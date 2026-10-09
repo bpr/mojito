@@ -252,7 +252,6 @@ impl Checker {
                     origin_binders: vec![None; regular_params.len()],
                     synthesized_default: false,
                     nested_origins: NestedOrigins::AsDeclared,
-                    template_ret: None,
                     overload: None,
                 };
                 let overloads = sigs.entry(m.name.clone()).or_default();
@@ -692,7 +691,6 @@ impl Checker {
                 sig.parametric_origin_writes =
                     parametric_origin_writes_in_body(&m.body, &info.fields);
             }
-            sig.template_ret = self.clone_template_return(declaration, m);
             sig.overload = self
                 .method_binder_owners
                 .call_qualifier(name, m)
@@ -760,40 +758,6 @@ impl Checker {
             overloads.push(sig);
         }
         Ok(())
-    }
-
-    /// The declared result of the template a method clone was elaborated
-    /// from, when that template is a sibling registered before it.
-    fn clone_template_return(
-        &self,
-        declaration: &StructDeclaration<'_>,
-        m: &mojito_ast::ast::Method,
-    ) -> Option<Ty> {
-        let first = m.body.first()?;
-        let catalog = self.template_catalog.borrow();
-        let template = &catalog
-            .trace(&mojito_checked::templates::InstanceName {
-                module: first.module.clone(),
-                owner: Some(declaration.name.to_string()),
-                name: m.name.clone(),
-                body: Some(first.span),
-            })?
-            .template;
-        let method = declaration.methods.iter().position(|sibling| {
-            sibling.name == template.name
-                && sibling
-                    .body
-                    .first()
-                    .is_some_and(|statement| statement.span == template.declaration)
-        })?;
-        self.declaration_types
-            .borrow()
-            .get(&mojito_checked::checked::AnnotationSite::MethodReturn {
-                module: declaration.module.clone(),
-                declaration: declaration.name.to_string(),
-                method,
-            })
-            .cloned()
     }
 
     /// Verify declared conformances, select the callable target, and check
@@ -1142,115 +1106,6 @@ impl Checker {
         Ok(())
     }
 
-    /// The members of struct `name`'s `method` overload set that witness a
-    /// requirement of that name in a trait the struct declares, each as
-    /// [`Self::verify_conformance`] matched it; empty when a conformance
-    /// condition does not compile.
-    pub(super) fn requirement_witnesses(&self, name: &str, method: &str) -> Vec<&MethodSig> {
-        let Some((info, members)) = self
-            .structs
-            .get(name)
-            .and_then(|info| Some((info, info.methods.get(method)?)))
-        else {
-            return Vec::new();
-        };
-        let self_ty = Ty::Struct(name.to_string(), info.self_arguments().into());
-        let mut witnesses: Vec<&MethodSig> = Vec::new();
-        for tr in &info.conforms {
-            let Some(requirements) = self
-                .traits
-                .get(tr)
-                .and_then(|trait_info| trait_info.methods.get(method))
-            else {
-                continue;
-            };
-            let Ok(assumption) = info
-                .conformance_conditions
-                .get(tr)
-                .map(|condition| self.compile_condition(&info.decls, condition))
-                .transpose()
-            else {
-                return Vec::new();
-            };
-            for requirement in requirements {
-                let want = self.requirement_at(requirement, &self_ty);
-                for member in members {
-                    if !witnesses.iter().any(|found| std::ptr::eq(*found, member))
-                        && self.method_satisfies_requirement_under(
-                            member,
-                            &want,
-                            assumption.as_ref(),
-                            method == "__next__",
-                        )
-                    {
-                        witnesses.push(member);
-                    }
-                }
-            }
-        }
-        // A built-in trait registers no declaration: its requirement is the
-        // signature a bound on it resolves ([`Self::builtin_requirements`]).
-        let builtin = BUILTIN_TRAITS.iter().filter(|tr| {
-            !self.traits.contains_key(**tr)
-                && info
-                    .conforms
-                    .iter()
-                    .any(|declared| declared == *tr || self.trait_refines(declared, tr))
-        });
-        for tr in builtin {
-            let Ok(assumption) = info
-                .conformance_conditions
-                .get(*tr)
-                .map(|condition| self.compile_condition(&info.decls, condition))
-                .transpose()
-            else {
-                continue;
-            };
-            for member in members {
-                if !witnesses.iter().any(|found| std::ptr::eq(*found, member))
-                    && self
-                        .builtin_requirements(tr, method, member.params.len())
-                        .iter()
-                        .any(|required| {
-                            builtin_requirement_witnessed(
-                                member,
-                                required,
-                                &self_ty,
-                                assumption.as_ref(),
-                            )
-                        })
-                {
-                    witnesses.push(member);
-                }
-            }
-        }
-        witnesses
-    }
-
-    /// The signatures built-in trait `tr` requires of a method named
-    /// `method` taking `argc` arguments: those a bound on it resolves
-    /// (`lookup_trait_methods`), and `Writable`'s `write_to` and
-    /// `write_repr_to`, each `(self, mut writer: Some[Writer]) -> None`,
-    /// which the checker spells as an inverted write instead.
-    fn builtin_requirements(&self, tr: &str, method: &str, argc: usize) -> Vec<MethodSig> {
-        if tr == "Writable" {
-            if !matches!(method, "write_to" | "write_repr_to") || argc != 1 {
-                return Vec::new();
-            }
-            let mut signature = MethodSig::intrinsic(
-                vec![Ty::Param {
-                    binder: synthetic_binder("Some[Writer]"),
-                    bounds: vec!["Writer".to_string()],
-                    callable_bound: None,
-                }],
-                Ty::None,
-            );
-            signature.conventions[0] = Some(ArgConvention::Mut);
-            return vec![signature];
-        }
-        self.lookup_trait_methods(&[tr.to_string()], method, argc)
-    }
-
     pub(super) fn method_satisfies_requirement_under(
         &self,
         got: &MethodSig,
@@ -1343,7 +1198,6 @@ impl Checker {
             origin_binders: req_sig.origin_binders.clone(),
             synthesized_default: false,
             nested_origins: req_sig.nested_origins,
-            template_ret: None,
             overload: None,
         }
     }
@@ -3313,57 +3167,6 @@ fn reads_name(default: &mojito_ast::ast::Expr, name: &str) -> bool {
         ExprKind::Infix(_, left, right) => reads_name(left, name) || reads_name(right, name),
         _ => false,
     }
-}
-
-/// Whether struct method `member` witnesses a built-in trait's `required`
-/// signature at the struct's type `self_ty`: the same receiver convention,
-/// parameters, and result, no variadic, reference result, or raise, and an
-/// availability condition only where the struct's conformance condition
-/// (`assumption`) implies it. A requirement parameter a bound
-/// types (`mut hasher: Some[Hasher]`) is witnessed by a parameter of the
-/// member's own binder, spelled either way, carrying exactly that bound;
-/// a binder of the struct's is no witness's.
-fn builtin_requirement_witnessed(
-    member: &MethodSig,
-    required: &MethodSig,
-    self_ty: &Ty,
-    assumption: Option<&GenericConstraint>,
-) -> bool {
-    let own = |binder: &ParamRef| {
-        existential_binder(binder) || member.decls.iter().any(|decl| *decl.id() == binder.id)
-    };
-    let fits = |got: &Ty, want: &Ty| match (got, want) {
-        (
-            Ty::Param {
-                binder,
-                bounds: got,
-                ..
-            },
-            Ty::Param { bounds: want, .. },
-        ) => {
-            own(binder)
-                && got.iter().all(|bound| want.contains(bound))
-                && want.iter().all(|bound| got.contains(bound))
-        }
-        _ => got == want || *got == substitute_self(want, self_ty),
-    };
-    member.has_self
-        && member.self_convention == required.self_convention
-        && member.conventions == required.conventions
-        && member.params.len() == required.params.len()
-        && member.variadic.is_none()
-        && member.kw_variadic.is_none()
-        && member.ref_return.is_none()
-        && !member.raises
-        && member.availability.iter().all(|constraint| {
-            assumption.is_some_and(|premise| generic_constraint_implies(premise, constraint))
-        })
-        && member
-            .params
-            .iter()
-            .zip(&required.params)
-            .all(|(got, want)| fits(got, want))
-        && fits(&member.ret, &required.ret)
 }
 
 /// Whether the struct declares the lifecycle member a trivial `kind` rules

@@ -706,6 +706,9 @@ pub trait MutVisitor {
 
     /// An expression, reported after its children.
     fn visit_expr_mut(&mut self, _expr: &mut Expr) {}
+
+    /// A type annotation, reported after its children.
+    fn visit_type_mut(&mut self, _ty: &mut Type) {}
 }
 
 /// Walk every statement, expression, and annotation of a block in place.
@@ -1090,6 +1093,11 @@ pub fn walk_expr_mut<V: MutVisitor>(visitor: &mut V, expr: &mut Expr) {
 
 /// Walk a type annotation's embedded expressions and nested types in place.
 pub fn walk_type_mut<V: MutVisitor>(visitor: &mut V, ty: &mut Type) {
+    walk_type_children_mut(visitor, ty);
+    visitor.visit_type_mut(ty);
+}
+
+fn walk_type_children_mut<V: MutVisitor>(visitor: &mut V, ty: &mut Type) {
     match ty {
         Type::Named(_, args) => walk_param_args_mut(visitor, args),
         Type::Assoc { base, args, .. } => {

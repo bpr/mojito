@@ -8,6 +8,22 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- The replaced mechanisms are deleted (roadmap R10, P5): the AST cloner
+  (`comptime/{mono,specialize,packs,unparse}.rs`), the checker's template
+  derivation (`checker/template_facts*`, `mojito-checked/src/templates.rs`,
+  `MOJITO_VERIFY_TEMPLATE_FACTS`), the VM's erased dispatch and the erased
+  oracle (`--erased`, `MOJITO_VM_ERASED`, `VmInstantiation`,
+  `Backend::run_elaborated`, `run_artifact_as`, the corpus `erased_vm`
+  group), and the stage-composed `Backend::run(&CheckedProgram)` seam with
+  the `mojito-vm → mojito-analysis` crate edge. Every generic `def` is a
+  template the one check infers once and `native::mono` instantiates below
+  MIR, a `Tuple`- or struct-typed value binder included; the VM runs
+  concrete MIR only, reporting a parametric instruction as an invariant
+  error, and a runtime struct value carries no compile-time arguments. The
+  check runs in a `CheckContext` (`check_program_in`), every executing test
+  goes through `Compiler`, and the corpus binary's `artifact` group compares
+  the production run with the serialized artifact's. Residue: R521.
+
 - Source validation and the executable check are one check, every
   function body keeps its `comptime if` and `comptime for` to MIR, module
   constants are parameter expressions, and the AST CTFE route is gone

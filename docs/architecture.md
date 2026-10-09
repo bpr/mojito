@@ -33,11 +33,10 @@ Dependency direction is enforced by Cargo. Bottom-up: `mojito-common`
 `mojito-native-core`} → `mojito-checker` → `mojito-mir` → `mojito-analysis` →
 `mojito-vm` → {`mojito-native` → `mojito-pliron` (feature-gated),
 `mojito-comptime`} → the root facade. Note that the crate DAG is not the
-pipeline order: `mojito-comptime` sits **above** the VM because CTFE compiles
-and executes sub-programs through `VmBackend`, which itself re-runs checking
-(the stage-composed seam contract), and `mojito-native` sits above it too
-because the elaborator owns its compile-time executor
-(`VmBackend::call_concrete`), as upstream's elaborator owns its interpreter. `crates/mojito-runtime` remains the
+pipeline order: `mojito-native` sits **above** the VM because the elaborator
+owns its compile-time executor (`VmBackend::call_concrete`), as upstream's
+elaborator owns its interpreter, and `mojito-comptime` sits above the
+checker because it elaborates the program the check consumes. `crates/mojito-runtime` remains the
 independently versioned native C-ABI runtime, depending on nothing above.
 
 ## Big Picture
@@ -73,16 +72,15 @@ each named by its accessor and each computed once:
 | Phase | Accessor | What it is | Who consumes it |
 |---|---|---|---|
 | Parametric MIR | `mir()` | The ownership-verified, pre-drop `MirProgram` the driver lowered; generic bodies name their parameters | Ownership analysis |
-| Drop-elaborated MIR | `drop_elaborated_mir()` | Parametric MIR with drops inserted, re-verified; may still be generic | The elaborator; `emit_mir` and the serialized artifact; the erased oracle |
+| Drop-elaborated MIR | `drop_elaborated_mir()` | Parametric MIR with drops inserted, re-verified; may still be generic | The elaborator; `emit_mir` and the serialized artifact |
 | Concrete MIR | `concrete_mir()` | The elaborator's entry-rooted output, a `SpecializedProgram` whose `mir::ConcreteMir` passed `verify_concrete` | The VM and the native backend |
 
 `native::mono` is the one elaborator below the waist. `concrete_mir()` runs it
-from the program's entry roots and caches the graph, so the VM, the native
-backend, and the instantiation census read one elaboration and no backend
-elaborates again. `mir::ConcreteMir` has one constructor, which runs concrete
-verification, so a holder never has to know which verifier mode ran. A body
-the elaborator refuses is `CompilerError::Elaborate`; execution never falls
-back to the erased path.
+from the program's entry roots and caches the graph, so the VM and the native
+backend read one elaboration and no backend elaborates again.
+`mir::ConcreteMir` has one constructor, which runs concrete verification, so
+a holder never has to know which verifier mode ran. A body the elaborator
+refuses is `CompilerError::Elaborate`; there is no other execution path.
 
 The entry roots are defined once, by `native::mono::entry_roots`: `main` and
 the module initializer `__toplevel__`, each when the program defines it.
@@ -90,25 +88,21 @@ Source execution, artifact execution, and a native executable all elaborate
 from them. A native caller that wants another root (a scalar entry under
 test) names it to `mono::specialize`, through `pliron::compile_mir`.
 
-`Compiler::execute` runs concrete MIR through `Backend::run_concrete`. The
-erased path — `Backend::run_elaborated` on drop-elaborated MIR, resolving
-parameters at run time — stays selectable as the differential oracle
-(`Compiler::with_vm_instantiation`, `MOJITO_VM_ERASED=1`, or `--erased` on
-`run` and `exec`) until the replaced mechanisms are deleted
-(`docs/parametric-mir-plan.md`, P5). The corpus binary's `erased_vm` group
-compares the two per fixture. Compile-time evaluation keeps its own VM run on
-erased bodies, as does the stage-composed `Backend::run(&CheckedProgram)`
-seam: `mojito-vm` sits above `mojito-native` in the crate order and cannot
-call the elaborator.
+`Compiler::execute` runs concrete MIR through `Backend::run_concrete`, the
+VM's one executable entry: the VM interprets concrete MIR and nothing else,
+and a parametric instruction, terminator, or constant reaching it is a
+compiler invariant error, since `verify_concrete` rejects each before a
+program runs. Compile-time evaluation runs concrete fragments the elaborator
+builds (`VmBackend::call_concrete`). The corpus binary's `artifact` group
+compares the production run with the serialized artifact's run per fixture.
 
 `CompiledProgram::emit_mir` serializes the drop-elaborated program to
 canonical text. Post-drop verification findings fold into its
 `invariant_errors`, which every consumer refuses when non-empty. Production
 backends therefore never re-lower checked syntax. `CompilerError` identifies
-the failing stage. Individual stage functions and `Backend::run(&CheckedProgram)` remain
-public compatibility seams for tests and diagnostic tools; that stage-composed
-entry re-checks pre-drop ownership but is non-authoritative for the
-whole-program specialization handoff (a generic body forwarding its own `H`
+the failing stage. Individual stage functions remain public seams for phase
+tests and diagnostic tools; every executing test goes through `Compiler`
+(a generic body forwarding its own `H`
 into `hash[H](x)` binds the declaration default there, while `Compiler` binds
 the caller's).
 
@@ -596,11 +590,9 @@ the instance's values before it answers nested applications
 (`Specializer::applied`), and demands the applications a struct instance's
 field types carry (`discover_structs`). A struct whose own static method is
 being run is declared by the body that uses it, once the method has run, so
-a field type may apply a static method of its own struct. The
-cloner serves a display binding by syntax alone
-(`mojito_ast::visit::display_bindings`, `served_display_bindings`), and
-keeps the clone only where a type or parameter argument is the display
-itself, or a collection built from it (`display_in_unserved_argument`).
+a field type may apply a static method of its own struct. A display
+binding is served by syntax alone
+(`mojito_ast::visit::display_bindings`, `served_display_bindings`).
 Evaluating such a binding again per reader is roadmap
 R378, where upstream evaluates a `comptime`
 alias. A thunk reads a local `comptime` value bound before it (`comptime k
@@ -657,8 +649,8 @@ analysis sees the whole collector lent or moved, and the elaborator
 (`expand_pack_spreads`) replaces the argument with one place read or move
 per element of the bound pack before it binds the callee, so concrete MIR
 carries no spread. A method call carries the same position
-(`MirInstr::MethodCall::spread`, schema 1.24), which the elaborator and the
-erased oracle expand alike. The checker types the spread against the
+(`MirInstr::MethodCall::spread`, schema 1.24), which the elaborator
+expands. The checker types the spread against the
 callee it selects, a `def`, method, or constructor whose collector is a
 type pack (a method's own `*a: *Ts` or its struct's `*b: *Self.Ts`); a
 spread into a homogeneous collector is rejected, as at the pin. It types a
@@ -696,10 +688,9 @@ every nullary construction whose type the bindings decide as that type's
 default construction — before unrolling for a parameter or a literal index,
 and in each unrolled copy for the loop's index — and a binding of the
 element under the loop takes the copy's own slot at its element type. A
-type parameter's runtime reification slot (a `Hasher` or `Defaultable`
-bound), which only the erased oracle reads, leaves every concrete instance
-(`reification_slots`, `mono/slots.rs`), as Mojo gives a type parameter no
-storage.
+type parameter's reification slot (a `Hasher` or `Defaultable` bound), which
+nothing reads, leaves every concrete instance (`reification_slots`,
+`mono/slots.rs`), as Mojo gives a type parameter no storage.
 
 **One check.** `prepare` normalizes declarations
 without selecting an arm, unrolling a loop, stubbing a template, or minting a
@@ -822,11 +813,11 @@ A tuple or struct value whose leaves include a `String`
 (`CtValue::is_constructed_parameter_value`) is never folded: no constant
 holds an owned buffer, so the instance constructs it into the parameter's
 slot at entry and its reads stay slot reads, the template's drop of the
-slot destroying it. The elaborator freezes a computed
-struct-typed argument (`Extent.square(4)`) to its fieldwise construction,
-which the checker reads as the frozen value. Every variadic struct is a
-generator too, `native::mono` binding its pack per instance; the cloner
-specializes no struct whole. The public `Tuple`, `TString`, and `Variant`
+slot destroying it. The elaborator above the check freezes a computed
+struct-typed argument (`Extent.square(4)`) to its fieldwise construction
+(`Elab::freeze_struct_value_arguments`), which the checker reads as the
+frozen value. Every variadic struct is a generator too, `native::mono`
+binding its pack per instance. The public `Tuple`, `TString`, and `Variant`
 are spelled element by element (`types::binds_pack_elementwise`,
 `types::canonical_pack_arguments`): `t[k]` is the template's
 `__getitem_param__[k]`, and `Tuple`'s consuming members move elements out
@@ -860,9 +851,7 @@ exactly that operand for the arm it guards (`conformance_arm_assumptions`,
 pushed on `assumed_conformances` around the arm), which is what the pin
 licenses for a plain parameter, a pack element, and a field type alike; a
 proof on another index, after the use, in another loop, or in an `or` proves
-nothing. A reflection body's certificate is incomplete by rule
-(`template_certificate`), so its instances keep the clone check and the
-elaborator's own field facts. A value read of a query over a parameter
+nothing. A value read of a query over a parameter
 (`field_count()`, `is_struct()`, `field_index[name]()`, `len(field_names())`,
 `field_names()[i]`) in a template-served body crosses the MIR waist as a
 `Const::Param` over its `Reflect` node, as upstream's `Reflected[T]` methods
@@ -907,8 +896,8 @@ parameter's default, a conditional callable default's condition, and a
 dependent type (`DependentType::Parameter`) are the same nodes; there is no
 second expression tree.
 
-- The context rides in `TemplateCatalog`, so source validation, the check,
-  and every transfer round of one compilation share it. Pure helpers in
+- The context rides in the checker's `CheckContext`, so every transfer
+  round of one compilation shares it. Pure helpers in
   `mojito-types` canonicalize on a detached context; equality is structural
   across contexts.
 - The normal form is no stronger than the pinned Mojo's: integer `+`, binary
@@ -1003,34 +992,17 @@ per instance once its `comptime if`s are decided and erases it, as upstream's
 `processRebindOp` does (`native::mono`'s `discharge_rebinds`,
 `mono/rebind.rs`), failing the instance with a `MonoErrorKind::Instantiation`
 error on a mismatch.
-A value-pack `def` whose binders its template does not serve keeps an
-inferred call on its template's abstract path: nothing above the waist
-replays the checker's recorded instantiation. No `def` is compile-time-keyed: a `comptime
-if`, a `comptime for`, and a `rebind` stay in the template whatever they read,
-and the elaborator below MIR decides them per instance, so every call of a
-generic `def` named once reaches its template, and an overloaded generic name
-is the checker's to select among, each declaration served by its own
-template.
-
-A **bound-generic** template — a plain
-trait-bound generic `def` with no comptime constructs and a unique top-level
-name — resolves softly: only an explicit application whose arguments resolve
-concretely monomorphizes, while inferred calls, symbolic arguments, and
-function-value uses stay on the template's abstract erased-dispatch path. The
-template itself always survives the rebuild, instantiated or not: what a
-parametric body demands of its own parameters is a fact about the template,
-so its Mojo-style abstract pre-check must not depend on which arguments some
-call happened to supply. In both classes each clone bakes
-its concrete type arguments into every remaining type position — annotations,
-compile-time argument lists, and constructor heads — and drops them from the
-residual signature and the rewritten calls, so the clone checks concretely.
-Because the checker never re-validates a dropped argument, the resolver
-enforces each dropped parameter's declared trait bounds at the requesting call
-through the conformance oracle. Type packs, callable-value bindings, and
-types that do not round-trip to source syntax remain symbolic on the residual
-signature. A specialization is walked whole — signature and body — for further
-template uses, so a clone's expanded `-> Variant[Int, String]` requests that
-concrete struct exactly as its body's calls do.
+Every generic `def` is a template, whatever its binders — type parameters,
+scalar or aggregate value parameters, type packs, and value packs alike: a
+`comptime if`, a `comptime for`, and a `rebind` stay in the template whatever
+they read, the elaborator below MIR decides them per instance, and every
+call of a generic `def` named once reaches its template, inferred or
+explicit, while an overloaded generic name is the checker's to select among,
+each declaration served by its own template. Nothing above the waist clones
+a `def` or replays a recorded instantiation; the checker enforces each
+parameter's declared trait bounds at the call, and the template's own check
+holds whether or not anything instantiates it, since what a parametric body
+demands of its own parameters is a fact about the template.
 
 A method with compile-time parameters of its own is a generator, as in the
 pin: its binders are its struct's followed by its own, its template crosses
@@ -1125,12 +1097,9 @@ t-string.
 `Compiler::compile_linked` elaborates once and checks once (since
 2026-10-08): no check feeds a second elaboration, and the instances a
 program needs are found below the MIR waist by `native::mono`'s worklist
-from the entry roots. A clone the elaboration's `DefInstanceTrace`s tie to
-a certified template takes its facts from the compilation's
-`TemplateCatalog` rather than being inferred. A bound-generic template is
-emitted before its specializations because a clone may still reference the
-template abstractly (an inferred recursive call) and the checker binds
-top-level names sequentially.
+from the entry roots. Nothing is cloned above the check: every generic
+`def`, struct, and method is a template the one check infers once, with its
+parameters symbolic, and `native::mono` instantiates below MIR.
 
 Methods with their own compile-time parameters (`def isa[T: AnyType](self)`,
 a constructor `__init__[T: AnyType, //, F: def() -> T](out self, *,
@@ -1140,7 +1109,7 @@ arguments; an infer-only `T` also solves through a callable-bounded
 sibling's contract), which the driver reads for the instances the method's
 body reaches (`TemplateReach::method_call`), and `native::mono` instantiates
 the template's MIR per call. A call whose arguments stay symbolic (inside
-an unspecialized generic body) keeps the erased path.
+a generic body) is instantiated where the body's own instance is.
 
 An *ordinary* generic struct (`struct Optional[T: AnyType]`, every parameter
 a plain type parameter) keeps its template in the program — checked once
@@ -1187,8 +1156,7 @@ request. Copying, moving, destruction, and the by-name dispatches the
 backends perform on a runtime struct name (`print`/`String(x)`/`repr(x)`/
 `Writer.write` through `write_to`/`write_repr_to`, and `len`/`abs`/`Bool`/
 `Int` and the prefix operators through their dunders) select the method by
-the runtime struct name alone, on the erased path, and by the instance
-struct `native::mono` built on concrete MIR.
+the instance struct `native::mono` built on concrete MIR.
 
 Under the production compiler, the erased-dispatch machinery
 (`__trait_dispatch.*`/`__iterator_dispatch.*` symbols, VM retargeting, and
@@ -1327,13 +1295,15 @@ Entry point:
 ```rust
 checker::check(program: &[Stmt]) -> Result<(), TypeError>
 checker::check_program(program: &[Stmt]) -> Result<CheckedProgram, TypeError>
-checker::check_program_for_discovery(program, catalog) -> Result<DiscoveryResult, TypeError>
-checker::check_program_with_templates(program, catalog) -> Result<CheckedProgram, TypeError>
+checker::check_program_for_discovery(program, context) -> Result<DiscoveryResult, TypeError>
+checker::check_program_in(program, context) -> Result<CheckedProgram, TypeError>
 ```
 
 `check` is the compatibility validation wrapper, and `check_program` the
-whole-handoff entry the stage-composed seam, CTFE, and direct clients use.
-The compiler driver calls `check_program_with_templates`, which runs every
+whole-handoff entry phase tests and direct clients use, in a default
+`CheckContext`. The compiler driver calls `check_program_in` with the
+compilation's context (its `ParamContext`, the body-fact carry switch, and
+the requirement defaults bound at calls through a bound), which runs every
 rejecting check — the transfer-effect fixpoint, reference-result reads,
 context-manager splicing, explicit destruction — and then assembles the
 checked arena. `check_program_for_discovery` stops before the arena: a
@@ -1360,8 +1330,7 @@ so an unchanged prefix keeps its identities. The copy is exact by
 construction — nothing outside the body window is skipped — and
 `tests/compiler_test.rs` pins that a compilation with carry-over lowers the
 same MIR as one without (`MOJITO_BODY_FACT_REUSE=0`), up to identity
-numbering. The catalog's template derivation is not consulted for a carried
-body; verification mode (`MOJITO_VERIFY_TEMPLATE_FACTS`) disables carry-over.
+numbering.
 
 The checked handoff owns the elaborated AST for diagnostics and
 an explicit semantic arena. Every checked expression has a `CheckedNodeId`, child
@@ -1678,63 +1647,28 @@ carries the value in its instantiated arguments, the checker names the
 argument's span (`SemanticAdjustment::FoldedParameterArguments`), and MIR
 lowers no code for it and leaves its slot's register absent. The verifier
 accepts the absent register only while the call carries that closed value
-(`verify_param_arguments`), the monomorphizer binds it from the instantiated
-arguments (`bind_instantiated_arguments`), and the erased oracle thaws it at
-the declared type (`VmBackend::thaw`). Only an argument over the caller's
-binders, a string, a callable, or a type keeps a register.
+(`verify_param_arguments`), and the monomorphizer binds it from the
+instantiated arguments (`bind_instantiated_arguments`). Only an argument
+over the caller's binders, a string, a callable, or a type keeps a register.
 
 Examples of syntax that may parse before it is fully implemented include richer
 trait features and advanced expression/declaration forms that the VM does not
 yet execute.
 
-### Checked Templates
+### Generic Bodies Are Checked Once
 
-A generic body is inferred once, with its parameters symbolic, and the
-instances it covers inherit that result instead of being inferred again as
-clones. The vocabulary is `crates/mojito-checked/src/templates.rs`; capture,
-certification, realization, and installation are
-`checker/template_facts.rs` and one file per seam under
-`checker/template_facts/`. The design record, with every certificate class
-and its soundness argument, is
-[`docs/notes/instantiation-from-template.md`](notes/instantiation-from-template.md).
+A generic body is inferred once, with its parameters symbolic, and nothing
+above the MIR waist derives, certifies, or clones an instance of it: the
+instances a program needs are built below the waist by `native::mono` from
+the template's MIR, and every obligation an instance owes (a `rebind`
+equality, an implicit copy, `Movable` at a transfer, the availability of a
+closed method call) is the elaborator's to judge per instance. The living
+contract is [`docs/notes/generator-contract.md`](notes/generator-contract.md).
 
-- **What is a template.** A module-level generic `def`, or a method of a
-  generic struct. A method has no source range of its own, so it is named by
-  its struct and the range of its body's first statement. Both reach the
-  mechanism through one `BodySite` (`check_def_body`, `check_method_body`).
-- **One producer per body.** The one check retains the template of every
-  generic body (`TemplateProducer::ExecutableCheck`).
-- **Capture is total or it refuses.** `FactTable` enumerates every
-  occurrence-keyed fact table. A body that recorded into a table without a
-  derivation recipe, keyed a fact outside its own occurrences, grew a store
-  that is not keyed by occurrence, or read a callee effect summary that was
-  not empty is retained as `TemplateCoverage::Incomplete`, and its instances
-  keep the clone check.
-- **The trace is explicit.** The elaborator records which prepared declaration
-  each `def` clone instantiates and what each compile-time parameter became
-  (`DefInstanceTrace`), and everything it generated
-  (`GeneratedDeclarations`). Only that list says a declaration is
-  generated: a module-qualified source name
-  carries a `$` too. A clone node keeps the syntax identity of the template
-  node it was copied from, and `rekey_syntax` returns the identity each
-  re-keyed node had before (`SyntaxOrigins`). No correspondence is inferred
-  from a mangled name.
-- **An instance still owes its obligations.** Realization substitutes, then
-  discharges the `rebind` equalities, the implicit copies, `Movable` at each
-  transfer, the deletability of each local of a parameter type, the clone
-  lookup of each retained application, the built-in `len` witness, the
-  availability of each closed method call at the instance, and the empty
-  effect summaries. A method beyond a scalar getter also owes that every
-  instance argument is plain data. It also records the generic-struct applications the body
-  reaches, substituted, so a derived clone requests the instances an inferred
-  one would. A failed obligation refuses the derivation, so the clone
-  check reports it in its own words. A refusal never accepts a program.
-- **Selection is bound once.** A derived instance inherits the overload its
-  template selected and never ranks the set again, as the pinned Mojo binds a
-  call while it checks the generic body.
-
-`MOJITO_VERIFY_TEMPLATE_FACTS=1` infers every derivable body as well and
-requires the two fact bundles to agree.
+- **Selection is bound once.** A call inside a generic body is bound while
+  the body is checked, and every instance inherits that overload and never
+  ranks the set again, as the pinned Mojo binds a call while it checks the
+  generic body.
 
 ### Overload Resolution
 
@@ -2046,9 +1980,7 @@ one once per call from the call's solved arguments
 A nested declaration inside a `comptime for` is a generator over the loop's
 index as well: each unrolled copy of the region points its closure at the
 body's instance under the copy's iteration, and a generic one carries the
-copy's bindings to its calls. The erased oracle passes the creating frame's
-parameter values, and the running loop's index, through the closure value
-instead.
+copy's bindings to its calls.
 
 Pack forwarding first flattens the one known spread into a virtual positional
 type sequence and runs the shared call-slot matcher; only positional overflow
@@ -2457,7 +2389,7 @@ are typed `Ty::None` by convention. Functions additionally carry their checked
 `ret_ty`, raising contract (`raises`/`error_ty`), and per-slot `var_tys`.
 
 `mir::verify` has two modes. `verify` accepts parametric MIR, the form the
-canonical artifact and the VM's erased oracle use: a register, slot,
+canonical artifact and the elaborator's input take: a register, slot,
 signature, place, or instruction type may name a parameter expression — a
 type binder, a dependent type, a symbolic vector lane or width, a symbolic
 struct argument, a compile-time application — and `verify/scope.rs` checks
@@ -2520,12 +2452,7 @@ in declaration order and in the caller's binder scope
 `SemanticAdjustment::InstantiatedArguments`). The elaborator binds the
 callee's own type parameters from them before unifying the runtime
 arguments, so a parameter no runtime parameter or result spells is bound
-too; the erased oracle reifies the struct's name from them where the
-brackets spelled none. An erased frame binds the value parameters its call
-reifies and, for a method, those its receiver carries, and closes a symbolic
-lane by them where it builds a value (`MaterializeLiteral`, `MakeSimd`,
-`SimdCast`, `SimdBitcast`; `erased_closed_ty`), so a generator member keyed
-on a `DType` runs erased. Elaborated MIR carries none.
+too. Elaborated MIR carries none.
 
 `mir::verify` is the standalone semantic verifier of record. From MIR plus
 `MirDeclarations` alone it checks place completeness and projection
@@ -3264,9 +3191,8 @@ which unpack-into-place targets also run (per tuple-display element, or
 conservatively with the whole right-hand side's origins). An outward store of
 a symbolic value that may carry a loan once instantiated records its effect
 as latent: the frame keeps it, in order, beside the published effects
-(`TransferFrame::record`) and never publishes it, and a template instance
-derived from the body publishes it where the substituted type carries a loan
-(`docs/notes/instantiation-from-template.md`, obligation 14). The same store
+(`TransferFrame::record`) and never publishes it; the elaborator's instance
+of the body carries the loan where the substituted type does. The same store
 publishes one effect whose source is the stored type itself
 (`SigOrigin::Carried`), as does a symbolic value handed by value to a callee
 that stores it. A call closes that type with the arguments of the struct
@@ -3915,12 +3841,12 @@ Module:
 crates/mojito-vm/src/backend/vm.rs
 ```
 
-The register VM executes verified MIR. Production hands it concrete MIR
-(`Backend::run_concrete`), in which every call names an instance; the same
-dispatcher runs drop-elaborated MIR that is still generic
-(`Backend::run_elaborated`), resolving parameters at run time, as the erased
-oracle and for compile-time evaluation. It is structured rather than
-byte-addressable:
+The register VM executes concrete MIR and nothing else: production hands
+it `Backend::run_concrete`, in which every call names an instance, and
+compile-time evaluation hands it a concrete fragment
+(`VmBackend::call_concrete`). A parametric instruction, terminator, or
+constant it meets is a compiler invariant error, never a runtime branch. It
+is structured rather than byte-addressable:
 
 - registers hold rich `runtime::Value`s
 - variables are frame slots
@@ -4146,8 +4072,7 @@ the last transfer round it splices the desugar into the checked tree in the
 statement's place. HIR, MIR, ownership analysis, and the backends therefore
 never see a `With` node. Each synthesized node's identity is derived from the
 statement's (`SyntaxId::derived`), so every rebuild of one statement's desugar
-names the same occurrences, and an instance derived from a checked template
-builds its own from the template's recorded form. The one compiler-private spelling it emits is
+names the same occurrences. The one compiler-private spelling it emits is
 `_mojito_keep_alive(name)`, a statement MIR lowers to the existing
 `KeepAlive` liveness anchor (resolved through the argument's checked binding,
 so a later block rebinding the same `as` name anchors its own slot): it keeps
@@ -4296,7 +4221,7 @@ with the elaborator and `Backend::run_concrete` (the CLI `exec` subcommand's
 engine): the artifact is drop-elaborated MIR, which may be generic, and the
 loaded program is elaborated to concrete MIR from its entry roots exactly as
 a compiled source program is. It is not drop-elaborated or
-ownership-analyzed again. `exec --erased` runs it as serialized instead. The composition lives in
+ownership-analyzed again. The composition lives in
 `src/artifact.rs`, beside rather than inside `Compiler`: the artifact path
 deliberately bypasses the source pipeline, and `mir::text` cannot host it
 without layering onto `backend`.

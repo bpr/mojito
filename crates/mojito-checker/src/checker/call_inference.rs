@@ -2209,52 +2209,7 @@ impl Checker {
         let bindings = Self::bind_callee_origins(name, &pattern_names, &patterns, &bound)?;
         let bound_variadic = variadic.map(|element| bindings.substitute(element));
         let bound = bindings.substitute_all(&params);
-        // A clone's own binders stand for the origin slots of a type argument
-        // (`first_or$…` over `List[Span[Int, __clone_origin0]]`), which the
-        // template spelled as its abstract parameter: the exclusivity rule
-        // reads them unbound, as it reads the template's.
-        let clone_binders = self.clone_origin_binder_ids(name);
-        let declared = if clone_binders.is_empty() {
-            bound.clone()
-        } else {
-            super::origins::ConstructorOriginBindings {
-                pointers: bindings
-                    .pointers
-                    .iter()
-                    .filter(|(id, _)| !clone_binders.contains(id))
-                    .map(|(id, origin)| (*id, origin.clone()))
-                    .collect(),
-                origins: bindings
-                    .origins
-                    .iter()
-                    .filter(|(id, _)| !clone_binders.contains(id))
-                    .map(|(id, origin)| (*id, origin.clone()))
-                    .collect(),
-            }
-            .substitute_all(&params)
-        };
-        Ok((bound, declared, bound_variadic, Some(bindings)))
-    }
-
-    /// The binders a generated clone `name` declares for the origin slots of
-    /// its loan-carrying type arguments, in its full binder-index domain.
-    fn clone_origin_binder_ids(&self, name: &str) -> Vec<mojito_types::origin::OriginParamId> {
-        let signatures = self.lookup_callable_origins(name).unwrap_or_default();
-        let [signature] = signatures.as_slice() else {
-            return Vec::new();
-        };
-        signature
-            .source
-            .iter()
-            .enumerate()
-            .filter(|(_, parameter)| {
-                parameter
-                    .name
-                    .starts_with(mojito_symbol::symbol::CLONE_ORIGIN_BINDER_PREFIX)
-            })
-            .filter_map(|(index, _)| u32::try_from(index).ok())
-            .map(mojito_types::origin::OriginParamId)
-            .collect()
+        Ok((bound.clone(), bound, bound_variadic, Some(bindings)))
     }
 
     /// `__param_list_address[*values]()`: a `Pointer[E, ImmStaticOrigin]` to

@@ -1,6 +1,6 @@
 //! The register VM: the sole runtime and executable semantic oracle, plus the
-//! statically dispatched `Backend` enum. `VmBackend::run` re-runs checking and
-//! ownership analysis on its input (the stage-composed seam contract).
+//! statically dispatched `Backend` enum. Its one executable input is concrete
+//! MIR, the elaborator's verified output.
 
 pub mod backend;
 pub mod builtins;

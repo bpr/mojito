@@ -1075,14 +1075,9 @@ impl Checker {
     ) {
         // Unstamped bundled code is checked for every program, and a
         // synthesized node has no source at all: neither is user-reachable
-        // code, so instances seen only there keep the erased path.
+        // code, so an instance seen only there is not a fact of this program.
         if source.is_none() || super::overload_support::is_bundled_module_source(source) {
             return;
-        }
-        // A checked template keeps the application as written: its instances
-        // substitute into it and record their own.
-        if let Some(Some(frame)) = self.struct_application_frames.borrow_mut().last_mut() {
-            frame.push((template.to_string(), arguments.to_vec()));
         }
         let Some(arguments) = self.instance_arguments(template, arguments) else {
             return;

@@ -662,7 +662,12 @@ fn a1_reference_field_arithmetic_matches_vm() {
             .unwrap_or_else(|error| panic!("{fixture}: must run on the VM: {error}"));
         let mut vm = mojito::backend::VmBackend::new();
         vm.enable_lifecycle_log();
-        vm.run_elaborated(compiled.drop_elaborated_mir().clone())
+        let concrete = compiled
+            .concrete_mir()
+            .unwrap_or_else(|error| panic!("{fixture}: must elaborate: {error}"))
+            .program
+            .clone();
+        vm.run_concrete(concrete)
             .unwrap_or_else(|error| panic!("{fixture}: must run on the VM: {error}"));
         let vm_events: Vec<String> = vm.lifecycle_log().expect("log enabled").to_vec();
 
@@ -909,7 +914,12 @@ fn lifecycle_event_traces_match_the_vm() {
             .unwrap_or_else(|error| panic!("{fixture}: must compile: {error}"));
         let mut vm = mojito::backend::VmBackend::new();
         vm.enable_lifecycle_log();
-        vm.run_elaborated(compiled.drop_elaborated_mir().clone())
+        let concrete = compiled
+            .concrete_mir()
+            .unwrap_or_else(|error| panic!("{fixture}: must elaborate: {error}"))
+            .program
+            .clone();
+        vm.run_concrete(concrete)
             .unwrap_or_else(|error| panic!("{fixture}: must run on the VM: {error}"));
         let vm_events: Vec<String> = vm.lifecycle_log().expect("log enabled").to_vec();
 

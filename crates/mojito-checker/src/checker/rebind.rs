@@ -31,43 +31,7 @@ pub(super) struct RebindTargets {
     assignments: HashMap<SourceSpan, ParamArg>,
 }
 
-impl RebindTargets {
-    /// The spans of the expressions the targets of `body`'s erased rebinds
-    /// embed. A clone's target is the type the elaborator wrote for the
-    /// template's parameter (`StringSpan[_]` for `T`), whose resolution
-    /// records facts at its own synthetic origin arguments: no occurrence of
-    /// the body keys them, and nothing lowered reads them.
-    pub(super) fn target_spans(&self, body: &[Stmt]) -> HashSet<SourceSpan> {
-        struct Sites(Vec<SourceSpan>);
-        impl mojito_ast::visit::Visitor for Sites {
-            fn visit_stmt(&mut self, statement: &Stmt) {
-                self.0.push(statement.source_span());
-            }
-            fn visit_expr(&mut self, expr: &Expr) {
-                self.0.push(expr.source_span());
-            }
-        }
-        struct Spans(HashSet<SourceSpan>);
-        impl mojito_ast::visit::Visitor for Spans {
-            fn visit_expr(&mut self, expr: &Expr) {
-                self.0.insert(expr.source_span());
-            }
-        }
-        let mut sites = Sites(Vec::new());
-        mojito_ast::visit::walk_block(&mut sites, body);
-        let mut spans = Spans(HashSet::new());
-        for site in &sites.0 {
-            let target = self
-                .operands
-                .get(site)
-                .or_else(|| self.assignments.get(site));
-            if let Some(target) = target {
-                mojito_ast::visit::walk_param_arg(&mut spans, target);
-            }
-        }
-        spans.0
-    }
-}
+impl RebindTargets {}
 
 /// Replace every well-formed `rebind[Dest](value)` call by its operand and
 /// return the retypings the erasure leaves behind. A malformed call (arity, a
@@ -214,7 +178,7 @@ impl Checker {
         if let Some(assertion) = assertion {
             self.rebind_assertions.borrow_mut().insert(
                 value.source_span(),
-                mojito_checked::templates::RebindAssertion {
+                mojito_checked::checked::RebindAssertion {
                     operand: assertion.dest,
                     dest: assertion.operand,
                     by_value: false,
@@ -255,11 +219,6 @@ impl Checker {
     /// on the concrete type it was cloned with.
     fn rebinds_by_value(&self, operand: &Ty) -> bool {
         self.is_trivial_register_passable(operand)
-            && !self
-                .transfer_frames
-                .borrow()
-                .iter()
-                .any(|frame| frame.keeps_symbolic_selection)
     }
 
     /// `Dest` for an operand of type `ty`. Under source validation, or where
@@ -270,7 +229,7 @@ impl Checker {
         let dest = self.rebind_target_ty(target)?;
         self.rebind_assertions.borrow_mut().insert(
             site.clone(),
-            mojito_checked::templates::RebindAssertion {
+            mojito_checked::checked::RebindAssertion {
                 operand: ty.clone(),
                 dest: dest.clone(),
                 by_value: self.rebinds_by_value(ty),

@@ -585,10 +585,8 @@ impl Checker {
     /// constant, a value pack), or a `range(...)` iterable's bounds, each
     /// compiled as a parameter expression; an `evaluated` display records
     /// its element alone. A bound the compiler does not
-    /// close — a pack length, a compile-time list's — is left unrecorded
-    /// under source validation, where the loop is the cloner's to unroll,
-    /// and is the explicit boundary in the executable check, which only sees
-    /// a loop the elaborator kept.
+    /// close — a pack length, a compile-time list's — is the explicit
+    /// boundary of the check, which only sees a loop the elaborator kept.
     fn record_comptime_iteration(
         &self,
         source: &Expr,
@@ -2953,16 +2951,6 @@ pub(super) fn positional_pack_binding(
         })
 }
 
-/// Whether a block names `reflect[...]` anywhere below it. Such a body is
-/// validated symbolically like any other, but its instances keep the clone
-/// check: the field facts the elaborator evaluates are its own
-/// (`template_facts/certificate.rs:template_certificate`).
-pub(super) fn reads_reflection(stmts: &[Stmt]) -> bool {
-    let mut finder = ReflectionFinder { found: false };
-    mojito_ast::visit::walk_block(&mut finder, stmts);
-    finder.found
-}
-
 #[derive(Debug, Clone)]
 struct ApplicableParameter {
     name: String,
@@ -3040,19 +3028,6 @@ impl ApplicableShape<'_> {
 /// spells.
 fn template_name(name: &str) -> &str {
     mojito_symbol::symbol::specialization_template(name).unwrap_or(name)
-}
-
-struct ReflectionFinder {
-    found: bool,
-}
-
-impl mojito_ast::visit::Visitor for ReflectionFinder {
-    fn visit_expr(&mut self, expr: &Expr) {
-        if matches!(&expr.kind, ExprKind::TypeApply { name, .. } | ExprKind::Call { name, .. } if name == "reflect")
-        {
-            self.found = true;
-        }
-    }
 }
 
 /// The spelling of a compile-time collection's type in the rejection of its

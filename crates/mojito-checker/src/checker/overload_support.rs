@@ -565,10 +565,9 @@ pub(super) fn is_bundled_variadics_source(source: Option<&str>) -> bool {
 /// Whether a source belongs to a bundled standard-library module, directly or
 /// through a specialization tag layered on its path.
 ///
-/// Generic-struct instances reached only from there keep the erased path
-/// (always correct): a program without its own instantiations mints no clones,
-/// and the instances a user-reachable clone reaches through its storage and
-/// signatures are minted by the specializer itself.
+/// A generic-struct instance reached only from there is not recorded as a
+/// fact of the program: the instances a user-reachable body reaches through
+/// its storage and signatures are minted by the elaborator itself.
 pub fn is_bundled_module_source(source: Option<&str>) -> bool {
     let (Some(root), Some(source)) = (mojito_module::module::bundled_root(), source) else {
         return false;

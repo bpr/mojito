@@ -133,16 +133,9 @@ impl VmBackend {
                 *slot = new_slot;
                 *projection = new_projection;
             }
-            Value::Struct {
-                fields,
-                value_params,
-                ..
-            } => {
+            Value::Struct { fields, .. } => {
                 for (_, field) in fields {
                     self.canonicalize_value_references(current, current_variables, field);
-                }
-                for (_, parameter) in value_params {
-                    self.canonicalize_value_references(current, current_variables, parameter);
                 }
             }
             Value::ComptimeList(values) | Value::Tuple(values) => {
@@ -433,18 +426,8 @@ impl VmBackend {
                 hops += 1;
             }
             value = match (segment, value) {
-                // Declared fields first, then reified value parameters (a
-                // `Self.n` read through a `ref self` receiver), as `get_field`.
-                (
-                    RefProjection::Field(name),
-                    Value::Struct {
-                        fields,
-                        value_params,
-                        ..
-                    },
-                ) => fields
+                (RefProjection::Field(name), Value::Struct { fields, .. }) => fields
                     .into_iter()
-                    .chain(value_params)
                     .find(|(field, _)| field == name)
                     .map(|(_, value)| value)
                     .ok_or_else(|| RuntimeError::TypeError(format!("no field '{name}'")))?,
@@ -577,17 +560,9 @@ impl VmBackend {
                         suffix: &projection[position + 1..],
                     }));
                 }
-                (
-                    RefProjection::Field(name),
-                    Value::Struct {
-                        fields,
-                        value_params,
-                        ..
-                    },
-                ) => {
+                (RefProjection::Field(name), Value::Struct { fields, .. }) => {
                     value = fields
                         .into_iter()
-                        .chain(value_params)
                         .find(|(field, _)| field == name)
                         .map(|(_, value)| value)
                         .ok_or_else(|| RuntimeError::TypeError(format!("no field '{name}'")))?;

@@ -565,7 +565,6 @@ impl Checker {
             synthesized_default: method.provenance
                 == mojito_ast::ast::MethodProvenance::SynthesizedDefault,
             nested_origins: NestedOrigins::of(&method.decorators),
-            template_ret: None,
             overload: None,
         })
     }
@@ -1522,7 +1521,6 @@ impl Checker {
             .push((self.scopes.len().saturating_sub(1), allowed));
         self.transfer_frames.borrow_mut().push(TransferFrame {
             callable: effect_key,
-            keeps_symbolic_selection: false,
             param_owners: owners.clone(),
             param_borrowed: m
                 .params
@@ -1578,15 +1576,16 @@ impl Checker {
         self.function_bases.push(self.scopes.len() - 1);
         let named_result = mojito_ast::ast::named_result(&m.params);
         self.named_result_context.push(named_result.is_some());
-        // The struct this method belongs to identifies it as a checked
-        // template or as a clone of one. A method checked outside a struct
-        // declaration has no such identity and is simply inferred.
-        let result = match self.method_site.clone() {
-            Some((module, owner)) => {
-                self.check_method_body(&owner, module.as_ref(), self_ty, m, ret_ty)
-            }
-            None => self.check_block(&m.body, Some(ret_ty), false),
-        };
+        count_body_inference(
+            !self.self_decls.is_empty() || !m.type_params.is_empty(),
+            || {
+                self.method_site.as_ref().map_or_else(
+                    || m.name.clone(),
+                    |(_, owner)| format!("{owner}.{}", m.name),
+                )
+            },
+        );
+        let result = self.check_block(&m.body, Some(ret_ty), false);
         self.named_result_context.pop();
         self.function_bases.pop();
         self.return_annotations.pop();

@@ -1381,23 +1381,6 @@ impl Checker {
                         element.temporary = Some(temporary.root);
                     }
                 }
-                if !place || source.is_some() {
-                    let named = targets
-                        .iter()
-                        .filter(|target| {
-                            matches!(&target.kind, ExprKind::Identifier(name) if name != "_")
-                        })
-                        .map(Expr::source_span)
-                        .collect();
-                    self.tuple_unpack_sources.borrow_mut().insert(
-                        value.source_span(),
-                        TupleUnpackSource {
-                            reference: source,
-                            targets: named,
-                            declares: *declares,
-                        },
-                    );
-                }
                 // A named target owns a copy of the element a place keeps, so
                 // the element must copy implicitly; `_` reads nothing.
                 for (target, element) in targets.iter().zip(&unpack_plan) {
@@ -2843,7 +2826,6 @@ impl Checker {
                 }
                 self.transfer_frames.borrow_mut().push(TransferFrame {
                     callable: name.clone(),
-                    keeps_symbolic_selection: false,
                     param_owners: owners.clone(),
                     param_borrowed: caller_regular
                         .iter()
@@ -2885,7 +2867,8 @@ impl Checker {
                 if module_level {
                     self.pack_element_views.borrow_mut().clear();
                 }
-                result = self.check_def_body(stmt, &decls, &ret_ty, module_level);
+                count_body_inference(!decls.is_empty(), || name.clone());
+                result = self.check_block(body, Some(&ret_ty), false);
                 self.named_result_context.pop();
                 self.return_annotations.pop();
                 self.return_ref_contracts.pop();
@@ -3263,4 +3246,67 @@ fn dependent_projection_spelling(annotation: &SourceType) -> String {
         }
     }
     type_text(annotation)
+}
+
+impl Checker {
+    /// Remove one occurrence's entry from every occurrence-keyed fact table:
+    /// the augmented store drops what it recorded at a synthesized receiver.
+    fn remove_occurrence_facts(&self, span: &SourceSpan) {
+        self.overload_targets.borrow_mut().remove(span);
+        self.contextual_bases.borrow_mut().remove(span);
+        self.generic_instantiations.borrow_mut().remove(span);
+        self.method_instantiations.borrow_mut().remove(span);
+        self.call_transfers.borrow_mut().remove(span);
+        self.implicit_conversions.borrow_mut().remove(span);
+        self.implicit_conversion_types.borrow_mut().remove(span);
+        self.implicit_conversion_raises.borrow_mut().remove(span);
+        self.conversion_source_borrows.borrow_mut().remove(span);
+        self.simd_constructions.borrow_mut().remove(span);
+        self.parameterized_method_calls.borrow_mut().remove(span);
+        self.operation_adjustments.borrow_mut().remove(span);
+        self.construction_immutable_binders
+            .borrow_mut()
+            .remove(span);
+        self.call_result_origins.borrow_mut().remove(span);
+        self.tuple_unpack_plans.borrow_mut().remove(span);
+        self.interior_references.borrow_mut().remove(span);
+        self.view_result_interiors.borrow_mut().remove(span);
+        self.call_parameters.borrow_mut().remove(span);
+        self.interior_invalidations.borrow_mut().remove(span);
+        self.expression_types.borrow_mut().remove(span);
+        self.expression_bindings.borrow_mut().remove(span);
+        self.statement_bindings.borrow_mut().remove(span);
+        self.with_desugars.borrow_mut().remove(span);
+        self.declaration_captures.borrow_mut().remove(span);
+        self.comprehension_bindings.borrow_mut().remove(span);
+        self.comprehension_iterables.borrow_mut().remove(span);
+        self.nested_def_params.borrow_mut().remove(span);
+        self.expression_place_types.borrow_mut().remove(span);
+        self.binding_types.borrow_mut().remove(span);
+        self.expression_effects.borrow_mut().remove(span);
+        self.selected_calls.borrow_mut().remove(span);
+        self.subscript_descriptors.borrow_mut().remove(span);
+        self.iteration_protocols.borrow_mut().remove(span);
+        self.explicit_destroy_calls.borrow_mut().remove(span);
+        self.reference_value_uses.borrow_mut().remove(span);
+        self.copyable_reference_result_reads
+            .borrow_mut()
+            .remove(span);
+        self.discarded_reference_results.borrow_mut().remove(span);
+        self.borrowed_reference_receivers.borrow_mut().remove(span);
+        self.copy_place_value_uses.borrow_mut().remove(span);
+        self.call_place_uses.borrow_mut().remove(span);
+        self.borrowed_read_call_places.borrow_mut().remove(span);
+        self.read_temporary_arguments.borrow_mut().remove(span);
+        self.unconsumed_temporaries.borrow_mut().remove(span);
+        self.linear_temporaries.borrow_mut().remove(span);
+        self.implicitly_copied_consuming_receivers
+            .borrow_mut()
+            .remove(span);
+        self.truthiness_conditions.borrow_mut().remove(span);
+        let mut deletability = self.explicit_destroy_deletability.borrow_mut();
+        deletability.bindings.remove(span);
+        deletability.linear_bindings.remove(span);
+        self.rebind_assertions.borrow_mut().remove(span);
+    }
 }

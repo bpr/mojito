@@ -94,22 +94,11 @@ fn nav_step<'a>(
     match proj {
         Proj::Rebind => Ok(slot),
         Proj::Field(name) => match slot {
-            // Search declared fields first, then value parameters (a `Self.n`
-            // read) — mirroring `get_field`, so a place read through this matches
-            // the register-based `GetField`.
-            Value::Struct {
-                fields,
-                value_params,
-                ..
-            } => {
-                if let Some(pos) = fields.iter().position(|(f, _)| f == name) {
-                    Ok(&mut fields[pos].1)
-                } else if let Some(pos) = value_params.iter().position(|(f, _)| f == name) {
-                    Ok(&mut value_params[pos].1)
-                } else {
-                    Err(RuntimeError::TypeError(format!("no field '{name}'")))
-                }
-            }
+            Value::Struct { fields, .. } => fields
+                .iter()
+                .position(|(f, _)| f == name)
+                .map(|pos| &mut fields[pos].1)
+                .ok_or_else(|| RuntimeError::TypeError(format!("no field '{name}'"))),
             other => Err(RuntimeError::TypeError(format!(
                 "field access on non-struct {}",
                 crate::runtime::type_name(other)

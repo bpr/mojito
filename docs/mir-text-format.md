@@ -15,7 +15,7 @@ corpus fixture by the `roundtrip::*` group of `tests/corpus_test.rs`, and
 `mojito exec [FILE]` loads a verified artifact, elaborates it to concrete MIR
 from `main` and module initialization, and runs it on the register VM
 (`artifact::run_artifact`). The artifact itself stays drop-elaborated MIR,
-which may be generic; `exec --erased` runs it as serialized.
+which may be generic; it is always elaborated before it runs.
 
 ## Compatibility
 
@@ -169,7 +169,7 @@ consumer rejects the spelling, which is the intended failure.
 Minor version 21 lets `type.construct` build an element of a type pack
 (`Ts[i]()`, `Self.Ts[i]()`): it gains `element`, `absent` for a type
 parameter's own construction, or the `present(param_arg { … })` whose
-`value` register the erased VM reads and whose `expr` is the index the
+`value` register a reader may inspect and whose `expr` is the index the
 elaborator evaluates, a literal one included. `param` then names the pack.
 The elaborator replaces it with the selected element's default
 construction, so elaborated MIR holds none. A 1.20 consumer rejects the
@@ -425,7 +425,7 @@ verifier's binder scope for its body is its own `param_decls` and
 `region_binders`, then each enclosing declaration's, then the struct of the
 outermost method.
 
-Abstract erased-dispatch requirements have no concrete declaration record.
+Abstract dispatch requirements (`__trait_dispatch.*`, `__iterator_dispatch.*`) have no concrete declaration record.
 Their complete `subscript_call`, `iterator_call`, or stored `func`/`generic_func`
 callable contract at the instruction is the declaration of record and must be
 verified before runtime retargeting.

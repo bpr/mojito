@@ -87,11 +87,10 @@ The table in §The inventory says where each of its variants goes.
 
 ## The inventory
 
-The source is the instantiation note's
-[§What an instance still owes](instantiation-from-template.md#what-an-instance-still-owes),
-by its numbers. That list is the migration inventory, not the specification:
-most of it describes how to rebuild a clone's facts, and that work has no
-successor.
+The source was the instantiation note's §What an instance still owes
+(deleted with derivation at P5), whose numbering the table keeps. That list
+was the migration inventory, not the specification: most of it described how
+to rebuild a clone's facts, and that work has no successor.
 
 Classes:
 

@@ -1,51 +1,42 @@
-use mojito::{
-    BackendKind, Compiler, RuntimeError, TypeError, Value, check_program, elaborate, link_source,
-    parse,
-};
+use mojito::{Compiler, CompilerError, RuntimeError, TypeError, Value, check_program, parse};
 use std::path::Path;
 
-fn linked(source: &str) -> Vec<mojito::Stmt> {
-    let linked = link_source(source, Path::new("evaluator_test.mojo")).expect("link error");
-    elaborate(linked).expect("comptime error")
-}
-
-/// Run a program on the VM backend (the sole executor), returning its global
-/// (top-level) bindings for value inspection. No type-checking — these tests
-/// exercise evaluation semantics directly (static errors are `checker_test`'s job).
-fn run(source: &str) -> Vec<(String, Value)> {
-    let program = linked(source);
-    let checked = check_program(&program).expect("type error");
-    let mut backend = BackendKind::make("vm").expect("the register VM is implemented");
-    backend.run(&checked).expect("runtime error");
-    backend.bindings()
-}
-
-/// Run through the authoritative whole-program compiler. Public variadic Tuple
-/// values require its checked discovery/specialization handoff and therefore
-/// must not use the lower-level `check_program` helper above.
-fn run_compiled(source: &str) -> Vec<(String, Value)> {
+/// Compile a snippet program through the whole-program `Compiler`, which
+/// permits executable module-scope statements, and execute it on the VM
+/// backend (the sole executor).
+fn execute(source: &str) -> Result<mojito::Execution, CompilerError> {
     let compiler = Compiler::default().with_snippet_module_scope();
     let program = compiler
         .compile_source(source, Path::new("evaluator_test.mojo"))
         .expect("compile error");
-    compiler.execute(&program).expect("runtime error").bindings
+    compiler.execute(&program)
+}
+
+/// Run a program, returning its global (top-level) bindings for value
+/// inspection. These tests exercise evaluation semantics; static errors are
+/// `checker_test`'s job.
+fn run(source: &str) -> Vec<(String, Value)> {
+    execute(source).expect("runtime error").bindings
+}
+
+/// [`run`], under its historical name for the tests that construct public
+/// variadic Tuples.
+fn run_compiled(source: &str) -> Vec<(String, Value)> {
+    run(source)
 }
 
 /// Run a program that is expected to fail at runtime, returning the error.
 fn run_err(source: &str) -> RuntimeError {
-    let program = linked(source);
-    let checked = check_program(&program).expect("type error");
-    let mut backend = BackendKind::make("vm").expect("the register VM is implemented");
-    backend.run(&checked).expect_err("expected a runtime error")
+    match execute(source) {
+        Err(CompilerError::Runtime(error)) => error,
+        Err(other) => panic!("expected a runtime error, got: {other}"),
+        Ok(_) => panic!("expected a runtime error"),
+    }
 }
 
 /// Run a program and return its captured `print` output.
 fn output(source: &str) -> String {
-    let program = linked(source);
-    let checked = check_program(&program).expect("type error");
-    let mut backend = BackendKind::make("vm").expect("the register VM is implemented");
-    backend.run(&checked).expect("runtime error");
-    backend.output()
+    execute(source).expect("runtime error").output
 }
 
 #[test]
@@ -1411,7 +1402,6 @@ fn field_write_mutates_in_place() {
         Value::Struct {
             name: "Point".into(),
             fields: vec![("x".into(), Value::Int(10)), ("y".into(), Value::Int(15))],
-            value_params: vec![],
         }
     );
 }

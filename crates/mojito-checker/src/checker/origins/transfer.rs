@@ -22,7 +22,6 @@ impl Checker {
         // First-seen observation (including "none"): the two-phase pass
         // reruns the check when this callee's final effects differ from what
         // the stalest query here saw.
-        self.note_effect_query(callee, EffectRead::of(effects.as_ref(), true));
         self.note_body_effect_read(
             callee,
             super::super::body_carry::ObservedEffects::Transfers(
@@ -59,13 +58,6 @@ impl Checker {
             return ty;
         }
         let effects = self.transfer_effects.borrow().get(name).cloned();
-        self.note_effect_query(
-            name,
-            match EffectRead::of(effects.as_ref(), false) {
-                EffectRead::Empty => EffectRead::Value,
-                read => read,
-            },
-        );
         self.note_body_effect_read(
             name,
             super::super::body_carry::ObservedEffects::Transfers(
@@ -200,13 +192,6 @@ impl Checker {
     ) -> Result<(), TypeError> {
         use mojito_checked::checked::CallThroughCallee;
         let throughs = self.call_through_effects.borrow().get(callee).cloned();
-        self.note_effect_query(
-            callee,
-            match &throughs {
-                Some(throughs) if !throughs.is_empty() => EffectRead::CallThrough(throughs.clone()),
-                _ => EffectRead::Empty,
-            },
-        );
         self.note_body_effect_read(
             callee,
             super::super::body_carry::ObservedEffects::CallThroughs(
@@ -307,7 +292,6 @@ impl Checker {
             _ => name.to_string(),
         };
         let effects = self.transfer_effects.borrow().get(&key).cloned();
-        self.note_effect_query(&key, EffectRead::of(effects.as_ref(), false));
         self.note_body_effect_read(
             &key,
             super::super::body_carry::ObservedEffects::Transfers(

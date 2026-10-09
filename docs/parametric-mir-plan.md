@@ -31,8 +31,8 @@ A package is written after the semantic checks and before lowering: the
 post-parse IR with its bodies, which an importer elaborates without checking
 the source again.
 
-Mojito today has the same phases in a different order, and three
-instantiation mechanisms where upstream has one.
+Mojito, when this plan was recorded, had the same phases in a different
+order, and three instantiation mechanisms where upstream has one.
 
 | Mechanism | Where | What it serves |
 |---|---|---|
@@ -46,13 +46,12 @@ Consequences of that arrangement:
   rounds, because only a check could discover the instantiations the next
   elaboration must clone; since 2026-10-08 (R9's driver half) it elaborates
   and checks once (`src/compiler.rs:compile_linked`).
-- A cloned body is checked again per instance. Checked templates
-  ([`docs/notes/instantiation-from-template.md`](notes/instantiation-from-template.md))
-  replace that check with derived facts for the bodies their certificates
-  cover, and the rest keep the clone check.
-- That derivation is `checker/template_facts.rs` and its submodules: 18,823
-  lines in 24 files. It grows by one recipe per body shape and cannot reach
-  every shape, because its carrier is still the clone.
+- A cloned body was checked again per instance. Checked templates replaced
+  that check with derived facts for the bodies their certificates covered,
+  and the rest kept the clone check; P5 deleted both on 2026-10-09.
+- That derivation was `checker/template_facts.rs` and its submodules: 18,823
+  lines in 24 files. It grew by one recipe per body shape and could not
+  reach every shape, because its carrier was still the clone.
 - The VM and the native backend instantiate generics by different means, so
   each new generic feature is implemented twice.
 
@@ -195,11 +194,11 @@ This plan uses three names, and since P1 the code uses them:
 
 ## Stages
 
-Each stage keeps the path it replaces alive behind a switch until the
-nightly gate agrees on both, the way `MOJITO_VERIFY_TEMPLATE_FACTS` compares
-derived facts with inferred ones today. That comparison path is temporary: a
-stage is not done until the code it replaces is deleted. The erased VM is the
-one exception, kept as an oracle until P5.
+Each stage kept the path it replaced alive behind a switch until the
+nightly gate agreed on both, the way `MOJITO_VERIFY_TEMPLATE_FACTS` compared
+derived facts with inferred ones. That comparison path was temporary: a
+stage is not done until the code it replaces is deleted. The erased VM was
+the one exception, kept as an oracle until P5 deleted it.
 
 A stage that changes the production pipeline or a public contract updates
 `docs/architecture.md` and the contract documents in the same change.
@@ -367,22 +366,24 @@ its output.
   `CompiledProgram::{mir, drop_elaborated_mir, concrete_mir}`. The entry
   roots are `native::mono::entry_roots`. The concrete graph is cached, and
   the native backend takes it and elaborates nothing.
-- The VM runs concrete MIR by default, for source programs and for loaded
-  artifacts. The erased path is selectable as the differential oracle until
-  P5: `--erased`, `MOJITO_VM_ERASED=1`, or
-  `Compiler::with_vm_instantiation`.
-- CTFE and the stage-composed `Backend::run(&CheckedProgram)` seam still run
-  erased bodies. `mojito-vm` sits above `mojito-native` and cannot call the
-  elaborator. CTFE moves at P4.
-- The parity gate is the corpus binary's `erased_vm` group: for each
+- The VM runs concrete MIR only, for source programs and for loaded
+  artifacts. The erased path was selectable as the differential oracle
+  (`--erased`, `MOJITO_VM_ERASED=1`, `Compiler::with_vm_instantiation`)
+  until P5 deleted it.
+- CTFE ran erased bodies until P4, and the stage-composed
+  `Backend::run(&CheckedProgram)` seam did until P5 deleted it. `mojito-vm`
+  sits above `mojito-native` and cannot call the elaborator, so the
+  elaborator calls `VmBackend::call_concrete`.
+- The parity gate was the corpus binary's `erased_vm` group: for each
   `assets/ok` and `assets/runtime_error` program, the concrete run and the
-  erased run agree on output or error text and on the ordered lifecycle
-  events, with fixed stdin for the programs that read it, and the serialized
-  artifact, loaded and elaborated, reaches the same outcome. The type-error
-  and ownership-error folders keep their own groups: P1 changes nothing
-  above the waist, so no program is accepted that was rejected.
-- The erased VM is a migration comparator. Where it and the pin disagree, the
-  pin decides.
+  erased run agreed on output or error text and on the ordered lifecycle
+  events, with fixed stdin for the programs that read it. What outlives P5
+  is its `artifact` group: the serialized artifact, loaded and elaborated,
+  reaches the same outcome as the production run. The type-error and
+  ownership-error folders keep their own groups: P1 changed nothing above
+  the waist, so no program is accepted that was rejected.
+- The erased VM was a migration comparator. Where it and the pin disagreed,
+  the pin decided.
 
 Measured against decision D4 on the same binary, erased and concrete
 interleaved, debug profile, `total` from `--timings`, median of three:
@@ -781,6 +782,16 @@ non-scalar closed constants).
 
 ### P5 — Delete
 
+Landed on 2026-10-09 (roadmap R10): the AST cloner
+(`comptime/{mono,specialize,packs,unparse}.rs`), the checker's template
+derivation (`checker/template_facts*`, `mojito-checked/src/templates.rs`),
+the VM's erased dispatch and the erased oracle (`--erased`,
+`MOJITO_VM_ERASED`, `VmInstantiation`, `Backend::run_elaborated`,
+`run_artifact_as`, the corpus `erased_vm` group), and the stage-composed
+`Backend::run(&CheckedProgram)` seam are deleted; `VmBackend::run_concrete`
+is the one executable entry, and `verify_concrete` rejects every parametric
+form before a program runs. The bullets below are what the stage covered.
+
 - The AST cloner's core and what is left of template derivation.
 - Erased dispatch in the VM and its verifier tolerances. This is the one
   comparison path that outlives its stage, and it goes here.
@@ -827,8 +838,8 @@ non-scalar closed constants).
   and instantiated at its calls. A plain body whose `comptime for` declares
   one is a template over no binders, so its loop reaches MIR.
 - **D1. The VM runs only concrete MIR.** Recommended: yes, from P1, with the
-  erased path kept as an oracle until P5. Upstream's interpreter never runs a
-  generator.
+  erased path kept as an oracle until P5, which deleted it on 2026-10-09.
+  Upstream's interpreter never runs a generator.
 - **D2. Where the elaborator lives.** Decided 2026-10-02
   ([`docs/notes/ctfe-request-path.md`](notes/ctfe-request-path.md) §D2):
   `native::mono` stays in `mojito-native`, the root driver calls it for both
@@ -881,17 +892,16 @@ non-scalar closed constants).
 
 ## `template_facts.rs`
 
-The tree is 18,823 lines. It is split along its own seams — capture,
+The tree was 18,823 lines. It was split along its own seams — capture,
 certificate, the `BodyShape` grammar by class, realization, installation,
 verification — one file each under `checker/template_facts/`, none over
-3,000 lines, so each later deletion removes whole files
-(`docs/symbol-map.md` lists the owners).
+3,000 lines, so each deletion removed whole files.
 
-- **By stage**: P2 deletes the method and function classes, each P3 step
-  deletes its class, and P5 deletes the mechanism.
+- **By stage**: P2 deleted the method and function classes, each P3 step
+  deleted its class, and P5 deleted the mechanism (2026-10-09).
 
-The freeze forbids a new certificate class or recipe. It allows a correctness
-fix to existing behavior.
+The freeze forbade a new certificate class or recipe. It allowed a
+correctness fix to existing behavior.
 
 Two measures track progress. The tree's line count goes down from P0 on. The
 census says which semantic decisions still need a clone or an inference, and
@@ -902,14 +912,14 @@ The line shares per class are not measured. Each stage's plan sizes them.
 
 ## Sizes
 
-Line counts are `wc -l` on 2026-09-30. The split between kept and deleted is
-an estimate.
+Line counts are `wc -l` on 2026-09-30; a row at 0 lines names a component
+P5 deleted on 2026-10-09. The split between kept and deleted is an estimate.
 
 | Component | Lines | Fate |
 |---|---|---|
-| `comptime/{rewrite,specialize,mono}.rs` | 10,698 | Deleted at P5; CTFE, fuel, and value crossing stay |
-| `checker/template_facts.rs` and submodules | 18,823 | Deleted by P5 |
-| `mojito-checked/src/templates.rs` | 2,681 | Mostly deleted; binder and obligation vocabulary moves to the generator |
+| `comptime/{specialize,mono,packs,unparse}.rs` | 0 | Deleted at P5; `comptime/rewrite.rs` keeps alias and type-binding substitution, and CTFE, fuel, and value crossing stay |
+| `checker/template_facts.rs` and submodules | 0 | Deleted at P5 |
+| `mojito-checked/src/templates.rs` | 0 | Deleted at P5; `RebindAssertion` moved to `checked.rs` |
 | `checker/comptime_validation.rs` | 1,623 | Merges into the one check at P4 |
 | `native/mono` | 5,621 | Kept and extended; becomes the elaborator |
-| VM erased dispatch | not measured | Deleted at P5 |
+| VM erased dispatch | 0 | Deleted at P5 |

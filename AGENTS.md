@@ -123,7 +123,7 @@ the root `backend-pliron` feature) may, and `scripts/check` excludes it.
    `mir::verify` plus ownership analysis, with checked declaration metadata,
    rather than rediscovering language rules from AST syntax. The VM and the
    native backend both run the concrete MIR `native::mono` elaborates from
-   it; the erased VM path (`--erased`) is a differential oracle only. Moving that waist
+   it, and the VM runs nothing else. Moving that waist
    is a staged decision recorded in `docs/pliron-future.md` and
    `docs/pliron-backend-pivot-plan.md`, never an incidental consequence of
    another change.
@@ -242,7 +242,7 @@ compiler-and-VM execution path.
 Files under `assets/<outcome>/` run through the whole pipeline as one
 generated test per fixture in the `tests/corpus_test.rs` binary
 (`harness = false`, libtest-mimic), grouped as `assets_*`, `vm_ok`,
-`erased_vm`, `verify::*`, `origin_*`, and `ownership_*` — each group pinning a distinct
+`artifact`, `verify::*`, `origin_*`, and `ownership_*` — each group pinning a distinct
 pipeline entry path; the phase-grouped files keep only targeted tests. The
 outcome folders are `ok`, `parse_error`, `type_error`, `runtime_error`,
 `ownership_ok`, and `ownership_error`. See `assets/README.md`.
@@ -257,12 +257,12 @@ gigabytes, so it is excluded from `scripts/check-pliron` and from the
 overnight gate; `scripts/check-pliron-heavy` runs it alone, one sweep at a
 time. Put a new whole-corpus sweep there, not in `tests/pliron_*.rs`.
 
-The stage-composed test seam (`link`/`parse` → `elaborate` →
-`check_program` → `backend.run`) enforces the same pre-drop ownership
-contract as the production `Compiler`: `VmBackend::run` runs the ownership
-analysis before executing. It remains non-authoritative only for the
-whole-program discovery/specialization handoff, which `Compiler`-based
-helpers (`run_compiled`) still own.
+Every executing test goes through `Compiler` (`compile_source`,
+`compile_path`, or `compile_unlinked`, with `with_snippet_module_scope` for
+snippet programs that keep executable statements at module scope): the VM
+runs concrete MIR only, and no test seam runs a checked program without
+the elaborator. The raw phase functions (`link`/`parse` → `elaborate` →
+`check_program` → `lower_checked_program`) are for phase tests only.
 - DO NOT generate narrative comments that merely restate what the code does.
 - DO NOT re-implement existing types or functions; check existing modules first.
 - Prefer idiomatic Rust patterns (e.g., `.map()`, `.and_then()`, `?` operator) over nested `match` or `if let` blocks.

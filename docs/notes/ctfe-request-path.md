@@ -292,9 +292,7 @@ The boundary:
   a callable struct's `__call__`, closures, `try` regions
   (`collect_referenced_functions`). Every in-body evaluation that applies a
   callable is a request (see Today), so R131, R132, R486, and the
-  instance-budget stop of R162 hold on the request path; the erased oracle
-  evaluates an application constant by calling the function
-  (`VmBackend::erased_application`).
+  instance-budget stop of R162 hold on the request path.
 - **Roadmap R9** (P4) landed on 2026-10-08 and 2026-10-09: one
   elaboration and one check per compilation, no discovery rounds and no
   per-round fuel reset; then plain-body compile-time regions kept to MIR,

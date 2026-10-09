@@ -16,27 +16,16 @@
 //! and `vm_refuses_mut_ref_via_non_place_argument`: the VM must error cleanly, never
 //! diverge.
 
-use mojito::{BackendKind, Compiler, check, elaborate, link_source, parse};
+use mojito::{Compiler, check, parse};
 use std::path::Path;
 
-/// Run `src` through the VM backend (the sole executor) and return its captured
-/// output, or a stage error string.
+/// Run `src` through the whole-program `Compiler` and the VM backend (the
+/// sole executor) and return its captured output, or a stage error string.
 fn run(src: &str) -> Result<String, String> {
-    let program =
-        link_source(src, Path::new("vm_test.mojo")).map_err(|e| format!("link error: {e}"))?;
-    let program = elaborate(program).map_err(|e| format!("comptime error: {e}"))?;
-    let checked = mojito::check_program(&program).map_err(|e| format!("type error: {e:?}"))?;
-    let mut backend = BackendKind::make("vm").expect("the register VM is implemented");
-    backend
-        .run(&checked)
-        .map_err(|e| format!("runtime error: {e:?}"))?;
-    Ok(backend.output())
+    run_compiled(src)
 }
 
-/// Run source through the authoritative discovery/specialization pipeline.
-/// Tests whose intrinsic results are public nominal Tuples need the generated
-/// concrete Tuple declaration; the lower-level helper above intentionally does
-/// not perform that whole-program handoff.
+/// [`run`] spelled out: the snippet-mode driver, compile then execute.
 fn run_compiled(src: &str) -> Result<String, String> {
     let compiler = Compiler::default().with_snippet_module_scope();
     let program = compiler
@@ -1872,22 +1861,20 @@ fn inferred_bound_generic_applications_monomorphize_end_to_end() {
 }
 
 #[test]
-fn raw_seam_executes_inferred_polymorphic_recursion_abstractly() {
-    // Only the authoritative `Compiler` owns the discovery fixpoint (and its
-    // divergence cap); the stage-composed seam stays request-free, so the
-    // program the compiler rejects as divergent executes here on the erased
-    // path.
+fn inferred_polymorphic_recursion_is_rejected() {
+    // Every reachable instantiation is elaborated below MIR, so a
+    // polymorphic recursion that never closes is a rejection, never an
+    // execution.
     let src = "def wrap[T: Copyable & Movable](x: T, depth: Int) -> Int:\n    if depth <= 0:\n        return 0\n    return wrap([x.copy()], depth - 1)\n\ndef main():\n    print(wrap(1, 3))\n";
-    assert_eq!(run(src).expect("abstract execution"), "0\n");
+    run(src).expect_err("an unbounded instantiation is rejected");
 }
 
 #[test]
-fn retained_template_executes_erased_dispatch_under_the_compiler() {
-    // The runtime half of the erased-dispatch residue witness: the retained
-    // abstract template's `__iterator_dispatch` protocol and copy adapter
-    // execute end to end through the authoritative pipeline.
+fn iterable_bound_generic_runs_under_the_compiler() {
+    // A bound generic over `Iterable` elaborates its `__iterator_dispatch`
+    // protocol and copy adapter per instance and runs end to end.
     let src = "from std.iter import Iterable\n\ndef first[C: Iterable](items: C, default: C.Element) -> C.Element:\n    for item in items:\n        return item.copy()\n    return default.copy()\n\ndef main():\n    print(first([1, 1], 1))\n    print(first([\"s\", \"s\"], \"s\"))\n";
-    assert_eq!(run_compiled(src).expect("erased path runs"), "1\ns\n");
+    assert_eq!(run_compiled(src).expect("instances run"), "1\ns\n");
 }
 
 #[test]

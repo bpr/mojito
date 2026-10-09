@@ -139,6 +139,7 @@ assets/ok/ctfe_module_display_constant_requests.mojo	main	exe-differential	sanit
 assets/ok/ctfe_projection_of_temporary_in_body.mojo	main	exe-differential	sanitized
 assets/ok/ctfe_type_generic_def_in_body.mojo	main	exe-differential	sanitized
 assets/ok/decorators.mojo	main	exe-differential	sanitized
+assets/ok/def_aggregate_value_binder_served.mojo	main	exe-differential	sanitized
 assets/ok/default_args.mojo	main	exe-differential	sanitized
 assets/ok/default_converting_constructor.mojo	main	exe-differential	sanitized
 assets/ok/default_reads_binder.mojo	main	exe-differential	sanitized
@@ -892,6 +893,7 @@ assets/ok/unspelled_loan_carrying_type_argument.mojo	main	exe-differential	sanit
 assets/ok/untracked_pointer_ref_params.mojo	main	exe-differential	sanitized
 assets/ok/user_iterator.mojo	main	exe-differential	sanitized
 assets/ok/value_argument_from_caller_parameter.mojo	main	exe-differential	sanitized
+assets/ok/value_pack_aggregate_served.mojo	main	exe-differential	sanitized
 assets/ok/value_pack_bracket_spread.mojo	main	exe-differential	sanitized
 assets/ok/value_pack_comptime_for_served.mojo	main	exe-differential	sanitized
 assets/ok/value_pack_runtime_read.mojo	main	exe-differential	sanitized

@@ -2,9 +2,8 @@
 
 use crate::backend::BackendKind;
 use crate::checked::CheckedProgram;
-use crate::comptime::{
-    ComptimeError, Elaborated, elaborate_prepared, generated_names, instance_traces, prepare,
-};
+use crate::checker::CheckContext;
+use crate::comptime::{ComptimeError, elaborate_prepared, prepare};
 use crate::error::{OwnershipError, ParseError, TypeError};
 use crate::mir::MirProgram;
 use crate::mir::text::{DisassembleError, disassemble};
@@ -32,17 +31,10 @@ pub struct CompiledProgram {
     mir: MirProgram,
     elaborated: OnceLock<MirProgram>,
     concrete: OnceLock<Result<SpecializedProgram, MonoError>>,
-    template_stats: crate::templates::TemplateStats,
     /// The native target the elaborator answers layout queries for.
     target: Option<crate::native::target::NativeTarget>,
 }
 impl CompiledProgram {
-    /// Which generic bodies this compilation inferred, and which clones it
-    /// served from a checked template instead.
-    pub const fn template_stats(&self) -> &crate::templates::TemplateStats {
-        &self.template_stats
-    }
-
     /// The semantically checked program carried by this ownership-verified
     /// pipeline result.
     pub const fn checked(&self) -> &CheckedProgram {
@@ -58,8 +50,7 @@ impl CompiledProgram {
 
     /// Drop-elaborated MIR: parametric MIR with drops inserted, re-verified.
     /// It may still be generic. It is the serialized artifact and the
-    /// elaborator's input, and the erased VM path runs it as the differential
-    /// oracle. Post-drop verification findings are folded into
+    /// elaborator's input. Post-drop verification findings are folded into
     /// `invariant_errors`; consumers refuse a non-empty list.
     pub fn drop_elaborated_mir(&self) -> &MirProgram {
         self.elaborated.get_or_init(|| {
@@ -145,44 +136,16 @@ impl fmt::Display for CompilerError {
     }
 }
 impl std::error::Error for CompilerError {}
-/// How the VM instantiates a generic body.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum VmInstantiation {
-    /// Run concrete MIR: the elaborator instantiated every reachable body
-    /// before execution, as it does for the native backend.
-    Concrete,
-    /// Run drop-elaborated MIR and resolve parameters at run time. Kept as
-    /// the differential oracle for the concrete path.
-    Erased,
-}
-impl VmInstantiation {
-    /// `Erased` when the `MOJITO_VM_ERASED` environment variable is set and
-    /// non-empty, `Concrete` otherwise.
-    pub fn from_env() -> Self {
-        if std::env::var_os("MOJITO_VM_ERASED").is_some_and(|value| !value.is_empty()) {
-            Self::Erased
-        } else {
-            Self::Concrete
-        }
-    }
-}
 /// Owns stage ordering and backend selection for normal whole-program use.
 #[derive(Debug, Clone)]
 pub struct Compiler {
     link_options: LinkOptions,
     backend: BackendKind,
     allow_executable_module_scope: bool,
-    /// Infer every body a checked template would serve as well, and require
-    /// the derived and inferred facts to agree. `None` defers to the
-    /// `MOJITO_VERIFY_TEMPLATE_FACTS` environment variable.
-    verify_template_facts: Option<bool>,
     /// Carry an unchanged body's facts from one checker pass to the next
     /// instead of inferring it again. `None` defers to the
     /// `MOJITO_BODY_FACT_REUSE` environment variable (`0` disables).
     body_fact_reuse: Option<bool>,
-    /// Which MIR phase the VM runs. `None` defers to
-    /// [`VmInstantiation::from_env`].
-    vm_instantiation: Option<VmInstantiation>,
     /// The native target the elaborator answers layout queries for: the
     /// `--target` of a native compile, otherwise the host. `None` on a host
     /// with no native target, where a program that asks a layout fails.
@@ -235,9 +198,7 @@ impl Compiler {
             link_options,
             backend,
             allow_executable_module_scope: false,
-            verify_template_facts: None,
             body_fact_reuse: None,
-            vm_instantiation: None,
             target: match crate::native::target::Triple::host() {
                 Some(triple) => Some(crate::native::target::NativeTarget::new(triple)),
                 None => None,
@@ -250,25 +211,11 @@ impl Compiler {
         self.target = Some(target);
         self
     }
-    /// Choose the MIR phase the VM runs, whatever the environment says.
-    #[must_use]
-    pub const fn with_vm_instantiation(mut self, instantiation: VmInstantiation) -> Self {
-        self.vm_instantiation = Some(instantiation);
-        self
-    }
     /// Turn body-fact carry-over on or off, whatever the environment says:
-    /// off, every checker pass infers every body it does not derive.
+    /// off, every checker pass infers every body.
     #[must_use]
     pub const fn with_body_fact_reuse(mut self, reuse: bool) -> Self {
         self.body_fact_reuse = Some(reuse);
-        self
-    }
-    /// Turn template-fact verification on or off, whatever the environment
-    /// says: every derivable body is then also inferred, and the two fact
-    /// bundles must agree.
-    #[must_use]
-    pub const fn with_template_verification(mut self, verify: bool) -> Self {
-        self.verify_template_facts = Some(verify);
         self
     }
     /// Permit executable module-scope statements for isolated compiler tests.
@@ -311,38 +258,24 @@ impl Compiler {
             let _prepare = timing::span("prepare");
             prepare(linked.to_vec()).map_err(CompilerError::Comptime)?
         };
-        // The checked templates of this compilation.
-        // `MOJITO_VERIFY_TEMPLATE_FACTS` keeps every clone check and
-        // compares it with the derived facts.
-        let mut templates_catalog = crate::templates::TemplateCatalog::new(
-            self.verify_template_facts.unwrap_or_else(|| {
-                std::env::var_os("MOJITO_VERIFY_TEMPLATE_FACTS")
-                    .is_some_and(|value| !value.is_empty())
-            }),
-        );
-        templates_catalog.set_body_fact_reuse(self.body_fact_reuse.unwrap_or_else(|| {
+        let mut context = CheckContext::new();
+        context.set_body_fact_reuse(self.body_fact_reuse.unwrap_or_else(|| {
             std::env::var_os("MOJITO_BODY_FACT_REUSE").is_none_or(|value| value != "0")
         }));
         // One elaboration and one check: every body is checked once with
         // every `comptime if` arm and `comptime for` body open and its
         // binders symbolic, and the elaborator below MIR decides, unrolls,
         // and finds the instances the entries reach.
-        let Elaborated {
-            program: elaborated,
-            def_traces,
-            generated,
-        } = {
+        let elaborated = {
             let _elaborate = timing::span("elaborate");
             elaborate_prepared(&prepared).map_err(CompilerError::Comptime)?
         };
         if !self.allow_executable_module_scope {
             validate_module_scope(&elaborated).map_err(CompilerError::Type)?;
         }
-        templates_catalog.set_traces(instance_traces(def_traces));
-        templates_catalog.set_generated(generated_names(generated));
         let checked = {
             let _check = timing::span("check");
-            crate::checker::check_program_with_templates(&elaborated, &mut templates_catalog)
+            crate::checker::check_program_in(&elaborated, &mut context)
                 .map_err(CompilerError::Type)?
         };
         let mir = {
@@ -350,21 +283,12 @@ impl Compiler {
             crate::mir::lower_checked_program(&checked)
         };
         timing::count("mir_functions", mir.functions.len() as u64);
-        let param_stats = templates_catalog.param_context().stats();
+        let param_stats = context.param_context().stats();
         timing::count("param_expr.interned", param_stats.interned);
         timing::count("param_expr.intern_hits", param_stats.hits);
         timing::count("param_expr.constant_folds", param_stats.constant_folds);
         timing::count("param_expr.replacements", param_stats.replacements);
         timing::count("param_expr.contexts", param_stats.contexts);
-        let template_stats = templates_catalog.stats();
-        timing::count(
-            "instantiation.checked.inferred",
-            template_stats.inferred_instances.len() as u64,
-        );
-        timing::count(
-            "instantiation.checked.derived",
-            template_stats.derived_only_instances() as u64,
-        );
         if !mir.invariant_errors.is_empty() {
             return Err(CompilerError::Verify(mir.invariant_errors));
         }
@@ -377,7 +301,6 @@ impl Compiler {
             mir,
             elaborated: OnceLock::new(),
             concrete: OnceLock::new(),
-            template_stats: templates_catalog.stats().clone(),
             target: self.target,
         })
     }
@@ -393,29 +316,15 @@ impl Compiler {
         if !elaborated.invariant_errors.is_empty() {
             return Err(CompilerError::Verify(elaborated.invariant_errors.clone()));
         }
-        match self
-            .vm_instantiation
-            .unwrap_or_else(VmInstantiation::from_env)
+        let concrete = {
+            let _prepare = timing::span("prepare");
+            let concrete = program.concrete_mir()?;
+            let _clone = timing::span("mir_clone");
+            concrete.program.clone()
+        };
         {
-            VmInstantiation::Concrete => {
-                let concrete = {
-                    let _prepare = timing::span("prepare");
-                    let concrete = program.concrete_mir()?;
-                    let _clone = timing::span("mir_clone");
-                    concrete.program.clone()
-                };
-                let _run = timing::span("vm");
-                backend.run_concrete(concrete)
-            }
-            VmInstantiation::Erased => {
-                let erased = {
-                    let _prepare = timing::span("prepare");
-                    let _clone = timing::span("mir_clone");
-                    elaborated.clone()
-                };
-                let _run = timing::span("vm");
-                backend.run_elaborated(erased)
-            }
+            let _run = timing::span("vm");
+            backend.run_concrete(concrete)
         }
         .map_err(CompilerError::Runtime)?;
         Ok(Execution {

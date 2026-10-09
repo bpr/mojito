@@ -6,7 +6,6 @@ rust-version.workspace = true
 publish = false
 
 [dependencies]
-mojito-analysis = { path = "../mojito-analysis" }
 mojito-ast = { path = "../mojito-ast" }
 mojito-checked = { path = "../mojito-checked" }
 mojito-common = { path = "../mojito-common" }

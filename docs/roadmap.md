@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R521**.
+Next free ID: **R522**.
 
 ## Ordered Work
 
@@ -40,44 +40,15 @@ Track: `pmir`.
 
 Mojo checks a parametric body once, keeps it as parametric IR, checks
 lifetimes on that IR, and instantiates everything in one elaborator. Mojito
-checks most bodies once
-([`docs/notes/instantiation-from-template.md`](notes/instantiation-from-template.md)).
-An ordinary generic struct's method with no compile-time construct is
-instantiated by `native::mono` from its template's MIR. Every other generic
-body is still cloned in the AST per instance before the check, so Mojito
-instantiates generics two ways: the AST cloner above the waist, and
-`native::mono` below it for both backends. The VM's erased dispatch remains
-for compile-time evaluation and as the differential oracle. The staged plan that closes the gap is
+checks every body once, with its parameters symbolic, and `native::mono`
+instantiates every generic body below the MIR waist for both backends; the
+VM runs concrete MIR only. The staged plan that closed the gap is
 [`docs/parametric-mir-plan.md`](parametric-mir-plan.md); the stage each entry
 belongs to is named in its title.
 
-Scope: only work that moves an instantiation from the AST cloner to the
-elaborator, or that deletes what the move makes dead.
-A defect found on the way is filed by its kind; a divergence from the pin
-goes to a catch-up track, however small.
-
-Frozen: `checker/template_facts.rs` gains no certificate class and no
-recipe. A body the certificates do not cover waits for its stage. A
-correctness fix to existing behavior is allowed.
-
-- [ ] **R10 (P5) The replaced mechanisms are still in the tree**
-
-  Problem: once R9 lands, the AST cloner's core, template derivation, and
-  the VM's erased dispatch serve nothing.
-  - Delete `comptime/{rewrite,specialize,mono,nested}.rs` down to what CTFE
-    and module-scope folding need.
-  - Delete what is left of `checker/template_facts` and the derivation
-    vocabulary in `mojito-checked/src/templates.rs`.
-  - Delete erased dispatch from the VM and its tolerances from `mir::verify`.
-  - Delete the oracle with it: `Backend::run_elaborated`, `VmInstantiation`,
-    `--erased`, `MOJITO_VM_ERASED`, and the corpus binary's `erased_vm` group.
-  - The stage-composed `Backend::run(&CheckedProgram)` seam runs erased
-    bodies, because `mojito-vm` cannot call the elaborator. Move the tests
-    that use it to the driver, or give the seam concrete MIR.
-  - Make a last pass over `docs/architecture.md` and `AGENTS.md` invariant 3.
-    Each earlier stage updated the pipeline it changed.
-  - Depends on R9.
-  - Model: Fable, Planned.
+Scope: what remains of the plan's stages, and what the pipeline order still
+leaves to close. A defect found on the way is filed by its kind; a
+divergence from the pin goes to a catch-up track, however small.
 
 - [ ] **R516 An applied module dictionary or set display constant is
   spelled at each read, not bound as a parameter expression**
@@ -129,384 +100,6 @@ correctness fix to existing behavior is allowed.
   - Depends on R10.
   - Model: Fable, Planned.
 
-- [ ] **R12 (P5) The erased oracle cannot default-construct a SIMD-typed
-  parameter**
-
-  Problem: `Array[c_char, 4]()` runs on concrete MIR and stops under
-  `--erased` with "constructing type parameter 'T' ... requires a reified
-  type argument".
-  - `T()` over a parameter bound to a SIMD type is the zero vector. The
-    elaborator builds it (`mono/substitute.rs`,
-    `default_construct_simd_parameters`).
-  - An erased value carries no type argument for a native scalar or vector,
-    so the VM's `ConstructTypeParam` has nothing to construct from.
-  - `assets/ok/simd_parameter_default_construction.mojo` is the
-    `ERASED_VM_RESIDUE` row (`tests/corpus_test.rs`).
-  - Entry R10 deletes the oracle and this row with it. Nothing else needs
-    the erased path to construct one.
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **R13 (P5) The erased oracle reads a place pointer bound to a
-  parameter as its pointee**
-
-  Problem: `assets/ok/template_served_loan_carrying_instance.mojo` runs on
-  concrete MIR and stops under `--erased` with "checked nominal subscript
-  receiver is Int".
-  - `assets/ok/template_served_def_loan_carrying_argument.mojo` and
-    `assets/extensions/ok/template_served_iterable_def.mojo` stop the same
-    way, in a `def` its template serves.
-  - A `Pointer(to=x)` value is a reference handle on the VM. A concrete body
-    tells it from a reference by the `Pointer` type of the register or the
-    slot.
-  - An erased body types it `T`, so `value.copy()` and a read of the whole
-    slot chase the handle to the pointee.
-  - Each fixture is an `ERASED_VM_RESIDUE` row (`tests/corpus_test.rs`).
-  - Entry R10 deletes the oracle and these rows with it.
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **R14 (P5) The erased oracle spells a type name over a parameter
-  as written**
-
-  Problem: `_unqualified_type_name[Self]()` in a method of `Box[T]` prints
-  `Box[SIMD[DType.int, 1]]` on concrete MIR and `Box[T]` under `--erased`.
-  - The template carries the type in `MirInstr::TypeName`, and the elaborator
-    writes the name from the substituted type.
-  - An erased value carries no type arguments, so the oracle has nothing to
-    substitute and spells the template's parameters.
-  - `repr` of a `List`, `Dict`, `Set`, `Array`, or `Optional`, and the text
-    of `EmptyOptionalError`, differ the same way.
-  - `assets/ok/generic_struct_instance_bodies.mojo`,
-    `generic_struct_instance_dispatch.mojo`,
-    `optional_raising_subscript.mojo`, and
-    `template_method_string_builtins.mojo` are the `ERASED_VM_RESIDUE` rows
-    (`tests/corpus_test.rs`).
-  - Entry R10 deletes the oracle and these rows with it.
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **R15 (P5) The erased oracle cannot size a parameter or dispatch a
-  bound requirement to a witness that renames its binder**
-
-  Problem: `size_of[T]()` in a `def` its template serves runs on concrete
-  MIR and stops under `--erased` with "a symbolic type has no layout: T",
-  and `self.item.__hash__(hasher)` through `T: Hashable` on a struct
-  overloading `__hash__[H: Hasher]` stops with "unknown method
-  'Twin.__hash__'".
-  - An erased body has no type for `T`: the elaborator answers the
-    instance's `MirInstr::SizeOf` under its target, and the oracle runs the
-    template's on the host.
-  - A bound dispatch spells the requirement's qualifier
-    (`__hash__$ov$Some$u5B$Hasher$u5D$$Hasher`), which names no lowered
-    overload of the receiver when the witness binds the parameter under a
-    name of its own (`Twin.__hash__$ov$H$Hasher`); the elaborator matches
-    them by parameter types (`dispatched_overload_target`), the VM's
-    by-name dispatch does not.
-  - The oracle reifies a solved type argument's struct name from the call
-    (`MirInstr::Call::instantiated_args`) but cannot construct a SIMD alias
-    (`Float32`) or a struct over value parameters (`Array[Int, 2]`) from it.
-  - `assets/ok/size_of_builtin.mojo`, `template_served_def_closed_call.mojo`,
-    `overloaded_method_own_binder_symbols.mojo`,
-    `simd_nullary_construction.mojo`, and `tuple_array_defaultable.mojo` are
-    the `ERASED_VM_RESIDUE` rows (`tests/corpus_test.rs`).
-  - An erased frame decides a `comptime if` over a value binder from its
-    reified parameters (`comptime_branch_holds`), and one comparing a type
-    binder with a type its reified spelling names (`T == Int`), but no other
-    type predicate, and runs no thunk for a condition that applies a
-    function: the remaining type-keyed `comptime_if_*` fixtures and
-    `comptime_if_condition_applies_def.mojo` are rows too. A region inside
-    a `try` reads only binders its body also holds as locals.
-  - Entry R10 deletes the oracle and these rows with it.
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **R16 (P5) The erased oracle cannot run a default that reads a
-  compile-time parameter**
-
-  Problem: `V[3]().m()`, beside `def m(self, x: Int = Self.n * 2)` in
-  `struct V[n: Int]`, prints `6` on concrete MIR and stops under `--erased`
-  with "erased default for parameter 'x' of 'V.m' reads a compile-time
-  parameter".
-  - The default function declares the binders it reads, and the elaborator
-    instantiates it with the owner instance's arguments
-    (`default_function_bindings` in `mono/specializer.rs`).
-  - The VM's `bind_for_call` runs an erased default function with no
-    frame values, so it refuses one that declares binders rather than read
-    them as `None`.
-  - `assets/ok/default_reads_binder.mojo` is the `ERASED_VM_RESIDUE` row
-    (`tests/corpus_test.rs`).
-  - Entry R10 deletes the oracle and this row with it.
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **R249 (P5) The erased oracle resumes a kept `comptime for` mid-range
-  after a compile-time `break`**
-
-  Problem: the erased path runs a `ComptimeFor` header from its index slot
-  — nothing before the first iteration, the previous value after — and
-  clears the slot only when the range ends (`comptime_for_next`,
-  `backend/vm.rs`), so a frame that leaves the loop through a `break` and
-  enters it again, from a runtime loop around it, resumes at the index the
-  `break` left.
-  - Concrete MIR carries no header: the elaborator unrolls the loop, so the
-    production path is unaffected.
-  - A per-frame loop state, or a slot reset on every exit edge, fixes it;
-    entry R10 deletes the oracle and the question with it.
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **R292 (P5) The erased oracle cannot run a vector at a kept `comptime
-  for` index's width**
-
-  Problem: `var v = SIMD[DType.int32, i](7)` inside `comptime for i in
-  range(1, n)` in a generic `def` runs on concrete MIR and stops under
-  `--erased` with "a SIMD instruction over the symbolic slots
-  `SIMD[DType.int32, i]` reached the VM".
-  - Concrete MIR has no such instruction: the elaborator unrolls the loop
-    and gives each copy its own slot at its own width.
-  - The erased frame runs the kept header with the index as a runtime
-    value, and the VM's SIMD instructions need a known width
-    (`concrete_simd_slots`).
-  - `assets/ok/comptime_for_index_typed_local.mojo` is the
-    `ERASED_VM_RESIDUE` row (`tests/corpus_test.rs`).
-  - Entry R10 deletes the oracle and this row with it.
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **R17 (P5) The erased oracle cannot bind a static receiver from a
-  binder its frame does not hold**
-
-  Problem: `W[n].plus(1, 2)` in `def via[n: Int]()`, beside a static
-  `plus` reading `Self.k` of `struct W[k: Int]`, prints `12` on concrete
-  MIR and stops under `--erased` with "no field 'k'".
-  - The VM binds a static method's receiver-less `self` slot from the
-    call's spelled receiver (`static_receiver_binding` in `mojito-vm`),
-    resolving a binder through the caller's frame.
-  - An erased `via` keeps no slot for an `n` its body never reads as a
-    value, so the receiver's argument has nothing to resolve to.
-  - No fixture pins it; `assets/ok/static_method_reads_struct_value_parameter.mojo`
-    keeps to receivers the erased frame holds.
-  - Entry R10 deletes the oracle and this gap with it.
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **R286 (P5) The erased oracle loses a pack's length once its
-  collector is gone**
-
-  Problem: `return 2 + Us.length` over `var *extra: *Us` that the body never
-  reads, or over a pack spelled only in the call
-  (`count[Int, String, Bool]()`), prints on concrete MIR and stops under
-  `--erased` with "the erased oracle cannot evaluate the parameter constant".
-  - The oracle reads a pack's length from its collector's runtime arity
-    (`erased_parameter_values`, `backend/vm.rs`); drop elaboration destroys
-    an unread `var` collector at entry, and a collector-less signature has
-    none.
-  - A `comptime for i in range(Us.length)` stops the same way.
-  - `assets/ok/pack_length_runtime_position.mojo` is the
-    `ERASED_VM_RESIDUE` row (`tests/corpus_test.rs`).
-  - Entry R10 deletes the oracle and this row with it.
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **R287 (P5) The erased oracle cannot answer a pack's membership or
-  conformance**
-
-  Problem: `Us.contains[Int]()` and `Us.all_conforms_to[Writable]()` in a
-  runtime position print on concrete MIR and stop under `--erased`.
-  - The erased frame carries one placeholder element per pack argument, so
-    it answers the length and nothing that needs an element's type.
-  - The elaborator answers both through the oracle that decides a
-    `comptime if` (`answer_param_constants`, `mono/specializer.rs`).
-  - Entry R10 deletes the oracle and the question with it.
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **R447 (P5) The erased oracle drops a kept `comptime for` index
-  before a `return` reads it**
-
-  Problem: `if i == idx: return values[i]` inside `comptime for i in
-  range(len(values))` in `def get[*values: Int](idx: Int) -> Int` prints on
-  concrete MIR and stops under `--erased` with "the erased oracle cannot
-  evaluate the parameter constant `values[i]`".
-  - Drop elaboration places the index slot's `drop.var` on the return edge
-    before the parameter constant that reads the index, since liveness does
-    not count a `Const::Param` read of the binder as a use of its slot.
-  - Assigning the element to a local and returning after the loop runs.
-  - Concrete MIR unrolls the loop and folds the constant, so the production
-    path is unaffected; entry R10 deletes the oracle and the question with
-    it.
-  - Found while landing R325's first stages (2026-10-07).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **R491 (P5) The erased oracle cannot read a struct's value pack in a
-  static method**
-
-  Problem: every runtime read of a value pack (`for v in values`,
-  `values[i]`, `ParameterList[1, 2]()[1]`) stops under `--erased` with "the
-  erased oracle cannot evaluate the parameter constant `values`", while
-  concrete MIR runs it.
-  - `ParameterList.get_span` is a `@staticmethod`, so its erased frame has
-    no receiver whose reified arguments hold `Self.values`.
-  - `assets/ok/value_pack_runtime_read.mojo` is in `ERASED_VM_RESIDUE`.
-  - Entry R10 deletes the oracle and the question with it.
-  - Found while landing R325 (2026-10-08).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **R323 (P5) The erased oracle cannot answer a reflection query over a
-  type parameter**
-
-  Problem: `return reflect[T].field_count()` in a template-served
-  `def count[T: AnyType]()`, and the same query in a generic struct's method
-  or a `comptime if` condition, print on concrete MIR and stop under
-  `--erased` with "the erased oracle cannot evaluate the parameter constant".
-  - The query reaches MIR as a parameter constant over `T`, which the
-    elaborator answers per instance (`reflection_answer`,
-    `mono/symbolic.rs`); an erased frame carries no type argument to answer
-    it from.
-  - `assets/ok/reflection_template_served.mojo` is the `ERASED_VM_RESIDUE`
-    row (`tests/corpus_test.rs`).
-  - Entry R10 deletes the oracle and this row with it.
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **R366 (P5) The erased oracle cannot evaluate a `comptime for`
-  display over a binder**
-
-  Problem: `comptime for x in [n, n + 1]:` in a template-served `def f[n:
-  Int]()` prints on concrete MIR and stops under `--erased` with "the
-  erased oracle cannot decide the comptime for sequence".
-  - The sequence is the application of a thunk the elaborator demands and
-    runs (`trip_elements`, `mono/unroll.rs`), and an erased frame runs no
-    thunk.
-  - `assets/ok/comptime_for_display_over_binder.mojo` is the
-    `ERASED_VM_RESIDUE` row (`tests/corpus_test.rs`).
-  - Entry R10 deletes the oracle and this row with it.
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **R506 (P5) The erased oracle cannot run a body's request over a
-  type argument or a module display**
-
-  Problem: `comptime c = capacity[Buffer[8]]()` over `def capacity[T:
-  HasSize]() -> Int: return T.size + 1`, and `comptime v = L[f(1) - 1]`
-  over a module `comptime L = [10, 20, 30]`, print on concrete MIR and stop
-  under `--erased` with "the erased oracle cannot evaluate the parameter
-  constant".
-  - Both are requests the elaborator below MIR serves since R488, and an
-    erased frame carries no type argument to read `T.size` from, nor
-    evaluates a subscript of a display whose index applies a function.
-  - `assets/ok/ctfe_type_generic_def_in_body.mojo`,
-    `assets/ok/ctfe_display_tuple_subscript_in_body.mojo`,
-    `assets/ok/generic_ctfe_associated_value.mojo`, and
-    `assets/extensions/ok/self_hosted_algorithms.mojo` are the
-    `ERASED_VM_RESIDUE` rows (`tests/corpus_test.rs`).
-  - Entry R10 deletes the oracle and these rows with it.
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **R385 (P5) The erased oracle cannot run a type over a lifted
-  application**
-
-  Problem: `var a = SIMD[DType.int32, h(n)](1)` in a template-served `def
-  f[n: Int]()` prints on concrete MIR and stops under `--erased` with "a
-  SIMD instruction over the symbolic slots `SIMD[DType.int32, h(2)]` reached
-  the VM".
-  - The width is the application of a function the elaborator demands and
-    runs per instance (`Specializer::applied`, `mono/specializer.rs`), and
-    an erased frame runs no such function.
-  - A parameter argument alone (`g[h(n)]()`) runs erased, since the body
-    computes the value where it stands.
-  - `assets/ok/comptime_application_argument.mojo`,
-    `assets/ok/comptime_call_callee_shapes.mojo`, and
-    `assets/ok/comptime_call_signature.mojo` are the `ERASED_VM_RESIDUE`
-    rows (`tests/corpus_test.rs`).
-  - Entry R10 deletes the oracle and these rows with it.
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **R334 (P5) The erased oracle cannot read a struct's value binder in
-  a method's parameter constant**
-
-  Problem: `return DType.exponent_bias[Self.dt]()` in a method of `struct
-  Format[dt: DType]` prints on concrete MIR and stops under `--erased` with
-  "the erased oracle cannot evaluate the parameter constant".
-  - The query reaches MIR as a parameter constant over `dt`, which the
-    elaborator answers per instance.
-  - An erased frame binds only the method's own slots and compile-time
-    locals (`erased_parameter_values`, `backend/vm.rs`), so the struct's
-    binder has no value there.
-  - `assets/ok/dtype_float_query_template_served.mojo` is an
-    `ERASED_VM_RESIDUE` row (`tests/corpus_test.rs`), listed under R15
-    since its `comptime if` stops first.
-  - Entry R10 deletes the oracle and this gap with it.
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **R295 (P5) The erased oracle cannot construct a pack element**
-
-  Problem: `print(Ts[0]())` in `def ends[*Ts: Movable & Defaultable &
-  Writable & Deinitable]()` prints on concrete MIR and stops under
-  `--erased` with "constructing type parameter 'Ts' … requires a reified
-  type argument".
-  - The VM indexes a pack's reified spellings by the element's index
-    register, but the erased frame of an explicit application leaves the
-    pack's slot unbound.
-  - A pack proved `Defaultable` only by a `where` clause has no slot at
-    all, since `constructible_type_parameter` reads bounds.
-  - Under a `comptime for` the oracle stops first at the loop's bound
-    (R286).
-  - `assets/ok/pack_element_default_construction.mojo` and
-    `assets/ok/pack_element_binding_served.mojo` are its
-    `ERASED_VM_RESIDUE` rows (`tests/corpus_test.rs`).
-  - Entry R10 deletes the oracle and these rows with it.
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **R361 (P5) The erased oracle cannot run several members of the
-  template-served `Tuple` and `TString`**
-
-  Problem: programs that ran under `--erased` while `Tuple` and `TString`
-  were cloned per element list now stop there, because the oracle runs the
-  templates' own bodies and an erased value carries no pack.
-  - A tuple an intrinsic or a named `out` result builds reifies no pack, so
-    a later member stops with "the erased oracle cannot decide the comptime
-    for stop" or "cannot evaluate the parameter constant
-    `TypeList[Ts.values]().length`" (`var r = t^.reverse()` then
-    `r^.concat((1,))`).
-  - The default initializer constructs `Self.Ts[i]()` from a reified type
-    name, which stops with "vm backend does not support the built-in or
-    callee 'UInt64'" for a scalar or a vector element.
-  - A pack a forwarding `def` passes to a constructor reifies none either,
-    so every t-string, built by `__make_tstring`, writes nothing under
-    `--erased`.
-  - A constructed `Tuple` does reify its pack, which sizes its storage
-    (`size_pack_storage`, `backend/vm/values.rs`), and a named result's
-    storage is sized from the frame (`erased_list_length`, `backend/vm.rs`).
-  - Its `ERASED_VM_RESIDUE` rows (`tests/corpus_test.rs`) cite this entry.
-  - Entry R10 deletes the oracle and these rows with it.
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **R504 (P5) The erased oracle cannot read a type's compile-time value
-  member through a type parameter**
-
-  Problem: `print(T.K)` in `def read[T: HasK]()` stops under `--erased`
-  with "the erased oracle cannot evaluate the parameter constant `T.K`",
-  where the elaborated run prints the member.
-  - The read is a `ParamKind::TypeMember` constant the elaborator answers
-    from `MirStructDeclaration::associated_values`; `const_value`
-    (`backend/vm.rs`) evaluates a parameter constant from the frame's
-    reified values only, and an erased frame reifies a type argument as a
-    name, not the instance whose binders a member like `Self.n + 1` reads.
-  - A read on a struct by name (`A.K`) folds in the checker and runs.
-  - Entry R10 deletes the oracle, and this gap with it.
-  - Found while landing R484 (2026-10-08).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R474 (P5) A closed parameter argument outside a generic call's
   brackets still lowers as run-time code**
 
@@ -528,89 +121,6 @@ correctness fix to existing behavior is allowed.
     values from the call's instantiated arguments, and move the
     `external_call` read to them.
   - Found while landing R468 (2026-10-07).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **R407 (P5) The erased oracle cannot run `Variant`**
-
-  Problem: a program that uses `Variant` runs on concrete MIR but stops
-  under `--erased`, where it ran while the cloner specialized `Variant` per
-  instance.
-  - The oracle reifies a pack's length, not its element types
-    (`erased_parameter_values`, `backend/vm.rs`), so it cannot decide the
-    `comptime if Self.Ts.contains[T]()` lines, nor close a storage
-    operation's `_get_type_index[T, *Ts]()` (`known_variant_index`).
-  - A static method's `Self.Ts.contains[T]()` stops the same way
-    (`assets/ok/pack_struct_static_method_through_instance.mojo`).
-  - The fixtures are `ERASED_VM_RESIDUE` rows (`tests/corpus_test.rs`)
-    citing this entry.
-  - Entry R10 deletes the oracle and these rows with it.
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **R300 (P5) The erased oracle cannot run a vector whose width is a
-  layout query**
-
-  Problem: `SIMD[DType.float32, S]` for `comptime S = size_of[Pair]()`
-  runs on concrete MIR and stops under `--erased` with "a SIMD instruction
-  over the symbolic slots `SIMD[DType.float32, size_of[Pair]()]` reached
-  the VM".
-  - The elaborator answers the query under the compilation's target; the
-    erased frame closes a lane only from the binders it reifies, and a
-    layout query names none.
-  - `assets/ok/comptime_layout_constant.mojo` is its `ERASED_VM_RESIDUE`
-    row (`tests/corpus_test.rs`).
-  - Entry R10 deletes the oracle and the row with it.
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **R301 (P5) The erased oracle cannot stop a kept `comptime for`
-  bounded by a binder**
-
-  Problem: `comptime for i in range(n)` in a template-served `def` keyed on
-  `n`, or over `range(len(Ts))`, runs on concrete MIR and stops under
-  `--erased` with "the erased oracle cannot decide the comptime for stop".
-  - The elaborator unrolls the loop per instance; the erased frame has no
-    runtime value for the bound.
-  - `assets/ok/comptime_for_template_served.mojo` and
-    `assets/ok/pack_element_alias_served.mojo` are its
-    `ERASED_VM_RESIDUE` rows (`tests/corpus_test.rs`).
-  - Entry R10 deletes the oracle and these rows with it.
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **R311 (P5) The erased oracle cannot forward a type binder to a
-  template's own call**
-
-  Problem: a template-served body that calls a generic callee over its own
-  type binder (`return 1 + S.count(x, n - 1)` in `S.count[T]`, or a `def`'s
-  recursive call) runs on concrete MIR and stops under `--erased` with "the
-  erased oracle cannot decide the comptime if condition" in the callee.
-  - The VM reifies a call's solved type argument only when it is closed
-    (`supplied_parameter_arguments`, `backend/vm.rs`); one over the
-    caller's binder reads the caller's frame (`bound_type_parameter`),
-    which holds no slot for a binder its body never reads as a value.
-  - A `comptime if` comparing a method's binder with its struct's
-    (`U == Self.T`) stops the same way: an erased instance carries no type
-    argument.
-  - `assets/ok/comptime_if_inferred_static_method.mojo` and
-    `assets/ok/generic_method_per_call_clones.mojo` are its
-    `ERASED_VM_RESIDUE` rows (`tests/corpus_test.rs`).
-  - Entry R10 deletes the oracle and these rows with it.
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **R315 (P5) The erased oracle cannot decide a conformance condition
-  over a type binder**
-
-  Problem: `comptime if conforms_to(Self.T, Hashable)` in a template-served
-  method runs on concrete MIR and stops under `--erased` with "the erased
-  oracle cannot decide the comptime if condition `Conforms { … }`".
-  - An erased frame binds a struct's type parameter to the spelling of its
-    type (`Box[Int]` binds `T` to `Int`), which names no conformance table.
-  - `assets/ok/keyed_def_builds_loan_carrying_instance.mojo` is its
-    `ERASED_VM_RESIDUE` row (`tests/corpus_test.rs`).
-  - Entry R10 deletes the oracle and the row with it.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -1873,32 +1383,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Pinned by `conformance/probes/mut_self_hash_witness.mojo`.
   - Depends on nothing.
   - Model: Opus, Planned.
-
-- [ ] **R80 A clone that is still checked re-ranks an overloaded call**
-
-  Problem: the pinned Mojo binds a call inside a generic body once, while it
-  checks the body, and Mojito ranks the overload set again for every
-  instantiation that takes the clone check.
-  - An instance derived from its checked template inherits the template's
-    choice (`assets/ok/template_overload_binding.mojo`,
-    `overload-bound-in-generic-body`), with a scalar local or a branch
-    (`assets/ok/template_overload_binding_local.mojo`), with a local of
-    the parameter type handed to the call
-    (`assets/ok/template_def_value_local.mojo`), from a struct method
-    (`assets/ok/template_overload_binding_method.mojo`), and for a generic
-    struct's static on a spelled receiver, even at an instance that
-    collapses its family
-    (`assets/ok/template_method_collapsed_static_overload.mojo`).
-  - A call through a bound whose witness is overloaded selects the member
-    witnessing the requirement, as the pin binds it, even where a rival
-    would outrank it on the argument
-    (`tests/compiler_test.rs:template_method_requirement_witness_outranks_a_better_rival`).
-  - What remains is any body still outside the derivation classes for
-    another reason: its instances are checked again, and rank the set
-    again. It closes as the `pmir` stages widen the classes.
-  - Depends on R10, which deletes the derivation classes once every stage
-    before it has widened them.
-  - Model: Fable, Not Planned.
 
 - [ ] **R81 Ordering a tuple of mixed element types is rejected**
 
@@ -5298,19 +4782,6 @@ residue found inside a task moves to the task that owns its fix.
     run without a block per body.
   - Model: Opus, Not Planned.
 
-- [ ] **R200 A generic instantiated at `StringLiteral` by a literal argument
-  keeps the erased path**
-
-  Problem: a generic instantiated at `T = StringLiteral` by a literal
-  argument runs erased, since `instance_method_clone_name` mints no clone
-  for it.
-  - Displays and `StringDict` keys now materialize `String`, so they no
-    longer reach it.
-  - Unchecked: whether `StringDict.__getitem__` can now return a reference
-    instead of its `Copyable`-guarded copy.
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R493 The bundled `ParameterList` lacks most of upstream's members**
 
   Problem: `ParameterList.of[4, 5, 6]`, `ParameterList[values.values]`,
@@ -5329,50 +4800,23 @@ residue found inside a task moves to the task that owns its fix.
   - Depends on nothing.
   - Model: Opus, Planned.
 
-- [ ] **R201 A call inside an unstamped bundled body on a bundled struct's
-  generic method keeps the erased path**
+- [ ] **R204 An abstract dispatch target that survives elaboration aborts at
+  run time**
 
-  Problem: such a call mints no instance clone and runs erased.
-  - Requests are admitted from user code, clone bodies, variadic specs,
-    instances, and user structs only.
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **R202 An instance clone whose walk cannot resolve an application
-  falls back to the erased path, or rejects a program the pin accepts**
-
-  Problem: an instance clone whose walk cannot resolve an application (a
-  variadic template over a nested public `Tuple` argument) is dropped to the
-  erased path rather than failing the program.
-  - When such a method can reach a compile-time-keyed stub, an instance the
-    elaborator queued but could not clone rejects the program instead —
-    rejecting one the pin accepts.
-  - An instance the checker records no instantiation for at all (a type
-    parameter inferred as the compile-time `StringLiteral`, `Box("a").f()`)
-    is not queued, so it keeps the erased path and aborts at run time.
-  - Depends on nothing.
-  - Model: Fable, Planned.
-
-- [ ] **R203 Bundled templates build and copy their instances through the
-  erased constructors**
-
-  Problem: a `List`/`Dict`/`Optional` instance builds and copies through the
-  template's `__init__`/`__copyinit__`/`__moveinit__` on the erased path, so
-  a `comptime if Self.T` there would not fold.
-  - User structs clone their constructors.
-  - Every struct's `__deinit__` clone is reached.
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **R204 An erased body dispatches by runtime name where no checked
-  static type reaches it**
-
-  Problem: a compile-time-keyed method reached through runtime-name dispatch
-  aborts rather than being rejected.
-  - Sites: an operator or protocol dunder called from another erased body.
-  - Sites: a value whose static type is a bare `Ty::Param`.
-  - Sites: an instance reached only from bundled code.
-  - Sites: CTFE, which runs before any clone exists.
+  Problem: a call the checker emits as an abstract `__trait_dispatch.*` or
+  `__iterator_dispatch.*` target that `native::mono` leaves unresolved
+  reaches the VM, whose by-name retargeting then aborts, where the
+  elaborator should reject the program.
+  - The VM keeps the retargeting (`TRAIT_DISPATCH_PREFIX`,
+    `symbol::borrowed_iterator_dispatch_alternate`; `backend/vm/exec.rs`,
+    `invoke.rs`) only for such a survivor; a target the elaborator resolves
+    (`mono/infer.rs`) never reaches it.
+  - Sites: an operator or protocol dunder reached from a value whose static
+    type is a bare `Ty::Param` the instance did not close; an instance
+    reached only from bundled code.
+  - Each survivor should be a `MonoError` at the call that reaches it, as the
+    pin rejects an unsatisfied requirement; the retargeting goes with the
+    last one.
   - Depends on nothing.
   - Model: Fable, Planned.
 
@@ -5982,22 +5426,6 @@ Track: `tooling`.
   - Depends on nothing.
   - Model: Fable, Planned.
 
-- [ ] **R155 Seven `erased_vm` trials compare random temporary paths**
-
-  Problem: the corpus binary's `erased_vm` trials of `tempfile_mkdtemp`,
-  `with_statement`, `with_multiple`, `path_operations`, `os_dir_operations`,
-  `file_handle_roundtrip`, and `file_descriptor_stdout_order` fail, because a
-  caught `raise` event carries a random temporary name and the two runs draw
-  different ones.
-  - The outputs agree, and so do the events apart from the name: "raise
-    unable to stat '/tmp/xpgslhxv'" against "'/tmp/d4y7nmno'".
-  - The lifecycle log records a raised error's text, and `std.tempfile`
-    probes a fresh random name per run.
-  - Found on `da941aee` while the parity group was run for the struct-method
-    templates (2026-10-01). It fails there too.
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R156 Three `comptime_test` callable-argument tests stop in
   elaboration**
 
@@ -6041,9 +5469,7 @@ Track: `tooling`.
 Track: `code-org`.
 
 The module splits (`docs/symbol-map.md`) removed every file over 3,000
-lines. `checker/template_facts.rs` and its submodules stay frozen: their
-line count only goes down, as the `pmir` track deletes the mechanism stage by
-stage. The rest needs semantic extraction, not line moves.
+lines. The rest needs semantic extraction, not line moves.
 
 - [ ] **R158 Shrink the 2 kloc band** *(standing)*
 
@@ -6071,6 +5497,16 @@ stage. The rest needs semantic extraction, not line moves.
   - Found while landing R405 (2026-10-07).
   - Depends on nothing.
   - Model: Opus, Not Planned.
+
+- [ ] **R521 `check_program_for_discovery` and `DiscoveryResult` carry the
+  names of the deleted discovery rounds**
+
+  Problem: the checker entry that stops before the checked arena is built,
+  and its result type, are named for the discovery rounds R9 deleted.
+  - Rename to `check_program_facts` / `CheckedFacts`; `tests/compiler_test.rs`
+    and `docs/architecture.md` name both.
+  - Depends on nothing.
+  - Model: Opus, Planned.
 
 ## Task Lifecycle Policy
 

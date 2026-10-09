@@ -22,14 +22,12 @@ impl VmBackend {
             keyword_args: kwargs,
             argument_places: arg_places,
             keyword_argument_places: kwarg_places,
-            value_params,
         } = call;
         let CallerFrame {
             id: frame_id,
             function: caller_function,
             registers: regs,
             variables: vars,
-            comptime,
         } = frame;
         // Order the arguments into parameter slots (filling defaults/keywords),
         // keeping the slot map so each parameter's source argument is known.
@@ -86,7 +84,6 @@ impl VmBackend {
             SynchronousCall {
                 function_index: idx,
                 arguments: bound,
-                value_params: &value_params,
                 reference_inputs: &reference_inputs,
             },
             CallerFrame {
@@ -94,7 +91,6 @@ impl VmBackend {
                 function: caller_function,
                 registers: regs,
                 variables: vars,
-                comptime,
             },
         )?;
         Ok(result)
@@ -116,7 +112,6 @@ impl VmBackend {
         let SynchronousCall {
             function_index,
             mut arguments,
-            value_params,
             reference_inputs,
         } = call;
         let CallerFrame {
@@ -124,7 +119,6 @@ impl VmBackend {
             function: _,
             registers: caller_registers,
             variables: caller_variables,
-            comptime: _,
         } = caller;
         for (parameter, handle) in reference_inputs {
             let slot = arguments.get_mut(*parameter).ok_or_else(|| {
@@ -135,7 +129,7 @@ impl VmBackend {
             *slot = handle.clone();
         }
         let stack_base = self.push_caller_mirror(caller_id, caller_registers, caller_variables);
-        let outcome = self.call_frame_with_id(prog, function_index, arguments, value_params);
+        let outcome = self.call_frame_with_id(prog, function_index, arguments);
         self.restore_caller_mirror(stack_base, caller_variables)?;
         outcome
     }
@@ -155,7 +149,6 @@ impl VmBackend {
             block: 0,
             instruction: 0,
             continuation: None,
-            comptime: Vec::new(),
         });
         stack_base
     }
@@ -213,23 +206,9 @@ impl VmBackend {
         // default) through the same path an explicit `f(arg=None)` takes; an
         // `Evaluate` default runs its lowered default function; scalars fold
         // directly; a default MIR could not lower errors only when its slot
-        // is actually taken. A default function reading a binder in scope
-        // runs only as the elaborator's instance, which binds it; the erased
-        // template has no value for it.
+        // is actually taken.
         let make_default = |i: usize| -> Result<Value, RuntimeError> {
             match &sig.defaults[i] {
-                Some(CheckedConst::Evaluate { function })
-                    if prog
-                        .sigs
-                        .get(function)
-                        .is_some_and(|default| !default.param_decls.is_empty()) =>
-                {
-                    Err(RuntimeError::Unsupported(format!(
-                        "vm: erased default for parameter '{}' of '{name}' reads a \
-                         compile-time parameter",
-                        sig.param_names[i]
-                    )))
-                }
                 Some(CheckedConst::Construct { target, arg }) => self.call_named(
                     prog,
                     target,
@@ -243,7 +222,7 @@ impl VmBackend {
                             "vm: missing default function '{function}'"
                         ))
                     })?;
-                    self.call_frame(prog, index, Vec::new(), &[])
+                    self.call_frame(prog, index, Vec::new())
                         .map(|(value, _)| value)
                 }
                 Some(other) => Ok(checked_const_value(other)),
@@ -255,7 +234,7 @@ impl VmBackend {
         };
         let (mut bound, slots) = bind_args(name, sig, argv, &kwargs, make_default)?;
         if let Some(index) = sig.kw_variadic_index {
-            let collector = kwargs_collector_struct(prog, sig.kw_variadic.as_ref());
+            let collector = kwargs_collector_struct(sig.kw_variadic.as_ref());
             bound[index] = self.make_kwargs_dict(prog, &collector, collected)?;
         }
         Ok((bound, slots))
@@ -267,21 +246,14 @@ impl VmBackend {
         collector: &str,
         entries: Vec<(String, Value)>,
     ) -> Result<Value, RuntimeError> {
-        let mut dict = self.construct_via_init(
-            prog,
-            collector,
-            None,
-            Vec::new(),
-            Vec::new(),
-            ConstructorParameters::default(),
-        )?;
+        let mut dict = self.construct_via_init(prog, collector, None, Vec::new(), Vec::new())?;
         let fname = prog.overload_name(&format!("{collector}.__setitem__"), 2);
         let fidx = prog.index_of(&fname).ok_or_else(|| {
             RuntimeError::Unsupported(format!("vm: kwargs {collector} has no __setitem__"))
         })?;
         for (key, value) in entries {
             let key = self.nominal_string_value(prog, &key)?;
-            let (_, frame) = self.call_frame(prog, fidx, vec![dict, key, value], &[])?;
+            let (_, frame) = self.call_frame(prog, fidx, vec![dict, key, value])?;
             dict = frame.into_iter().next().unwrap_or(Value::None);
         }
         Ok(dict)
@@ -386,16 +358,12 @@ impl VmBackend {
             receiver_place: recv_place,
             argument_places: arg_places,
             keyword_argument_places: kwarg_places,
-            parameter_arguments: param_arg_regs,
-            parameter_declarations: param_decls,
-            instantiated_arguments: instantiated,
         } = invocation;
         let CallerFrame {
             id: frame_id,
             function: caller_function,
             registers: regs,
             variables: vars,
-            comptime,
         } = frame;
         // A receiver read out of a `ref`-typed field arrives as a reference
         // handle: dispatch on its referent. A `mut self` write-back re-enters
@@ -442,16 +410,12 @@ impl VmBackend {
                                     receiver_place: recv_place,
                                     argument_places: arg_places,
                                     keyword_argument_places: kwarg_places,
-                                    parameter_arguments: param_arg_regs,
-                                    parameter_declarations: param_decls,
-                                    instantiated_arguments: instantiated,
                                 },
                                 CallerFrame {
                                     id: frame_id,
                                     function: caller_function,
                                     registers: regs,
                                     variables: vars,
-                                    comptime,
                                 },
                             );
                         }
@@ -481,12 +445,7 @@ impl VmBackend {
                         ))
                     })?;
                     let arguments = vec![hasher, crate::runtime::hash_leaf_value(recv.clone())];
-                    let value_params = lane_binders_from_arguments(
-                        &prog.mir.functions[fidx].1.param_types,
-                        &arguments,
-                        &[],
-                    );
-                    let (_, variables) = self.call_frame(prog, fidx, arguments, &value_params)?;
+                    let (_, variables) = self.call_frame(prog, fidx, arguments)?;
                     let updated = variables.into_iter().next().unwrap_or(Value::None);
                     self.store_at_call_place(prog, frame_id, place, updated, regs, vars)?;
                     return Ok(Value::None);
@@ -627,7 +586,7 @@ impl VmBackend {
                         // that lives exactly as long as the call.
                         let (payload, allocation) = self.temporary_string_span(prog, &text)?;
                         let (_, variables) =
-                            self.call_frame(prog, index, vec![writer.clone(), payload], &[])?;
+                            self.call_frame(prog, index, vec![writer.clone(), payload])?;
                         self.heap_free(allocation, 0)?;
                         writer = variables.into_iter().next().unwrap_or(Value::None);
                     }
@@ -727,44 +686,12 @@ impl VmBackend {
                         Self::reference_to_place_parts(frame_id, regs, vars, place)?,
                     ));
                 }
-                let value_params = prog
-                    .sigs
-                    .get(&fname)
-                    .map(|signature| {
-                        let contract = if param_decls.is_empty() {
-                            &signature.param_decls
-                        } else {
-                            param_decls
-                        };
-                        let supplied = self.supplied_parameter_arguments(
-                            prog,
-                            CallerBindings {
-                                function: caller_function,
-                                frame: frame_id,
-                                registers: regs,
-                                variables: vars,
-                                comptime,
-                            },
-                            contract,
-                            param_arg_regs,
-                            instantiated,
-                        );
-                        let supplied = resolve_value_parameter_slots(contract, &supplied);
-                        reify_value_parameters(prog, &signature.param_decls, &supplied)
-                    })
-                    .unwrap_or_default();
-                let mut value_params = value_params;
-                let solved =
-                    lane_binders_from_arguments(&function.param_types, &call_args, &value_params);
-                value_params.retain(|(name, _)| solved.iter().all(|(binder, _)| binder != name));
-                value_params.extend(solved);
                 let (ret, mut frame_vars, returned_frame_id) = self
                     .call_synchronously_with_references(
                         prog,
                         SynchronousCall {
                             function_index: fidx,
                             arguments: call_args,
-                            value_params: &value_params,
                             reference_inputs: &reference_inputs,
                         },
                         CallerFrame {
@@ -772,7 +699,6 @@ impl VmBackend {
                             function: caller_function,
                             registers: regs,
                             variables: vars,
-                            comptime,
                         },
                     )?;
                 let returns_reference = prog.mir.functions[fidx].1.returns_reference;
@@ -837,59 +763,16 @@ const KWARGS_COLLECTOR: &str = "StringDict";
 /// The prefix every instance of the collector carries in a specialized program.
 const KWARGS_COLLECTOR_INSTANCE: &str = "StringDict$mono$";
 
-/// The collector a callee's `**kwargs: element` binds: the template in an
-/// erased program, its instance at `element` (`StringDict$mono$TInt`) in a
-/// specialized one, which declares no template.
-fn kwargs_collector_struct(prog: &Prog, element: Option<&Ty>) -> String {
-    match element {
-        Some(element) if !prog.structs.contains_key(KWARGS_COLLECTOR) => {
+/// The collector a callee's `**kwargs: element` binds: its instance at
+/// `element` (`StringDict$mono$TInt`), which concrete MIR declares.
+fn kwargs_collector_struct(element: Option<&Ty>) -> String {
+    element.map_or_else(
+        || KWARGS_COLLECTOR.to_string(),
+        |element| {
             mojito_symbol::symbol::instance_symbol(
                 KWARGS_COLLECTOR,
                 &[mojito_symbol::symbol::InstanceArg::Ty(element.clone())],
             )
-        }
-        _ => KWARGS_COLLECTOR.to_string(),
-    }
-}
-
-/// The dtype and width binders an erased call solves from its argument
-/// values where a parameter's type is a vector over them (`SIMD[dt, w]`),
-/// as the elaborator solves them from the argument types. A template frame
-/// reads them; a binder `supplied` a value keeps it.
-fn lane_binders_from_arguments(
-    parameter_types: &[Ty],
-    arguments: &[Value],
-    supplied: &[(String, Value)],
-) -> Vec<(String, Value)> {
-    let mut solved: Vec<(String, Value)> = Vec::new();
-    for (ty, argument) in parameter_types.iter().zip(arguments) {
-        let Ty::Simd { dtype, width } = peel_references(ty) else {
-            continue;
-        };
-        let Some((lane, lanes)) = crate::runtime::hash_leaf_ty(argument).and_then(|ty| {
-            mojito_types::types::simd_shape(&mojito_types::types::hash_leaf_ty(&ty))
-        }) else {
-            continue;
-        };
-        let dtype = match dtype {
-            mojito_types::types::SimdDtype::Expr(expr) => Some(expr),
-            mojito_types::types::SimdDtype::Known(_) => None,
-        };
-        let width = match width {
-            mojito_types::types::SimdWidth::Expr(expr) => Some(expr),
-            mojito_types::types::SimdWidth::Known(_) => None,
-        };
-        let slots = [(dtype, Value::Dtype(lane)), (width, Value::Int(lanes))];
-        for (slot, value) in slots {
-            if let Some(reference) = slot.and_then(mojito_types::param_expr::ParamExpr::as_decl_ref)
-                && !supplied
-                    .iter()
-                    .chain(&solved)
-                    .any(|(name, value)| **name == *reference.name && *value != Value::None)
-            {
-                solved.push((reference.name.to_string(), value));
-            }
-        }
-    }
-    solved
+        },
+    )
 }

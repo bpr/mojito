@@ -12,9 +12,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use mojito::mir::lower_program;
-use mojito::{
-    BackendKind, Compiler, ComptimeError, TypeError, check, check_program, elaborate, link, parse,
-};
+use mojito::{Compiler, ComptimeError, TypeError, check, elaborate, link, parse};
 
 /// Parse + elaborate + type-check, returning the checker's verdict.
 fn check_source(source: &str) -> Result<(), TypeError> {
@@ -65,20 +63,13 @@ fn assert_ambiguous(source: &str, func: &str) {
     }
 }
 
-/// Run a checked program on the VM and return its captured output.
+/// Run `source` through the production pipeline on the VM and return its
+/// captured output.
 fn vm(source: &str) -> String {
-    let program = parse(source).expect("parse error");
-    let program = elaborate(program).expect("comptime error");
-    let checked = check_program(&program).expect("type error");
-    let mut backend = BackendKind::make("vm").expect("the register VM is implemented");
-    backend.run(&checked).expect("runtime error");
-    backend.output()
+    compiled(source)
 }
 
-/// Run `source` through the production pipeline and return its captured
-/// output. The stage-composed `vm` helper above does not own the
-/// discovery/specialization handoff, so a program reaching a generic method's
-/// clone needs the whole-program driver.
+/// [`vm`] spelled out: the driver, compile then execute.
 fn compiled(source: &str) -> String {
     let dir = TempDir::new();
     let entry = dir.write("main.mojo", source);

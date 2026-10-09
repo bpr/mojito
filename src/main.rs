@@ -76,12 +76,6 @@ fn main() -> ExitCode {
         );
         return ExitCode::FAILURE;
     }
-    if cli.vm_instantiation.is_some()
-        && (!matches!(command, Some("run" | "exec")) || cli.backend != BackendKind::Vm)
-    {
-        eprintln!("--erased is only valid with the run and exec commands on the VM backend");
-        return ExitCode::FAILURE;
-    }
     if !matches!(command, Some("compile" | "run" | "link")) && cli.runtime_lib.is_some() {
         eprintln!("--runtime-lib is only valid with the compile, run, and link commands");
         return ExitCode::FAILURE;
@@ -152,10 +146,6 @@ struct CliArgs {
     /// each pipeline phase (see `mojito_common::timing`) —
     /// the bench driver's channel.
     timings: bool,
-    /// `--erased` for `run` and `exec` on the VM backend: run
-    /// drop-elaborated MIR and resolve parameters at run time, instead of
-    /// the concrete graph. `None` leaves the choice to `MOJITO_VM_ERASED`.
-    vm_instantiation: Option<mojito::VmInstantiation>,
     /// `--native-debug LEVEL` for `compile`/`run --backend pliron` (parsed
     /// by the backend; raw here so the default build carries no backend
     /// types).
@@ -177,7 +167,6 @@ fn parse_cli_args(raw: Vec<String>) -> Result<CliArgs, String> {
     let mut target = None;
     let mut print_toolchain = false;
     let mut timings = false;
-    let mut vm_instantiation = None;
     let mut native_debug = None;
     let mut runtime_lib = None;
     let mut iter = raw.into_iter();
@@ -222,8 +211,6 @@ fn parse_cli_args(raw: Vec<String>) -> Result<CliArgs, String> {
             print_toolchain = true;
         } else if arg == "--timings" {
             timings = true;
-        } else if arg == "--erased" {
-            vm_instantiation = Some(mojito::VmInstantiation::Erased);
         } else if let Some(level) = arg.strip_prefix("--native-debug=") {
             native_debug = Some(level.to_string());
         } else if arg == "--native-debug" {
@@ -251,7 +238,6 @@ fn parse_cli_args(raw: Vec<String>) -> Result<CliArgs, String> {
         target,
         print_toolchain,
         timings,
-        vm_instantiation,
         native_debug,
         runtime_lib,
     })
@@ -399,10 +385,6 @@ fn run_program_native(_file: Option<&str>, _cli: &CliArgs) -> Result<(), String>
 
 fn run_program(file: Option<&str>, backend: BackendKind, cli: &CliArgs) -> Result<(), String> {
     let compiler = Compiler::new(cli.link_options.clone(), backend);
-    let compiler = match cli.vm_instantiation {
-        Some(instantiation) => compiler.with_vm_instantiation(instantiation),
-        None => compiler,
-    };
     let compiled = {
         let _frontend = mojito::timing::span("frontend");
         compile_input(&compiler, file)?
@@ -691,10 +673,7 @@ fn stage_exec(file: Option<&str>, cli: &CliArgs) -> ExitCode {
         }
     };
     let label = file.unwrap_or("-");
-    let instantiation = cli
-        .vm_instantiation
-        .unwrap_or_else(mojito::VmInstantiation::from_env);
-    match mojito::run_artifact_as(&bytes, label, cli.backend, instantiation) {
+    match mojito::run_artifact(&bytes, label, cli.backend) {
         Ok(execution) => {
             // Artifacts are compiled programs: print their output verbatim and
             // never echo bindings, matching file-based `run`'s parity rationale.
@@ -767,7 +746,7 @@ fn print_usage() {
          \x20 --runtime-lib PATH     explicit runtime archive (first in discovery order)\n\
          \x20 --print-toolchain      report the resolved native toolchain (compile only)\n\
          \x20 --timings              print per-phase timings and counters to stderr\n\
-         \x20 --erased               run generic bodies erased, the differential oracle (run|exec, VM)\n\n\
+\n\
          commands:\n\
          \x20 lex   [FILE]   print the token stream (one per line)\n\
          \x20 parse [FILE]   print the parsed AST\n\

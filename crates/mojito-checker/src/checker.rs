@@ -49,6 +49,7 @@ use traits_support::*;
 
 use mojito_common::timing;
 
+use bound_defaults::BoundDefaultArguments;
 use mojito_ast::ast::{
     ArgConvention, Dtype, Expr, ExprKind, FnParam, InfixOp, Method, PrefixOp, Stmt, StmtKind,
     StructComptime, SubscriptArg, TStringPart, TraitComptime, Type as SourceType,
@@ -57,7 +58,7 @@ use mojito_ast::call::{
     ArgSlot, CallVariadics, effective_keyword_only_index, match_call_slots, regular_marker_index,
 };
 use mojito_common::error::TypeError;
-use mojito_common::token::SourceSpan;
+use mojito_common::token::{SourceSpan, SyntaxId};
 use mojito_types::ct::CtValue;
 use mojito_types::param_expr::{
     ConstraintVerdict, HoleKind, MetaTy, ParamContext, ParamError, ParamExpr, ParamId, ParamKind,
@@ -78,22 +79,15 @@ pub fn check(stmts: &[Stmt]) -> Result<(), TypeError> {
 
 /// Type-check and retain the semantic facts consumed by lowering/backends.
 pub fn check_program(stmts: &[Stmt]) -> Result<mojito_checked::checked::CheckedProgram, TypeError> {
-    check_program_with_templates(
-        stmts,
-        &mut mojito_checked::templates::TemplateCatalog::new(false),
-    )
+    check_program_in(stmts, &mut CheckContext::default())
 }
 
-/// [`check_program`] over a template catalog.
-///
-/// A generic body this check infers is retained there, and a clone the
-/// catalog traces to a certified template takes its facts from it instead of
-/// being inferred (`checker/template_facts.rs`).
-pub fn check_program_with_templates(
+/// [`check_program`] in a compilation's [`CheckContext`].
+pub fn check_program_in(
     stmts: &[Stmt],
-    catalog: &mut mojito_checked::templates::TemplateCatalog,
+    context: &mut CheckContext,
 ) -> Result<mojito_checked::checked::CheckedProgram, TypeError> {
-    let discovery = check_program_for_discovery(stmts, catalog)?;
+    let discovery = check_program_for_discovery(stmts, context)?;
     let _arena = timing::span("arena");
     timing::count("arena_builds", 1);
     Ok(discovery.finalize())
@@ -109,9 +103,75 @@ pub fn check_program_with_templates(
 /// which a client reading the facts alone need not pay for.
 pub fn check_program_for_discovery(
     stmts: &[Stmt],
-    catalog: &mut mojito_checked::templates::TemplateCatalog,
+    context: &mut CheckContext,
 ) -> Result<mojito_checked::checked::DiscoveryResult, TypeError> {
-    check_program_carrying(stmts, catalog).map(PassCarry::into_result)
+    check_program_carrying(stmts, context).map(PassCarry::into_result)
+}
+
+/// The per-compilation state one check runs in.
+///
+/// It lives for one `Compiler::compile_linked`: the driver lends it to the
+/// check and reads it back; every other entry point checks in a default one.
+#[derive(Debug)]
+pub struct CheckContext {
+    /// The compilation's parameter-expression context, shared by every
+    /// checker pass. A defaulted context holds a detached one.
+    param_context: ParamContext,
+    /// Carry an unchanged body's raw facts from one checker pass to the
+    /// next instead of inferring it again (`checker/body_carry.rs`).
+    body_fact_reuse: bool,
+    /// Per call through a bound, by the syntax identity the call keeps across
+    /// passes, the requirement defaults it binds (`bound_defaults.rs`).
+    bound_default_arguments: HashMap<SyntaxId, BoundDefaultArguments>,
+}
+
+impl CheckContext {
+    pub fn new() -> Self {
+        Self {
+            param_context: ParamContext::new(),
+            body_fact_reuse: true,
+            bound_default_arguments: HashMap::new(),
+        }
+    }
+
+    pub const fn param_context(&self) -> &ParamContext {
+        &self.param_context
+    }
+
+    /// Whether a body whose inputs are unchanged since the previous checker
+    /// pass takes its facts from that pass.
+    pub const fn body_fact_reuse(&self) -> bool {
+        self.body_fact_reuse
+    }
+
+    pub const fn set_body_fact_reuse(&mut self, reuse: bool) {
+        self.body_fact_reuse = reuse;
+    }
+
+    const fn bound_default_arguments(&self) -> &HashMap<SyntaxId, BoundDefaultArguments> {
+        &self.bound_default_arguments
+    }
+
+    /// Keep the requirement defaults a pass found calls through a bound
+    /// leaving out; whether any call was new.
+    fn record_bound_default_arguments(
+        &mut self,
+        found: HashMap<SyntaxId, BoundDefaultArguments>,
+    ) -> bool {
+        let before = self.bound_default_arguments.len();
+        for (call, arguments) in found {
+            self.bound_default_arguments
+                .entry(call)
+                .or_insert(arguments);
+        }
+        self.bound_default_arguments.len() != before
+    }
+}
+
+impl Default for CheckContext {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 /// [`check_program_for_discovery`]'s passes, returning the last pass's
@@ -122,7 +182,7 @@ pub fn check_program_for_discovery(
 /// still current from that pass instead of inferring it (`body_carry`).
 fn check_program_carrying(
     stmts: &[Stmt],
-    catalog: &mut mojito_checked::templates::TemplateCatalog,
+    context: &mut CheckContext,
 ) -> Result<PassCarry, TypeError> {
     // Two-phase transfer effects: a call site checked before its callee's
     // body only sees effects already committed, so the check reruns — seeded
@@ -159,7 +219,7 @@ fn check_program_carrying(
     bound_defaults::bind_bound_default_arguments(
         &mut expanded,
         &syntax_origins,
-        catalog.bound_default_arguments(),
+        context.bound_default_arguments(),
     );
     let rebind_targets = erase_rebinds(&mut expanded);
     // The previous pass: none for the first, then each stale pass for the
@@ -179,21 +239,21 @@ fn check_program_carrying(
         checker.previous = previous.take();
         checker.rebind_targets.clone_from(&rebind_targets);
         checker.syntax_origins.clone_from(&syntax_origins);
-        checker.param_context = catalog.param_context().clone();
-        checker.template_catalog.replace(std::mem::take(catalog));
+        checker.param_context = context.param_context().clone();
+        checker.context.replace(std::mem::take(context));
         let body_check = {
             let _check = timing::span("check_program");
             checker.check_program(&expanded)
         };
-        *catalog = checker.template_catalog.take();
+        *context = checker.context.take();
         // A call through a bound leaving out a requirement default binds it
         // (`bound_defaults.rs`); a pass that found a new one checks again
-        // with it spelled, whatever its verdict on the clones without it.
-        if catalog.record_bound_default_arguments(checker.bound_default_arguments.take())
+        // with it spelled, whatever its verdict without it.
+        if context.record_bound_default_arguments(checker.bound_default_arguments.take())
             && bound_defaults::bind_bound_default_arguments(
                 &mut expanded,
                 &syntax_origins,
-                catalog.bound_default_arguments(),
+                context.bound_default_arguments(),
             )
         {
             continue;
@@ -699,7 +759,6 @@ pub struct Checker {
     /// Per unpacked value, what [`Self::tuple_unpack_plan`] built the plan
     /// from beside the value's type. Checker-only: a template keeps it as the
     /// recipe of its plan.
-    tuple_unpack_sources: RefCell<FactMap<SourceSpan, TupleUnpackSource>>,
     /// Per comprehension, the iterable of the clause that declares each of
     /// its generator binders, in clause order. Checker-only: a template keeps
     /// it as the recipe of each binder's plan.
@@ -837,32 +896,23 @@ pub struct Checker {
     handled_raise_depth: usize,
     handled_raise_types: RefCell<Vec<Vec<Ty>>>,
     uninitialized: RefCell<HashSet<mojito_types::origin::OwnerId>>,
-    /// The compilation's checked templates and the clone traces of the
-    /// elaboration being checked (`template_facts.rs`). The driver lends it
-    /// for one check and takes it back; every other entry point checks with
-    /// an empty one, which derives nothing.
-    template_catalog: RefCell<mojito_checked::templates::TemplateCatalog>,
-    /// The identity each occurrence had before the final re-key: the
-    /// occurrence-level expansion trace from a template to its clones.
+    /// The compilation's check context. The driver lends it for one check
+    /// and takes it back; every other entry point checks in a default one.
+    context: RefCell<CheckContext>,
+    /// The identity each occurrence had before the final re-key, which the
+    /// bound-default binding keys by.
     syntax_origins: mojito_ast::ast::SyntaxOrigins,
     /// The requirement defaults each call through a bound leaves out, by the
     /// call's origin (`bound_defaults.rs`).
-    bound_default_arguments: RefCell<
-        HashMap<mojito_common::token::SyntaxId, mojito_checked::templates::BoundDefaultArguments>,
-    >,
+    bound_default_arguments: RefCell<HashMap<SyntaxId, BoundDefaultArguments>>,
     /// Each erased `rebind` this check judged, at its operand (or, for a
     /// rebound assignment, its statement): the operand's own type, the
-    /// target, and whether the rebind is by value. A checked template keeps
-    /// these as the equalities its instances owe.
-    rebind_assertions: RefCell<FactMap<SourceSpan, mojito_checked::templates::RebindAssertion>>,
+    /// target, and whether the rebind is by value. The elaborator asserts
+    /// the equality per instance.
+    rebind_assertions: RefCell<FactMap<SourceSpan, mojito_checked::checked::RebindAssertion>>,
     /// The module and name of the struct whose method is being checked, for
-    /// the method's identity as a checked template or a clone of one.
+    /// the method's display name.
     method_site: Option<(Option<String>, String)>,
-    /// Per body being inferred, innermost last: each callee whose transfer
-    /// or call-through summary the body read, and whether it was empty. A
-    /// retained template depends on exactly these summaries. `None` is a
-    /// body nothing will capture, which records no reads.
-    effect_query_frames: RefCell<Vec<Option<EffectQueries>>>,
     /// The previous checker pass, whose facts a body site with unchanged
     /// inputs takes instead of being inferred (`body_carry`).
     previous: Option<PassCarry>,
@@ -870,10 +920,6 @@ pub struct Checker {
     body_records: RefCell<HashMap<SourceSpan, body_carry::BodyRecord>>,
     /// The effect entries the open body site has read, exactly as read.
     site_reads: RefCell<Option<Vec<(String, body_carry::ObservedEffects)>>>,
-    /// Per body being inferred, innermost last: each generic-struct
-    /// application the body reached, before `record_struct_instantiation`
-    /// filters it. `None` is a body nothing will capture.
-    struct_application_frames: RefCell<Vec<Option<StructApplications>>>,
 }
 
 impl Checker {
@@ -994,7 +1040,6 @@ impl Checker {
             generated_declaration: std::cell::Cell::new(false),
             storage_origin_demands: RefCell::new(None),
             tuple_unpack_plans: RefCell::new(FactMap::default()),
-            tuple_unpack_sources: RefCell::new(FactMap::default()),
             comprehension_iterables: RefCell::new(FactMap::default()),
             nested_def_params: RefCell::new(FactMap::default()),
             interior_references: RefCell::new(FactMap::default()),
@@ -1040,16 +1085,14 @@ impl Checker {
             handled_raise_depth: 0,
             handled_raise_types: RefCell::new(Vec::new()),
             uninitialized: RefCell::new(HashSet::new()),
-            template_catalog: RefCell::new(mojito_checked::templates::TemplateCatalog::default()),
+            context: RefCell::new(CheckContext::default()),
             syntax_origins: mojito_ast::ast::SyntaxOrigins::default(),
             bound_default_arguments: RefCell::new(HashMap::new()),
             rebind_assertions: RefCell::new(FactMap::default()),
             method_site: None,
-            effect_query_frames: RefCell::new(Vec::new()),
             previous: None,
             body_records: RefCell::new(HashMap::new()),
             site_reads: RefCell::new(None),
-            struct_application_frames: RefCell::new(Vec::new()),
         }
     }
 
@@ -1207,7 +1250,7 @@ impl Checker {
     }
 
     /// Type every bracket argument a call still evaluates at run time
-    /// (`Counter[1 + Self.n](i)` in an erased body), so its lowering reads
+    /// (`Counter[1 + Self.n](i)` in a generic body), so its lowering reads
     /// checked facts. One the call already typed keeps its contextual type.
     fn type_runtime_param_args(
         &self,
@@ -2160,13 +2203,10 @@ struct MethodSig {
     /// How a call's exclusivity check counts the origins the argument
     /// types carry.
     nested_origins: NestedOrigins,
-    /// A clone's template's declared result type, whose type parameters the
-    /// clone's own `ret` has substituted. `None` for every other method.
-    template_ret: Option<Ty>,
-    /// The signature qualifier of the overload this method is, or is a
-    /// per-call clone of (`$ov$T$Copyable$Int`), when its template is one of
-    /// several same-named overloads: what a call selecting that overload
-    /// records. `None` for every other method.
+    /// The signature qualifier of the overload this method is
+    /// (`$ov$T$Copyable$Int`), when it is one of several same-named
+    /// overloads: what a call selecting that overload records. `None` for
+    /// every other method.
     overload: Option<String>,
 }
 
@@ -2204,7 +2244,6 @@ impl MethodSig {
             origin_binders: vec![None; len],
             synthesized_default: false,
             nested_origins: NestedOrigins::AsDeclared,
-            template_ret: None,
             overload: None,
         }
     }
@@ -2529,18 +2568,6 @@ type StructAssociatedMembers = (
     HashMap<String, ParameterizedMember>,
 );
 
-/// What one tuple unpacking read its elements from, beside the value's type.
-#[derive(Debug, Clone)]
-struct TupleUnpackSource {
-    /// The reference the unpacked place yields; `None` for a temporary.
-    reference: Option<mojito_types::origin::RefTy>,
-    /// The named targets, in order.
-    targets: Vec<SourceSpan>,
-    /// Whether the statement declares them (`var a, b = t`) rather than
-    /// storing to bindings already in scope.
-    declares: bool,
-}
-
 /// The checked signature of a trait: required methods plus associated
 /// compile-time facts. A method requirement's signature may mention
 /// `Ty::SelfType` (the conforming type).
@@ -2560,12 +2587,6 @@ struct TraitInfo {
 /// signature-relative effects.
 struct TransferFrame {
     callable: String,
-    /// Whether this body is a clone of a template source validation
-    /// checked, so a selection made there with the operand symbolic (the
-    /// `rebind` overload) stands rather than being remade on the concrete
-    /// type the clone was made with. Set by `mark_symbolic_selection` once
-    /// the body site is known.
-    keeps_symbolic_selection: bool,
     param_owners: Vec<mojito_types::origin::OwnerId>,
     /// Whether each parameter's convention borrows caller storage
     /// (`mut`/`ref`) rather than owning a moved value.
@@ -2695,45 +2716,6 @@ type CallResultOrigin = (
     mojito_types::origin::Origin,
     Option<mojito_types::origin::Mutability>,
 );
-
-/// Each callee whose effect summary one body read, and what the read found.
-type EffectQueries = Vec<(String, EffectRead)>;
-
-/// What reading one callee's effect summary found.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum EffectRead {
-    Empty,
-    /// An empty summary read where a callable's name stands as a value,
-    /// under that name rather than a call's target.
-    Value,
-    /// Transfer effects replayed against a call's own receiver and arguments,
-    /// as read.
-    Transfers(Vec<mojito_types::types::TransferEffect>),
-    /// Anything else with no recipe: the effects of a named callable behind
-    /// a call-through residue, or those baked into a function value.
-    Residue,
-    /// A callee's call-through residue, resolved against the call's own
-    /// callable actuals and republished as a composition when one of them is
-    /// the body's own callable parameter.
-    CallThrough(Vec<mojito_checked::checked::CallThroughEffect>),
-}
-
-impl EffectRead {
-    /// A read of `effects` that a call replays when `replayed`.
-    pub(crate) fn of(
-        effects: Option<&Vec<mojito_types::types::TransferEffect>>,
-        replayed: bool,
-    ) -> Self {
-        match effects {
-            Some(effects) if !effects.is_empty() && replayed => Self::Transfers(effects.clone()),
-            Some(effects) if !effects.is_empty() => Self::Residue,
-            _ => Self::Empty,
-        }
-    }
-}
-
-/// Each generic-struct application one body reached, as written.
-type StructApplications = Vec<(String, Vec<TyArg>)>;
 
 /// One runtime parameter of a selected callee, recorded per call site.
 #[derive(Debug, Clone, PartialEq)]
@@ -2996,12 +2978,23 @@ mod indexing;
 
 mod method_calls;
 
+/// Count one body inference under `body_inference.template` for a generic
+/// body and `body_inference.plain` otherwise, naming the body in the notes.
+fn count_body_inference(generic: bool, name: impl FnOnce() -> String) {
+    let counter = if generic {
+        "body_inference.template"
+    } else {
+        "body_inference.plain"
+    };
+    timing::count(counter, 1);
+    timing::note(counter, name);
+}
+
 mod call_inference;
 mod ffi_calls;
 
 mod bound_defaults;
 mod statements;
-mod template_facts;
 mod with_stmt;
 
 #[cfg(test)]

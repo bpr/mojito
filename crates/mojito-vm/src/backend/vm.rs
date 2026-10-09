@@ -16,18 +16,15 @@ use crate::runtime::{
 use calls::*;
 #[allow(clippy::wildcard_imports, reason = "pages of this split module")]
 use mojito_ast::call::{ArgSlot, CallVariadics, match_call_slots};
-use mojito_checked::checked::{CheckedConst, ComptimeSequence};
+use mojito_checked::checked::CheckedConst;
 use mojito_common::timing;
 use mojito_hir::hir::VarId;
 use mojito_mir::mir::{
-    ConcreteMir, Const, MirBlock, MirCaptureMode, MirFunction, MirInstr, MirIntrinsicSubscript,
-    MirPlace, MirProgram, MirSubscriptArg, MirTerm, Proj, Reg,
+    ConcreteMir, Const, MirBlock, MirCaptureMode, MirInstr, MirIntrinsicSubscript, MirPlace,
+    MirProgram, MirSubscriptArg, MirTerm, Proj, Reg,
 };
 use mojito_types::ct::CtValue;
-use mojito_types::param_expr::ParamId;
-use mojito_types::types::{
-    CallableDefault, ConstraintOperand, GenericConstraint, ParamDecl, Ty, TyArg,
-};
+use mojito_types::types::Ty;
 #[allow(clippy::wildcard_imports, reason = "pages of this split module")]
 use places::*;
 use std::collections::HashMap;
@@ -81,9 +78,6 @@ pub struct VmBackend {
     /// to the native backend's constant globals, which
     /// `MirInstr::ParamListAddress` addresses.
     static_param_lists: HashMap<String, u64>,
-    /// The erased oracle's position in each running `comptime for`, by frame
-    /// and header: the index of the element its slot holds.
-    comptime_cursors: HashMap<(FrameId, usize), usize>,
 }
 
 impl VmBackend {
@@ -339,16 +333,14 @@ impl VmBackend {
         }
     }
 
-    /// Execute a function for its return value only. `value_params` reifies a
-    /// value-parameterized generic function's comptime arguments (empty otherwise).
+    /// Execute a function for its return value only.
     fn call_function(
         &mut self,
         prog: &Prog,
         fidx: usize,
         args: Vec<Value>,
-        value_params: &[(String, Value)],
     ) -> Result<Value, RuntimeError> {
-        Ok(self.call_frame(prog, fidx, args, value_params)?.0)
+        Ok(self.call_frame(prog, fidx, args)?.0)
     }
 
     /// Call a struct dunder `Type.method(args…)` (`args[0]` is the receiver). The
@@ -379,8 +371,7 @@ impl VmBackend {
         );
         let Some(idx) = prog.index_of(&fname) else {
             // `Equatable`'s default `!=`: a struct that declares `__eq__`
-            // and no `__ne__` negates its `__eq__`, which an erased body
-            // dispatches by name.
+            // and no `__ne__` negates its `__eq__`.
             if method == "__ne__"
                 && let Value::Bool(equal) = self.call_dunder(prog, sname, "__eq__", args)?
             {
@@ -390,41 +381,17 @@ impl VmBackend {
                 "vm: struct '{sname}' has no method '{method}'"
             )));
         };
-        self.call_function(prog, idx, args, &[])
+        self.call_function(prog, idx, args)
     }
 }
 
 impl VmBackend {
-    /// Run a checked program, entering through `main()` when present. This
-    /// executable entry enforces the same pre-drop ownership contract the
-    /// production `Compiler` pipeline does, so a stage-composed caller cannot
-    /// execute a program the analysis rejects. (The VM-CTFE entry
-    /// `run_function_value` deliberately keeps the lighter checked boundary.)
-    pub fn run(
-        &mut self,
-        program: &mojito_checked::checked::CheckedProgram,
-    ) -> Result<(), RuntimeError> {
-        let lowered = mojito_mir::mir::lower_checked_program(program);
-        if !lowered.invariant_errors.is_empty() {
-            return Err(RuntimeError::Unsupported(format!(
-                "invalid checked program: {}",
-                lowered.invariant_errors.join("; ")
-            )));
-        }
-        mojito_analysis::analysis::check_ownership_program(&lowered)
-            .map_err(|error| RuntimeError::Unsupported(format!("ownership error: {error}")))?;
-        self.run_prog(&build_prog_lowered(lowered)?)
-    }
-
-    /// Run a verified, already drop-elaborated MIR program — what
-    /// `mir::text::load_artifact` yields — resolving any parameter it still
-    /// names at run time. The loading gate is the artifact's
-    /// semantic gate, so this entry re-runs neither `mir::verify` nor the
-    /// pre-drop ownership analysis (meaningless on elaborated MIR), and it
-    /// must not re-run drop elaboration: `elaborate_drops_program` is not
-    /// idempotent, and the artifact's `drop.var`/cleanup schedule is already
-    /// final.
-    pub fn run_elaborated(&mut self, mir: MirProgram) -> Result<(), RuntimeError> {
+    /// Run concrete MIR, entering through `main()` when present.
+    /// [`ConcreteMir`] is built only by concrete verification, so this entry
+    /// verifies nothing again: the drop schedule and every instantiation are
+    /// already final.
+    pub fn run_concrete(&mut self, mir: ConcreteMir) -> Result<(), RuntimeError> {
+        let mir: MirProgram = mir.into_program();
         if !mir.invariant_errors.is_empty() {
             return Err(RuntimeError::Unsupported(format!(
                 "invalid MIR program: {}",
@@ -439,12 +406,6 @@ impl VmBackend {
         };
         let _run = timing::span("execute");
         self.run_prog(&prog)
-    }
-
-    /// Run concrete MIR. [`ConcreteMir`] is built only by concrete
-    /// verification, so this entry verifies nothing again.
-    pub fn run_concrete(&mut self, mir: ConcreteMir) -> Result<(), RuntimeError> {
-        self.run_elaborated(mir.into_program())
     }
 
     /// Call `name` in a verified concrete fragment for its result, under
@@ -469,7 +430,7 @@ impl VmBackend {
             .index_of(name)
             .ok_or_else(|| RuntimeError::UndefinedVariable(name.to_string()))?;
         self.ctfe_fuel = Some(fuel);
-        let result = self.call_function(&prog, index, args, &[]);
+        let result = self.call_function(&prog, index, args);
         let remaining = self.ctfe_fuel.take().unwrap_or(0);
         Ok((result?, remaining))
     }
@@ -488,11 +449,7 @@ impl VmBackend {
             return Ok(collection);
         }
         match value {
-            Value::Struct {
-                name,
-                fields,
-                value_params,
-            } if value_params.is_empty() => {
+            Value::Struct { name, fields } => {
                 if let [(storage, Value::Tuple(elements))] = fields.as_slice()
                     && storage == "storage"
                     && is_nominal_tuple(&name)
@@ -641,7 +598,7 @@ impl VmBackend {
         // user variables (skipping synthetic `$…` temporaries) as the global
         // bindings.
         if let Some(top) = prog.index_of("__toplevel__") {
-            let (_, vars) = self.call_frame(prog, top, Vec::new(), &[])?;
+            let (_, vars) = self.call_frame(prog, top, Vec::new())?;
             let names = &prog.mir.functions[top].1.var_names;
             self.bindings = names
                 .iter()
@@ -651,96 +608,21 @@ impl VmBackend {
                 .collect();
         }
         if let Some(main) = prog.index_of("main") {
-            self.call_function(prog, main, Vec::new(), &[])?;
+            self.call_function(prog, main, Vec::new())?;
         }
         Ok(())
     }
 }
 
-/// A `Variant` operation's alternative. Concrete MIR holds only known
-/// ones; the erased oracle reifies a pack's length, not its element types,
-/// so a template's `_get_type_index` is out of its reach.
+/// A `Variant` operation's alternative. Concrete MIR holds only known ones.
 pub(super) fn known_variant_index(
     index: &mojito_types::types::VariantIndex,
 ) -> Result<usize, RuntimeError> {
     index.known().ok_or_else(|| {
         RuntimeError::Unsupported(format!(
-            "Variant alternative `{index}` is not known in erased execution"
+            "concrete MIR carries no symbolic Variant alternative `{index}`"
         ))
     })
-}
-
-/// The values an erased frame reads a parameter expression against, by
-/// name: its slots and reified value parameters that have a compile-time
-/// reading, and each type pack of the signature by its collector's runtime
-/// arity — a tuple of as many placeholder elements, which answers the
-/// pack's length query and nothing else, since the frame carries no type
-/// argument. The index of a `comptime for` inside its loop is its slot's
-/// value under the binder's name, whatever spelling the slot took.
-pub(super) fn erased_parameter_values(
-    function: &MirFunction,
-    variables: &[Value],
-    comptime: &[(String, Value)],
-) -> HashMap<String, CtValue> {
-    let packs = function
-        .param_types
-        .iter()
-        .zip(variables)
-        .filter_map(|(ty, value)| {
-            let (Ty::VariadicPack(element), Value::Tuple(items)) = (ty, value) else {
-                return None;
-            };
-            let Ty::Param { binder, .. } =
-                mojito_types::types::pack_spread(std::slice::from_ref(&**element))?
-            else {
-                return None;
-            };
-            let placeholder = CtValue::Type(Box::new(Ty::None));
-            Some((
-                binder.name.trim_start_matches('*').to_string(),
-                CtValue::Tuple(vec![placeholder; items.len()]),
-            ))
-        });
-    function
-        .var_names
-        .iter()
-        .zip(variables)
-        .chain(comptime.iter().map(|(name, value)| (name, value)))
-        .map(|(name, value)| (name.trim_start_matches('*'), value))
-        .chain(live_loop_indices(function, variables))
-        .filter_map(|(name, value)| {
-            runtime_value_as_ct(value).map(|value| (name.to_string(), value))
-        })
-        .chain(packs)
-        .collect()
-}
-
-/// The index of each `comptime for` of `function` whose loop is running,
-/// under its binder's name: its slot is cleared outside the loop.
-fn live_loop_indices<'a>(
-    function: &'a MirFunction,
-    variables: &'a [Value],
-) -> impl Iterator<Item = (&'a str, &'a Value)> {
-    function
-        .blocks
-        .iter()
-        .filter_map(|block| match &block.term {
-            MirTerm::ComptimeFor { binder, slot, .. } => {
-                let value = variables.get(*slot as usize)?;
-                (!matches!(value, Value::None)).then_some((binder.name.as_ref(), value))
-            }
-            _ => None,
-        })
-}
-
-/// Bind a nested body's inherited enclosing binders beside the call's own
-/// parameters, which shadow an enclosing binder of the same name.
-fn inherit_parameters(own: &mut Vec<(String, Value)>, inherited: Vec<(String, Value)>) {
-    for (name, value) in inherited {
-        if !own.iter().any(|(bound, _)| *bound == name) {
-            own.push((name, value));
-        }
-    }
 }
 
 /// The whole program the VM executes: the lowered MIR plus the struct and
@@ -784,89 +666,9 @@ impl Prog {
         self.mir.functions.iter().position(|(n, _)| n == name)
     }
 
-    /// The values of the binders of the regions a body nested in them is
-    /// declared in and of its enclosing declarations' value binders, which
-    /// it reads, taken from the frame of `function` that builds a closure
-    /// over it: an erased nested body is not instantiated, so its closure
-    /// carries them. A `comptime for` index is its slot's value in the
-    /// iteration the closure is built in.
-    fn inherited_parameters(
-        &self,
-        target: &str,
-        function: &MirFunction,
-        variables: &[Value],
-        comptime: &[(String, Value)],
-    ) -> Vec<(String, Value)> {
-        let mut parameters = Vec::new();
-        let target = self.sigs.get(target);
-        // A region binder of the target is the index of a loop of
-        // `function`, whose slot holds the iteration's value.
-        for decl in target.map_or(&[][..], |sig| &sig.region_binders) {
-            let binder = decl.binder();
-            let value = function.blocks.iter().find_map(|block| match &block.term {
-                MirTerm::ComptimeFor {
-                    binder: index,
-                    slot,
-                    ..
-                } if index.id == binder.id => variables.get(*slot as usize),
-                _ => None,
-            });
-            if let Some(value) = value.filter(|value| !matches!(value, Value::None)) {
-                parameters.push((binder.name.to_string(), value.clone()));
-            }
-        }
-        let mut scopes: Vec<&[ParamDecl]> = vec![target.map_or(&[][..], |sig| &sig.region_binders)];
-        let mut link = target.and_then(|sig| sig.enclosing.as_deref());
-        while let Some(sig) = link.and_then(|name| self.sigs.get(name)) {
-            scopes.push(&sig.param_decls);
-            scopes.push(&sig.region_binders);
-            link = sig.enclosing.as_deref();
-        }
-        for decl in scopes.into_iter().flatten() {
-            let name = match decl {
-                ParamDecl::Value { name, .. }
-                | ParamDecl::Type {
-                    name,
-                    variadic: true,
-                    ..
-                } => name.trim_start_matches('*'),
-                ParamDecl::Type { .. } => continue,
-            };
-            let pack = matches!(decl, ParamDecl::Type { .. })
-                .then(|| erased_parameter_values(function, variables, comptime).remove(name))
-                .flatten()
-                .and_then(|pack| match pack {
-                    // Only the pack's length is read off an erased body.
-                    CtValue::Tuple(items) => Some(Value::Tuple(vec![Value::Int(0); items.len()])),
-                    _ => None,
-                });
-            let value = pack.as_ref().or_else(|| {
-                comptime
-                    .iter()
-                    .find(|(bound, _)| bound == name)
-                    .map(|(_, value)| value)
-                    .or_else(|| {
-                        function
-                            .var_names
-                            .iter()
-                            .position(|candidate| candidate == name)
-                            .and_then(|slot| variables.get(slot))
-                    })
-                    .filter(|value| !matches!(value, Value::None))
-            });
-            if let Some(value) = value
-                && !parameters.iter().any(|(bound, _)| bound == name)
-            {
-                parameters.push((name.to_string(), value.clone()));
-            }
-        }
-        parameters
-    }
-
     /// The `hasher`'s `_update_with_simd` a scalar `__hash__` leaf of type
     /// `leaf` calls: the instance the elaborator minted at the leaf's vector
-    /// type, else the template itself, whose dtype and width binders an
-    /// erased run reifies from the leaf.
+    /// type, else the symbol as named.
     fn hash_leaf_update(&self, hasher: &str, leaf: &mojito_types::types::Ty) -> String {
         let template = format!("{hasher}._update_with_simd");
         let shape = mojito_types::types::simd_shape(&mojito_types::types::hash_leaf_ty(leaf));
@@ -1005,8 +807,6 @@ struct CallerFrame<'a> {
     function: usize,
     registers: &'a mut [Value],
     variables: &'a mut Vec<Value>,
-    /// The caller frame's compile-time bindings (`Frame::comptime`).
-    comptime: &'a [(String, Value)],
 }
 
 /// Executing-frame storage that must remain reachable while adapting an
@@ -1058,15 +858,6 @@ struct FnSig {
     /// Indexes into the regular-parameter list.
     positional_only: Option<usize>,
     keyword_only: Option<usize>,
-    /// Checker-resolved compile-time parameters. Value parameters become typed
-    /// frame locals; type parameters remain erased.
-    param_decls: Vec<ParamDecl>,
-    /// The declaration a nested function is nested in, whose value binders
-    /// its body reads.
-    enclosing: Option<String>,
-    /// The binders of the regions a nested function is declared in, which
-    /// its body reads.
-    region_binders: Vec<ParamDecl>,
 }
 
 impl FnSig {
@@ -1092,118 +883,12 @@ impl FnSig {
     }
 }
 
-/// The name a solved type argument reifies to in an erased frame: the
-/// spelling [`MirInstr::ConstructTypeParam`] constructs from. A type with no
-/// runtime constructor by name (a symbolic one, a SIMD vector) reifies to
-/// nothing, and the slot stays unsupplied.
-fn reified_type_spelling(ty: &Ty) -> Option<String> {
-    Some(match ty {
-        Ty::Struct(name, _) => name.clone(),
-        Ty::Int => "Int".to_string(),
-        Ty::UInt => "UInt".to_string(),
-        Ty::Bool => "Bool".to_string(),
-        Ty::Float64 => "Float64".to_string(),
-        Ty::StringLiteral => "StringLiteral".to_string(),
-        Ty::None => "NoneType".to_string(),
-        _ => return None,
-    })
-}
-
-/// The erased frame's reification of a type argument: its spelling, or,
-/// for a struct instance over value arguments (`AHasher[key]`), a type token
-/// — a fieldless `Value::Struct` whose `value_params` carry them — so a
-/// construction of the binder (`H()`) builds the instance at its arguments.
-fn reified_type_value(prog: &Prog, ty: &Ty) -> Option<Value> {
-    let Ty::Struct(name, arguments) = ty else {
-        return reified_type_spelling(ty).map(Value::Str);
-    };
-    let value_params: Vec<(String, Value)> = prog
-        .structs
-        .get(name)
-        .map(|definition| {
-            definition
-                .param_decls
-                .iter()
-                .zip(arguments.iter())
-                .filter_map(|(declaration, argument)| match (declaration, argument) {
-                    (ParamDecl::Value { name, ty, .. }, TyArg::Val(value)) => Some((
-                        name.trim_start_matches('*').to_string(),
-                        crate::runtime::coerce_checked(
-                            ct_value_as_runtime(value.clone())?,
-                            ty.as_ref(),
-                        ),
-                    )),
-                    _ => None,
-                })
-                .collect()
-        })
-        .unwrap_or_default();
-    Some(if value_params.is_empty() {
-        Value::Str(name.clone())
-    } else {
-        type_token(name, value_params)
-    })
-}
-
-/// A reified struct type over value arguments (see [`reified_type_value`]).
-fn type_token(name: &str, value_params: Vec<(String, Value)>) -> Value {
-    Value::Struct {
-        name: name.to_string(),
-        fields: Vec::new(),
-        value_params,
-    }
-}
-
-/// Reify generic value parameters in declaration order. Missing source
-/// arguments are filled from checked scalar/callable defaults; callable aliases
-/// can therefore reuse an earlier runtime closure without ever converting its
-/// capture payload into `CtValue`.
-fn reify_value_parameters(
-    prog: &Prog,
-    declarations: &[ParamDecl],
-    supplied: &[Option<Value>],
-) -> Vec<(String, Value)> {
-    let resolved = resolve_value_parameter_slots(declarations, supplied);
-    declarations
-        .iter()
-        .enumerate()
-        .filter_map(|(index, declaration)| {
-            let ParamDecl::Value { name, ty, .. } = declaration else {
-                // A constructible type parameter is reified as the bound
-                // struct's name (supplied argument, else the declared default).
-                let ParamDecl::Type { name, default, .. } = declaration else {
-                    return None;
-                };
-                let value = match resolved.get(index).cloned().flatten() {
-                    Some(value @ (Value::Str(_) | Value::Tuple(_) | Value::Struct { .. })) => value,
-                    _ if constructible_type_parameter(declaration) => match default.as_deref() {
-                        Some(default @ Ty::Struct(..)) => reified_type_value(prog, default)?,
-                        _ => return None,
-                    },
-                    _ => return None,
-                };
-                return Some((name.clone(), value));
-            };
-            let value = resolved
-                .get(index)
-                .cloned()
-                .flatten()
-                .unwrap_or(Value::None);
-            Some((
-                name.trim_start_matches('*').to_string(),
-                crate::runtime::coerce_checked(value, ty.as_ref()),
-            ))
-        })
-        .collect()
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 struct FrameId(u64);
 
 struct SynchronousCall<'a> {
     function_index: usize,
     arguments: Vec<Value>,
-    value_params: &'a [(String, Value)],
     reference_inputs: &'a [(usize, Value)],
 }
 
@@ -1214,85 +899,6 @@ struct StructDef {
     fields: Vec<(String, Ty)>,
     mut_self_methods: std::collections::HashSet<String>,
     fieldwise_init: bool,
-    /// Checker-resolved compile-time parameters. Type parameters are erased;
-    /// value parameters are materialized to their declared type on reification.
-    param_decls: Vec<ParamDecl>,
-}
-
-fn runtime_value_as_ct(value: &Value) -> Option<CtValue> {
-    Some(match value {
-        Value::Int(value) => CtValue::Int(*value),
-        Value::UInt(value) => CtValue::UInt(*value),
-        Value::Float64(value) => CtValue::Float(value.to_bits()),
-        Value::IntLiteral(value) => CtValue::IntLiteral(value.clone()),
-        Value::FloatLiteral(value) => CtValue::FloatLiteral(value.clone()),
-        Value::Bool(value) => CtValue::Bool(*value),
-        Value::Dtype(dtype) => CtValue::Dtype(*dtype),
-        Value::Str(value) => CtValue::Str(value.clone()),
-        Value::Tuple(values) => CtValue::Tuple(
-            values
-                .iter()
-                .map(runtime_value_as_ct)
-                .collect::<Option<Vec<_>>>()?,
-        ),
-        Value::ComptimeList(values) => CtValue::List(
-            values
-                .iter()
-                .map(runtime_value_as_ct)
-                .collect::<Option<Vec<_>>>()?,
-        ),
-        Value::Simd { dtype, lanes } => CtValue::Simd {
-            dtype: *dtype,
-            lanes: match lanes {
-                crate::runtime::SimdLanes::Int(lanes) => lanes
-                    .iter()
-                    .copied()
-                    .map(mojito_types::ct::CtLane::Int)
-                    .collect(),
-                crate::runtime::SimdLanes::Float(lanes) => lanes
-                    .iter()
-                    .map(|lane| mojito_types::ct::CtLane::Float(lane.to_bits()))
-                    .collect(),
-                crate::runtime::SimdLanes::Bool(lanes) => lanes
-                    .iter()
-                    .copied()
-                    .map(mojito_types::ct::CtLane::Bool)
-                    .collect(),
-            },
-        },
-        // A type token compares by its spelling, as every reified type does.
-        Value::Struct {
-            name,
-            fields,
-            value_params,
-        } if fields.is_empty() && !value_params.is_empty() => CtValue::Str(name.clone()),
-        Value::Struct { name, fields, .. } => CtValue::Struct {
-            name: name.clone(),
-            fields: fields
-                .iter()
-                .map(|(field, value)| Some((field.clone(), runtime_value_as_ct(value)?)))
-                .collect::<Option<Vec<_>>>()?,
-        },
-        _ => return None,
-    })
-}
-
-/// The value parameter `binder` of the struct a static method's
-/// receiver-less `self` slot carries, in the caller's frame.
-fn static_self_parameter(prog: &Prog, caller: CallerBindings<'_>, binder: &str) -> Option<Value> {
-    let function = &prog.mir.functions[caller.function].1;
-    let slot = function
-        .var_names
-        .iter()
-        .skip(function.n_params)
-        .position(|var| var == "self")?;
-    let Value::Struct { value_params, .. } = caller.variables.get(function.n_params + slot)? else {
-        return None;
-    };
-    value_params
-        .iter()
-        .find(|(name, _)| name == binder)
-        .map(|(_, value)| value.clone())
 }
 
 /// Whether the struct `name` is an instance of the nominal `Tuple`.
@@ -1364,7 +970,6 @@ fn ct_value_as_runtime(value: CtValue) -> Option<Value> {
                 .into_iter()
                 .map(|(field, value)| Some((field, ct_value_as_runtime(value)?)))
                 .collect::<Option<Vec<_>>>()?,
-            value_params: Vec::new(),
         },
         CtValue::Dict { .. }
         | CtValue::Set { .. }
@@ -1374,236 +979,6 @@ fn ct_value_as_runtime(value: CtValue) -> Option<Value> {
         | CtValue::Expr(_)
         | CtValue::Deferred(_) | CtValue::Marker(_) => return None,
     })
-}
-
-/// A type over the erased frame's value binders, closed by the values the
-/// frame reifies: an erased body keyed on a `DType` or lane binder
-/// (`Scalar[Self.dtype]` in a range-family member) builds its values at the
-/// lane its frame binds. A closed type, or one over a binder the frame does
-/// not hold, is returned as it is.
-fn erased_closed_ty(
-    ty: &Ty,
-    function: &MirFunction,
-    variables: &[Value],
-    comptime: &[(String, Value)],
-) -> Ty {
-    if comptime.is_empty() || !mojito_types::types::is_symbolic(ty) {
-        return ty.clone();
-    }
-    let named = erased_parameter_values(function, variables, comptime);
-    let context = mojito_types::param_expr::ParamContext::detached();
-    let bindings = mojito_types::param_expr::ParamBindings::from_named_values(&context, &named);
-    mojito_types::types::replace_parameters(&context, ty, &bindings, 0)
-        .unwrap_or_else(|_| ty.clone())
-}
-
-/// The length of the type list an application spreads (`Tuple[*Ts.reverse()]`,
-/// `Tuple[*Self.Ts]`), counted under the erased frame's reified packs.
-fn erased_list_length(
-    arguments: &[TyArg],
-    function: &MirFunction,
-    variables: &[Value],
-    comptime: &[(String, Value)],
-) -> Option<usize> {
-    let context = mojito_types::param_expr::ParamContext::detached();
-    let named = erased_parameter_values(function, variables, comptime);
-    let bindings = mojito_types::param_expr::ParamBindings::from_named_values(&context, &named);
-    if let Some(Ty::Param { binder, .. }) = mojito_types::types::pack_spread_argument(arguments) {
-        return match named.get(binder.name.trim_start_matches('*')) {
-            Some(mojito_types::ct::CtValue::Tuple(elements)) => Some(elements.len()),
-            _ => None,
-        };
-    }
-    let list = mojito_types::types::list_spread_argument(arguments)?;
-    let length = context.list_length(list).ok()?;
-    context
-        .replace(&length, &bindings)
-        .ok()?
-        .as_constant()
-        .and_then(mojito_types::param_expr::fold::integer_value)
-        .and_then(|length| length.to_i64())
-        .and_then(|length| usize::try_from(length).ok())
-}
-
-/// Decide a `comptime if` on the erased path from the frame's reified value
-/// parameters: a comparison over value binders, constants, and expressions
-/// of them. A condition over a type binder has no erased reading, since an
-/// erased frame carries no type argument.
-/// The block a `comptime for` header hands control to on the erased path,
-/// which runs the loop as written: the slot holds the iteration's element,
-/// or nothing before the first and after the last, and `cursors` the
-/// element's position, keyed by the frame and the header — an empty slot
-/// starts the sequence the frame's reified parameters decide, which a range
-/// spans as `range` does, and the slot is cleared on exit.
-fn comptime_for_next(
-    header: &MirTerm,
-    function: &MirFunction,
-    variables: &mut [Value],
-    comptime: &[(String, Value)],
-    cursors: &mut HashMap<(FrameId, usize), usize>,
-    frame: FrameId,
-) -> Result<usize, RuntimeError> {
-    let MirTerm::ComptimeFor {
-        slot,
-        source,
-        body,
-        exit,
-        ..
-    } = header
-    else {
-        return Err(RuntimeError::Unsupported(
-            "a compile-time loop header was expected".to_string(),
-        ));
-    };
-    let unsupported = |what: &str| {
-        RuntimeError::Unsupported(format!(
-            "the erased oracle cannot decide the comptime for {what} `{source}`"
-        ))
-    };
-    let named = erased_parameter_values(function, variables, comptime);
-    let evaluate = |expr: &mojito_types::param_expr::ParamExpr, what: &str| {
-        expr.evaluate_named(&named).map_err(|_| unsupported(what))
-    };
-    let key = (frame, std::ptr::from_ref(header) as usize);
-    let slot = *slot as usize;
-    let position = if matches!(variables[slot], Value::None) {
-        0
-    } else {
-        cursors.get(&key).map_or(0, |position| position + 1)
-    };
-    let next = match source {
-        ComptimeSequence::Range { start, stop, step } => {
-            let bound = |expr, what| {
-                mojito_types::param_expr::fold::integer_value(&evaluate(expr, what)?)
-                    .and_then(|value| value.to_i64())
-                    .ok_or_else(|| unsupported(what))
-            };
-            let (start, stop, step) = (
-                bound(start, "start")?,
-                bound(stop, "stop")?,
-                bound(step, "step")?,
-            );
-            i64::try_from(position)
-                .ok()
-                .and_then(|position| position.checked_mul(step))
-                .and_then(|offset| start.checked_add(offset))
-                .filter(|next| (step > 0 && *next < stop) || (step < 0 && *next > stop))
-                .map(Value::Int)
-        }
-        ComptimeSequence::Elements(elements) => evaluate(elements, "sequence")?
-            .comptime_iteration_elements()
-            .ok_or_else(|| unsupported("sequence"))?
-            .into_iter()
-            .nth(position)
-            .map(|element| ct_value_as_runtime(element).ok_or_else(|| unsupported("element")))
-            .transpose()?,
-    };
-    if let Some(next) = next {
-        variables[slot] = next;
-        cursors.insert(key, position);
-        Ok(*body)
-    } else {
-        variables[slot] = Value::None;
-        cursors.remove(&key);
-        Ok(*exit)
-    }
-}
-
-fn comptime_branch_holds(
-    cond: &GenericConstraint,
-    function: &MirFunction,
-    variables: &[Value],
-    comptime: &[(String, Value)],
-) -> Result<bool, RuntimeError> {
-    use GenericConstraint::{And, Bool, Eq, Ge, Gt, Le, Lt, Ne, Not, Or, WithMessage};
-    use mojito_ast::ast::InfixOp;
-    let unsupported = || {
-        RuntimeError::Unsupported(format!(
-            "the erased oracle cannot decide the comptime if condition `{cond:?}`"
-        ))
-    };
-    let named = erased_parameter_values(function, variables, comptime);
-    let operand = |operand: &ConstraintOperand| match operand {
-        ConstraintOperand::Param(param) => named.get(param.name.as_ref()).cloned(),
-        ConstraintOperand::Value(CtValue::Expr(expr)) | ConstraintOperand::Expr(expr) => {
-            expr.evaluate_named(&named).ok()
-        }
-        ConstraintOperand::Value(value) => Some(value.clone()),
-        ConstraintOperand::PackLength(pack) => match named.get(pack.name.trim_start_matches('*')) {
-            Some(CtValue::Tuple(elements)) => i64::try_from(elements.len()).ok().map(CtValue::Int),
-            _ => None,
-        },
-        // A type parameter reifies as its type's spelling, so a type operand
-        // compares by the same spelling; an element of a reified pack
-        // (`Self.Ts[i]`) is its element's spelling.
-        ConstraintOperand::Type(Ty::Dependent(dependent)) => {
-            let (list, index) = dependent.pack_element()?;
-            let pack = list.as_decl_ref()?;
-            let CtValue::Tuple(elements) = named.get(pack.name.trim_start_matches('*'))? else {
-                return None;
-            };
-            let index =
-                mojito_types::param_expr::fold::integer_value(&index.evaluate_named(&named).ok()?)?
-                    .to_i64()?;
-            match elements.get(usize::try_from(index).ok()?)? {
-                CtValue::Type(ty) => reified_type_spelling(ty).map(CtValue::Str),
-                spelling @ CtValue::Str(_) => Some(spelling.clone()),
-                _ => None,
-            }
-        }
-        ConstraintOperand::Type(ty) => reified_type_spelling(ty).map(CtValue::Str),
-    };
-    let compare = |op, left, right| {
-        let (left, right) = (
-            operand(left).ok_or_else(unsupported)?,
-            operand(right).ok_or_else(unsupported)?,
-        );
-        match (op, &left, &right) {
-            (InfixOp::Eq, CtValue::Str(left), CtValue::Str(right)) => Ok(left == right),
-            (InfixOp::Eq, CtValue::Bool(left), CtValue::Bool(right)) => Ok(left == right),
-            _ => mojito_types::param_expr::fold::compare(op, &left, &right)
-                .map_err(|_| unsupported()),
-        }
-    };
-    let holds = |inner| comptime_branch_holds(inner, function, variables, comptime);
-    match cond {
-        Bool(value) => Ok(*value),
-        WithMessage(inner, _) => holds(inner),
-        Not(inner) => Ok(!holds(inner)?),
-        And(left, right) => Ok(holds(left)? && holds(right)?),
-        Or(left, right) => Ok(holds(left)? || holds(right)?),
-        Eq(left, right) => compare(InfixOp::Eq, left, right),
-        Ne(left, right) => Ok(!compare(InfixOp::Eq, left, right)?),
-        Lt(left, right) => compare(InfixOp::Lt, left, right),
-        Le(left, right) => compare(InfixOp::Le, left, right),
-        Gt(left, right) => compare(InfixOp::Gt, left, right),
-        Ge(left, right) => compare(InfixOp::Ge, left, right),
-        GenericConstraint::Conforms { .. }
-        | GenericConstraint::ConformsPack { .. }
-        | GenericConstraint::PackPredicate { .. }
-        | GenericConstraint::PackContains { .. }
-        | GenericConstraint::Trivial(..) => Err(unsupported()),
-    }
-}
-
-fn resolve_callable_default(
-    default: &CallableDefault,
-    runtime: &HashMap<ParamId, Value>,
-    comptime: &HashMap<String, CtValue>,
-) -> Option<Value> {
-    match default {
-        CallableDefault::Symbol(symbol) => Some(Value::Function(symbol.clone())),
-        CallableDefault::Parameter(parameter) => runtime.get(&parameter.id).cloned(),
-        CallableDefault::If {
-            condition,
-            then_value,
-            else_value,
-        } => match condition.evaluate_named(comptime).ok()? {
-            CtValue::Bool(true) => resolve_callable_default(then_value, runtime, comptime),
-            CtValue::Bool(false) => resolve_callable_default(else_value, runtime, comptime),
-            _ => None,
-        },
-    }
 }
 
 /// Take the two arguments of a two-arg built-in (`min`/`max`).
@@ -1622,87 +997,6 @@ fn arg2(name: &str, args: Vec<Value>) -> Result<(Value, Value), RuntimeError> {
     ))
 }
 
-/// Resolve every supplied or defaulted value in declaration order. This is
-/// separate from frame-local naming so an indirect call can resolve the
-/// anonymous contract's defaults, then reify those concrete values under the
-/// implementation's (alpha-equivalent) declaration names.
-/// Whether a type parameter must be reified at runtime: its bound admits
-/// default construction (`H()`), which an erased body performs by name.
-pub fn constructible_type_parameter(declaration: &ParamDecl) -> bool {
-    mojito_types::types::constructible_type_parameter(declaration)
-}
-
-fn resolve_value_parameter_slots(
-    declarations: &[ParamDecl],
-    supplied: &[Option<Value>],
-) -> Vec<Option<Value>> {
-    let mut resolved = vec![None; declarations.len()];
-    let mut runtime = HashMap::new();
-    let mut comptime = HashMap::new();
-    for (index, declaration) in declarations.iter().enumerate() {
-        let ParamDecl::Value {
-            id,
-            name,
-            ty,
-            default,
-            callable_default,
-            ..
-        } = declaration
-        else {
-            // A reified type argument passes through as the bound type's
-            // name (a type token, for an instance over value arguments; a
-            // pack, as its elements' names). The declaration's own bounds do
-            // not gate it: a constructor may default-construct `Self.T`
-            // under a `where conforms_to(Self.T, Defaultable)` clause on an
-            // `AnyType` binder (current Array's nullary `__init__`).
-            resolved[index] = supplied.get(index).cloned().flatten().filter(|value| {
-                matches!(
-                    value,
-                    Value::Str(_) | Value::Tuple(_) | Value::Struct { .. }
-                )
-            });
-            continue;
-        };
-        let value = supplied
-            .get(index)
-            .cloned()
-            .flatten()
-            .or_else(|| {
-                callable_default
-                    .as_ref()
-                    .and_then(|default| resolve_callable_default(default, &runtime, &comptime))
-            })
-            .or_else(|| {
-                default.as_ref().and_then(|default| {
-                    default
-                        .evaluate_named(&comptime)
-                        .ok()
-                        .and_then(|value| value.materialize_as(ty))
-                        .and_then(ct_value_as_runtime)
-                })
-            })
-            .map(|value| match (value, declaration) {
-                // A value pack coerces each of its values.
-                (Value::Tuple(values), ParamDecl::Value { variadic: true, .. }) => Value::Tuple(
-                    values
-                        .into_iter()
-                        .map(|value| crate::runtime::coerce_checked(value, ty.as_ref()))
-                        .collect(),
-                ),
-                (value, _) => crate::runtime::coerce_checked(value, ty.as_ref()),
-            });
-        let Some(value) = value else {
-            continue;
-        };
-        runtime.insert(id.clone(), value.clone());
-        if let Some(value) = runtime_value_as_ct(&value) {
-            comptime.insert(name.clone(), value);
-        }
-        resolved[index] = Some(value);
-    }
-    resolved
-}
-
 struct Frame {
     id: FrameId,
     function: usize,
@@ -1711,18 +1005,13 @@ struct Frame {
     block: usize,
     instruction: usize,
     continuation: Option<ReturnContinuation>,
-    /// The reified value parameters of an erased generic body, by name:
-    /// what a `comptime if` over a value binder reads on the erased path.
-    comptime: Vec<(String, Value)>,
 }
 
-/// The frame an instruction executes in: its function, its id, and the value
-/// parameters it reifies (`Frame::comptime`).
+/// The frame an instruction executes in: its function and its id.
 #[derive(Clone, Copy)]
-struct FrameScope<'a> {
+struct FrameScope {
     function: usize,
     id: FrameId,
-    comptime: &'a [(String, Value)],
 }
 
 struct WritebackCall<'a> {
@@ -1732,7 +1021,6 @@ struct WritebackCall<'a> {
     keyword_args: Vec<(String, Value)>,
     argument_places: &'a [Option<MirPlace>],
     keyword_argument_places: &'a [Option<MirPlace>],
-    value_params: Vec<(String, Value)>,
 }
 
 struct MethodInvocation<'a> {
@@ -1745,11 +1033,6 @@ struct MethodInvocation<'a> {
     receiver_place: &'a Option<MirPlace>,
     argument_places: &'a [Option<MirPlace>],
     keyword_argument_places: &'a [Option<MirPlace>],
-    parameter_arguments: &'a [mojito_mir::mir::MirParamArg],
-    parameter_declarations: &'a [mojito_types::types::ParamDecl],
-    /// The method's own compile-time arguments the checker solved
-    /// (`MirInstr::MethodCall::instantiated_args`).
-    instantiated_arguments: &'a [TyArg],
 }
 
 /// Recover the retained caller place selected for one bound parameter. Keyword
@@ -1791,610 +1074,6 @@ struct HeapAllocation {
     live: bool,
 }
 
-fn build_prog_lowered(lowered: mojito_mir::mir::MirProgram) -> Result<Prog, RuntimeError> {
-    let mut mir = mojito_analysis::analysis::elaborate_drops_program(lowered);
-    // The VM executes the drop-elaborated program, so it is re-verified after
-    // the DropVar/edge-cleanup rewrite — the elaborated MIR must satisfy the
-    // same contract the pre-elaboration program did.
-    mir.invariant_errors
-        .extend(mojito_mir::mir::verify::verify(&mir));
-    if !mir.invariant_errors.is_empty() {
-        return Err(RuntimeError::Unsupported(format!(
-            "invalid checked program: {}",
-            mir.invariant_errors.join("; ")
-        )));
-    }
-    let structs = build_structs(&mir.declarations);
-    let sigs = build_sigs(&mir.declarations);
-    Ok(Prog {
-        // Elaborate ASAP drops: splice a `DropVar` after each variable's last
-        // use, so a struct's `__deinit__` runs there (Stage 7). A no-op for values
-        // without a destructor.
-        mir,
-        structs,
-        sigs,
-    })
-}
-
-/// Bind source-ordered compile-time arguments to their checked declarations.
-/// Keyword arguments may skip defaults or appear out of declaration order, and
-/// an erased type argument still occupies its selected declaration slot. A
-/// value pack takes every positional argument from its slot on, as the tuple
-/// of its values.
-fn align_parameter_arguments(
-    declarations: &[ParamDecl],
-    arguments: Vec<(Option<String>, Option<Value>)>,
-) -> Vec<Option<Value>> {
-    // A pack, of values or of types (its elements reified by spelling),
-    // collects every positional argument from its position on.
-    let value_pack = |index: usize| {
-        matches!(
-            declarations[index],
-            ParamDecl::Value { variadic: true, .. } | ParamDecl::Type { variadic: true, .. }
-        )
-    };
-    let mut aligned: Vec<Option<Value>> = (0..declarations.len())
-        .map(|index| value_pack(index).then(|| Value::Tuple(Vec::new())))
-        .collect();
-    let mut next_positional = 0;
-    for (name, value) in arguments {
-        let index = if let Some(name) = name {
-            declarations
-                .iter()
-                .position(|declaration| declaration.name().trim_start_matches('*') == name)
-        } else {
-            while declarations
-                .get(next_positional)
-                .is_some_and(|declaration| match declaration {
-                    ParamDecl::Type { infer_only, .. } | ParamDecl::Value { infer_only, .. } => {
-                        *infer_only
-                    }
-                })
-            {
-                next_positional += 1;
-            }
-            let index = (next_positional < declarations.len()).then_some(next_positional);
-            next_positional += usize::from(index.is_some_and(|index| !value_pack(index)));
-            index
-        };
-        let Some(index) = index else {
-            continue;
-        };
-        if !value_pack(index) {
-            aligned[index] = value;
-        } else if let (Some(Value::Tuple(values)), Some(value)) = (&mut aligned[index], value) {
-            // A value pack's elements are scalars, so a tuple is a pack
-            // spread whole (`f[*vs]()`).
-            match value {
-                Value::Tuple(spread) if matches!(declarations[index], ParamDecl::Value { .. }) => {
-                    values.extend(spread);
-                }
-                value => values.push(value),
-            }
-        }
-    }
-    aligned
-}
-
-impl VmBackend {
-    /// The bindings a static method call's spelled receiver (`W[5].st()`,
-    /// `Box[Int].accepts[Int]()`) gives its frame: each type parameter of the
-    /// receiver's struct reified by name, so a `comptime if` on `Self.T`
-    /// decides as in an instance method, and the receiver-less `self` slot
-    /// of a value-parameterized struct, bound with its value parameters
-    /// reified so the body's `Self.k` reads it as an instance method reads
-    /// its receiver's. A receiver argument naming an enclosing binder
-    /// (`W[Self.k]`) resolves in the caller's frame.
-    fn static_receiver_binding(
-        &self,
-        prog: &Prog,
-        caller: CallerBindings<'_>,
-        callee: usize,
-        receiver: Option<&Ty>,
-    ) -> Vec<(String, Value)> {
-        let Some(Ty::Struct(name, arguments)) = receiver else {
-            return Vec::new();
-        };
-        let Some(definition) = prog.structs.get(name) else {
-            return Vec::new();
-        };
-        let mut bindings: Vec<(String, Value)> = definition
-            .param_decls
-            .iter()
-            .zip(arguments.iter())
-            .filter_map(|(declaration, argument)| {
-                let (
-                    ParamDecl::Type {
-                        name,
-                        variadic: false,
-                        ..
-                    },
-                    TyArg::Ty(ty),
-                ) = (declaration, argument)
-                else {
-                    return None;
-                };
-                let value = match ty {
-                    Ty::Param { binder, .. } => self
-                        .bound_type_parameter(
-                            prog,
-                            caller.function,
-                            caller.frame,
-                            caller.variables,
-                            &binder.name,
-                        )
-                        .or_else(|| caller.comptime_binding(&binder.name))?,
-                    ty => reified_type_value(prog, ty)?,
-                };
-                Some((name.clone(), value))
-            })
-            .collect();
-        bindings.extend(self.static_self_binding(prog, caller, callee, name, arguments));
-        bindings
-    }
-
-    /// The receiver-less `self` slot of a static method on a
-    /// value-parameterized struct ([`Self::static_receiver_binding`]);
-    /// `None` when the callee has no such slot.
-    fn static_self_binding(
-        &self,
-        prog: &Prog,
-        caller: CallerBindings<'_>,
-        callee: usize,
-        name: &str,
-        arguments: &mojito_types::types::TyArgs,
-    ) -> Option<(String, Value)> {
-        let function = &prog.mir.functions[callee].1;
-        function
-            .var_names
-            .iter()
-            .skip(function.n_params)
-            .any(|var| var == "self")
-            .then_some(())?;
-        let value_params = prog
-            .structs
-            .get(name)?
-            .param_decls
-            .iter()
-            .zip(arguments)
-            .filter_map(|(declaration, argument)| {
-                let (ParamDecl::Value { name, ty, .. }, TyArg::Val(value)) =
-                    (declaration, argument)
-                else {
-                    return None;
-                };
-                let value = match value {
-                    CtValue::Expr(expression) => {
-                        let binder = &expression.as_decl_ref()?.name;
-                        self.bound_type_parameter(
-                            prog,
-                            caller.function,
-                            caller.frame,
-                            caller.variables,
-                            binder,
-                        )
-                        .or_else(|| caller.comptime_binding(binder))
-                        .or_else(|| static_self_parameter(prog, caller, binder))?
-                    }
-                    value => ct_value_as_runtime(value.clone())?,
-                };
-                Some((
-                    name.clone(),
-                    crate::runtime::coerce_checked(value, ty.as_ref()),
-                ))
-            })
-            .collect();
-        Some((
-            "self".to_string(),
-            Value::Struct {
-                name: name.to_string(),
-                fields: Vec::new(),
-                value_params,
-            },
-        ))
-    }
-
-    /// A compile-time value as a run-time value of the declared type `ty`,
-    /// [`Self::freeze`]'s inverse: a string becomes a nominal `String` (a
-    /// `StringLiteral` keeps its text), a tuple at a nominal `Tuple` type the
-    /// struct holding its thawed elements in `storage`, a struct its fields
-    /// thawed at their declared types, and anything else crosses as
-    /// [`crate::crossing::ct_to_vm`] admits it.
-    fn thaw(&mut self, prog: &Prog, value: &CtValue, ty: &Ty) -> Result<Value, RuntimeError> {
-        match (value, ty) {
-            (CtValue::Str(text), ty) if *ty != Ty::StringLiteral => {
-                self.nominal_string_value(prog, text)
-            }
-            (CtValue::Tuple(elements), Ty::Struct(name, _)) if is_nominal_tuple(name) => {
-                let element_types = mojito_types::types::tuple_elements(ty).unwrap_or_default();
-                if element_types.len() != elements.len() {
-                    return Err(RuntimeError::Unsupported(format!(
-                        "vm: a compile-time tuple does not match its declared type {ty}"
-                    )));
-                }
-                let thawed = elements
-                    .iter()
-                    .zip(&element_types)
-                    .map(|(element, element_ty)| self.thaw(prog, element, element_ty))
-                    .collect::<Result<Vec<_>, _>>()?;
-                let spellings = element_types
-                    .iter()
-                    .map(|element| {
-                        Value::Str(
-                            reified_type_spelling(element).unwrap_or_else(|| element.to_string()),
-                        )
-                    })
-                    .collect();
-                Ok(Value::Struct {
-                    name: name.clone(),
-                    fields: vec![("storage".to_string(), Value::Tuple(thawed))],
-                    value_params: vec![("*Ts".to_string(), Value::Tuple(spellings))],
-                })
-            }
-            (CtValue::Struct { name, fields }, ty) => {
-                let declared = prog
-                    .structs
-                    .get(name)
-                    .map(|definition| definition.fields.clone())
-                    .unwrap_or_default();
-                let fields = fields
-                    .iter()
-                    .map(|(field, value)| {
-                        let (_, field_ty) = declared
-                            .iter()
-                            .find(|(candidate, _)| candidate == field)
-                            .ok_or_else(|| {
-                                RuntimeError::Unsupported(format!(
-                                    "vm: compile-time struct '{name}' has no field '{field}'"
-                                ))
-                            })?;
-                        Ok((field.clone(), self.thaw(prog, value, field_ty)?))
-                    })
-                    .collect::<Result<Vec<_>, RuntimeError>>()?;
-                let value_params = match reified_type_value(prog, ty) {
-                    Some(Value::Struct { value_params, .. }) => value_params,
-                    _ => Vec::new(),
-                };
-                Ok(Value::Struct {
-                    name: name.clone(),
-                    fields,
-                    value_params,
-                })
-            }
-            (value, _) => crate::crossing::ct_to_vm(value),
-        }
-    }
-
-    /// The supplied compile-time arguments of a call, aligned to the callee's
-    /// declarations. A reified type argument spelled as the caller's own binder
-    /// (`hash[Self.H](key)` in an erased struct body, `Const::Str("H")`)
-    /// resolves through the caller frame's reified parameters; a spelling bound
-    /// nowhere passes through for the callee's declaration default.
-    #[allow(
-        clippy::needless_pass_by_value,
-        reason = "borrow bundle: `From<&Frame>` builds it at each call site"
-    )]
-    #[allow(
-        clippy::needless_pass_by_value,
-        reason = "borrow bundle: `From<&Frame>` builds it at each call site"
-    )]
-    /// [`Self::runtime_parameter_arguments`] completed by the type arguments
-    /// the checker solved for a generic `def` or method call: a type
-    /// parameter the brackets spelled no struct name for
-    /// (`make[Tuple[Int, Bool]]()`) reifies as the solved struct's name.
-    fn supplied_parameter_arguments(
-        &mut self,
-        prog: &Prog,
-        caller: CallerBindings<'_>,
-        declarations: &[ParamDecl],
-        arguments: &[mojito_mir::mir::MirParamArg],
-        instantiated: &[TyArg],
-    ) -> Vec<Option<Value>> {
-        let mut supplied = self.runtime_parameter_arguments(prog, caller, declarations, arguments);
-        for ((slot, argument), declaration) in
-            supplied.iter_mut().zip(instantiated).zip(declarations)
-        {
-            // A forwarded pack (`f[*Ts]`, a spread) replaces the empty
-            // element list an unsupplied pack slot starts with.
-            let pack = matches!(declaration, ParamDecl::Type { variadic: true, .. });
-            match argument {
-                TyArg::Ty(ty) if slot.is_none() || pack => {
-                    if let Some(value) = reified_type_value(prog, ty) {
-                        *slot = Some(value);
-                    } else if let Ty::Param { binder, .. } = ty
-                        && let Some(value) = self
-                            .bound_type_parameter(
-                                prog,
-                                caller.function,
-                                caller.frame,
-                                caller.variables,
-                                &binder.name,
-                            )
-                            .or_else(|| caller.comptime_binding(&binder.name))
-                    {
-                        // A binder of the caller's own forwards the type the
-                        // caller's frame reified for it.
-                        *slot = Some(value);
-                    }
-                }
-                // A type pack's solution is its element list, which the
-                // erased frame keeps for the pack's length.
-                // A closed value the call carries as compile-time data
-                // (`tup[(1, Tag(8, "x"))]()`, `s[3]()`) has no register; the
-                // erased frame holds it thawed at its declared type.
-                TyArg::Val(value)
-                    if slot.is_none()
-                        && value.is_folded_parameter_argument()
-                        && let ParamDecl::Value {
-                            ty,
-                            variadic: false,
-                            ..
-                        } = declaration =>
-                {
-                    *slot = self.thaw(prog, value, ty).ok();
-                }
-                TyArg::Val(CtValue::Tuple(elements))
-                    if matches!(declaration, ParamDecl::Type { variadic: true, .. }) =>
-                {
-                    *slot = Some(Value::Tuple(
-                        elements
-                            .iter()
-                            .map(|element| match element {
-                                CtValue::Type(ty) => Value::Str(
-                                    reified_type_spelling(ty).unwrap_or_else(|| ty.to_string()),
-                                ),
-                                _ => Value::None,
-                            })
-                            .collect(),
-                    ));
-                }
-                _ => {}
-            }
-        }
-        supplied
-    }
-
-    /// A constructed instance's compile-time arguments: those the call
-    /// supplied, with each unsupplied type parameter reified from the call's
-    /// checked result type, so `Cell(9)` builds the same `Cell[Int]` value an
-    /// explicit `Cell[Int](9)` does, and its methods' erased frames bind
-    /// `Self.T` from the receiver. An argument over the caller's binder
-    /// (`Box[T](v)` in a generic `def`) reads what the caller's frame bound.
-    fn constructed_parameter_arguments(
-        &self,
-        prog: &Prog,
-        caller: CallerBindings<'_>,
-        declarations: &[ParamDecl],
-        mut supplied: Vec<Option<Value>>,
-        result_ty: Option<&Ty>,
-    ) -> Vec<Option<Value>> {
-        let Some(Ty::Struct(_, arguments)) = result_ty else {
-            return supplied;
-        };
-        supplied.resize(supplied.len().max(declarations.len()), None);
-        let spelling =
-            |ty: &Ty| Value::Str(reified_type_spelling(ty).unwrap_or_else(|| ty.to_string()));
-        // A pack is its elements' spellings, read off the checked type
-        // whatever the call's own arguments reified: the type binds it whole,
-        // or, keyed on the pack alone, element by element. A spread of the
-        // caller's own pack (`V[*Ts]`) keeps the elements the call forwarded.
-        if let [ParamDecl::Type { variadic: true, .. }] = declarations
-            && !matches!(
-                &arguments[..],
-                [TyArg::Val(_) | TyArg::Ty(Ty::RuntimePack(_))]
-            )
-            && mojito_types::types::pack_spread_argument(arguments).is_none()
-        {
-            supplied[0] = Some(Value::Tuple(
-                arguments
-                    .iter()
-                    .filter_map(|argument| match argument {
-                        TyArg::Ty(ty) => Some(spelling(ty)),
-                        _ => None,
-                    })
-                    .collect(),
-            ));
-            return supplied;
-        }
-        for ((slot, declaration), argument) in
-            supplied.iter_mut().zip(declarations).zip(arguments.iter())
-        {
-            match (declaration, argument) {
-                (ParamDecl::Type { variadic: true, .. }, TyArg::Val(CtValue::Tuple(elements))) => {
-                    *slot = Some(Value::Tuple(
-                        elements
-                            .iter()
-                            .map(|element| match element {
-                                CtValue::Type(ty) => spelling(ty),
-                                _ => Value::None,
-                            })
-                            .collect(),
-                    ));
-                    continue;
-                }
-                (ParamDecl::Type { variadic: true, .. }, TyArg::Ty(Ty::RuntimePack(elements))) => {
-                    *slot = Some(Value::Tuple(elements.iter().map(spelling).collect()));
-                    continue;
-                }
-                _ => {}
-            }
-            let (
-                None,
-                ParamDecl::Type {
-                    variadic: false, ..
-                },
-                TyArg::Ty(ty),
-            ) = (&slot, declaration, argument)
-            else {
-                continue;
-            };
-            *slot = match ty {
-                Ty::Param { binder, .. } => self
-                    .bound_type_parameter(
-                        prog,
-                        caller.function,
-                        caller.frame,
-                        caller.variables,
-                        &binder.name,
-                    )
-                    .or_else(|| caller.comptime_binding(&binder.name)),
-                ty => reified_type_value(prog, ty),
-            };
-        }
-        supplied
-    }
-
-    fn runtime_parameter_arguments(
-        &self,
-        prog: &Prog,
-        caller: CallerBindings<'_>,
-        declarations: &[ParamDecl],
-        arguments: &[mojito_mir::mir::MirParamArg],
-    ) -> Vec<Option<Value>> {
-        let bound = |spelling: &str| {
-            self.bound_type_parameter(
-                prog,
-                caller.function,
-                caller.frame,
-                caller.variables,
-                spelling,
-            )
-            .or_else(|| caller.comptime_binding(spelling))
-        };
-        align_parameter_arguments(
-            declarations,
-            arguments
-                .iter()
-                .flat_map(|argument| {
-                    let value = argument
-                        .value
-                        .map(|register| caller.registers[register.0 as usize].clone());
-                    // A spread of the caller's own pack (`V[*Ts]`) forwards
-                    // each element the caller's frame bound for it.
-                    if let Some(Value::Str(spelling)) = &value
-                        && spelling.starts_with('*')
-                        && let Some(Value::Tuple(elements)) = bound(spelling)
-                    {
-                        return elements
-                            .into_iter()
-                            .map(|element| (argument.name.clone(), Some(element)))
-                            .collect();
-                    }
-                    let value = value.map(|value| match value {
-                        Value::Str(spelling) if !prog.structs.contains_key(&spelling) => {
-                            bound(&spelling).unwrap_or(Value::Str(spelling))
-                        }
-                        other => other,
-                    });
-                    vec![(argument.name.clone(), value)]
-                })
-                .collect(),
-        )
-    }
-
-    /// The runtime binding of the compile-time type parameter `param` in the
-    /// frame of `function`, reified as the bound struct's name: a def binds its
-    /// reified parameters into the frame local of the same name; a struct method
-    /// reads them from `self`'s reified parameters — through the handle when
-    /// `self` is a reference (a `mut self` method called on a value still under
-    /// construction, `self[k] = v` inside `Dict.__init__`).
-    fn bound_type_parameter(
-        &self,
-        prog: &Prog,
-        function: usize,
-        frame: FrameId,
-        variables: &[Value],
-        param: &str,
-    ) -> Option<Value> {
-        let definition = &prog.mir.functions[function].1;
-        let receiver_parameter = |receiver: &Value| match receiver {
-            Value::Struct { value_params, .. } => value_params
-                .iter()
-                .find(|(candidate, _)| candidate == param)
-                .map(|(_, value)| value.clone()),
-            _ => None,
-        };
-        definition
-            .var_names
-            .iter()
-            .position(|candidate| candidate == param)
-            .map(|slot| variables[slot].clone())
-            .filter(|value| !matches!(value, Value::None))
-            .or_else(|| match variables.first() {
-                Some(receiver @ Value::Struct { .. }) => receiver_parameter(receiver),
-                Some(reference @ Value::Ref { .. }) => self
-                    .read_reference(reference, frame, variables)
-                    .ok()
-                    .and_then(|receiver| receiver_parameter(&receiver)),
-                _ => None,
-            })
-            // A method-level type parameter inferred from an argument
-            // (`__hash__[H2: Hasher](self, mut hasher: H2)` → `H2()`): the
-            // parameter's runtime struct names the bound type. A `mut` parameter
-            // holds a reference handle; the caller reads through it.
-            .or_else(|| {
-                let signature = prog.sigs.get(&prog.mir.functions[function].0)?;
-                let parameter = signature
-                    .param_names
-                    .iter()
-                    .zip(&signature.param_types)
-                    .find(|(_, ty)| {
-                        matches!(ty, Ty::Param { binder, .. } if binder.name.as_ref() == param)
-                    })
-                    .map(|(name, _)| name)?;
-                let slot = definition
-                    .var_names
-                    .iter()
-                    .position(|candidate| candidate == parameter)?;
-                match &variables[slot] {
-                    Value::Struct {
-                        name, value_params, ..
-                    } => Some(if value_params.is_empty() {
-                        Value::Str(name.clone())
-                    } else {
-                        type_token(name, value_params.clone())
-                    }),
-                    reference @ Value::Ref { .. } => Some(reference.clone()),
-                    _ => None,
-                }
-            })
-    }
-}
-
-#[derive(Clone, Copy)]
-struct CallerBindings<'a> {
-    function: usize,
-    frame: FrameId,
-    registers: &'a [Value],
-    variables: &'a [Value],
-    /// The caller frame's compile-time bindings (`Frame::comptime`).
-    comptime: &'a [(String, Value)],
-}
-
-impl CallerBindings<'_> {
-    /// What the caller's frame binds its compile-time parameter `name` to:
-    /// a reified type's spelling or a value parameter's value, including a
-    /// struct parameter read off its receiver.
-    fn comptime_binding(&self, name: &str) -> Option<Value> {
-        self.comptime
-            .iter()
-            .find(|(bound, _)| bound == name)
-            .map(|(_, value)| value.clone())
-    }
-}
-
-impl<'a> From<&'a Frame> for CallerBindings<'a> {
-    fn from(frame: &'a Frame) -> Self {
-        CallerBindings {
-            function: frame.function,
-            frame: frame.id,
-            registers: &frame.registers,
-            variables: &frame.variables,
-            comptime: &frame.comptime,
-        }
-    }
-}
-
 struct ReturnContinuation {
     dest: Reg,
     writebacks: Vec<(usize, MirPlace)>,
@@ -2412,7 +1091,6 @@ fn build_structs(declarations: &mojito_mir::mir::MirDeclarations) -> HashMap<Str
                     fields: declaration.fields.clone(),
                     mut_self_methods: declaration.mut_self_methods.clone(),
                     fieldwise_init: declaration.fieldwise_init,
-                    param_decls: declaration.param_decls.clone(),
                 },
             )
         })
@@ -2439,9 +1117,6 @@ fn build_sigs(declarations: &mojito_mir::mir::MirDeclarations) -> HashMap<String
                     owned_pack_slot: declaration.owned_pack_slot(),
                     positional_only: declaration.positional_only,
                     keyword_only: declaration.keyword_only,
-                    param_decls: declaration.param_decls.clone(),
-                    enclosing: declaration.enclosing.clone(),
-                    region_binders: declaration.region_binders.clone(),
                 },
             )
         })
@@ -2455,13 +1130,8 @@ fn navigate_reference_mut<'a>(
     for segment in projection {
         value = match segment {
             RefProjection::Field(name) => match value {
-                Value::Struct {
-                    fields,
-                    value_params,
-                    ..
-                } => fields
+                Value::Struct { fields, .. } => fields
                     .iter_mut()
-                    .chain(value_params.iter_mut())
                     .find(|(field, _)| field == name)
                     .map(|(_, value)| value)
                     .ok_or_else(|| RuntimeError::TypeError(format!("no field '{name}'")))?,
@@ -2590,16 +1260,11 @@ struct ReferencePointerBoundary<'a> {
     suffix: &'a [RefProjection],
 }
 
-/// Read a struct field (or a reified value parameter, e.g. `Self.n`) by name.
+/// Read a struct field by name.
 fn get_field(base: &Value, field: &str) -> Result<Value, RuntimeError> {
     match base {
-        Value::Struct {
-            fields,
-            value_params,
-            ..
-        } => fields
+        Value::Struct { fields, .. } => fields
             .iter()
-            .chain(value_params.iter())
             .find(|(f, _)| f == field)
             .map(|(_, v)| v.clone())
             .ok_or_else(|| RuntimeError::TypeError(format!("no field '{field}'"))),
@@ -2672,90 +1337,22 @@ fn index_value(base: &Value, idx: i64) -> Result<Value, RuntimeError> {
     }
 }
 
-impl VmBackend {
-    /// The value of a compile-time application an erased frame reads as a
-    /// constant (`comptime x = f(n)`): the function called with the
-    /// frame's values of its arguments, its compile-time ones bound by name
-    /// as an erased call binds them. `None` for any other parameter
-    /// constant, or an application of no function of the program.
-    fn erased_application(
-        &mut self,
-        prog: &Prog,
-        expr: &mojito_types::param_expr::ParamExpr,
-        function: &MirFunction,
-        variables: &[Value],
-        comptime: &[(String, Value)],
-    ) -> Result<Option<Value>, RuntimeError> {
-        let mojito_types::param_expr::ParamKind::Apply {
-            function: callee,
-            args,
-        } = expr.kind()
-        else {
-            return Ok(None);
-        };
-        let (Some(index), Some(declaration)) = (
-            prog.index_of(callee),
-            prog.mir
-                .declarations
-                .functions
-                .iter()
-                .find(|declaration| declaration.lowered_name == *callee),
-        ) else {
-            return Ok(None);
-        };
-        // A static method of a generic struct is applied to its instance
-        // first, which an erased call does not pass.
-        let on_instance = mojito_symbol::symbol::split_method_symbol(callee)
-            .and_then(|(owner, _)| prog.structs.get(owner))
-            .is_some_and(|owner| !owner.param_decls.is_empty());
-        let args = &args[usize::from(on_instance).min(args.len())..];
-        let parameters = erased_parameter_values(function, variables, comptime);
-        let value = |arg: &mojito_types::param_expr::ParamExpr| {
-            arg.evaluate_named(&parameters)
-                .ok()
-                .and_then(ct_value_as_runtime)
-                .ok_or_else(|| {
-                    RuntimeError::Unsupported(format!(
-                        "the erased oracle cannot evaluate the argument `{arg}` of `{expr}`"
-                    ))
-                })
-        };
-        let (compile_time, runtime) = args.split_at(declaration.param_decls.len().min(args.len()));
-        let mut value_params = Vec::new();
-        for (decl, arg) in declaration.param_decls.iter().zip(compile_time) {
-            if let ParamDecl::Value { name, .. } = decl {
-                value_params.push((name.clone(), value(arg)?));
-            }
-        }
-        let runtime = runtime.iter().map(value).collect::<Result<Vec<_>, _>>()?;
-        // A compile-time evaluation is fuel-bounded wherever it runs.
-        let outermost = self.ctfe_fuel.is_none();
-        if outermost {
-            self.ctfe_fuel = Some(crate::crossing::CTFE_FUEL);
-        }
-        let result = self.call_function(prog, index, runtime, &value_params);
-        if outermost {
-            self.ctfe_fuel = None;
-        }
-        result.map(Some)
-    }
-}
-
 /// Whether a branch condition register holds `True`.
 fn is_true(v: &Value) -> bool {
     matches!(v, Value::Bool(true))
         || matches!(v, Value::Simd { dtype: mojito_ast::ast::Dtype::Bool, lanes: crate::runtime::SimdLanes::Bool(values) } if values == &[true])
 }
 
-/// Materialize a MIR constant into a runtime value. A parameter constant
-/// reaches the VM only on the erased path, which reads it against the
-/// frame's reified parameters as `comptime_for_next` reads a loop bound.
-fn const_value(
-    k: &Const,
-    function: &MirFunction,
-    variables: &[Value],
-    comptime: &[(String, Value)],
-) -> Result<Value, RuntimeError> {
+/// The error for a parametric instruction, terminator, or constant the VM
+/// met: concrete verification rejects every one before a program runs, so
+/// meeting `what` here is a compiler invariant violation.
+fn parametric_instruction(what: &str) -> RuntimeError {
+    RuntimeError::Unsupported(format!("concrete MIR carries no {what}"))
+}
+
+/// Materialize a MIR constant into a runtime value. A parameter constant is
+/// a verifier finding on concrete MIR, never a runtime read.
+fn const_value(k: &Const) -> Result<Value, RuntimeError> {
     Ok(match k {
         Const::Int(n) => Value::Int(*n),
         Const::Float(x) => Value::Float64(*x),
@@ -2771,15 +1368,11 @@ fn const_value(
                 "no runtime value for the parameter value `{value}`"
             ))
         })?,
-        Const::Param(expr) => expr
-            .evaluate_named(&erased_parameter_values(function, variables, comptime))
-            .ok()
-            .and_then(ct_value_as_runtime)
-            .ok_or_else(|| {
-                RuntimeError::Unsupported(format!(
-                    "the erased oracle cannot evaluate the parameter constant `{expr}`"
-                ))
-            })?,
+        Const::Param(expr) => {
+            return Err(parametric_instruction(&format!(
+                "the parameter constant `{expr}`"
+            )));
+        }
     })
 }
 
@@ -2980,4 +1573,3 @@ use dispatch::CallTypes;
 mod invoke;
 mod libc;
 mod values;
-use values::ConstructorParameters;

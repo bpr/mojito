@@ -2,10 +2,10 @@
 //!
 //! Through a bound, current Mojo runs the requirement's default for a slot
 //! the call leaves out, whatever the witness declares; on a nominal receiver
-//! the witness's own. An instance clone reaches the witness nominally, so the
+//! the witness's own. An instance reaches the witness nominally, so the
 //! check records each such call's omitted requirement defaults, and the
-//! checked tree spells them as arguments of the call and of every clone of
-//! it, which then runs the requirement's default as the pin does. A witness
+//! checked tree spells them as arguments of the call, whose every instance
+//! then runs the requirement's default as the pin does. A witness
 //! may therefore default differently from its requirement, or not at all
 //! (`traits_support::method_satisfies_requirement`).
 //!
@@ -19,9 +19,24 @@
 use super::*;
 use mojito_ast::ast::{KwArg, ParamArg, SyntaxOrigins};
 use mojito_ast::visit::{MutVisitor, walk_block_mut, walk_expr_mut};
-use mojito_checked::templates::BoundDefaultArguments;
 use mojito_common::literal::IntLiteral;
 use mojito_common::token::SyntaxId;
+
+/// The requirement defaults one call through a bound leaves out.
+///
+/// Through a bound, current Mojo runs the requirement's default, not the
+/// witness's; binding it at the call carries that into every instance, which
+/// reaches the witness nominally.
+#[derive(Debug, Clone, PartialEq)]
+pub(super) struct BoundDefaultArguments {
+    /// The positional arguments the call was checked with; a call node with
+    /// any other count is not the one these arguments complete.
+    pub(super) positional: usize,
+    pub(super) keywords: Vec<KwArg>,
+    /// The requirement's parameter names, in declaration order: each
+    /// keyword goes before the call's first keyword for a later parameter.
+    pub(super) parameters: Vec<String>,
+}
 
 /// A call through a trait bound, as its requirement defaults are recorded.
 pub(super) struct BoundCall<'a> {

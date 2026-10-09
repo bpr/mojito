@@ -28,13 +28,12 @@ reverse: it elaborated the AST first and then checked the concrete clones. That
 front-end change is language work that has to happen with or without Pliron. Do
 it first, and treat the move to Pliron as a later, optional step.
 
-The first half has since landed. Mojito checks a template body once with its
-parameters symbolic, and the instances a checked template covers derive their
-facts from it instead of being inferred again
-([`docs/notes/instantiation-from-template.md`](notes/instantiation-from-template.md)).
-The bodies that note lists as uncovered keep a per-instance check. The second
-half has not: the carrier is still the elaborator's concrete AST clone, a
-template never reaches HIR or MIR, and there is no parametric IR.
+Both halves have since landed. Mojito checks a template body once with its
+parameters symbolic and checks no instance again; what an instance still owes
+below the waist is
+[`docs/notes/generator-contract.md`](notes/generator-contract.md). The
+template reaches HIR and MIR as parametric IR, and `native::mono` elaborates
+it for both backends (`docs/parametric-mir-plan.md`).
 
 ## What the source notes got wrong
 
@@ -279,8 +278,9 @@ move as the `pmir` track closes. The rest of the roadmap is orthogonal to steps 
 and can interleave with them.
 
 1. **Fix the check order inside the current architecture.** *Landed*
-   (`docs/notes/instantiation-from-template.md`, which also lists the bodies
-   that keep a per-instance check). Type-check
+   (every body is checked once with its parameters symbolic;
+   `docs/notes/generator-contract.md` names what the elaborator still owes
+   an instance). Type-check
    `comptime if`/`for` bodies symbolically and reject what upstream rejects.
    Conformance needs this regardless of Pliron, and it is where the Mojo-like
    behavior users actually notice lives: errors before instantiation, rather

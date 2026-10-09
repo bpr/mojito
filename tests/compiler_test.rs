@@ -1176,17 +1176,7 @@ fn clone_return_values<'a>(
         .collect()
 }
 
-/// How many times `name` was inferred and retained as a checked template.
-/// Bundled method templates are certified too, so a test counts its own.
-fn certified_count(stats: &mojito::templates::TemplateStats, name: &str) -> usize {
-    stats
-        .certified
-        .iter()
-        .filter(|certified| *certified == name)
-        .count()
-}
-
-/// One generic `def` per `comptime for` shape its template serves.
+/// One generic `def` per `comptime for` shape the elaborator unrolls.
 const COMPTIME_FOR_SERVED: &str = "\
 comptime L = [10, 20]
 
@@ -1268,7 +1258,7 @@ def main():
 ";
 
 #[test]
-fn comptime_for_shapes_served_by_the_template_mint_no_clone() {
+fn comptime_for_shapes_are_unrolled_per_instance() {
     let compile = |source: &str| {
         Compiler::default()
             .compile_source(source, std::path::Path::new("census.mojo"))
@@ -1282,38 +1272,19 @@ fn comptime_for_shapes_served_by_the_template_mint_no_clone() {
 }
 
 #[test]
-fn template_two_types_infers_the_template_once() {
+fn generic_def_runs_for_two_types() {
     let compiler = Compiler::default();
     let program = compiler
         .compile_unlinked(TEMPLATE_TWO_TYPES)
         .expect("compile");
-    let stats = program.template_stats();
-    assert_eq!(certified_count(stats, "tag"), 1, "one template inference");
-    assert!(
-        stats
-            .reused
-            .iter()
-            .chain(&stats.carried)
-            .any(|name| name == "tag"),
-        "later passes reuse or carry the template's own facts: {stats:?}"
-    );
-    // The template serves both calls; no clone is minted.
-    assert!(
-        stats
-            .derived
-            .iter()
-            .chain(&stats.inferred_clones)
-            .all(|name| !name.starts_with("tag$")),
-        "no clone of the certified template exists: {stats:?}"
-    );
     let execution = compiler.execute(&program).expect("execute");
     assert_eq!(execution.output, "7\n7\n");
 }
 
 #[test]
-fn template_served_def_declares_no_clone() {
-    // The checked program declares the template alone: both calls run its
-    // MIR, and the template's own `return 7` is the one checked occurrence,
+fn generic_def_declares_no_clone() {
+    // The checked program declares the generic `def` alone: both calls run
+    // its MIR, and its own `return 7` is the one checked occurrence,
     // keeping its literal type and materialization.
     let program = Compiler::default()
         .compile_unlinked(TEMPLATE_TWO_TYPES)
@@ -1351,101 +1322,60 @@ fn template_served_def_declares_no_clone() {
     );
 }
 
-fn run_source(source: &str) -> (String, mojito::templates::TemplateStats) {
+fn run_source(source: &str) -> String {
     let compiler = Compiler::default();
     let program = compiler.compile_unlinked(source).expect("compile");
-    let output = compiler.execute(&program).expect("execute").output;
-    (output, program.template_stats().clone())
+    compiler.execute(&program).expect("execute").output
 }
 
 #[test]
 fn template_overload_binding_keeps_the_symbolic_choice() {
     // The pinned Mojo binds `pick(x)` once, while it checks `outer` with `T`
     // symbolic: the generic overload is the only candidate a `T` argument
-    // fits, and the template serves both calls with no clone that could rank
-    // the set again and pick `pick(x: Int)`.
+    // fits, and both calls run that binding, with nothing ranking the set
+    // again to pick `pick(x: Int)`.
     let generic_last = "def pick(x: Int) -> Int:\n    return 1\n\ndef pick[T: Copyable](x: T) -> Int:\n    return 2\n\ndef outer[T: Copyable](x: T) -> Int:\n    return pick(x)\n\ndef main():\n    print(outer(3))\n    print(outer(True))\n    print(pick(5))\n";
-    let (output, stats) = run_source(generic_last);
-    assert_eq!(output, "2\n2\n1\n");
-    assert!(
-        stats
-            .derived
-            .iter()
-            .chain(&stats.inferred_clones)
-            .all(|name| !name.starts_with("outer$")),
-        "no clone re-ranks the overload set: {stats:?}"
-    );
+    assert_eq!(run_source(generic_last), "2\n2\n1\n");
 
     let generic_first = "def pick[T: Copyable](x: T) -> Int:\n    return 2\n\ndef pick(x: Int) -> Int:\n    return 1\n\ndef outer[T: Copyable](x: T) -> Int:\n    return pick(x)\n\ndef main():\n    print(outer[Int](3))\n    print(outer[Bool](True))\n    print(outer(4))\n    print(pick(5))\n";
-    assert_eq!(run_source(generic_first).0, "2\n2\n2\n1\n");
+    assert_eq!(run_source(generic_first), "2\n2\n2\n1\n");
 }
 
 #[test]
 fn template_method_keeps_the_symbolic_choice() {
     // A struct method's call of a module-scope overload set on a value of the
     // struct's parameter type is bound once, as the pinned Mojo binds it:
-    // the `Int` instance derives and inherits the generic overload.
-    assert_methods_derive(
+    // the `Int` instance inherits the generic overload.
+    assert_entry_output(
         include_str!("../assets/ok/template_overload_binding_method.mojo"),
         "2 2 2 2 1\n",
-        &[("Box.get", 0), ("Box.each", 0)],
     );
 }
 
 #[test]
-fn template_inner_request_needs_no_outer_clone_inference() {
+fn generic_def_calling_a_generic_def_runs() {
+    // `outer`'s call of `helper` is bound with `T` symbolic; the elaborator
+    // instantiates both bodies per call.
     let source = "def helper[T: Copyable](x: T) -> Int:\n    return 5\n\ndef outer[T: Copyable](x: T) -> Int:\n    return helper(x)\n\ndef main():\n    print(outer(3))\n    print(outer(True))\n";
-    // Both templates serve their calls: `outer`'s inner request of `helper`
-    // is closed from retained facts, and neither mints a clone.
-    let (output, stats) = run_source(source);
-    assert_eq!(output, "5\n5\n");
-    for clone in ["outer$", "helper$"] {
-        assert!(
-            stats
-                .derived
-                .iter()
-                .chain(&stats.inferred_clones)
-                .all(|name| !name.starts_with(clone)),
-            "{clone} mints no clone: {stats:?}"
-        );
-    }
+    assert_eq!(run_source(source), "5\n5\n");
 }
 
 #[test]
 fn template_bounded_len_realizes_per_instance() {
-    // `len(x)` is proved once through `T: Sized`. The template serves both
-    // calls, each taking the concrete witness and the read-in-place fact the
-    // built-in records for a nominal struct, with no clone minted.
+    // `len(x)` is proved once through `T: Sized`; each call takes the
+    // concrete witness and the read-in-place fact the built-in records for
+    // a nominal struct.
     let source = "def is_empty[T: Sized](x: T) -> Bool:\n    return len(x) == 0\n\nstruct Bag(Sized):\n    var items: List[Int]\n\n    def __init__(out self):\n        self.items = List[Int]()\n\n    def __len__(self) -> Int:\n        return len(self.items)\n\ndef main():\n    var xs: List[Int] = [1, 2, 3]\n    print(is_empty(xs))\n    var b: Bag = Bag()\n    print(is_empty(b))\n";
-    let (output, stats) = run_source(source);
-    assert_eq!(output, "False\nTrue\n");
-    assert_eq!(certified_count(&stats, "is_empty"), 1);
-    assert!(
-        stats
-            .derived
-            .iter()
-            .chain(&stats.inferred_clones)
-            .all(|name| !name.starts_with("is_empty$")),
-        "{stats:?}"
-    );
+    assert_eq!(run_source(source), "False\nTrue\n");
 }
 
 #[test]
-fn template_two_arms_are_template_served() {
-    // Source validation checks both arms once; the template serves both
-    // calls, and the elaborator selects each instance's arm.
+fn template_two_arms_are_selected_per_instance() {
+    // The one check judges both arms with `flag` symbolic, and the
+    // elaborator selects each instance's arm.
     let source = "def choose[flag: Bool]() -> Int:\n    comptime if flag:\n        return 11\n    else:\n        return 22\n\ndef main():\n    print(choose[True]())\n    print(choose[False]())\n";
     let compiler = Compiler::default();
     let program = compiler.compile_unlinked(source).expect("compile");
-    let stats = program.template_stats();
-    assert_eq!(certified_count(stats, "choose"), 1);
-    assert!(
-        stats
-            .inferred_clones
-            .iter()
-            .all(|name| !name.starts_with("choose$")),
-        "{stats:?}"
-    );
     assert_eq!(
         compiler.execute(&program).expect("execute").output,
         "11\n22\n"
@@ -1467,12 +1397,7 @@ fn template_rebind_and_where_are_instance_obligations() {
             "def as_int[T: Copyable](x: T) -> Int:\n    return rebind[Int](x)\n\ndef main():\n    print(as_int({argument}))\n"
         )
     };
-    let (output, stats) = run_source(&rebind("3"));
-    assert_eq!(output, "3\n");
-    assert!(
-        stats.derived.iter().any(|name| name.starts_with("as_int$")),
-        "a true assertion derives: {stats:?}"
-    );
+    assert_eq!(run_source(&rebind("3")), "3\n");
     // A false assertion is a type error in the rebind's own words, never a
     // permissive fallback.
     let error = Compiler::default()
@@ -1490,16 +1415,7 @@ fn template_rebind_and_where_are_instance_obligations() {
             "def small[n: Int]() -> Int where (n < 4, \"n must stay below four\"):\n    comptime if n == 0:\n        return 100\n    else:\n        return 200\n\ndef main():\n    print(small[{argument}]())\n"
         )
     };
-    let (output, stats) = run_source(&constrained("3"));
-    assert_eq!(output, "200\n");
-    assert!(
-        stats
-            .derived
-            .iter()
-            .chain(&stats.inferred_clones)
-            .all(|name| !name.starts_with("small$")),
-        "the template serves small: {stats:?}"
-    );
+    assert_eq!(run_source(&constrained("3")), "200\n");
     let error = Compiler::default()
         .compile_unlinked(&constrained("7"))
         .expect_err("a violated where clause rejects");
@@ -1513,9 +1429,9 @@ fn template_rebind_and_where_are_instance_obligations() {
 }
 
 #[test]
-fn template_loop_is_template_served() {
+fn template_loop_is_unrolled_per_instance() {
     // A `comptime for` over a value parameter, with a `comptime if` on its
-    // index, is served by its template: the elaborator unrolls it per trip
+    // index, stays in the body to MIR: the elaborator unrolls it per trip
     // count, and every copy updates that instance's own `sum`.
     let source = "def total[n: Int]() -> Int:\n    var sum = 0\n    comptime for i in range(n):\n        comptime if i == 1:\n            sum += 10\n        else:\n            sum += 1\n    return sum\n\ndef main():\n    print(total[0]())\n    print(total[1]())\n    print(total[3]())\n";
     let compiler = Compiler::default();
@@ -1527,26 +1443,24 @@ fn template_loop_is_template_served() {
 }
 
 #[test]
-fn template_pack_instances_are_template_served() {
-    // A pack-keyed template is checked once at the dependent element `Ts[i]`
-    // and serves every call; the elaborator unrolls each instance's loop.
+fn template_pack_instances_are_unrolled_per_call() {
+    // A pack-keyed `def` is checked once at the dependent element `Ts[i]`;
+    // the elaborator unrolls each instance's loop.
     let source = "def show[*Ts: Writable](*values: *Ts):\n    comptime for i in range(values.__len__()):\n        print(values[i])\n\ndef main():\n    show(1, \"two\", 3.5)\n    show(True)\n    show()\n";
     let expected = "1\ntwo\n3.5\nTrue\n";
-    for verify in [false, true] {
-        let compiler = Compiler::default().with_template_verification(verify);
-        let program = compiler.compile_unlinked(source).expect("compile");
-        assert_eq!(
-            compiler.execute(&program).expect("execute").output,
-            expected
-        );
-    }
+    let compiler = Compiler::default();
+    let program = compiler.compile_unlinked(source).expect("compile");
+    assert_eq!(
+        compiler.execute(&program).expect("execute").output,
+        expected
+    );
 }
 
 #[test]
-fn pack_keyed_method_is_template_served() {
+fn pack_keyed_method_runs_per_call() {
     // A method keyed on a type pack of its own, on a plain struct and on a
-    // generic struct's instance, serves every call from its template: the
-    // forwarded pack binds the callee's, and no per-call clone is minted.
+    // generic struct's instance, is instantiated per call: the forwarded
+    // pack binds the callee's.
     let source = "struct Box[T: Writable & Copyable & Deinitable]:\n    var v: Self.T\n\n    def __init__(out self, v: Self.T):\n        self.v = v.copy()\n\n    def show[*Ts: Writable](self, *a: *Ts):\n        print(self.v, Ts.length)\n        comptime for i in range(Ts.length):\n            print(a[i])\n\nstruct Sink:\n    def __init__(out self):\n        pass\n\n    def take[*Ts: Writable](self, *a: *Ts):\n        comptime for i in range(a.__len__()):\n            print(a[i])\n\n    def relay[*Ts: Writable](self, *a: *Ts):\n        self.take(*a)\n\ndef main():\n    Box[Int](5).show(1, \"x\")\n    Sink().relay(2, \"two\")\n";
     let compiler = Compiler::default();
     let program = compiler.compile_unlinked(source).expect("compile");
@@ -1557,317 +1471,221 @@ fn pack_keyed_method_is_template_served() {
 }
 
 #[test]
-fn template_folded_values_are_template_served() {
+fn template_folded_values_run_per_instance() {
     // A loop variable and a value parameter read as runtime values fold to
-    // each instance's literal; the template serves every call.
+    // each instance's literal.
     let source = "def bump(x: Int) -> Int:\n    return x + 1\n\ndef mixed[n: Int]() -> Int:\n    var acc = n\n    comptime for i in range(n):\n        acc = acc * 2 + i\n        acc += bump(i)\n    comptime if n > 2:\n        return acc\n    return n\n\ndef main():\n    print(mixed[0]())\n    print(mixed[3]())\n";
-    for verify in [false, true] {
-        let compiler = Compiler::default().with_template_verification(verify);
-        let program = compiler.compile_unlinked(source).expect("compile");
-        assert_eq!(
-            compiler.execute(&program).expect("execute").output,
-            "0\n39\n"
-        );
-    }
+    let compiler = Compiler::default();
+    let program = compiler.compile_unlinked(source).expect("compile");
+    assert_eq!(
+        compiler.execute(&program).expect("execute").output,
+        "0\n39\n"
+    );
 }
 
 #[test]
-fn template_folded_arithmetic_is_template_served() {
+fn template_folded_arithmetic_runs_per_instance() {
     // Over folded values and literals alone an operator folds too: the
-    // outermost one is an `IntLiteral` materialized to the template's `Int`,
+    // outermost one is an `IntLiteral` materialized to the body's `Int`,
     // and each operand below it a literal typed as one and nothing else.
     let source = "def nested[n: Int, m: Int]() -> Int:\n    var sum = 0\n    comptime for i in range(n):\n        comptime for j in range(m):\n            sum += i * 10 + j\n    sum += -n\n    return sum\n\ndef main():\n    print(nested[2, 3]())\n";
-    for verify in [false, true] {
-        let compiler = Compiler::default().with_template_verification(verify);
-        let program = compiler.compile_unlinked(source).expect("compile");
-        assert_eq!(compiler.execute(&program).expect("execute").output, "34\n");
-    }
-    // Division folds to a `FloatLiteral` materialized to the template's
+    let compiler = Compiler::default();
+    let program = compiler.compile_unlinked(source).expect("compile");
+    assert_eq!(compiler.execute(&program).expect("execute").output, "34\n");
+    // Division folds to a `FloatLiteral` materialized to the body's
     // `Float64`, `~` to an `IntLiteral` materialized to its `Int`, and a
-    // comparison is a `Bool` in both checks.
+    // comparison is a `Bool`.
     let folding = "def halves[n: Int]() -> Float64:\n    var acc = 0.0\n    comptime for i in range(n):\n        acc += i / 2\n        print(~i, i < 2)\n    return acc\n\ndef main():\n    print(halves[3]())\n";
-    for verify in [false, true] {
-        let compiler = Compiler::default().with_template_verification(verify);
-        let program = compiler.compile_unlinked(folding).expect("compile");
-        assert_eq!(
-            compiler.execute(&program).expect("execute").output,
-            "-1 True\n-2 True\n-3 False\n1.5\n"
-        );
-    }
+    let compiler = Compiler::default();
+    let program = compiler.compile_unlinked(folding).expect("compile");
+    assert_eq!(
+        compiler.execute(&program).expect("execute").output,
+        "-1 True\n-2 True\n-3 False\n1.5\n"
+    );
 }
 
 #[test]
-fn template_keyed_runtime_while_is_template_served() {
+fn template_keyed_runtime_while_runs_per_instance() {
     // A runtime `while` in a keyed body, over an `Int` local after a
     // `comptime for`, inside a
     // `comptime for` with `break` and `continue`, and under a `comptime if`
-    // arm: each unrolled copy keeps its own loop, and the template serves
-    // every instance.
-    for verify in [false, true] {
-        let compiler = Compiler::default().with_template_verification(verify);
-        let program = compile_entry(
-            &compiler,
-            include_str!("../assets/ok/template_keyed_runtime_while.mojo"),
-        );
-        assert_eq!(
-            compiler.execute(&program).expect("execute").output,
-            "20 2\n16 1\n13 0\n"
-        );
-    }
+    // arm: each unrolled copy keeps its own loop.
+    let compiler = Compiler::default();
+    let program = compile_entry(
+        &compiler,
+        include_str!("../assets/ok/template_keyed_runtime_while.mojo"),
+    );
+    assert_eq!(
+        compiler.execute(&program).expect("execute").output,
+        "20 2\n16 1\n13 0\n"
+    );
 }
 
 #[test]
-fn template_keyed_runtime_if_is_template_served() {
+fn template_keyed_runtime_if_runs_per_instance() {
     // A runtime `if` in a keyed body, inside a `comptime for`, under a
     // `comptime if` arm, and after the loop: each unrolled copy keeps its own
-    // `if`, and the template serves every instance.
-    for verify in [false, true] {
-        let compiler = Compiler::default().with_template_verification(verify);
-        let program = compile_entry(
-            &compiler,
-            include_str!("../assets/ok/template_keyed_runtime_if.mojo"),
-        );
-        assert_eq!(
-            compiler.execute(&program).expect("execute").output,
-            "15 2\n4 1\n2\n4\n6 0\n"
-        );
-    }
+    // `if`.
+    let compiler = Compiler::default();
+    let program = compile_entry(
+        &compiler,
+        include_str!("../assets/ok/template_keyed_runtime_if.mojo"),
+    );
+    assert_eq!(
+        compiler.execute(&program).expect("execute").output,
+        "15 2\n4 1\n2\n4\n6 0\n"
+    );
 }
 
 #[test]
-fn template_def_var_parameter_is_served_by_its_template() {
+fn template_def_var_parameter_runs() {
     // A surviving trait-bound `def` taking a `var` parameter: consumed through
     // a named destructor, transferred into a local, and the bundled
     // `dealloc`, whose leaked pointer is freed as an untracked pointer local.
-    // Each template serves both calls; no clone is minted.
-    for verify in [false, true] {
-        let compiler = Compiler::default().with_template_verification(verify);
-        let program = compile_entry(
-            &compiler,
-            include_str!("../assets/ok/template_def_var_parameter.mojo"),
-        );
-        let stats = program.template_stats();
-        for template in [
-            "finish$",
-            "count_one$",
-            "weigh$",
-            "__module$std$memory$alloc$dealloc$",
-        ] {
-            assert!(
-                stats
-                    .derived
-                    .iter()
-                    .chain(&stats.verified)
-                    .chain(&stats.inferred_clones)
-                    .all(|name| !name.starts_with(template)),
-                "{template} mints no clone: {stats:?}"
-            );
-        }
-        assert_eq!(
-            compiler.execute(&program).expect("execute").output,
-            "1 2\n5 6\n2 1\n"
-        );
-    }
+    let compiler = Compiler::default();
+    let program = compile_entry(
+        &compiler,
+        include_str!("../assets/ok/template_def_var_parameter.mojo"),
+    );
+    assert_eq!(
+        compiler.execute(&program).expect("execute").output,
+        "1 2\n5 6\n2 1\n"
+    );
 }
 
 #[test]
-fn template_def_builds_hasher_is_served_by_its_template() {
+fn template_def_builds_hasher_runs() {
     // A surviving trait-bound `def` that constructs a struct and hands its
     // parameter to the struct's method taking an existential `Some[Trait]`,
     // as `hash_seeded` builds an `AHasher` and feeds it `value`, whether the
-    // binder's bound names the existential's or only refines it. Each
-    // template serves its calls; no clone is minted.
+    // binder's bound names the existential's or only refines it.
     let source = "from std.hashlib._ahash import U256, AHasher\n\ncomptime Z = AHasher[U256(0)]\n\ndef build_only[T: Hashable](value: T, seed: U256) -> UInt64:\n    var hasher = Z(seed)\n    return hasher^.finish()\n\ndef update_only[T: Hashable](value: T, var hasher: Z) -> UInt64:\n    hasher.update(value)\n    return hasher^.finish()\n\ndef full[T: Hashable](value: T, seed: U256) -> UInt64:\n    var hasher = Z(seed)\n    hasher.update(value)\n    return hasher^.finish()\n\ntrait Named:\n    def name(self) -> Int:\n        ...\n\n\ntrait Titled(Named):\n    def title(self) -> Int:\n        ...\n\n\n@fieldwise_init\nstruct P(Titled):\n    var n: Int\n\n    def name(self) -> Int:\n        return self.n\n\n    def title(self) -> Int:\n        return self.n * 2\n\n\n@fieldwise_init\nstruct Sink:\n    var total: Int\n\n    def take(mut self, value: Some[Named]):\n        self.total += value.name()\n\n    def read(self) -> Int:\n        return self.total\n\n\ndef plain[T: Named](value: T) -> Int:\n    var sink = Sink(1)\n    sink.take(value)\n    return sink.read()\n\n\ndef refined[T: Titled](value: T) -> Int:\n    var sink = Sink(1)\n    sink.take(value)\n    return sink.read()\n\n\ndef main():\n    print(build_only(Int(1), U256(1, 2, 3, 4)))\n    print(update_only(Int(1), Z(U256(1, 2, 3, 4))))\n    print(full(Int(1), U256(1, 2, 3, 4)))\n    print(full(String(\"hi\"), U256(1, 2, 3, 4)))\n    print(plain(P(3)), refined(P(4)))\n";
-    for verify in [false, true] {
-        let compiler = Compiler::default().with_template_verification(verify);
-        let program = compile_entry(&compiler, source);
-        let stats = program.template_stats();
-        for template in ["build_only$", "update_only$", "full$", "plain$", "refined$"] {
-            assert!(
-                stats
-                    .derived
-                    .iter()
-                    .chain(&stats.verified)
-                    .chain(&stats.inferred_clones)
-                    .all(|name| !name.starts_with(template)),
-                "{template} mints no clone: {stats:?}"
-            );
-        }
-        assert_eq!(
-            compiler.execute(&program).expect("execute").output,
-            "3797827051053374179\n12108717972610326012\n12108717972610326012\n2602545273972113607\n4 5\n"
-        );
-    }
+    let compiler = Compiler::default();
+    let program = compile_entry(&compiler, source);
+    assert_eq!(
+        compiler.execute(&program).expect("execute").output,
+        "3797827051053374179\n12108717972610326012\n12108717972610326012\n2602545273972113607\n4 5\n"
+    );
 }
 
 #[test]
-fn template_value_keyed_def_is_template_served() {
+fn template_value_keyed_def_runs_per_instance() {
     // A `def` keyed on a type and a value, with no compile-time control
-    // flow, is certified by the abstract check; each clone reads the value
-    // as the literal it folded to.
+    // flow, is checked once with both symbolic; each instance reads the
+    // value as the literal it folds to.
     let source = "def bump(x: Int) -> Int:\n    return x + 1\n\ndef scaled[T: ImplicitlyCopyable & Deinitable, n: Int](x: T, base: Int) -> Int:\n    var kept = x\n    var acc = base * n\n    acc += bump(n)\n    acc += n * 10 + 1\n    return acc\n\ndef main():\n    print(scaled[Int, 3](7, 2), scaled[String, 1](\"s\", 5))\n";
-    for verify in [false, true] {
-        let compiler = Compiler::default().with_template_verification(verify);
-        let program = compiler.compile_unlinked(source).expect("compile");
-        assert_eq!(
-            compiler.execute(&program).expect("execute").output,
-            "41 18\n"
-        );
-    }
+    let compiler = Compiler::default();
+    let program = compiler.compile_unlinked(source).expect("compile");
+    assert_eq!(
+        compiler.execute(&program).expect("execute").output,
+        "41 18\n"
+    );
 }
 
 #[test]
-fn template_print_statement_is_template_served() {
-    // A `print` statement in a runtime `def` or a method selects no callee,
-    // so the value-keyed `shown`, `plain`, and `Box.report` mint no clone.
+fn template_print_statement_runs_per_instance() {
+    // A `print` statement in a runtime `def` or a method selects no callee;
+    // the value-keyed `shown`, `plain`, and `Box.report` run per instance.
     let source = "def shown[T: ImplicitlyCopyable & Deinitable, n: Int](x: T, base: Int) -> Int:\n    var kept = x\n    print(n, base)\n    return base * n\n\ndef plain[T: ImplicitlyCopyable & Deinitable](x: T, v: Int) -> Int:\n    var kept = x\n    if v > 2:\n        print(\"big\", v)\n    return v\n\nstruct Box[T: ImplicitlyCopyable & Deinitable](Movable):\n    var item: Self.T\n    var count: Int\n\n    def __init__(out self, var item: Self.T, count: Int):\n        self.item = item\n        self.count = count\n\n    def report(self, extra: Int) -> Int:\n        print(\"count\", self.count, extra)\n        return self.count + extra\n\ndef main():\n    print(shown[Int, 3](7, 2), shown[String, 1](\"s\", 5))\n    print(plain[Int](1, 3), plain[String](\"s\", 1))\n    var a = Box[Int](1, 4)\n    var b = Box[String](\"x\", 9)\n    print(a.report(2), b.report(3))\n";
-    for verify in [false, true] {
-        let compiler = Compiler::default().with_template_verification(verify);
-        let program = compiler
-            .compile_source(
-                source,
-                std::path::Path::new("/tmp/mojito_template_print_statement.mojo"),
-            )
-            .expect("compile");
-        assert_eq!(
-            compiler.execute(&program).expect("execute").output,
-            "3 2\n1 5\n6 5\nbig 3\n3 1\ncount 4 2\ncount 9 3\n6 12\n"
-        );
-    }
+    let compiler = Compiler::default();
+    let program = compiler
+        .compile_source(
+            source,
+            std::path::Path::new("/tmp/mojito_template_print_statement.mojo"),
+        )
+        .expect("compile");
+    assert_eq!(
+        compiler.execute(&program).expect("execute").output,
+        "3 2\n1 5\n6 5\nbig 3\n3 1\ncount 4 2\ncount 9 3\n6 12\n"
+    );
 }
 
 #[test]
-fn template_print_whole_value_is_served_by_its_template() {
+fn template_print_whole_value_runs_per_instance() {
     // A `print` of a whole value reads it where it lies and selects no
-    // callee, so the templates of `echo` and `Box.report` serve every call
-    // with no clone minted.
+    // callee; `echo` and `Box.report` run per instance.
     let source = "def echo[T: Writable & ImplicitlyCopyable & Deinitable](x: T, s: String) -> Int:\n    var kept = x\n    print(x, s)\n    print(\"kept\", kept, 3)\n    return 1\n\n\nstruct Box[T: Writable & ImplicitlyCopyable & Deinitable](Movable):\n    var item: Self.T\n    var count: Int\n\n    def __init__(out self, var item: Self.T, count: Int):\n        self.item = item\n        self.count = count\n\n    def report(self, extra: String) -> Int:\n        print(\"item\", self.item, extra)\n        return self.count\n\n\ndef main():\n    print(echo[Int](7, \"a\"), echo[String](\"s\", \"b\"))\n    var a = Box[Int](1, 4)\n    var b = Box[String](\"x\", 9)\n    print(a.report(\"p\"), b.report(\"q\"))\n";
-    for verify in [false, true] {
-        let compiler = Compiler::default().with_template_verification(verify);
-        let program = compiler
-            .compile_source(
-                source,
-                std::path::Path::new("/tmp/mojito_template_print_whole_value.mojo"),
-            )
-            .expect("compile");
-        let stats = program.template_stats();
-        assert!(
-            stats
-                .derived
-                .iter()
-                .chain(&stats.verified)
-                .chain(&stats.inferred_clones)
-                .all(|name| !["echo$", "Box.report$"].iter().any(|p| name.starts_with(p))),
-            "no clone is minted: {stats:?}"
-        );
-        assert_eq!(
-            compiler.execute(&program).expect("execute").output,
-            "7 a\nkept 7 3\ns b\nkept s 3\n1 1\nitem 1 p\nitem x q\n4 9\n"
-        );
-    }
+    let compiler = Compiler::default();
+    let program = compiler
+        .compile_source(
+            source,
+            std::path::Path::new("/tmp/mojito_template_print_whole_value.mojo"),
+        )
+        .expect("compile");
+    assert_eq!(
+        compiler.execute(&program).expect("execute").output,
+        "7 a\nkept 7 3\ns b\nkept s 3\n1 1\nitem 1 p\nitem x q\n4 9\n"
+    );
 }
 
 #[test]
-fn template_pack_element_construction_derives() {
+fn template_pack_element_construction_runs() {
     // A pack element's default construction handed to `print` or bound to a
-    // local is checked once with the pack symbolic. Each method instance
-    // checks the elaborated construction alone and fixes its copy's loop
-    // index at the element that construction built, or at the first of
-    // several elements sharing its type; the pack-keyed `build` is served by
-    // its template.
+    // local is checked once with the pack symbolic; the elaborator unrolls
+    // each instance's loop and constructs the element the index names.
     let source = "struct Row[*Ts: Movable & Writable & Deinitable](Movable):\n    var width: Int\n\n    def __init__(out self):\n        self.width = 3\n\n    def defaults(self) where conforms_to(Self.Ts.values, Defaultable):\n        comptime for i in range(len(Self.Ts)):\n            print(Self.Ts[i]())\n\n    def locals(self) where conforms_to(Self.Ts.values, Defaultable):\n        comptime for i in range(len(Self.Ts)):\n            var value = Self.Ts[i]()\n            print(value, self.width)\n\n\ndef build[*Ts: Movable & Defaultable & Writable & Deinitable]():\n    comptime for i in range(len(Ts)):\n        var value = Ts[i]()\n        print(value)\n\n\ndef main():\n    var row = Row[Int, Float64, Bool]()\n    row.defaults()\n    row.locals()\n    build[Int, Optional[Int], Tuple[Int, Bool]]()\n    var shared = Row[Int, Int, Bool]()\n    shared.defaults()\n    shared.locals()\n    build[Bool, Int, Bool]()\n";
-    for verify in [false, true] {
-        let compiler = Compiler::default().with_template_verification(verify);
-        let program = compiler
-            .compile_source(
-                source,
-                std::path::Path::new("/tmp/mojito_template_pack_element_construction.mojo"),
-            )
-            .expect("compile");
-        let stats = program.template_stats();
-        let served = if verify {
-            &stats.verified
-        } else {
-            &stats.derived
-        };
-        let derived: std::collections::HashSet<&str> = served
-            .iter()
-            .map(String::as_str)
-            .filter(|name| name.ends_with(".defaults") || name.ends_with(".locals"))
-            .collect();
-        assert_eq!(derived.len(), 4, "every method instance derives: {stats:?}");
-        assert_eq!(
-            compiler.execute(&program).expect("execute").output,
-            "0\n0.0\nFalse\n0 3\n0.0 3\nFalse 3\n0\nNone\n(0, False)\n0\n0\nFalse\n0 3\n0 3\nFalse 3\nFalse\n0\nFalse\n"
-        );
-    }
+    let compiler = Compiler::default();
+    let program = compiler
+        .compile_source(
+            source,
+            std::path::Path::new("/tmp/mojito_template_pack_element_construction.mojo"),
+        )
+        .expect("compile");
+    assert_eq!(
+        compiler.execute(&program).expect("execute").output,
+        "0\n0.0\nFalse\n0 3\n0.0 3\nFalse 3\n0\nNone\n(0, False)\n0\n0\nFalse\n0 3\n0 3\nFalse 3\nFalse\n0\nFalse\n"
+    );
 }
 
 #[test]
-fn template_def_string_builtins_are_served_by_its_template() {
+fn template_def_string_builtins_run_per_instance() {
     // `repr` and `_unqualified_type_name[T]()` in a runtime `def` select no
-    // callee; the template serves both calls with no clone minted, and each
-    // renders the type name from its own substituted type.
+    // callee, and each instance renders the type name from its own
+    // substituted type.
     let source = "from std.reflection.type_info import _unqualified_type_name\n\ndef shown[T: Writable & ImplicitlyCopyable & Deinitable](x: T) -> Int:\n    var kept = x\n    var r = repr(kept)\n    print(r, _unqualified_type_name[T]())\n    return 1\n\ndef main():\n    print(shown[Int](7), shown[String](\"s\"))\n";
-    for verify in [false, true] {
-        let compiler = Compiler::default().with_template_verification(verify);
-        let program = compiler
-            .compile_source(
-                source,
-                std::path::Path::new("/tmp/mojito_template_def_string_builtins.mojo"),
-            )
-            .expect("compile");
-        let stats = program.template_stats();
-        assert!(
-            stats
-                .derived
-                .iter()
-                .chain(&stats.verified)
-                .chain(&stats.inferred_clones)
-                .all(|name| !name.starts_with("shown$")),
-            "`shown` mints no clone: {stats:?}"
-        );
-        assert_eq!(
-            compiler.execute(&program).expect("execute").output,
-            "Int(7) SIMD[DType.int, 1]\n's' String\n1 1\n"
-        );
-    }
+    let compiler = Compiler::default();
+    let program = compiler
+        .compile_source(
+            source,
+            std::path::Path::new("/tmp/mojito_template_def_string_builtins.mojo"),
+        )
+        .expect("compile");
+    assert_eq!(
+        compiler.execute(&program).expect("execute").output,
+        "Int(7) SIMD[DType.int, 1]\n's' String\n1 1\n"
+    );
 }
 
 #[test]
-fn template_value_shaped_construction_is_template_served() {
+fn template_value_shaped_construction_runs_per_instance() {
     // A keyed `def` constructing a `SIMD` whose dtype or width names its own
     // value binder records no dimensions in its template; each instance's
     // are its substituted construction type's.
     let source = "def both[dt: DType, w: Int](v: Int) -> Int:\n    var acc = v\n    comptime if dt.is_integral():\n        var lanes = SIMD[dt, w](v)\n        acc += len(lanes) * 10\n    else:\n        var one = Scalar[dt](v)\n        acc += len(one)\n    return acc\n\ndef main():\n    print(both[DType.int16, 4](2), both[DType.float32, 2](9))\n";
-    for verify in [false, true] {
-        let compiler = Compiler::default().with_template_verification(verify);
-        let program = compiler.compile_unlinked(source).expect("compile");
-        assert_eq!(
-            compiler.execute(&program).expect("execute").output,
-            "42 10\n"
-        );
-    }
+    let compiler = Compiler::default();
+    let program = compiler.compile_unlinked(source).expect("compile");
+    assert_eq!(
+        compiler.execute(&program).expect("execute").output,
+        "42 10\n"
+    );
 }
 
 #[test]
-fn template_value_shaped_operations_are_template_served() {
+fn template_value_shaped_operations_run_per_instance() {
     // A keyed `def` applying operators, reductions, casts, and conversions
-    // to a value-shaped construction's value is served by its template; a
+    // to a value-shaped construction's value is checked once; a
     // reinterpretation narrower than an instance's lane is rejected when the
     // elaborator closes that lane.
     let source = "def sum_lanes[w: Int](v: Int) -> Int:\n    var lanes = SIMD[DType.int64, w](v)\n    var twice = lanes + lanes * 3\n    var wide = twice.cast[DType.int32]()\n    return Int(twice.reduce_add()) + Int(wide.reduce_max()) + wide.length\n\ndef scale[dt: DType](v: Int) -> Int:\n    var one = Scalar[dt](v)\n    var two = one * one - one\n    return Int(two) + Int(one.to_bits[DType.uint16]())\n\ndef main():\n    print(sum_lanes[4](2), sum_lanes[2](9), scale[DType.int16](3), scale[DType.uint8](4))\n";
-    for verify in [false, true] {
-        let compiler = Compiler::default().with_template_verification(verify);
-        let program = compiler.compile_unlinked(source).expect("compile");
-        assert_eq!(
-            compiler.execute(&program).expect("execute").output,
-            "44 110 9 16\n"
-        );
-    }
+    let compiler = Compiler::default();
+    let program = compiler.compile_unlinked(source).expect("compile");
+    assert_eq!(
+        compiler.execute(&program).expect("execute").output,
+        "44 110 9 16\n"
+    );
     let narrower = "def scale[dt: DType](v: Int) -> Int:\n    var one = Scalar[dt](v)\n    return Int(one.to_bits[DType.uint16]())\n\ndef main():\n    print(scale[DType.int64](4))\n";
-    // The template serves `scale`, so the elaborator decides the constraint
-    // once the instance closes its source lane.
+    // The check accepts `scale` with `dt` symbolic; the elaborator decides
+    // the constraint once the instance closes its source lane.
     let compiler = Compiler::default();
     let program = compiler
         .compile_unlinked(narrower)
@@ -1884,77 +1702,51 @@ fn template_value_shaped_operations_are_template_served() {
 }
 
 #[test]
-fn template_value_shaped_lane_copy_is_template_served() {
+fn template_value_shaped_lane_copy_runs_per_instance() {
     // A lane of a value-shaped vector bound to a local copies a place; each
     // instance re-proves the copy at its own lane type.
     let source = "def first_lanes[dt: DType](v: Int) -> Int:\n    var lanes = SIMD[dt, 4](v)\n    var first = lanes[0]\n    var last = lanes[3]\n    first += last\n    return Int(first) + Int(lanes[1])\n\ndef widest[w: Int](v: Int) -> Int:\n    var lanes = SIMD[DType.int32, w](v)\n    var first = lanes[0]\n    return Int(first) * w\n\ndef main():\n    print(first_lanes[DType.int16](3), first_lanes[DType.float32](2), first_lanes[DType.int64](4), first_lanes[DType.float64](1), widest[4](5), widest[2](7))\n";
-    for verify in [false, true] {
-        let compiler = Compiler::default().with_template_verification(verify);
-        let program = compiler.compile_unlinked(source).expect("compile");
-        assert_eq!(
-            compiler.execute(&program).expect("execute").output,
-            "9 6 12 3 20 14\n"
-        );
-    }
+    let compiler = Compiler::default();
+    let program = compiler.compile_unlinked(source).expect("compile");
+    assert_eq!(
+        compiler.execute(&program).expect("execute").output,
+        "9 6 12 3 20 14\n"
+    );
 }
 
 #[test]
-fn template_struct_lane_members_are_template_served() {
-    // A member of a `DType`-keyed struct, a generator the template serves,
-    // converts, builds, and combines values of the symbolic lane with
+fn template_struct_lane_members_run_per_instance() {
+    // A member of a `DType`-keyed struct, a generator, converts, builds,
+    // and combines values of the symbolic lane with
     // literals, and runs at a vector lane and at the native `Int` and
     // `Float64` lanes, where each literal beside a lane value materializes
     // at the native scalar.
     let source = "struct Lane[dtype: DType](Copyable, ImplicitlyCopyable, Movable):\n    var pos: Scalar[Self.dtype]\n\n    def __init__(out self, pos: Scalar[Self.dtype]):\n        var first = pos\n        if Int(first) < 0:\n            first = 0\n        self.pos = first\n\n    def bump(mut self):\n        self.pos += 1\n\n    def twice(self) -> Scalar[Self.dtype]:\n        return 2 * self.pos - 1\n\n    def at(self, idx: Int) -> Scalar[Self.dtype]:\n        return self.pos + Scalar[Self.dtype](idx)\n\ndef main():\n    var a = Lane[DType.int](3)\n    var b = Lane[DType.int16](-4)\n    var c = Lane[DType.float64](5)\n    a.bump()\n    b.bump()\n    c.bump()\n    print(a.twice(), b.at(2), c.twice(), c.at(1))\n";
     let compiler = Compiler::default();
-    let derived = compile_entry(&compiler.clone().with_template_verification(false), source);
-    let verified = compile_entry(&compiler.clone().with_template_verification(true), source);
-    for program in [&derived, &verified] {
-        assert_eq!(
-            compiler.execute(program).expect("execute").output,
-            "7 3 11.0 7.0\n"
-        );
-    }
-    assert_struct_is_a_generator(&derived, "Lane");
-}
-
-/// A struct the template serves mints no specialization: no derived or
-/// inferred body is named for one of its instances (`Lane$dint;.bump`).
-fn assert_struct_is_a_generator(program: &mojito::compiler::CompiledProgram, name: &str) {
-    let stats = program.template_stats();
-    let prefix = format!("{name}$");
-    assert!(
-        !stats
-            .derived
-            .iter()
-            .chain(&stats.inferred_clones)
-            .any(|body| body.starts_with(&prefix)),
-        "{name} mints no specialization: {stats:?}"
+    let program = compile_entry(&compiler, source);
+    assert_eq!(
+        compiler.execute(&program).expect("execute").output,
+        "7 3 11.0 7.0\n"
     );
 }
 
 #[test]
-fn float_lane_methods_are_template_served() {
+fn float_lane_methods_run_per_lane() {
     // `__ceil__` and `__fma__` on values of a struct's symbolic lane — the
     // bundled float range's and a user struct's — run from the template at
     // a sized float lane and at the native `Float64`, whose `__fma__`
     // borrows its place arguments and reads its temporary ones.
     let source = "struct R[dtype: DType](Copyable, ImplicitlyCopyable, Movable):\n    var start: Scalar[Self.dtype]\n    var step: Scalar[Self.dtype]\n\n    def __init__(out self, start: Scalar[Self.dtype], step: Scalar[Self.dtype]):\n        self.start = start\n        self.step = step\n\n    def at(self, idx: Int) -> Scalar[Self.dtype]:\n        return Scalar[Self.dtype](idx).__fma__(self.step, self.start)\n\n    def far(self, idx: Int) -> Scalar[Self.dtype]:\n        return Scalar[Self.dtype](idx).__fma__(self.step * self.step, self.start + self.step)\n\n    def up(self) -> Scalar[Self.dtype]:\n        return (self.start / self.step).__ceil__()\n\ndef main():\n    var a = R[DType.float32](1.5, 2.0)\n    var b = R[DType.float64](1.5, 2.0)\n    print(a.at(2), a.up(), b.at(2), b.up())\n    print(a.far(2), b.far(2))\n    for x in range(Float64(0.5), Float64(1.5), Float64(0.5)):\n        print(x)\n    for y in range(Float32(1.0), Float32(0.0), Float32(-0.5)):\n        print(y)\n";
     let compiler = Compiler::default();
-    let derived = compile_entry(&compiler.clone().with_template_verification(false), source);
-    let verified = compile_entry(&compiler.clone().with_template_verification(true), source);
-    for program in [&derived, &verified] {
-        assert_eq!(
-            compiler.execute(program).expect("execute").output,
-            "5.5 1.0 5.5 1.0\n11.5 11.5\n0.5\n1.0\n1.0\n0.5\n"
-        );
-    }
-    assert_struct_is_a_generator(&derived, "R");
-    assert_struct_is_a_generator(&derived, "__module$std$range$_FloatStridedRange");
+    let program = compile_entry(&compiler, source);
+    assert_eq!(
+        compiler.execute(&program).expect("execute").output,
+        "5.5 1.0 5.5 1.0\n11.5 11.5\n0.5\n1.0\n1.0\n0.5\n"
+    );
 }
 
 #[test]
-fn lane_comparisons_are_template_served() {
+fn lane_comparisons_run_per_lane() {
     // A comparison between values of a symbolic lane, as a condition or
     // through `Bool(...)`, runs at a sized lane, whose mask a condition
     // tests through `__bool__`, and at a native `Int` or `Float64`, which
@@ -1963,96 +1755,43 @@ fn lane_comparisons_are_template_served() {
     // at a native lane.
     let source = "struct W[dtype: DType](Copyable, ImplicitlyCopyable, Movable):\n    var pos: Scalar[Self.dtype]\n\n    def __init__(out self, pos: Scalar[Self.dtype]):\n        self.pos = pos\n\n    def below(self, limit: Int) -> Bool:\n        return Bool(self.pos < Scalar[Self.dtype](limit))\n\n    def clamp(self, limit: Int) -> Scalar[Self.dtype]:\n        if self.pos < Scalar[Self.dtype](limit):\n            return self.pos\n        return Scalar[Self.dtype](limit)\n\n    def same(self, other: Scalar[Self.dtype]) -> Bool:\n        var m = self.pos == other\n        return Bool(m)\n\n    def positive(self) -> Int:\n        var neg = self.pos < 0\n        if neg:\n            return -1\n        if 0 == self.pos:\n            return 0\n        return 1\n\ndef sign[dt: DType](x: Scalar[dt], y: Scalar[dt]) -> Int:\n    var gt = x > y\n    if gt:\n        return 1\n    elif x != y:\n        return -1\n    return 0\n\ndef main():\n    var a = W[DType.int](3)\n    var b = W[DType.float64](3.5)\n    var c = W[DType.int32](7)\n    print(a.below(5), b.below(2), c.below(9))\n    print(a.clamp(2), b.clamp(9), c.clamp(4))\n    print(a.same(3), b.same(3.5), c.same(1))\n    print(a.positive(), W[DType.float64](-2.5).positive(), W[DType.int32](0).positive())\n    print(sign(Int(1), Int(4)), sign(Float32(3), Float32(2)), sign(UInt16(2), UInt16(2)))\n";
     let compiler = Compiler::default();
-    let derived = compile_entry(&compiler.clone().with_template_verification(false), source);
-    let verified = compile_entry(&compiler.clone().with_template_verification(true), source);
-    for program in [&derived, &verified] {
-        assert_eq!(
-            compiler.execute(program).expect("execute").output,
-            "True False True\n2 3.5 4\nTrue True False\n1 -1 0\n-1 1 0\n"
-        );
-    }
-    assert_struct_is_a_generator(&derived, "W");
-    // The lane-keyed `sign` is served by its template at every lane.
+    let program = compile_entry(&compiler, source);
+    assert_eq!(
+        compiler.execute(&program).expect("execute").output,
+        "True False True\n2 3.5 4\nTrue True False\n1 -1 0\n-1 1 0\n"
+    );
 }
 
 #[test]
-fn float_lane_literals_are_template_served() {
+fn float_lane_literals_run_per_lane() {
     // A float literal beside a value of a symbolic lane — an operand, a
     // comparison's operand, or an augmented assignment's value — runs from
     // the template at a sized float lane and at the native `Float64`, where
     // it materializes.
     let source = "struct W[dtype: DType](Copyable, ImplicitlyCopyable, Movable):\n    var pos: Scalar[Self.dtype]\n\n    def __init__(out self, pos: Scalar[Self.dtype]):\n        self.pos = pos\n\n    def half(self) -> Scalar[Self.dtype]:\n        return self.pos * 0.5\n\n    def small(self) -> Bool:\n        if self.pos < 0.5:\n            return True\n        return False\n\n    def big(self) -> Bool:\n        return Bool(1.5 <= self.pos)\n\n    def nudge(mut self):\n        self.pos += 0.25\n\n\ndef main():\n    var a = W[DType.float64](3.0)\n    var b = W[DType.float32](0.25)\n    a.nudge()\n    b.nudge()\n    print(a.half(), a.small(), a.big(), b.half(), b.small(), b.big())\n";
     let compiler = Compiler::default();
-    let derived = compile_entry(&compiler.clone().with_template_verification(false), source);
-    let verified = compile_entry(&compiler.clone().with_template_verification(true), source);
-    for program in [&derived, &verified] {
-        assert_eq!(
-            compiler.execute(program).expect("execute").output,
-            "1.625 False True 0.25 False False\n"
-        );
-    }
-    assert_struct_is_a_generator(&derived, "W");
-}
-
-#[test]
-fn spread_pack_initializer_is_template_served() {
-    // `self.storage = Tuple(*args^)` in a user variadic struct's
-    // initializer runs from the template: the struct is a generator, as at
-    // the pin, and mints no specialization.
-    let source = include_str!("../assets/ok/template_method_variadic_struct.mojo");
-    let compiler = Compiler::default();
-    let derived = compile_entry(&compiler.clone().with_template_verification(false), source);
-    let verified = compile_entry(&compiler.clone().with_template_verification(true), source);
-    for program in [&derived, &verified] {
-        assert_eq!(
-            compiler.execute(program).expect("execute").output,
-            "3 2 4\n6\n"
-        );
-    }
-    assert_struct_is_a_generator(&derived, "Bag");
-}
-
-#[test]
-fn sibling_call_result_field_derives() {
-    // `self.bumped().count`, a field read of a sibling method's whole-value
-    // result, derives for every specialization of a variadic struct.
-    let source = include_str!("../assets/ok/template_method_variadic_struct.mojo");
-    let compiler = Compiler::default();
-    let derived = compile_entry(&compiler.clone().with_template_verification(false), source);
-    let verified = compile_entry(&compiler.clone().with_template_verification(true), source);
-    for program in [&derived, &verified] {
-        assert_eq!(
-            compiler.execute(program).expect("execute").output,
-            "3 2 4\n6\n"
-        );
-    }
-    let stats = derived.template_stats();
-    let twice = |name: &&String| {
-        name.starts_with("Bag$")
-            && name
-                .rsplit_once('.')
-                .is_some_and(|(_, member)| member == "twice")
-    };
+    let program = compile_entry(&compiler, source);
     assert_eq!(
-        stats
-            .derived
-            .iter()
-            .filter(twice)
-            .collect::<std::collections::BTreeSet<_>>()
-            .len(),
-        2,
-        "both twice specializations derive; refused: {:?}",
-        stats.refused
-    );
-    assert!(
-        !stats.inferred_clones.iter().any(|name| twice(&name)),
-        "no twice is inferred: {:?}",
-        stats.inferred_clones
+        compiler.execute(&program).expect("execute").output,
+        "1.625 False True 0.25 False False\n"
     );
 }
 
 #[test]
-fn tstring_is_template_served() {
+fn spread_pack_initializer_runs() {
+    // `self.storage = Tuple(*args^)` in a user variadic struct's
+    // initializer: the struct is a generator, as at the pin.
+    let source = include_str!("../assets/ok/template_method_variadic_struct.mojo");
+    let compiler = Compiler::default();
+    let program = compile_entry(&compiler, source);
+    assert_eq!(
+        compiler.execute(&program).expect("execute").output,
+        "3 2 4\n6\n"
+    );
+}
+
+#[test]
+fn tstring_runs_from_its_generator() {
     // `TString` is a struct generator, as at the pin: a t-string, nested
     // or interpolating a generic value, runs from the template of
     // `std/format/tstring.mojo`, and no specialization is minted for it.
@@ -2068,100 +1807,51 @@ fn tstring_is_template_served() {
         ),
     ] {
         let compiler = Compiler::default();
-        let derived = compile_entry(&compiler.clone().with_template_verification(false), source);
-        let verified = compile_entry(&compiler.clone().with_template_verification(true), source);
-        for program in [&derived, &verified] {
-            assert_eq!(compiler.execute(program).expect("execute").output, expected);
-        }
-        assert_struct_is_a_generator(&derived, "TString");
+        let program = compile_entry(&compiler, source);
+        assert_eq!(
+            compiler.execute(&program).expect("execute").output,
+            expected
+        );
     }
 }
 
 #[test]
-fn pack_accessor_derives() {
+fn pack_accessor_runs() {
     // A user variadic struct's `__getitem__[i: Int]` over its `Tuple`
-    // storage, copying the element out or returning a reference to it,
-    // derives each unrolled `__getitem__$k` and its value twin.
+    // storage, copying the element out or returning a reference to it, is
+    // instantiated per index by the elaborator.
     let source = include_str!("../assets/ok/template_method_pack_accessor.mojo");
     let compiler = Compiler::default();
-    let derived = compile_entry(&compiler.clone().with_template_verification(false), source);
-    let verified = compile_entry(&compiler.clone().with_template_verification(true), source);
-    for program in [&derived, &verified] {
-        assert_eq!(
-            compiler.execute(program).expect("execute").output,
-            "1 a\nTrue 2\n7 b\n"
-        );
-    }
-    let stats = derived.template_stats();
-    let accessor = |name: &&String| {
-        (name.starts_with("Bag$") || name.starts_with("Shelf$")) && name.contains(".__getitem")
-    };
-    assert!(
-        stats.derived.iter().filter(|name| accessor(name)).count() >= 6,
-        "the accessors derive; refused: {:?}",
-        stats.refused
-    );
-    assert!(
-        !stats.inferred_clones.iter().any(|name| accessor(&name)),
-        "no accessor is inferred: {:?}",
-        stats.inferred_clones
+    let program = compile_entry(&compiler, source);
+    assert_eq!(
+        compiler.execute(&program).expect("execute").output,
+        "1 a\nTrue 2\n7 b\n"
     );
 }
 
 #[test]
-fn unavailable_member_stub_derives() {
-    // A member whose availability clause folds false is one trap stub per
-    // template method, shared by every specialization under the same
-    // identities: the first copy checked is its template, and the others
-    // derive from it.
+fn unavailable_member_stub_runs() {
+    // A member whose availability clause folds false is a trap stub; a
+    // tuple over an element without the comparisons still constructs and
+    // reads.
     let source = "struct Opaque(Copyable, Movable):\n    var n: Int\n\n    def __init__(out self, n: Int):\n        self.n = n\n\ndef main():\n    var a = (1, Opaque(2))\n    var b = (String(\"s\"), Opaque(3))\n    print(a[1].n + b[1].n)\n";
     let compiler = Compiler::default();
-    let derived = compile_entry(&compiler.clone().with_template_verification(false), source);
-    let verified = compile_entry(&compiler.clone().with_template_verification(true), source);
-    for program in [&derived, &verified] {
-        assert_eq!(compiler.execute(program).expect("execute").output, "5\n");
-    }
-    let stats = derived.template_stats();
-    for member in ["__eq__", "__ne__", "__lt__", "__le__", "__gt__", "__ge__"] {
-        let copies = |names: &[String]| {
-            names
-                .iter()
-                .filter(|name| name.contains("Opaque") && name.ends_with(&format!(".{member}")))
-                .cloned()
-                .collect::<std::collections::BTreeSet<_>>()
-        };
-        assert!(
-            !copies(&stats.derived).is_empty(),
-            "an unavailable {member} derives: {stats:?}"
-        );
-        assert!(
-            copies(&stats.inferred_clones).len() <= 1,
-            "one copy of the {member} stub at most is inferred: {stats:?}"
-        );
-    }
+    let program = compile_entry(&compiler, source);
+    assert_eq!(compiler.execute(&program).expect("execute").output, "5\n");
 }
 
 #[test]
-fn simd_wildcard_member_is_template_served() {
+fn simd_wildcard_member_runs_per_vector_type() {
     // `AHasher[key]._update_with_simd(mut self, new_data: SIMD[_, _])` is a
-    // generator over its inferred dtype and width: each key's specialization
+    // generator over its inferred dtype and width: each key's instance
     // keeps the member with its own binders, which the elaborator
-    // instantiates per hashed vector type, so no leaf is cloned.
+    // instantiates per hashed vector type.
     let source = "from std.hashlib._ahash import AHasher, U256\n\ndef main():\n    var a = AHasher[U256(1, 2, 3, 4)]()\n    a.update(Int(7))\n    var b = AHasher[U256(5, 6, 7, 8)]()\n    b.update(Int(7))\n    print(a^.finish() == b^.finish())\n";
     let compiler = Compiler::default();
-    let derived = compile_entry(&compiler.clone().with_template_verification(false), source);
-    let verified = compile_entry(&compiler.clone().with_template_verification(true), source);
-    for program in [&derived, &verified] {
-        assert_eq!(
-            compiler.execute(program).expect("execute").output,
-            "False\n"
-        );
-    }
-    let stats = derived.template_stats();
-    let leaf_clone = |name: &String| name.contains("._update_with_simd$");
-    assert!(
-        !stats.derived.iter().any(leaf_clone) && !stats.inferred_clones.iter().any(leaf_clone),
-        "no hasher leaf is cloned: {stats:?}"
+    let program = compile_entry(&compiler, source);
+    assert_eq!(
+        compiler.execute(&program).expect("execute").output,
+        "False\n"
     );
 }
 
@@ -2201,93 +1891,46 @@ fn hash_leaf_instantiates_the_hasher_template_per_vector_type() {
 }
 
 #[test]
-fn struct_hasher_simd_update_is_template_served() {
+fn struct_hasher_simd_update_runs_per_key() {
     // A method whose own `H: Hasher` a call binds to `AHasher` hands it
     // multi-lane vectors: the elaborator instantiates the struct's own
     // `update` and `_update_with_simd` per call, from one template.
     let source = "from std.hashlib import Hasher\nfrom std.hashlib._ahash import AHasher, U256\n\nstruct Tag(Hashable, Movable):\n    var value: Int\n\n    def __init__(out self, value: Int):\n        self.value = value\n\n    def __hash__[H: Hasher](self, mut hasher: H):\n        hasher._update_with_simd(SIMD[DType.int32, 4](1, 2, 3, 4))\n        hasher.update(SIMD[DType.uint8, 8](self.value))\n\ndef main():\n    var t = Tag(1)\n    var a = AHasher[U256(1, 2, 3, 4)]()\n    t.__hash__(a)\n    var b = AHasher[U256(5, 6, 7, 8)]()\n    t.__hash__(b)\n    var c = AHasher[U256(1, 2, 3, 4)]()\n    Tag(1).__hash__(c)\n    print(a^.finish() == c^.finish(), b^.finish() == 0)\n";
     let compiler = Compiler::default();
-    let derived = compile_entry(&compiler.clone().with_template_verification(false), source);
-    let verified = compile_entry(&compiler.clone().with_template_verification(true), source);
-    for program in [&derived, &verified] {
-        assert_eq!(
-            compiler.execute(program).expect("execute").output,
-            "True False\n"
-        );
-    }
-    // The template serves every hasher: no instance of the method is
-    // cloned for either key.
-    let stats = derived.template_stats();
-    let clone = |name: &String| name.starts_with("Tag.__hash__$");
-    assert!(
-        !stats.derived.iter().any(clone)
-            && !stats.inferred_clones.iter().any(clone)
-            && !stats.refused.iter().any(|(name, _)| clone(name)),
-        "no hasher instance is cloned: {stats:?}"
+    let program = compile_entry(&compiler, source);
+    assert_eq!(
+        compiler.execute(&program).expect("execute").output,
+        "True False\n"
     );
 }
 
 #[test]
-fn struct_hasher_field_update_is_template_served() {
+fn struct_hasher_field_update_runs_per_key() {
     // A method whose own `H: Hasher` a call binds to `AHasher` hands it a
     // field of `self` and a field of a field: each is borrowed where it
-    // lies, apart from the hasher, and the template serves both keys.
+    // lies, apart from the hasher, at both keys.
     let source = "from std.hashlib import Hasher\nfrom std.hashlib._ahash import AHasher, U256\n\n\n@fieldwise_init\nstruct Inner(Copyable, Movable):\n    var lanes: SIMD[DType.uint8, 4]\n\n\nstruct Tag(Hashable, Movable):\n    var value: Int\n    var inner: Inner\n\n    def __init__(out self, value: Int):\n        self.value = value\n        self.inner = Inner(SIMD[DType.uint8, 4](1, 2, 3, 4))\n\n    def __hash__[H: Hasher](self, mut hasher: H):\n        hasher.update(self.value)\n        hasher._update_with_simd(self.inner.lanes)\n\n\ndef main():\n    var t = Tag(1)\n    var a = AHasher[U256(1, 2, 3, 4)]()\n    t.__hash__(a)\n    var b = AHasher[U256(5, 6, 7, 8)]()\n    t.__hash__(b)\n    var c = AHasher[U256(1, 2, 3, 4)]()\n    Tag(1).__hash__(c)\n    print(a^.finish() == c^.finish(), b^.finish() == 0)\n";
     let compiler = Compiler::default();
-    let derived = compile_entry(&compiler.clone().with_template_verification(false), source);
-    let verified = compile_entry(&compiler.clone().with_template_verification(true), source);
-    for program in [&derived, &verified] {
-        assert_eq!(
-            compiler.execute(program).expect("execute").output,
-            "True False\n"
-        );
-    }
-    // The template serves every hasher: no instance of the method is
-    // cloned for either key.
-    let stats = derived.template_stats();
-    let clone = |name: &String| name.starts_with("Tag.__hash__$");
-    assert!(
-        !stats.derived.iter().any(clone)
-            && !stats.inferred_clones.iter().any(clone)
-            && !stats.refused.iter().any(|(name, _)| clone(name)),
-        "no hasher instance is cloned: {stats:?}"
-    );
-}
-
-/// No clone of the public `Tuple` is checked: its template serves every
-/// instance.
-fn assert_no_tuple_clone(stats: &mojito::templates::TemplateStats) {
-    let clone = |name: &String| name.starts_with("Tuple");
-    assert!(
-        !stats
-            .derived
-            .iter()
-            .chain(&stats.inferred_clones)
-            .chain(&stats.verified)
-            .any(clone)
-            && !stats.refused.iter().any(|(name, _)| clone(name)),
-        "no Tuple instance is cloned: {stats:?}"
+    let program = compile_entry(&compiler, source);
+    assert_eq!(
+        compiler.execute(&program).expect("execute").output,
+        "True False\n"
     );
 }
 
 #[test]
-fn tuple_default_initializer_is_template_served() {
+fn tuple_default_initializer_runs() {
     // `Tuple`'s `__init__(out self)` is upstream's: it marks `self.storage`
     // initialized and writes each element through `Pointer(to=self[i])` from
     // the initializer list `{}`, which the element's own default
-    // construction stands for. The template serves every Defaultable
-    // instance, so no clone of it is checked.
+    // construction stands for, at every Defaultable instance.
     let source = "def main():\n    var t = Tuple[Int, Optional[Int]]()\n    var u = Tuple[UInt64, Bool, Float64]()\n    var n = Tuple[String, Tuple[Int, Bool]]()\n    print(t[0], t[1] is None, u[0], u[1], u[2], n[0], n[1][0], n[1][1])\n";
     let compiler = Compiler::default();
-    let derived = compile_entry(&compiler.clone().with_template_verification(false), source);
-    let verified = compile_entry(&compiler.clone().with_template_verification(true), source);
-    for program in [&derived, &verified] {
-        assert_eq!(
-            compiler.execute(program).expect("execute").output,
-            "0 True 0 False 0.0  0 False\n"
-        );
-        assert_no_tuple_clone(program.template_stats());
-    }
+    let program = compile_entry(&compiler, source);
+    assert_eq!(
+        compiler.execute(&program).expect("execute").output,
+        "0 True 0 False 0.0  0 False\n"
+    );
 }
 
 #[test]
@@ -2312,262 +1955,170 @@ fn unavailable_initializer_is_rejected() {
 }
 
 #[test]
-fn tuple_teardowns_are_template_served() {
+fn tuple_teardowns_are_unrolled_per_instance() {
     // `Tuple.consume_elements` and `deinit_with` take a compile-time
     // callable binder and move each element out through a pointer in a
-    // `comptime for` the template keeps: the elaborator unrolls it per
-    // instance, and no clone of either teardown is checked.
+    // `comptime for` the body keeps to MIR: the elaborator unrolls it per
+    // instance.
     let source = "def main():\n    var pair = (String(\"b\"), 1)\n    var words = (String(\"x\"), String(\"y\"), String(\"z\"))\n    print(pair[0], words[2])\n";
     let compiler = Compiler::default();
-    let derived = compile_entry(&compiler.clone().with_template_verification(false), source);
-    let verified = compile_entry(&compiler.clone().with_template_verification(true), source);
-    for program in [&derived, &verified] {
-        assert_eq!(compiler.execute(program).expect("execute").output, "b z\n");
-        assert_no_tuple_clone(program.template_stats());
-    }
+    let program = compile_entry(&compiler, source);
+    assert_eq!(compiler.execute(&program).expect("execute").output, "b z\n");
 }
 
 #[test]
-fn tuple_over_erased_views_is_template_served() {
+fn tuple_over_erased_views_runs() {
     // `split_at_grapheme` returns `Tuple[StringSpan, StringSpan]`, whose
-    // element origins erase from the instance: the template serves it as it
-    // serves plain-data elements, the `rebind`-keyed `__contains__` and the
+    // element origins erase from the instance: it runs as a tuple of
+    // plain-data elements does, the `rebind`-keyed `__contains__` and the
     // comparison members among them.
     let source = "def main():\n    var text = String(\"h\u{e9}llo\")\n    var parts = text.split_at_grapheme(2)\n    print(parts[0], parts[1], len(parts))\n    var again = text.split_at_grapheme(2)\n    print(parts == again, parts != again)\n    print(parts)\n";
     let compiler = Compiler::default();
-    let derived = compile_entry(&compiler.clone().with_template_verification(false), source);
-    let verified = compile_entry(&compiler.clone().with_template_verification(true), source);
-    for program in [&derived, &verified] {
-        assert_eq!(
-            compiler.execute(program).expect("execute").output,
-            "h\u{e9} llo 2\nTrue False\n(h\u{e9}, llo)\n"
-        );
-        assert_no_tuple_clone(program.template_stats());
-    }
+    let program = compile_entry(&compiler, source);
+    assert_eq!(
+        compiler.execute(&program).expect("execute").output,
+        "h\u{e9} llo 2\nTrue False\n(h\u{e9}, llo)\n"
+    );
 }
 
 #[test]
-fn reference_result_read_in_method_derives() {
+fn reference_result_read_in_method_runs() {
     // A method reads a value through a free call returning
     // `ref[origin_of(a, b)] T` and stores it into `self`: the call reads
-    // through the reference as upstream does, so the local owns a copy, the
-    // store's frame effect has a union source, and the template serves every
-    // instance without a clone.
+    // through the reference as upstream does, so the local owns a copy and
+    // the store's frame effect has a union source, at every instance.
     let source = "def pick[T: Copyable](ref a: T, ref b: T, first: Bool) -> ref[origin_of(a, b)] T:\n    if first:\n        return a\n    return b\n\nstruct Holder[T: ImplicitlyCopyable & Deinitable](Movable):\n    var value: Self.T\n\n    def __init__(out self, var value: Self.T):\n        self.value = value^\n\n    def choose(mut self, a: Self.T, b: Self.T, first: Bool):\n        var r = pick(a, b, first)\n        self.value = r^\n\n    def copied(mut self, a: Self.T, b: Self.T, first: Bool):\n        self.value = pick(a, b, first).copy()\n\ndef main():\n    var h = Holder(0)\n    h.choose(1, 2, True)\n    print(h.value)\n    h.copied(3, 4, False)\n    var s = Holder(String(\"x\"))\n    s.choose(String(\"a\"), String(\"b\"), False)\n    print(h.value, s.value)\n    s.copied(String(\"c\"), String(\"d\"), True)\n    print(s.value)\n";
     let compiler = Compiler::default();
-    let derived = compile_entry(&compiler.clone().with_template_verification(false), source);
-    let verified = compile_entry(&compiler.clone().with_template_verification(true), source);
-    for program in [&derived, &verified] {
-        assert_eq!(
-            compiler.execute(program).expect("execute").output,
-            "1\n4 b\nc\n"
-        );
-    }
-    let stats = derived.template_stats();
-    for instance in ["y3:Int", "y6:String"] {
-        for member in ["choose", "copied"] {
-            let name = format!("Holder.{member}${instance}");
-            assert!(
-                !stats.derived.contains(&name) && !stats.inferred_clones.contains(&name),
-                "{name} is never minted: {stats:?}"
-            );
-        }
-    }
+    let program = compile_entry(&compiler, source);
+    assert_eq!(
+        compiler.execute(&program).expect("execute").output,
+        "1\n4 b\nc\n"
+    );
 }
 
 #[test]
-fn template_vector_keyed_members_derive() {
+fn vector_keyed_struct_members_run() {
     // A struct keyed on a closed vector value, a generator as the bundled
     // `AHasher` is, reads `Self.key`, constructs through the vector
     // alias, copies a lane into a field, reads the module's integer
     // constants, and calls a module function over closed values; every
-    // member derives at every key.
+    // member runs at every key.
     let source = "comptime Pair = SIMD[DType.uint64, 2]\ncomptime MULTIPLE = 6364136223846793005\ncomptime ROT = 23\n\ndef _mix(lhs: UInt64, rhs: UInt64) -> UInt64:\n    return (lhs * rhs) ^ (lhs >> UInt64(32))\n\nstruct Mixer[key: Pair](Movable):\n    var state: UInt64\n    var extra: UInt64\n\n    def __init__(out self):\n        var keyed = Self.key ^ Pair(0x243F6A8885A308D3, 0x13198A2E03707344)\n        self.state = keyed[0]\n        self.extra = keyed[1]\n\n    def feed(mut self, value: UInt64):\n        self.state = _mix(value ^ self.state, UInt64(MULTIPLE))\n\n    def rotate(mut self):\n        var mixed = self.state + self.extra\n        self.state = (mixed << UInt64(ROT)) | (mixed >> UInt64(64 - ROT))\n\n    def finish(var self) -> UInt64:\n        return self.state ^ self.extra\n\ndef main():\n    var zero = Mixer[Pair(0)]()\n    zero.feed(UInt64(7))\n    zero.rotate()\n    print(zero^.finish())\n    var keyed = Mixer[Pair(3, 4)]()\n    keyed.feed(UInt64(7))\n    keyed.rotate()\n    print(keyed^.finish())\n";
     let compiler = Compiler::default();
-    let derived = compile_entry(&compiler.clone().with_template_verification(false), source);
-    let verified = compile_entry(&compiler.clone().with_template_verification(true), source);
-    for program in [&derived, &verified] {
-        assert_eq!(
-            compiler.execute(program).expect("execute").output,
-            "3689973725367583649\n8585631970048071827\n"
-        );
-    }
-    let stats = derived.template_stats();
-    for key in ["i0;i0;", "i3;i4;"] {
-        for member in ["__init__", "feed", "rotate", "finish"] {
-            let name = format!("Mixer$vuint64:2;[{key}].{member}");
-            assert!(stats.derived.contains(&name), "{name} derives: {stats:?}");
-            assert!(
-                !stats.inferred_clones.contains(&name),
-                "{name} is never inferred: {stats:?}"
-            );
-        }
-    }
-    // The bundled `AHasher`'s own members derive the same way.
-    let hashed = compile_entry(
-        &compiler,
-        "def main():\n    print(hash(String(\"hello\")))\n",
-    );
-    let stats = hashed.template_stats();
-    let own = |name: &String| name.starts_with("__module$$ahash$AHasher$");
-    assert!(
-        stats.derived.iter().any(&own),
-        "AHasher's members derive: {stats:?}"
-    );
-    assert!(
-        !stats.inferred_clones.iter().any(own),
-        "AHasher's members are never inferred: {stats:?}"
+    let program = compile_entry(&compiler, source);
+    assert_eq!(
+        compiler.execute(&program).expect("execute").output,
+        "3689973725367583649\n8585631970048071827\n"
     );
 }
 
 #[test]
-fn template_value_keyed_lane_def_is_template_served() {
+fn template_value_keyed_lane_def_runs_per_instance() {
     // A `DType`- or lane-keyed `def` with no compile-time control flow is
-    // served by its template: the cloner mints no instance, and the
-    // elaborator closes the lane slots per call.
+    // checked once; the elaborator closes the lane slots per call.
     let source = "def lane[dt: DType](v: Int) -> Int:\n    var one = Scalar[dt](v)\n    return len(one) + v\n\ndef wide[w: Int](v: Int) -> Int:\n    var lanes = SIMD[DType.int32, w](v)\n    return len(lanes)\n\ndef main():\n    print(lane[DType.int16](2), lane[DType.float32](9), wide[4](2))\n";
-    for verify in [false, true] {
-        let compiler = Compiler::default().with_template_verification(verify);
-        let program = compiler.compile_unlinked(source).expect("compile");
-        assert_eq!(
-            compiler.execute(&program).expect("execute").output,
-            "3 10 4\n"
-        );
-    }
+    let compiler = Compiler::default();
+    let program = compiler.compile_unlinked(source).expect("compile");
+    assert_eq!(
+        compiler.execute(&program).expect("execute").output,
+        "3 10 4\n"
+    );
 }
 
 #[test]
-fn template_overloaded_lane_def_is_template_served() {
-    // An overloaded `DType`-keyed `def` is served by its template like a
-    // uniquely named one: the checker selects the overload, and a call
+fn template_overloaded_lane_def_runs_per_instance() {
+    // An overloaded `DType`-keyed `def` is checked once like a uniquely
+    // named one: the checker selects the overload, and a call
     // selecting the lane member is left as written, beside a plain sibling
     // and beside a type-keyed sibling that materializes a reflected list.
     let source = "@fieldwise_init\nstruct P(Copyable):\n    var a: Int\n    var b: Int\n\ndef lane[dt: DType](a: Scalar[dt]) -> Int:\n    return 1\n\ndef lane(a: String) -> Int:\n    return 2\n\ndef kind[T: AnyType](a: Int) -> Int:\n    comptime names = reflect[T].field_names()\n    var all = materialize[names]()\n    return len(all) + a\n\ndef kind[dt: DType](a: Scalar[dt]) -> Int:\n    return 3\n\ndef kind(a: String) -> Int:\n    return 4\n\ndef main():\n    print(lane(Int32(1)), lane[DType.float64](2.0), lane(String(\"s\")))\n    print(kind[P](10), kind[DType.float64](1.8), kind(Int32(4)), kind(String(\"s\")))\n";
-    for verify in [false, true] {
-        let compiler = Compiler::default().with_template_verification(verify);
-        let program = compiler.compile_unlinked(source).expect("compile");
-        assert_eq!(
-            compiler.execute(&program).expect("execute").output,
-            "1 1 2\n12 3 3 4\n"
-        );
-    }
+    let compiler = Compiler::default();
+    let program = compiler.compile_unlinked(source).expect("compile");
+    assert_eq!(
+        compiler.execute(&program).expect("execute").output,
+        "1 1 2\n12 3 3 4\n"
+    );
 }
 
 #[test]
-fn template_local_comptime_lane_binding_is_template_served() {
+fn template_local_comptime_lane_binding_runs_per_instance() {
     // A local `comptime` binding of a lane binder (`comptime lane = dt`) is
-    // an alias of the binder's parameter expression: the template serves the
-    // body, a type naming the alias and a thunk calling a method on it
-    // included, so the cloner mints no instance.
+    // an alias of the binder's parameter expression: the body is checked
+    // once, a type naming the alias and a thunk calling a method on it
+    // included, and closed per instance.
     let source = "def rebound[dt: DType](a: Scalar[dt]) -> Scalar[dt]:\n    comptime lane = dt\n    return a + Scalar[lane](1)\n\ndef single[dt: DType](a: Scalar[dt]) -> Scalar[dt]:\n    comptime lane = dt\n    comptime if lane.is_floating_point():\n        return a / Scalar[lane](2)\n    return a + Scalar[lane](2)\n\ndef main():\n    print(rebound[DType.int32](6), rebound[DType.float32](3.0))\n    print(single[DType.int64](5), single[DType.float16](5))\n";
-    for verify in [false, true] {
-        let compiler = Compiler::default().with_template_verification(verify);
-        let program = compiler.compile_unlinked(source).expect("compile");
-        assert_eq!(
-            compiler.execute(&program).expect("execute").output,
-            "7 4.0\n7 2.5\n"
-        );
-    }
+    let compiler = Compiler::default();
+    let program = compiler.compile_unlinked(source).expect("compile");
+    assert_eq!(
+        compiler.execute(&program).expect("execute").output,
+        "7 4.0\n7 2.5\n"
+    );
 }
 
 #[test]
-fn template_lane_def_value_binder_outside_lane_is_template_served() {
+fn template_lane_def_value_binder_outside_lane_runs() {
     // A lane-keyed `def` is an ordinary generic `def`: a value binder a
     // runtime parameter names outside a lane slot (`n` of `a: Box[n]`) is
     // inferred from the argument's type, an erased origin beside the lane is
-    // too, and a `thin` callable binder is bound from the brackets, so the
-    // cloner mints no instance.
+    // too, and a `thin` callable binder is bound from the brackets.
     let source = "struct Box[n: Int](Copyable):\n    var v: Int\n\n    def __init__(out self, v: Int):\n        self.v = v\n\ndef h[dt: DType, n: Int](a: Box[n], b: Scalar[dt]) -> Int:\n    return n\n\ndef o2[dt: DType, mut: Bool, //, origin: Origin[mut=mut]](ref[origin] x: Scalar[dt]) -> Scalar[dt]:\n    return x + 1\n\ndef twice(x: Int) -> Int:\n    return 2 * x\n\ndef c[dt: DType, f: def(Int) thin -> Int](x: Scalar[dt]) -> Int:\n    return f(Int(x))\n\ndef main():\n    var a = Int32(4)\n    print(h(Box[3](0), Int32(1)), h[DType.int8, 2](Box[2](0), Int8(1)))\n    print(o2(a), c[DType.int8, twice](Int8(3)))\n";
-    for verify in [false, true] {
-        let compiler = Compiler::default().with_template_verification(verify);
-        let program = compiler.compile_unlinked(source).expect("compile");
-        assert_eq!(
-            compiler.execute(&program).expect("execute").output,
-            "3 2\n5 6\n"
-        );
-    }
+    let compiler = Compiler::default();
+    let program = compiler.compile_unlinked(source).expect("compile");
+    assert_eq!(
+        compiler.execute(&program).expect("execute").output,
+        "3 2\n5 6\n"
+    );
 }
 
 #[test]
-fn template_served_method_own_binders_mint_no_clone() {
-    // A method with a bounded binder of its own is a generator: its template
-    // serves every call, beside its struct's binder on a generic struct's
-    // instance, so no call mints a per-call clone to check or derive.
+fn method_own_binders_run_per_call() {
+    // A method with a bounded binder of its own is a generator the
+    // elaborator instantiates per call, beside its struct's binder on a
+    // generic struct's instance.
     let source = "struct Box[T: Copyable & Deinitable](Movable):\n    var count: Int\n\n    def __init__(out self, count: Int):\n        self.count = count\n\n    def echo[U: Copyable & Deinitable](self, other: U) -> U:\n        return other.copy()\n\nstruct Plain:\n    var x: Int\n\n    def __init__(out self, x: Int):\n        self.x = x\n\n    def echo[U: Copyable & Deinitable](self, other: U) -> U:\n        return other.copy()\n\ndef main():\n    var b = Box[Int](4)\n    print(b.echo[String](\"e\"), b.echo(7))\n    var p = Plain(7)\n    print(p.echo(1.5))\n";
-    for verify in [false, true] {
-        let compiler = Compiler::default().with_template_verification(verify);
-        let program = compiler.compile_unlinked(source).expect("compile");
-        let stats = program.template_stats();
-        let clones: Vec<&String> = stats
-            .derived
-            .iter()
-            .chain(&stats.verified)
-            .chain(&stats.inferred_clones)
-            .filter(|name| name.starts_with("Box.echo$") || name.starts_with("Plain.echo$"))
-            .collect();
-        assert!(clones.is_empty(), "no per-call clone is minted: {clones:?}");
-        assert_eq!(
-            compiler.execute(&program).expect("execute").output,
-            "e 7\n1.5\n"
-        );
-    }
+    let compiler = Compiler::default();
+    let program = compiler.compile_unlinked(source).expect("compile");
+    assert_eq!(
+        compiler.execute(&program).expect("execute").output,
+        "e 7\n1.5\n"
+    );
 }
 
 #[test]
-fn template_method_own_lane_mints_no_clone() {
+fn method_own_lane_runs_per_call() {
     // A method keyed on its own `DType` or width binder, a body constructing
-    // at that lane included, is served by its template: the elaborator closes
-    // the lane per call, so no call mints a per-call clone.
+    // at that lane included, is checked once; the elaborator closes the lane
+    // per call.
     let source = "struct Box:\n    var x: Int\n\n    def __init__(out self, x: Int):\n        self.x = x\n\n    def lanes[w: Int](self) -> Int:\n        var v = SIMD[DType.int32, w](self.x)\n        return len(v) + Int(v.reduce_add())\n\n    def kind[dt: DType](self, y: Int) -> Int:\n        var one = Scalar[dt](y + self.x)\n        return Int(one * one)\n\n    def twice[dt: DType](self, a: Scalar[dt]) -> Scalar[dt]:\n        return a + a\n\ndef main():\n    var b = Box(3)\n    print(b.lanes[4](), b.lanes[2]())\n    print(b.kind[DType.int16](2), b.kind[DType.uint8](1), b.twice(Int16(5)))\n";
-    for verify in [false, true] {
-        let compiler = Compiler::default().with_template_verification(verify);
-        let program = compiler.compile_unlinked(source).expect("compile");
-        let stats = program.template_stats();
-        let clones: Vec<&String> = stats
-            .derived
-            .iter()
-            .chain(&stats.verified)
-            .chain(&stats.inferred_clones)
-            .filter(|name| name.starts_with("Box.") && name.contains('$'))
-            .collect();
-        assert!(clones.is_empty(), "no per-call clone is minted: {clones:?}");
-        assert_eq!(
-            compiler.execute(&program).expect("execute").output,
-            "16 8\n25 16 10\n"
-        );
-    }
+    let compiler = Compiler::default();
+    let program = compiler.compile_unlinked(source).expect("compile");
+    assert_eq!(
+        compiler.execute(&program).expect("execute").output,
+        "16 8\n25 16 10\n"
+    );
 }
 
 #[test]
 fn template_value_struct_methods_are_served_on_the_generator() {
     // A struct whose value binder is a lane width (`Width[n: Int]` spelling
-    // `SIMD[dt, Self.n]`) is a generator the template serves: no instance is
-    // specialized whole, and a method keyed on its own binder is served by
-    // its template too, the struct's binder and its own bound per call.
+    // `SIMD[dt, Self.n]`) is a generator, and a method keyed on its own
+    // binder is instantiated per call with the struct's binder and its own
+    // bound.
     let source = "struct Width[n: Int]:\n    def __init__(out self):\n        pass\n\n    def rep[dt: DType](self, a: SIMD[dt, Self.n]) -> SIMD[dt, Self.n]:\n        return a + a\n\n    def sized[dt: DType](self, a: SIMD[dt, Self.n]) -> Int:\n        return Self.n + len(a)\n\n    def widen[w: Int](self) -> SIMD[DType.int32, w]:\n        return SIMD[DType.int32, w](Self.n)\n\ndef main():\n    var w = Width[4]()\n    print(w.rep[DType.int16](SIMD[DType.int16, 4](1, 2, 3, 4)))\n    print(w.sized(SIMD[DType.uint8, 4](1)), w.widen[2]())\n";
-    for verify in [false, true] {
-        let compiler = Compiler::default().with_template_verification(verify);
-        let program = compiler.compile_unlinked(source).expect("compile");
-        let stats = program.template_stats();
-        let clones: Vec<&String> = stats
-            .inferred_clones
-            .iter()
-            .filter(|name| name.starts_with("Width"))
-            .collect();
-        assert!(clones.is_empty(), "no per-call clone is minted: {clones:?}");
-        assert_eq!(
-            compiler.execute(&program).expect("execute").output,
-            "[2, 4, 6, 8]\n8 [4, 4]\n"
-        );
-    }
+    let compiler = Compiler::default();
+    let program = compiler.compile_unlinked(source).expect("compile");
+    assert_eq!(
+        compiler.execute(&program).expect("execute").output,
+        "[2, 4, 6, 8]\n8 [4, 4]\n"
+    );
 }
 
 #[test]
 fn discovery_scan_matches_the_checked_arena() {
-    // Request discovery reads a `DiscoveryResult` instead of the assembled
-    // arena. Every request kind is a function of the expressions visited,
-    // their three recorded types, the declaration types, and the recorded
-    // instantiations — so those must be exactly the arena's, in its order.
+    // A `DiscoveryResult` answers the checked facts before the arena is
+    // assembled: the expressions visited, their three recorded types, the
+    // declaration types, and the recorded instantiations must be exactly
+    // the arena's, in its order.
     for benchmark in ["tuple", "tstring", "generic", "stdlib_heavy"] {
         let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("benchmarks/compile")
@@ -2576,7 +2127,7 @@ fn discovery_scan_matches_the_checked_arena() {
         let program = mojito::elaborate(linked).expect("elaborate");
         let discovery = mojito::checker::check_program_for_discovery(
             &program,
-            &mut mojito::templates::TemplateCatalog::default(),
+            &mut mojito::checker::CheckContext::default(),
         )
         .expect("check");
         let mut scanned = Vec::new();
@@ -2620,8 +2171,8 @@ fn discovery_scan_matches_the_checked_arena() {
     }
 }
 
-/// Compile `source` as a linked entry module. An unlinked source has no
-/// module path, and an instance seen only there mints no method clones.
+/// Compile `source` as a linked entry module, which gives it a module path
+/// an unlinked source lacks.
 fn compile_entry(compiler: &Compiler, source: &str) -> mojito::compiler::CompiledProgram {
     compiler
         .compile_source(source, std::path::Path::new("template_methods.mojo"))
@@ -2631,665 +2182,371 @@ fn compile_entry(compiler: &Compiler, source: &str) -> mojito::compiler::Compile
 const METHOD_GETTERS: &str = "@fieldwise_init\nstruct Counter[T: Copyable & Movable & Deinitable](Copyable):\n    var item: Self.T\n    var count: Int\n    var active: Bool\n\n    def size(self) -> Int:\n        return self.count\n\n    def doubled(self, extra: Int) -> Int:\n        return self.count + self.count + extra\n\n    def is_active(self) -> Bool:\n        return self.active\n\ndef main():\n    var a = Counter(7, 3, True)\n    var b = Counter(String(\"x\"), 5, False)\n    print(a.size(), a.doubled(1), a.is_active())\n    print(b.size(), b.doubled(2), b.is_active())\n";
 
 #[test]
-fn template_method_instances_derive() {
-    // A generic struct's method is inferred once, with the struct's
-    // parameters symbolic, and its MIR serves every plain-data instance: no
-    // per-instantiation clone (`size$y3:Int`) is minted.
+fn generic_struct_method_instances_run() {
+    // A generic struct's method is checked once, with the struct's
+    // parameters symbolic, and its MIR is instantiated per instance.
     let compiler = Compiler::default();
     let program = compile_entry(&compiler, METHOD_GETTERS);
-    let stats = program.template_stats();
     assert_eq!(
         compiler.execute(&program).expect("execute").output,
         "3 7 True\n5 12 False\n"
     );
-    for method in ["Counter.size", "Counter.doubled", "Counter.is_active"] {
-        assert!(
-            stats.certified.iter().any(|name| name == method),
-            "{method} is a checked template: {stats:?}"
-        );
-        let clone = format!("{method}$");
-        let derived: std::collections::HashSet<&String> = stats
-            .derived
-            .iter()
-            .filter(|name| name.starts_with(&clone))
-            .collect();
-        assert!(
-            derived.is_empty(),
-            "the template serves both instances of {method}: {derived:?}"
-        );
-        assert!(
-            stats
-                .inferred_clones
-                .iter()
-                .all(|name| !name.starts_with(&clone)),
-            "no clone of {method} is inferred: {stats:?}"
-        );
-    }
 }
 
-/// Compile `source` derived and under fact verification, which fails the
-/// compilation if a derived bundle differs from the body's own check. Both
-/// must run to `expected`. Each of `methods` names how many of its instances
-/// still mint a clone, every one of which must derive rather than be
-/// inferred: none where the template's MIR serves each instance, which is
-/// every method with no compile-time construct on a plain-data instance.
-fn assert_methods_derive(source: &str, expected: &str, methods: &[(&str, usize)]) {
+/// Compile `source` as a linked entry module and assert it prints
+/// `expected`.
+fn assert_entry_output(source: &str, expected: &str) {
     let compiler = Compiler::default();
-    let derived = compile_entry(&compiler.clone().with_template_verification(false), source);
-    let verified = compile_entry(&compiler.clone().with_template_verification(true), source);
+    let program = compile_entry(&compiler, source);
     assert_eq!(
-        compiler.execute(&derived).expect("execute").output,
+        compiler.execute(&program).expect("execute").output,
         expected
     );
-    assert_eq!(
-        compiler.execute(&verified).expect("execute").output,
-        expected
-    );
-    assert_eq!(struct_requests(&derived), struct_requests(&verified));
-    let stats = derived.template_stats();
-    for (method, instances) in methods {
-        let clone = format!("{method}$");
-        let names: std::collections::HashSet<&String> = stats
-            .derived
-            .iter()
-            .filter(|name| name.starts_with(&clone))
-            .collect();
-        assert_eq!(
-            names.len(),
-            *instances,
-            "{method} derives for each instance that clones it; refused: {:?}",
-            stats.refused
-        );
-        assert!(
-            stats
-                .inferred_clones
-                .iter()
-                .all(|name| !name.starts_with(&clone)),
-            "no clone of {method} is inferred: {:?}",
-            stats.inferred_clones
-        );
-    }
 }
 
 #[test]
-fn template_method_statements_derive() {
+fn template_method_statements_run() {
     // Receivers beyond a read `self`, a `where` clause, scalar locals and
     // field writes, `if`, `while`, a discarded call, and a sibling call that
     // passes a scalar.
-    assert_methods_derive(
+    assert_entry_output(
         include_str!("../assets/ok/template_method_statements.mojo"),
         "4 51\n0 12\n10 20\n10 55\n9 20\n64 64\n9 39\n",
-        &[
-            ("Tally.size", 0),
-            ("Tally.bump", 0),
-            ("Tally.reset", 0),
-            ("Tally.fill", 0),
-            ("Tally.bump_by", 0),
-            ("Tally.triangle", 0),
-            ("Tally.clamped", 0),
-            ("Tally.spend", 0),
-            ("Tally.width", 0),
-        ],
     );
 }
 
 #[test]
-fn template_method_moves_derive() {
+fn template_method_moves_run() {
     // A whole value of a parameter type moved between a `var` parameter, a
     // local, a field, and the result. `Keep`'s local is linear in the
     // template and deletable in each instance; `Pair`'s copies are owed per
     // instance.
-    assert_methods_derive(
+    assert_entry_output(
         include_str!("../assets/ok/template_method_moves.mojo"),
         "1 3\n1 z\n1 9\n0 4 0 1 x\n4 q 2\n2 1 2\nr l r\n",
-        &[
-            ("Cell.__init__", 0),
-            ("Cell.count", 0),
-            ("Slot.replace", 0),
-            ("Slot.cycle", 0),
-            ("Slot.take", 0),
-            ("Keep.pass_through", 0),
-            ("Pair.left", 0),
-            ("Pair.pick", 0),
-            ("Pair.flip", 0),
-        ],
     );
 }
 
 #[test]
-fn template_method_var_self_derive() {
+fn template_method_var_self_run() {
     // A `var self` method returning `self^`, which owes `Movable` at the
     // instance's type; the owned `List` iterator's `__iter__` is one.
-    assert_methods_derive(
+    assert_entry_output(
         include_str!("../assets/ok/template_method_var_self.mojo"),
         "1 1 x 4\n4\n5\n",
-        &[
-            ("Box.bumped", 0),
-            ("Box.itself", 0),
-            ("__module$std$collections$list$_ListOwnedIter.__iter__", 0),
-        ],
     );
 }
 
 #[test]
-fn template_method_variadic_initializer_derive() {
+fn template_method_variadic_initializer_run() {
     // An initializer collecting `var *values`, with a `None` default.
-    assert_methods_derive(
+    assert_entry_output(
         include_str!("../assets/ok/template_method_variadic_initializer.mojo"),
         "3 2\n2 2\n",
-        &[("Bag.__init__", 0)],
     );
 }
 
 #[test]
-fn template_method_reference_results_derive() {
+fn template_method_reference_results_run() {
     // A `ref self` accessor returning a field or a pointer slot as a handle,
     // behind a scalar guard or the bundled bounds check that aborts.
-    assert_methods_derive(
+    assert_entry_output(
         include_str!("../assets/ok/template_method_reference_result.mojo"),
         "1 0 1\na 0 a\n3 0 3\nz y\n4 4\n",
-        &[
-            ("Slot.peek", 0),
-            ("Slot.counter", 0),
-            ("Slot.guarded", 0),
-            ("List.unsafe_get", 0),
-            ("Optional.value", 0),
-            ("Optional.unsafe_value", 0),
-        ],
     );
 }
 
 #[test]
-fn template_method_reference_calls_derive() {
+fn template_method_reference_calls_run() {
     // A reference-returning call on a field of `self`, forwarded as the
     // method's own reference result or read by value. `Rack`'s template marks
     // no copyable read; its `Int` instance does and its `Token` one does not.
-    assert_methods_derive(
+    assert_entry_output(
         include_str!("../assets/ok/template_method_reference_call.mojo"),
         "4\n3 4\n8\n9\ny\nx y\n",
-        &[
-            ("Rack.at", 0),
-            ("Shelf.at", 0),
-            ("Shelf.first", 0),
-            ("Shelf.second", 0),
-        ],
     );
 }
 
 #[test]
-fn template_method_subscript_stores_derive() {
+fn template_method_subscript_stores_run() {
     // A store through a subscript of `self` or of one of its fields: a scalar
     // field of a reference getter's element, a scalar or a whole value
     // through a declared setter, a scalar element stored whole or augmented
     // through the mutable reference its getter yields or through a value
     // getter and a setter, and a struct element's in-place dunder.
-    assert_methods_derive(
+    assert_entry_output(
         include_str!("../assets/ok/template_method_subscript_store.mojo"),
         "8 0 31\n6 3 7 11\n0 51\ny 1 z 5\n2 3 4 8\n1 3 8 w\n",
-        &[
-            ("Shelf.reset", 0),
-            ("Shelf.bump", 0),
-            ("Shelf.count", 0),
-            ("Shelf.bump_count", 0),
-            ("Shelf.put_item", 0),
-            ("Shelf.put_bucket", 0),
-            ("Shelf.put_entry", 0),
-            ("Shelf.set_cell", 0),
-            ("Shelf.bump_cell", 0),
-            ("Shelf.bump_table", 0),
-            ("Shelf.bump_counter", 0),
-            ("Shelf.bump_tally", 0),
-            ("Shelf.put", 0),
-        ],
     );
 }
 
 #[test]
-fn template_method_parameter_built_stores_derive() {
+fn template_method_parameter_built_stores_run() {
     // An augmented element store whose value getter reads a subscripted
     // value built over the parameter, or whose element is the parameter
     // itself and updates through its bound's `__iadd__`: the getter is
     // realized on the instance's receiver and the dunder re-selected on the
     // instance's element type. A module `def` updating a `mut` parameter
-    // through its bound's `__iadd__` is served by its template the same way.
-    assert_methods_derive(
+    // through its bound's `__iadd__` is re-selected the same way.
+    assert_entry_output(
         include_str!("../assets/ok/template_method_parameter_built_store.mojo"),
         "2 2 6 9\n1 4 32 41\n3 21\n",
-        &[
-            ("Rack.bump_box", 0),
-            ("Rack.bump_self", 0),
-            ("Rack.accumulate", 0),
-            ("Rack.fold", 0),
-            ("add_in", 0),
-        ],
     );
 }
 
 #[test]
-fn template_method_inplace_places_derive() {
+fn template_method_inplace_places_run() {
     // An augmented assignment to a field, a `mut` parameter, or a `var`
     // local through its in-place dunder: one dispatched through the bare
     // parameter's bound, raising or not, is re-selected on the instance's
     // type, and a struct's own dunder, raising or not, is realized on that
     // struct, its clone where it has one.
-    assert_methods_derive(
+    assert_entry_output(
         include_str!("../assets/ok/template_method_inplace_place.mojo"),
         "6 5 6 2 17\n8 5 8 6\nnegative 8\n5 21 1 9 4 31\n5 1 41 21\n5 5 7\nnegative 5\n9 8 13\n",
-        &[
-            ("Rack.add", 0),
-            ("Rack.bump_meter", 0),
-            ("Rack.bump_meter_by", 0),
-            ("Rack.bump_tick", 0),
-            ("Rack.bump_inner", 0),
-            ("Rack.bump_checked", 0),
-            ("Rack.absorb", 0),
-            ("Rack.bumped", 0),
-            ("Rack.summed", 0),
-            ("Ledger.add", 0),
-            ("Ledger.absorb", 0),
-            ("Ledger.summed", 0),
-        ],
     );
 }
 
 #[test]
-fn template_method_borrowed_parameters_derive() {
+fn template_method_borrowed_parameters_run() {
     // A `mut` or bare `ref` parameter is bound from its convention alone: a
     // `mut` one may be stored to, scalar or whole, and a `ref` one is read.
-    assert_methods_derive(
+    assert_entry_output(
         include_str!("../assets/ok/template_method_borrowed_parameter.mojo"),
         "5\n1 mine\n7 held\nTrue True\n0\n",
-        &[
-            ("Shelf.tally", 0),
-            ("Shelf.reset", 0),
-            ("Shelf.put", 0),
-            ("Shelf.same", 0),
-            ("Shelf.larger", 0),
-        ],
     );
 }
 
 #[test]
-fn template_method_reference_locals_derive() {
+fn template_method_reference_locals_run() {
     // A `ref` declaration over `self`, a field, a parameter, a local, or a
     // reference call, then read, copied out, stored through, or forwarded as
     // the method's own reference result.
-    assert_methods_derive(
+    assert_entry_output(
         include_str!("../assets/ok/template_method_reference_local.mojo"),
         "3 0 3\n5 x\n4 y\n2 2 2 2\n4 4\n9 q\n5 x\n",
-        &[
-            ("Shelf.hits_at", 0),
-            ("Shelf.value_at", 0),
-            ("Shelf.item_at", 0),
-            ("Shelf.touch", 0),
-            ("Shelf.size", 0),
-            ("Shelf.mine", 0),
-            ("Shelf.doubled", 0),
-            ("Shelf.echo", 0),
-            ("Shelf.peek", 0),
-        ],
     );
 }
 
 #[test]
-fn template_method_reference_receivers_derive() {
+fn template_method_reference_receivers_run() {
     // A field read or a closed method call through a reference call's result
     // or a `ref` local, over a closed referent and a generic one.
-    assert_methods_derive(
+    assert_entry_output(
         include_str!("../assets/ok/template_method_reference_receiver.mojo"),
         "1 0 3 2\n4 y\n10 0 4 3\n",
-        &[
-            ("Shelf.key_at", 0),
-            ("Shelf.total_at", 0),
-            ("Shelf.value_at", 0),
-            ("Shelf.bump_at", 0),
-            ("Shelf.seen_at", 0),
-            ("Shelf.touch", 0),
-        ],
     );
 }
 
 #[test]
-fn template_method_reference_arguments_derive() {
+fn template_method_reference_arguments_run() {
     // A `ref` local, a field reached through a reference, and a reference
     // call's result handed to a read, a `var`, and a `mut` parameter, and a
     // `ref` local lent to a hand-written constructor's `ref` parameter.
-    assert_methods_derive(
+    assert_entry_output(
         include_str!("../assets/ok/template_method_reference_argument.mojo"),
         "2 1 2 1\n2 1 2 1\n2 1 2 1\n2 2 2 1\n1 1 2 2\n",
-        &[
-            ("Shelf.local_entry", 0),
-            ("Shelf.call_entry", 0),
-            ("Shelf.call_item", 0),
-            ("Shelf.local_field", 0),
-            ("Shelf.call_field", 0),
-            ("Shelf.taken", 0),
-            ("Shelf.kept", 0),
-            ("Shelf.counted", 0),
-            ("Shelf.counted_mut", 0),
-        ],
     );
 }
 
 #[test]
-fn template_method_sibling_views_derive() {
+fn template_method_sibling_views_run() {
     // A sibling call whose result is a view over `self`: returned as is,
     // wrapped by a fieldwise or a hand-written constructor, spelled through a
     // `comptime` alias as `Dict.keys` is, and bound to a local. The call's
     // loan and the origin its result binds name the receiver.
-    assert_methods_derive(
+    assert_entry_output(
         include_str!("../assets/ok/template_method_sibling_view.mojo"),
         "2 1 2 1\n2 1 12 11\n2 1\n",
-        &[
-            ("Shelf.view", 0),
-            ("Shelf.keys", 0),
-            ("Shelf.aliased", 0),
-            ("Shelf.counted", 0),
-            ("Shelf.bound", 0),
-        ],
     );
 }
 
 #[test]
-fn template_method_receiver_pointers_derive() {
+fn template_method_receiver_pointers_run() {
     // A pointer to `self` or a field of it rebound to the whole receiver, handed
     // to a fieldwise or a hand-written constructor from a read or a `mut`
     // receiver, as `Set.__iter__` and `Dict.__iter__` build their borrowed
     // iterators. Both provenances root at the instance's own `self`.
-    assert_methods_derive(
+    assert_entry_output(
         include_str!("../assets/ok/template_method_receiver_pointer.mojo"),
         "1 0\n12 11\n2 1\n2 1\na 7\nk 2\n",
-        &[
-            ("Shelf.cursor", 0),
-            ("Shelf.whole", 0),
-            ("Shelf.offset", 0),
-            ("Shelf.edit", 0),
-            ("Set.__iter__", 0),
-            ("Dict.__iter__", 0),
-        ],
     );
 }
 
 #[test]
-fn template_method_immutable_sibling_views_derive() {
+fn template_method_immutable_sibling_views_run() {
     // A sibling's `ImmOrigin` view wrapped by a construction, returned and
     // bound to a local: the construction's immutable-binder record names the
     // view's slot under the wrapping field, which no instance changes.
-    assert_methods_derive(
+    assert_entry_output(
         include_str!("../assets/ok/template_method_immutable_sibling_view.mojo"),
         "2 1\n2 1\n",
-        &[("Shelf.keys", 0), ("Shelf.bound", 0)],
     );
 }
 
 #[test]
-fn template_method_temporary_receivers_derive() {
+fn template_method_temporary_receivers_run() {
     // A method called on a call's temporary result: a sibling's view over
     // `self`, a sibling's owned copy of `Self`, a field's copied list, and a
     // field's stripped string view, alone, with an argument, as operands, and
     // bound to a local.
-    assert_methods_derive(
+    assert_entry_output(
         include_str!("../assets/ok/template_method_temporary_receiver.mojo"),
         "2 1 1 0\n3 1 2 1\n4 2 2 1\n2 1 AB C\n",
-        &[
-            ("Shelf.direct", 0),
-            ("Shelf.skipped", 0),
-            ("Shelf.summed", 0),
-            ("Shelf.copied", 0),
-            ("Shelf.bound", 0),
-            ("Shelf.total", 0),
-            ("Shelf.trimmed", 0),
-            ("Shelf.shout", 0),
-        ],
     );
 }
 
 #[test]
-fn template_method_parameter_receivers_derive() {
+fn template_method_parameter_receivers_run() {
     // A method called on a parameter: on a read one alone, as an operator's
     // operand, bound to a local, and on its field; on a `mut` and a `var`
     // one, mutating it.
-    assert_methods_derive(
+    assert_entry_output(
         include_str!("../assets/ok/template_method_parameter_receiver.mojo"),
         "True False\n4 z\n2 2\n1 1\nTrue False\n2 2 2 2\n4 4\n",
-        &[
-            ("Box.same", 0),
-            ("Box.grab", 0),
-            ("Box.total", 0),
-            ("Box.count", 0),
-            ("Box.matches", 0),
-            ("Box.fill", 0),
-            ("Box.owned", 0),
-        ],
     );
 }
 
 #[test]
-fn template_method_subscripted_receivers_derive() {
+fn template_method_subscripted_receivers_run() {
     // A method called on a subscripted element: a bare parameter's
     // requirement on `self.items[j]`, and a copy of an element's field
     // through a read parameter (`other.entries[i].key.copy()`) beside the
     // built-in `len` of that field, as `Dict.update` spells it.
-    assert_methods_derive(
+    assert_entry_output(
         include_str!("../assets/ok/template_method_subscripted_receiver.mojo"),
         "2 3 3 2\n22 2 11 1\n8 8 10 10\n6 3 k 3\n2 3 2 2 y\n",
-        &[
-            ("Holder.dup", 0),
-            ("Holder.pull", 0),
-            ("Holder.push", 0),
-            ("Holder.local_elem", 0),
-            ("Holder.bump_at", 0),
-            ("Holder.get_at", 0),
-            ("Holder.take", 0),
-            ("Table.other_key", 0),
-            ("Table.total", 0),
-            ("Dict.update", 0),
-        ],
     );
     // A scalar element of a `mut` parameter's field, stored augmented
     // through its getter's mutable reference and stored whole.
-    assert_methods_derive(
+    assert_entry_output(
         "struct Tick[T: Copyable & Movable & Deinitable](Copyable, Movable):\n    var counts: List[Int]\n    var items: List[Self.T]\n\n    def __init__(out self, var items: List[Self.T]):\n        self.counts = [0, 5]\n        self.items = items^\n\n    def tick(self, mut other: Tick[Self.T], i: Int):\n        other.counts[i] += 1\n        other.counts[0] = self.counts[i]\n\ndef main():\n    var l1: List[Int] = [1]\n    var l2: List[Int] = [2]\n    var a = Tick[Int](l1^)\n    var b = Tick[Int](l2^)\n    a.tick(b, 1)\n    var l3: List[String] = [\"x\"]\n    var l4: List[String] = [\"y\"]\n    var s = Tick[String](l3^)\n    var t = Tick[String](l4^)\n    s.tick(t, 0)\n    print(b.counts[0], b.counts[1], t.counts[0], t.counts[1])\n",
         "5 6 0 5\n",
-        &[("Tick.tick", 0)],
     );
 }
 
 #[test]
-fn template_method_element_field_results_derive() {
+fn template_method_element_field_results_run() {
     // A reference result reached through a subscripted element's field,
     // read and written through, and `Dict.__getitem__`, which returns one.
-    assert_methods_derive(
+    assert_entry_output(
         include_str!("../assets/ok/template_method_element_field_result.mojo"),
         "15\n20\n2\na\nbcd\n3\n7\n",
-        &[
-            ("Table.value_at", 0),
-            ("Table.key_at", 0),
-            ("Dict.__getitem__", 0),
-        ],
     );
 }
 
 #[test]
-fn template_method_raises_derive() {
+fn template_method_raises_run() {
     // A method that raises: `Error("…")` under a bare `raises`, and a
     // construction of the declared error type, built over the struct's
     // parameter or closed, under a typed one, one of them from a method
     // returning a reference.
-    assert_methods_derive(
+    assert_entry_output(
         include_str!("../assets/ok/template_method_raises.mojo"),
         "7\nseven\n7 seven\nerror: empty slot\nerror: SlotError\n1 2 1\nerror: Exhausted\n",
-        &[("Slot.take", 0), ("Slot.peek", 0), ("Slot.use", 0)],
     );
 }
 
 #[test]
-fn template_method_binder_construction_derives() {
-    // A construction of the method's own `[H: Hasher]` binder, kept symbolic
-    // by every clone, and the fresh hasher consumed through `finish`.
-    assert_methods_derive(
+fn template_method_binder_construction_runs() {
+    // A construction of the method's own `[H: Hasher]` binder, closed per
+    // call, and the fresh hasher consumed through `finish`.
+    assert_entry_output(
         include_str!("../assets/ok/template_method_binder_construction.mojo"),
         "True False\nTrue False\nTrue False\n",
-        &[("Sealed.__hash__", 0)],
     );
 }
 
 #[test]
-fn template_method_hash_leaf_derives() {
+fn template_method_hash_leaf_runs() {
     // A multi-lane vector handed to a hasher, which no other body hashed:
     // the leaf is closed, so every instance records the template's again.
-    assert_methods_derive(
+    assert_entry_output(
         include_str!("../assets/ok/template_method_hash_leaf.mojo"),
         "True False\nFalse\nTrue False\nTrue False\n",
-        &[("Lanes.__hash__", 0)],
     );
 }
 
 #[test]
-fn template_method_generic_calls_derive() {
+fn template_method_generic_calls_run() {
     // A generic module function called on a value of the struct's parameter
     // type, a field or a loop element, as the bundled `Set.__hash__` does:
     // the template binds the selection and each instance re-keys the
     // application.
-    assert_methods_derive(
+    assert_entry_output(
         include_str!("../assets/ok/template_method_generic_call.mojo"),
         "True True True\nTrue True\nTrue True\nTrue True\n",
-        &[
-            ("Bag.own", 0),
-            ("Bag.mixed", 0),
-            ("Bag.total", 0),
-            ("Set.__hash__", 0),
-        ],
     );
 }
 
 #[test]
-fn template_method_vector_hash_leaf_derives() {
+fn template_method_vector_hash_leaf_runs() {
     // A bound `__hash__` on a sized scalar or a multi-lane vector instance:
     // the elaborator instantiates the hasher's leaf at each instance's lane,
-    // so the template serves the instance and its `digest` over the hasher
-    // alike, and no clone is minted.
-    assert_methods_derive(
+    // and the instance's `digest` over the hasher with it.
+    assert_entry_output(
         include_str!("../assets/ok/template_method_vector_hash_leaf.mojo"),
         "5089976597503910097\nTrue True\n",
-        &[("Box.digest", 0)],
     );
-    assert_methods_derive(
+    assert_entry_output(
         include_str!("../assets/ok/template_method_vector_instance.mojo"),
         "1547189026303444902\n",
-        &[("Box.digest", 0)],
     );
 }
 
 #[test]
-fn template_method_simd_leaf_derives() {
+fn template_method_simd_leaf_runs() {
     // A `Hasher`'s `_update_with_simd(mut self, value: SIMD[_, _])` is a
-    // generator over its inferred dtype and width: the template serves every
-    // leaf, so no leaf is cloned.
-    assert_methods_derive(
+    // generator over its inferred dtype and width, instantiated per leaf.
+    assert_entry_output(
         include_str!("../assets/ok/template_method_simd_leaf.mojo"),
         "12638128926439346813 8559387686524852476\n5808589858502755950 2298681937012504952\n\
          12638149817160282822 11008053066886195656\n8026467504136239071 8296160167128612196\n\
          True False\n13725386680924731485 17471\n620445648566982762 12768243554632580026\n\
          10 20 2\n",
-        &[
-            ("FoldHasher._update_with_simd", 0),
-            ("PairHasher._update_with_simd", 0),
-        ],
-    );
-    let program = compile_entry(
-        &Compiler::default(),
-        include_str!("../assets/ok/template_method_simd_leaf.mojo"),
-    );
-    let stats = program.template_stats();
-    assert!(
-        stats
-            .refused
-            .iter()
-            .all(|(name, _)| !name.contains("._update_with_simd$")),
-        "no leaf clone is refused: {:?}",
-        stats.refused
     );
 }
 
 #[test]
-fn template_method_simd_leaf_default_bits_derives() {
+fn template_method_simd_leaf_default_bits_runs() {
     // `value.to_bits()` with its defaulted target over the wildcard vector
     // parameter: the template's target is the unsigned dtype of the lane's
     // width as a parameter expression, which each instance folds.
-    assert_methods_derive(
+    assert_entry_output(
         include_str!("../assets/ok/template_method_simd_leaf_default_bits.mojo"),
         "12638128926439346813 12638149817160282822\n8026467504136239071 12638152016183539244\n\
          559230338672390537\n620445648566982762\n",
-        &[("BitsHasher._update_with_simd", 0)],
     );
 }
 
 #[test]
-fn template_method_simd_leaf_default_bits_lanes_derive() {
+fn template_method_simd_leaf_default_bits_lanes_run() {
     // Lanes of a local holding `value.to_bits()` with its defaulted target,
     // each cast before use: a lane is a symbolic-lane scalar in the
     // template, which each instance folds with the cast's source.
-    assert_methods_derive(
+    assert_entry_output(
         include_str!("../assets/ok/template_method_simd_leaf_default_bits_lanes.mojo"),
         "12638128926439346813 12638149817160282822\n8026467504136239071 12638152016183539244\n\
          559230338672390537\n620445648566982762\n",
-        &[("LaneBitsHasher._update_with_simd", 0)],
     );
 }
 
 #[test]
-fn template_value_keyed_struct_members_derive() {
-    // A struct keyed on a vector value is a generator; source validation
-    // checks its members once with the value symbolic, and every instance's
-    // members derive. A `DType`-keyed struct is a generator the template
-    // serves, so it mints no clone at all.
-    let source = include_str!("../assets/ok/template_value_keyed_struct.mojo");
-    let expected = "3 18 6\n2 20 10\n3751\n";
-    let compiler = Compiler::default();
-    let derived = compile_entry(&compiler.clone().with_template_verification(false), source);
-    let verified = compile_entry(&compiler.clone().with_template_verification(true), source);
-    assert_eq!(
-        compiler.execute(&derived).expect("execute").output,
-        expected
-    );
-    assert_eq!(
-        compiler.execute(&verified).expect("execute").output,
-        expected
-    );
-    let stats = derived.template_stats();
-    for member in [
-        "Salted$vuint64:2;[i1;i2;].__init__",
-        "Salted$vuint64:2;[i1;i2;].mix_pair",
-    ] {
-        assert!(
-            stats.derived.iter().any(|name| name == member),
-            "{member} derives; refused: {:?}",
-            stats.refused
-        );
-    }
-    assert!(
-        stats
-            .inferred_clones
-            .iter()
-            .all(|name| !name.starts_with("Tally$") && !name.starts_with("Salted$")),
-        "no member is inferred: {:?}",
-        stats.inferred_clones
-    );
-    assert!(
-        !stats.derived.iter().any(|name| name.starts_with("Tally$")),
-        "a DType-keyed struct mints no specialization: {:?}",
-        stats.derived
+fn value_keyed_struct_members_run() {
+    // A struct keyed on a vector value and one keyed on a `DType` are
+    // generators: the check sees each member once with the value symbolic,
+    // and the elaborator instantiates it per key.
+    assert_entry_output(
+        include_str!("../assets/ok/template_value_keyed_struct.mojo"),
+        "3 18 6\n2 20 10\n3751\n",
     );
 }
 
 #[test]
-fn template_value_keyed_struct_members_are_certified_and_keep_the_clone_check() {
+fn vector_alias_constructor_in_a_value_keyed_struct_runs() {
     // `Pair64(3, 5)` (a vector alias called as a constructor) types under the
-    // symbolic check, so the member is certified rather than ending without
-    // a verdict, and its clone is still checked per specialization.
-    // `Int(self.value)` over a `DType`-keyed struct's symbolic lane is
-    // checked once on the template, which serves every instance.
+    // symbolic check, and `Int(self.value)` over a `DType`-keyed struct's
+    // symbolic lane is checked once and closed per instance.
     let source = "comptime Pair64 = SIMD[DType.uint64, 2]\n\n\n\
         struct Lane[dt: DType](Copyable, Movable):\n\
         \x20   var value: Scalar[Self.dt]\n\n\
@@ -3306,544 +2563,231 @@ fn template_value_keyed_struct_members_are_certified_and_keep_the_clone_check() 
         \x20   print(Lane[DType.int16](21).widened())\n\
         \x20   print(Seeded[Pair64(1, 2)]().first)\n";
     let compiler = Compiler::default();
-    let program = compile_entry(&compiler.clone().with_template_verification(true), source);
+    let program = compile_entry(&compiler, source);
     assert_eq!(
         compiler.execute(&program).expect("execute").output,
         "42\n2\n"
     );
-    let stats = program.template_stats();
-    assert!(
-        stats.certified.iter().any(|name| name == "Seeded.__init__"),
-        "Seeded.__init__ is certified: {:?}",
-        stats.certified
-    );
-    assert!(
-        stats
-            .inferred_clones
-            .iter()
-            .any(|name| name == "Seeded$vuint64:2;[i1;i2;].__init__"),
-        "the vector-keyed clone keeps the clone check: {:?}",
-        stats.inferred_clones
-    );
-    assert!(
-        !stats
-            .inferred_clones
-            .iter()
-            .chain(&stats.derived)
-            .any(|name| name.starts_with("Lane$")),
-        "the DType-keyed struct mints no clone: {:?}",
-        stats.inferred_clones
-    );
 }
 
 #[test]
-fn template_method_struct_binder_construction_runs_from_the_template() {
+fn template_method_struct_binder_construction_runs() {
     // A struct binder's construction (`Self.H()`) builds another type under
-    // each instance. The elaborator constructs the substituted type, so the
-    // template serves the instance and no clone is minted.
+    // each instance: the elaborator constructs the substituted type.
     let source = "from std.hashlib import Hasher\nfrom std.hashlib.hasher import default_hasher\n\n\nstruct Mixer[H: Hasher](Movable):\n    var seed: Int\n\n    def __init__(out self, seed: Int):\n        self.seed = seed\n\n    def mix(self) -> UInt64:\n        var inner = Self.H()\n        inner.update(self.seed)\n        return inner^.finish()\n\n\ndef main():\n    var a = Mixer[default_hasher](3)\n    var b = Mixer[default_hasher](3)\n    print(a.mix() == b.mix())\n";
     let compiler = Compiler::default();
     let program = compile_entry(&compiler, source);
-    let stats = program.template_stats();
     assert_eq!(
         compiler.execute(&program).expect("execute").output,
         "True\n"
     );
-    assert!(
-        stats
-            .derived
-            .iter()
-            .chain(&stats.inferred_clones)
-            .all(|name| !name.starts_with("Mixer.mix$")),
-        "no clone of the method is minted: {stats:?}"
-    );
 }
 
 #[test]
-fn template_method_value_parameter_templates_reuse() {
+fn value_parameter_struct_methods_run() {
     // A struct with a scalar value parameter (`Grid[T, rows: Int]`, as
-    // `Array`) or an origin parameter (`Span`) is never cloned whole, so its
-    // methods are certified as templates and their own facts reused in every
-    // later pass instead of being inferred again. A receiver origin naming
-    // the method's own binder (`ref [o] self`) is served by its template
-    // too.
-    let source = include_str!("../assets/ok/template_method_value_parameter.mojo");
-    let expected = "2 3\na 2\n5 5 3\nz 2\n4 8 False 2 6 True\n2 2\n";
-    let compiler = Compiler::default();
-    let program = compile_entry(&compiler.clone().with_template_verification(false), source);
-    let verified = compile_entry(&compiler.clone().with_template_verification(true), source);
-    assert_eq!(
-        compiler.execute(&program).expect("execute").output,
-        expected
-    );
-    assert_eq!(
-        compiler.execute(&verified).expect("execute").output,
-        expected
-    );
-    let stats = program.template_stats();
-    // `Span.__getitem__` is two overloads (an index and a contiguous
-    // slice), each its own template body under the one name.
-    for (name, bodies) in [
-        ("Grid.count", 1),
-        ("Grid.total", 1),
-        ("Grid.full", 1),
-        ("Array.__len__", 1),
-        ("Array.__getitem__", 1),
-        ("Array.unsafe_get", 1),
-        ("Span.__len__", 1),
-        ("Span.__getitem__", 2),
-        ("Cell.hits_of", 1),
-    ] {
-        assert_eq!(
-            certified_count(stats, name),
-            bodies,
-            "{name}: one template inference per body"
-        );
-        assert!(
-            stats
-                .reused
-                .iter()
-                .chain(&stats.carried)
-                .any(|reused| reused == name),
-            "{name}: later passes reuse or carry the template's own facts: {stats:?}"
-        );
-    }
-    // With carry-over off, a `Self.rows` read is served by the catalog.
-    let uncarried = compile_entry(&compiler.with_body_fact_reuse(false), source);
-    let uncarried = uncarried.template_stats();
-    for name in ["Grid.count", "Grid.total", "Grid.full"] {
-        assert!(
-            uncarried.reused.iter().any(|reused| reused == name),
-            "{name}: later passes reuse the template's own facts: {uncarried:?}"
-        );
-    }
-    let derived: std::collections::HashSet<&str> = stats
-        .derived
-        .iter()
-        .map(String::as_str)
-        .filter(|name| name.starts_with("Cell.hits_of$"))
-        .collect();
-    assert!(
-        derived.is_empty(),
-        "the template serves both receiver-origin instances: {derived:?}"
+    // `Array`) or an origin parameter (`Span`) is a generator whose methods
+    // are checked once with the parameter symbolic. A receiver origin naming
+    // the method's own binder (`ref [o] self`) is instantiated per call too.
+    assert_entry_output(
+        include_str!("../assets/ok/template_method_value_parameter.mojo"),
+        "2 3\na 2\n5 5 3\nz 2\n4 8 False 2 6 True\n2 2\n",
     );
 }
 
 #[test]
-fn array_members_reuse_templates() {
+fn array_members_run() {
     // `Array`'s initializers, the copy and move ones among them, its
     // comparisons over pointer slots and over whole values, `__contains__`,
     // `unsafe_ptr`, `write_repr_to`, `deinit_with`, both `__iter__`
-    // overloads, and the borrowed iterator's `__next__` are certified
-    // templates whose facts every later pass reuses, verified against their
-    // own check.
-    let source = "def main():\n    var a: Array[Int, 3] = [1, 5, 2]\n    var b = Array[Int, 3](fill=4)\n    var c = Array[Int, 3]()\n    print(a == b, a != b, a < b, a <= b, a > b, a >= b)\n    print(5 in a, 7 in c, a.unsafe_ptr()[])\n    var d = a.copy()\n    var e = d^\n    def show(var element: Int):\n        print(element)\n\n    e^.deinit_with(show)\n    for x in b:\n        print(x)\n    for x in a^:\n        print(x)\n";
-    let expected = "False True True True False False\nTrue False 1\n1\n5\n2\n4\n4\n4\n1\n5\n2\n";
-    let compiler = Compiler::default();
-    let program = compile_entry(&compiler.clone().with_template_verification(false), source);
-    let verified = compile_entry(&compiler.clone().with_template_verification(true), source);
-    for program in [&program, &verified] {
-        assert_eq!(compiler.execute(program).expect("execute").output, expected);
-    }
-    let stats = program.template_stats();
-    // The literal, default, fill, copy, and move initializers.
-    for (name, bodies) in [
-        ("Array.__init__", 5),
-        ("Array.__iter__", 2),
-        ("Array.deinit_with", 1),
-        ("Array.__eq__", 1),
-        ("Array.__ne__", 1),
-        ("Array.__lt__", 1),
-        ("Array.__le__", 1),
-        ("Array.__gt__", 1),
-        ("Array.__ge__", 1),
-        ("Array.__contains__", 1),
-        ("Array.__hash__", 1),
-        ("Array.unsafe_ptr", 1),
-        ("Array.write_to", 1),
-        ("Array.write_repr_to", 1),
-        ("__module$std$collections$array$_ArrayIter.__next__", 1),
-    ] {
-        assert_eq!(
-            certified_count(stats, name),
-            bodies,
-            "{name}: one template inference per body"
-        );
-        assert!(
-            stats
-                .reused
-                .iter()
-                .chain(&stats.carried)
-                .any(|reused| reused == name),
-            "{name}: later passes reuse or carry the template's own facts: {stats:?}"
-        );
-    }
+    // overloads, and the borrowed iterator's `__next__`.
+    assert_entry_output(
+        "def main():\n    var a: Array[Int, 3] = [1, 5, 2]\n    var b = Array[Int, 3](fill=4)\n    var c = Array[Int, 3]()\n    print(a == b, a != b, a < b, a <= b, a > b, a >= b)\n    print(5 in a, 7 in c, a.unsafe_ptr()[])\n    var d = a.copy()\n    var e = d^\n    def show(var element: Int):\n        print(element)\n\n    e^.deinit_with(show)\n    for x in b:\n        print(x)\n    for x in a^:\n        print(x)\n",
+        "False True True True False False\nTrue False 1\n1\n5\n2\n4\n4\n4\n1\n5\n2\n",
+    );
 }
 
 #[test]
-fn template_raise_forms_derive() {
+fn template_raise_forms_run() {
     // A raised string literal, and a call of a raising sibling method or
     // module function, in a method and in a module-level `def` that raises.
-    let source = include_str!("../assets/ok/template_raise_forms.mojo");
-    assert_methods_derive(
-        source,
+    assert_entry_output(
+        include_str!("../assets/ok/template_raise_forms.mojo"),
         "7 seven\nerror: empty slot\nerror: not ready\nerror: SlotError\n2 2\nerror: refused\n",
-        &[
-            ("Slot.take", 0),
-            ("Slot.relay", 0),
-            ("Slot.ready", 0),
-            ("Slot.check", 0),
-            ("Slot.checked", 0),
-        ],
     );
-    // The templates of the raising module `def`s serve every call; no clone
-    // is minted.
-    let (_, stats) = run_source(source);
-    for template in ["refuse$", "forward$"] {
-        assert!(
-            stats
-                .derived
-                .iter()
-                .chain(&stats.inferred_clones)
-                .all(|name| !name.starts_with(template)),
-            "{template} mints no clone: {stats:?}"
-        );
-    }
 }
 
 #[test]
-fn template_def_try_unpack_is_served_by_its_template() {
+fn template_def_try_unpack_runs() {
     // A module-level `def` unpacking a direct call's result, declared and
     // assigned again, and guarding raising calls with a bare or a binding
-    // `except`; the bundled `os.removedirs` is this shape. Each template
-    // serves both calls; no clone is minted.
-    for verify in [false, true] {
-        let compiler = Compiler::default().with_template_verification(verify);
-        let program = compile_entry(
-            &compiler,
-            include_str!("../assets/ok/template_def_try_unpack.mojo"),
-        );
-        let stats = program.template_stats();
-        for template in ["steps$", "guarded$", "named$"] {
-            assert!(
-                stats
-                    .derived
-                    .iter()
-                    .chain(&stats.verified)
-                    .chain(&stats.inferred_clones)
-                    .all(|name| !name.starts_with(template)),
-                "{template} mints no clone: {stats:?}"
-            );
-        }
-        assert_eq!(
-            compiler.execute(&program).expect("execute").output,
-            "4 4\n3 -1\nnegative\n5 6\n"
-        );
-    }
+    // `except`; the bundled `os.removedirs` is this shape.
     let compiler = Compiler::default();
     let program = compile_entry(
         &compiler,
-        "from std.os import removedirs\n\n\ndef main() raises:\n    removedirs(String(\"/nonexistent/mojito/a\"))\n",
+        include_str!("../assets/ok/template_def_try_unpack.mojo"),
     );
-    let stats = program.template_stats();
-    assert!(
-        stats
-            .derived
-            .iter()
-            .chain(&stats.inferred_clones)
-            .all(|name| !name.starts_with("__module$os$removedirs$")),
-        "os.removedirs mints no clone: {stats:?}"
+    assert_eq!(
+        compiler.execute(&program).expect("execute").output,
+        "4 4\n3 -1\nnegative\n5 6\n"
+    );
+    compile_entry(
+        &compiler,
+        "from std.os import removedirs\n\n\ndef main() raises:\n    removedirs(String(\"/nonexistent/mojito/a\"))\n",
     );
 }
 
 #[test]
-fn template_method_raised_built_message_derives() {
+fn template_method_raised_built_message_runs() {
     // `Error` of a `String` built by a closed operator over a construction
     // and a converted literal: nothing at the operator names a parameter.
     let source = "struct Slot[T: Copyable & Deinitable](Movable):\n    var item: Self.T\n    var full: Bool\n\n    def __init__(out self, var item: Self.T):\n        self.item = item^\n        self.full = False\n\n    def take(self) raises -> Self.T:\n        if not self.full:\n            raise Error(String(\"em\") + \"pty\")\n        return self.item.copy()\n\n\ndef main():\n    try:\n        print(Slot[Int](1).take())\n    except e:\n        print(e)\n";
-    for verify in [false, true] {
-        let compiler = Compiler::default().with_template_verification(verify);
-        let program = compile_entry(&compiler, source);
-        let stats = program.template_stats();
-        let served = if verify {
-            &stats.verified
-        } else {
-            &stats.derived
-        };
-        assert_eq!(
-            compiler.execute(&program).expect("execute").output,
-            "empty\n"
-        );
-        assert!(
-            served
-                .iter()
-                .chain(&stats.inferred_clones)
-                .all(|name| !name.starts_with("Slot.take$")),
-            "the template serves the instance: {stats:?}"
-        );
-    }
+    let compiler = Compiler::default();
+    let program = compile_entry(&compiler, source);
+    assert_eq!(
+        compiler.execute(&program).expect("execute").output,
+        "empty\n"
+    );
 }
 
 #[test]
-fn template_def_slice_stringify_is_served_by_its_template() {
+fn template_def_slice_stringify_runs() {
     // A keyword slice of a closed local, the stringify builtin, a whole
     // rebinding, a returned tuple display, `external_call`, a direct call's
     // result, and a raised `Error` of a built `String`; the bundled
-    // `os.rmdir` and `path.split` are this shape. Each template serves its
-    // calls; no clone is minted.
-    for verify in [false, true] {
-        let compiler = Compiler::default().with_template_verification(verify);
-        let program = compile_entry(
-            &compiler,
-            include_str!("../assets/ok/template_def_slice_stringify.mojo"),
-        );
-        let stats = program.template_stats();
-        for template in [
-            "halves$",
-            "closed_file$",
-            "__module$path$split$",
-            "__module$os$rmdir$",
-        ] {
-            assert!(
-                stats
-                    .derived
-                    .iter()
-                    .chain(&stats.verified)
-                    .chain(&stats.inferred_clones)
-                    .all(|name| !name.starts_with(template)),
-                "{template} mints no clone: {stats:?}"
-            );
-        }
-        assert_eq!(
-            compiler.execute(&program).expect("execute").output,
-            "ban ana\n xyz\n/a/b c\nclose failed: -1 Err: Bad file descriptor\n\
-             close failed: -1 Err: Bad file descriptor\n\
-             Can not remove directory: /nonexistent/mojito/a Err: No such file or directory\n"
-        );
-    }
+    // `os.rmdir` and `path.split` are this shape.
+    let compiler = Compiler::default();
+    let program = compile_entry(
+        &compiler,
+        include_str!("../assets/ok/template_def_slice_stringify.mojo"),
+    );
+    assert_eq!(
+        compiler.execute(&program).expect("execute").output,
+        "ban ana\n xyz\n/a/b c\nclose failed: -1 Err: Bad file descriptor\n\
+         close failed: -1 Err: Bad file descriptor\n\
+         Can not remove directory: /nonexistent/mojito/a Err: No such file or directory\n"
+    );
 }
 
 #[test]
-fn template_def_bound_conversion_is_served_by_its_template() {
+fn template_def_bound_conversion_runs() {
     // `Int`, `Float64`, and `Bool` of a parameter whose binder carries the
     // conversion's bound, at a scalar and at a struct read in place through
     // its dunder, and of a generic struct's field or local; the bundled
-    // `stat.S_ISDIR` family is this shape. Each template serves its calls;
-    // no clone is minted.
-    for verify in [false, true] {
-        let compiler = Compiler::default().with_template_verification(verify);
-        let program = compile_entry(
-            &compiler,
-            include_str!("../assets/ok/template_def_bound_conversion.mojo"),
-        );
-        let stats = program.template_stats();
-        for template in [
-            "masked$",
-            "halved$",
-            "truthy$",
-            "__module$stat$S_ISDIR$",
-            "__module$stat$S_ISREG$",
-            "__module$stat$S_ISLNK$",
-            "__module$path$isdir$",
-        ] {
-            assert!(
-                stats
-                    .derived
-                    .iter()
-                    .chain(&stats.verified)
-                    .chain(&stats.inferred_clones)
-                    .all(|name| !name.starts_with(template)),
-                "{template} mints no clone: {stats:?}"
-            );
-        }
-        assert!(
-            !stats
-                .refused
-                .iter()
-                .any(|(name, _)| name.starts_with("__module$stat$")),
-            "no stat predicate is refused: {stats:?}"
-        );
-        assert_eq!(
-            compiler.execute(&program).expect("execute").output,
-            "16384 32768\n3.5 2.5\nTrue False\nTrue False\n7 3.0\nTrue False False\n"
-        );
-    }
+    // `stat.S_ISDIR` family is this shape.
+    let compiler = Compiler::default();
+    let program = compile_entry(
+        &compiler,
+        include_str!("../assets/ok/template_def_bound_conversion.mojo"),
+    );
+    assert_eq!(
+        compiler.execute(&program).expect("execute").output,
+        "16384 32768\n3.5 2.5\nTrue False\nTrue False\n7 3.0\nTrue False False\n"
+    );
 }
 
 #[test]
-fn template_def_type_alias_is_served_by_its_template() {
+fn template_def_type_alias_runs() {
     // `c_int = Int32` spelled in an `external_call` result type, a
-    // construction, and a local's annotation expands once in the template,
-    // which serves both calls with no clone minted.
-    for verify in [false, true] {
-        let compiler = Compiler::default().with_template_verification(verify);
-        let program = compile_entry(
-            &compiler,
-            include_str!("../assets/ok/template_def_type_alias.mojo"),
-        );
-        let stats = program.template_stats();
-        assert!(
-            stats
-                .derived
-                .iter()
-                .chain(&stats.verified)
-                .chain(&stats.inferred_clones)
-                .all(|name| !name.starts_with("closed_status$")),
-            "closed_status mints no clone: {stats:?}"
-        );
-        assert_eq!(
-            compiler.execute(&program).expect("execute").output,
-            "-1\n-1\n"
-        );
-    }
+    // construction, and a local's annotation expands once in the one check
+    // of the body.
+    let compiler = Compiler::default();
+    let program = compile_entry(
+        &compiler,
+        include_str!("../assets/ok/template_def_type_alias.mojo"),
+    );
+    assert_eq!(
+        compiler.execute(&program).expect("execute").output,
+        "-1\n-1\n"
+    );
 }
 
 #[test]
-fn template_def_defaulted_parameter_is_served_by_its_template() {
+fn template_def_defaulted_parameter_runs() {
     // Literal defaults (`label: String = "tag"`, `offset: Int = -1`,
     // `note: Optional[Int] = None`) are the callee's to evaluate, left out
-    // or supplied; the template serves every call with no clone minted.
-    for verify in [false, true] {
-        let compiler = Compiler::default().with_template_verification(verify);
-        let program = compile_entry(
-            &compiler,
-            include_str!("../assets/ok/template_def_defaulted_parameter.mojo"),
-        );
-        let stats = program.template_stats();
-        for name in ["tagged$", "scaled$"] {
-            assert!(
-                stats
-                    .derived
-                    .iter()
-                    .chain(&stats.verified)
-                    .chain(&stats.inferred_clones)
-                    .all(|clone| !clone.starts_with(name)),
-                "{name} mints no clone: {stats:?}"
-            );
-        }
-        assert_eq!(
-            compiler.execute(&program).expect("execute").output,
-            "1 tag 0.5 7 False\ntag\ns x 1.5 3 True\nx\n2\n3\n5\n"
-        );
-    }
+    // or supplied.
+    let compiler = Compiler::default();
+    let program = compile_entry(
+        &compiler,
+        include_str!("../assets/ok/template_def_defaulted_parameter.mojo"),
+    );
+    assert_eq!(
+        compiler.execute(&program).expect("execute").output,
+        "1 tag 0.5 7 False\ntag\ns x 1.5 3 True\nx\n2\n3\n5\n"
+    );
 }
 
 #[test]
-fn template_def_constructed_default_is_served_by_its_template() {
+fn template_def_constructed_default_runs() {
     // A default constructing a declared struct from literals
     // (`sep: String = String("-")`) is the callee's to evaluate, as a
-    // literal default is, left out or supplied; the template serves every
-    // call with no clone minted.
+    // literal default is, left out or supplied.
     let source = "@fieldwise_init\nstruct Pair(ImplicitlyCopyable, Movable):\n    var a: Int\n    var b: Int\n\n\ndef join[T: Copyable & Deinitable](x: T, sep: String = String(\"-\")) -> String:\n    return sep\n\n\ndef span[T: Copyable & Deinitable](x: T, p: Pair = Pair(1, b=2)) -> Int:\n    return p.a + p.b\n\n\ndef main():\n    print(join(1), join(\"a\"), join(2, \"+\"))\n    print(span(1), span(\"a\"), span(2, Pair(10, 20)))\n";
-    for verify in [false, true] {
-        let compiler = Compiler::default().with_template_verification(verify);
-        let program = compile_entry(&compiler, source);
-        let stats = program.template_stats();
-        for name in ["join$", "span$"] {
-            assert!(
-                stats
-                    .derived
-                    .iter()
-                    .chain(&stats.verified)
-                    .chain(&stats.inferred_clones)
-                    .all(|clone| !clone.starts_with(name)),
-                "{name} mints no clone: {stats:?}"
-            );
-        }
-        assert_eq!(
-            compiler.execute(&program).expect("execute").output,
-            "- - +\n3 3 30\n"
-        );
-    }
+    let compiler = Compiler::default();
+    let program = compile_entry(&compiler, source);
+    assert_eq!(
+        compiler.execute(&program).expect("execute").output,
+        "- - +\n3 3 30\n"
+    );
 }
 
 #[test]
-fn template_method_explicit_destroy_call_derives() {
+fn template_method_explicit_destroy_call_runs() {
     // A consuming call on a `^` transfer: a named `deinit self` destructor on
     // a local or on a field of a consumed `self`, a `var self` method, and a
     // `deinit self` requirement through a bound, whose instance's struct is
     // asked again whether it names a destructor.
-    assert_methods_derive(
+    assert_entry_output(
         include_str!("../assets/ok/template_method_explicit_destroy_call.mojo"),
         "2 3 5\n6 7\n8 9\n10 22 1\n",
-        &[
-            ("Desk.spend", 0),
-            ("Desk.lease", 0),
-            ("Ledger.close", 0),
-            ("Clerk.handle", 0),
-        ],
     );
 }
 
 #[test]
-fn template_method_copied_consuming_receiver_derives() {
+fn template_method_copied_consuming_receiver_runs() {
     // A consuming call on a named place the call copies first: `or_else` on
     // a field of a read parameter, of `self`, on a local, and on a parameter
     // built over the struct's parameter, and a `var self` requirement through
-    // a bound. A direct call of a scalar module function derives beside them.
-    assert_methods_derive(
+    // a bound. A direct call of a scalar module function runs beside them.
+    assert_entry_output(
         include_str!("../assets/ok/template_method_copied_consuming_receiver.mojo"),
         "3 2\n3 6\n7 9\nx z\n4 60\n",
-        &[
-            ("Shelf.count", 0),
-            ("Shelf.capped", 0),
-            ("Shelf.pick", 0),
-            ("Purse.total", 0),
-        ],
     );
 }
 
 #[test]
-fn template_method_copied_receivers_derive() {
+fn template_method_copied_receivers_run() {
     // A read method copying `self` into a `var` local, then storing a scalar,
     // a whole value, or an in-place update to the local's fields and reading
     // them back. `Span`'s contiguous slice stores a pointer offset the same way.
-    assert_methods_derive(
+    assert_entry_output(
         include_str!("../assets/ok/template_method_copied_receiver.mojo"),
         "1 2 1 1\n5 q\n2 1\n2 2 3 2 b\n",
-        &[
-            ("Window.shifted", 0),
-            ("Window.replaced", 0),
-            ("Window.trimmed", 0),
-        ],
     );
 }
 
 #[test]
-fn template_method_tuple_elements_derive() {
+fn template_method_tuple_elements_run() {
     // Elements of a tuple-typed local read at literal indices, from a closed
     // tuple, one built over the struct's parameter, and `slice.indices(n)`,
     // as `List`'s strided slice reads its bounds; an element of the
     // parameter's type is also bound to a `var`, annotated or not, and
     // returned whole.
-    assert_methods_derive(
+    assert_entry_output(
         include_str!("../assets/ok/template_method_tuple_element.mojo"),
         "3 5\n40 60\n7 w 7 w\n7 w\n1 2\n3 1 5 4 d a\n",
-        &[
-            ("Holder.span", 0),
-            ("Holder.tag", 2),
-            ("Holder.head", 2),
-            ("Holder.label", 2),
-            ("Holder.front", 2),
-            ("Holder.width", 0),
-        ],
     );
 }
 
 #[test]
-fn template_method_discarded_values_derive() {
+fn template_method_discarded_values_run() {
     // A whole value of the struct's parameter type discarded with `_ =`: a
     // local bound from a tuple element or a field, a field of `self`, a
     // parameter, and a local transferred out with `^`.
-    assert_methods_derive(
+    assert_entry_output(
         include_str!("../assets/ok/template_method_discarded_value.mojo"),
         "3 5\n4 6\n5 7\n6 8\n",
-        &[
-            ("Holder.head", 2),
-            ("Holder.field", 0),
-            ("Holder.param", 0),
-            ("Holder.moved", 0),
-        ],
     );
 }
 
@@ -3867,229 +2811,151 @@ fn module_constants_do_not_reach_bundled_compile_time_binders() {
 }
 
 #[test]
-fn tuple_members_are_template_served() {
+fn tuple_members_run() {
     // Every member of `Tuple` runs from its template: the static `__len__`
     // over its pack length, the initializer relocating its pack whole, the
     // element accessor, the synthesized `copy`, `__contains__`,
     // `write_repr_to`, and the consuming teardowns.
     let source = "def main():\n    var t = (1, String(\"a\"))\n    print(len(t), Tuple[Int, String].__len__())\n    print(t[0], t[1])\n    var c = t.copy()\n    print(c[1], 1 in t, String(\"b\") in t)\n    print(repr(t))\n";
-    for verify in [false, true] {
-        let compiler = Compiler::default().with_template_verification(verify);
-        let program = compile_entry(&compiler, source);
-        assert_no_tuple_clone(program.template_stats());
-        assert_eq!(
-            compiler.execute(&program).expect("execute").output,
-            "2 2\n1 a\na True False\nTuple[SIMD[DType.int, 1], String](Int(1), 'a')\n"
-        );
-    }
-}
-
-#[test]
-fn template_method_defaulted_destructor_derives() {
-    // A named destructor called with its argument left to its default
-    // (`ticket^.finish()`), which is evaluated in the callee's scope: the
-    // body is inside the class, so the method derives per instance.
-    let source = "@explicit_destroy(\"finish the ticket\")\nstruct Ticket(Movable, Deinitable where False):\n    var id: Int\n\n    def __init__(out self, id: Int):\n        self.id = id\n\n    def finish(deinit self, bonus: Int = 1) -> Int:\n        return self.id + bonus\n\n\nstruct Desk[T: Copyable & Deinitable](Movable):\n    var count: Int\n\n    def __init__(out self):\n        self.count = 0\n\n    def spend(self, n: Int) -> Int:\n        var ticket = Ticket(n)\n        return ticket^.finish()\n\n\ndef main():\n    print(Desk[Int]().spend(1))\n";
-    assert_methods_derive(source, "2\n", &[("Desk.spend", 0)]);
-}
-
-#[test]
-fn template_method_struct_argument_derives() {
-    // An instance argument that is a struct declaring fields of its own
-    // parameter types is judged with those fields at its own arguments, so
-    // `Pair[Int, String]` is plain data as `Int` is.
-    assert_methods_derive(
-        "@fieldwise_init\nstruct Pair[K: Copyable & Deinitable, V: Copyable & Deinitable](Copyable):\n    var key: Self.K\n    var value: Self.V\n\n\nstruct Shelf[T: Copyable & Deinitable](Movable):\n    var item: Self.T\n    var uses: Int\n\n    def __init__(out self, var item: Self.T):\n        self.item = item^\n        self.uses = 0\n\n    def bump(mut self) -> Int:\n        self.uses += 1\n        return self.uses\n\n    def replace(mut self, var item: Self.T) -> Int:\n        self.item = item^\n        return self.bump()\n\n\ndef main():\n    var a = Shelf[Pair[Int, String]](Pair[Int, String](1, \"one\"))\n    var b = Shelf[Int](7)\n    print(a.bump(), b.bump())\n    print(a.replace(Pair[Int, String](2, \"two\")), b.replace(8))\n    print(a.item.key, a.item.value, b.item)\n",
-        "1 1\n2 2\n2 two 8\n",
-        &[("Shelf.bump", 0), ("Shelf.replace", 0)],
+    let compiler = Compiler::default();
+    let program = compile_entry(&compiler, source);
+    assert_eq!(
+        compiler.execute(&program).expect("execute").output,
+        "2 2\n1 a\na True False\nTuple[SIMD[DType.int, 1], String](Int(1), 'a')\n"
     );
 }
 
 #[test]
-fn template_method_built_over_locals_derive() {
+fn template_method_defaulted_destructor_runs() {
+    // A named destructor called with its argument left to its default
+    // (`ticket^.finish()`), which is evaluated in the callee's scope, runs
+    // per instance.
+    let source = "@explicit_destroy(\"finish the ticket\")\nstruct Ticket(Movable, Deinitable where False):\n    var id: Int\n\n    def __init__(out self, id: Int):\n        self.id = id\n\n    def finish(deinit self, bonus: Int = 1) -> Int:\n        return self.id + bonus\n\n\nstruct Desk[T: Copyable & Deinitable](Movable):\n    var count: Int\n\n    def __init__(out self):\n        self.count = 0\n\n    def spend(self, n: Int) -> Int:\n        var ticket = Ticket(n)\n        return ticket^.finish()\n\n\ndef main():\n    print(Desk[Int]().spend(1))\n";
+    assert_entry_output(source, "2\n");
+}
+
+#[test]
+fn template_method_struct_argument_runs() {
+    // An instance argument that is a struct declaring fields of its own
+    // parameter types is judged with those fields at its own arguments, so
+    // `Pair[Int, String]` is plain data as `Int` is.
+    assert_entry_output(
+        "@fieldwise_init\nstruct Pair[K: Copyable & Deinitable, V: Copyable & Deinitable](Copyable):\n    var key: Self.K\n    var value: Self.V\n\n\nstruct Shelf[T: Copyable & Deinitable](Movable):\n    var item: Self.T\n    var uses: Int\n\n    def __init__(out self, var item: Self.T):\n        self.item = item^\n        self.uses = 0\n\n    def bump(mut self) -> Int:\n        self.uses += 1\n        return self.uses\n\n    def replace(mut self, var item: Self.T) -> Int:\n        self.item = item^\n        return self.bump()\n\n\ndef main():\n    var a = Shelf[Pair[Int, String]](Pair[Int, String](1, \"one\"))\n    var b = Shelf[Int](7)\n    print(a.bump(), b.bump())\n    print(a.replace(Pair[Int, String](2, \"two\")), b.replace(8))\n    print(a.item.key, a.item.value, b.item)\n",
+        "1 1\n2 2\n2 two 8\n",
+    );
+}
+
+#[test]
+fn template_method_built_over_locals_run() {
     // A local whose type is built over the struct's parameter: a bundled
     // collection moved out, handed on, or left unused, a hand-written struct
     // named or inferred at its construction, and a view a constructor's `ref`
     // parameter infers. Each binding's deletability is judged again at the
     // instance's type. Such a local is also a receiver and `len`'s operand.
-    assert_methods_derive(
+    assert_entry_output(
         include_str!("../assets/ok/template_method_built_over_local.mojo"),
         "0 0 3 3\n2 y 5 z\n4 4 1 1\n0 0 4 x 0 0\n",
-        &[
-            ("Shelf.made", 0),
-            ("Shelf.fresh", 0),
-            ("Shelf.popped", 0),
-            ("Shelf.cleared", 0),
-            ("Shelf.handed", 0),
-            ("Shelf.wrapped", 0),
-            ("Shelf.inferred", 0),
-            ("Shelf.unused", 0),
-            ("Shelf.viewed", 0),
-        ],
     );
 }
 
 #[test]
-fn template_method_explicit_applications_derive() {
+fn template_method_explicit_applications_run() {
     // A generic module function applied to the struct's parameter
     // (`unsafe_alloc[Self.T](n)`), stored to a field or bound to a local
     // that later lands in one, and an untracked pointer field handed to a
     // constructor's read parameter.
-    assert_methods_derive(
+    assert_entry_output(
         include_str!("../assets/ok/template_method_explicit_application.mojo"),
         "8\n8\n3\n",
-        &[
-            ("Pool.__init__", 0),
-            ("Pool.regrow", 0),
-            ("Pool.take", 0),
-            ("Handle.__init__", 0),
-        ],
     );
 }
 
 #[test]
-fn template_method_constructions_derive() {
+fn template_method_constructions_run() {
     // A `copy:` construction of the struct's own type, a fieldwise
     // construction, a bundled collection over the struct's parameter, and a
     // hand-written constructor family retargeted to the instance's own
     // `__init__` clone, as a result, a field store, and a local.
-    assert_methods_derive(
+    assert_entry_output(
         include_str!("../assets/ok/template_method_construction.mojo"),
         "1 2 x 3 0 0\n1 x 1 2 x\n1 0 x 7\n1 1 5 y\n0 0\n",
-        &[
-            ("Box.copy", 0),
-            ("Box.empty", 0),
-            ("Box.some", 0),
-            ("Box.pair", 0),
-            ("Box.tagged", 0),
-            ("Box.tagged_as", 0),
-            ("Box.reset", 0),
-            ("Box.keep", 0),
-            ("Box.__init__", 0),
-            ("Tagged.__init__", 0),
-        ],
     );
 }
 
 #[test]
-fn template_method_converting_call_arguments_derive() {
+fn template_method_converting_call_arguments_run() {
     // A literal and a whole value of the struct's parameter type, each
     // converted at a sibling call's argument. The conversion is recorded
-    // twice — at the argument and in the call's boundary — so the verified
-    // half of this assertion is what pins the boundary: a derived bundle
-    // that kept the template's `Wrapper` there differs from the clone's own
-    // `Wrapper.__init__$y3:Int`.
-    assert_methods_derive(
+    // twice — at the argument and in the call's boundary — and the
+    // elaborator substitutes the instance's `Wrapper` at both.
+    assert_entry_output(
         include_str!("../assets/ok/template_method_converting_call_argument.mojo"),
         "4 2 7\n4 2 7\n",
-        &[
-            ("Holder.numbered", 0),
-            ("Holder.flagged", 0),
-            ("Holder.boxed", 0),
-            ("Holder.keep", 0),
-        ],
     );
 }
 
 #[test]
-fn template_method_converting_closed_bindings_derive() {
+fn template_method_converting_closed_bindings_run() {
     // A literal converted into a closed struct at an annotated binding: the
     // local holds the struct, not the scalar it was converted from.
-    assert_methods_derive(
+    assert_entry_output(
         include_str!("../assets/ok/template_method_converting_argument.mojo"),
         "count 4 flag True 5\ncount 4 flag True hi\n",
-        &[("Holder.write_to", 0)],
     );
 }
 
 #[test]
-fn template_method_converting_bindings_derive() {
+fn template_method_converting_bindings_run() {
     // An annotated `var` whose value converts to a declared type built over
     // the struct's parameter: a literal and a whole value of the parameter
     // type, each reaching the instance's own constructor clone; an
     // annotation equal to the value's type, which converts nothing; and a
     // scalar annotation, whose local stays a scalar.
-    assert_methods_derive(
+    assert_entry_output(
         include_str!("../assets/ok/template_method_converting_binding.mojo"),
         "4 6 5 0\n4 6 hi 0\n3 m 4.0 4.0\n",
-        &[
-            ("Holder.labeled", 0),
-            ("Holder.counted", 0),
-            ("Holder.boxed", 0),
-            ("Holder.listed", 0),
-            ("Holder.moved", 0),
-            ("Holder.floated", 0),
-        ],
     );
 }
 
 #[test]
-fn template_method_operator_dispatch_derives() {
+fn template_method_operator_dispatch_runs() {
     // Equality, `!=`, and an ordering over two places of the struct's
     // parameter type; `!=` served by the instance's `__eq__` and a negation
     // (`Tag` declares no `__ne__`); and `+` over two places whose type is
     // built over the parameter, whose result is a temporary of that type
     // rather than a `Bool`.
-    assert_methods_derive(
+    assert_entry_output(
         include_str!("../assets/ok/template_method_operator_dispatch.mojo"),
         "False True False True\n1 2\nTrue True True False\nFalse False 1\n3 7\n",
-        &[
-            ("Pair.same", 0),
-            ("Pair.differs", 0),
-            ("Pair.matches", 0),
-            ("Sorted.ordered", 0),
-            ("Sorted.bounds", 0),
-            ("Totals.merged", 0),
-        ],
     );
 }
 
 #[test]
-fn template_method_operator_operands_derives() {
+fn template_method_operator_operands_runs() {
     // A sibling call's result, a nested operator, and a right-hand literal
     // as operands: a temporary records nothing in either check, a place
     // under a consuming dunder is copied in the template already, and a
     // literal reaches `Meter[Self.T]` through the template's own conversion.
-    assert_methods_derive(
+    assert_entry_output(
         include_str!("../assets/ok/template_method_operator_operands.mojo"),
         "True False True False\n1 5 6 8\nTrue False True False\n3 9 4 12\nFalse False True True\n",
-        &[
-            ("Pair.starts", 0),
-            ("Gauge.lowered", 0),
-            ("Gauge.bumped", 0),
-            ("Gauge.is_two", 0),
-            ("Gauge.below", 0),
-            ("Gauge.spanned", 0),
-            ("Gauge.chained", 0),
-            ("Gauge.balanced", 0),
-            ("Gauge.matches_sum", 0),
-        ],
     );
 }
 
 #[test]
-fn template_method_reflected_operator_derives() {
+fn template_method_reflected_operator_runs() {
     // A literal or closed scalar left operand dispatches the right operand's
     // reflected dunder: the template's `ReflectedOperator` adjustment
     // stands, and each instance names the dunder again, an overloaded one
     // by its key.
-    assert_methods_derive(
+    assert_entry_output(
         include_str!("../assets/ok/template_method_reflected_operator.mojo"),
         "2 4 2.5 7.5\n9 7 -0.5 -2.5\n3 7\n3 5 3 1\n",
-        &[
-            ("Gauge.raised", 0),
-            ("Gauge.scaled", 0),
-            ("Gauge.margin", 0),
-            ("Gauge.fraction", 0),
-            ("Gauge.doubled", 0),
-            ("Gauge.shifted", 0),
-            ("Gauge.based", 0),
-        ],
     );
 }
 
 #[test]
-fn template_method_bounded_arithmetic_derives() {
+fn template_method_bounded_arithmetic_runs() {
     // `a + b` and `a / b` under arithmetic bounds: the template's result is
     // the operand's own type (`Float64` for `/`), so the operator is a
     // temporary where the body puts it, and each instance owes that its
@@ -4119,15 +2985,11 @@ def main():
     print(a.bound(), b.bound())
     print(a.ratio(), b.ratio())
 ";
-    assert_methods_derive(
-        source,
-        "3 2.0\n3 2.0\n0.5 3.0\n",
-        &[("Acc.total", 0), ("Acc.bound", 0), ("Acc.ratio", 0)],
-    );
+    assert_entry_output(source, "3 2.0\n3 2.0\n0.5 3.0\n");
 }
 
 #[test]
-fn template_method_consuming_operand_derives() {
+fn template_method_consuming_operand_runs() {
     // A dunder that takes its operand by value copies the place the operator
     // reads, which the symbolic template never recorded. The instance owes
     // the copy and that its own type is implicitly copyable.
@@ -4157,117 +3019,88 @@ def main():
     var b = Pair[Coin](Coin(3), Coin(3))
     print(a.same(), b.same())
 ";
-    assert_methods_derive(source, "False True\n", &[("Pair.same", 0)]);
+    assert_entry_output(source, "False True\n");
 }
 
 #[test]
-fn template_method_consuming_conversion_runs_from_the_template() {
-    // The conversion's constructor is selected once, on the template, and
-    // the template serves the instance: no clone re-selects it at the
-    // instance's types.
+fn template_method_consuming_conversion_runs() {
+    // The conversion's constructor is selected once, with `T` symbolic, and
+    // the instance runs that selection at its own types.
     let source = "struct Wrapper[T: Copyable & Deinitable](Copyable, Deinitable, Movable):\n    var value: Self.T\n\n    @implicit\n    def __init__(out self, var value: Self.T):\n        self.value = value^\n\nstruct Holder[T: Copyable & Deinitable](Deinitable, Movable):\n    var item: Self.T\n\n    def __init__(out self, var item: Self.T):\n        self.item = item^\n\n    def keep(self, box: Wrapper[Self.T]) -> Int:\n        return 7\n\n    def boxed(self) -> Int:\n        return self.keep(self.item)\n\ndef main():\n    var number = Holder[Int](5)\n    print(number.boxed())\n";
     let compiler = Compiler::default();
     let program = compile_entry(&compiler, source);
-    let stats = program.template_stats();
     assert_eq!(compiler.execute(&program).expect("execute").output, "7\n");
-    assert!(
-        stats
-            .derived
-            .iter()
-            .chain(&stats.inferred_clones)
-            .all(|name| !name.starts_with("Holder.boxed$")),
-        "no clone of the method is minted: {stats:?}"
-    );
 }
 
 #[test]
-fn template_method_view_bindings_derive() {
+fn template_method_view_bindings_run() {
     // An annotation left to inference takes the value's own type, and the
     // view conversion, at a binding or at a sibling's argument, borrows its
     // source place as the template's did: each instance re-selects the
     // conversion and keeps the borrow, read or mutable.
-    assert_methods_derive(
+    assert_entry_output(
         include_str!("../assets/ok/template_method_view_binding.mojo"),
         "2 2\n2 2\n3 3\n3 3\n",
-        &[
-            ("Shelf.viewed", 0),
-            ("Shelf.counted", 0),
-            ("Shelf.grown", 0),
-            ("Shelf.measured", 0),
-        ],
     );
 }
 
 #[test]
-fn template_method_bound_witness_shapes_derive() {
+fn template_method_bound_witness_shapes_run() {
     // Each instance re-selects the witness a call through the bound names:
     // an overload member the arity picks, a `[H: Hasher]` binder a concrete
     // hasher closes, a `mut self` requirement, and a
     // `var self` one the receiver's `^` transfer consumes.
-    assert_methods_derive(
+    assert_entry_output(
         include_str!("../assets/ok/template_method_bound_witness_shapes.mojo"),
         "T3 B3 3 s\nT3 B3 3 s\nTrue True\nTrue True\nFalse\n15\n",
-        &[
-            ("Holder.__hash__", 0),
-            ("Holder.write_to", 0),
-            ("Holder.feed", 0),
-            ("Holder.show", 0),
-            ("Ledger.step", 0),
-            ("Ledger.settle", 0),
-        ],
     );
 }
 
 #[test]
-fn template_method_same_arity_witness_overloads_derive() {
+fn template_method_same_arity_witness_overloads_run() {
     // Two `total` members take one argument each, and the instance selects
     // the one witnessing the requirement, never ranking the set: a
     // `String` or `Float64` rival does not compete.
-    assert_methods_derive(
+    assert_entry_output(
         "trait Tally:\n    def total(self, by: Int) -> Int:\n        ...\n\n\nstruct Counter(Copyable, Deinitable, Movable, Tally):\n    var count: Int\n\n    def __init__(out self, count: Int):\n        self.count = count\n\n    def total(self, by: Int) -> Int:\n        return self.count + by\n\n    def total(self, by: String) -> Int:\n        return self.count\n\n\nstruct Ledger[T: Copyable & Deinitable & Tally](Movable):\n    var entry: Self.T\n\n    def __init__(out self, var entry: Self.T):\n        self.entry = entry^\n\n    def sum(self) -> Int:\n        return self.entry.total(1)\n\n\ndef main():\n    print(Ledger[Counter](Counter(2)).sum())\n",
         "3\n",
-        &[("Ledger.sum", 0)],
     );
-    assert_methods_derive(
+    assert_entry_output(
         "trait Tally:\n    def total(self, by: Int) -> Int:\n        ...\n\n\nstruct Counter(Copyable, Deinitable, Movable, Tally):\n    var count: Int\n\n    def __init__(out self, count: Int):\n        self.count = count\n\n    def total(self, by: Float64) -> Int:\n        return self.count + 10\n\n    def total(self, by: Int) -> Int:\n        return self.count + by\n\n\nstruct Ledger[T: Copyable & Deinitable & Tally](Movable):\n    var entry: Self.T\n    var step: Int\n\n    def __init__(out self, var entry: Self.T):\n        self.entry = entry^\n        self.step = 4\n\n    def sum(self) -> Int:\n        return self.entry.total(1)\n\n    def stepped(self) -> Int:\n        return self.entry.total(self.step)\n\n\ndef main():\n    var ledger = Ledger[Counter](Counter(2))\n    print(ledger.sum(), ledger.stepped())\n",
         "3 6\n",
-        &[("Ledger.sum", 0), ("Ledger.stepped", 0)],
     );
 }
 
 #[test]
-fn template_method_ranked_witness_overloads_derive() {
+fn template_method_ranked_witness_overloads_run() {
     // Each instance selects the `total` member witnessing the requirement,
     // whatever the argument (an operator, a call, a field): a defaulted
     // `Float64` rival, a generic one, and a `var` one do not compete.
-    assert_methods_derive(
+    assert_entry_output(
         "trait Tally:\n    def total(self, by: Int) -> Int:\n        ...\n\n\nstruct Counter(Copyable, Deinitable, Movable, Tally):\n    var count: Int\n    var name: String\n\n    def __init__(out self, count: Int):\n        self.count = count\n        self.name = String(\"n\")\n\n    def total(self, by: Int) -> Int:\n        return self.count + by\n\n    def total(self, by: String) -> Int:\n        return self.count\n\n    def total[U: Writable](self, by: U) -> Int:\n        return -1\n\n    def total(self, by: Float64, scale: Int = 3) -> Int:\n        return -2\n\n    def total[U: Copyable & Deinitable & Intable](self, var by: U) -> Int:\n        return -4\n\n\nstruct Ledger[T: Copyable & Deinitable & Tally](Movable):\n    var entry: Self.T\n    var step: Int\n\n    def __init__(out self, var entry: Self.T):\n        self.entry = entry^\n        self.step = 2\n\n    def sum(self) -> Int:\n        return self.entry.total(self.step + 1)\n\n    def plain(self) -> Int:\n        return self.entry.total(self.step)\n\n    def doubled(self) -> Int:\n        return self.step * 2\n\n    def called(self) -> Int:\n        return self.entry.total(self.doubled())\n\n\ndef main():\n    var ledger = Ledger[Counter](Counter(2))\n    print(ledger.sum(), ledger.plain(), ledger.called())\n",
         "5 4 6\n",
-        &[("Ledger.sum", 0), ("Ledger.plain", 0), ("Ledger.called", 0)],
     );
 }
 
 #[test]
-fn template_method_generic_witness_rivals_derive() {
+fn template_method_generic_witness_rivals_run() {
     // Rivals with binders of their own — inside `List[U]`, a `DType`
     // binder of `Scalar[dt]`, a bare binder a literal could bind — do not
     // compete with the member witnessing the requirement.
-    assert_methods_derive(
+    assert_entry_output(
         "trait Tally:\n    def total(self, by: Int) -> Int:\n        ...\n\n\nstruct Counter(Copyable, Deinitable, Movable, Tally):\n    var count: Int\n\n    def __init__(out self, count: Int):\n        self.count = count\n\n    def total(self, by: Int) -> Int:\n        return self.count + by\n\n    def total[U: Copyable & Deinitable](self, by: List[U]) -> Int:\n        return -1\n\n    def total[dt: DType](self, by: Scalar[dt], scale: Int = 2) -> Int:\n        return -2\n\n    def total[U: Writable](self, by: U) -> Int:\n        return -3\n\n\nstruct Ledger[T: Copyable & Deinitable & Tally](Movable):\n    var entry: Self.T\n    var step: Int\n\n    def __init__(out self, var entry: Self.T):\n        self.entry = entry^\n        self.step = 2\n\n    def plain(self) -> Int:\n        return self.entry.total(self.step)\n\n    def literal(self) -> Int:\n        return self.entry.total(5)\n\n\ndef main():\n    var ledger = Ledger[Counter](Counter(2))\n    print(ledger.plain(), ledger.literal())\n",
         "4 7\n",
-        &[("Ledger.plain", 0), ("Ledger.literal", 0)],
     );
 }
 
 #[test]
-fn template_method_requirement_witness_beside_variadic_rivals_derives() {
+fn template_method_requirement_witness_beside_variadic_rivals_runs() {
     // The call is bound to the requirement, so the member witnessing it is
     // selected at every instance, and a variadic rival the recorded types
     // cannot rank does not compete.
-    assert_methods_derive(
+    assert_entry_output(
         "trait Tally:\n    def total(self, by: Int) -> Int:\n        ...\n\n\nstruct Counter(Copyable, Deinitable, Movable, Tally):\n    var count: Int\n\n    def __init__(out self, count: Int):\n        self.count = count\n\n    def total(self, by: Int) -> Int:\n        return self.count + by\n\n    def total(self, by: Int, *more: Int) -> Int:\n        return -1\n\n    def total(self, *by: Float64) -> Int:\n        return -2\n\n\nstruct Ledger[T: Copyable & Deinitable & Tally](Movable):\n    var entry: Self.T\n    var step: Int\n\n    def __init__(out self, var entry: Self.T):\n        self.entry = entry^\n        self.step = 2\n\n    def plain(self) -> Int:\n        return self.entry.total(self.step)\n\n    def literal(self) -> Int:\n        return self.entry.total(5)\n\n\ndef main():\n    var ledger = Ledger[Counter](Counter(2))\n    print(ledger.plain(), ledger.literal())\n",
         "4 7\n",
-        &[("Ledger.plain", 0), ("Ledger.literal", 0)],
     );
 }
 
@@ -4277,167 +3110,107 @@ fn template_method_requirement_witness_outranks_a_better_rival() {
     // the generic body, so the `Float64` witness runs even where an exact
     // `Int` rival, or a variadic one, would outrank it on the argument; a
     // clone check ranking the set again used to print `-1 -2`.
-    assert_methods_derive(
+    assert_entry_output(
         "trait Tally:\n    def total(self, by: Float64) -> Int:\n        ...\n\n\nstruct Counter(Copyable, Deinitable, Movable, Tally):\n    var count: Int\n\n    def __init__(out self, count: Int):\n        self.count = count\n\n    def total(self, by: Float64) -> Int:\n        return self.count + 1\n\n    def total(self, by: Int) -> Int:\n        return -1\n\n\nstruct Tallies(Copyable, Deinitable, Movable, Tally):\n    var count: Int\n\n    def __init__(out self, count: Int):\n        self.count = count\n\n    def total(self, by: Float64) -> Int:\n        return self.count + 2\n\n    def total(self, *by: Int) -> Int:\n        return -2\n\n\nstruct Ledger[T: Copyable & Deinitable & Tally](Movable):\n    var entry: Self.T\n\n    def __init__(out self, var entry: Self.T):\n        self.entry = entry^\n\n    def literal(self) -> Int:\n        return self.entry.total(3)\n\n\ndef main():\n    print(Ledger[Counter](Counter(2)).literal(), Ledger[Tallies](Tallies(2)).literal())\n",
         "3 4\n",
-        &[("Ledger.literal", 0)],
     );
 }
 
 #[test]
-fn template_method_requirement_witness_beside_reference_rival_derives() {
+fn template_method_requirement_witness_beside_reference_rival_runs() {
     // A rival with a reference parameter (the `ref` type extension) would
     // rank by the argument's place and origin, which no recorded type
     // holds; beside the requirement's witness it does not compete.
-    assert_methods_derive(
+    assert_entry_output(
         "trait Tally:\n    def total(self, by: Int) -> Int:\n        ...\n\n\nstruct Counter(Copyable, Deinitable, Movable, Tally):\n    var count: Int\n\n    def __init__(out self, count: Int):\n        self.count = count\n\n    def total(self, by: Int) -> Int:\n        return self.count + by\n\n    def total[o: Origin[mut=False]](self, by: ref[o] Int) -> Int:\n        return -1\n\n\nstruct Ledger[T: Copyable & Deinitable & Tally](Movable):\n    var entry: Self.T\n    var step: Int\n\n    def __init__(out self, var entry: Self.T):\n        self.entry = entry^\n        self.step = 2\n\n    def plain(self) -> Int:\n        return self.entry.total(self.step)\n\n\ndef main():\n    print(Ledger[Counter](Counter(2)).plain())\n",
         "4\n",
-        &[("Ledger.plain", 0)],
     );
 }
 
 #[test]
-fn template_method_builtin_requirement_witness_beside_generic_rival_derives() {
+fn template_method_builtin_requirement_witness_beside_generic_rival_runs() {
     // A built-in trait registers no declaration, yet `Hashable`'s
     // requirement still names its witness: the `[H: Hasher]` member, never
     // the rival whose own binder sits inside `List[U]`, which the recorded
     // types cannot rank.
-    assert_methods_derive(
+    assert_entry_output(
         "from std.hashlib import Hasher\n\n\n@fieldwise_init\nstruct Twin(Copyable, Deinitable, Hashable, Movable):\n    var x: Int\n\n    def __hash__[H: Hasher](self, mut hasher: H):\n        self.x.__hash__(hasher)\n\n    def __hash__[U: Copyable](self, mut hasher: List[U]):\n        pass\n\n\nstruct Holder[T: Copyable & Deinitable & Hashable](Hashable, Movable):\n    var item: Self.T\n\n    def __init__(out self, var item: Self.T):\n        self.item = item^\n\n    def __hash__[H: Hasher](self, mut hasher: H):\n        self.item.__hash__(hasher)\n\n\ndef main():\n    print(hash(Holder[Twin](Twin(3))) == hash(Twin(3)))\n    print(hash(Holder[Int](3)) == hash(Holder[Int](3)))\n",
         "True\nTrue\n",
-        &[("Holder.__hash__", 0)],
     );
     // `Writable`'s `write_to` likewise, whether the template calls it
     // through the bound or writes into a `String`.
-    assert_methods_derive(
+    assert_entry_output(
         "@fieldwise_init\nstruct Twin(Copyable, Deinitable, Movable, Writable):\n    var x: Int\n\n    def write_to(self, mut writer: Some[Writer]):\n        writer.write(\"T\", self.x)\n\n    def write_to[U: Copyable](self, mut writer: List[U]):\n        pass\n\n\nstruct Holder[T: Copyable & Deinitable & Writable](Movable, Writable):\n    var item: Self.T\n\n    def __init__(out self, var item: Self.T):\n        self.item = item^\n\n    def write_to(self, mut writer: Some[Writer]):\n        self.item.write_to(writer)\n\n    def show(self) -> String:\n        var text = String()\n        self.item.write_to(text)\n        return text\n\n\ndef main():\n    print(Holder[Twin](Twin(3)), Holder[Twin](Twin(5)).show())\n    print(Holder[Int](4), Holder[Int](6).show())\n",
         "T3 T5\n4 6\n",
-        &[("Holder.write_to", 0), ("Holder.show", 0)],
     );
     // A generic struct's instance clones the whole overload set, so the
     // bound call names the witness's clone by its overload qualifier.
-    assert_methods_derive(
+    assert_entry_output(
         "from std.hashlib import Hasher\n\n\n@fieldwise_init\nstruct Pair[T: Copyable & Deinitable & Hashable](Copyable, Deinitable, Hashable, Movable):\n    var x: Self.T\n\n    def __hash__[H: Hasher](self, mut hasher: H):\n        self.x.__hash__(hasher)\n\n    def __hash__[U: Copyable](self, mut hasher: List[U]):\n        pass\n\n\nstruct Holder[T: Copyable & Deinitable & Hashable](Hashable, Movable):\n    var item: Self.T\n\n    def __init__(out self, var item: Self.T):\n        self.item = item^\n\n    def __hash__[H: Hasher](self, mut hasher: H):\n        self.item.__hash__(hasher)\n\n\ndef main():\n    print(hash(Holder[Pair[Int]](Pair[Int](3))) == hash(Pair[Int](3)))\n    print(hash(Holder[Int](3)) == hash(Holder[Int](3)))\n",
         "True\nTrue\n",
-        &[("Holder.__hash__", 0)],
     );
 }
 
 #[test]
-fn template_method_origin_bearing_constructions_derive() {
+fn template_method_origin_bearing_constructions_run() {
     // A view over the receiver, constructed from a `ref` local into a
     // fieldwise struct's reference field: the constructed type names the
     // receiver in an origin argument, kept by binding and rebound per
     // instance, and the `return` re-resolves the annotation's
     // `origin_of(self)`.
-    assert_methods_derive(
+    assert_entry_output(
         include_str!("../assets/extensions/ok/ref_field_template_method_construction.mojo"),
         "4 q 2 2\n5 r 1 1\n",
-        &[("Store.view", 0), ("Store.rest", 0), ("Store.__init__", 0)],
     );
 }
 
 #[test]
 fn template_def_with_a_scalar_local_keeps_the_symbolic_choice() {
-    // A surviving trait-bound `def` with a scalar local is served by its
-    // template, so both calls run the overload the template bound rather
-    // than a clone ranking the set again on a concrete argument.
-    let (output, stats) = run_source(include_str!(
-        "../assets/ok/template_overload_binding_local.mojo"
-    ));
-    assert_eq!(output, "2\n2\n");
-    assert!(
-        stats
-            .derived
-            .iter()
-            .chain(&stats.inferred_clones)
-            .all(|name| !name.starts_with("outer$")),
-        "outer mints no clone: {stats:?}"
+    // A surviving trait-bound `def` with a scalar local binds its overload
+    // once with `T` symbolic, so both calls run that overload rather than
+    // one ranked again on a concrete argument.
+    assert_eq!(
+        run_source(include_str!(
+            "../assets/ok/template_overload_binding_local.mojo"
+        )),
+        "2\n2\n"
     );
 }
 
 #[test]
-fn template_def_with_a_value_local_is_served_by_its_template() {
+fn template_def_with_a_value_local_keeps_the_symbolic_choice() {
     // A surviving trait-bound `def` holding a whole value of its parameter
     // type — a local copied from the parameter, transferred into another or
     // into the result, and handed by value to an overloaded direct call —
-    // and one iterating a `List[T]` parameter are served by their templates,
-    // so every call runs the overload the template bound rather than a clone
-    // ranking the set again.
-    let (output, stats) = run_source(include_str!("../assets/ok/template_def_value_local.mojo"));
-    assert_eq!(output, "2\n2\n2\n3\n2\n5\nk\n");
-    for template in ["outer$", "tally$", "keep$"] {
-        assert!(
-            stats
-                .derived
-                .iter()
-                .chain(&stats.inferred_clones)
-                .all(|name| !name.starts_with(template)),
-            "{template} mints no clone: {stats:?}"
-        );
-    }
+    // and one iterating a `List[T]` parameter bind their overloads once with
+    // `T` symbolic, so every call runs that overload rather than one ranked
+    // again.
+    assert_eq!(
+        run_source(include_str!("../assets/ok/template_def_value_local.mojo")),
+        "2\n2\n2\n3\n2\n5\nk\n"
+    );
 }
 
 #[test]
-fn template_def_converting_argument_is_template_served() {
+fn template_def_converting_argument_keeps_the_symbolic_choice() {
     // A direct call whose argument converts through an `@implicit`
-    // constructor: the template's selection of the callee stands for every
-    // call. The trait-bound `counted` and the `comptime if`-keyed `keyed` are
-    // both served by their templates with no clone.
-    let (output, stats) = run_source(include_str!(
-        "../assets/ok/template_def_converting_argument.mojo"
-    ));
-    assert_eq!(output, "6 6\n4 2\n");
-    assert!(
-        stats
-            .derived
-            .iter()
-            .chain(&stats.inferred_clones)
-            .all(|name| !name.starts_with("counted$") && !name.starts_with("keyed$")),
-        "neither template mints a clone: {stats:?}"
+    // constructor: the one selection of the callee stands for every call of
+    // the trait-bound `counted` and the `comptime if`-keyed `keyed`.
+    assert_eq!(
+        run_source(include_str!(
+            "../assets/ok/template_def_converting_argument.mojo"
+        )),
+        "6 6\n4 2\n"
     );
-}
-
-/// The instances a compiled program's checked facts request.
-fn struct_requests(program: &mojito::compiler::CompiledProgram) -> Vec<String> {
-    let mut requests: Vec<String> = program
-        .checked()
-        .struct_instantiations()
-        .iter()
-        .map(|instantiation| format!("{instantiation:?}"))
-        .collect();
-    requests.sort();
-    requests
 }
 
 #[test]
-fn template_method_requests_match_an_inferred_run() {
-    // A derived run must request exactly what a verified run requests, or
-    // discovery converges on a different program. `Outer[Int].size` reaches
-    // `Inner[Int].size` through a field, and `twice` reaches
-    // `Outer[Int].size` through `self`: the templates serve both, and both
-    // receivers are still discovered as instances.
+fn generic_struct_method_reaches_instances_through_fields_and_self() {
+    // `Outer[Int].size` reaches `Inner[Int].size` through a field, and
+    // `twice` reaches `Outer[Int].size` through `self`: the elaborator
+    // instantiates both receivers' methods.
     let source = "@fieldwise_init\nstruct Inner[T: Copyable & Movable & Deinitable](Copyable):\n    var item: Self.T\n    var count: Int\n\n    def size(self) -> Int:\n        return self.count\n\n@fieldwise_init\nstruct Outer[T: Copyable & Movable & Deinitable](Copyable):\n    var inner: Inner[Self.T]\n\n    def size(self) -> Int:\n        return self.inner.size()\n\n    def twice(self) -> Int:\n        return self.size() * 2\n\ndef main():\n    var a = Outer(Inner(7, 3))\n    var b = Outer(Inner(String(\"x\"), 5))\n    print(a.twice(), b.twice())\n";
-    let derived = compile_entry(
-        &Compiler::default().with_template_verification(false),
-        source,
-    );
-    // Verification infers every derivable body and keeps the inferred facts;
-    // it fails the compilation if they differ from the derived ones.
-    let inferred = compile_entry(
-        &Compiler::default().with_template_verification(true),
-        source,
-    );
-    assert_eq!(struct_requests(&derived), struct_requests(&inferred));
-    let compiler = Compiler::default();
-    assert_eq!(
-        compiler.execute(&derived).expect("execute").output,
-        "6 10\n"
-    );
-    assert_eq!(
-        compiler.execute(&inferred).expect("execute").output,
-        "6 10\n"
-    );
+    assert_entry_output(source, "6 10\n");
 }
 
 /// Assert that `source` prints `output` and that the template of each `def`
@@ -4597,19 +3370,18 @@ fn template_symbolic_store_keeps_a_latent_transfer_for_its_instances() {
     // `c` borrows the lists it names, and the plain-data one records
     // nothing. The lists are read parameters, so the cell and the span put
     // into it do not alias.
-    assert_methods_derive(
+    assert_entry_output(
         "struct Cell[T: Copyable & Deinitable](Movable):\n    var item: Self.T\n\n    def __init__(out self, var first: Self.T):\n        self.item = first^\n\n    def put(mut self, var value: Self.T):\n        self.item = value^\n\n\ndef run(xs: List[Int], ys: List[Int]):\n    var c = Cell[Span[Int, origin_of(xs, ys)]](Span(ys))\n    var n = Cell[Int](1)\n    c.put(Span(xs))\n    n.put(2)\n    print(len(c.item), c.item[1], n.item)\n\n\ndef main():\n    run([1, 2, 3], [4, 5, 6])\n",
         "3 2 2\n",
-        &[("Cell.put", 0)],
     );
 }
 
 #[test]
-fn loan_carrying_instance_is_served_by_its_template() {
-    // An instance over a loan-carrying argument clones no method its
-    // template serves. The summary's carried source keeps the loan a clone's
-    // own check used to record, so each pointee outlives its last naming.
-    let compiler = Compiler::default().with_template_verification(true);
+fn loan_carrying_instance_runs() {
+    // An instance over a loan-carrying argument runs the method checked with
+    // the struct's parameter symbolic: the summary's carried source records
+    // the loan, so each pointee outlives its last naming.
+    let compiler = Compiler::default();
     let compiled = compile_entry(
         &compiler,
         include_str!("../assets/ok/template_served_loan_carrying_instance.mojo"),
@@ -4621,10 +3393,10 @@ fn loan_carrying_instance_is_served_by_its_template() {
 }
 
 #[test]
-fn template_transfer_replay_reuses_the_template_and_derives_its_instances() {
-    // A method whose body replays a callee's transfer summary is certified
-    // once, served from its own facts in every later transfer round, and
-    // its template serves each plain-data instance without a clone.
+fn transfer_replay_method_runs_per_instance() {
+    // A method whose body replays a callee's transfer summary is checked
+    // once, with the struct's parameter symbolic, and runs at each
+    // plain-data instance.
     let compiler = Compiler::default();
     let program = compiler
         .compile_source(
@@ -4633,39 +3405,6 @@ fn template_transfer_replay_reuses_the_template_and_derives_its_instances() {
             std::path::Path::new("assets/ok/template_method_transfer_replay.mojo"),
         )
         .expect("compile");
-    let stats = program.template_stats();
-    for name in ["Bag.push", "Bag.push_held"] {
-        assert_eq!(
-            certified_count(stats, name),
-            1,
-            "{name}: one template inference"
-        );
-        assert!(
-            stats
-                .reused
-                .iter()
-                .chain(&stats.carried)
-                .any(|reused| reused == name),
-            "{name}: later rounds reuse or carry the template's own facts: {stats:?}"
-        );
-        let derived: std::collections::HashSet<&str> = stats
-            .derived
-            .iter()
-            .map(String::as_str)
-            .filter(|derived| derived.starts_with(&format!("{name}$")))
-            .collect();
-        assert!(
-            derived.is_empty(),
-            "{name}: the template serves both instances: {derived:?}"
-        );
-        assert!(
-            stats
-                .inferred_clones
-                .iter()
-                .all(|clone| !clone.starts_with(&format!("{name}$"))),
-            "{name}: no clone of the certified template is inferred: {stats:?}"
-        );
-    }
     let execution = compiler.execute(&program).expect("execute");
     assert_eq!(execution.output, "2 2 2 x\n");
 }
@@ -4728,14 +3467,6 @@ fn body_fact_carry_over_lowers_the_same_program() {
         let inferred = inferring
             .compile_path(&path)
             .unwrap_or_else(|error| panic!("{fixture} without carry-over: {error}"));
-        assert!(
-            !carried.template_stats().carried.is_empty(),
-            "{fixture}: a later pass carries some body"
-        );
-        assert!(
-            inferred.template_stats().carried.is_empty(),
-            "{fixture}: carry-over is off"
-        );
         assert_eq!(
             renumber_binding_identities(&carried.emit_mir().expect("emit")),
             renumber_binding_identities(&inferred.emit_mir().expect("emit")),
@@ -4750,254 +3481,124 @@ fn body_fact_carry_over_lowers_the_same_program() {
 }
 
 #[test]
-fn template_nested_def_forms_derive() {
+fn template_nested_def_forms_run() {
     // A nested `def` over the struct parameter's type, with a capture-all
     // default, a `ref`, transferred, or `self` capture, or a nested `def` of
     // its own, keeps its declaration's facts in the recipe.
     let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("assets/ok/template_method_nested_def_forms.mojo");
     let source = std::fs::read_to_string(path).expect("fixture");
-    assert_methods_derive(
+    assert_entry_output(
         &source,
         "5 w\n6 f\n7 p\n2 4\n5 8\n57 60\n6 7\n4 5\n5 8\n10 14\n7 9\n22 24\n",
-        &[
-            ("Shelf.echoed", 2),
-            ("Shelf.fresh", 2),
-            ("Shelf.picked", 2),
-            ("Shelf.counted", 2),
-            ("Shelf.defaulted", 2),
-            ("Shelf.copied", 2),
-            ("Shelf.referenced", 2),
-            ("Shelf.moved", 2),
-            ("Shelf.selfish", 2),
-            ("Shelf.bumped", 2),
-            ("Shelf.layered", 2),
-            ("Shelf.deep", 2),
-        ],
     );
 }
 
 #[test]
-fn template_nested_def_conventions_derive() {
+fn template_nested_def_conventions_run() {
     // A nested `def` with a `var`, `mut`, or `ref` parameter, a default, or
     // `raises` keeps its declaration's facts in the recipe.
     let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("assets/ok/template_method_nested_def_conventions.mojo");
     let source = std::fs::read_to_string(path).expect("fixture");
-    assert_methods_derive(
-        &source,
-        "5 w\n6 7\n6 8\n30 39\n4 5\n2 3\n3 v\n3 h\n-3 12\n",
-        &[
-            ("Shelf.owned", 2),
-            ("Shelf.mutated", 2),
-            ("Shelf.referenced", 2),
-            ("Shelf.defaulted", 2),
-            ("Shelf.raising", 2),
-            ("Shelf.grown", 2),
-            ("Shelf.viewed", 2),
-            ("Shelf.handed", 2),
-            ("Shelf.caught", 2),
-        ],
-    );
+    assert_entry_output(&source, "5 w\n6 7\n6 8\n30 39\n4 5\n2 3\n3 v\n3 h\n-3 12\n");
 }
 
 #[test]
-fn template_nested_def_defaults_derive() {
+fn template_nested_def_defaults_run() {
     // A nested `def` with a literal whole-value default, a typed `raises`,
     // or an `out` parameter keeps its declaration's facts in the recipe.
     let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("assets/ok/template_method_nested_def_defaults.mojo");
     let source = std::fs::read_to_string(path).expect("fixture");
-    assert_methods_derive(
-        &source,
-        "-+ -+\n6 8\n-3 2\n4 5\n5 6\n1 1\n",
-        &[
-            ("Shelf.joined", 2),
-            ("Shelf.picked", 2),
-            ("Shelf.typed", 2),
-            ("Shelf.made", 2),
-            ("Shelf.leading", 2),
-            ("Shelf.fresh", 2),
-        ],
-    );
+    assert_entry_output(&source, "-+ -+\n6 8\n-3 2\n4 5\n5 6\n1 1\n");
 }
 
 #[test]
-fn template_nested_def_constructed_default_derives() {
+fn template_nested_def_constructed_default_runs() {
     // A nested `def` whose default constructs a declared struct keeps the
     // construction's facts in the recipe; a call leaving the argument out
     // runs the lowered default function.
     let source = "@fieldwise_init\nstruct Pair(ImplicitlyCopyable, Movable):\n    var a: Int\n    var b: Int\n\n\nstruct Shelf[T: Copyable & Deinitable](Movable):\n    var bias: Int\n\n    def __init__(out self, bias: Int):\n        self.bias = bias\n\n    def joined(self, k: Int) -> String:\n        def join(x: Int, sep: String = String(\"-\")) -> String:\n            return sep\n\n        return join(k, \"+\") + join(k)\n\n    def spanned(self, k: Int) -> Int:\n        def span(x: Int, p: Pair = Pair(1, 2)) -> Int:\n            return x\n\n        return span(k) + span(k, Pair(10, 20))\n\n\ndef main():\n    print(Shelf[Int](1).joined(3), Shelf[String](1).joined(4))\n    print(Shelf[Int](1).spanned(3), Shelf[String](1).spanned(4))\n";
-    assert_methods_derive(
-        source,
-        "+- +-\n6 8\n",
-        &[("Shelf.joined", 2), ("Shelf.spanned", 2)],
-    );
+    assert_entry_output(source, "+- +-\n6 8\n");
 }
 
 #[test]
-fn template_nested_def_struct_parameter_field_derives() {
+fn template_nested_def_struct_parameter_field_runs() {
     // A nested `def`'s read parameter holding a struct, closed or of the
     // struct parameter's type, has its fields read and its methods called
     // where it lies.
     let source = "@fieldwise_init\nstruct Pair(ImplicitlyCopyable, Movable):\n    var a: Int\n    var b: Int\n\n    def total(self) -> Int:\n        return self.a + self.b\n\n\n@fieldwise_init\nstruct Box[T: Copyable & Deinitable](Copyable, Movable):\n    var item: Self.T\n    var n: Int\n\n\nstruct Shelf[T: Copyable & Deinitable](Movable):\n    var bias: Int\n\n    def __init__(out self, bias: Int):\n        self.bias = bias\n\n    def summed(self, k: Int, p: Pair) -> Int:\n        def f(x: Int, q: Pair) -> Int:\n            return x + q.a + q.total()\n\n        return f(k, p) + f(k, Pair(10, 20))\n\n    def counted(self, b: Box[Self.T]) -> Int:\n        def g(c: Box[Self.T]) -> Int:\n            return c.n + 1\n\n        return g(b)\n\n\ndef main():\n    print(Shelf[Int](1).summed(3, Pair(1, 2)), Shelf[String](1).summed(4, Pair(1, 2)))\n    print(Shelf[Int](1).counted(Box[Int](5, 6)), Shelf[String](1).counted(Box[String](\"s\", 7)))\n";
-    assert_methods_derive(
-        source,
-        "50 52\n7 8\n",
-        &[("Shelf.summed", 2), ("Shelf.counted", 2)],
-    );
+    assert_entry_output(source, "50 52\n7 8\n");
 }
 
 #[test]
-fn template_stringify_scalar_parameter_derives() {
+fn template_stringify_scalar_parameter_runs() {
     // `String(k)` of a closed-scalar parameter, in a method or a nested
     // `def`, routes to the stringify builtin as any other closed value does.
     let source = "struct Shelf[T: Copyable & Deinitable](Movable):\n    var bias: Int\n\n    def __init__(out self, bias: Int):\n        self.bias = bias\n\n    def named(self, k: Int) -> String:\n        return String(k) + String(self.bias)\n\n    def joined(self, sep: String, k: Int) -> String:\n        def f(sep: String, x: Int) -> String:\n            return sep + String(x)\n\n        return f(sep, k)\n\n\ndef main():\n    print(Shelf[Int](1).named(3), Shelf[String](1).named(4))\n    print(Shelf[Int](1).joined(\",\", 3), Shelf[String](1).joined(\";\", 4))\n";
-    assert_methods_derive(
-        source,
-        "31 41\n,3 ;4\n",
-        &[("Shelf.named", 0), ("Shelf.joined", 2)],
-    );
+    assert_entry_output(source, "31 41\n,3 ;4\n");
 }
 
 #[test]
-fn template_generic_static_call_derives() {
+fn template_generic_static_call_runs() {
     // A generic struct's static solves the struct's parameters at the
     // instance's types and records nothing naming the clone it retargets to.
     let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("assets/ok/template_method_generic_static_call.mojo");
     let source = std::fs::read_to_string(path).expect("fixture");
-    assert_methods_derive(
-        &source,
-        "20 30\n7 7\n4 5\n3 x\n3 x\n3 x\n3 x\n",
-        &[
-            ("Shelf.counter", 0),
-            ("Shelf.width", 0),
-            ("Shelf.checked", 0),
-            ("Shelf.spelled", 0),
-            ("Shelf.inferred", 0),
-            ("Shelf.contextual", 0),
-            ("Shelf.moved", 0),
-        ],
-    );
+    assert_entry_output(&source, "20 30\n7 7\n4 5\n3 x\n3 x\n3 x\n3 x\n");
 }
 
 #[test]
-fn template_generic_static_shapes_derive() {
+fn template_generic_static_shapes_run() {
     // A generic struct's static with an availability condition, a `ref` or
     // `mut` parameter, a read-only pack, or binders of its own derives; the
     // last calls the static's template.
     let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("assets/ok/template_method_generic_static_shapes.mojo");
     let source = std::fs::read_to_string(path).expect("fixture");
-    assert_methods_derive(
+    assert_entry_output(
         &source,
         "14 14\n3 x\n4 3 y x\n9 z\n6 6\n3 3 0 0\n5\n5\n1 1\n",
-        &[
-            ("Shelf.width", 0),
-            ("Shelf.peeked", 0),
-            ("Shelf.swapped", 0),
-            ("Shelf.local_swap", 0),
-            ("Shelf.total", 0),
-            ("Shelf.counted", 0),
-            ("Shelf.none", 0),
-        ],
-    );
-    // `shown` calls a lone static with a binder of its own, which the
-    // elaborator instantiates per call: its template serves every instance.
-    let compiler = Compiler::default().with_template_verification(false);
-    let program = compile_entry(&compiler, &source);
-    let stats = program.template_stats();
-    assert!(
-        stats
-            .derived
-            .iter()
-            .chain(&stats.inferred_clones)
-            .all(|name| !name.starts_with("Shelf.shown$")),
-        "the template serves Shelf.shown for every instance"
     );
 }
 
 #[test]
-fn template_applied_overloaded_static_derives() {
+fn template_applied_overloaded_static_runs() {
     // A generic struct's static with binders of its own, spelled with
     // explicit compile-time arguments or ranked from an overload family one
-    // of whose members declares binders, derives: a member with binders
-    // names its template, and a member without binders retargets to the
-    // instance's clone of it. A string literal bound to the static's own
-    // binder, inferred or spelled, binds as the template binds it.
+    // of whose members declares binders, is instantiated per call. A string
+    // literal bound to the static's own binder, inferred or spelled, binds
+    // as the one check binds it.
     let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("assets/ok/template_method_applied_overloaded_static.mojo");
     let source = std::fs::read_to_string(path).expect("fixture");
-    assert_methods_derive(
+    assert_entry_output(
         &source,
         "6 6\n6 6\n5\n5\n1 1\n7\n7\n1 1\ns\ns\n1 1\nt\nt\n1 1\n11 11\n6 6\n",
-        &[("Shelf.summed", 0), ("Shelf.valued", 0)],
     );
-    let compiler = Compiler::default().with_template_verification(false);
-    let program = compile_entry(&compiler, &source);
-    // A method that calls a static with binders of its own, lone or
-    // overloaded, is served by its template.
-    for (method, clones) in [
-        ("scaled", 0),
-        ("twice", 0),
-        ("picked", 0),
-        ("applied", 0),
-        ("worded", 0),
-        ("spelled", 0),
-    ] {
-        let derived: std::collections::HashSet<&String> = program
-            .template_stats()
-            .derived
-            .iter()
-            .filter(|name| name.starts_with(&format!("Shelf.{method}$")))
-            .collect();
-        assert_eq!(
-            derived.len(),
-            clones,
-            "Shelf.{method} derives for each instance that clones it"
-        );
-    }
 }
 
 #[test]
-fn template_overloaded_generic_static_call_derives() {
+fn template_overloaded_generic_static_call_runs() {
     // An overloaded static of a generic struct whose members differ only in
     // closed parameter types ranks the template's member at every instance:
     // a spelled receiver retargets to the instance's clone of it.
     let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("assets/ok/template_method_overloaded_generic_static_call.mojo");
     let source = std::fs::read_to_string(path).expect("fixture");
-    assert_methods_derive(
-        &source,
-        "3 x\n3 x\n6 7\n5 6\n3 x\n3 x\n",
-        &[
-            ("Shelf.by_int", 0),
-            ("Shelf.by_float", 0),
-            ("Shelf.counted", 0),
-            ("Shelf.checked", 0),
-            ("Shelf.inferred", 0),
-            ("Shelf.contextual", 0),
-        ],
-    );
+    assert_entry_output(&source, "3 x\n3 x\n6 7\n5 6\n3 x\n3 x\n");
 }
 
 #[test]
-fn template_overloaded_static_on_a_parameter_type_derives() {
+fn template_overloaded_static_on_a_parameter_type_runs() {
     // Members differing in a parameter of the struct's parameter type: each
     // instance calls its own clone of the member the template ranked.
     let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("assets/ok/template_method_overloaded_parameter_typed_static.mojo");
     let source = std::fs::read_to_string(path).expect("fixture");
-    assert_methods_derive(
-        &source,
-        "1 1\n1 1\n2 2\n",
-        &[
-            ("Shelf.picked", 0),
-            ("Shelf.given", 0),
-            ("Shelf.literal", 0),
-        ],
-    );
+    assert_entry_output(&source, "1 1\n1 1\n2 2\n");
 }
 
 #[test]
@@ -5008,62 +3609,34 @@ fn template_overloaded_static_keeps_the_template_member_at_every_instance() {
     let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("assets/ok/template_method_collapsed_static_overload.mojo");
     let source = std::fs::read_to_string(path).expect("fixture");
-    assert_methods_derive(
-        &source,
-        "1 1\n1 2 2\n2\n",
-        &[
-            ("Shelf.picked", 0),
-            ("Shelf.given", 0),
-            ("Shelf.literal", 0),
-        ],
-    );
+    assert_entry_output(&source, "1 1\n1 2 2\n2\n");
 }
 
 #[test]
-fn template_string_literal_argument_derives() {
+fn template_string_literal_argument_runs() {
     // A string literal handed to a method's `StringSpan` or `String`
     // parameter converts by its syntax and the callee's declared parameter.
     let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("assets/ok/template_method_string_literal_argument.mojo");
     let source = std::fs::read_to_string(path).expect("fixture");
-    assert_methods_derive(
-        &source,
-        "4 3\n-1 2 True True\n2 1\n2 1 a-b-a! cab!\n4 4\n",
-        &[
-            ("Named.trimmed_length", 0),
-            ("Named.position", 0),
-            ("Named.has_z", 0),
-            ("Named.local_trimmed", 0),
-            ("Named.tag_count", 0),
-            ("Named.tag_joined", 0),
-            ("Named.tag_taken", 0),
-        ],
-    );
+    assert_entry_output(&source, "4 3\n-1 2 True True\n2 1\n2 1 a-b-a! cab!\n4 4\n");
 }
 
 #[test]
-fn template_defaulted_argument_derives() {
+fn template_defaulted_argument_runs() {
     // A method call leaving a defaulted parameter to its default records
     // only the omitted slot: the callee evaluates its own default.
     let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("assets/ok/template_method_defaulted_argument.mojo");
     let source = std::fs::read_to_string(path).expect("fixture");
-    assert_methods_derive(
+    assert_entry_output(
         &source,
         "-1 2 False True\na-b! cab! a-b!! cab!!\n24 12 4 4\n",
-        &[
-            ("Named.position", 0),
-            ("Named.starts", 0),
-            ("Named.tag_joined", 0),
-            ("Named.tag_twice", 0),
-            ("Named.tripled_length", 0),
-            ("Named.reaped", 0),
-        ],
     );
 }
 
 #[test]
-fn template_bound_defaulted_argument_derives() {
+fn template_bound_defaulted_argument_runs() {
     // A call through a bound leaving a defaulted parameter of the requirement
     // to its default records only the omitted slot when every witness
     // declares the requirement's default alike; keywords out of parameter
@@ -5071,20 +3644,14 @@ fn template_bound_defaulted_argument_derives() {
     let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("assets/ok/template_method_bound_defaulted_argument.mojo");
     let source = std::fs::read_to_string(path).expect("fixture");
-    assert_methods_derive(
+    assert_entry_output(
         &source,
         "x7 x4 x6 x7\nxabababababab xababab xababababab xabababababab\n",
-        &[
-            ("Holder.both_default", 0),
-            ("Holder.one_default", 0),
-            ("Holder.keyword_offset", 0),
-            ("Holder.keywords_swapped", 0),
-        ],
     );
 }
 
 #[test]
-fn template_bound_value_argument_derives() {
+fn template_bound_value_argument_runs() {
     // A string literal or a named value of a closed non-scalar type handed
     // by value through a bound is a temporary or a place read where it
     // lies, whatever the witness; so is a string requirement default the
@@ -5092,22 +3659,14 @@ fn template_bound_value_argument_derives() {
     let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("assets/ok/template_method_bound_value_argument.mojo");
     let source = std::fs::read_to_string(path).expect("fixture");
-    assert_methods_derive(
+    assert_entry_output(
         &source,
         "y5 z4 w3 p2 t3 x3\nyabababab zababab wabab pab tabab xabab\n",
-        &[
-            ("Holder.keyword_literal", 0),
-            ("Holder.positional_literal", 0),
-            ("Holder.named_local", 0),
-            ("Holder.named_parameter", 0),
-            ("Holder.field_argument", 0),
-            ("Holder.spelled_default", 0),
-        ],
     );
 }
 
 #[test]
-fn template_bound_self_argument_derives() {
+fn template_bound_self_argument_runs() {
     // A value of a struct parameter's type handed by value to a
     // requirement parameter typed `Self` or by the requirement's own binder:
     // a borrowed place read where it lies, an owned temporary, a transferred
@@ -5115,65 +3674,39 @@ fn template_bound_self_argument_derives() {
     let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("assets/ok/template_method_bound_self_argument.mojo");
     let source = std::fs::read_to_string(path).expect("fixture");
-    assert_methods_derive(
+    assert_entry_output(
         &source,
         "7 3 7 10 10 2.w 2.q\n5 3 5 10 10 ab-7 ab-9\n12 18\n",
-        &[
-            ("Holder.merged_field", 0),
-            ("Holder.merged_parameter", 0),
-            ("Holder.merged_local", 0),
-            ("Holder.absorbed_copy", 0),
-            ("Holder.absorbed_transfer", 0),
-            ("Holder.paired_field", 0),
-            ("Implicit.absorbed_field", 0),
-            ("Implicit.absorbed_parameter", 0),
-        ],
     );
 }
 
 #[test]
-fn template_bound_binder_result_derives() {
+fn template_bound_binder_result_runs() {
     // A call through a bound whose result is typed by the requirement's own
     // binder, inferred from a by-value argument: the result is the
     // argument's type in every instance.
     let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("assets/ok/template_method_bound_binder_result.mojo");
     let source = std::fs::read_to_string(path).expect("fixture");
-    assert_methods_derive(
-        &source,
-        "w 7\nw w q\n7 7 9\n",
-        &[
-            ("Holder.echoed_field", 0),
-            ("Holder.echoed_local", 0),
-            ("Holder.echoed_nested", 0),
-            ("Holder.echoed_discarded", 0),
-            ("Holder.echoed_parameter", 0),
-        ],
-    );
+    assert_entry_output(&source, "w 7\nw w q\n7 7 9\n");
 }
 
 #[test]
-fn template_stringify_parameter_value_derives() {
+fn template_stringify_parameter_value_runs() {
     // `String(value)` of a named value of a struct parameter's type: each
     // instance writes a numeric or `Bool` value itself and any other value
     // through its `Writable` conformance, read where it lies.
     let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("assets/ok/template_method_stringify_parameter_value.mojo");
     let source = std::fs::read_to_string(path).expect("fixture");
-    assert_methods_derive(
+    assert_entry_output(
         &source,
         "3 3 4 1\nTrue True False 4\nab ab c 2\n#7 #7 #12 2\n",
-        &[
-            ("Holder.field", 0),
-            ("Holder.local", 0),
-            ("Holder.parameter", 0),
-            ("Holder.stored", 0),
-        ],
     );
 }
 
 #[test]
-fn template_print_parameter_temporary_derives() {
+fn template_print_parameter_temporary_runs() {
     // `print` of a temporary of a struct parameter's type, a bound builtin's
     // copy or a call through a bound typed by the requirement's binder: the
     // temporary is unconsumed by its syntax, and each instance proves it
@@ -5181,150 +3714,76 @@ fn template_print_parameter_temporary_derives() {
     let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("assets/ok/template_method_print_parameter_temporary.mojo");
     let source = std::fs::read_to_string(path).expect("fixture");
-    assert_methods_derive(
+    assert_entry_output(
         &source,
         "3\nTrue\nab\n#7\n3\nTrue\nab\n#7\nw = 3 3\nw = True True\nw = ab ab\nw = #7 #7\n3\nTrue\nab\n#7\n4 4\nFalse False\nc c\n#12 #12\n",
-        &[
-            ("Holder.copied", 0),
-            ("Holder.echoed", 0),
-            ("Holder.mixed", 0),
-            ("Holder.nested", 0),
-            ("Holder.parameter", 0),
-        ],
     );
 }
 
 #[test]
-fn template_print_keywords_derive() {
+fn template_print_keywords_run() {
     // `print` with `sep`, `end`, or `flush`: a literal, a closed scalar, or a
     // `String` read where it lies, each keyword typed by its own spelling;
     // the `def` and method templates serve every call.
-    assert_methods_derive(
+    assert_entry_output(
         include_str!("../assets/ok/template_print_keywords.mojo"),
         "3, 3\n3|\ndone\ns+s\ns|\ndone\n1 1\n4 - 4\nq - q\n4 <\nq <\n4/7/4;\nq::7::q;\nw 4\nw q\n",
-        &[
-            ("show", 0),
-            ("Holder.spaced", 0),
-            ("Holder.ended", 0),
-            ("Holder.glued", 0),
-            ("Holder.flushed", 0),
-        ],
     );
 }
 
 #[test]
-fn template_print_call_keywords_derive() {
+fn template_print_call_keywords_run() {
     // `print` with a call result as `sep`, `end`, or `file`: the keyword's
     // type never mentions a parameter, so the `def` and method templates
     // build and drop the same temporary for every call.
-    assert_methods_derive(
+    assert_entry_output(
         include_str!("../assets/ok/template_print_call_keywords.mojo"),
         "3-3\n35\ndone\ns-s\ns6\ndone\n1 1\n4 = 4\nq = q\n47 <\nq8 <\nw:4\nw:q\n",
-        &[
-            ("show", 0),
-            ("Holder.spaced", 0),
-            ("Holder.ended", 0),
-            ("Holder.filed", 0),
-        ],
     );
 }
 
 #[test]
-fn template_bound_display_argument_derives() {
+fn template_bound_display_argument_runs() {
     // A collection or tuple display, a leading-dot or spelled static call,
     // or a construction handed by value through a bound to a closed
     // parameter type builds the same temporary whatever the witness.
     let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("assets/ok/template_method_bound_display_argument.mojo");
     let source = std::fs::read_to_string(path).expect("fixture");
-    assert_methods_derive(
+    assert_entry_output(
         &source,
         "13 13 22 10\n2 6 6 0\n13 13 17 12\n4 6 4 2\n13 14 18\n6 8 20\n",
-        &[
-            ("Holder.leading_dot", 0),
-            ("Holder.spelled_static", 0),
-            ("Holder.constructed", 0),
-            ("Holder.tuple_display", 0),
-            ("Holder.applied", 0),
-            ("Holder.mixed_display", 0),
-            ("Holder.empty_display", 0),
-            ("Holder.word_display", 0),
-            ("Holder.set_display", 0),
-            ("Holder.dict_display", 0),
-            ("Holder.item_display", 0),
-        ],
     );
 }
 
 #[test]
 fn witness_default_differing_from_requirement_runs_the_requirements() {
     // A call through a bound runs the requirement's default where a witness
-    // declares another or none, spelled at the call, and every instance
-    // still derives from its template.
+    // declares another or none, spelled at the call, at every instance.
     let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("assets/ok/witness_default_differs_from_requirement.mojo");
     let source = std::fs::read_to_string(path).expect("fixture");
-    assert_methods_derive(
+    assert_entry_output(
         &source,
         "11\n11\n51\n108\n10\n-104\n110\n-93\n36\n11\n1003\n",
-        &[
-            ("Holder.run", 0),
-            ("Holder.run_keyword", 0),
-            ("Holder.run_explicit", 0),
-            ("Holder.run_shift", 0),
-        ],
     );
 }
 
 #[test]
-fn template_field_of_field_derives() {
+fn template_field_of_field_runs() {
     // A field of a `self` field holding a struct, and a field of a struct
     // parameter, is read and written at the same path under every instance.
     let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("assets/ok/template_method_field_of_field.mojo");
     let source = std::fs::read_to_string(path).expect("fixture");
-    assert_methods_derive(
-        &source,
-        "10 20\n12 23\n20 40\n5 6 25 46\n1 s\n8 10\n6 8\n",
-        &[
-            ("Holder.base", 0),
-            ("Holder.offset", 0),
-            ("Holder.count", 0),
-            ("Holder.reset", 0),
-            ("Holder.item_copy", 0),
-            ("Holder.take", 0),
-            ("Holder.peek", 0),
-        ],
-    );
+    assert_entry_output(&source, "10 20\n12 23\n20 40\n5 6 25 46\n1 s\n8 10\n6 8\n");
 }
 
 #[test]
-fn ctfe_subprogram_hasher_leaves_are_template_served() {
-    // A compile-time `hash` runs the hasher's `_update_with_simd` template
-    // in its VM-CTFE subprogram, its dtype and width read off the leaf, so
-    // neither the subprogram nor the driver clones a leaf.
-    let source = include_str!("../assets/ok/comptime_hash.mojo");
-    let program = compile_entry(&Compiler::default(), source);
-    let stats = program.template_stats();
-    let leaf_clone = |name: &String| name.contains("._update_with_simd$");
-    assert!(
-        !stats.derived.iter().any(leaf_clone)
-            && !stats.inferred_clones.iter().any(leaf_clone)
-            && !stats.refused.iter().any(|(name, _)| leaf_clone(name)),
-        "no hasher leaf is cloned: {stats:?}"
-    );
-    let verified = compile_entry(
-        &Compiler::default().with_template_verification(true),
-        source,
-    );
-    assert_eq!(
-        Compiler::default()
-            .execute(&verified)
-            .expect("execute")
-            .output,
-        Compiler::default()
-            .execute(&program)
-            .expect("execute")
-            .output
-    );
+fn ctfe_subprogram_hasher_leaves_run() {
+    // A compile-time `hash` runs the hasher's `_update_with_simd` in its
+    // VM-CTFE subprogram, its dtype and width read off the leaf.
+    let compiler = Compiler::default();
+    let program = compile_entry(&compiler, include_str!("../assets/ok/comptime_hash.mojo"));
+    compiler.execute(&program).expect("execute");
 }

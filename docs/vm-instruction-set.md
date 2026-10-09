@@ -83,7 +83,7 @@ accessed; the compact notation omits this analysis-only field.
 | `const.*` | `Const` | Load a literal into a register |
 | `var.copy` | `UseVar(Copy)` | Copy a variable value into a register |
 | `value.copy` | `CopyValue` | Run checked `Copyable` value semantics for an SSA value produced by a consuming reference or projected-place read |
-| `value.rebind` | `Rebind` | Read a generator's `rebind[Dest](x)` operand at `Dest`; erased per instance by the elaborator |
+| `value.rebind` | `Rebind` | Read a generator's `rebind[Dest](x)` operand at `Dest`; erased per instance by the elaborator, a verifier finding on concrete MIR |
 | `var.move` | `UseVar(Move)` | Move a variable value into a register |
 | `var.borrow` | `UseVar(BorrowShared)` | Read through a shared borrow |
 | `var.borrow_mut` | `UseVar(BorrowMut)` | Read through an exclusive borrow |
@@ -273,9 +273,10 @@ value.rebind { dest: %r1, value: %r0 }
 holds one. The elaborator asserts the two types equal for each instance a
 call reaches, after deciding its `comptime if`s, and replaces `dest` by
 `value`; a mismatch fails the instance ("rebind input type 'String' does not
-match result type 'Int'"). Concrete MIR and the native backend never see
-it, and the erased oracle runs it as the value it rebinds. A rebound place
-needs no instruction: its terminal type is `Dest`.
+match result type 'Int'"). Concrete MIR, the VM, and the native backend
+never see it: `verify_concrete` rejects one, and the VM reports it as an
+invariant error. A rebound place needs no instruction: its terminal type
+is `Dest`.
 
 ### `var.move` — Move Variable
 
@@ -334,8 +335,8 @@ Produces an `Int` from the shared native ABI layout engine. The checked type is
 part of the instruction, and verification rejects types without a concrete
 runtime layout; the VM does not infer layout from a runtime value. Only a
 generator carries the query: the elaborator answers it under the compilation's
-native target (`native::mono`), so concrete MIR holds the constant, and the VM
-reaches the instruction only as the erased oracle, on the host.
+native target (`native::mono`), so concrete MIR holds the constant; the
+instruction is a verifier finding on concrete MIR.
 
 ### `type.name` — Unqualified spelling of a parametric type
 
@@ -348,8 +349,7 @@ compile-time parameter (`_unqualified_type_name[Self]()` in a generic
 struct's method). Only a template holds one, and verification rejects a
 concrete type, whose name lowers to a `const`. The elaborator substitutes the
 type and replaces the instruction with that constant, so concrete MIR and
-the native backend never see it. The erased oracle runs the template itself
-and spells the parameters as written (`Box[T]`).
+the native backend never see it; it is a verifier finding on concrete MIR.
 
 ### Unary instructions
 

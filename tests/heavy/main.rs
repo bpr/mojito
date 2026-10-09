@@ -284,10 +284,14 @@ fn parity_exe_manifest_and_differential() {
                     Some(bytes) => {
                         let mut vm = mojito::backend::VmBackend::new();
                         vm.set_input_override(bytes.to_vec());
-                        vm.run_elaborated(compiled.drop_elaborated_mir().clone())
-                            .unwrap_or_else(|error| {
-                                panic!("{rel}: fixture must run on the VM: {error}")
-                            });
+                        let concrete = compiled
+                            .concrete_mir()
+                            .unwrap_or_else(|error| panic!("{rel}: must elaborate: {error}"))
+                            .program
+                            .clone();
+                        vm.run_concrete(concrete).unwrap_or_else(|error| {
+                            panic!("{rel}: fixture must run on the VM: {error}")
+                        });
                         vm.output()
                     }
                     None => {
@@ -486,7 +490,7 @@ fn parity_exe_manifest_and_differential() {
     let excluded = count("excluded");
     if !focused {
         assert!(
-            differential == 1007,
+            differential == 1009,
             "exe-differential coverage must cover the complete runnable inventory: {differential} != 862"
         );
         assert!(

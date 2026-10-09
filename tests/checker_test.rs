@@ -7309,8 +7309,8 @@ fn a_reflected_field_proof_is_keyed_by_its_element() {
 fn check_once(source: &str, file: &str) -> Result<(), mojito::error::TypeError> {
     let linked = mojito::link_source(source, std::path::Path::new(file)).expect("link error");
     let program = mojito::elaborate(linked).expect("elaborate");
-    let mut catalog = mojito::templates::TemplateCatalog::default();
-    mojito::checker::check_program_with_templates(&program, &mut catalog).map(|_| ())
+    let mut context = mojito::checker::CheckContext::default();
+    mojito::checker::check_program_in(&program, &mut context).map(|_| ())
 }
 
 #[test]
@@ -7344,33 +7344,6 @@ fn a_body_forwarding_its_pack_is_validated_from_its_template() {
             .contains("expected Int, found StringLiteral"),
         "{error}"
     );
-}
-
-#[test]
-fn method_templates_are_identified_by_their_struct_and_body() {
-    // A `Method` has no source range of its own, so a method template is
-    // named by its struct, its name, and the range of its body's first
-    // statement: two overloads of one name are two templates.
-    let source = "@fieldwise_init\nstruct Box[T: Copyable & Movable & Deinitable](Copyable):\n    var item: Self.T\n    var count: Int\n\n    def pick(self) -> Int:\n        return self.count\n\n    def pick(self, extra: Int) -> Int:\n        return self.count + extra\n\ndef main():\n    var b = Box(1, 2)\n    print(b.pick(), b.pick(3))\n";
-    let linked = mojito::link_source(source, std::path::Path::new("method_templates.mojo"))
-        .expect("link error");
-    let program = mojito::elaborate(linked).expect("elaborate");
-    let mut catalog = mojito::templates::TemplateCatalog::default();
-    mojito::checker::check_program_with_templates(&program, &mut catalog).expect("check");
-    let picks: Vec<_> = catalog
-        .templates()
-        .filter(|template| {
-            template.id.owner.as_deref() == Some("Box") && template.id.name == "pick"
-        })
-        .collect();
-    assert_eq!(picks.len(), 2, "one template per overload");
-    assert_ne!(picks[0].id.declaration, picks[1].id.declaration);
-    assert!(picks.iter().all(|template| matches!(
-        template.coverage,
-        mojito::templates::TemplateCoverage::Certified(
-            mojito::templates::TemplateClass::MethodScalarBody
-        )
-    )));
 }
 
 #[test]
@@ -7423,79 +7396,6 @@ fn overloads_of_one_generic_method_own_distinct_binders() {
     assert!(by_s.iter().all(|owner| *owner == by_s[0]), "{owners:?}");
     assert_ne!(by_t[0], by_s[0]);
     assert!(by_s[0].starts_with("Box.pick$ov$"), "{owners:?}");
-}
-
-#[test]
-fn method_template_classes_name_what_the_body_holds() {
-    // A method beyond a scalar getter is certified `MethodBody`, and its
-    // features say which arguments its certificate rests on. A store through
-    // the method's own origin binder stays outside every class.
-    use mojito::templates::{MethodFeatures, TemplateClass, TemplateCoverage};
-    let source = "@fieldwise_init\nstruct Slot[T: Movable & Deinitable & Equatable](Movable):\n    var item: Self.T\n    var uses: Int\n\n    def count(self) -> Int:\n        return self.uses\n\n    def bump(mut self, step: Int):\n        self.uses += step\n\n    def replace(mut self, var item: Self.T):\n        self.item = item^\n        self.bump(1)\n\n    def same(self, other: Self.T) -> Bool:\n        return self.item == other\n\n    def peek(ref self) -> ref[origin_of(self.item)] Self.T:\n        return self.item\n\n    def tally(self, mut into: Int):\n        into += self.uses\n\n    def held(self) -> Int:\n        ref me = self\n        return me.uses\n\n    def through(self) -> Int:\n        ref me = self\n        return me.count()\n\n    def filled(self) -> Int:\n        var n = 0\n        self.tally(n)\n        return n\n\n    def first[o: Origin](self, ref[o] other: Self.T) -> ref[o] Self.T:\n        return other\n\n    def write[o: MutOrigin](self, ref[o] into: Int):\n        into += self.uses\n\ndef main():\n    var s = Slot(1, 0)\n    s.replace(2)\n    print(s.count(), s.same(2), s.peek())\n";
-    let linked = mojito::link_source(source, std::path::Path::new("method_classes.mojo"))
-        .expect("link error");
-    let program = mojito::elaborate(linked).expect("elaborate");
-    let mut catalog = mojito::templates::TemplateCatalog::default();
-    mojito::checker::check_program_with_templates(&program, &mut catalog).expect("check");
-    let coverage = |method: &str| {
-        catalog
-            .templates()
-            .find(|template| {
-                template.id.owner.as_deref() == Some("Slot") && template.id.name == method
-            })
-            .unwrap_or_else(|| panic!("no template for Slot.{method}"))
-            .coverage
-            .clone()
-    };
-    assert_eq!(
-        coverage("count"),
-        TemplateCoverage::Certified(TemplateClass::MethodScalarBody)
-    );
-    assert_eq!(
-        coverage("bump"),
-        TemplateCoverage::Certified(TemplateClass::MethodBody(MethodFeatures::STATEMENTS))
-    );
-    let TemplateCoverage::Certified(TemplateClass::MethodBody(replace)) = coverage("replace")
-    else {
-        panic!("Slot.replace is certified: {:?}", coverage("replace"));
-    };
-    assert!(replace.contains(MethodFeatures::OPAQUE_MOVES));
-    assert!(replace.contains(MethodFeatures::SIBLING_CALLS));
-    let TemplateCoverage::Certified(TemplateClass::MethodBody(peek)) = coverage("peek") else {
-        panic!("Slot.peek is certified: {:?}", coverage("peek"));
-    };
-    assert!(peek.contains(MethodFeatures::REFERENCE_RESULT));
-    assert_eq!(
-        coverage("tally"),
-        TemplateCoverage::Certified(TemplateClass::MethodBody(MethodFeatures::STATEMENTS))
-    );
-    let TemplateCoverage::Certified(TemplateClass::MethodBody(held)) = coverage("held") else {
-        panic!("Slot.held is certified: {:?}", coverage("held"));
-    };
-    assert!(held.contains(MethodFeatures::REFERENCE_LOCALS));
-    assert!(!held.contains(MethodFeatures::REFERENCE_RECEIVERS));
-    let TemplateCoverage::Certified(TemplateClass::MethodBody(through)) = coverage("through")
-    else {
-        panic!("Slot.through is certified: {:?}", coverage("through"));
-    };
-    assert!(through.contains(MethodFeatures::REFERENCE_RECEIVERS));
-    let TemplateCoverage::Certified(TemplateClass::MethodBody(filled)) = coverage("filled") else {
-        panic!("Slot.filled is certified: {:?}", coverage("filled"));
-    };
-    assert!(filled.contains(MethodFeatures::PLACE_ARGUMENTS));
-    let TemplateCoverage::Certified(TemplateClass::MethodBody(first)) = coverage("first") else {
-        panic!("Slot.first is certified: {:?}", coverage("first"));
-    };
-    assert!(first.contains(MethodFeatures::ORIGIN_PARAMETERS));
-    assert!(
-        matches!(coverage("write"), TemplateCoverage::Incomplete(_)),
-        "Slot.write stores through its origin binder: {:?}",
-        coverage("write")
-    );
-    let TemplateCoverage::Certified(TemplateClass::MethodBody(same)) = coverage("same") else {
-        panic!("Slot.same is certified: {:?}", coverage("same"));
-    };
-    assert!(same.contains(MethodFeatures::OPERATOR_DISPATCH));
 }
 
 /// A residual constraint is neither false nor a proof, and negating it proves

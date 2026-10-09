@@ -22,13 +22,6 @@
 //!   budget. This keeps function-body execution on the same path as runtime code.
 //! - **Materialization** — module-level `comptime` constants are inlined as literals
 //!   into runtime code, so a top-level comptime value is usable inside functions.
-//! - **Delayed generic elaboration (roadmap milestone 6)** — a generic `def` whose (value)
-//!   parameters feed a `comptime if`/`comptime for` cannot be elaborated early (the
-//!   parameter value is only known per call). Such a def is kept as a *template*;
-//!   a monomorphization pass then specializes it per distinct value argument,
-//!   resolving the comptime construct so only the *selected* branch reaches the
-//!   executable check (`f[0]` and `f[1]` take different branches; the dropped
-//!   branch was validated symbolically first).
 //!
 //! Compile-time values are the shared [`CtValue`](mojito_types::ct::CtValue) universe:
 //! runtime-materializable `Int`/`Bool`/`String`/`Tuple`/`List`, plus
@@ -40,13 +33,12 @@ use mojito_ast::ast::{
 };
 pub use mojito_symbol::symbol::mangle;
 
-use mojito_ast::call::{CallVariadics, effective_keyword_only_index, match_call_slots};
 use mojito_common::token::{Span, SyntaxId};
 use mojito_types::ct::{CtMarker, CtValue};
 use mojito_types::param_expr::{ParamContext, ParamError, ParamExpr};
 use mojito_types::types::{ParamDecl, Ty, TyArg, list_type, tuple_type};
 use std::cell::{Cell, RefCell};
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{HashMap, HashSet};
 
 /// Comptime-specific accessors on the shared [`CtValue`], reporting a
 /// [`ComptimeError`] when a value is not of the required kind.
@@ -251,7 +243,7 @@ impl std::fmt::Display for ComptimeError {
 /// same contract the compiler driver enforces.
 pub fn elaborate(program: Vec<Stmt>) -> Result<Vec<Stmt>, ComptimeError> {
     let prepared = prepare(program)?;
-    elaborate_prepared(&prepared).map(|elaborated| elaborated.program)
+    elaborate_prepared(&prepared)
 }
 
 /// Prepare a linked program for source validation and elaboration.
@@ -261,10 +253,8 @@ pub fn elaborate(program: Vec<Stmt>) -> Result<Vec<Stmt>, ComptimeError> {
 /// parameters, and fold SIMD alias bounds.
 ///
 /// These rewrites normalize declarations without selecting a `comptime if`
-/// arm, unrolling a loop, stubbing a template body, or minting a clone, so
-/// the result still carries every source body the validator must see. The
-/// driver prepares once and re-elaborates the prepared program each
-/// discovery round.
+/// arm or unrolling a loop, so the result still carries every source body
+/// the check must see.
 pub fn prepare(mut program: Vec<Stmt>) -> Result<Vec<Stmt>, ComptimeError> {
     pack_qualification::qualify_struct_packs(&mut program)?;
     synthesize_copyable_copy(&mut program);
@@ -277,104 +267,11 @@ pub fn prepare(mut program: Vec<Stmt>) -> Result<Vec<Stmt>, ComptimeError> {
     Ok(program)
 }
 
-/// An elaborated program, with what its cloner generated along the way.
-pub struct Elaborated {
-    pub program: Vec<Stmt>,
-    /// How each generated `def` clone came from its template.
-    pub def_traces: Vec<DefInstanceTrace>,
-    /// Every declaration this elaboration generated rather than kept: a
-    /// consumer asks this list, never a `$` in a name, since a
-    /// module-qualified source name carries one too.
-    pub generated: GeneratedDeclarations,
-}
-
-/// The declarations an elaboration generated.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct GeneratedDeclarations {
-    /// `def` clones, by output name.
-    pub defs: Vec<String>,
-}
-
-/// The declaration-level expansion trace of one generated `def` clone.
-///
-/// It says which prepared declaration the clone instantiates, and what each
-/// of that declaration's compile-time parameters became. A consumer
-/// identifies the clone by `clone_module` and `clone_name` exactly as written
-/// here, never by demangling a symbol. The occurrence-level trace is the
-/// syntax identity each clone node keeps from the template node it was copied
-/// from.
-#[derive(Debug, Clone, PartialEq)]
-pub struct DefInstanceTrace {
-    /// The source tag stamped on every node of the clone.
-    pub clone_module: String,
-    pub clone_name: String,
-    pub template_module: Option<String>,
-    pub template_name: String,
-    pub template_span: mojito_common::token::Span,
-    /// Type parameters baked into the clone, with the source type written in
-    /// their place, in name order.
-    pub type_bindings: Vec<(String, Type)>,
-    /// Value parameters folded into the clone as literals.
-    pub value_bindings: Vec<(String, CtValue)>,
-    /// Type packs expanded into the clone's signature, each with the source
-    /// element types written there, in name order.
-    pub pack_bindings: Vec<(String, Vec<Type>)>,
-    /// Parameters the clone still declares.
-    pub residual: Vec<String>,
-}
-
-/// The elaborator's declaration-level clone traces in the checker's terms.
-///
-/// The elaborator records what it generated, and the checker decides what
-/// that lets it derive. The driver hands them to the program's check, and
-/// VM CTFE to its subprogram's.
-pub fn instance_traces(
-    defs: Vec<DefInstanceTrace>,
-) -> Vec<(
-    mojito_checked::templates::InstanceName,
-    mojito_checked::templates::InstanceTrace,
-)> {
-    use mojito_checked::templates::{InstanceName, InstanceTrace, TemplateId};
-    defs.into_iter()
-        .map(|trace| {
-            (
-                InstanceName {
-                    module: Some(trace.clone_module),
-                    owner: None,
-                    name: trace.clone_name,
-                    body: None,
-                },
-                InstanceTrace {
-                    template: TemplateId {
-                        module: trace.template_module,
-                        owner: None,
-                        name: trace.template_name,
-                        declaration: trace.template_span,
-                    },
-                    type_bindings: trace.type_bindings,
-                    value_bindings: trace.value_bindings,
-                    pack_bindings: trace.pack_bindings,
-                    residual: trace.residual,
-                },
-            )
-        })
-        .collect()
-}
-
-/// The elaborator's generated-declaration list in the checker's terms.
-pub fn generated_names(
-    generated: GeneratedDeclarations,
-) -> mojito_checked::templates::GeneratedNames {
-    mojito_checked::templates::GeneratedNames {
-        defs: generated.defs.into_iter().collect(),
-    }
-}
-
 /// Elaborate a [`prepare`]d program.
 ///
 /// Ordinary callers use [`elaborate`]; the compiler, which prepares once,
 /// enters here.
-pub fn elaborate_prepared(program: &[Stmt]) -> Result<Elaborated, ComptimeError> {
+pub fn elaborate_prepared(program: &[Stmt]) -> Result<Vec<Stmt>, ComptimeError> {
     let indexes = mojito_common::timing::span("indexes");
     let conformance =
         mojito_checker::checker::ConformanceOracle::from_program(program).map_err(|error| {
@@ -382,7 +279,6 @@ pub fn elaborate_prepared(program: &[Stmt]) -> Result<Elaborated, ComptimeError>
                 "could not build the specialization conformance oracle: {error}"
             ))
         })?;
-    let bound_generics = collect_bound_generic_templates(program);
     let elab = Elab {
         program,
         fns: collect_fns(program),
@@ -394,21 +290,9 @@ pub fn elaborate_prepared(program: &[Stmt]) -> Result<Elaborated, ComptimeError>
                 _ => None,
             })
             .collect(),
-        specializable: collect_specializable(program, &bound_generics),
-        bound_generics,
-        pack_defs: program
-            .iter()
-            .filter(|statement| pack_keyed_declaration(statement))
-            .filter_map(|statement| match &statement.kind {
-                StmtKind::Def { name, .. } => Some(name.clone()),
-                _ => None,
-            })
-            .collect(),
         conformance,
         template_binders: RefCell::new(Vec::new()),
         crossing_templates: Cell::new(0),
-        def_traces: RefCell::new(Vec::new()),
-        generated: RefCell::new(GeneratedDeclarations::default()),
         top_consts: RefCell::new(HashMap::new()),
         applied_displays: RefCell::new(HashMap::new()),
         generic_aliases: RefCell::new(HashMap::new()),
@@ -429,32 +313,23 @@ pub fn elaborate_prepared(program: &[Stmt]) -> Result<Elaborated, ComptimeError>
         .filter(|(_, value)| !is_scalar_constant(value))
         .map(|(name, value)| (name.clone(), value.clone()))
         .collect();
-    let materialized = materialize_block(elaborated, &materialized_consts, &elab.struct_names);
-    // Monomorphize comptime-dependent generic templates against their call sites.
-    let mut result = elab.monomorphize(materialized)?.program;
+    let mut result = materialize_block(elaborated, &materialized_consts, &elab.struct_names);
+    elab.freeze_struct_value_arguments(&mut result, &consts);
     for statement in &mut result {
         if let Some(source) = statement.module.clone() {
             mojito_ast::ast::stamp_source(std::slice::from_mut(statement), &source);
         }
     }
-    Ok(Elaborated {
-        program: result,
-        def_traces: elab.def_traces.take(),
-        generated: elab.generated.take(),
-    })
+    Ok(result)
 }
 
 mod crossing;
 mod elab;
 mod pack_qualification;
-mod packs;
 mod params;
 mod requests;
 mod synth;
-mod unparse;
 
-#[allow(clippy::wildcard_imports, reason = "pages of this split module")]
-use packs::*;
 #[allow(clippy::wildcard_imports, reason = "pages of this split module")]
 use params::*;
 #[allow(clippy::wildcard_imports, reason = "pages of this split module")]
@@ -469,61 +344,6 @@ const fn rebuilt(source: &Stmt, kind: StmtKind) -> Stmt {
         span: source.span,
         module: None,
         syntax_id: source.syntax_id,
-    }
-}
-
-/// The origin binders one generated clone declares so its baked type
-/// arguments spell their origin slots (`Span[Int, __clone_origin0]`): each an
-/// infer-only `Origin`, preceded by an infer-only `Bool` mutability binder
-/// unless the slot fixes its mutability. A binder's `OriginParamId` counts
-/// down from `u32::MAX`, far above any checker slot index, and spells as its
-/// own name wherever the bound type is spelled (`source_type_from_ty`).
-pub(super) struct CloneOriginBinders;
-
-impl CloneOriginBinders {
-    /// The name a synthetic binder's id spells as.
-    fn name(id: mojito_types::origin::OriginParamId) -> Option<String> {
-        let index = u32::MAX - id.0;
-        (index < Self::LIMIT).then(|| {
-            format!(
-                "{}{index}",
-                mojito_symbol::symbol::CLONE_ORIGIN_BINDER_PREFIX
-            )
-        })
-    }
-
-    const LIMIT: u32 = 1 << 16;
-
-    /// The binder `index` as declared: its `Bool` mutability binder unless
-    /// the slot fixes the mutability, then the `Origin` itself.
-    fn declared(index: u32, slot_mutability: Option<&Expr>) -> Vec<TypeParam> {
-        let prefix = mojito_symbol::symbol::CLONE_ORIGIN_BINDER_PREFIX;
-        let binder = |name: String, bound: &str, origin_mutability: Option<Expr>| TypeParam {
-            name,
-            bounds: vec![bound.to_string()],
-            value_type: None,
-            callable_bound: None,
-            origin_mutability,
-            infer_only: true,
-            default: None,
-            constraints: Vec::new(),
-        };
-        let mut declared = Vec::new();
-        let mutability = if let Some(ExprKind::Bool(fixed)) =
-            slot_mutability.map(|expression| &expression.kind)
-        {
-            Expr::new(ExprKind::Bool(*fixed), mojito_common::token::DUMMY_SPAN)
-        } else {
-            let name = format!("{prefix}_mut{index}");
-            declared.push(binder(name.clone(), "Bool", None));
-            Expr::new(ExprKind::Identifier(name), mojito_common::token::DUMMY_SPAN)
-        };
-        declared.push(binder(
-            format!("{prefix}{index}"),
-            "Origin",
-            Some(mutability),
-        ));
-        declared
     }
 }
 
@@ -969,15 +789,6 @@ fn source_type_from_ty_with_origins(
                     // placeholder: a concrete place has no source spelling,
                     // and the slot infers again at the clone's own use sites.
                     TyArg::Origin(origin) => {
-                        // A clone's own origin binder spells as a bare type
-                        // name, which an origin slot reads as the binder: it
-                        // adds no expression the template did not check.
-                        if let mojito_types::origin::Origin::Param(id) = origin
-                            && !origin_names.contains_key(id)
-                            && let Some(binder) = CloneOriginBinders::name(*id)
-                        {
-                            return Some(ParamArg::Type(Type::Named(binder, Vec::new())));
-                        }
                         let spelling = match origin {
                             mojito_types::origin::Origin::Param(id) => origin_names
                                 .get(id)
@@ -1002,45 +813,6 @@ fn source_type_from_ty_with_origins(
                 ParamArg::Value(CtValue::Int(width.known()?).materialize((0, 0))?),
             ],
         ),
-        // A pointer spells only over a clone's own origin binder
-        // (`Elab::clone_binding`), re-applying the binder's interior and
-        // subtree projection; a place origin has no source spelling.
-        Ty::Pointer {
-            element,
-            origin:
-                mojito_types::origin::PointerOrigin::Param {
-                    id,
-                    interior,
-                    subtree,
-                    ..
-                },
-        } if !origin_names.contains_key(id) => {
-            let mut origin = Type::Named(CloneOriginBinders::name(*id)?, Vec::new());
-            for tag in interior {
-                origin = Type::IndexedProjection {
-                    base: Box::new(Type::Assoc {
-                        base: Box::new(origin),
-                        name: "_get_owned_interior".to_string(),
-                        args: Vec::new(),
-                    }),
-                    index: Box::new(Expr::new(ExprKind::Str(tag.clone()), (0, 0))),
-                };
-            }
-            if *subtree {
-                origin = Type::Assoc {
-                    base: Box::new(origin),
-                    name: "_subtree".to_string(),
-                    args: Vec::new(),
-                };
-            }
-            Type::Named(
-                "Pointer".to_string(),
-                vec![
-                    ParamArg::Type(source_type_from_ty_with_origins(element, origin_names)?),
-                    ParamArg::Type(origin),
-                ],
-            )
-        }
         Ty::Ref(reference) => {
             let origin_name = match &reference.origin {
                 mojito_types::origin::Origin::Param(id) => origin_names.get(id)?.clone(),
@@ -1061,53 +833,6 @@ fn source_type_from_ty_with_origins(
     })
 }
 
-impl Elab<'_> {
-    /// Every clone binder `ty`'s struct origin tails name, with the
-    /// mutability its slot declares.
-    fn collect_clone_binders(&self, ty: &Ty, found: &mut Vec<(u32, Option<Expr>)>) {
-        if let Ty::Pointer { element, origin } = ty {
-            self.collect_clone_binders(element, found);
-            if let mojito_types::origin::PointerOrigin::Param { id, mutability, .. } = origin
-                && CloneOriginBinders::name(*id).is_some()
-            {
-                let fixed = match mutability {
-                    mojito_types::origin::Mutability::Mutable => Some(true),
-                    mojito_types::origin::Mutability::Immutable => Some(false),
-                    mojito_types::origin::Mutability::Param(_) => None,
-                };
-                found.push((
-                    u32::MAX - id.0,
-                    fixed.map(|fixed| {
-                        Expr::new(ExprKind::Bool(fixed), mojito_common::token::DUMMY_SPAN)
-                    }),
-                ));
-            }
-            return;
-        }
-        let Ty::Struct(name, arguments) = ty else {
-            return;
-        };
-        let mut slots = self.explicit_origin_slots(name).into_iter();
-        for argument in arguments {
-            match argument {
-                TyArg::Ty(inner) => self.collect_clone_binders(inner, found),
-                TyArg::Origin(origin) => {
-                    let slot = slots.next();
-                    if let mojito_types::origin::Origin::Param(id) = origin
-                        && CloneOriginBinders::name(*id).is_some()
-                    {
-                        found.push((
-                            u32::MAX - id.0,
-                            slot.and_then(|slot| slot.origin_mutability.clone()),
-                        ));
-                    }
-                }
-                TyArg::Val(_) => {}
-            }
-        }
-    }
-}
-
 /// Compile-time metadata for a top-level struct, enough to read associated
 /// facts such as `T.size`.
 struct CtStruct<'a> {
@@ -1120,48 +845,14 @@ struct CtStruct<'a> {
     fields: &'a [mojito_ast::ast::Param],
 }
 
-/// Whether a declaration must remain a template until a concrete call selects
-/// its compile-time arguments: a generic `def` keyed on a value pack whose
-/// binders its template does not serve ([`template_serves_binders`]). A `def` keyed on a type pack never does: its
-/// template serves the body, as upstream's does, with the collector a pack of
-/// the symbolic `Ts`, and the elaborator below MIR binds the pack from the
-/// call. This predicate is intentionally independent of the top-level
-/// registry, so a nested `def` answers it the same way.
-fn is_specializable_declaration(statement: &Stmt) -> bool {
-    match &statement.kind {
-        StmtKind::Def {
-            name, type_params, ..
-        } => {
-            !type_params.is_empty()
-                && !pack_keyed_declaration(statement)
-                && variadic_keyed_declaration(statement)
-                && !template_serves_binders(type_params, name)
-        }
-        _ => false,
-    }
-}
-
 /// The compile-time elaboration engine: the CTFE-callable functions and a shared
-/// fuel budget. `top_consts` captures module-level constants for materialization;
-/// `specializable` holds the comptime-dependent generic `def` templates
-/// (roadmap milestone 6).
+/// fuel budget. `top_consts` captures module-level constants for materialization.
 struct Elab<'a> {
     program: &'a [Stmt],
     fns: HashSet<String>,
     structs: HashMap<String, CtStruct<'a>>,
     /// Every declared struct name, for materialization's projection rewrite.
     struct_names: HashSet<String>,
-    /// Top-level generic `def`s whose value parameters feed a `comptime if`/`for`
-    /// (so they must be monomorphized per call), by name → the template `Stmt`.
-    specializable: HashMap<String, &'a Stmt>,
-    /// The subset of `specializable` that is a plain trait-bound generic `def`
-    /// (no comptime constructs). Calls resolve softly: an explicit concrete
-    /// application monomorphizes, every other reference stays on the template's
-    /// abstract erased-dispatch path and retains the template.
-    bound_generics: HashSet<String>,
-    /// Top-level type-pack `def`s, every one served by its template: a
-    /// clone's spread of its own pack into one expands element by element.
-    pack_defs: HashSet<String>,
     /// Checker-owned declaration facts used to validate inferred pack bounds
     /// before specialization consumes the source generic call.
     conformance: mojito_checker::checker::ConformanceOracle,
@@ -1172,10 +863,6 @@ struct Elab<'a> {
     template_binders: RefCell<Vec<HashSet<String>>>,
     /// How many function bodies the runtime-crossing pass has descended into.
     crossing_templates: Cell<usize>,
-    /// The declaration-level trace of every `def` clone generated so far.
-    def_traces: RefCell<Vec<DefInstanceTrace>>,
-    /// The `def` clones and per-call method clones generated so far.
-    generated: RefCell<GeneratedDeclarations>,
     top_consts: RefCell<HashMap<String, CtValue>>,
     /// The module constants whose initializer is a display that applies a
     /// callable, by name, each as the display spelled where it is read
@@ -1211,167 +898,6 @@ fn substitute_source_param_arg_binding(argument: &mut ParamArg, binding: &str, r
             if matches!(&expr.kind, ExprKind::Identifier(name) if name == binding) {
                 *argument = ParamArg::Type(replacement.clone());
             }
-        }
-    }
-}
-
-/// The monomorphization worklist and its results.
-#[derive(Default)]
-struct Mono {
-    queue: VecDeque<Job>,
-    /// Mangled names already requested (dedups identical instantiations).
-    done: HashSet<String>,
-    /// Generated specializations, by template name (in generation order).
-    generated: HashMap<String, Vec<Stmt>>,
-    /// Lexical value bindings visible while call sites are rewritten. `true`
-    /// denotes a top-level specialization template; `false` is an ordinary
-    /// binding that shadows a same-spelled template.
-    value_scopes: Vec<HashMap<String, bool>>,
-    /// Scope index of each active function/method body. Walrus bindings have
-    /// function scope even when their expression occurs in a nested block.
-    function_scopes: Vec<usize>,
-    /// Concrete runtime-pack element types visible while scanning a generated
-    /// specialization. `None` is an ordinary binding which shadows a pack of
-    /// the same name; scopes mirror `value_scopes` exactly.
-    runtime_pack_scopes: Vec<HashMap<String, Option<Vec<Type>>>>,
-    /// Bound-generic templates with at least one reference left on the
-    /// abstract path (an unresolvable call or a function-value use), and
-    /// variadic struct templates applied over such a body's own symbolic
-    /// parameters. The program rebuild keeps these templates alongside
-    /// their specializations (a variadic template as a shell).
-    retained: HashSet<String>,
-    /// The type-parameter names of the declarations enclosing the walk
-    /// (outermost first): a variadic template applied over one of them
-    /// stays symbolic instead of failing eager specialization.
-    symbolic_type_params: Vec<String>,
-    /// Whether the walk is inside an unstamped bundled stdlib declaration:
-    /// instances reached only from there keep the erased path.
-    in_bundled: bool,
-}
-
-impl Mono {
-    /// Whether a specialization named `output_name` is new and should be
-    /// queued.
-    fn queue_specialization(&mut self, output_name: &str) -> bool {
-        self.done.insert(output_name.to_string())
-    }
-
-    /// Leave the call or function-value use of `template` at `site` on its
-    /// abstract path.
-    fn retain_abstract(&mut self, template: &str) {
-        self.retained.insert(template.to_string());
-    }
-
-    /// Bring a declaration's type parameters into the symbolic set for the
-    /// walk of its signature and body; returns the length to truncate back
-    /// to afterwards.
-    fn push_symbolic_type_params(&mut self, type_params: &[TypeParam]) -> usize {
-        let base = self.symbolic_type_params.len();
-        self.symbolic_type_params.extend(
-            type_params
-                .iter()
-                .map(|parameter| parameter.name.trim_start_matches('*').to_string()),
-        );
-        base
-    }
-
-    fn push_value_scope(&mut self) {
-        self.value_scopes.push(HashMap::new());
-        self.runtime_pack_scopes.push(HashMap::new());
-    }
-
-    fn pop_value_scope(&mut self) {
-        self.value_scopes.pop();
-        self.runtime_pack_scopes.pop();
-    }
-
-    fn push_function_scope(&mut self) {
-        self.push_value_scope();
-        self.function_scopes.push(self.value_scopes.len() - 1);
-    }
-
-    fn pop_function_scope(&mut self) {
-        self.function_scopes.pop();
-        self.pop_value_scope();
-    }
-
-    fn bind_value(&mut self, name: &str, template: bool) {
-        self.value_scopes
-            .last_mut()
-            .expect("monomorphization always has a value scope")
-            .insert(name.to_string(), template);
-        self.runtime_pack_scopes
-            .last_mut()
-            .expect("runtime-pack scopes mirror value scopes")
-            .insert(name.to_string(), None);
-    }
-
-    fn bind_parameter(&mut self, parameter: &FnParam) {
-        self.bind_value(&parameter.name, false);
-        let Type::Named(name, arguments) = &parameter.ty else {
-            return;
-        };
-        if parameter.kind != ParamKind::Variadic || name != "$pack" {
-            return;
-        }
-        let Some(types) = arguments
-            .iter()
-            .map(|argument| match argument {
-                ParamArg::Type(ty) => Some(ty.clone()),
-                _ => None,
-            })
-            .collect::<Option<Vec<_>>>()
-        else {
-            return;
-        };
-        self.runtime_pack_scopes
-            .last_mut()
-            .expect("runtime-pack scopes mirror value scopes")
-            .insert(parameter.name.clone(), Some(types));
-    }
-
-    fn resolve_runtime_pack(&self, name: &str) -> Option<&[Type]> {
-        self.runtime_pack_scopes
-            .iter()
-            .rev()
-            .find_map(|scope| scope.get(name))
-            .and_then(Option::as_deref)
-    }
-
-    fn resolves_top_template(&self, name: &str) -> bool {
-        self.value_scopes
-            .iter()
-            .rev()
-            .find_map(|scope| scope.get(name).copied())
-            .unwrap_or(false)
-    }
-
-    fn bind_named_value(&mut self, name: &str) {
-        let base = self
-            .function_scopes
-            .last()
-            .copied()
-            .unwrap_or_else(|| self.value_scopes.len() - 1);
-        if let Some(scope) = self.value_scopes[base..]
-            .iter_mut()
-            .rev()
-            .find(|scope| scope.contains_key(name))
-        {
-            // Assigning through a walrus to a function template is a type error
-            // for the checker to report. It must not remain a template here,
-            // otherwise monomorphization can erase that invalid assignment.
-            scope.insert(name.to_string(), false);
-        } else {
-            self.value_scopes[base].insert(name.to_string(), false);
-        }
-        if let Some(scope) = self.runtime_pack_scopes[base..]
-            .iter_mut()
-            .rev()
-            .find(|scope| scope.contains_key(name))
-        {
-            scope.insert(name.to_string(), None);
-        } else {
-            self.runtime_pack_scopes[base].insert(name.to_string(), None);
         }
     }
 }
@@ -1438,152 +964,8 @@ fn collect_structs(program: &[Stmt]) -> HashMap<String, CtStruct<'_>> {
     structs
 }
 
-/// Collect the top-level generic `def`s that are templates: the bound-generic
-/// ones, which resolve softly, and the value-pack ones whose binders their
-/// template does not serve ([`is_specializable_declaration`]), which
-/// specialize per call. An inferred call to one is served from the checker's
-/// recorded instantiation, since the elaborator does not infer types.
-fn collect_specializable<'a>(
-    program: &'a [Stmt],
-    bound_generics: &HashSet<String>,
-) -> HashMap<String, &'a Stmt> {
-    let mut m = HashMap::new();
-    for s in program {
-        if let StmtKind::Def { name, .. } | StmtKind::Struct { name, .. } = &s.kind
-            && (is_specializable_declaration(s) || bound_generics.contains(name))
-        {
-            // An overloaded name has one entry here, the first declaration:
-            // this registry answers the name-level question "is this a
-            // template at all?".
-            m.entry(name.clone()).or_insert(s);
-        }
-    }
-    m
-}
-
-/// Whether every compile-time parameter of a `def` is one its template
-/// serves: a type parameter — a type pack included, which the elaborator
-/// binds from the call's recorded elements — or a value parameter typed by a
-/// scalar (`Int`, `UInt`, `Bool`, `Float64`, `StringLiteral`, `DType`) or by
-/// an earlier type binder (`[T: AnyType, //, v: T]`), a value pack among
-/// them. The elaborator binds such a value from the call's recorded
-/// arguments, from the argument's lane slot, or from the checker's inferred
-/// instantiation (`n` of `a: Box[n]`).
-pub(super) fn template_serves_binders(type_params: &[TypeParam], owner: &str) -> bool {
-    !type_params.is_empty()
-        && type_params.iter().all(|parameter| {
-            match classify_ct_param(parameter, type_params, owner) {
-                Some(ParamDecl::Type { .. }) => true,
-                Some(ParamDecl::Value { ty, .. }) => matches!(
-                    ty.as_ref(),
-                    Ty::Int
-                        | Ty::UInt
-                        | Ty::Bool
-                        | Ty::Float64
-                        | Ty::StringLiteral
-                        | Ty::Dtype
-                        | Ty::Param { .. }
-                ),
-                _ => false,
-            }
-        })
-}
-
-/// How many top-level `def`s share each name: the name-keyed template classes
-/// admit only a unique name, since overload selection is the checker's.
-fn def_name_counts(program: &[Stmt]) -> HashMap<&str, usize> {
-    let mut counts: HashMap<&str, usize> = HashMap::new();
-    for statement in program {
-        if let StmtKind::Def { name, .. } = &statement.kind {
-            *counts.entry(name.as_str()).or_default() += 1;
-        }
-    }
-    counts
-}
-
-/// Whether a top-level `def` is a type-pack template: it declares a `*Ts` type
-/// parameter — the type-pack class's per-declaration predicate.
-fn pack_keyed_declaration(statement: &Stmt) -> bool {
-    let StmtKind::Def {
-        name, type_params, ..
-    } = &statement.kind
-    else {
-        return false;
-    };
-    type_params.iter().any(|parameter| {
-        matches!(
-            classify_ct_param(parameter, type_params, name),
-            Some(ParamDecl::Type { variadic: true, .. })
-        )
-    })
-}
-
-/// Whether a top-level `def` declares a pack among its compile-time
-/// parameters: a `*Ts` type pack or a `*values` value pack.
-fn variadic_keyed_declaration(statement: &Stmt) -> bool {
-    matches!(&statement.kind, StmtKind::Def { type_params, .. }
-        if type_params.iter().any(|parameter| parameter.name.starts_with('*')))
-}
-
-/// Top-level trait-bound generic `def`s with no comptime constructs. These
-/// monomorphize per explicit concrete application like the comptime class, but
-/// resolution is soft — an unresolvable call (inference, symbolic arguments)
-/// stays on the template's abstract erased-dispatch path — and the template
-/// survives whenever any reference stays abstract or none exists, keeping the
-/// Mojo-style pre-check of the uninstantiated body. An overloaded name stays
-/// entirely on the abstract path: the registry is name-keyed and overload
-/// selection is the checker's.
-fn collect_bound_generic_templates(program: &[Stmt]) -> HashSet<String> {
-    let def_counts = def_name_counts(program);
-    program
-        .iter()
-        .filter_map(|statement| {
-            let StmtKind::Def {
-                name, type_params, ..
-            } = &statement.kind
-            else {
-                return None;
-            };
-            if is_specializable_declaration(statement) || def_counts[name.as_str()] != 1 {
-                return None;
-            }
-            let has_type_binder = type_params.iter().any(|parameter| {
-                matches!(
-                    classify_ct_param(parameter, type_params, name),
-                    Some(ParamDecl::Type {
-                        variadic: false,
-                        ..
-                    })
-                )
-            });
-            (has_type_binder || template_serves_binders(type_params, name)).then(|| name.clone())
-        })
-        .collect()
-}
-
-/// A pending specialization request: template `orig`, specialized for `vals`.
-struct Job {
-    orig: String,
-    vals: Vec<CtValue>,
-    output_name: String,
-    whole_pack_abi: bool,
-}
-
 fn source_type_from_ty(ty: &Ty) -> Option<Type> {
     source_type_from_ty_with_origins(ty, &HashMap::new())
-}
-
-/// The concrete call-site information used to select one function-template
-/// specialization. Nested pack forwarding supplies its already-known element
-/// types; ordinary calls leave that field empty and infer from expressions.
-#[derive(Clone, Copy)]
-struct SpecRequest<'a> {
-    param_args: &'a [ParamArg],
-    call_args: &'a [Expr],
-    kwargs: &'a [mojito_ast::ast::KwArg],
-    consts: &'a HashMap<String, CtValue>,
-    request_site: &'a str,
-    forwarded_pack_types: Option<&'a [Ty]>,
 }
 
 fn lit_result(val: &CtValue, span: Span) -> Result<Expr, ComptimeError> {
@@ -1596,152 +978,7 @@ fn lit_result(val: &CtValue, span: Span) -> Result<Expr, ComptimeError> {
 
 mod eval;
 
-mod mono;
-
 mod rewrite;
-
-mod specialize;
 
 #[allow(clippy::wildcard_imports, reason = "pages of this split module")]
 use rewrite::*;
-
-impl<'a> Elab<'a> {
-    /// The explicit (non-infer-only) `Origin`/`OriginSet` parameters of the
-    /// struct `name`, in the order of a `Ty::Struct`'s origin tail.
-    pub(super) fn explicit_origin_slots(&self, name: &str) -> Vec<&'a TypeParam> {
-        self.structs
-            .get(name)
-            .map(|declaration| {
-                declaration
-                    .source_params
-                    .iter()
-                    .filter(|parameter| {
-                        !parameter.infer_only
-                            && matches!(parameter.bounds.as_slice(), [only] if only == "Origin" || only == "OriginSet")
-                    })
-                    .collect()
-            })
-            .unwrap_or_default()
-    }
-
-    /// The clone binders the bound values of a `def` clone name, declared
-    /// in binder order.
-    /// The binders in `explicit` are declared explicit: no argument spells
-    /// them, so each call supplies them (`Elab::unspelled_clone_binders`).
-    pub(super) fn clone_origin_binder_params(
-        &self,
-        values: &[CtValue],
-        explicit: &[u32],
-    ) -> Vec<TypeParam> {
-        let mut found = Vec::new();
-        for value in values {
-            if let CtValue::Type(ty) = value {
-                self.collect_clone_binders(ty, &mut found);
-            }
-        }
-        found.sort_by_key(|(index, _)| *index);
-        found.dedup_by_key(|(index, _)| *index);
-        found
-            .into_iter()
-            .flat_map(|(index, mutability)| {
-                let mut declared = CloneOriginBinders::declared(index, mutability.as_ref());
-                if let Some(origin) = declared.last_mut() {
-                    origin.infer_only = !explicit.contains(&index);
-                }
-                declared
-            })
-            .collect()
-    }
-
-    /// The source spelling of a heterogeneous pack element type, with every
-    /// origin slot the checker erased spelled as upstream's `_` placeholder
-    /// (`Named[Int]` → `Named[Int, _]`): the specialized `$pack` parameter
-    /// annotation resolves in parameter position, where a placeholder marks
-    /// the slot explicitly inferred. A struct with only origin slots stays
-    /// bare (`RefBox`, not `RefBox[_]`): the bare spelling infers in every
-    /// position a specialized `Tuple` element occupies, the placeholder only
-    /// in parameter position.
-    pub(super) fn pack_element_source_type(&self, ty: &Ty) -> Option<Type> {
-        source_type_from_ty(ty).map(|source| self.insert_origin_placeholders(source))
-    }
-
-    /// See [`Self::pack_element_source_type`]; walks nested applications.
-    pub(super) fn insert_origin_placeholders(&self, source: Type) -> Type {
-        let Type::Named(name, arguments) = source else {
-            return source;
-        };
-        let arguments: Vec<ParamArg> = arguments
-            .into_iter()
-            .map(|argument| match argument {
-                ParamArg::Type(inner) => ParamArg::Type(self.insert_origin_placeholders(inner)),
-                other => other,
-            })
-            .collect();
-        let is_origin = |parameter: &TypeParam| matches!(parameter.bounds.as_slice(), [only] if only == "Origin" || only == "OriginSet");
-        let Some(declaration) = self.structs.get(&name) else {
-            return Type::Named(name, arguments);
-        };
-        let explicit: Vec<&TypeParam> = declaration
-            .source_params
-            .iter()
-            .filter(|parameter| !parameter.infer_only)
-            .collect();
-        let non_origin = explicit
-            .iter()
-            .filter(|parameter| !is_origin(parameter))
-            .count();
-        if non_origin == explicit.len()
-            || non_origin == 0
-            || arguments.len() != non_origin
-            || arguments
-                .iter()
-                .any(|argument| matches!(argument, ParamArg::Named { .. }))
-        {
-            return Type::Named(name, arguments);
-        }
-        let mut positional = arguments.into_iter();
-        let filled = explicit
-            .iter()
-            .map(|parameter| {
-                if is_origin(parameter) {
-                    ParamArg::Value(Expr::new(ExprKind::Identifier("_".to_string()), (0, 0)))
-                } else {
-                    positional
-                        .next()
-                        .expect("argument count equals the non-origin explicit count")
-                }
-            })
-            .collect();
-        Type::Named(name, filled)
-    }
-}
-
-#[cfg(test)]
-mod value_typed_binder_tests {
-    use super::{classify_ct_params, template_serves_binders};
-    use mojito::parse;
-    use mojito_ast::ast::StmtKind;
-    use mojito_types::types::{ParamDecl, Ty};
-
-    #[test]
-    fn a_value_pack_typed_by_a_sibling_binder_is_a_served_value_parameter() {
-        let parsed =
-            parse("def g[T: AnyType, //, *vs: T]() -> Int:\n    return 0\n").expect("parse");
-        let type_params = parsed
-            .iter()
-            .find_map(|statement| match &statement.kind {
-                StmtKind::Def { type_params, .. } => Some(type_params),
-                _ => None,
-            })
-            .expect("one def");
-        let decls = classify_ct_params(type_params, "g");
-        assert!(matches!(
-            decls.as_slice(),
-            [
-                ParamDecl::Type { id: binder, .. },
-                ParamDecl::Value { ty, variadic: true, .. },
-            ] if matches!(ty.as_ref(), Ty::Param { binder: typed, .. } if typed.id == *binder)
-        ));
-        assert!(template_serves_binders(type_params, "g"));
-    }
-}

@@ -19,14 +19,13 @@ impl VmBackend {
         &mut self,
         prog: &Prog,
         i: &MirInstr,
-        scope: FrameScope<'_>,
+        scope: FrameScope,
         regs: &mut [Value],
         vars: &mut Vec<Value>,
     ) -> Result<Flow, RuntimeError> {
         let FrameScope {
             function,
             id: frame_id,
-            comptime,
         } = scope;
         // The executing frame's function, before any callee shadows the name.
         let caller_function = function;
@@ -83,10 +82,8 @@ impl VmBackend {
                             ))
                         })?;
             }
-            // The erased oracle runs a rebind as the value it rebinds; the
-            // type equality is the elaborator's to judge.
-            MirInstr::Rebind { dest, value } => {
-                regs[dest.0 as usize] = regs[value.0 as usize].clone();
+            MirInstr::Rebind { .. } => {
+                return Err(parametric_instruction("a value rebind"));
             }
             MirInstr::CopyValue { dest, value } => {
                 let source = regs[value.0 as usize].clone();
@@ -140,51 +137,13 @@ impl VmBackend {
                     });
                 }
                 regs[dest.0 as usize] = Value::Closure {
-                    parameters: prog.inherited_parameters(
-                        function,
-                        &prog.mir.functions[caller_function].1,
-                        vars,
-                        comptime,
-                    ),
                     function: function.clone(),
                     captures: environment,
                 };
             }
             MirInstr::KeepAlive { .. } => {}
-            MirInstr::Const {
-                dest,
-                k: Const::Param(expr),
-            } if let Some(field) = projected_frame_parameter(
-                expr,
-                &prog.mir.functions[function].1,
-                vars,
-                comptime,
-            ) =>
-            {
-                // A field chain of a parameter the erased frame holds
-                // (`q.s` in `def f[q: Q]()`) is a fresh copy of that field,
-                // as an instance's construction of it is.
-                regs[dest.0 as usize] = if self.has_copyinit {
-                    self.clone_value(prog, field)?
-                } else {
-                    field.clone()
-                };
-            }
-            MirInstr::Const {
-                dest,
-                k: Const::Param(expr),
-            } if let Some(value) = self.erased_application(
-                prog,
-                expr,
-                &prog.mir.functions[function].1,
-                vars,
-                comptime,
-            )? =>
-            {
-                regs[dest.0 as usize] = value;
-            }
             MirInstr::Const { dest, k } => {
-                let mut value = const_value(k, &prog.mir.functions[function].1, vars, comptime)?;
+                let mut value = const_value(k)?;
                 // An aggregate parameter constant holds each tuple as the
                 // nominal `Tuple` its checked type names.
                 if matches!(k, Const::Value(_)) {
@@ -194,9 +153,7 @@ impl VmBackend {
                 regs[dest.0 as usize] = value;
             }
             MirInstr::ParamListAddress { dest, values } => {
-                let Value::Tuple(items) =
-                    const_value(values, &prog.mir.functions[function].1, vars, comptime)?
-                else {
+                let Value::Tuple(items) = const_value(values)? else {
                     return Err(RuntimeError::Unsupported(format!(
                         "the parameter list `{values:?}` has no elements to address"
                     )));
@@ -214,180 +171,34 @@ impl VmBackend {
                     offset: 0,
                 };
             }
-            MirInstr::ConstructTypeParam {
-                dest,
-                param,
-                kwargs,
-                element,
-                ..
-            } => {
-                // The `Copyable` initializer produces a copy of its borrowed
-                // source, whatever type the parameter is bound to.
-                if let [(keyword, source)] = kwargs.as_slice() {
-                    if keyword != "copy" {
-                        return Err(RuntimeError::Unsupported(format!(
-                            "vm: constructing type parameter '{}' with keyword '{keyword}'",
-                            param.name
-                        )));
-                    }
-                    let source = regs[source.0 as usize].clone();
-                    regs[dest.0 as usize] = self.clone_value(prog, &source)?;
-                    return Ok(Flow::Normal);
-                }
-                // A constructible type parameter is reified at runtime as the
-                // bound struct's name, in the slot its declaration names (a
-                // pack's spelled `*Ts`).
-                let slot = match element {
-                    Some(_) => format!("*{}", param.name.trim_start_matches('*')),
-                    None => param.name.to_string(),
-                };
-                let bound = match self.bound_type_parameter(prog, function, frame_id, vars, &slot) {
-                    Some(reference @ Value::Ref { .. }) => {
-                        match self.read_reference(&reference, frame_id, vars)? {
-                            Value::Struct {
-                                name, value_params, ..
-                            } if value_params.is_empty() => Some(Value::Str(name)),
-                            Value::Struct {
-                                name, value_params, ..
-                            } => Some(super::type_token(&name, value_params)),
-                            _ => None,
-                        }
-                    }
-                    other => other,
-                };
-                // A pack is reified as the tuple of its elements' spellings,
-                // of which `Ts[i]()` constructs the one its index selects.
-                let bound = match (element, bound) {
-                    (None, bound) => bound,
-                    (Some(element), Some(Value::Tuple(spellings))) => element
-                        .value
-                        .and_then(|index| match regs[index.0 as usize] {
-                            Value::Int(index) => usize::try_from(index).ok(),
-                            _ => None,
-                        })
-                        .and_then(|index| spellings.get(index).cloned()),
-                    (Some(_), _) => None,
-                };
-                // A type token carries the instance's value arguments.
-                let (bound, token_params) = match bound {
-                    Some(Value::Struct {
-                        name, value_params, ..
-                    }) => (Some(Value::Str(name)), value_params),
-                    bound => (bound, Vec::new()),
-                };
-                let Some(Value::Str(type_name)) = bound else {
-                    return Err(RuntimeError::Unsupported(format!(
-                        "vm: constructing type parameter '{}' in '{}' requires a reified type argument",
-                        param.name, prog.mir.functions[function].0
-                    )));
-                };
-                // A reified argument can pass through an enclosing abstract
-                // binder's spelling rather than a concrete struct name; fall
-                // back to the declaration default there, as an unsupplied
-                // slot would.
-                let type_name = if prog.structs.contains_key(&type_name) {
-                    type_name
-                } else {
-                    prog.sigs
-                        .get(&prog.mir.functions[function].0)
-                        .and_then(|signature| {
-                            signature
-                                .param_decls
-                                .iter()
-                                .find(|declaration| *declaration.id() == param.id)
-                        })
-                        .and_then(|declaration| match declaration {
-                            mojito_types::types::ParamDecl::Type {
-                                default: Some(default),
-                                ..
-                            } => match default.as_ref() {
-                                Ty::Struct(struct_name, _) => Some(struct_name.clone()),
-                                _ => None,
-                            },
-                            _ => None,
-                        })
-                        .unwrap_or(type_name)
-                };
-                regs[dest.0 as usize] = match type_name.as_str() {
-                    "Int" => Value::Int(0),
-                    "UInt" => Value::UInt(0),
-                    "Bool" => Value::Bool(false),
-                    "Float64" => Value::Float64(0.0),
-                    "StringLiteral" => Value::Str(String::new()),
-                    "NoneType" => Value::None,
-                    _ => {
-                        let param_vals: Vec<Option<Value>> = prog
-                            .structs
-                            .get(&type_name)
-                            .map(|definition| {
-                                definition
-                                    .param_decls
-                                    .iter()
-                                    .map(|declaration| {
-                                        token_params
-                                            .iter()
-                                            .find(|(name, _)| {
-                                                name == declaration.name().trim_start_matches('*')
-                                            })
-                                            .map(|(_, value)| value.clone())
-                                    })
-                                    .collect()
-                            })
-                            .unwrap_or_default();
-                        self.call_named(
-                            prog,
-                            &type_name,
-                            Vec::new(),
-                            Vec::new(),
-                            &CallTypes {
-                                param_vals: &param_vals,
-                                ..CallTypes::default()
-                            },
-                        )?
-                    }
-                };
-            }
-            // Only the erased oracle runs a template: its values carry no
-            // type arguments, so the name keeps the template's parameters.
-            MirInstr::TypeName { dest, ty } => {
-                regs[dest.0 as usize] =
-                    Value::Str(mojito_symbol::symbol::unqualified_instance_name(ty));
-            }
-            // Only the erased oracle reaches the construction of a type an
-            // expression denotes, which its values cannot select.
-            MirInstr::ConstructType { ty, .. } => {
-                return Err(RuntimeError::Unsupported(format!(
-                    "the erased oracle cannot construct the type `{ty}` a parameter expression denotes"
+            MirInstr::ConstructTypeParam { param, .. } => {
+                return Err(parametric_instruction(&format!(
+                    "a construction of the type parameter `{}`",
+                    param.name
                 )));
             }
-            // Only the erased oracle reaches a layout query: the elaborator
-            // answers every one in concrete MIR. The oracle runs on the
-            // host, so the host is its target.
-            MirInstr::SizeOf { dest, ty } => {
-                let target = mojito_native_core::target::NativeTarget::host().ok_or_else(|| {
-                    RuntimeError::Unsupported(
-                        "a layout query needs a native target, and this host has none".to_string(),
-                    )
-                })?;
-                let structs = mojito_mir::mir::struct_field_index(&prog.mir.declarations);
-                let size = mojito_native_core::layout::LayoutCx {
-                    target: &target,
-                    structs: &structs,
-                }
-                .layout_of(ty)
-                .map_err(|error| RuntimeError::Unsupported(error.to_string()))?
-                .size;
-                regs[dest.0 as usize] = Value::Int(size as i64);
+            MirInstr::TypeName { ty, .. } => {
+                return Err(parametric_instruction(&format!(
+                    "the name of the type `{ty}`"
+                )));
+            }
+            MirInstr::ConstructType { ty, .. } => {
+                return Err(parametric_instruction(&format!(
+                    "a construction of the type `{ty}`"
+                )));
+            }
+            MirInstr::SizeOf { ty, .. } => {
+                return Err(parametric_instruction(&format!(
+                    "the layout query of `{ty}`"
+                )));
             }
             MirInstr::MaterializeLiteral {
                 dest,
                 value,
                 target,
             } => {
-                let target =
-                    erased_closed_ty(target, &prog.mir.functions[function].1, vars, comptime);
                 regs[dest.0 as usize] =
-                    crate::runtime::materialize_literal(regs[value.0 as usize].clone(), &target)?;
+                    crate::runtime::materialize_literal(regs[value.0 as usize].clone(), target)?;
             }
             MirInstr::UseVar { dest, var, mode } => {
                 let slot = *var as usize;
@@ -496,7 +307,7 @@ impl VmBackend {
                 let l = regs[a.0 as usize].clone();
                 let r = regs[b.0 as usize].clone();
                 let value = self.apply_binop(prog, *op, l, r, resolved.as_deref())?;
-                // An erased body types a comparison over its parameter
+                // A generic instance types a comparison over its parameter
                 // `Bool`, as its bound declares; sized scalars yield a mask.
                 let declared_bool = matches!(value, Value::Simd { .. })
                     && prog.mir.functions[function].1.reg_types.get(&dest.0) == Some(&Ty::Bool);
@@ -514,77 +325,27 @@ impl VmBackend {
                 arg_places,
                 kwarg_places,
                 param_arg_regs,
-                receiver,
-                instantiated_args,
                 spread,
                 ..
             } => {
                 let mut argv: Vec<Value> =
                     args.iter().map(|r| regs[r.0 as usize].clone()).collect();
-                splice_pack_spread(&mut argv, *spread);
+                refuse_pack_spread(*spread)?;
                 let mut kw: Vec<(String, Value)> = kwargs
                     .iter()
                     .map(|(n, r)| (n.clone(), regs[r.0 as usize].clone()))
                     .collect();
-                // The supplied compile-time value-parameter arguments (a type
-                // parameter is `None`), used to reify a constructed struct's
-                // `value_params`.
-                let caller = CallerBindings {
-                    function: caller_function,
-                    frame: frame_id,
-                    registers: regs,
-                    variables: vars,
-                    comptime,
-                };
-                // An explicitly resolved `__init__` overload constructs its
-                // struct, so the supplied arguments align with the struct's
-                // declarations (`Dict[K, V, H](keys, values, None)`), not the
-                // constructor's own; so does a call naming the struct.
-                let constructed = mojito_symbol::symbol::init_overload_struct(&func.0)
-                    .and_then(|struct_name| prog.structs.get(struct_name))
-                    .or_else(|| {
-                        (!prog.sigs.contains_key(&func.0))
-                            .then(|| prog.structs.get(&func.0))
-                            .flatten()
-                    });
-                let declarations = constructed
-                    .map(|definition| definition.param_decls.as_slice())
-                    .or_else(|| {
-                        prog.sigs
-                            .get(&func.0)
-                            .map(|signature| signature.param_decls.as_slice())
-                    });
-                let pvals = declarations.map_or_else(
-                    || {
-                        param_arg_regs
-                            .iter()
-                            .map(|argument| {
-                                argument
-                                    .value
-                                    .map(|register| regs[register.0 as usize].clone())
-                            })
-                            .collect()
-                    },
-                    |declarations| {
-                        self.supplied_parameter_arguments(
-                            prog,
-                            caller,
-                            declarations,
-                            param_arg_regs,
-                            instantiated_args,
-                        )
-                    },
-                );
-                let pvals = match constructed {
-                    Some(definition) => self.constructed_parameter_arguments(
-                        prog,
-                        caller,
-                        &definition.param_decls,
-                        pvals,
-                        prog.mir.functions[function].1.reg_types.get(&dest.0),
-                    ),
-                    None => pvals,
-                };
+                // The compile-time argument slots a builtin reads as runtime
+                // data (`external_call`'s callee name); a user callee declares
+                // none on concrete MIR.
+                let pvals: Vec<Option<Value>> = param_arg_regs
+                    .iter()
+                    .map(|argument| {
+                        argument
+                            .value
+                            .map(|register| regs[register.0 as usize].clone())
+                    })
+                    .collect();
                 // A handwritten constructor receives reference arguments as
                 // caller-frame handles, just like an ordinary ref-parameter call.
                 // Its synthetic `self` occupies parameter slot zero.
@@ -670,40 +431,6 @@ impl VmBackend {
                         })
                     })
                     .flatten();
-                // A constructor's own compile-time parameters the checker
-                // solved, declared after its struct's, bind in its frame as a
-                // method's do; the struct's reify on the instance.
-                let static_receiver = if let Some(definition) = constructed {
-                    constructor_index
-                        .and_then(|index| prog.sigs.get(&prog.mir.functions[index].0))
-                        .and_then(|signature| {
-                            signature.param_decls.get(definition.param_decls.len()..)
-                        })
-                        .filter(|own| !own.is_empty() && !instantiated_args.is_empty())
-                        .map(|own| {
-                            let supplied = self.supplied_parameter_arguments(
-                                prog,
-                                caller,
-                                own,
-                                &[],
-                                instantiated_args,
-                            );
-                            reify_value_parameters(prog, own, &supplied)
-                        })
-                        .unwrap_or_default()
-                } else {
-                    prog.index_of(&func.0)
-                        .map(|callee| {
-                            self.static_receiver_binding(prog, caller, callee, receiver.as_ref())
-                        })
-                        .unwrap_or_default()
-                };
-                let mut runtime_value_params = prog
-                    .sigs
-                    .get(&func.0)
-                    .map(|signature| reify_value_parameters(prog, &signature.param_decls, &pvals))
-                    .unwrap_or_default();
-                runtime_value_params.extend(static_receiver.iter().cloned());
                 let result = if let Some(idx) = writeback {
                     self.call_with_writeback(
                         prog,
@@ -714,14 +441,12 @@ impl VmBackend {
                             keyword_args: kw,
                             argument_places: arg_places,
                             keyword_argument_places: kwarg_places,
-                            value_params: runtime_value_params,
                         },
                         CallerFrame {
                             id: frame_id,
                             function: caller_function,
                             registers: regs,
                             variables: vars,
-                            comptime,
                         },
                     )?
                 } else {
@@ -751,7 +476,6 @@ impl VmBackend {
                         &CallTypes {
                             param_vals: &pvals,
                             arg_types: &arg_types,
-                            static_receiver: &static_receiver,
                         },
                     );
                     self.restore_caller_mirror(stack_base, vars)?;
@@ -769,17 +493,10 @@ impl VmBackend {
                 callee_place,
                 arg_places,
                 kwarg_places,
-                param_arg_regs,
-                param_decls,
-                instantiated_args,
                 ..
             } => {
                 let callable = regs[callee.0 as usize].clone();
                 let mut nominal_receiver = None;
-                let inherited = match &callable {
-                    Value::Closure { parameters, .. } => parameters.clone(),
-                    _ => Vec::new(),
-                };
                 let (function, captures) = match &callable {
                     Value::Function(function) => (function.clone(), Vec::new()),
                     Value::Closure {
@@ -841,33 +558,6 @@ impl VmBackend {
                 // its real caller handle; the shared caller mirror keeps those
                 // handles valid through the child call.
                 let definition = &prog.mir.functions[index].1;
-                let mut value_params: Vec<(String, Value)> = prog
-                    .sigs
-                    .get(&function)
-                    .map(|signature| {
-                        let contract = if param_decls.is_empty() {
-                            &signature.param_decls
-                        } else {
-                            param_decls
-                        };
-                        let supplied = self.supplied_parameter_arguments(
-                            prog,
-                            CallerBindings {
-                                function: caller_function,
-                                frame: frame_id,
-                                registers: regs,
-                                variables: vars,
-                                comptime,
-                            },
-                            contract,
-                            param_arg_regs,
-                            instantiated_args,
-                        );
-                        let supplied = resolve_value_parameter_slots(contract, &supplied);
-                        reify_value_parameters(prog, &signature.param_decls, &supplied)
-                    })
-                    .unwrap_or_default();
-                inherit_parameters(&mut value_params, inherited);
                 let mut reference_inputs: Vec<(usize, Value)> = Vec::new();
                 if let Some(receiver) = nominal_receiver {
                     for parameter in 1..definition.ref_params.len() {
@@ -949,7 +639,6 @@ impl VmBackend {
                     SynchronousCall {
                         function_index: index,
                         arguments: bound,
-                        value_params: &value_params,
                         reference_inputs: &reference_inputs,
                     },
                     CallerFrame {
@@ -957,7 +646,6 @@ impl VmBackend {
                         function: caller_function,
                         registers: regs,
                         variables: vars,
-                        comptime,
                     },
                 )?;
                 regs[dest.0 as usize] = result;
@@ -973,9 +661,6 @@ impl VmBackend {
                 recv_place,
                 arg_places,
                 kwarg_places,
-                param_arg_regs,
-                param_decls,
-                instantiated_args,
                 spread,
                 ..
             } => {
@@ -993,9 +678,9 @@ impl VmBackend {
                 if pointer_copy {
                     regs[dest.0 as usize] = recv_val;
                 } else {
-                    let mut argv: Vec<Value> =
+                    let argv: Vec<Value> =
                         args.iter().map(|r| regs[r.0 as usize].clone()).collect();
-                    splice_pack_spread(&mut argv, *spread);
+                    refuse_pack_spread(*spread)?;
                     let kw: Vec<(String, Value)> = kwargs
                         .iter()
                         .map(|(name, reg)| (name.clone(), regs[reg.0 as usize].clone()))
@@ -1012,16 +697,12 @@ impl VmBackend {
                             receiver_place: recv_place,
                             argument_places: arg_places,
                             keyword_argument_places: kwarg_places,
-                            parameter_arguments: param_arg_regs,
-                            parameter_declarations: param_decls,
-                            instantiated_arguments: instantiated_args,
                         },
                         CallerFrame {
                             id: frame_id,
                             function: caller_function,
                             registers: regs,
                             variables: vars,
-                            comptime,
                         },
                     )?;
                     let target = prog.mir.functions[function].1.reg_types.get(&dest.0);
@@ -1182,16 +863,12 @@ impl VmBackend {
                             receiver_place: base_place,
                             argument_places: &argument_places,
                             keyword_argument_places: &[],
-                            parameter_arguments: &call.param_arg_regs,
-                            parameter_declarations: &call.param_decls,
-                            instantiated_arguments: &[],
                         },
                         CallerFrame {
                             id: frame_id,
                             function: caller_function,
                             registers: regs,
                             variables: vars,
-                            comptime,
                         },
                     )?;
                     let target = prog.mir.functions[function].1.reg_types.get(&dest.0);
@@ -1302,16 +979,12 @@ impl VmBackend {
                             receiver_place: object_place,
                             argument_places: arg_places,
                             keyword_argument_places: &[],
-                            parameter_arguments: &call.param_arg_regs,
-                            parameter_declarations: &call.param_decls,
-                            instantiated_arguments: &[],
                         },
                         CallerFrame {
                             id: frame_id,
                             function: caller_function,
                             registers: regs,
                             variables: vars,
-                            comptime,
                         },
                     )?;
                     let target = prog.mir.functions[function].1.reg_types.get(&dest.0);
@@ -1387,16 +1060,12 @@ impl VmBackend {
                         receiver_place: object_place,
                         argument_places: arg_places,
                         keyword_argument_places: kwarg_places,
-                        parameter_arguments: &call.param_arg_regs,
-                        parameter_declarations: &call.param_decls,
-                        instantiated_arguments: &[],
                     },
                     CallerFrame {
                         id: frame_id,
                         function: caller_function,
                         registers: regs,
                         variables: vars,
-                        comptime,
                     },
                 )?;
                 let target = prog.mir.functions[function].1.reg_types.get(&dest.0);
@@ -1459,16 +1128,12 @@ impl VmBackend {
                         receiver_place,
                         argument_places: &argument_places,
                         keyword_argument_places: &keyword_argument_places,
-                        parameter_arguments: &call.param_arg_regs,
-                        parameter_declarations: &call.param_decls,
-                        instantiated_arguments: &[],
                     },
                     CallerFrame {
                         id: frame_id,
                         function: caller_function,
                         registers: regs,
                         variables: vars,
-                        comptime,
                     },
                 )?;
             }
@@ -1761,13 +1426,7 @@ impl VmBackend {
                         *val = self.call_dunder(prog, &name, "__int__", vec![receiver])?;
                     }
                 }
-                let (dtype, width) = concrete_simd_slots(&erased_closed_slots(
-                    dtype,
-                    width,
-                    &prog.mir.functions[function].1,
-                    vars,
-                    comptime,
-                ))?;
+                let (dtype, width) = concrete_simd_slots(&(dtype.clone(), width.clone()))?;
                 regs[dest.0 as usize] = simd_from_values(dtype, width, &vals)?;
             }
             MirInstr::SimdCast {
@@ -1776,13 +1435,7 @@ impl VmBackend {
                 dtype,
                 width,
             } => {
-                let (dtype, _) = concrete_simd_slots(&erased_closed_slots(
-                    dtype,
-                    width,
-                    &prog.mir.functions[function].1,
-                    vars,
-                    comptime,
-                ))?;
+                let (dtype, _) = concrete_simd_slots(&(dtype.clone(), width.clone()))?;
                 regs[dest.0 as usize] = crate::runtime::simd_cast(dtype, &regs[value.0 as usize])?;
             }
             MirInstr::SimdBitcast {
@@ -1791,13 +1444,7 @@ impl VmBackend {
                 dtype,
                 width,
             } => {
-                let (dtype, _) = concrete_simd_slots(&erased_closed_slots(
-                    dtype,
-                    width,
-                    &prog.mir.functions[function].1,
-                    vars,
-                    comptime,
-                ))?;
+                let (dtype, _) = concrete_simd_slots(&(dtype.clone(), width.clone()))?;
                 regs[dest.0 as usize] =
                     crate::runtime::simd_to_bits(dtype, &regs[value.0 as usize])?;
             }
@@ -1808,20 +1455,15 @@ impl VmBackend {
                 mask,
             } => {
                 let source = &regs[value.0 as usize];
-                let mask = match mask.known() {
-                    Some(mask) => std::borrow::Cow::Borrowed(mask),
-                    None => std::borrow::Cow::Owned(erased_lane_mask(
-                        mask,
-                        source,
-                        &prog.mir.functions[function].1,
-                        vars,
-                        comptime,
-                    )?),
+                let Some(mask) = mask.known() else {
+                    return Err(parametric_instruction(&format!(
+                        "the symbolic lane mask `{mask}`"
+                    )));
                 };
                 let gathered = crate::runtime::simd_shuffle(
                     source,
                     other.map(|other| &regs[other.0 as usize]),
-                    &mask,
+                    mask,
                 )?;
                 regs[dest.0 as usize] = gathered;
             }
@@ -2057,7 +1699,7 @@ impl VmBackend {
                                 "vm: checked iterator method '{target}' is missing from MIR"
                             ))
                         })?;
-                        current = self.call_function(prog, fidx, vec![current.clone()], &[])?;
+                        current = self.call_function(prog, fidx, vec![current.clone()])?;
                     }
                 }
                 vars[*dest as usize] = current;
@@ -2222,25 +1864,9 @@ impl VmBackend {
             MirInstr::MarkInitialized { place } => {
                 if place.is_whole_root()
                     && matches!(vars[place.root as usize], Value::None)
-                    && let Some(Ty::Struct(name, arguments)) = &place.ty
-                    && let Some(mut skeleton) = Self::uninitialized_struct(prog, name)
+                    && let Some(Ty::Struct(name, _)) = &place.ty
+                    && let Some(skeleton) = Self::uninitialized_struct(prog, name)
                 {
-                    // An erased body names its result over the frame's packs
-                    // (`Tuple[*Self.Ts.reverse()]`): its storage has one
-                    // placeholder per element of the list the frame closes.
-                    if let Some(length) = erased_list_length(
-                        arguments,
-                        &prog.mir.functions[function].1,
-                        vars,
-                        comptime,
-                    ) && let Value::Struct { fields, .. } = &mut skeleton
-                    {
-                        for (_, field) in fields {
-                            if let Value::Tuple(slots) = field {
-                                slots.resize(length, Value::None);
-                            }
-                        }
-                    }
                     vars[place.root as usize] = skeleton;
                 }
             }
@@ -2306,7 +1932,6 @@ impl VmBackend {
                         function: caller_function,
                         registers: regs,
                         variables: vars,
-                        comptime,
                     },
                 );
             }
@@ -2326,7 +1951,7 @@ impl VmBackend {
     pub(super) fn exec_try(
         &mut self,
         prog: &Prog,
-        scope: FrameScope<'_>,
+        scope: FrameScope,
         regions: &TryRegions<'_>,
         frame: CallerFrame<'_>,
     ) -> Result<Flow, RuntimeError> {
@@ -2342,7 +1967,6 @@ impl VmBackend {
             function: _,
             registers: regs,
             variables: vars,
-            comptime: _,
         } = frame;
         let outcome = match self.run_region(prog, scope, body, regs, vars) {
             // The body raised: run the exceptional-edge cleanup (destroy the body's
@@ -2444,14 +2068,11 @@ impl VmBackend {
     pub(super) fn run_region(
         &mut self,
         prog: &Prog,
-        scope: FrameScope<'_>,
+        scope: FrameScope,
         blocks: &[MirBlock],
         regs: &mut [Value],
         vars: &mut Vec<Value>,
     ) -> Result<Flow, RuntimeError> {
-        let FrameScope {
-            function, comptime, ..
-        } = scope;
         let mut block = 0usize;
         loop {
             let b = &blocks[block];
@@ -2477,37 +2098,15 @@ impl VmBackend {
                         *else_b
                     };
                 }
-                MirTerm::ComptimeBranch {
-                    cond,
-                    then_b,
-                    else_b,
-                } => {
-                    block = if comptime_branch_holds(
-                        cond,
-                        &prog.mir.functions[function].1,
-                        vars,
-                        comptime,
-                    )? {
-                        *then_b
-                    } else {
-                        *else_b
-                    };
+                MirTerm::ComptimeBranch { cond, .. } => {
+                    return Err(parametric_instruction(&format!(
+                        "a compile-time branch on `{cond:?}`"
+                    )));
                 }
-                header @ MirTerm::ComptimeFor { .. } => {
-                    block = comptime_for_next(
-                        header,
-                        &prog.mir.functions[function].1,
-                        vars,
-                        comptime,
-                        &mut self.comptime_cursors,
-                        scope.id,
-                    )?;
-                    self.materialize_comptime_binder(
-                        prog,
-                        &prog.mir.functions[function].1,
-                        header,
-                        vars,
-                    )?;
+                MirTerm::ComptimeFor { binder, .. } => {
+                    return Err(parametric_instruction(&format!(
+                        "a compile-time loop over `{binder}`"
+                    )));
                 }
                 MirTerm::Return(r) => {
                     let v = r
@@ -2606,96 +2205,9 @@ impl VmBackend {
     }
 }
 
-/// A SIMD instruction's slots, closed by the erased frame's value binders
-/// ([`erased_closed_ty`]).
-/// The value a field chain of a parameter (`q.i.v`) names in the erased
-/// frame holding the parameter's slot, or a binder's compile-time value;
-/// `None` for any other parameter expression.
-fn projected_frame_parameter<'v>(
-    expr: &mojito_types::param_expr::ParamExpr,
-    function: &MirFunction,
-    vars: &'v [Value],
-    comptime: &'v [(String, Value)],
-) -> Option<&'v Value> {
-    use mojito_types::param_expr::ParamKind;
-    let ParamKind::Field { base, name } = expr.kind() else {
-        return None;
-    };
-    let base = match base.kind() {
-        ParamKind::DeclRef(reference) => function
-            .var_names
-            .iter()
-            .zip(vars)
-            .chain(comptime.iter().map(|(name, value)| (name, value)))
-            .find(|(slot, _)| slot.trim_start_matches('*') == &*reference.name)
-            .map(|(_, value)| value),
-        ParamKind::Field { .. } => projected_frame_parameter(base, function, vars, comptime),
-        _ => None,
-    }?;
-    let Value::Struct { fields, .. } = base else {
-        return None;
-    };
-    fields
-        .iter()
-        .find(|(field, _)| field == name)
-        .map(|(_, value)| value)
-}
-
-fn erased_closed_slots(
-    dtype: &mojito_types::types::SimdDtype,
-    width: &mojito_types::types::SimdWidth,
-    function: &MirFunction,
-    variables: &[Value],
-    comptime: &[(String, Value)],
-) -> (
-    mojito_types::types::SimdDtype,
-    mojito_types::types::SimdWidth,
-) {
-    let slots = (dtype.clone(), width.clone());
-    if comptime.is_empty() || !(dtype.is_symbolic() || width.is_symbolic()) {
-        return slots;
-    }
-    mojito_types::types::simd_ty_from_slots(dtype.clone(), width.clone())
-        .ok()
-        .map(|ty| erased_closed_ty(&ty, function, variables, comptime))
-        .and_then(|ty| mojito_types::types::simd_slots(&ty))
-        .unwrap_or(slots)
-}
-
-/// A template's lane mask, closed by the erased frame's value binders and
-/// checked against the receiver's lanes as an instance's is.
-fn erased_lane_mask(
-    mask: &mojito_types::types::LaneMask,
-    source: &Value,
-    function: &MirFunction,
-    variables: &[Value],
-    comptime: &[(String, Value)],
-) -> Result<Vec<usize>, RuntimeError> {
-    let Value::Simd { lanes, .. } = source else {
-        return Err(RuntimeError::TypeError(format!(
-            "cannot shuffle {} as a SIMD value",
-            crate::runtime::type_name(source)
-        )));
-    };
-    let named = super::erased_parameter_values(function, variables, comptime);
-    let context = mojito_types::param_expr::ParamContext::detached();
-    mask.close_with(&|expr| {
-        expr.evaluate_named(&named)
-            .and_then(|value| context.constant(value))
-            .ok()
-            .and_then(|value| value.as_i64())
-    })
-    .resolve(lanes.width() as i64)
-    .ok_or_else(|| {
-        RuntimeError::Unsupported(format!("the lane mask `{mask}` reached the VM unclosed"))
-    })?
-    .map_err(|constraint| RuntimeError::Unsupported(format!("constraint failed: {constraint}")))
-}
-
 /// The known lane dtype and width of a SIMD instruction. Concrete MIR holds
-/// known slots; a symbolic one is a generator form the elaborator closes
-/// before the VM runs (or the erased frame closes from its binders), so
-/// meeting it here is the unsupported boundary.
+/// known slots; a symbolic one is a verifier finding before the VM runs, so
+/// meeting it here is the invariant boundary.
 fn concrete_simd_slots(
     (dtype, width): &(
         mojito_types::types::SimdDtype,

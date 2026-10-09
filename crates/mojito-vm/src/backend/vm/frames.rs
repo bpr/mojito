@@ -34,10 +34,9 @@ impl VmBackend {
             block: 0,
             instruction: 0,
             continuation: None,
-            comptime: Vec::new(),
         };
         self.frames.push(shadow);
-        let result = self.call_frame_with_id(prog, fidx, args, &[]);
+        let result = self.call_frame_with_id(prog, fidx, args);
         // `call_frame` truncates to the shadow on error and unwinds its own child
         // on success, leaving the shadow on top either way; move its storage back.
         if let Some(shadow) = self.frames.pop() {
@@ -51,9 +50,8 @@ impl VmBackend {
         prog: &Prog,
         fidx: usize,
         args: Vec<Value>,
-        value_params: &[(String, Value)],
     ) -> Result<(Value, Vec<Value>), RuntimeError> {
-        self.call_frame_with_id(prog, fidx, args, value_params)
+        self.call_frame_with_id(prog, fidx, args)
             .map(|(value, variables, _)| (value, variables))
     }
 
@@ -65,9 +63,8 @@ impl VmBackend {
         prog: &Prog,
         fidx: usize,
         args: Vec<Value>,
-        value_params: &[(String, Value)],
     ) -> Result<(Value, Vec<Value>, FrameId), RuntimeError> {
-        let frame = self.make_frame(prog, fidx, args, value_params, None)?;
+        let frame = self.make_frame(prog, fidx, args, None)?;
         let target = frame.id;
         let stack_base = self.frames.len();
         self.frames.push(frame);
@@ -86,7 +83,6 @@ impl VmBackend {
         prog: &Prog,
         fidx: usize,
         args: Vec<Value>,
-        value_params: &[(String, Value)],
         continuation: Option<ReturnContinuation>,
     ) -> Result<Frame, RuntimeError> {
         self.burn_ctfe()?;
@@ -111,39 +107,8 @@ impl VmBackend {
                 None => arg,
             };
         }
-        // Bind reified value parameters (a value-parameterized generic function's
-        // comptime `Int` params) into their body var slots, resolved by name — the
-        // body reads them as ordinary `Int` locals (`return n * 2`).
-        for (pname, val) in value_params {
-            if let Some(slot) = f.var_names.iter().position(|n| n == pname) {
-                vars[slot] = match f.var_tys.get(&(slot as u32)) {
-                    Some(ty) => crate::runtime::coerce_checked(val.clone(), ty),
-                    None => val.clone(),
-                };
-            }
-        }
-
         let id = FrameId(self.next_frame_id);
         self.next_frame_id += 1;
-        // A method's frame binds its struct's reified value parameters too,
-        // read off the receiver (through the handle of a `mut`/`ref self`),
-        // so an erased member closes `Scalar[Self.dtype]` at its instance.
-        let mut comptime = value_params.to_vec();
-        if f.var_names.first().is_some_and(|name| name == "self") {
-            let receiver = match vars.first() {
-                Some(reference @ Value::Ref { .. }) => {
-                    self.read_reference(reference, id, &vars).ok()
-                }
-                other => other.cloned(),
-            };
-            if let Some(Value::Struct { value_params, .. }) = receiver {
-                for (name, value) in value_params {
-                    if !comptime.iter().any(|(bound, _)| *bound == name) {
-                        comptime.push((name, value));
-                    }
-                }
-            }
-        }
         Ok(Frame {
             id,
             function: fidx,
@@ -152,7 +117,6 @@ impl VmBackend {
             block: 0,
             instruction: 0,
             continuation,
-            comptime,
         })
     }
 
@@ -182,7 +146,6 @@ impl VmBackend {
                     FrameScope {
                         function: frame.function,
                         id: frame.id,
-                        comptime: &frame.comptime,
                     },
                     &mut frame.registers,
                     &mut frame.variables,
@@ -240,43 +203,15 @@ impl VmBackend {
                     self.frames.push(frame);
                     continue;
                 }
-                MirTerm::ComptimeBranch {
-                    cond,
-                    then_b,
-                    else_b,
-                } => {
-                    frame.block = if comptime_branch_holds(
-                        cond,
-                        &prog.mir.functions[frame.function].1,
-                        &frame.variables,
-                        &frame.comptime,
-                    )? {
-                        *then_b
-                    } else {
-                        *else_b
-                    };
-                    frame.instruction = 0;
-                    self.frames.push(frame);
-                    continue;
+                MirTerm::ComptimeBranch { cond, .. } => {
+                    return Err(parametric_instruction(&format!(
+                        "a compile-time branch on `{cond:?}`"
+                    )));
                 }
-                header @ MirTerm::ComptimeFor { .. } => {
-                    frame.block = comptime_for_next(
-                        header,
-                        &prog.mir.functions[frame.function].1,
-                        &mut frame.variables,
-                        &frame.comptime,
-                        &mut self.comptime_cursors,
-                        frame.id,
-                    )?;
-                    self.materialize_comptime_binder(
-                        prog,
-                        &prog.mir.functions[frame.function].1,
-                        header,
-                        &mut frame.variables,
-                    )?;
-                    frame.instruction = 0;
-                    self.frames.push(frame);
-                    continue;
+                MirTerm::ComptimeFor { binder, .. } => {
+                    return Err(parametric_instruction(&format!(
+                        "a compile-time loop over `{binder}`"
+                    )));
                 }
                 MirTerm::Return(reg) => reg
                     .as_ref()
@@ -365,18 +300,11 @@ impl VmBackend {
             callee_place,
             arg_places,
             kwarg_places,
-            param_arg_regs,
-            param_decls,
-            instantiated_args,
             ..
         } = instruction
         {
             let callable = &caller.registers[callee.0 as usize];
             let mut nominal_receiver = None;
-            let inherited = match callable {
-                Value::Closure { parameters, .. } => parameters.clone(),
-                _ => Vec::new(),
-            };
             let (function_name, captured) = match callable {
                 Value::Function(function_name) => (function_name.clone(), Vec::new()),
                 Value::Closure {
@@ -430,27 +358,6 @@ impl VmBackend {
                 ),
             };
             let definition = &prog.mir.functions[index].1;
-            let mut value_params: Vec<(String, Value)> = prog
-                .sigs
-                .get(&function_name)
-                .map(|signature| {
-                    let contract = if param_decls.is_empty() {
-                        &signature.param_decls
-                    } else {
-                        param_decls
-                    };
-                    let supplied = self.supplied_parameter_arguments(
-                        prog,
-                        caller.into(),
-                        contract,
-                        param_arg_regs,
-                        instantiated_args,
-                    );
-                    let supplied = resolve_value_parameter_slots(contract, &supplied);
-                    reify_value_parameters(prog, &signature.param_decls, &supplied)
-                })
-                .unwrap_or_default();
-            inherit_parameters(&mut value_params, inherited);
             if let Some(receiver) = nominal_receiver {
                 for parameter in 1..definition.ref_params.len() {
                     if !definition.ref_params[parameter] {
@@ -535,7 +442,6 @@ impl VmBackend {
                     prog,
                     index,
                     bound,
-                    &value_params,
                     Some(ReturnContinuation {
                         dest: *dest,
                         writebacks: Vec::new(),
@@ -554,19 +460,16 @@ impl VmBackend {
             recv_place,
             arg_places,
             kwarg_places,
-            param_arg_regs,
-            param_decls,
-            instantiated_args,
             spread,
             ..
         } = instruction
             && let Value::Struct { name, .. } = &caller.registers[recv.0 as usize]
         {
-            let mut positional: Vec<Value> = args
+            let positional: Vec<Value> = args
                 .iter()
                 .map(|register| caller.registers[register.0 as usize].clone())
                 .collect();
-            splice_pack_spread(&mut positional, *spread);
+            refuse_pack_spread(*spread)?;
             let function_name =
                 prog.runtime_method_name(name, method, resolved.as_deref(), positional.len());
             let Some(index) = prog.index_of(&function_name) else {
@@ -638,32 +541,11 @@ impl VmBackend {
             let mut call_args = Vec::with_capacity(bound.len() + 1);
             call_args.push(receiver);
             call_args.extend(bound);
-            let value_params = prog
-                .sigs
-                .get(&function_name)
-                .map(|signature| {
-                    let contract = if param_decls.is_empty() {
-                        &signature.param_decls
-                    } else {
-                        param_decls
-                    };
-                    let supplied = self.supplied_parameter_arguments(
-                        prog,
-                        caller.into(),
-                        contract,
-                        param_arg_regs,
-                        instantiated_args,
-                    );
-                    let supplied = resolve_value_parameter_slots(contract, &supplied);
-                    reify_value_parameters(prog, &signature.param_decls, &supplied)
-                })
-                .unwrap_or_default();
             return self
                 .make_frame(
                     prog,
                     index,
                     call_args,
-                    &value_params,
                     Some(ReturnContinuation {
                         dest: *dest,
                         writebacks: Vec::new(),
@@ -678,9 +560,6 @@ impl VmBackend {
             kwargs,
             arg_places,
             kwarg_places,
-            param_arg_regs,
-            receiver,
-            instantiated_args,
             spread,
             ..
         } = instruction
@@ -693,11 +572,11 @@ impl VmBackend {
         let Some(index) = prog.index_of(&func.0) else {
             return Ok(None);
         };
-        let mut positional: Vec<Value> = args
+        let positional: Vec<Value> = args
             .iter()
             .map(|reg| caller.registers[reg.0 as usize].clone())
             .collect();
-        splice_pack_spread(&mut positional, *spread);
+        refuse_pack_spread(*spread)?;
         let keywords: Vec<(String, Value)> = kwargs
             .iter()
             .map(|(name, reg)| (name.clone(), caller.registers[reg.0 as usize].clone()))
@@ -712,26 +591,6 @@ impl VmBackend {
                 (0..args.len()).map(ArgSlot::Positional).collect(),
             ),
         };
-        let mut value_params = prog
-            .sigs
-            .get(&func.0)
-            .map(|signature| {
-                let supplied = self.supplied_parameter_arguments(
-                    prog,
-                    caller.into(),
-                    &signature.param_decls,
-                    param_arg_regs,
-                    instantiated_args,
-                );
-                reify_value_parameters(prog, &signature.param_decls, &supplied)
-            })
-            .unwrap_or_default();
-        value_params.extend(self.static_receiver_binding(
-            prog,
-            caller.into(),
-            index,
-            receiver.as_ref(),
-        ));
         let function = &prog.mir.functions[index].1;
         for (parameter, is_ref) in function.ref_params.iter().enumerate() {
             let place = bound_argument_place(
@@ -777,7 +636,6 @@ impl VmBackend {
             prog,
             index,
             bound,
-            &value_params,
             Some(ReturnContinuation {
                 dest: *dest,
                 writebacks: Vec::new(),

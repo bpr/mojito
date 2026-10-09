@@ -1340,6 +1340,22 @@ impl CheckedTables {
     }
 }
 
+/// One erased `rebind` the check judged, at its operand (or, for a rebound
+/// assignment, its statement): the operand's own type, the target, and
+/// whether the rebind is by value.
+///
+/// Source validation takes `dest` on faith while `operand` is symbolic, so
+/// the elaborator owes their equality per instance after substitution.
+/// `by_value` is the overload upstream selects once, on the declaration: a
+/// trivially register-passable operand is rebound by value and is not a
+/// place.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RebindAssertion {
+    pub operand: Ty,
+    pub dest: Ty,
+    pub by_value: bool,
+}
+
 /// What one check of an elaborated program established, before the executable
 /// handoff is assembled.
 ///
@@ -1395,7 +1411,7 @@ pub struct DiscoveryResult {
     pub implicitly_copied_consuming_receivers: FactSet<SourceSpan>,
     pub truthiness_conditions: FactSet<SourceSpan>,
     /// Each erased `rebind` the check judged, at its operand.
-    pub rebind_assertions: FactMap<SourceSpan, crate::templates::RebindAssertion>,
+    pub rebind_assertions: FactMap<SourceSpan, RebindAssertion>,
     pub declaration_effects: FactMap<AnnotationSite, DeclarationEffect>,
 }
 
@@ -1865,7 +1881,7 @@ impl CheckedProgram {
         read_temporary_arguments: &HashSet<SourceSpan>,
         implicitly_copied_consuming_receivers: &HashSet<SourceSpan>,
         truthiness_conditions: &HashSet<SourceSpan>,
-        rebind_assertions: &HashMap<SourceSpan, crate::templates::RebindAssertion>,
+        rebind_assertions: &HashMap<SourceSpan, RebindAssertion>,
         declaration_effects: HashMap<AnnotationSite, DeclarationEffect>,
     ) -> Self {
         let expressions_span = mojito_common::timing::span("expressions");
@@ -2089,7 +2105,7 @@ fn build_checked_expressions(
     read_temporary_arguments: &HashSet<SourceSpan>,
     implicitly_copied_consuming_receivers: &HashSet<SourceSpan>,
     truthiness_conditions: &HashSet<SourceSpan>,
-    rebind_assertions: &HashMap<SourceSpan, crate::templates::RebindAssertion>,
+    rebind_assertions: &HashMap<SourceSpan, RebindAssertion>,
     generic_instantiations: &HashMap<SourceSpan, GenericInstantiation>,
     method_instantiations: &HashMap<SourceSpan, MethodInstantiation>,
     scan: Option<&mut dyn FnMut(&Expr)>,
@@ -2130,7 +2146,7 @@ fn build_checked_expressions(
         read_temporary_arguments: &'a HashSet<SourceSpan>,
         implicitly_copied_consuming_receivers: &'a HashSet<SourceSpan>,
         truthiness_conditions: &'a HashSet<SourceSpan>,
-        rebind_assertions: &'a HashMap<SourceSpan, crate::templates::RebindAssertion>,
+        rebind_assertions: &'a HashMap<SourceSpan, RebindAssertion>,
         generic_instantiations: &'a HashMap<SourceSpan, GenericInstantiation>,
         method_instantiations: &'a HashMap<SourceSpan, MethodInstantiation>,
     }

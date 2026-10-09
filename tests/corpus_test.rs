@@ -11,13 +11,11 @@
 //!   `assets/README.md`).
 //! - `vm_ok::<name>` — the production `Compiler::default()` compile+execute
 //!   path over `assets/ok`.
-//! - `erased_vm::<name>` — the production run on concrete MIR against the
-//!   erased oracle, over `assets/ok` and `assets/runtime_error`: the same
-//!   output or error text and the same ordered lifecycle events, and the
-//!   same outcome from the serialized artifact, loaded and elaborated. The
-//!   fixtures that do not yet agree are `ERASED_VM_RESIDUE`. The type-error
-//!   and ownership-error folders are gated by `assets_*`: elaboration runs
-//!   after the checker and cannot accept a program it rejects.
+//! - `artifact::<name>` — the production run on concrete MIR against the
+//!   program's serialized artifact, loaded and elaborated, over `assets/ok`
+//!   and `assets/runtime_error`: the same output or error text. An
+//!   `input()` fixture is covered by the round-trip group alone, since
+//!   `run_artifact` reads process stdin.
 //! - `verify::<category>::<name>` — raw phase functions (link → elaborate →
 //!   `check_program` → `lower_checked_program` → `elaborate_drops_program` →
 //!   verify) over every executable fixture category.
@@ -57,7 +55,7 @@ fn main() {
     let mut trials = Vec::new();
     assets_outcome_trials(&mut trials);
     vm_ok_trials(&mut trials);
-    erased_vm_trials(&mut trials);
+    artifact_trials(&mut trials);
     verify_trials(&mut trials);
     roundtrip_trials(&mut trials);
     origin_trials(&mut trials);
@@ -293,166 +291,6 @@ fn vm_ok_trials(trials: &mut Vec<Trial>) {
     }
 }
 
-/// The `erased_vm` trials that do not yet hold, by the `docs/roadmap.md`
-/// entry that owns each. A listed trial passes while its fixture still
-/// differs and fails once it agrees, so a fix removes its row.
-const ERASED_VM_RESIDUE: &[&str] = &[
-    // R491, the erased oracle: `ParameterList.get_span` is a static method,
-    // whose erased frame has no receiver to read the struct's value pack.
-    "value_pack_runtime_read",
-    // R315, the erased oracle: a struct's type parameter binds the
-    // spelling of its type, which decides no conformance condition.
-    "keyed_def_builds_loan_carrying_instance",
-    // Section 1, the erased oracle: an erased value carries no type
-    // argument to construct `T()` from where `T` is a SIMD type or a struct
-    // over value parameters.
-    "simd_nullary_construction",
-    "simd_parameter_default_construction",
-    "tuple_array_defaultable",
-    // Section 1, the erased oracle: a bound dispatch spells the
-    // requirement's qualifier, which names no lowered overload of the erased
-    // receiver whose witness binds the parameter under a name of its own.
-    "overloaded_method_own_binder_symbols",
-    // Section 1, the erased oracle: an erased value carries no type
-    // argument to tell a place pointer bound to `T` from a reference.
-    "extensions::subtree_pointer_generic_return_deref",
-    "extensions::template_served_iterable_def",
-    "generic_field_pointer_deref_in_place",
-    "template_served_def_loan_carrying_argument",
-    "template_served_loan_carrying_instance",
-    // Section 1, the erased oracle: an erased value carries no type
-    // argument to spell a type name over a parameter from.
-    "generic_param_string_literal_materializes",
-    "generic_struct_instance_bodies",
-    "generic_struct_instance_dispatch",
-    "generic_struct_template_reach",
-    "optional_raising_subscript",
-    "template_def_string_builtins",
-    "template_method_string_builtins",
-    // Section 1, the erased oracle: an erased body carries no type
-    // argument to take `size_of` of a parameter from.
-    "size_of_builtin",
-    "template_served_def_closed_call",
-    // Section 1, the erased oracle: an erased default function has no
-    // value for a compile-time parameter it reads.
-    "default_reads_binder",
-    // Section 1, the erased oracle: an erased frame carries no type
-    // argument to decide a `comptime if` over a type binder with, and runs
-    // no thunk for a condition that applies a function.
-    "comptime_if_condition_applies_def",
-    "comptime_if_condition_reads_index",
-    "comptime_if_generic_struct_lifecycle",
-    "comptime_if_layout_query",
-    "comptime_local_binder_alias",
-    "dtype_compile_time_values",
-    "dtype_float_query_template_served",
-    "lane_template_served",
-    "pack_beside_value_binder",
-    "simd_symbolic_surface",
-    "template_def_converting_argument",
-    "template_folded_value",
-    "template_two_arms",
-    "template_value_shaped_construction",
-    "template_value_shaped_operations",
-    // R286, the erased oracle: a pack's length is its collector's runtime
-    // arity, and an unread `var` collector or a collector-less call has none.
-    "pack_length_runtime_position",
-    // R295, the erased oracle: an erased frame leaves a pack's reified
-    // spellings unbound, so it has no element to construct `Ts[i]()` from
-    // (R286 stops a collector-less pack's loop first).
-    "pack_element_binding_served",
-    // R292, the erased oracle: a kept `comptime for` runs its index as a
-    // runtime value, so a vector at the index's width has no known width.
-    "comptime_for_index_typed_local",
-    // R300, the erased oracle: a vector whose width is a layout query
-    // reaches the VM with its slot symbolic.
-    "comptime_layout_constant",
-    // R301, the erased oracle: a kept `comptime for` bounded by a value
-    // parameter, a pack's length, or a type's value member has no runtime
-    // value to stop at.
-    "comptime_for_template_served",
-    "template_type_member_loop_bound",
-    // R323, the erased oracle: an erased frame carries no type argument to
-    // answer a reflection query over a type parameter from.
-    "dtype_keyed_overload_beside_keyed",
-    "reflection_comptime_for_served",
-    "reflection_field_name_materialize",
-    "reflection_field_type_construction",
-    "reflection_list_materialized_whole",
-    "reflection_symbolic_fields",
-    "reflection_template_served",
-    "template_served_body_call_into_overload_family",
-    // R366, the erased oracle: an erased frame runs no thunk for a
-    // `comptime for` display over a binder.
-    "comptime_display_binding_alias",
-    "comptime_display_binding_arguments",
-    "comptime_display_binding_reads",
-    "comptime_for_aggregate_binder",
-    "comptime_for_applied_bound",
-    "comptime_for_applied_sequence",
-    "comptime_for_display_binding",
-    "comptime_for_display_element_reads",
-    "comptime_for_display_over_binder",
-    "comptime_for_string_aggregates",
-    "comptime_for_tuple_elements",
-    "comptime_for_value_struct_method",
-    "pack_def_unkept_loop_template_served",
-    // R385, the erased oracle: an erased frame runs no function lifted for
-    // an application a type spells.
-    "comptime_application_argument",
-    "comptime_call_callee_shapes",
-    "comptime_call_signature",
-    "ctfe_body_requests",
-    // R506, the erased oracle: an erased frame carries no type argument to
-    // read `T.size` from in a requested application of a `def` generic over
-    // a type, and evaluates no subscript of a module display whose index
-    // applies a function.
-    "ctfe_display_tuple_subscript_in_body",
-    "ctfe_type_generic_def_in_body",
-    "extensions::self_hosted_algorithms",
-    "generic_ctfe_associated_value",
-    // R302: concrete MIR never frees the empty entries list a linear
-    // `Dict.deinit_with` leaves, where the erased run destroys it.
-    "dict_insert_linear_capable",
-    // R361, the erased oracle: `Tuple` and `TString` are served by their
-    // templates, whose bodies an erased frame cannot always run. A tuple an
-    // intrinsic or a named result builds reifies no pack, a pack a
-    // forwarding `def` passes on (`__make_tstring`, every t-string) reifies
-    // none either, and a default initializer constructs an element from a
-    // reified type name.
-    "pack_element_default_construction",
-    "pack_element_rebind",
-    "pack_inferred_through_tuple",
-    "repr_type_names",
-    "slice_descriptor_protocols",
-    "template_tuple_default_initializer",
-    "tstring_forms",
-    "tstring_generic_interpolation",
-    "tstring_lazy",
-    "tstring_template_served",
-    "tuple_nested_type_arguments",
-    "tuple_reverse_concat",
-    "type_names_applied_elements",
-    "variadic_method_type_params",
-    "variadic_pack_upstream_spellings",
-    // R407, the erased oracle: a pack reifies its length, not its element
-    // types, so `Variant`'s template cannot select an alternative and a
-    // static method cannot answer `Self.Ts.contains[T]()`.
-    "container_hashable",
-    "pack_struct_static_method_through_instance",
-    "variadic_pack_forwarding_generic_def",
-    "variadic_struct_over_variant_method",
-    "variant_deinit_with_linear_payload",
-    "variant_duplicate_alternatives",
-    "variant_generic_def_operations",
-    "variant_hash_dict_key",
-    "variant_init_with_constructor",
-    "variant_nominal_string_payload",
-    "variant_owning_api",
-    "variant_string_literal_payload",
-    "variant_unsafe_get_static_supported",
-];
-
 /// Stdin bytes for the fixtures that call `input()`, so both runs of one
 /// read the same line and neither inherits the test runner's stdin.
 fn fixture_stdin(path: &Path) -> Option<&'static [u8]> {
@@ -463,79 +301,22 @@ fn fixture_stdin(path: &Path) -> Option<&'static [u8]> {
     }
 }
 
-/// What one VM run observed: its output or its failure, and its ordered
-/// lifecycle events.
-#[derive(Debug, PartialEq, Eq)]
-struct VmRun {
-    outcome: Result<String, String>,
-    lifecycle: Vec<String>,
-}
-
-/// Run a program on a fresh VM through `run`, with `stdin` served to
-/// `input()`. A lifecycle event names the struct it destroys or consumes;
-/// an elaborated instance is reported under its template, as the erased run
-/// names it.
-fn vm_run(
-    stdin: Option<&[u8]>,
-    run: impl FnOnce(&mut VmBackend) -> Result<(), mojito::runtime::RuntimeError>,
-) -> VmRun {
+/// Run `program` on a fresh VM, capturing its output or its error text; a
+/// panic is an error outcome.
+fn vm_outcome(program: mojito::mir::ConcreteMir) -> Result<String, String> {
     catch_unwind(AssertUnwindSafe(|| {
         let mut vm = VmBackend::new();
-        vm.enable_lifecycle_log();
-        if let Some(bytes) = stdin {
-            vm.set_input_override(bytes.to_vec());
-        }
-        let outcome = run(&mut vm)
+        vm.run_concrete(program)
             .map(|()| vm.output())
-            .map_err(|error| error.to_string());
-        let lifecycle = vm
-            .lifecycle_log()
-            .unwrap_or_default()
-            .iter()
-            .map(|event| match event.split_once("$mono") {
-                Some((template, _))
-                    if event.starts_with("drop ") || event.starts_with("consume ") =>
-                {
-                    template.to_string()
-                }
-                _ => without_temp_paths(event),
-            })
-            .collect();
-        VmRun { outcome, lifecycle }
+            .map_err(|error| error.to_string())
     }))
-    .unwrap_or_else(|_| VmRun {
-        outcome: Err("the VM panicked".to_string()),
-        lifecycle: Vec::new(),
-    })
-}
-
-/// `event` with each path under the temporary directory spelled `<tmp>`: a
-/// fixture's temporary files are named at random per run, and a raised
-/// error's message may name one.
-fn without_temp_paths(event: &str) -> String {
-    let temp = std::env::temp_dir();
-    let temp = temp.to_string_lossy();
-    let temp = temp.trim_end_matches('/');
-    let mut out = String::new();
-    let mut rest = event;
-    while let Some(start) = rest.find(temp) {
-        out.push_str(&rest[..start]);
-        out.push_str("<tmp>");
-        let after = &rest[start + temp.len()..];
-        let end = after
-            .find(|c: char| c == '\'' || c == '"' || c.is_whitespace())
-            .unwrap_or(after.len());
-        rest = &after[end..];
-    }
-    out.push_str(rest);
-    out
+    .unwrap_or_else(|_| Err("the VM panicked".to_string()))
 }
 
 /// Run the fixture as production does, on concrete MIR, and require the
-/// erased oracle to observe the same thing: output or error text, and the
-/// ordered lifecycle events. The program's serialized artifact, loaded and
-/// elaborated, must reach the same outcome.
-fn concrete_runs_as_erased(path: &Path) -> Result<(), Failed> {
+/// program's serialized artifact, loaded and elaborated, to reach the same
+/// outcome: output or error text.
+fn artifact_runs_as_source(path: &Path) -> Result<(), Failed> {
     let compiled = Compiler::default()
         .compile_path(path)
         .map_err(|error| fail(format!("compile: {error}")))?;
@@ -544,48 +325,35 @@ fn concrete_runs_as_erased(path: &Path) -> Result<(), Failed> {
         .map_err(|error| fail(format!("elaborate: {error}")))?
         .program
         .clone();
-    let stdin = fixture_stdin(path);
-    let erased = compiled.drop_elaborated_mir().clone();
-    let expected = vm_run(stdin, |vm| vm.run_elaborated(erased));
-    let actual = vm_run(stdin, |vm| vm.run_concrete(concrete));
-    if actual != expected {
+    let source = vm_outcome(concrete);
+    let text = compiled
+        .emit_mir()
+        .map_err(|error| fail(format!("emit: {error}")))?;
+    let artifact = catch_unwind(AssertUnwindSafe(|| {
+        mojito::run_artifact(
+            text.as_bytes(),
+            path.display().to_string(),
+            mojito::BackendKind::Vm,
+        )
+        .map(|execution| execution.output)
+        .map_err(|error| error.to_string())
+    }))
+    .unwrap_or_else(|_| Err("the VM panicked".to_string()));
+    if artifact != source {
         return Err(fail(format!(
-            "concrete program ran to {actual:?}, erased program to {expected:?}"
+            "artifact ran to {artifact:?}, source program to {source:?}"
         )));
-    }
-    // `run_artifact` reads process stdin, so an `input()` fixture's artifact
-    // is covered by the round-trip group alone.
-    if stdin.is_none() {
-        let text = compiled
-            .emit_mir()
-            .map_err(|error| fail(format!("emit: {error}")))?;
-        let artifact = catch_unwind(AssertUnwindSafe(|| {
-            mojito::run_artifact_as(
-                text.as_bytes(),
-                path.display().to_string(),
-                mojito::BackendKind::Vm,
-                mojito::VmInstantiation::Concrete,
-            )
-            .map(|execution| execution.output)
-            .map_err(|error| error.to_string())
-        }))
-        .unwrap_or_else(|_| Err("the VM panicked".to_string()));
-        if artifact != actual.outcome {
-            return Err(fail(format!(
-                "artifact ran to {artifact:?}, source program to {:?}",
-                actual.outcome
-            )));
-        }
     }
     Ok(())
 }
 
-fn erased_vm_trials(trials: &mut Vec<Trial>) {
+fn artifact_trials(trials: &mut Vec<Trial>) {
     let paths: Vec<(PathBuf, String)> = ["ok", "runtime_error"]
         .into_iter()
         .flat_map(|category| {
             labeled_fixtures(category)
                 .into_iter()
+                .filter(|(path, _)| fixture_stdin(path).is_none())
                 .map(move |(path, label)| {
                     let name = match (category, label == category) {
                         ("ok", true) => stem(&path),
@@ -596,31 +364,16 @@ fn erased_vm_trials(trials: &mut Vec<Trial>) {
                 })
         })
         .collect();
-    let unknown: Vec<&str> = ERASED_VM_RESIDUE
-        .iter()
-        .copied()
-        .filter(|residue| !paths.iter().any(|(_, name)| name == residue))
-        .collect();
     let count = paths.len();
-    trials.push(Trial::test("erased_vm::guard_corpus", move || {
+    trials.push(Trial::test("artifact::guard_corpus", move || {
         if count == 0 {
             return Err(fail("expected some ok fixtures".to_string()));
-        }
-        if !unknown.is_empty() {
-            return Err(fail(format!("residue rows name no fixture: {unknown:?}")));
         }
         Ok(())
     }));
     for (path, name) in paths {
-        let residue = ERASED_VM_RESIDUE.contains(&name.as_str());
-        trials.push(Trial::test(format!("erased_vm::{name}"), move || {
-            match (concrete_runs_as_erased(&path), residue) {
-                (Ok(()), true) => Err(fail(
-                    "now runs as the erased program: remove its ERASED_VM_RESIDUE row".to_string(),
-                )),
-                (Err(_), true) => Ok(()),
-                (outcome, false) => outcome,
-            }
+        trials.push(Trial::test(format!("artifact::{name}"), move || {
+            artifact_runs_as_source(&path)
         }));
     }
 }

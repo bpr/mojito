@@ -55,9 +55,9 @@ pub(super) fn addressed_slots<'a>(
 
 /// The slots a template seeds for its constructible type parameters (a
 /// `Hasher` or `Defaultable` bound), each typed by its own binder, that no
-/// block of `function` still addresses: the reification the erased VM reads
-/// to construct `T()`. Mojo gives a type parameter no storage, so a
-/// concrete instance, whose every construction names its type, keeps none.
+/// block of `function` still addresses. Mojo gives a type parameter no
+/// storage, so a concrete instance, whose every construction names its
+/// type, keeps none.
 pub(super) fn reification_slots(function: &MirFunction, scope: &[ParamDecl]) -> BTreeSet<VarId> {
     let addressed = addressed_slots(&function.blocks);
     scope

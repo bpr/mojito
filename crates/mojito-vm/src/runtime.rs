@@ -31,9 +31,6 @@ pub enum Value {
     Closure {
         function: String,
         captures: Vec<ClosureCapture>,
-        /// The enclosing declarations' value binders the lifted body reads,
-        /// by name: an erased nested body is not instantiated under them.
-        parameters: Vec<(String, Self)>,
     },
     /// A checked slice descriptor. Unlike the old fabricated struct layout,
     /// omitted bounds and descriptor kind are first-class runtime data.
@@ -43,14 +40,13 @@ pub enum Value {
         end: Option<i64>,
         step: Option<i64>,
     },
-    /// A struct instance: its type name, field values (in declaration order), and
-    /// any reified value parameters (`FixedBuffer[8]` stores `size = 8`, read via
-    /// `Self.size` in methods). A value type — `Clone` deep-copies, giving value
+    /// A struct instance: its type name and field values (in declaration
+    /// order). An instance's compile-time arguments are in its name, as the
+    /// elaborator minted it. A value type — `Clone` deep-copies, giving value
     /// semantics.
     Struct {
         name: String,
         fields: Vec<(String, Self)>,
-        value_params: Vec<(String, Self)>,
     },
     /// A SIMD vector: its element type and lane values. The width-1 case is a
     /// scalar-alias value (`Int32`, …).
@@ -196,14 +192,12 @@ impl PartialEq for Value {
                 Self::Struct {
                     name: n1,
                     fields: f1,
-                    value_params: p1,
                 },
                 Self::Struct {
                     name: n2,
                     fields: f2,
-                    value_params: p2,
                 },
-            ) => n1 == n2 && f1 == f2 && p1 == p2,
+            ) => n1 == n2 && f1 == f2,
             (
                 Self::Simd {
                     dtype: d1,
@@ -291,23 +285,8 @@ impl fmt::Display for Value {
                     bound(step)
                 )
             }
-            Self::Struct {
-                name,
-                fields,
-                value_params,
-            } => {
-                write!(f, "{name}")?;
-                if !value_params.is_empty() {
-                    write!(f, "[")?;
-                    for (i, (_, val)) in value_params.iter().enumerate() {
-                        if i > 0 {
-                            write!(f, ", ")?;
-                        }
-                        write!(f, "{val}")?;
-                    }
-                    write!(f, "]")?;
-                }
-                write!(f, "(")?;
+            Self::Struct { name, fields } => {
+                write!(f, "{name}(")?;
                 for (i, (fname, val)) in fields.iter().enumerate() {
                     if i > 0 {
                         write!(f, ", ")?;
@@ -1591,7 +1570,7 @@ fn simd_value(dtype: Dtype, lanes: SimdLanes) -> Value {
 }
 
 /// Lift any finite runtime numeric value into the same exact comparison domain
-/// as a literal. This keeps erased/generic equality and hashing coherent even
+/// as a literal. This keeps generic equality and hashing coherent even
 /// if an exact literal survives past a boundary that normally materializes it.
 fn as_finite_numeric(value: &Value) -> Option<ExactNum> {
     match value {

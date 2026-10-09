@@ -8,7 +8,7 @@
 //! complete program, and it is elaborated after it is loaded.
 
 use crate::backend::BackendKind;
-use crate::compiler::{Execution, VmInstantiation};
+use crate::compiler::Execution;
 use crate::mir::text::{ArtifactReport, load_artifact};
 use crate::native::mono::{MonoError, entry_roots, specialize};
 use crate::runtime::RuntimeError;
@@ -20,38 +20,23 @@ use std::fmt;
 /// The loading gate (parse + canonical verify) is the artifact's semantic
 /// gate: the loaded program is not drop-elaborated or ownership-analyzed
 /// again. It is elaborated to concrete MIR from its entry roots, as a
-/// compiled source program is, unless `MOJITO_VM_ERASED` selects the erased
-/// oracle.
+/// compiled source program is.
 pub fn run_artifact(
     input: &[u8],
     source_name: impl Into<String>,
     backend: BackendKind,
 ) -> Result<Execution, ArtifactRunError> {
-    run_artifact_as(input, source_name, backend, VmInstantiation::from_env())
-}
-
-/// [`run_artifact`] with the VM's instantiation chosen by the caller.
-pub fn run_artifact_as(
-    input: &[u8],
-    source_name: impl Into<String>,
-    backend: BackendKind,
-    instantiation: VmInstantiation,
-) -> Result<Execution, ArtifactRunError> {
     let parsed = load_artifact(input, source_name).map_err(ArtifactRunError::Load)?;
     let mut backend = backend.instantiate().map_err(ArtifactRunError::Backend)?;
-    match instantiation {
-        VmInstantiation::Concrete => {
-            let concrete = specialize(
-                &parsed.program,
-                &entry_roots(&parsed.program),
-                crate::native::target::NativeTarget::host().as_ref(),
-            )
-            .map_err(ArtifactRunError::Elaborate)?;
-            backend.run_concrete(concrete.program)
-        }
-        VmInstantiation::Erased => backend.run_elaborated(parsed.program),
-    }
-    .map_err(ArtifactRunError::Runtime)?;
+    let concrete = specialize(
+        &parsed.program,
+        &entry_roots(&parsed.program),
+        crate::native::target::NativeTarget::host().as_ref(),
+    )
+    .map_err(ArtifactRunError::Elaborate)?;
+    backend
+        .run_concrete(concrete.program)
+        .map_err(ArtifactRunError::Runtime)?;
     Ok(Execution {
         output: backend.output(),
         bindings: backend.bindings(),

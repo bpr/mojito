@@ -13,7 +13,7 @@ map and dependency DAG live in `docs/architecture.md` §Workspace Layout.
 
 | Stage | Owning symbols | Output / invariant |
 |---|---|---|
-| Driver | `compiler::Compiler::{compile_path, compile_source, execute}`, `compiler::CompiledProgram::{mir, drop_elaborated_mir, concrete_mir, emit_mir}`, `compiler::VmInstantiation` | The only whole-program stage ordering. Holds the three MIR phases apart, each computed once: parametric MIR (`mir`), drop-elaborated MIR (`drop_elaborated_mir`, what `emit_mir` serializes), and concrete MIR (`concrete_mir`, the elaborator's cached output every backend consumes). |
+| Driver | `compiler::Compiler::{compile_path, compile_source, execute}`, `compiler::CompiledProgram::{mir, drop_elaborated_mir, concrete_mir, emit_mir}` | The only whole-program stage ordering. Holds the three MIR phases apart, each computed once: parametric MIR (`mir`), drop-elaborated MIR (`drop_elaborated_mir`, what `emit_mir` serializes), and concrete MIR (`concrete_mir`, the elaborator's cached output every backend consumes). |
 | Lex | `lexer::Lexer`, crate-level `lex` | Spanned token stream. |
 | Parse | `parser::Parser::{parse_program, parse_program_diagnostic}`, crate-level `parse` | Spanned AST; diagnostic partial AST is quarantined. |
 | Link | `module::{link_with_options, link_source_with_options, LinkOptions, ModuleError}` | Dependency-first flat program with `SourceSpan` module identity, explicit-binding collision checks, canonical self-import checks, and provisional exports for mutual cycles. `builtin_module_exports` gives the docstring-only `std.traits`/`std.origin` homes and the `std.hashlib` `Hashable`/`Hasher` homes their builtin identity exports. |
@@ -25,28 +25,28 @@ map and dependency DAG live in `docs/architecture.md` §Workspace Layout.
 | Verify | `mir::verify::{verify, verify_concrete, concrete_function_findings, instruction_named_types}` | `verify_concrete` is the mode for elaborated MIR: `verify` plus the rules of `verify/concrete.rs`, which reject symbolic types, compile-time parameters, layout queries, and compile-time argument slots that forward a binder or compute an expression over one; `verify/scope.rs` is the parametric mode's binder-scope and kind rule for every type a body names (`docs/notes/param-expr-attributes.md` §Register types), and `instruction_named_types` the types an instruction names beside its places; `concrete_function_findings` is the same rules for one body, which `native::mono` asks while materializing an instance. `verify` is semantic verification of typed MIR: register/place types, concrete and inline abstract call contracts, variadic ABI conventions, CFG edges, effects, reference capabilities, loans, and interior origins. `verify/instr.rs` owns `verify_instruction`: the place and register checks every instruction gets, then a dispatch on the instruction's family over one `InstrCx`. Each family's checks sit with the rules they use: loans and interior invalidation in `loans.rs`, the iterator protocol in `iteration.rs`, subscripts in `subscripts.rs`, calls in `calls.rs`, and references, value construction, private storage, SIMD, and raise/`try` effects in `instr.rs`. |
 | Ownership | `analysis::check_ownership_program` (checked wrapper `check_ownership_checked`) | Move/init and loan validation over lowered MIR; `analysis/moves.rs` walks `try` regions per channel (`walk_region`/`walk_try`). |
 | Drops | `analysis::elaborate_drops_program` | MIR with explicit `DropVar`/`ConsumeVar` operations, plus `DropPlace`s before writes that overwrite an initialized droppable place — a field store, and a whole place written through a reference (a `mut` parameter's or `mut self` receiver's `WriteRef`, a place pointer's or `ref` binding's `Store`) — from `analysis/store_drops.rs` (`elaborate_store_drops`, whose `out self` receiver test is `mojito_symbol::symbol::is_initializer_symbol`) and per-field `DropPlace`s for `deinit` parameters from `analysis/field_drops.rs` (`refine_deinit_fields`); re-verified before execution. |
-| Execute | `compiler::Compiler::{execute, with_vm_instantiation}`, `backend::Backend::{run, run_concrete, run_elaborated}`, `backend::vm::VmBackend`, `artifact::{run_artifact, run_artifact_as}` | Production execution runs the cached `CompiledProgram::concrete_mir` through `run_concrete`; a loaded artifact is elaborated the same way first. `run_elaborated` runs drop-elaborated MIR erased, as the differential oracle (`VmInstantiation::Erased`, `MOJITO_VM_ERASED`, `--erased`). `run` is the stage-composed test seam, which stays erased. |
-| Artifacts | `artifact::{run_artifact, ArtifactRunError}` | Load-then-execute composition for textual MIR artifacts: the `load_artifact` gate plus `Backend::run_elaborated`, shared by the CLI `exec` subcommand and tests. |
+| Execute | `compiler::Compiler::execute`, `backend::Backend::run_concrete`, `backend::vm::VmBackend`, `artifact::run_artifact` | Production execution runs the cached `CompiledProgram::concrete_mir` through `run_concrete`, the one executable entry (`VmBackend::call_concrete` is its CTFE twin); a loaded artifact is elaborated the same way first. |
+| Artifacts | `artifact::{run_artifact, ArtifactRunError}` | Load-then-execute composition for textual MIR artifacts: the `load_artifact` gate, then `native::mono` and `Backend::run_concrete`, shared by the CLI `exec` subcommand and tests. |
 
 ## Cross-Phase Contracts
 
 | Concern | Sole owner | Consumers |
 |---|---|---|
-| Structural call binding | `call::{match_call_slots, match_fieldwise_slots, ArgSlot, CallSlots}` | Checker and VM call adapters; `match_fieldwise_slots` binds a `@fieldwise_init` construction's keywords to fields for the checker, template facts, and MIR, which lists the registers in field order from `OverloadSets::fieldwise_parameters`. |
+| Structural call binding | `call::{match_call_slots, match_fieldwise_slots, ArgSlot, CallSlots}` | Checker and VM call adapters; `match_fieldwise_slots` binds a `@fieldwise_init` construction's keywords to fields for the checker and MIR, which lists the registers in field order from `OverloadSets::fieldwise_parameters`. |
 | Parser-to-call marker normalization | `call::{regular_marker_index, effective_keyword_only_index}` | Checker and MIR declaration lowering. |
 | Callable identity, overload/dispatch, and native instance names | `symbol::{SignatureKey, VariadicKey, InstanceArg, OverloadSets, resolve_callable_symbol, resolve_method_symbol, instance_symbol, canonical_specialization_type, unqualified_instance_name, lowered_def_name, lowered_method_name, static_method_symbol}` | Checker, MIR, VM, native monomorphization, symbol tests. Runtime and native method retargeting share one declaration-view policy. A receiver-overloaded static (`Tuple.__len__()` beside the instance `__len__`) keys as `static_method_symbol`; a minted Tuple instance spells bare in overload keys and with its elements in instance names (`KeyMode`). An `instance_symbol` whose argument spelling passes 96 characters names its arguments by a SHA-256 digest (`W$mono$H…`), and a nested instance argument spells as its own symbol, so a symbol's length is bounded at any nesting depth. A struct's variadic runtime-pack constructor beside a same-arity nullary one is selected by the VM's `constructor_name`, the monomorphizer's `runtime_pack_constructor`, and the native `constructor_init` alike. |
 | Checked semantic facts | `checked::{CheckedProgram, CheckedTables, CheckedConst, AnnotationSite, CheckedCallContract, CheckedIteratorCall, CheckedResultAdapter}` | MIR, ownership driver, backends. `CheckedProgram::tables` is the one `Arc<CheckedTables>` (expressions, declarations, span indexes) that every `hir::Cfg` and MIR `Flatten` shares — lowering never copies program-wide tables. |
 | Source annotation syntax | `ast::SourceType` (alias of the AST `Type` node) | Parser, checker input, HIR/MIR source metadata. |
 | Source location/provenance | `token::{Span, SourceSpan}` | AST, checker side tables, MIR diagnostics. |
 | Compile-time values | `ct::CtValue` | Elaborator, specialization, checked constants. `CtValue::Expr` is a residual parameter expression, `CtValue::Deferred` the slot of a binder (named by `ParamRef`) outside generic identity, and `CtValue::Marker` an elaborator-private `CtMarker` classification of a name; none is a constant. |
-| Parameter expressions | `param_expr::{ParamContext, ParamExpr, ParamKind, ParamOp, MetaTy, ParamId, ParamRef, ParamBindings, ParamEval, ParamError, ConstraintVerdict, ParamConstraint, identity_eq, SIZE_OF_FUNCTION, builtin_application_value}` and `param_expr::fold::{fold_infix, fold_neg, fold_invert, compare}` (crate `mojito-types`) | The typed, canonical, per-compilation-interned form of a value argument, a value default, a callable default's condition, and a dependent type (`types::DependentType::Parameter`). `ParamContext` owns construction, canonical form, `rebuild` (an operator rebuilt from its parts as the constructors kept it, for the A1 payload's export and the MIR text reader), `replace` (type identity) and `evaluate`/`fold` (a required value); `fold` is the one implementation of compile-time scalar operators. `ParamKind::Apply` (`ParamContext::{apply, size_of, dtype_float_query}`) is a compile-time application, never folded by `replace` and equal by structure (`evaluate` answers a builtin one, `answer_builtin_applications`), carrying the value the compile-time route established when one has; the checker builds one for a module constant whose initializer applies a function (`Checker::applied_constant_expr`, kept by `TemplateCatalog::applied_constants`), and the elaborator keeps such a constant's name in every type argument (`CtMarker::Applied`). Users: the checker (`constraints.rs`), the elaborator (`eval.rs`), MIR text and the verifier, native monomorphization (`mono/symbolic.rs`), the VM's default resolution, and `symbol::mangle`. `types::{TyRewrite, rewrite_ty, replace_parameters, referenced_parameters}` is the one type traversal behind replacement. `Ty::Simd`'s slots are `types::{SimdDtype, SimdWidth}`; a lane gather's mask is `types::LaneMask`, known or a template's `shuffle`/`slice`/`join` form, and `LaneMask::{close_with, resolve}` are the one closing and constraint rule the elaborator (`close_lane_masks`) and the erased VM share; `simd_ty_from_slots` is the only constructor of a symbolic vector type, and `simd_shape`, `simd_slots`, `is_scalar_simd`, `scalar_simd_dtype`, and `simd_lane` read the slots. A type binder is the same identity: `Ty::Param { binder: ParamRef, .. }` and `ParamDecl::{Type, Value}.id` carry the declaration's `ParamId`, `types::TySubst` (`HashMap<ParamId, Ty>`) is every type substitution's key, and `types::CONTRACT_BINDER_OWNER` owns a canonicalized contract's slots. The identity crosses the waist on `MirInstr::ConstructTypeParam.param` and `MirParamArg.binder` (a forwarded enclosing binder), and native monomorphization's `Bindings.types` and `Bindings.values` are keyed by `ParamRef`. Design: `docs/notes/param-expr-attributes.md`. |
+| Parameter expressions | `param_expr::{ParamContext, ParamExpr, ParamKind, ParamOp, MetaTy, ParamId, ParamRef, ParamBindings, ParamEval, ParamError, ConstraintVerdict, ParamConstraint, identity_eq, SIZE_OF_FUNCTION, builtin_application_value}` and `param_expr::fold::{fold_infix, fold_neg, fold_invert, compare}` (crate `mojito-types`) | The typed, canonical, per-compilation-interned form of a value argument, a value default, a callable default's condition, and a dependent type (`types::DependentType::Parameter`). `ParamContext` owns construction, canonical form, `rebuild` (an operator rebuilt from its parts as the constructors kept it, for the A1 payload's export and the MIR text reader), `replace` (type identity) and `evaluate`/`fold` (a required value); `fold` is the one implementation of compile-time scalar operators. `ParamKind::Apply` (`ParamContext::{apply, size_of, dtype_float_query}`) is a compile-time application, never folded by `replace` and equal by structure (`evaluate` answers a builtin one, `answer_builtin_applications`), carrying the value the compile-time route established when one has; the checker builds one for a module constant whose initializer applies a function (`Checker::applied_constant_expr`), and the elaborator keeps such a constant's name in every type argument (`CtMarker::Applied`). Users: the checker (`constraints.rs`), the elaborator (`eval.rs`), MIR text and the verifier, native monomorphization (`mono/symbolic.rs`), the VM's default resolution, and `symbol::mangle`. `types::{TyRewrite, rewrite_ty, replace_parameters, referenced_parameters}` is the one type traversal behind replacement. `Ty::Simd`'s slots are `types::{SimdDtype, SimdWidth}`; a lane gather's mask is `types::LaneMask`, known or a template's `shuffle`/`slice`/`join` form, and `LaneMask::{close_with, resolve}` are the one closing and constraint rule the elaborator applies (`close_lane_masks`); `simd_ty_from_slots` is the only constructor of a symbolic vector type, and `simd_shape`, `simd_slots`, `is_scalar_simd`, `scalar_simd_dtype`, and `simd_lane` read the slots. A type binder is the same identity: `Ty::Param { binder: ParamRef, .. }` and `ParamDecl::{Type, Value}.id` carry the declaration's `ParamId`, `types::TySubst` (`HashMap<ParamId, Ty>`) is every type substitution's key, and `types::CONTRACT_BINDER_OWNER` owns a canonicalized contract's slots. The identity crosses the waist on `MirInstr::ConstructTypeParam.param` and `MirParamArg.binder` (a forwarded enclosing binder), and native monomorphization's `Bindings.types` and `Bindings.values` are keyed by `ParamRef`. Design: `docs/notes/param-expr-attributes.md`. |
 | Semantic types | `types::{Ty, TyArg, ParamDecl}` | Checker, checked data, MIR declarations, VM coercion. |
 | Runtime values/operations | `runtime::{Value, coerce_checked, apply_infix, apply_prefix}` | VM and VM-backed CTFE. |
 | Backend contract | `backend::{Backend, BackendKind}` | Compiler driver and CLI. |
 | Phase timing (`--timings`) | `timing::{enable, enabled, span, round, count, report}` (crate `mojito-common`) | Every phase crate records spans; the CLI enables collection and prints the report; `scripts/bench-compile` and `tools/bench` parse it. Disabled, a span is one relaxed atomic load. |
 | `print` keywords | `infer_print` (`checker/builtins.rs`) | The VM's `print` arm (`dispatch.rs`; `file=` writes through `host_write_bytes`), pliron's `lower_print` (`lower/print.rs`; a `print_sink` descriptor makes `write_stdout` call libc `write`), `mojito_types::types::is_stdlib_file_descriptor_struct`. |
 | Constructed defaults (`dir: Optional[String] = None`) | `CheckedConst::Construct` in the callee's declaration | The VM's `bind_for_call`; the native monomorphizer's `instantiate_constructed_defaults` (enqueues the constructor instance for the parameter type and respells the default's target), pliron's `reachable_set` (follows the default's target) and `bind_call_slots` (runs the instance over fresh storage). |
-| Evaluated defaults (`s: String = String("a")`) | `mir::lower_default` lowers the default as the zero-parameter function `$default$<owner>$<parameter>` recorded as `CheckedConst::Evaluate`; the checker's `dynamic_default_reference` rejects one naming runtime storage and the elaborator below MIR runs one like any function it demands | The VM's `bind_for_call` runs the function per call; pliron calls it from the caller (`evaluated_default_value` in `lower/calls.rs`), releasing a borrowed slot's value through `default_temps`. `native::mono` (`instantiate_constructed_defaults`) and pliron's `reachable_set` carry the edge no call instruction spells; a default function declaring the binders it reads is instantiated under its owner instance's arguments (`default_function_bindings`), and the erased VM refuses it. |
+| Evaluated defaults (`s: String = String("a")`) | `mir::lower_default` lowers the default as the zero-parameter function `$default$<owner>$<parameter>` recorded as `CheckedConst::Evaluate`; the checker's `dynamic_default_reference` rejects one naming runtime storage and the elaborator below MIR runs one like any function it demands | The VM's `bind_for_call` runs the function per call; pliron calls it from the caller (`evaluated_default_value` in `lower/calls.rs`), releasing a borrowed slot's value through `default_temps`. `native::mono` (`instantiate_constructed_defaults`) and pliron's `reachable_set` carry the edge no call instruction spells; a default function declaring the binders it reads is instantiated under its owner instance's arguments (`default_function_bindings`). |
 | Keyword-pack collectors (`var **kwargs: T`) | The callee declaration's `kw_variadic`, collected into the `StringDict` instance `instance_symbol("StringDict", [T])` | The VM's `make_kwargs_dict`; `native::mono`'s `enqueue_keyword_collector` keeps the instance's empty constructor and `__setitem__`, pliron's `reachable_set` follows them, and `build_keyword_collector` (`lower/calls.rs`) runs them from the direct (`bind_call_slots`) and indirect (`bind_contract_slots`) caller. |
 | Narrow float lanes (`Float16`, `Float32`) | `ast::Dtype::{is_narrow_float, round_lane, float_literal_lane}` over `common::float::{f16, round_f16, f16_bits}` and `literal::FloatLiteral::{to_f16, to_f32}` (crate `mojito-common`) | The VM's lane rounding, literal materialization, `to_bits`, and `__fma__` (`runtime.rs`); `CtLane::from_value` (`mojito-types/ct.rs`); pliron's `widen_float_lane`/`round_float_lane` (`lower/arith.rs`), `lower_narrow_float_binop` (`lower/binops.rs`), `narrow_float_constant` (`lower/emit.rs`), and `simd_round_float_vector` (`lower/simd.rs`). |
 | `DType` values | `ast::Dtype::{code, is_integral, is_floating_point, is_signed, is_unsigned, is_numeric, is_float8, is_half_float, predicate, float_query, repr_alias}` with `DTYPE_PREDICATES`, `DTYPE_FLOAT_QUERIES`, the `DTYPE_*_MASK` bits, and `UPSTREAM_ONLY_DTYPE_NAMES` (crate `mojito-ast`) | The checker's `dtype_constant` (`checker/indexing.rs`, recording `SemanticAdjustment::DtypeConstant` for `DType.<name>` and a `SIMD` type operand's `dtype` via `member_type_operand`; `infer_member` records it for a value's `dtype` beside `length`), its `dtype_float_query` (recording `SemanticAdjustment::ParamValue`: the answer at a known dtype, `ParamContext::dtype_float_query`'s application over a binder), and its `Ty::Dtype` method arm (`infer_dtype_predicate` in `method_calls/simd_receivers.rs`); MIR's `Const::Dtype` and `CheckedConst::Dtype`; the elaborator's predicate and float-query folds (`comptime/eval.rs`), a `SIMD` type's `dtype` in `associated_value` (`comptime/elab.rs`), and dtype equality (`compare_numeric_values`); the VM's `Value::Dtype` (display, `scalar_repr`, `hash_leaf_value`, the receiver arm in `invoke.rs`); pliron's `ScalarTy::Dtype` (`dtype_constant`, `dtype_text`, `lower_dtype_predicate`). A `DType` hashes as its `UInt8` code through `types::hash_leaf_ty`. |
@@ -56,8 +56,8 @@ map and dependency DAG live in `docs/architecture.md` §Workspace Layout.
 | Generated string tables | `stdlib/std/_string_tables.mojo` (written by `scripts/gen-string-tables` from the pinned upstream `_unicode_lookups.mojo` and `_parsing_numbers/constants.mojo`) | Fixed-width hex records in string literals: the Unicode 16 case-mapping tables behind `StringSpan.upper`/`lower`/`isupper`/`islower` and the Eisel-Lemire power-of-five table behind `atof`; `string.mojo`'s `_hex_at`/`_hex_u64_at`/`_table_find` decode and binary-search them. Regenerate at every re-pin; never edit by hand. |
 | String formatting | `stdlib/std/string.mojo` (`_FormatUtils`, `_FormatCurlyEntry`, `_PrecompiledEntriesRuntime`, and the `format` methods of `String` and `StringSpan`), the literal stand-in named by `mojito_symbol::symbol::{STDLIB_FORMAT_UTILS_STRUCT, FORMAT_LITERAL_METHOD}` | Upstream's `collections/string/format.mojo`, kept beside `String` because `format` builds a `String`. A string literal's `format` reaches `_FormatUtils.format_literal` through `infer_literal_format` (`checker/method_calls/intrinsic_receivers.rs`) and `SemanticAdjustment::LiteralFormat`; nothing in the VM or the native backend formats a template. |
 | Native compile (`backend-pliron`) | `backend::pliron::{compile, compile_mir, CompileOptions, NativeModule, EmitKind, OptLevel, NativeTarget, JitValue, TrapCategory, PlironError, runtime_declarations}` | CLI `compile`/`run --backend pliron` and the capability-manifest differential harness. `compile` takes the driver's cached concrete graph and elaborates nothing; `compile_mir` elaborates drop-elaborated MIR from the entries a caller names. |
-| Shared native ABI | `native::target::{Triple, CpuFeatures, NativeTarget, BuildConfig, OptLevel, EmitKind}`, `native::layout::{LayoutCx, StructFieldIndex, LayoutError, compose}`, `native::mangle::mangle`, `native::rt_abi` | Every native backend, the elaborator's answer to a layout query (`native::mono`, under the compilation's target; `LayoutError::Symbolic` is the one refusal of a type that still names a parameter), the erased oracle's `SizeOf` on the host, the CLI, `crates/mojito-runtime` agreement tests, and the LLVM cross checks. |
-| The elaborator | `native::mono::{specialize, entry_roots, SpecializedProgram, MonoError, MonoErrorKind}`, `mir::ConcreteMir`, `mono/specializer.rs`: `InstanceState`, `Specializer::{demand_application, materialize_closure, resolve_applications, select_comptime_branches, demand_layout}`, `LayoutOracle`; `mono/rebind.rs`: `Specializer::discharge_rebinds`; `mono/failure.rs`: `Specializer::discharge_instantiation_failures` (a reached method clone whose instantiation failed above MIR), `reached_failure` (a parameter constant an unrolled iteration could not compute, reported once the instance reaches it); `mono/gather.rs`: `Specializer::close_lane_masks`; `mir::prune_unreachable_blocks` | The driver, for the VM and the native backend alike, and artifact execution. Clones an entry-rooted concrete MIR graph from drop-elaborated MIR, which it leaves unchanged. `entry_roots` is the one definition of a whole program's roots (`main`, `__toplevel__`). Its output is a `ConcreteMir`, whose only constructor runs `mir::verify::verify_concrete`, which owns the concreteness rules. `mono/promote.rs` owns the one shape whose instance signature differs from its template's: a callable parameter bound to a closure that captures becomes the instance's last runtime parameter, renumbering the variable slots it displaces (`mir::verify::instruction_places_mut` is the shared place inventory it walks). `mono/availability.rs` owns the verdict of a member's `where` clause (`MirFunctionDeclaration.availability`) under an instance's bindings, read from `MirStructDeclaration.conformances` and `MirDeclarations.traits`; the checker builds those rows in `Checker::conformance_facts` (`checker/traits.rs`), handed over as `CheckedProgram::conformances`. `mojito_types::conformance::leaf_conforms` is the one rule for a compiler-known type's conformance to a built-in trait, shared by the checker's `conforms_to` and the elaborator. `INSTANCE_BUDGET` (`mono.rs`) is the one elaboration bound, checked in `Specializer::enqueue`; `specialize` runs the elaborator on its own deep-stack thread. |
+| Shared native ABI | `native::target::{Triple, CpuFeatures, NativeTarget, BuildConfig, OptLevel, EmitKind}`, `native::layout::{LayoutCx, StructFieldIndex, LayoutError, compose}`, `native::mangle::mangle`, `native::rt_abi` | Every native backend, the elaborator's answer to a layout query (`native::mono`, under the compilation's target; `LayoutError::Symbolic` is the one refusal of a type that still names a parameter), the CLI, `crates/mojito-runtime` agreement tests, and the LLVM cross checks. |
+| The elaborator | `native::mono::{specialize, entry_roots, SpecializedProgram, MonoError, MonoErrorKind}`, `mir::ConcreteMir`, `mono/specializer.rs`: `InstanceState`, `Specializer::{demand_application, materialize_closure, resolve_applications, select_comptime_branches, demand_layout}`, `LayoutOracle`; `mono/rebind.rs`: `Specializer::discharge_rebinds`; `mono/failure.rs`: `Specializer::discharge_instantiation_failures` (a reached method whose body failed to elaborate above MIR), `reached_failure` (a parameter constant an unrolled iteration could not compute, reported once the instance reaches it); `mono/gather.rs`: `Specializer::close_lane_masks`; `mir::prune_unreachable_blocks` | The driver, for the VM and the native backend alike, and artifact execution. Clones an entry-rooted concrete MIR graph from drop-elaborated MIR, which it leaves unchanged. `entry_roots` is the one definition of a whole program's roots (`main`, `__toplevel__`). Its output is a `ConcreteMir`, whose only constructor runs `mir::verify::verify_concrete`, which owns the concreteness rules. `mono/promote.rs` owns the one shape whose instance signature differs from its template's: a callable parameter bound to a closure that captures becomes the instance's last runtime parameter, renumbering the variable slots it displaces (`mir::verify::instruction_places_mut` is the shared place inventory it walks). `mono/availability.rs` owns the verdict of a member's `where` clause (`MirFunctionDeclaration.availability`) under an instance's bindings, read from `MirStructDeclaration.conformances` and `MirDeclarations.traits`; the checker builds those rows in `Checker::conformance_facts` (`checker/traits.rs`), handed over as `CheckedProgram::conformances`. `mojito_types::conformance::leaf_conforms` is the one rule for a compiler-known type's conformance to a built-in trait, shared by the checker's `conforms_to` and the elaborator. `INSTANCE_BUDGET` (`mono.rs`) is the one elaboration bound, checked in `Specializer::enqueue`; `specialize` runs the elaborator on its own deep-stack thread. |
 
 ## Source Versus Checked Naming
 
@@ -108,9 +108,7 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   rejections), synthesizes the desugar (`Synth` node factory, whose node
   identities are `SyntaxId::derived` from the statement's, hidden
   `$with<id>_*` names) and checks it in a block scope, recording a
-  `WithDesugar` (form and statements); `with_desugar` builds the same
-  statements from a statement and a form without a check, for a derived
-  instance (`template_facts/capture.rs:instance_with_desugars`); and
+  `WithDesugar` (its statements); and
   `splice_with_desugars` replaces every checked `with` in the final tree
   before `explicit_destroy`; `KEEP_ALIVE_BUILTIN` names the
   `_mojito_keep_alive` liveness anchor the call inference accepts and MIR's
@@ -120,12 +118,12 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   bound branch, `resolve_bound_method` in `method_calls/resolution.rs`)
   records, by the call's
   origin, each omitted requirement default some conformer's witness
-  declares otherwise (`witnesses_default_alike`), the catalog keeps them
-  across passes (`TemplateCatalog::bound_default_arguments`,
-  `BoundDefaultArguments`), and `bind_bound_default_arguments` spells them
-  as keyword arguments of the call and of every clone of it, before a pass
-  and again, with another pass, when a pass found new ones
-  (`check_program_carrying`). The spelled defaults are literals, or
+  declares otherwise (`witnesses_default_alike`), the compilation's
+  `CheckContext` keeps them across passes
+  (`CheckContext::bound_default_arguments`, `BoundDefaultArguments`), and
+  `bind_bound_default_arguments` spells them as keyword arguments of the
+  call, before a pass and again, with another pass, when a pass found new
+  ones (`check_program_carrying`). The spelled defaults are literals, or
   expressions over the method's value parameters: `requirement_default` in
   `checker/traits.rs` folds a requirement's default over module constants
   (`comptimes`, `comptime_literals`, both registered before the trait pass)
@@ -149,9 +147,10 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   spelling and the ordinary method call both dispatch to after the static
   receiver arms (a type-name receiver is never inferred as a value); the
   public API is
-  `stdlib/std/utils/variant.mojo`, whose type-keyed methods specialize per
-  call, and `type_keyed_projection` routes a `v[T]` subscript to the struct's
-  `__getitem_param__[T]` clone in value and place positions (the
+  `stdlib/std/utils/variant.mojo`, whose type-keyed methods `native::mono`
+  instantiates at each call's type argument, and `type_keyed_projection`
+  routes a `v[T]` subscript to the struct's type-keyed
+  `__getitem_param__[T]` accessor in value and place positions (the
   `type_keyed_accessor_call` lowering in MIR). `check_lambda` runs a lambda
   expression's hidden definition through `check_def` during statement-root
   registration and caches the finalized function-value type under the
@@ -180,15 +179,15 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `SemanticAdjustment::LiteralFormat`, which
   `mir/lower_expr/expr_method.rs` lowers as that static `Call` with the
   literal first), `resolution.rs`
-  selects a signature per receiver family (struct, bound, builtin) and
-  retargets to a minted clone, `receiver_effects.rs` checks the receiver
+  selects a signature per receiver family (struct, bound, builtin),
+  `receiver_effects.rs` checks the receiver
   and argument conventions and builds the reference result, and
   `call_contract.rs` records the `CheckedCallContract`. `selection.rs`,
   `statics.rs`, and `builtin_types.rs` hold the scoring, static, and
   pointer/List helpers, and `mlir_op.rs` the one `__mlir_op` statement
   the bundled modules spell. `mc_infer.rs:infer_selected_method_call` is the
-  tail every selected signature takes (clone retarget, effects, receiver and
-  argument contracts, result). A member of `Tuple` or `TString` is an
+  tail every selected signature takes (overload target, effects, receiver
+  and argument contracts, result). A member of `Tuple` or `TString` is an
   ordinary struct method of its declaration in `std/builtin/tuple.mojo` or
   `std/format/tstring.mojo`; no Rust surface types one. A method's named `out` result is read off
   `mojito-ast`'s `named_result` / `FnParam::is_named_result` by
@@ -334,7 +333,7 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   It also owns binding-identity allocation: `reserve_owners` hands out
   identities from the cursor, or from the fresh region above every range a
   previous pass recorded once a body inferred again would cross the ceiling
-  of the range it had (`owner_range_split` then refuses template capture).
+  of the range it had (`owner_range_split`, which `body_carry.rs` reads).
 - `checker/body_carry.rs` owns carrying a body's facts from one checker pass
   to the next. `PassCarry` is what `checker.rs:check_program_carrying`
   returns (the `DiscoveryResult`, the checker-internal stores, one
@@ -384,9 +383,9 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   template-only form the concrete verifier rejects) and
   `native::mono`'s `default_construct_parameters` (`mono/substitute.rs`,
   through `constructed_type` and `default_construction`, beside the
-  unroller's per-copy call) writes as the element's default construction (each
-  instance's construction is `comptime/rewrite.rs:pack_element_construction`,
-  reached for a `def` through `fold_pack_uses`; `Tuple.__init__(out self)`
+  unroller's per-copy call) writes as the element's default construction (an
+  alias substitution above the check spells it through
+  `comptime/rewrite.rs:pack_element_construction`; `Tuple.__init__(out self)`
   writes it through `Pointer(to=self[i]).unsafe_write({})`, the initializer
   list `initializer_list.rs:infer_initializer_list` spells as the element's
   construction, after the `lit.ownership.mark_initialized` statement
@@ -399,21 +398,14 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `lit.ownership.mark_destroyed`, `SemanticAdjustment::MarkDestroyed`
   lowered as `MirInstr::MarkDestroyed`, which `analysis/moves.rs` moves,
   `field_drops.rs` counts as the field's transfer, the VM tombstones, and
-  Pliron's `lower/drops.rs:clear_presence` clears the leaf flag for; an instance derives a
-  `print` argument or a local's value through
-  `template_facts/realization_folds.rs:element_construction_facts`, a copy with no folded
-  index taking its loop index from `constructed_element_indices`, which
-  `index_indifferent` lets pick among elements sharing the constructed type),
+  Pliron's `lower/drops.rs:clear_presence` clears the leaf flag for),
   `forwarded_pack`/`forwarded_pack_argument` recognize a spread of it as one
   call argument (its placement through `call.rs:spread_position` and
   `bind_spread`) and `bind_forwarded_pack` binds it whole to a callee's pack
   collector (bounds, ownership, and the recorded `owned_packs`/
   `owned_collectors`), at the overflow loops of
   `call_inference.rs:infer_generic_call`, `generics.rs:instantiate_method_generics`,
-  `method_calls/selection.rs:score_method_call`, and `builtins.rs:infer_print`
-  (`rebind.rs:rebinds_by_value` keeps a validated template's selection in a
-  clone through the transfer frame `template_facts.rs:mark_symbolic_selection`
-  marks),
+  `method_calls/selection.rs:score_method_call`, and `builtins.rs:infer_print`,
   `close_pack_elements` and `positional_pack_binding` bind a callee's pack at
   a use (`types::expand_pack_spread` for a spread such as `other: Self`),
   `infer_unbound_pack_construction` types the private `__RuntimeTuple`
@@ -453,194 +445,27 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `type_resolution.rs:tuple_element_types` and
   `declarations.rs:spread_pack_values` build,
   `generics.rs:expand_solved_packs` closes at a call, and
-  `native::mono`'s `substitute_ty` closes per instance. The cloner's twins
-  over source types are `comptime/packs.rs:type_list_source_types`,
-  `bind_type_list_packs`, and `expand_spread_argument`, and
-  `comptime/eval.rs` reverses and concatenates closed `TypeList` values. The
-  elaborator's `comptime/eval.rs` answers the same queries per instance;
-  `template_facts/certificate.rs:template_certificate` keeps every reflection-reading
-  body's instances on the clone check (`reads_reflection`).
-- `checker/template_facts.rs` owns checked templates on the checker side:
-  the shared types (`BodySite`, `Occurrence`, `BodyShape`, `GrammarNotes`),
-  the helpers more than one seam uses, and the body entry points. The rest
-  is one file per seam under `checker/template_facts/`:
-  - `capture.rs` — `capture_body_facts`, `body_transfers`,
-    `occurrences_over`, `record_template`, `retain_template`, `span_table`.
-  - `certificate.rs` — `template_certificate`, `method_certificate`,
-    `validated_struct_binders`, `FUNCTION_FEATURES`, and the binder
-    predicates they read.
-  - `grammar.rs` — the `BodyShape` core walk (`statement`, `expression`,
-    `whole_value`, the local and receiver predicates). Each certificate
-    class's productions are a `grammar_*.rs` beside it: `grammar_calls.rs`,
-    `grammar_builtins.rs`, `grammar_constructions.rs`,
-    `grammar_control.rs`, `grammar_operators.rs`, `grammar_packs.rs`,
-    `grammar_references.rs`, `grammar_simd.rs`, `grammar_stores.rs`.
-  - `realization.rs` — `derivable_facts`, `derive`,
-    `instance_substitution`, `realize_instance_facts`, `realize_transfers`,
-    `substituted_facts`. `realization_calls.rs` holds the per-call
-    `realize_*` recipes (method, static, direct, callable, operator,
-    conversion, `print`/`repr`/`len`), and `realization_folds.rs` what the
-    elaborator folds per instance (pack elements, folded literals and
-    arithmetic, `SIMD` lanes).
-  - `install.rs` — `install_body_facts`, `replace_body_facts`,
-    `install_transfers`, `remove_occurrence_facts`.
-  - `verify.rs` — `capturable`, `census`, `transfer_residue`, and the
-    unkeyed-store and hash-leaf growth checks.
-  `Checker::check_def_body` is every `def` body's entry and
-  `check_method_body` every struct method's (from
-  `declarations.rs:bind_and_check_method`, under `Checker::method_site`); both
-  build a `BodySite` for `check_body`, which serves a clone
-  from a certified template (`derivable_facts`, `realize_instance_facts`,
-  `install_body_facts`), otherwise infers the body, and retains a
-  module-level generic body's facts (`capture_body_facts`,
-  `template_certificate` — whose `FUNCTION_FEATURES` allowlist bounds a
-  `FunctionBody` — `method_certificate`, `record_template`).
-  `BodyShape::simd_intrinsic` admits the lane reads of a closed or
-  lane-shaped vector, `instance_substitution` folds a wildcard vector
-  binder's hidden slots, and
-  `realize_simd_intrinsics` records each instance's reinterpretation and
-  lane-count shapes. `BodyShape::struct_lane_simd` admits a `DType`-keyed
-  struct's symbolic lane (`Scalar[Self.dtype]`) as a scalar, and
-  `realize_lane_literals` materializes a literal beside such a lane where an
-  instance folds it to `Int` or `Float64`. `BodyShape::lane_float_method`
-  admits a float lane's rounding dunder or `__fma__` on such values, and
-  `realize_lane_float_methods` records the borrows the native `Float64`'s
-  method takes. `BodyShape::lane_comparison` admits a comparison of such
-  values as a condition or `Bool(...)`'s argument, and
-  `realize_lane_comparisons` re-types its mask to `Bool` where the lane is
-  native. `BodyShape::struct_vector` admits a
-  closed vector binder read as `Self.key`, whose clone construction
-  `fold_vector_values` tells from the template's syntax and
-  `construct_folded_vectors` records; `operators.rs:vector_alias` types a
-  vector alias's call (`U256(...)`) as the `SIMD` it spells.
-  `realize_method_call` realizes a closed method call's contract at the
-  instance (its `realize_method_contract` half also
-  realizes an element store's embedded value getter,
-  `realize_element_getters`, and `realize_element_dunders` re-selects an
-  embedded in-place dunder dispatched through a bound,
-  `bound_dispatch.rs:realize_embedded_dispatch`; `realize_inplace_updates`
-  realizes an augmented assignment's in-place dunder kept at its place in
-  the `inplace_updates` table, through the same two helpers, and
-  `install_body_facts` writes it back as the `AugmentedInPlace` adjustment),
-  `realize_builtin_len` takes the `len`
-  witness, `realize_operator` repeats an operator's type-driven dispatch
-  (through `operators.rs:struct_infix_dispatch`, the type-level half of
-  `infer_infix`, `operators.rs:struct_reflected_dispatch`, its reflected
-  half, and `operators.rs:scalar_operator_result`, its primitive half), `plain_data` is the instance-argument obligation of a
-  `MethodBody` and `loan_free` its transfer obligation (`body_transfers`
-  keeps each replayed transfer by template owner with its source's binding
-  type, `transfer_residue` tells a replay from a residue no recipe covers,
-  `realize_transfers` replays them for an instance, and
-  `install_transfers` installs them), `residue_plain` its call-through
-  obligation (a callee's
-  residue is read as `EffectRead::CallThrough`, kept as
-  `call_through_reads`, and rekeyed by `note_realized_callee`;
-  `realize_callable_call` takes a call through a `def(...)` parameter from
-  the instance's own binding of it), `realize_conversion` re-selects an
-  implicit conversion from the substituted source and target types while
-  `install_conversions` writes the four conversion tables back and
-  `realize_repr_call` re-proves `repr`'s argument `Writable`, and `census`
-  reports what keeps each
-  generic body from being
-  captured, with `grammar_features` naming the constructs it holds. The
-  submodule `template_facts/bound_dispatch.rs` re-selects a call through a
-  bound for an instance: `bound_witness` is the by-types resolver from a
-  receiver type, its convention, a method name, and the recorded argument
-  types to the requirement's witness (a place read, a hashed leaf, or a
-  struct's own method with its binders bound, of an overload set the one
-  member witnessing the requirement (`traits.rs:requirement_witnesses`),
-  naming the member itself), with
-  `witness_binders` judging one declaration, `realize_bound_dispatch` rewrites the
-  abstract contract with it (a receiver typed by a binder the instance keeps
-  stays a dispatch, reading the summaries of every conformer
-  `mc_infer.rs:dispatch_conformers` names) (and marks a witness that is a named `deinit self`
-  destructor as an explicit-destroy call, refusing a copied receiver whose
-  witness does not consume it), `realize_inverted_writes` turns an inverted
-  `write_to` on a struct instance into that call, and
-  `realize_bound_builtin` re-proves a `hasher.update`/`writer.write`
-  argument's bound. The submodule `template_facts/constructions.rs`
-  re-selects a struct construction's constructor for an instance
-  (`realize_construction`): the template's member must still bind every
-  recorded argument type exactly (`exact_binding`, over
-  `call.rs:match_call_slots`; a fieldwise struct's fields likewise, over
-  `match_fieldwise_slots`), and the template's spelling stays its target.
-  The submodule
-  `template_facts/iterations.rs` keeps a runtime `for`'s protocol as the
-  inputs it is selected from (`captured_iterations`, a `TemplateIteration`
-  proven by rebuilding the recorded protocol), selects it again from an
-  instance's substituted iterable type (`realize_iterations`), and resolves
-  it against the instance's own source binding (`install_iterations`), all
-  through `iteration.rs:loop_site_protocol`, the path the `for` statement
-  and comprehensions share. The submodule `template_facts/comprehensions.rs`
-  keeps each comprehension binder as its owner and its clause's iterable
-  (`captured_comprehension_bindings`, a `TemplateComprehensionBinding`
-  proven against the recorded binding and the checker-only
-  `comprehension_iterables` table `inference.rs:check_comprehension`
-  fills), and declares it again for an instance from the protocol
-  installed at that iterable (`install_comprehension_bindings`). The
-  submodule `template_facts/tuple_unpacks.rs`
-  keeps a tuple unpacking's plan as the value's type, the reference the
-  unpacked place yields, and the named targets (`captured_tuple_unpacks`, a
-  `TemplateTupleUnpack` proven by rebuilding the recorded plan), and builds
-  the plan again for an instance (`realize_tuple_unpacks`,
-  `install_tuple_unpacks`) through `statements.rs:tuple_unpack_plan`, the
-  path the unpack statement itself takes. A `with` statement's form
-  (`WithForm`, the `WithDesugars` table's recipe) is kept at the statement;
-  `instance_with_desugars` builds an instance's desugars from it before its
-  occurrences are walked (`occurrences_over`, which reads each desugar in its
-  statement's place), and installation hands them to the final splice. A
-  nested `def` has no derivation recipe: a body holding one is served by its
-  template, and a clone kept for another reason infers it. A capturing
-  callable's environment is kept like a struct's origin slots
-  (`map_struct_origins`). A retained struct type that
-  names a binding in an origin argument is kept by template owner
-  (`unbound_struct_origins`/`bind_struct_origins` over `map_struct_origins`,
-  the bundle's `typed_origins`: only a slot naming a binding is unbound and
-  refilled, so a slot an instance's argument brings in, such as a clone
-  binder, stays as it stands; a pointer to a place, `Pointer(to=self.items)`,
-  keeps its provenance the same way, first, flagged by `TypedOrigins::pointer`:
-  `typed_origins`/`bind_typed_origins`), and the return annotation an inference
-  re-resolves at each `return` is resolved once for a derived instance
-  (`annotation_spans`, `grew_outside_body`). `struct_application_frames`, pushed in
-  `generics.rs:record_struct_instantiation`, is how a template keeps the
-  struct applications its instances must request. `span_table` maps every
-  `FactTable` onto the checker's storage, `BodyShape` is the grammar of the
-  derivation classes (`method_direct_calls` the direct calls a method body
-  may make), and `overload_rebinding_only` is the one difference
-  verification mode accepts. `note_effect_query` records the callee effect
-  summaries a body read, which are its dependencies. The vocabulary
-  (`CheckedTemplate`, `CheckedBodyFacts`, `TemplateCatalog`, `InstanceTrace`,
-  `OccurrenceId`, `TemplateObligation`, `MethodFeatures`, the template-local
-  `TemplateCallContract` with `closed_method_contract` and its consuming
-  siblings `consuming_method_contract` (through a bound) and
-  `consuming_nominal_contract` (a nominal receiver's `^` transfer, or a
-  place the call copies, `BodyShape::copied_consuming_call`), and the
-  exhaustive
-  `derive_adjustment`) is `crates/mojito-checked/src/templates.rs`. The
-  declaration-level trace is `comptime.rs`'s `DefInstanceTrace` (type,
-  value, and pack bindings), recorded by `specialize.rs:generate_def_spec`;
-  `GeneratedDeclarations` lists what an elaboration generated; the
-  occurrence-level trace is `ast.rs:rekey_syntax`'s `SyntaxOrigins` (which
-  traces a `mojito-common` `token.rs:SyntaxId::derived` node through its
-  parent) plus
-  `comptime.rs:rebuilt` and the identity a folded `comptime for` variable
-  or pack `TypeList` use keeps (`rewrite.rs:rewrite_expr`). A pack struct's
-  `__RuntimeTuple(*args^)` initializer, which each instance writes as
-  `args^`, is laid over the instance by `template_facts/realization_folds.rs:relocate_packs`
-  from the template's `PackRelocation`; a user struct's or `TString`'s
-  `Tuple(*args^)`, which each instance expands per element with
-  `mojito-checked` `templates.rs:PackElementNode` identities, by
-  `template_facts/realization_folds.rs:spread_packs` from its `PackSpread`. `mojito-comptime`'s
-  `comptime.rs:instance_traces` carries one to the other. A variadic struct's
-  member instance substitutes per copy through `mojito-types`' `types.rs:substitute_packs`.
-  The design record is `docs/notes/instantiation-from-template.md`.
-  Where each instance obligation goes once clones are gone is
-  `docs/notes/generator-contract.md`.
+  `native::mono`'s `substitute_ty` closes per instance, and
+  `comptime/eval.rs` reverses and concatenates a closed `TypeList` above
+  the check.
+- A `def` body and a struct method's body are each checked once, with
+  their binders symbolic, by `check_block` (`checker/statements.rs`; a
+  method's from `declarations.rs:bind_and_check_method`, under
+  `Checker::method_site`); `count_body_inference` (`checker.rs`) keeps the
+  `body_inference.plain`/`body_inference.template` timing counters, and
+  `remove_occurrence_facts` (`checker/statements.rs`) clears an
+  occurrence's facts before an augmented store re-infers it. What an
+  instance still owes below the waist is `docs/notes/generator-contract.md`.
+- `operators.rs:vector_alias` types a vector alias's call (`U256(...)`) as
+  the `SIMD` it spells; `operators.rs:struct_infix_dispatch` is the
+  type-level half of `infer_infix` and `struct_reflected_dispatch` its
+  reflected half.
 - `checked.rs`'s `DiscoveryResult` is what a check returns before its arena
   is built (`checker.rs:check_program_for_discovery`): `CheckedProgram::new`'s
   inputs, owned, with `scan_expressions` for a client reading the facts
-  alone and `finalize` for the arena (`check_program_with_templates`, the
-  driver's entry). Its tables are `fact_store.rs`'s logged stores.
+  alone and `finalize` for the arena (`check_program_in`, the driver's
+  entry, in the compilation's `CheckContext`). Its tables are
+  `fact_store.rs`'s logged stores.
 - `fact_store.rs` owns `FactMap`, `FactSet`, and `FactVec`: a `HashMap`,
   `HashSet`, or `Vec` that logs every key written, read through `Deref`,
   with `mark`/`logged` for a range of the log. Every checker fact store is
@@ -677,8 +502,8 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   closed types, recording each judged rebind in `Checker.rebind_assertions`,
   which `CheckedProgram.rebind_assertions` hands to MIR as
   `SemanticAdjustment::Rebind`; `check_rebind_place`
-  rejects writing through a by-value (`TrivialRegisterPassable`) rebind,
-  outside `$`-mangled clones. The eraser turns `rebind[Dest](x) = value`
+  rejects writing through a by-value (`TrivialRegisterPassable`) rebind.
+  The eraser turns `rebind[Dest](x) = value`
   into the plain `Assign` of `x`, whose retyping `rebind_assignment_target`
   applies from the `Assign` arm and `record_assignment_rebind` records,
   reversed, on the assigned value. MIR lowering reads a rebound operand
@@ -689,9 +514,7 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   which see through the step, and `native::mono`'s `discharge_rebinds`
   (`mono/rebind.rs`) judges and erases both forms per instance, each
   place step against the type it applies to (`verify::place_base_ty` for
-  the first). `RebindTargets::target_spans` names the
-  spans a body's erased targets embed, which template capture tolerates as
-  it does a return annotation's. The parser admits the call as an
+  the first). The parser admits the call as an
   assignment and augmented-assignment target (`parser/stmts.rs`).
   Every body is checked once with the operand symbolic, so no body is
   keyed on a `rebind`.
@@ -703,7 +526,7 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   verdict reads. Its evaluators resolve names and delegate operator
   semantics to `param_expr::fold`; `compile_dependent_ct_expr` builds a
   `ParamExpr` through the compilation's `ParamContext`
-  (`Checker::param_context`, handed over by `TemplateCatalog::param_context`),
+  (`Checker::param_context`, the compilation's `CheckContext::param_context`),
   and `value_parameter_in_scope`/`push_param_scope` resolve a bare value
   parameter to its owned reference (`annotations.rs`: `binder_owner`,
   `Checker::method_binder_owner` over `symbol::MethodBinderOwners`, which
@@ -815,16 +638,13 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   (`Enclosing`). `verify/scope.rs` (`Scope::of_function`) walks that chain
   for the binders a body may name; `native::mono`
   (`Specializer::instantiate_nested_bodies`, `nested_bindings`,
-  `binder_scope`) instantiates a nested body under its enclosing instance;
-  the erased VM carries the enclosing values on the closure
-  (`Value::Closure::parameters`, `Prog::inherited_parameters`). A
+  `binder_scope`) instantiates a nested body under its enclosing instance. A
   declaration inside a kept `comptime for` also declares the loop indices
   (`MirFunctionDeclaration::region_binders`, from `find_nested_defs`'s loop
   stack and `nested.rs::loop_index`); `mono/unroll.rs`
   (`instantiate_region_references`, `region_generator_slots`) points each
   region copy's closure at its instance, a generic one at the copy's
-  generator (`Specializer::region_generators`). A plain body whose loop
-  declares one is a template (`comptime/elab.rs::declares_in_comptime_for`).
+  generator (`Specializer::region_generators`).
 
 ### VM and Comptime
 
@@ -901,9 +721,7 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   trace differential compares against. Its remaining methods are
   split across `impl VmBackend` blocks in the submodules below.
 - `backend/vm/frames.rs` owns call-frame construction and the `drive_frames`
-  dispatch loop (`call_frame`/`make_frame`/`prepare_direct_call`); `make_frame`
-  binds a method frame's receiver value parameters among its reified ones,
-  which `exec.rs` closes a symbolic lane by (`vm.rs`'s `erased_closed_ty`).
+  dispatch loop (`call_frame`/`make_frame`/`prepare_direct_call`).
 - `backend/vm/references.rs` owns runtime reference handle read/write/projection,
   including `place_crosses_reference`/`place_handle`, which decide whether a
   place reaches a stored handle at or below its root and must therefore be
@@ -937,30 +755,22 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   declarations without selecting or cloning — among them each conformer's
   inherited trait defaults, through `checker::expand_trait_defaults`, `elaborate_prepared` is the
   route the driver enters once per compilation,
-  `elaborate` composes prepare → elaborate for the stage
-  seam), the `Elab` elaboration driver (`block`/`stmt`; its
+  `elaborate` composes prepare → elaborate for the CLI's
+  `check` and the phase tests), the `Elab` elaboration driver
+  (`block`/`stmt`; its
   `keep_template_comptime_if` keeps every `comptime if` of a function body and `keep_template_comptime_for` every loop, `def_body` pushing a binder set for every body, empty for a plain one; a module constant that applies a callable, asks a layout, or reads one is marked `CtMarker::Applied` and kept as written, `applied_initializer`; its
   own binders (`Elab::template_binders`) for the check, where every other
-  one is selected), type
-  resolution, the template classification (`collect_bound_generic_templates`,
-  a type-pack def among them, since every one is template-served; the
-  per-declaration predicates `is_specializable_declaration` and
-  `pack_keyed_declaration` leave only a value-pack `def` whose binders its
-  template does not serve specializable; `Mono::retain_abstract` records a
-  template a reference leaves on its abstract path), the
-  origin-slot vocabulary (`explicit_origin_slots` lists a struct's explicit
-  origin parameters; `CloneOriginBinders` names the binders a clone declares
-  for them, `symbol::CLONE_ORIGIN_BINDER_PREFIX`, which
-  `Checker::clone_origin_binder_ids` leaves unbound for the argument
-  exclusivity rule; `pack_element_source_type` spells
-  erased slots as `_`), and the free-function/`Mono` support code; `Elab`'s remaining
+  one is selected), and type resolution; nothing is cloned or specialized
+  above the check. `Elab`'s remaining
   methods are split across `impl<'a> Elab<'a>` blocks in the submodules
-  below (`comptime/elab.rs` holds the root driver's own cluster), and the
-  root's helper clusters live in
-  `comptime/{synth,packs,params}.rs`.
+  below, and the root's helper clusters live in `comptime/{synth,params}.rs`.
+- `comptime/elab.rs` holds the root driver's own cluster, and owns
+  `Elab::freeze_struct_value_arguments` (a whole-program `MutVisitor` walk
+  folding a computed struct-typed value argument, `Tagged[Extent.square(4)]`,
+  to its fieldwise construction) and `instantiation_failure_stub` (below).
 - `comptime/pack_qualification.rs` owns upstream's spelling rule for a
   variadic struct's own pack (`qualify_struct_packs`, the first step of
-  `elaborate_with_requests`): a member naming the pack bare reports
+  `prepare`): a member naming the pack bare reports
   `ComptimeError::UnqualifiedStructParam`, the header keeps the bare name,
   and the parser's qualified spread `Type::SelfParam("*Ts")` is folded onto
   the bare `Named("*Ts")` node every later fold expands. It walks members
@@ -991,37 +801,26 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   (`reflection_query`: `r.field_count()`, `reflect[T].field_index["x"]()`);
   a bare runtime use of a compile-time collection is rejected with
   upstream's `ImplicitlyCopyable` text; runtime locals shadow).
-- `comptime/unparse.rs` owns the source spelling of a `where` clause for
-  diagnostics (`render_where_clause`, `violated_constraint_message`: the
-  clause as declared with `Self.` dropped, upstream's note text).
-- `comptime/specialize.rs` owns monomorphization and `def` specialization
-  synthesis (`generate_def_spec`, request seeding). No method mints a
-  clone, per call or per instance: a `comptime if`/`comptime for` over a
-  method's own binders or its struct's stays in its template
-  (`Elab::def_body`), and a body that still fails over them becomes
-  `instantiation_failure_stub`'s body there, the compiler-private
-  `_mojito_instantiation_failed("…")` the checker types like `_mojito_abort`
-  (`call_inference.rs`, diverging in
+- No method or `def` is cloned, per call or per instance: a `comptime
+  if`/`comptime for` over a method's own binders or its struct's stays in
+  its template (`Elab::def_body`), and a body that still fails over them
+  becomes `instantiation_failure_stub`'s body there (`comptime/elab.rs`),
+  the compiler-private `_mojito_instantiation_failed("…")` the checker
+  types like `_mojito_abort` (`call_inference.rs`, diverging in
   `declarations.rs:is_diverging_intrinsic`), so `native::mono` reports it
-  where it is reached (`mono/failure.rs`); the erased VM raises it as
-  unsupported.
-  `template_serves_def` says
-  which generic `def` keeps its template at every closed call: a plain
-  trait-bound one, with type parameters and scalar or `DType` value
-  parameters (`template_serves_binders`, a value inferred from any argument
-  type included); a `DType`- or lane-keyed `def`,
-  overloaded or not, is an ordinary generic `def`. An
-  associated type its body names is solved below
-  the waist, from `MirStructDeclaration.associated_types`
+  where it is reached (`mono/failure.rs`). Every generic `def` keeps its
+  template at every call; a `DType`- or lane-keyed `def`, overloaded or
+  not, is an ordinary generic `def`. An associated type its body names is
+  solved below the waist, from `MirStructDeclaration.associated_types`
   (`declared_associated_type` over `struct_instance`,
-  `native/mono/substitute.rs`).
-  `checker/origins/transfer.rs`
-  owns the carried source that lets both (`SigOrigin::Carried`, recorded by
+  `native/mono/substitute.rs`). `checker/origins/transfer.rs` owns the
+  carried source (`SigOrigin::Carried`, recorded by
   `record_transfer_effect` and closed by `replay_transfer_effects` with the
   receiver's arguments and the call's own bindings, `call_closed`).
-- `comptime/mono.rs` owns the monomorphizing AST rewrite (`mono_type` and
-  friends) and struct-specialization argument resolution.
-- `comptime/rewrite.rs` owns AST substitution and value materialization.
+- `comptime/rewrite.rs` owns alias substitution over the AST
+  (`rewrite_stmt_cloned`, `rewrite_expr`), type-binding substitution
+  (`substitute_type_bindings_in_{block,type}`), `materialize_block`, and
+  `pack_element_construction`.
 - `comptime/synth.rs` also owns the `SIMD[_, _]` parameter desugar
   (`desugar_simd_wildcard_parameters`: an infer-only `DType` and
   `SIMDLength` binder pair per wildcard parameter of a `def`, method, or
@@ -1040,9 +839,8 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
 - A scalar `__hash__` leaf calls its hasher's `_update_with_simd`
   instance at the leaf's vector type (`mojito_types::types::hash_leaf_ty`):
   `native::mono`'s `enqueue_hash_leaf_instances` instantiates it, and the
-  VM (`Prog::hash_leaf_update`, which an erased run answers with the
-  template and the lane binders `lane_binders_from_arguments` reads off the
-  argument values) and Pliron (`hash_leaf_update_instance`) select it by
+  VM (`Prog::hash_leaf_update`) and Pliron (`hash_leaf_update_instance`)
+  select it by
   the lane shape of its value parameter.
 - `crates/mojito-symbol/src/symbol.rs` owns the value-specialization demangler
   (`demangle_specialization`, which rebuilds every key but a type or
@@ -1054,8 +852,8 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   wrap MIR emits), the list-literal initializer predicate
   `is_list_literal_constructor` (the checker's display construction and
   mono's `Array` parameter-value construction), and
-  `materialized_instantiation_argument`, the spelling a `def` clone bakes
-  (the native monomorphizer's `enqueue_display_instance` in
+  `materialized_instantiation_argument`, the spelling an instance's
+  argument takes (the native monomorphizer's `enqueue_display_instance` in
   `native/mono/instances.rs` instantiates a printed instance's `write_to`,
   and `dispatched_overload_target` selects the receiver's
   own overload for a bound dispatch whose qualifier spells the requirement's
@@ -1068,12 +866,7 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `checker/method_calls/statics.rs:record_static_receiver` types and MIR
   lowering copies into `MirInstr::Call::receiver` (a static method's
   `Self.n` reads a receiver-less `self` slot `Flatten::intern_static_self`
-  types as the struct at its own binders; the erased VM binds that slot,
-  and each of the struct's type parameters by name, from the same field,
-  `static_receiver_binding`; an erased construction reifies an inferred
-  type argument from the call's result type,
-  `VmBackend::constructed_parameter_arguments`, and a binder of the caller
-  from its frame, `CallerBindings::comptime_binding`), and `infer_call` binds a
+  types as the struct at its own binders), and `infer_call` binds a
   `def`'s own type parameters from the arguments the checker solved, which
   `SemanticAdjustment::InstantiatedArguments` carries into
   `MirInstr::Call::instantiated_args`, and a method's own from a
@@ -1082,9 +875,10 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   as named arguments as a `def`'s are); the checker closes a method's own value
   binders in its result (`Checker::close_method_values`) and types a spelled
   `DType` argument (`record_dtype_parameter_arguments`); `split_method_symbol` splits a lowered method
-  symbol from its receiver at the last `.` outside brackets (a clone's baked
-  `SIMD[DType.float32, 2]` keeps its `.`; the MIR verifier, template facts,
-  and the monomorphizer parse method symbols through it), and `lifecycle_constructor` recognizes a
+  symbol from its receiver at the last `.` outside brackets (an instance's
+  baked `SIMD[DType.float32, 2]` keeps its `.`; the MIR verifier and the
+  monomorphizer parse method symbols through it), and
+  `lifecycle_constructor` recognizes a
   construction through an overload.
 - A closed bracket argument is compile-time data on its call: the checker's
   `folded_parameter_arguments` (`checker/call_inference.rs`, over
@@ -1096,9 +890,7 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `SemanticAdjustment::FoldedParameterArguments`; `Flatten::param_arg_regs`
   (`Flatten::param_arg_has_no_runtime_form`, `mir.rs`) lowers no code for
   them; `verify_param_arguments` (`verify/subscripts.rs`) accepts the absent
-  register against the call's `instantiated_args`; and
-  `VmBackend::supplied_parameter_arguments` fills the erased slot through
-  `VmBackend::thaw` (`backend/vm.rs`), `freeze`'s inverse.
+  register against the call's `instantiated_args`.
 
 ## Change Routing
 
@@ -1106,7 +898,7 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
 |---|---|---|
 | Syntax or AST shape | [`grammar.md`](grammar.md), `parser.rs`, `ast.rs` | Parser tests, `frontend.md`, feature matrix. |
 | Argument binding | `call.rs` | Checker/VM adapters and call-parity tests. |
-| Which declarations use a parameter as a lane width | `mojito-ast/simd_width.rs` | The elaborator's per-call specialization (`comptime.rs`, `comptime/synth.rs`'s method stubs) and `checker/comptime_validation.rs` (`value_keyed_def`, `validate_comptime_method_bodies`). |
+| Which declarations use a parameter as a lane width | `mojito-ast/simd_width.rs` | `comptime/synth.rs` (`desugar_simd_wildcard_parameters`), `checker/comptime_validation.rs`, and `native::mono`'s lane closing (`mono/gather.rs`). |
 | An AST walk (read-only `Visitor`, in-place `MutVisitor`) | `mojito-ast/visit.rs` | `comptime/pack_qualification.rs`, `ast::stamp_source`, `checker/rebind.rs`. |
 | Overload identity | `symbol.rs` | Checker selection, MIR declarations, symbol/rejection tests. |
 | Type rules | `checker.rs` or focused checker child | `CheckedProgram`, negative checker tests. |
@@ -1226,8 +1018,7 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   struct) is lifted by name at its own type
   (`Checker::requested_binding`, `checker/comptime_validation.rs`), in any
   body, a projection of a temporary it builds copied out as the thunk's
-  `return` operand (`Checker::copy_compile_time_result`); the erased oracle runs such an application by calling its function
-  (`VmBackend::erased_application`, `backend/vm.rs`);
+  `return` operand (`Checker::copy_compile_time_result`);
   `Flatten::crossing_operand` (`mir/lower_expr/expr_access.rs`) is the
   operand of a kept `materialize[X]()` or `comptime(e)`
   (`Checker::infer_template_materialize`, `infer_template_comptime`, which
@@ -1321,13 +1112,12 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
 - `native::mono` slot renumbering (`mono/slots.rs`): `renumber_slots`,
   `renumber_blocks`, `addressed_slots`, and `retire_slots`, shared by
   runtime promotion (`mono/promote.rs`) and unrolling; `reification_slots`
-  names a type parameter's erased-oracle slot, which `materialize_body`
-  retires from each instance. The comptime
-  elaborator's walk (`Elab::mono_stmt`, `comptime/mono.rs`) treats a kept
-  `comptime for`'s index as a symbolic parameter, so a struct applied over
-  it (`Lanes[i]`) stays for the checker. `comptime_for_next`
-  (`backend/vm.rs`) runs the header on the erased path from the slot and a
-  per-frame cursor (`VmBackend::comptime_cursors`).
+  names the slot a template body still addresses to construct a type
+  parameter (`T()`), which `materialize_body` retires from each instance,
+  since a concrete instance names every type it constructs. The comptime
+  elaborator keeps a `comptime for`'s index symbolic
+  (`Elab::keep_template_comptime_for`, `comptime/elab.rs`), so a struct
+  applied over it (`Lanes[i]`) reaches the check as a parameter expression.
 - Every `comptime for` of every function body is kept to MIR
   (`Elab::keep_template_comptime_for`, `comptime/elab.rs`); no top-level
   `def` is keyed on one and nothing is unrolled above the check. The
@@ -1335,15 +1125,11 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   or condition (`cross_stmt`, `NamedCollections`, `comptime/crossing.rs`),
   and leaves a `comptime(e)` it cannot evaluate for the check
   (`in_template_body`, true in every function body).
-- Every type pack is template-served: `is_specializable_declaration`
-  (`comptime.rs`) never names a `def` that `pack_keyed_declaration` holds,
-  and `Elab::pack_defs` feeds `PackRewriter::served_callees`
-  (`comptime/rewrite.rs`), which spells a clone's spread into such a callee
-  element by element; a whole-pack spread is `MirInstr::Call::spread` or
-  `MirInstr::MethodCall::spread`
+- Every type pack is template-served: a whole-pack spread is
+  `MirInstr::Call::spread` or `MirInstr::MethodCall::spread`
   (`lower_pack_spread_argument`, `mir/calls.rs`; `verify_pack_spread`,
-  `verify/calls.rs`; `splice_pack_spread`, `backend/vm/calls.rs`, for the
-  erased oracle) and `native::mono::spread` (`mono/spread.rs`:
+  `verify/calls.rs`; `refuse_pack_spread`, `backend/vm/calls.rs`, since
+  concrete MIR carries none) and `native::mono::spread` (`mono/spread.rs`:
   `expand_pack_spreads`, after `substitute_function`; `spread_operands` reads
   either call form) replaces it with the bound pack's element places; `Checker::pack_length_binder`/`pack_length_query`
   (`checker/constraints.rs`) read `args.__len__()`, `Ts.length`, and
@@ -1358,14 +1144,11 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `substitute_ty` (a `Dependent` element closes through
   `replace_parameters`; a `VariadicPack` over a bound pack is the elements'
   `Tuple`), and `ParamContext::replace` (`mojito-types`) answers a bound
-  pack's length; `erased_parameter_values` (`backend/vm.rs`) gives the
-  erased frame each pack's arity, from the collector or the call's recorded
-  elements.
+  pack's length.
 
 ## Struct generators (P3d, 2026-10-05)
 
-- No struct is a template the cloner keeps: `is_specializable_declaration`
-  (`comptime.rs`) admits only a `def`, and every struct — keyed on a
+- No struct is cloned above the check: every struct — keyed on a
   `DType`, a lane width, a vector or struct value, or a type pack — is a
   generator `native::mono` instantiates.
 - `Variant` is a generator (2026-10-06). Its storage operations carry
@@ -1416,9 +1199,7 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   and `store_parameter_value` (`lower/consts.rs`). A `comptime for`
   element with a `String` leaf is constructed at each read of its binder
   the same way (`construct_parameter_reads`, from
-  `Specializer::copy_body`, `mono/unroll.rs`), and the erased VM
-  materializes the element it binds at the slot's type
-  (`VmBackend::materialize_comptime_binder`, `backend/vm/adapters.rs`). A
+  `Specializer::copy_body`, `mono/unroll.rs`). A
   borrow of a compile-time value (a value parameter, a `comptime for`
   variable) is a temporary the checker materializes
   (`materialized_reference_actual`, and for a read of a tuple or struct
@@ -1431,10 +1212,9 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   that `Checker::infer_member` records, its root kept from materializing
   (`parameter_field_objects`); a borrowed one materializes through
   `ParamValue.materialized`, as `ConstructCollection.materialized` does,
-  and the AST unroller folds one off a substituted binder
-  (`substituted_field`, `comptime/rewrite.rs`). The erased oracle reads
-  one off the frame slot (`projected_frame_parameter`,
-  `backend/vm/exec.rs`). A compile-time parameter's slot is no
+  and an alias substitution folds one off a substituted binder
+  (`substituted_field`, `comptime/rewrite.rs`). A compile-time parameter's
+  slot is no
   drop root: a `comptime for` binder's (`comptime_binder_slots`,
   `analysis/scan.rs`) and a value parameter's
   (`materialized_parameter_slots`, `mojito-mir/src/mir.rs`, over the
@@ -1465,20 +1245,12 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   it is `Flatten::receiver_value_parameter_place` (`mir.rs`).
 - `eval_associated_ct` freezes a fieldwise construction of a non-generic
   struct from compile-time values (`Extent(2, 3)`) to `CtValue::Struct`;
-  `Elab::freeze_struct_value_arguments` (`comptime/mono.rs`) rewrites any
+  `Elab::freeze_struct_value_arguments` (`comptime/elab.rs`) rewrites any
   other struct-typed argument of a struct or a uniquely named `def` to that
   construction, evaluated by CTFE.
 - `bind_ty_args` (`mono/unify.rs`) binds a struct's pack element by element,
   whole (`CtValue::Tuple`), or forwarded (`Ty::RuntimePack`) through
   `bind_pack`.
-- The erased oracle reifies a struct instance over value arguments as a
-  type token (`reified_type_value`/`type_token`, `backend/vm.rs`), a fieldless
-  `Value::Struct` that `ConstructTypeParam` constructs at its arguments;
-  `align_parameter_arguments` collects a type pack's arguments and
-  `constructed_parameter_arguments` reads a pack off the checked result
-  type; a constructor's own solved parameters reach its frame as
-  `ConstructorParameters::own` (`backend/vm/values.rs`); a `comptime if`
-  over a pack element reads its spelling (`comptime_branch_holds`).
 
 ## The parameter constant (2026-10-04)
 
@@ -1489,10 +1261,7 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   and `typelist_proposition_query` (`checker/comptime_validation.rs`), from
   `infer_member` (`Ts.length`, `indexing.rs`), `infer_len` (`len(Ts)`,
   `builtins.rs`), and the `Invoke` arm of `infer` (`Ts.contains[X]()`,
-  `Ts.all_conforms_to[T]()`, `inference.rs`); `derive_adjustment`
-  (`templates.rs`) substitutes it for an instance, and a struct clone's
-  derivation drops it where the clone folded the query
-  (`substituted_facts`, `folded_literals`). A value pack that is still a
+  `Ts.all_conforms_to[T]()`, `inference.rs`). A value pack that is still a
   parameter (`*values: Int`) is a `ParamList` of its element
   (`annotations::value_parameter_expr`, `verify::declared_kind`):
   `Checker::value_pack_named` resolves it — a struct's own `Self.values`
@@ -1508,9 +1277,7 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   identity is derived at `ast::VALUE_PACK_READ_ORDINAL`, the checked arena
   and HIR (`substitute_spelled_constructions`) lower it in the read's place,
   and `origin_place` / `materialize_borrow_owner` treat the read as that
-  temporary. `spell_value_pack_reads` (`comptime/rewrite.rs`) spells a
-  clone's runtime reads as `ParameterList[v0, v1, ...]()` at the same
-  ordinal. `Checker::spells_parameter_list` and
+  temporary. `Checker::spells_parameter_list` and
   `admit_parameter_list_brackets` admit `ParameterList`'s brackets only
   there and in its bundled module, since upstream's list is one parameter.
   `ParameterList.get_span` takes the elements' static address from the
@@ -1531,14 +1298,11 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   (`Flatten::value_pack_spread`, `EnclosingBinders::value_pack`),
   `verify_param_arguments` accepts it in the pack's slot, mono folds it and
   retires it once the call names its instance (`retire_forwarded_packs`,
-  `mono/spread.rs`), and the erased oracle splices it into the callee's
-  tuple (`align_parameter_arguments`); and mono binds the pack from the call
+  `mono/spread.rs`); and mono binds the pack from the call
   (`bind_instantiated_arguments`, `mono/infer.rs`;
   `bind_explicit_value_arguments`, `mono/unify.rs`) and folds the constants
-  in each unrolled copy too (`copy_body`, `mono/unroll.rs`). The erased
-  oracle reifies it as a tuple (`align_parameter_arguments`,
-  `backend/vm.rs`) that `const_value` reads from the frame's `comptime`
-  bindings. `Flatten::param_value` and
+  in each unrolled copy too (`copy_body`, `mono/unroll.rs`).
+  `Flatten::param_value` and
   `param_value_register` (`mir/lower_expr/expr_access.rs`) lower it; the
   pack operand is never lowered. `verify/scope.rs` checks its binders and
   `verify/concrete.rs` rejects a survivor.
@@ -1562,15 +1326,10 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `builtin_application_value` (`param_expr.rs`): a `DType` float-format
   query at a float dtype is its `Int`, and at any other is
   `ParamError::Constraint`, the same instantiation error.
-  `ParamContext::evaluate` answers them too, so the erased oracle does;
+  `ParamContext::evaluate` answers them too;
   `ParamContext::replace` does not, since an application stays symbolic in
   a type. The checker's producer is
-  `record_reflection_value` (`checker/reflection.rs`). The erased oracle evaluates it
-  in `const_value` (`backend/vm.rs`) against `erased_parameter_values`.
-- On the cloner, `fold_pack_uses` (`comptime/rewrite.rs`, called from
-  `generate_def_spec`) folds a `def` clone's own pack uses — `Ts[k]()` and the
-  `TypeList` queries `fold_pack_typelist_use` answers — honouring a nested
-  declaration's same-named type parameter.
+  `record_reflection_value` (`checker/reflection.rs`).
 
 ## The compile-time branch and the request path (2026-10-03)
 
@@ -1589,9 +1348,7 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   survivor; the text form is `comptime_branch` (schema 1.15).
 - `mojito_vm::crossing` owns `ct_to_vm`/`vm_to_ct` and `CTFE_FUEL`;
   `VmBackend::{call_concrete, freeze}` run a verified fragment for the
-  elaborator; `comptime_branch_holds` (`backend/vm.rs`) decides a value
-  condition on the erased path from the frame's reified parameters
-  (`Frame::comptime`).
+  elaborator.
 - `native::mono`: `InstanceState`, `Specializer::drain`,
   `demand_application` (the demand edge: materialize the instance's
   reference closure — `Specializer::materialize_closure` over the names each
@@ -1607,9 +1364,8 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   condition, `demand_layout` and `LayoutOracle` (`Bindings::layout`, read by
   `eval_ct` for `size_of[T]()`), `select_comptime_branches`, and
   `FunctionFrame` around a nested materialization. No `def` is keyed on
-  its compile-time control flow, and
-  `template_serves_binders` admits a scalar value parameter an application
-  binds (`Int`, `UInt`, `Bool`, `Float64`, `StringLiteral`, `DType`), and
-  native `mono::substitute`'s `scalar_parameter_ty` types its read at the
-  declared type (`comptime.rs`, `comptime/specialize.rs`); `CtMarker::Applied` keeps
+  its compile-time control flow; native `mono::substitute`'s
+  `scalar_parameter_ty` types the read of a scalar value parameter an
+  application binds (`Int`, `UInt`, `Bool`, `Float64`, `StringLiteral`,
+  `DType`) at the declared type; `CtMarker::Applied` keeps
   an applied constant, a layout constant among them, symbolic through elaboration.

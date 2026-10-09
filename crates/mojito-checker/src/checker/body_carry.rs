@@ -135,7 +135,6 @@ pub struct InternalStores {
     transferred_origins: FactMap<OwnerId, Vec<mojito_types::origin::Origin>>,
     construction_immutable_binders: FactMap<SourceSpan, Vec<super::ImmutableOriginBinder>>,
     call_result_origins: FactMap<SourceSpan, Vec<super::CallResultOrigin>>,
-    tuple_unpack_sources: FactMap<SourceSpan, super::TupleUnpackSource>,
     comprehension_iterables: FactMap<SourceSpan, Vec<SourceSpan>>,
     nested_def_params: FactMap<SourceSpan, Vec<OwnerId>>,
     view_result_interiors: FactMap<SourceSpan, Vec<String>>,
@@ -201,7 +200,6 @@ macro_rules! carried_stores {
             internal map transferred_origins = transferred_origins;
             internal map construction_immutable_binders = construction_immutable_binders;
             internal map call_result_origins = call_result_origins;
-            internal map tuple_unpack_sources = tuple_unpack_sources;
             internal map comprehension_iterables = comprehension_iterables;
             internal map nested_def_params = nested_def_params;
             internal map view_result_interiors = view_result_interiors;
@@ -354,7 +352,6 @@ macro_rules! define_carry_ops {
                     transferred_origins: self.transferred_origins.into_inner(),
                     construction_immutable_binders: self.construction_immutable_binders.into_inner(),
                     call_result_origins: self.call_result_origins.into_inner(),
-                    tuple_unpack_sources: self.tuple_unpack_sources.into_inner(),
                     comprehension_iterables: self.comprehension_iterables.into_inner(),
                     nested_def_params: self.nested_def_params.into_inner(),
                     view_result_interiors: self.view_result_interiors.into_inner(),
@@ -448,11 +445,6 @@ impl Checker {
         self.previous = Some(previous);
         timing::count("body_facts.carried", 1);
         timing::note("body_facts.carried", || display.to_string());
-        self.template_catalog
-            .borrow_mut()
-            .stats_mut()
-            .carried
-            .push(display.to_string());
         true
     }
 
@@ -503,7 +495,7 @@ impl Checker {
 
     /// Whether the checker carries bodies at all this pass.
     pub(super) fn carries_bodies(&self) -> bool {
-        self.template_catalog.borrow().body_fact_reuse()
+        self.context.borrow().body_fact_reuse()
     }
 
     fn carry_refusal(&self, key: &SourceSpan) -> Result<(), CarryRefusal> {

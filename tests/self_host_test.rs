@@ -4,7 +4,7 @@
 //! a small entry program that imports through the bundled `stdlib/std/...` search
 //! root and runs on the VM.
 
-use mojito::{BackendKind, Compiler, elaborate, link};
+use mojito::Compiler;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -32,23 +32,14 @@ impl Drop for TempDir {
     }
 }
 
-/// Exercise the library and VM at the explicit link/elaborate/check boundary.
+/// Compile and run the entry file through the whole-program `Compiler`.
 /// Authoritative executable coverage lives in `assets/ok`; the regression case
 /// below also pins chained reference-returning subscript receivers.
 fn run(entry: &Path) -> Result<String, String> {
-    let program = link(entry).map_err(|e| e.to_string())?;
-    let program = elaborate(program).map_err(|e| format!("comptime error: {e}"))?;
-    let checked = mojito::check_program(&program).map_err(|e| format!("type error: {e:?}"))?;
-    let mut backend = BackendKind::make("vm").expect("the register VM is implemented");
-    backend
-        .run(&checked)
-        .map_err(|e| format!("runtime error: {e:?}"))?;
-    Ok(backend.output())
+    run_compiled(entry)
 }
 
-/// Run through the authoritative whole-program `Compiler` pipeline
-/// (discovery/specialization plus the ownership phase the raw boundary above
-/// intentionally skips); rejection pins use this runner.
+/// [`run`] spelled out: the driver, compile then execute.
 fn run_compiled(entry: &Path) -> Result<String, String> {
     let compiler = Compiler::default();
     let program = compiler

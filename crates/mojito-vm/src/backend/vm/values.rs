@@ -4,14 +4,6 @@
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 
-/// A construction's compile-time arguments: the struct's, aligned with its
-/// declarations, and the constructor's own the call solved, by name.
-#[derive(Clone, Copy, Default)]
-pub(super) struct ConstructorParameters<'a> {
-    pub(super) param_vals: &'a [Option<Value>],
-    pub(super) own: &'a [(String, Value)],
-}
-
 impl VmBackend {
     /// Apply a binary operator, dispatching to a user struct's **dunder** when an
     /// operand is a struct (operator overloading): `a OP b` → `a.__op__(b)` for a
@@ -175,7 +167,7 @@ impl VmBackend {
         let fidx = prog.index_of(&fname).ok_or_else(|| {
             RuntimeError::Unsupported(format!("vm: struct '{name}' has no method '__setitem__'"))
         })?;
-        let (_, frame_vars) = self.call_frame(prog, fidx, vec![recv, idx, value], &[])?;
+        let (_, frame_vars) = self.call_frame(prog, fidx, vec![recv, idx, value])?;
         *nav_mut(vars, regs, parent)? = frame_vars.into_iter().next().unwrap_or(Value::None);
         Ok(())
     }
@@ -318,42 +310,15 @@ impl VmBackend {
         target: Option<&str>,
         args: Vec<Value>,
         kwargs: Vec<(String, Value)>,
-        parameters: ConstructorParameters<'_>,
     ) -> Result<Value, RuntimeError> {
-        let ConstructorParameters { param_vals, own } = parameters;
         let def = prog.structs.get(name).ok_or_else(|| {
             RuntimeError::Unsupported(format!(
                 "vm: constructed struct '{name}' is missing from MIR"
             ))
         })?;
-        let mut fields = uninitialized_fields(&def.fields);
-        let mut value_params = reify_value_parameters(prog, &def.param_decls, param_vals);
-        size_pack_storage(&def.fields, &mut fields, &value_params);
-        // A same-type lifecycle constructor (`copy:` / `deinit move:`) always
-        // produces its argument's exact type; when the call site supplied no
-        // parameter arguments (a generic template body cannot), inherit the
-        // reified parameters from the source value.
-        if value_params
-            .iter()
-            .all(|(_, value)| matches!(value, Value::None))
-            && let Some(source) = args
-                .iter()
-                .chain(kwargs.iter().map(|(_, value)| value))
-                .find_map(|value| match value {
-                    Value::Struct {
-                        name: source_name,
-                        value_params,
-                        ..
-                    } if source_name == name && !value_params.is_empty() => Some(value_params),
-                    _ => None,
-                })
-        {
-            value_params.clone_from(source);
-        }
         let skeleton = Value::Struct {
             name: name.to_string(),
-            fields,
-            value_params,
+            fields: uninitialized_fields(&def.fields),
         };
         let constructor =
             target.map_or_else(|| prog.constructor_name(name, args.len()), str::to_string);
@@ -372,22 +337,7 @@ impl VmBackend {
         let mut bound = Vec::with_capacity(user_args.len() + 1);
         bound.push(skeleton);
         bound.extend(user_args);
-        let mut constructor_params: Vec<_> = prog
-            .sigs
-            .get(&constructor)
-            .into_iter()
-            .flat_map(|signature| signature.param_decls.iter())
-            .zip(param_vals)
-            .filter_map(|(declaration, value)| {
-                value
-                    .clone()
-                    .map(|value| (declaration.name().to_string(), value))
-            })
-            .collect();
-        // The constructor's own compile-time parameters the call solved
-        // (`__init__[T, //, F: def() -> T]`).
-        constructor_params.extend(own.iter().cloned());
-        let (_, frame_vars) = self.call_frame(prog, fidx, bound, &constructor_params)?;
+        let (_, frame_vars) = self.call_frame(prog, fidx, bound)?;
         Ok(frame_vars.into_iter().next().unwrap_or(Value::None))
     }
 
@@ -400,7 +350,6 @@ impl VmBackend {
         Some(Value::Struct {
             name: name.to_string(),
             fields: uninitialized_fields(&def.fields),
-            value_params: reify_value_parameters(prog, &def.param_decls, &[]),
         })
     }
 
@@ -491,7 +440,6 @@ impl VmBackend {
         let skeleton = Value::Struct {
             name: mojito_symbol::symbol::STDLIB_STRING_STRUCT.to_string(),
             fields,
-            value_params: Vec::new(),
         };
         self.materialize_string_struct(skeleton, text)
     }
@@ -529,7 +477,6 @@ impl VmBackend {
         let view = Value::Struct {
             name: mojito_types::types::STDLIB_STRING_SPAN_STRUCT.to_string(),
             fields,
-            value_params: Vec::new(),
         };
         Ok((view, allocation))
     }
@@ -569,12 +516,7 @@ impl VmBackend {
     ) -> Result<Value, RuntimeError> {
         let bytes = literal.as_bytes();
         let allocation = self.alloc_utf8_bytes(bytes)?;
-        let Value::Struct {
-            name,
-            mut fields,
-            value_params,
-        } = skeleton
-        else {
+        let Value::Struct { name, mut fields } = skeleton else {
             unreachable!("string construction starts from a struct skeleton");
         };
         for (field, slot) in &mut fields {
@@ -588,11 +530,7 @@ impl VmBackend {
                 other => unreachable!("unexpected String field '{other}'"),
             };
         }
-        Ok(Value::Struct {
-            name,
-            fields,
-            value_params,
-        })
+        Ok(Value::Struct { name, fields })
     }
 
     /// Invoke a callable *value* (a plain function or a closure) with owned
@@ -656,7 +594,6 @@ impl VmBackend {
         name: &str,
         args: &[Value],
         kwargs: &[(String, Value)],
-        param_vals: &[Option<Value>],
     ) -> Result<Value, RuntimeError> {
         if !args.is_empty() || kwargs.len() != 1 || kwargs[0].0 != "copy" {
             return Err(RuntimeError::Unsupported(format!(
@@ -667,26 +604,8 @@ impl VmBackend {
         let fidx = prog.index_of(&copy).ok_or_else(|| {
             RuntimeError::Unsupported(format!("vm: struct '{name}' has no copy constructor"))
         })?;
-        let def = &prog.structs[name];
-        let mut value_params = reify_value_parameters(prog, &def.param_decls, param_vals);
-        // Copy construction produces the source's exact type; inherit its
-        // reified parameters when the call site supplied none.
-        if value_params
-            .iter()
-            .all(|(_, value)| matches!(value, Value::None))
-            && let Value::Struct {
-                name: source_name,
-                value_params: source_params,
-                ..
-            } = &kwargs[0].1
-            && source_name == name
-            && !source_params.is_empty()
-        {
-            value_params.clone_from(source_params);
-        }
-        let skeleton = self.struct_skeleton(prog, name, value_params);
-        let (_, frame_vars) =
-            self.call_frame(prog, fidx, vec![skeleton, kwargs[0].1.clone()], &[])?;
+        let skeleton = Self::struct_skeleton(prog, name);
+        let (_, frame_vars) = self.call_frame(prog, fidx, vec![skeleton, kwargs[0].1.clone()])?;
         Ok(frame_vars.into_iter().next().unwrap_or(Value::None))
     }
 
@@ -698,16 +617,11 @@ impl VmBackend {
     /// when `has_copyinit` is set.
     pub(super) fn clone_value(&mut self, prog: &Prog, v: &Value) -> Result<Value, RuntimeError> {
         match v {
-            Value::Struct {
-                name,
-                fields,
-                value_params,
-            } => {
+            Value::Struct { name, fields } => {
                 let copy = format!("{name}.__copyinit__");
                 if let Some(fidx) = prog.index_of(&copy) {
-                    let skeleton = self.struct_skeleton(prog, name, value_params.clone());
-                    let (_, frame_vars) =
-                        self.call_frame(prog, fidx, vec![skeleton, v.clone()], &[])?;
+                    let skeleton = Self::struct_skeleton(prog, name);
+                    let (_, frame_vars) = self.call_frame(prog, fidx, vec![skeleton, v.clone()])?;
                     Ok(frame_vars.into_iter().next().unwrap_or(Value::None))
                 } else {
                     let mut new_fields = Vec::with_capacity(fields.len());
@@ -717,7 +631,6 @@ impl VmBackend {
                     Ok(Value::Struct {
                         name: name.clone(),
                         fields: new_fields,
-                        value_params: value_params.clone(),
                     })
                 }
             }
@@ -744,11 +657,7 @@ impl VmBackend {
                 index: *index,
                 value: Box::new(self.clone_value(prog, value)?),
             }),
-            Value::Closure {
-                function,
-                captures,
-                parameters,
-            } => {
+            Value::Closure { function, captures } => {
                 let mut copied = Vec::with_capacity(captures.len());
                 for capture in captures {
                     copied.push(ClosureCapture {
@@ -763,7 +672,6 @@ impl VmBackend {
                 Ok(Value::Closure {
                     function: function.clone(),
                     captures: copied,
-                    parameters: parameters.clone(),
                 })
             }
             // Scalars alias/copy trivially; a bare pointer copy *aliases* (correct —
@@ -796,7 +704,6 @@ impl VmBackend {
             block: 0,
             instruction: 0,
             continuation: None,
-            comptime: Vec::new(),
         });
 
         let mut returned_variables = returned_frame.map(|(id, variables)| {
@@ -810,7 +717,6 @@ impl VmBackend {
                 block: 0,
                 instruction: 0,
                 continuation: None,
-                comptime: Vec::new(),
             });
             variables
         });
@@ -837,20 +743,16 @@ impl VmBackend {
     /// default move — the value's slot was already tombstoned — suffices. Only
     /// reached when `has_moveinit` is set.
     ///
-    /// A closed generic-struct instance runs its own `__moveinit__` clone;
-    /// a value whose static type is unknown or symbolic keeps the erased path.
     pub(super) fn move_typed_value(
         &mut self,
         prog: &Prog,
         v: Value,
     ) -> Result<Value, RuntimeError> {
-        if let Value::Struct {
-            name, value_params, ..
-        } = &v
+        if let Value::Struct { name, .. } = &v
             && let Some(fidx) = prog.index_of(&format!("{name}.__moveinit__"))
         {
-            let skeleton = self.struct_skeleton(prog, name, value_params.clone());
-            let (_, frame_vars) = self.call_frame(prog, fidx, vec![skeleton, v], &[])?;
+            let skeleton = Self::struct_skeleton(prog, name);
+            let (_, frame_vars) = self.call_frame(prog, fidx, vec![skeleton, v])?;
             return Ok(frame_vars.into_iter().next().unwrap_or(Value::None));
         }
         Ok(v)
@@ -880,12 +782,8 @@ impl VmBackend {
                 "vm: the bundled `std._intrinsics._pow_int` body is not linked".to_string(),
             ));
         };
-        let (result, _) = self.call_frame(
-            prog,
-            index,
-            vec![Value::Int(base), Value::Int(exponent)],
-            &[],
-        )?;
+        let (result, _) =
+            self.call_frame(prog, index, vec![Value::Int(base), Value::Int(exponent)])?;
         let Value::Int(bits) = result else {
             return Err(RuntimeError::TypeError(format!(
                 "`_pow_int` did not return an Int, got {}",
@@ -953,30 +851,6 @@ impl VmBackend {
             );
         }
         Ok(allocation)
-    }
-}
-
-/// Give storage over a pack the instance reifies (`__RuntimeTuple[*Self.Ts]`
-/// in an erased template) one placeholder per element of that pack.
-fn size_pack_storage(
-    declared: &[(String, Ty)],
-    fields: &mut [(String, Value)],
-    value_params: &[(String, Value)],
-) {
-    for ((_, ty), (_, placeholder)) in declared.iter().zip(fields) {
-        let Ty::Tuple(elements) = ty else {
-            continue;
-        };
-        let Some(Ty::Param { binder, .. }) = mojito_types::types::pack_spread(elements) else {
-            continue;
-        };
-        let pack = binder.name.trim_start_matches('*');
-        if let Some((_, Value::Tuple(bound))) = value_params
-            .iter()
-            .find(|(name, _)| name.trim_start_matches('*') == pack)
-        {
-            *placeholder = Value::Tuple(vec![Value::None; bound.len()]);
-        }
     }
 }
 

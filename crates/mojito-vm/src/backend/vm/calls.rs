@@ -21,16 +21,13 @@ pub(super) fn checked_const_value(value: &CheckedConst) -> Value {
     }
 }
 
-/// Splice the collector a call or a method call spreads whole (`show(*args)`,
-/// `Sink().take(*args)`) into its positional arguments, element by element, so the callee's own matcher
-/// collects them. Only the erased oracle runs a template's spread as it
-/// stands; elaborated MIR carries none.
-pub(super) fn splice_pack_spread(argv: &mut Vec<Value>, spread: Option<usize>) {
-    if let Some(position) = spread
-        && let Some(Value::Tuple(elements)) = argv.get(position).cloned()
-    {
-        argv.splice(position..=position, elements);
-    }
+/// Refuse a call or a method call that still spreads a collector whole
+/// (`show(*args)`): the elaborator expands every spread, so concrete MIR
+/// carries none.
+pub(super) fn refuse_pack_spread(spread: Option<usize>) -> Result<(), RuntimeError> {
+    spread.map_or(Ok(()), |_| {
+        Err(parametric_instruction("a whole pack spread"))
+    })
 }
 
 /// Match positional + keyword arguments to a function's parameter slots, producing
@@ -121,11 +118,9 @@ pub(super) fn bind_args(
 
 /// Build a struct instance (fieldwise), coercing each argument to its field type.
 pub(super) fn construct(
-    prog: &Prog,
     def: &StructDef,
     name: &str,
     args: Vec<Value>,
-    param_vals: &[Option<Value>],
 ) -> Result<Value, RuntimeError> {
     if !def.fieldwise_init {
         return Err(RuntimeError::TypeError(format!(
@@ -145,15 +140,9 @@ pub(super) fn construct(
         .zip(args)
         .map(|((fname, fty), arg)| (fname.clone(), crate::runtime::coerce_checked(arg, fty)))
         .collect();
-    // Reify the value parameters onto the instance (type parameters stay erased):
-    // pair each declared value parameter with its supplied comptime `Int` argument.
-    // Explicit `Name[...](...)` supplies every parameter positionally, so the decls
-    // align with `param_vals`.
-    let value_params = reify_value_parameters(prog, &def.param_decls, param_vals);
     Ok(Value::Struct {
         name: name.to_string(),
         fields,
-        value_params,
     })
 }
 

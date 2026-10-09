@@ -30,32 +30,6 @@ pub(super) fn retained_specialization_param(tp: &TypeParam, siblings: &[TypePara
     )
 }
 
-/// The concrete source type to substitute for a specialization type parameter
-/// that is dropped from the clone's signature and calls, or `None` when the
-/// parameter must remain symbolic: type packs, callable-value bindings,
-/// constrained parameters, and types that do not round-trip to source syntax
-/// (such as origin-carrying references). The resolver (`resolve_spec_args_for`)
-/// and the clone generator (`generate_def_spec`) must agree on this decision,
-/// so both consult this one predicate.
-pub(super) fn spec_type_param_substitution(decl: &ParamDecl, value: &CtValue) -> Option<Type> {
-    let ParamDecl::Type {
-        variadic: false,
-        callable_bound: None,
-        constraints,
-        ..
-    } = decl
-    else {
-        return None;
-    };
-    if !constraints.is_empty() {
-        return None;
-    }
-    let CtValue::Type(ty) = value else {
-        return None;
-    };
-    source_type_from_ty(ty)
-}
-
 /// Classify one of `owner`'s source parameters that participates in
 /// compile-time evaluation; `None` means specialization retains it
 /// symbolically (see [`retained_specialization_param`]).
@@ -154,22 +128,6 @@ pub(super) fn ct_value_param_type(name: &str) -> Option<Ty> {
         _ if mojito_symbol::symbol::is_stdlib_string_struct(name) => Ty::StringLiteral,
         _ => return None,
     })
-}
-
-/// CTFE does not evaluate an Origin as a runtime value, but nested type
-/// annotations still need its stable declaration-order identity while the
-/// monomorphizer resolves a variadic Tuple element pack. Carry that semantic
-/// fact as a non-materializable marker for the duration of the enclosing
-/// struct walk.
-pub(super) const fn ct_origin_marker(
-    id: mojito_types::origin::OriginParamId,
-    mutability: mojito_types::origin::Mutability,
-) -> CtValue {
-    CtValue::Marker(CtMarker::TupleOrigin { id, mutability })
-}
-
-pub(super) fn ct_value_has_type(value: &CtValue, ty: &Ty) -> bool {
-    materialize_ct_value(value.clone(), ty).is_some()
 }
 
 /// The `(dtype, width)` of a source `SIMD[DType.d, w]` argument list, or

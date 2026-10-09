@@ -21,26 +21,42 @@
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 use mojito_ast::ast::WithItem;
-use mojito_checked::templates::WithForm;
 use mojito_common::token::SyntaxId;
+
+/// The desugar a `with` statement takes.
+///
+/// The manager struct's declared `__enter__` and `__exit__` members and
+/// whether the context may raise decide it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum WithForm {
+    /// A consuming `__enter__` and no `__exit__`: the enter result stands in
+    /// for the manager to the end of the block. `returns_none` is whether
+    /// `__enter__` returns nothing, so an unnamed result is not bound.
+    ConsumingEnter { returns_none: bool },
+    /// No `__exit__`: the manager itself lives to the end of the block.
+    KeptManager,
+    /// `try: body finally: manager.__exit__()`.
+    PlainExit,
+    /// In a raising context, beside the plain `__exit__`, an
+    /// `__exit__(self, err: Error) -> Bool` takes the body's error and
+    /// decides whether it is raised again.
+    ErrorExit,
+}
 
 /// The compiler-private liveness anchor the desugar emits at the end of a
 /// block: `_mojito_keep_alive(name)` keeps `name` alive to that point without
 /// copying or moving it (HIR lowers it to `KeepAlive`).
 pub const KEEP_ALIVE_BUILTIN: &str = "_mojito_keep_alive";
 
-/// A checked `with` statement's desugar: the statements that replace it and
-/// the form its manager's protocol decided.
+/// A checked `with` statement's desugar: the statements that replace it.
 #[derive(Debug, Clone)]
 pub(super) struct WithDesugar {
-    pub(super) form: WithForm,
     pub(super) statements: Vec<Stmt>,
 }
 
 /// Replace every checked `with` statement in `stmts` (recursively, through
 /// every nested block and declaration body) by its recorded desugar. A `with`
-/// without a recorded desugar — an unchecked generic template body kept
-/// verbatim for monomorphization — stays as written.
+/// without a recorded desugar stays as written.
 pub(super) fn splice_with_desugars(
     stmts: &mut Vec<Stmt>,
     desugars: &HashMap<SourceSpan, WithDesugar>,
@@ -59,20 +75,6 @@ pub(super) fn splice_with_desugars(
         splice_nested(&mut stmts[index], desugars);
         index += 1;
     }
-}
-
-/// The desugar of the `with` statement `stmt` in `form`, built without a
-/// check: the statements [`Checker::check_with`] builds for it, node for
-/// node and identity for identity.
-pub(super) fn with_desugar(stmt: &Stmt, form: WithForm) -> Option<Vec<Stmt>> {
-    let StmtKind::With { items, body } = &stmt.kind else {
-        return None;
-    };
-    let (item, synth, body) = first_item(stmt, items, body)?;
-    let manager = synth.name("mgr");
-    let mut desugar = vec![manager_declaration(item, &synth, &manager)];
-    desugar.extend(desugar_tail(item, body, &synth, &manager, form));
-    Some(desugar)
 }
 
 impl Checker {
@@ -119,7 +121,7 @@ impl Checker {
         for statement in &statements[1..] {
             self.check_stmt(statement, ret, in_loop)?;
         }
-        Ok(WithDesugar { form, statements })
+        Ok(WithDesugar { statements })
     }
 
     /// The desugar form a manager's protocol selects, from its declared

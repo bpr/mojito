@@ -2,6 +2,8 @@
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
+use mojito_ast::ast::Method;
+use mojito_ast::visit::{MutVisitor, walk_block_mut};
 
 impl Elab<'_> {
     /// Elaborate a block, resolving `comptime` constructs. `in_fn` is true inside a
@@ -346,12 +348,6 @@ impl Elab<'_> {
                 where_clauses,
                 body,
             } => {
-                // A comptime-dependent generic template can't be elaborated now (its
-                // parameter value is unknown); keep it verbatim for monomorphization.
-                if is_specializable_declaration(stmt) {
-                    out.push(stmt.clone());
-                    return Ok(());
-                }
                 let body = self.def_body(&[], type_params, params, body, env)?;
                 let params = fold_default_bindings(params, env);
                 out.push(rebuilt(
@@ -406,9 +402,7 @@ impl Elab<'_> {
                                 if names_struct_parameter(&error, type_params)
                                     || names_method_parameter(&error, &m) =>
                             {
-                                vec![super::specialize::instantiation_failure_stub(
-                                    name, &m.name, &m, &error,
-                                )]
+                                vec![instantiation_failure_stub(name, &m.name, &m, &error)]
                             }
                             Err(error) => return Err(error),
                         };
@@ -934,16 +928,6 @@ impl mojito_checker::checker::CalleeOracle for Elab<'_> {
     }
 }
 
-/// The environment key marking `binding` as a specialized variadic pack.
-///
-/// A pack binds as a compile-time tuple, but unlike a tuple value it is
-/// iterable (`comptime for value in values`, as upstream's `VariadicList`),
-/// so `comptime for` consults this marker before rejecting a tuple source.
-/// The `$` keeps it apart from every source identifier.
-pub(super) fn pack_binding_marker(binding: &str) -> String {
-    format!("$pack${binding}")
-}
-
 impl Elab<'_> {
     /// A scalar under a SIMD-valued annotation other than `Int` takes the
     /// annotation's dtype, splatted across its width, so every materialized
@@ -1344,5 +1328,155 @@ const fn spelled_receiver(value: &CtValue, subscripted: bool) -> bool {
             | CtValue::Deferred(_)
             | CtValue::Marker(_)
             | CtValue::Dtype(_)
+    )
+}
+
+impl Elab<'_> {
+    /// Freeze each computed argument of a struct-typed value parameter of a
+    /// generator, a struct or a uniquely named `def`
+    /// (`Tagged[Extent.square(4)]`), into the fieldwise construction of its
+    /// compile-time value (`Tagged[Extent(4, 4)]`), the form the checker
+    /// reads as a frozen struct value, wherever `program` applies one. An
+    /// argument over a binder, which has no value yet, is left as written.
+    pub(super) fn freeze_struct_value_arguments(
+        &self,
+        program: &mut [Stmt],
+        consts: &HashMap<String, CtValue>,
+    ) {
+        struct Freezer<'e, 'a> {
+            elab: &'e Elab<'a>,
+            consts: &'e HashMap<String, CtValue>,
+        }
+        impl MutVisitor for Freezer<'_, '_> {
+            fn visit_expr_mut(&mut self, expr: &mut Expr) {
+                if let ExprKind::TypeApply { name, args }
+                | ExprKind::Call {
+                    name,
+                    param_args: args,
+                    ..
+                } = &mut expr.kind
+                {
+                    self.elab.freeze_arguments(name, args, self.consts);
+                }
+            }
+            fn visit_type_mut(&mut self, ty: &mut Type) {
+                if let Type::Named(name, arguments) = ty {
+                    self.elab.freeze_arguments(name, arguments, self.consts);
+                }
+            }
+        }
+        walk_block_mut(&mut Freezer { elab: self, consts }, program);
+    }
+
+    fn freeze_arguments(
+        &self,
+        name: &str,
+        arguments: &mut [ParamArg],
+        consts: &HashMap<String, CtValue>,
+    ) {
+        let computed = |argument: &ParamArg| match argument {
+            ParamArg::Value(expression) => matches!(
+                expression.kind,
+                ExprKind::Call { .. } | ExprKind::MethodCall { .. }
+            ),
+            ParamArg::Named { value, .. } => matches!(&**value, ParamArg::Value(expression)
+                if matches!(expression.kind, ExprKind::Call { .. } | ExprKind::MethodCall { .. })),
+            ParamArg::Type(_) => false,
+        };
+        if !arguments.iter().any(computed) {
+            return;
+        }
+        let type_params = if let Some(info) = self.structs.get(name) {
+            info.source_params
+        } else {
+            let mut defs = self
+                .program
+                .iter()
+                .filter_map(|statement| match &statement.kind {
+                    StmtKind::Def {
+                        name: declared,
+                        type_params,
+                        ..
+                    } if declared == name => Some(type_params.as_slice()),
+                    _ => None,
+                });
+            match (defs.next(), defs.next()) {
+                (Some(type_params), None) => type_params,
+                _ => return,
+            }
+        };
+        let struct_valued = |parameter: &TypeParam| matches!(parameter.bounds.as_slice(), [only] if self.structs.contains_key(only));
+        if !type_params.iter().any(struct_valued) {
+            return;
+        }
+        let explicit: Vec<&TypeParam> = type_params
+            .iter()
+            .filter(|parameter| {
+                !parameter.infer_only
+                    && !matches!(parameter.bounds.as_slice(),
+                        [only] if only == "Origin" || only == "OriginSet")
+            })
+            .collect();
+        for (index, argument) in arguments.iter_mut().enumerate() {
+            let (parameter, expression) = match argument {
+                ParamArg::Value(expression) => (explicit.get(index).copied(), expression),
+                ParamArg::Named { name, value } => match &mut **value {
+                    ParamArg::Value(expression) => (
+                        explicit
+                            .iter()
+                            .copied()
+                            .find(|parameter| parameter.name == *name),
+                        expression,
+                    ),
+                    _ => continue,
+                },
+                ParamArg::Type(_) => continue,
+            };
+            if !parameter.is_some_and(struct_valued) {
+                continue;
+            }
+            if let Ok(value @ CtValue::Struct { .. }) = self.eval(expression, consts)
+                && let Some(frozen) = value.materialize(expression.span)
+            {
+                *expression = frozen;
+            }
+        }
+    }
+}
+
+/// The body of a method of `owner` whose elaboration failed with `error`:
+/// the elaborator below MIR reports the failure if a reachable call
+/// instantiates the method.
+fn instantiation_failure_stub(
+    owner: &str,
+    name: &str,
+    method: &Method,
+    error: &ComptimeError,
+) -> Stmt {
+    intrinsic_statement(
+        "_mojito_instantiation_failed",
+        format!("{owner}.{name}: {error}"),
+        method,
+    )
+}
+
+/// A statement calling the compiler-private intrinsic `callee` with the
+/// literal `message`, at `method`'s first statement.
+fn intrinsic_statement(callee: &str, message: String, method: &Method) -> Stmt {
+    let span = method
+        .body
+        .first()
+        .map_or(mojito_common::token::DUMMY_SPAN, |statement| statement.span);
+    mk(
+        StmtKind::Expr(Expr::new(
+            ExprKind::Call {
+                name: callee.to_string(),
+                param_args: Vec::new(),
+                args: vec![Expr::new(ExprKind::Str(message), span)],
+                kwargs: Vec::new(),
+            },
+            span,
+        )),
+        span,
     )
 }

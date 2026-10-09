@@ -297,8 +297,7 @@ test `param_expr_residual_is_not_false` pin this.
 - The VM materializes no residual or deferred value. A parameter constant
   (`Const::Param`, a pack query read as a runtime value) is the one
   expression a body runs: the elaborator folds it per instance, so concrete
-  MIR never holds one, and only the erased oracle evaluates it, against its
-  frame's reified parameters.
+  MIR never holds one.
 - Native monomorphization closes a residual under the mono environment or
   reports the contextual unsupported boundary; lowering sees concrete types.
   Layout is asked only of a concrete type (`LayoutError::Symbolic`), and the

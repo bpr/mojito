@@ -13,41 +13,17 @@
 
 use crate::runtime::RuntimeError;
 use crate::runtime::Value;
-use mojito_checked::checked::CheckedProgram;
 
 mod vm;
 pub use vm::VmBackend;
 
-/// A statically dispatched execution backend. The frontend hands it a program
-/// (the checked AST, lowered to verified MIR) and it executes, capturing
-/// output.
+/// A statically dispatched execution backend. The frontend hands it concrete
+/// MIR and it executes, capturing output.
 pub enum Backend {
     Vm(VmBackend),
 }
 
 impl Backend {
-    /// Run a checked program, entering through `main()` when present. Production
-    /// compilation rejects executable module-scope statements; the top-level MIR
-    /// block remains for declarations and explicit legacy snippet tests.
-    pub fn run(&mut self, program: &CheckedProgram) -> Result<(), RuntimeError> {
-        match self {
-            Self::Vm(vm) => vm.run(program),
-        }
-    }
-
-    /// Run a verified, drop-elaborated MIR program that may still be generic,
-    /// resolving its parameters at run time: the erased oracle the concrete
-    /// path is compared against. See [`VmBackend::run_elaborated`] for the
-    /// trust contract.
-    pub fn run_elaborated(
-        &mut self,
-        program: mojito_mir::mir::MirProgram,
-    ) -> Result<(), RuntimeError> {
-        match self {
-            Self::Vm(vm) => vm.run_elaborated(program),
-        }
-    }
-
     /// Run concrete MIR, the elaborator's verified output: the production
     /// execution entry for source programs and artifacts alike.
     pub fn run_concrete(

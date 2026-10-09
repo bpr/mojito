@@ -3400,8 +3400,8 @@ fn chained_inferred_calls_are_served_by_their_templates() {
 #[test]
 fn conflicting_unrolled_occurrences_stay_on_the_abstract_path() {
     // `comptime for` unrolling duplicates one source occurrence with two
-    // incompatible instantiations; the discovery loop drops the occurrence and
-    // both calls keep the retained template's erased path.
+    // incompatible instantiations; the one check keeps the template, and the
+    // elaborator below MIR instantiates each call.
     let mir = compiled_mir(
         "def ident[T: ImplicitlyCopyable & Movable](x: T) -> T:\n    return x\n\ndef walk[*Ts: ImplicitlyCopyable & Writable & Deinitable](*args: *Ts):\n    comptime for i in range(Ts.length):\n        print(ident(args[i]))\n\ndef main():\n    walk(1, \"s\")\n",
     );
@@ -3415,13 +3415,11 @@ fn conflicting_unrolled_occurrences_stay_on_the_abstract_path() {
 
 #[test]
 fn conflict_retained_template_keeps_dispatch_and_adapter_under_the_compiler() {
-    // The erased-dispatch residue witness for the authoritative pipeline: the
-    // `comptime for` unrolling records conflicting closed instantiations at
-    // one source occurrence, so discovery drops the occurrence and the
-    // retained abstract template keeps the `__iterator_dispatch` protocol and
-    // its `CopyIteratorReference` adapter. If the fixpoint ever
-    // over-monomorphizes or abstract checking of retained templates breaks,
-    // this pin notices.
+    // The `comptime for` unrolling records conflicting closed instantiations
+    // at one source occurrence; the one check keeps the template, whose body
+    // carries the `__iterator_dispatch` protocol and its
+    // `CopyIteratorReference` adapter for the elaborator to resolve per
+    // instance.
     let mir = compiled_mir(
         "from std.iter import Iterable\n\ndef first[C: Iterable](items: C, default: C.Element) -> C.Element:\n    for item in items:\n        return item.copy()\n    return default.copy()\n\ndef walk[*Ts: ImplicitlyCopyable & Writable & Deinitable](*args: *Ts):\n    comptime for i in range(Ts.length):\n        print(first([args[i], args[i]], args[i]))\n\ndef main():\n    walk(1, True)\n",
     );
@@ -3444,10 +3442,10 @@ fn conflict_retained_template_keeps_dispatch_and_adapter_under_the_compiler() {
 
 #[test]
 fn function_value_reference_retains_the_bound_generic_template() {
-    // A residual callable argument has no application to monomorphize
-    // against, so it pins the abstract template — the designed
-    // erased-dispatch fallback. (Local callable storage no longer infers a
-    // generic specialization, so the argument channel carries this shape.)
+    // A residual callable argument has no application to instantiate
+    // against above MIR, so the template is what the check keeps. (Local
+    // callable storage no longer infers a generic specialization, so the
+    // argument channel carries this shape.)
     let mir = compiled_mir(
         "def ident[T: ImplicitlyCopyable & Movable](x: T) -> T:\n    return x\n\ndef apply(cb: def(Int) -> Int, x: Int) -> Int:\n    return (cb)(x)\n\ndef main():\n    print(apply(ident, 41))\n",
     );

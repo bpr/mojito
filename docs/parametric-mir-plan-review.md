@@ -52,8 +52,8 @@ the architectural resemblance worth preserving.
    one traversal. Recursive effect summaries and loop dataflow can still
    require fixed points within that process.
 
-   This matters beyond `where` clauses and `rebind`. The existing
-   [instance obligations](notes/instantiation-from-template.md#what-an-instance-still-owes)
+   This matters beyond `where` clauses and `rebind`. The
+   [instance obligations](notes/generator-contract.md#the-inventory)
    include implicit copying, deletability, reference reads, loans in stored
    values, closure effects, and replayed transfers. Some currently vary
    with the substituted type. P2 explicitly includes lifecycle methods, so
@@ -214,8 +214,7 @@ the architectural resemblance worth preserving.
    detect a checker that now accepts invalid programs.
 
    Keep the erased VM as a migration comparator, but use the Mojo pin to
-   adjudicate known Mojito divergences. For example,
-   [overload selection](notes/instantiation-from-template.md#overload-selection-is-bound-once)
+   adjudicate known Mojito divergences. For example, overload selection
    must remain bound at the template check even where clone checking used
    to choose differently.
 

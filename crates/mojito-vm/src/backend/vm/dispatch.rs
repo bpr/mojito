@@ -4,15 +4,12 @@
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 
-/// The checked types a named call carries: the compile-time value arguments
-/// its callee reifies and its argument types.
+/// The checked types a named call carries: the compile-time argument slots
+/// a builtin reads as runtime data and its argument types.
 #[derive(Default)]
 pub(super) struct CallTypes<'a> {
     pub(super) param_vals: &'a [Option<Value>],
     pub(super) arg_types: &'a [Option<mojito_types::types::Ty>],
-    /// The bindings a static method call's spelled receiver gives its frame
-    /// ([`VmBackend::static_receiver_binding`]).
-    pub(super) static_receiver: &'a [(String, Value)],
 }
 
 impl VmBackend {
@@ -101,7 +98,7 @@ impl VmBackend {
                 // fields. Checked explicit-destroy obligations guarantee that
                 // an intact linear value never reaches an automatic DropVar, so
                 // this rule does not need to reconstruct generic conditional
-                // deletability from the erased runtime struct name.
+                // deletability from the runtime struct name.
                 if fields
                     .iter()
                     .any(|(_, value)| matches!(value, Value::Moved))
@@ -119,12 +116,8 @@ impl VmBackend {
                     // `self` is the whole struct, owned by the destructor: its
                     // elaborated `ConsumeVar` destroys the residual fields at
                     // their last use. The return value is discarded.
-                    let self_val = Value::Struct {
-                        name,
-                        fields,
-                        value_params: Vec::new(),
-                    };
-                    self.call_function(prog, idx, vec![self_val], &[])?;
+                    let self_val = Value::Struct { name, fields };
+                    self.call_function(prog, idx, vec![self_val])?;
                     return Ok(());
                 }
                 for (_, value) in fields {
@@ -216,14 +209,7 @@ impl VmBackend {
         if let Some(target) = target
             && constructors.next().is_none()
         {
-            return self.construct_via_init(
-                prog,
-                &name,
-                Some(&target),
-                arguments,
-                Vec::new(),
-                ConstructorParameters::default(),
-            );
+            return self.construct_via_init(prog, &name, Some(&target), arguments, Vec::new());
         }
         self.call_named(prog, &name, arguments, Vec::new(), &CallTypes::default())
     }
@@ -246,9 +232,7 @@ impl VmBackend {
     }
 
     /// Dispatch a call by name: a built-in intrinsic, a struct constructor, or a
-    /// user function (with default/keyword/`*args` slot-matching). `param_vals`
-    /// holds the supplied compile-time value-parameter arguments (`Name[...](...)`),
-    /// used to reify a constructed struct's `value_params`.
+    /// user function (with default/keyword/`*args` slot-matching).
     #[allow(clippy::too_many_lines, reason = "TODO: split this pass")]
     pub(super) fn call_named(
         &mut self,
@@ -261,7 +245,6 @@ impl VmBackend {
         let CallTypes {
             param_vals,
             arg_types,
-            static_receiver,
         } = *types;
         // Built-ins take positional arguments only, and user functions handle
         // keywords through their signatures below. Struct constructors get a
@@ -281,17 +264,7 @@ impl VmBackend {
         if let Some((struct_name, "__init__")) = mojito_symbol::symbol::lifecycle_constructor(name)
             && prog.structs.contains_key(struct_name)
         {
-            return self.construct_via_init(
-                prog,
-                struct_name,
-                Some(name),
-                args,
-                kwargs,
-                ConstructorParameters {
-                    param_vals,
-                    own: static_receiver,
-                },
-            );
+            return self.construct_via_init(prog, struct_name, Some(name), args, kwargs);
         }
         match name {
             // Unlinked VM-CTFE programs have the checker-known `range` builtin
@@ -396,8 +369,8 @@ impl VmBackend {
                 };
                 Err(RuntimeError::Abort(message))
             }
-            // A method clone whose instantiation failed, reached on the
-            // erased path; the elaborator reports it before concrete MIR runs.
+            // A method whose elaboration failed: the elaborator reports it
+            // where a call instantiates the method, before concrete MIR runs.
             "_mojito_instantiation_failed" => Err(RuntimeError::Unsupported(match args.first() {
                 Some(Value::Str(message)) => format!("function instantiation failed: {message}"),
                 _ => "function instantiation failed".to_string(),
@@ -426,12 +399,10 @@ impl VmBackend {
                 Some(Value::Struct {
                     name,
                     fields,
-                    value_params,
                 }) => {
                     let recv = Value::Struct {
                         name: name.clone(),
                         fields,
-                        value_params,
                     };
                     self.call_dunder(prog, &name, "__len__", vec![recv])
                 }
@@ -582,14 +553,10 @@ impl VmBackend {
                         None,
                         args,
                         kwargs,
-                        ConstructorParameters {
-                            param_vals,
-                            own: static_receiver,
-                        },
                     );
                 }
                 if !kwargs.is_empty() {
-                    self.construct_via_copy(prog, name, &args, &kwargs, param_vals)
+                    self.construct_via_copy(prog, name, &args, &kwargs)
                 } else if prog.index_of(&constructor).is_some() {
                     self.construct_via_init(
                         prog,
@@ -597,13 +564,9 @@ impl VmBackend {
                         None,
                         args,
                         Vec::new(),
-                        ConstructorParameters {
-                            param_vals,
-                            own: static_receiver,
-                        },
                     )
                 } else {
-                    construct(prog, &prog.structs[name], name, args, param_vals)
+                    construct(&prog.structs[name], name, args)
                 }
             }
             // `UnsafePointer[T].alloc(n)` — reserve `n` slots in the heap arena and
@@ -646,14 +609,7 @@ impl VmBackend {
                         Some(sig) => self.bind_for_call(prog, name, sig, &args, kwargs)?.0,
                         None => args,
                     };
-                    // Reify the function's value parameters (`doubled[21]()`): pair
-                    // each declared value parameter with its supplied comptime arg.
-                    let mut value_params: Vec<(String, Value)> = match prog.sigs.get(name) {
-                        Some(sig) => reify_value_parameters(prog, &sig.param_decls, param_vals),
-                        None => Vec::new(),
-                    };
-                    value_params.extend(static_receiver.iter().cloned());
-                    self.call_function(prog, idx, bound, &value_params)
+                    self.call_function(prog, idx, bound)
                 }
                 None => Err(RuntimeError::Unsupported(format!(
                     "vm backend does not support the built-in or callee '{name}' yet"
@@ -673,12 +629,7 @@ impl VmBackend {
         value: Value,
         repr: bool,
     ) -> Result<String, RuntimeError> {
-        let Value::Struct {
-            name,
-            fields,
-            value_params,
-        } = value
-        else {
+        let Value::Struct { name, fields } = value else {
             // Integer text is the bundled `std._intrinsics._int_digits`
             // body — the same digits the native backend calls it for —
             // wrapped in `repr`'s constructor spelling when asked.
@@ -715,13 +666,9 @@ impl VmBackend {
             })
         });
         if writes_protocol && let Some(index) = prog.index_of(&symbol) {
-            let receiver = Value::Struct {
-                name,
-                fields,
-                value_params,
-            };
+            let receiver = Value::Struct { name, fields };
             let (_, variables) =
-                self.call_frame(prog, index, vec![receiver, Value::Str(String::new())], &[])?;
+                self.call_frame(prog, index, vec![receiver, Value::Str(String::new())])?;
             return match variables.get(1) {
                 Some(Value::Str(text)) => Ok(text.clone()),
                 other => Err(RuntimeError::TypeError(format!(
@@ -757,8 +704,7 @@ impl VmBackend {
             return Ok(None);
         };
         let scratch = self.digit_scratch()?;
-        let (length, _) =
-            self.call_frame(prog, index, vec![value.clone(), scratch.clone()], &[])?;
+        let (length, _) = self.call_frame(prog, index, vec![value.clone(), scratch.clone()])?;
         let Value::Int(length) = length else {
             return Err(RuntimeError::TypeError(format!(
                 "`{symbol}` did not return a byte count, got {}",

@@ -111,20 +111,6 @@ impl VmBackend {
         if items.len() == 3 && public_elements.len() == 2 {
             items.truncate(2);
         }
-        // Ordinary generic functions are type-erased: while their body runs,
-        // an intrinsic such as `divmod` can have the symbolic checked result
-        // `Tuple[T, T]`. There is deliberately no nominal implementation for an
-        // open type. Keep the private pack transient through that boundary; the
-        // direct-call instruction in the concrete caller carries the fully
-        // substituted destination type and materializes its `Tuple` instance
-        // below. A closed missing instance remains a compiler invariant error
-        // rather than falling back to runtime guessing.
-        if public_elements
-            .iter()
-            .any(|element| mojito_types::types::is_symbolic(element))
-        {
-            return Ok(Value::Tuple(items));
-        }
         let definition = prog.structs.get(name).ok_or_else(|| {
             RuntimeError::Unsupported(format!(
                 "vm: checked public Tuple result targets missing specialization '{name}'"
@@ -135,14 +121,6 @@ impl VmBackend {
                 "vm: public Tuple specialization '{name}' does not have one private runtime-pack field"
             )));
         };
-        // The erased template's storage is its pack, whatever its length.
-        if field == "storage" && mojito_types::types::pack_spread(storage_elements).is_some() {
-            return Ok(Value::Struct {
-                name: name.clone(),
-                fields: vec![(field.clone(), Value::Tuple(items))],
-                value_params: Vec::new(),
-            });
-        }
         if field != "storage"
             || storage_elements.len() != items.len()
             || public_elements.len() != items.len()
@@ -171,7 +149,6 @@ impl VmBackend {
         Ok(Value::Struct {
             name: name.clone(),
             fields: vec![(field.clone(), storage)],
-            value_params: Vec::new(),
         })
     }
 
@@ -224,17 +201,12 @@ impl VmBackend {
                         Ok(Value::Struct {
                             name: name.clone(),
                             fields: vec![(field, Value::Tuple(storage))],
-                            value_params: Vec::new(),
                         })
                     }
                     _ => self.materialize_checked_result(prog, Value::Tuple(items), target),
                 }
             }
-            Value::Struct {
-                name,
-                fields,
-                value_params,
-            } => {
+            Value::Struct { name, fields } => {
                 let declared = prog.structs.get(&name).map(|definition| &definition.fields);
                 let fields = fields
                     .into_iter()
@@ -248,11 +220,7 @@ impl VmBackend {
                         Ok((field, self.materialize_parameter_value(prog, value, ty)?))
                     })
                     .collect::<Result<Vec<_>, RuntimeError>>()?;
-                Ok(Value::Struct {
-                    name,
-                    fields,
-                    value_params,
-                })
+                Ok(Value::Struct { name, fields })
             }
             Value::Str(text)
                 if matches!(target, Some(Ty::Struct(name, _))
@@ -264,38 +232,9 @@ impl VmBackend {
         }
     }
 
-    /// Materialize the element a `comptime for` header just bound into its
-    /// slot at the slot's checked type, as a parameter constant is
-    /// ([`Self::materialize_parameter_value`]).
-    pub(super) fn materialize_comptime_binder(
-        &mut self,
-        prog: &Prog,
-        function: &MirFunction,
-        header: &MirTerm,
-        variables: &mut [Value],
-    ) -> Result<(), RuntimeError> {
-        let MirTerm::ComptimeFor { slot, .. } = header else {
-            return Ok(());
-        };
-        let value = std::mem::replace(&mut variables[*slot as usize], Value::None);
-        variables[*slot as usize] =
-            self.materialize_parameter_value(prog, value, function.var_tys.get(slot))?;
-        Ok(())
-    }
-
-    /// Build an uninitialized `self` skeleton for `name` (fields = `None`), carrying
-    /// the given reified `value_params`. Shared by `__init__`/`__copyinit__`/
-    /// `__moveinit__` construction.
-    #[allow(
-        clippy::unused_self,
-        reason = "TODO: make an associated function or use the receiver"
-    )]
-    pub(super) fn struct_skeleton(
-        &self,
-        prog: &Prog,
-        name: &str,
-        value_params: Vec<(String, Value)>,
-    ) -> Value {
+    /// Build an uninitialized `self` skeleton for `name` (fields = `None`).
+    /// Shared by `__init__`/`__copyinit__`/`__moveinit__` construction.
+    pub(super) fn struct_skeleton(prog: &Prog, name: &str) -> Value {
         let fields = prog.structs[name]
             .fields
             .iter()
@@ -304,7 +243,6 @@ impl VmBackend {
         Value::Struct {
             name: name.to_string(),
             fields,
-            value_params,
         }
     }
 

@@ -309,9 +309,7 @@ impl Checker {
                     parameter_names: sig.names.clone(),
                     view_return_interior: sig.view_return_interior.clone(),
                     view_return: sig.view_return.clone(),
-                    declared_return: Some(
-                        sig.template_ret.clone().unwrap_or_else(|| sig.ret.clone()),
-                    ),
+                    declared_return: Some(sig.ret.clone()),
                     declared_params: sig.params.clone(),
                     nested_origins: sig.nested_origins,
                     param_types: params,

@@ -73,7 +73,6 @@ pub fn ct_to_vm(value: &CtValue) -> Result<Value, RuntimeError> {
                 .iter()
                 .map(|(field, value)| Ok::<_, RuntimeError>((field.clone(), ct_to_vm(value)?)))
                 .collect::<Result<Vec<_>, _>>()?,
-            value_params: Vec::new(),
         }),
         CtValue::Simd { dtype, lanes } => Ok(Value::Simd {
             dtype: *dtype,

@@ -65,14 +65,6 @@ pub const TRAIT_DISPATCH: &str = "__trait_dispatch";
 /// writer's own `write`; the `$` keeps any source method from naming it.
 pub const WRITE_FORMATTED: &str = "$write_formatted";
 
-/// The name prefix of the origin binders a generated clone declares.
-///
-/// They spell the origin slots of a loan-carrying type argument
-/// (`__clone_origin0` and its mutability binder `__clone_origin_mut0` in
-/// `Bag[Span[Int, __clone_origin0]]`), and stand for origins inside the baked
-/// types, not for any template parameter.
-pub const CLONE_ORIGIN_BINDER_PREFIX: &str = "__clone_origin";
-
 /// The implicit-conversion target that splats a scalar across a vector.
 ///
 /// It stands for upstream's `@implicit SIMD.__init__(Scalar[dtype])`, which
