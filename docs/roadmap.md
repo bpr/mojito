@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R532**.
+Next free ID: **R535**.
 
 ## Ordered Work
 
@@ -1799,14 +1799,22 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Planned.
 
-- [ ] **R526 A capturing generic callable bound to a callable parameter does not elaborate**
+- [ ] **R532 A generic closure declared in a generic body does not
+  elaborate when bound to a callable parameter**
 
-  Problem: `invoke_captured[captured_add]()`, where the parameter is `def[n: Int](Int) capturing[origins] -> Int`, fails with "place keeps symbolic type" in `native::mono`; the pin prints 42 (`conformance/fixtures/generic_anonymous_callables.mojo`).
-  - The callable is promoted to a runtime parameter that keeps its generic contract type.
-  - The body's `callback[2](40)` needs the closure's `n = 2` instance called with the passed environment.
-  - Also fails `param_callable_value_test::generic_callable_contract_defaults_override_implementation_defaults`.
+  Problem: in `def outer[m: Int]()`, a `@parameter def add[n: Int](value:
+  Int)` reading `m`, bound by `invoke[add]()`, fails with "operator Add is
+  not defined for Int and None"; the pin prints 53.
+  - The folded callable names the lifted template alone, so the callee's
+    instance specializes it without the enclosing instance's binders.
+  - A nested body inherits them only where it is called from its defining
+    frame (`declaration.enclosing == Some(owner)` in the `CallIndirect` arm
+    of `mono/specializer.rs`).
+  - Fails whether the closure captures or not.
+  - Pinned by `conformance/probes/generic_closure_in_generic_body_callable_parameter.mojo`.
+  - Found while landing R526 (2026-10-09).
   - Depends on nothing.
-  - Model: Opus, Planned.
+  - Model: Opus, Not Planned.
 
 - [ ] **R528 A default value that does I/O is rejected; the pin evaluates it once**
 
@@ -4344,6 +4352,23 @@ retained on purpose and re-probed rather than fixed; they are listed in
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
+- [ ] **R534 A closure with a by-value capture is accepted as a
+  compile-time callable argument; the pin rejects it**
+
+  Problem: `invoke[inner]()`, where `inner` is `def inner() {var x} -> Int`
+  and the parameter is `callback: def() capturing[origins] -> Int`, prints
+  10 in Mojito; the pin rejects it ("cannot use a dynamic value in a
+  parameter list").
+  - A generic closure of the same shape is refused, but only by the
+    elaborator ("captures by value"), not by the checker at the binding.
+  - Following the pin means the checker rejecting a by-value capturing
+    closure as a parameter argument.
+  - Pinned by `conformance/probes/callable_parameter_by_value_capture.mojo`.
+  - Ledger name: `callable-parameter-by-value-capture`.
+  - Found while landing R526 (2026-10-09).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
 ### Mojito-Specific Shortcuts To Move Toward Mojo's Shape
 
 Track: `mojo-shape`.
@@ -4775,6 +4800,22 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     initializer call.
   - Found while landing R364 (2026-10-07).
   - Depends on R10, which deletes the erased oracle's reification.
+  - Model: Opus, Not Planned.
+
+- [ ] **R533 A non-generic capturing closure bound to a callable parameter
+  is passed whole and called indirectly**
+
+  Problem: a generic capturing closure's instance folds the closure's body
+  and takes only its environment, but a non-generic one is still promoted
+  to a runtime closure parameter (`Bindings::runtime_callables`), where the
+  pin specializes on the bound function in both cases.
+  - Two mechanisms carry one rule (`mono/promote.rs`).
+  - Moving the non-generic case onto the environment path leaves one, and
+    makes its calls direct.
+  - A body using the parameter as a value would rebuild a `MakeClosure`
+    over the environment parameters.
+  - Found while landing R526 (2026-10-09).
+  - Depends on nothing.
   - Model: Opus, Not Planned.
 
 ### Grow The CPU Standard Library *(demand-first)*

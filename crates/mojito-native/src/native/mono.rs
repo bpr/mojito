@@ -239,6 +239,13 @@ struct Bindings {
     /// a runtime parameter and its body keeps the indirect call, instead of
     /// folding the callable's name into a direct one.
     runtime_callables: Vec<ParamRef>,
+    /// Callable parameters bound to a generic closure with captures, each
+    /// beside the closure's lifted body and environment. The instance folds
+    /// the body's name, as for a callable that captures nothing, and takes
+    /// the environment alone: one trailing reference parameter per captured
+    /// place, typed here, which a call through the parameter passes to the
+    /// body's specialization.
+    callable_environments: Vec<(ParamRef, String, Vec<Ty>)>,
     /// What answers a layout application (`size_of[T]()`) a type of the
     /// instance carries: the target, and the struct declarations known when
     /// the layout is asked. `None` where no layout is answered.
@@ -247,6 +254,17 @@ struct Bindings {
     /// parameter argument of the instance carries (`SIMD[dt, L[0]]` over a
     /// local display binding). `None` where no application is answered.
     applications: Option<Rc<Applications>>,
+}
+
+/// What a call passes for the callable parameters it binds to closures that
+/// capture ([`Specializer::bind_capturing_callables`]).
+#[derive(Default)]
+struct CapturingArguments {
+    /// Each closure passed whole, in the order its instance promotes them.
+    closures: Vec<Reg>,
+    /// Each captured place a generic closure's instance takes by reference,
+    /// after every closure, beside the register its load fills.
+    environment: Vec<(Reg, MirPlace)>,
 }
 
 /// The compile-time applications of lowered functions the elaboration's

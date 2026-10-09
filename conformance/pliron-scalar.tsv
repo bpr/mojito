@@ -46,6 +46,7 @@ assets/ok/callable_element_call_dispatch.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/callable_struct_element_invocation.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/callable_struct_transfer_after_last_use.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/capturing_callable_parameter_with_locals.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/capturing_generic_callable_parameter_environment.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/capturing_lambda_array_display.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/chained_comparison.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/chained_comparison_operand_copy.mojo	-	ineligible	no-scalar-entry-shape

@@ -469,28 +469,54 @@ impl<'a> Specializer<'a> {
         self.instances[index].1.as_str()
     }
 
-    /// The callable parameters this call binds to a closure that captures.
-    /// Their environments survive no name, so each becomes a runtime
-    /// parameter of the instance and an argument here.
-    pub(super) fn capturing_callable_arguments(
+    /// Bind the callable parameters this call binds to a closure that
+    /// captures, answering the trailing arguments the call passes for them
+    /// and the loads those arguments need first. An environment survives no
+    /// name: a generic closure's instance folds the lifted body and takes
+    /// the captured places as reference parameters, and any other closure
+    /// is passed whole, a runtime parameter its instance calls indirectly.
+    pub(super) fn bind_capturing_callables(
         &self,
+        owner: &str,
+        function: &mut MirFunction,
         target: &str,
         param_args: &[mojito_mir::mir::MirParamArg],
-    ) -> Vec<(ParamRef, Reg)> {
+        bindings: &mut Bindings,
+    ) -> Result<CapturingArguments, MonoError> {
+        bindings.runtime_callables.clear();
+        bindings.callable_environments.clear();
+        let mut trailing = CapturingArguments::default();
         let Some(declaration) = self.declarations.get(target) else {
-            return Vec::new();
+            return Ok(trailing);
         };
-        matched_parameter_arguments(&declaration.param_decls, param_args)
-            .into_iter()
-            .filter(|(decl, _, _)| {
-                matches!(decl, ParamDecl::Value { ty, .. }
-                    if matches!(peel_refs(ty), Ty::Func { .. } | Ty::GenericFunc { .. }))
-            })
-            .filter_map(|(decl, reg, _)| {
-                let (_, captures_are_empty) = self.callable_targets.get(&reg.0)?;
-                (!captures_are_empty).then(|| (decl.binder(), reg))
-            })
-            .collect()
+        for (decl, reg, _) in matched_parameter_arguments(&declaration.param_decls, param_args) {
+            let ParamDecl::Value { ty, .. } = decl else {
+                continue;
+            };
+            let generic = match peel_refs(ty) {
+                Ty::GenericFunc { .. } => true,
+                Ty::Func { .. } => false,
+                _ => continue,
+            };
+            let Some((callee, false)) = self.callable_targets.get(&reg.0) else {
+                continue;
+            };
+            if !generic {
+                bindings.runtime_callables.push(decl.binder());
+                trailing.closures.push(reg);
+                continue;
+            }
+            let captured = self.capture_arguments(owner, function, callee)?;
+            let environment = captured
+                .iter()
+                .map(|(reg, _)| function.reg_types[&reg.0].clone())
+                .collect();
+            bindings
+                .callable_environments
+                .push((decl.binder(), callee.clone(), environment));
+            trailing.environment.extend(captured);
+        }
+        Ok(trailing)
     }
 
     /// The values a call through a callable contract gives each of the
@@ -622,11 +648,40 @@ impl<'a> Specializer<'a> {
                     .map(|ty| (parameter.name.to_string(), ty))
             })
             .collect();
+        // A generic closure's environment follows them: the body folds the
+        // lifted body's name, and a call through the parameter passes these
+        // reference parameters as the environment of its specialization.
+        let environments: Vec<(String, Vec<mojito_hir::hir::VarId>)> = bindings
+            .callable_environments
+            .iter()
+            .map(|(parameter, target, types)| {
+                let slots = append_environment_parameters(&mut function, &parameter.name, types);
+                (target.clone(), slots)
+            })
+            .collect();
         self.enclosing.clone_from(bindings);
         self.instantiate_nested_bodies(&key.template, &mut function.blocks)?;
         self.constant_values = function_constant_values(&function);
         self.callable_targets = function_callable_targets(&function);
         self.closure_captures = function_closure_captures(&function);
+        for (target, slots) in &environments {
+            let captures = slots
+                .iter()
+                .map(|&slot| MirClosureCapture {
+                    place: MirPlace {
+                        through: Some(slot),
+                        ..MirPlace::root(slot, function.var_tys.get(&slot).cloned())
+                    },
+                    mode: MirCaptureMode::Reference,
+                })
+                .collect();
+            self.closure_captures.insert(target.clone(), captures);
+            for (callee, captures_are_empty) in self.callable_targets.values_mut() {
+                if callee == target {
+                    *captures_are_empty = false;
+                }
+            }
+        }
         self.constant_values.extend(
             self.callable_targets
                 .iter()
@@ -656,6 +711,18 @@ impl<'a> Specializer<'a> {
             declaration.enclosing = None;
             for (parameter, ty) in promoted {
                 declare_runtime_parameter(&mut declaration, &parameter, ty);
+            }
+            for (target, slots) in environments {
+                let body = self.declarations[target.as_str()];
+                for (position, slot) in slots.into_iter().enumerate() {
+                    declare_environment_parameter(
+                        &mut declaration,
+                        function.var_names[slot as usize].clone(),
+                        function.param_types[slot as usize].clone(),
+                        body,
+                        position,
+                    );
+                }
             }
             self.instantiate_constructed_defaults(&key.template, &mut declaration, bindings)?;
             self.enqueue_keyword_collector(&key.template, &declaration)?;
@@ -2092,18 +2159,18 @@ impl<'a> Specializer<'a> {
                         }
                         // A callable parameter bound to a closure with
                         // captures keeps its environment: the instance takes
-                        // it as a trailing runtime parameter, so pass the
-                        // closure here as an ordinary argument.
-                        let capturing = self.capturing_callable_arguments(&target, param_arg_regs);
-                        bindings.runtime_callables =
-                            capturing.iter().map(|(binder, _)| binder.clone()).collect();
+                        // it as trailing runtime parameters, passed here.
+                        let capturing = self.bind_capturing_callables(
+                            owner,
+                            function,
+                            &target,
+                            param_arg_regs,
+                            &mut bindings,
+                        )?;
                         func.0 = self.enqueue(&target, bindings, arguments)?;
                         param_arg_regs.clear();
                         instantiated_args.clear();
-                        for (_, closure) in capturing {
-                            args.push(closure);
-                            arg_places.push(None);
-                        }
+                        pass_capturing_arguments(capturing, index, args, arg_places, &mut preludes);
                     }
                     MirInstr::MakeSimd { elems, .. } => {
                         for elem in elems.clone() {
@@ -2363,17 +2430,22 @@ impl<'a> Specializer<'a> {
                                 }
                                 // As at a direct call, a callable parameter
                                 // bound to a capturing closure becomes the
-                                // instance's trailing runtime parameter.
-                                let capturing =
-                                    self.capturing_callable_arguments(&target, param_arg_regs);
-                                bindings.runtime_callables =
-                                    capturing.iter().map(|(binder, _)| binder.clone()).collect();
+                                // instance's trailing runtime parameters.
+                                let capturing = self.bind_capturing_callables(
+                                    owner,
+                                    function,
+                                    &target,
+                                    param_arg_regs,
+                                    &mut bindings,
+                                )?;
                                 let concrete = self.enqueue(&target, bindings, arguments)?;
-                                arg_places.resize(args.len(), None);
-                                for (_, closure) in capturing {
-                                    args.push(closure);
-                                    arg_places.push(None);
-                                }
+                                pass_capturing_arguments(
+                                    capturing,
+                                    index,
+                                    args,
+                                    arg_places,
+                                    &mut preludes,
+                                );
                                 concrete
                             } else {
                                 target
@@ -3000,6 +3072,32 @@ impl<'a> Specializer<'a> {
 const fn arity_keyed_variadic(declaration: &MirFunctionDeclaration) -> bool {
     matches!(&declaration.variadic, Some(element)
         if !matches!(element, Ty::RuntimePack(_) | Ty::Tuple(_)))
+}
+
+/// Append a call's trailing arguments for its capturing callable parameters,
+/// queueing the loads they need ahead of instruction `index`.
+fn pass_capturing_arguments(
+    capturing: CapturingArguments,
+    index: usize,
+    args: &mut Vec<Reg>,
+    arg_places: &mut Vec<Option<MirPlace>>,
+    preludes: &mut Vec<(usize, Vec<MirInstr>)>,
+) {
+    arg_places.resize(args.len(), None);
+    for closure in capturing.closures {
+        args.push(closure);
+        arg_places.push(None);
+    }
+    if capturing.environment.is_empty() {
+        return;
+    }
+    let mut loads = Vec::with_capacity(capturing.environment.len());
+    for (dest, place) in capturing.environment {
+        args.push(dest);
+        arg_places.push(Some(place.clone()));
+        loads.push(MirInstr::LoadPlace { dest, place });
+    }
+    preludes.push((index, loads));
 }
 
 /// `ty` with every pointer origin reset to the static one. A pointer's

@@ -8,6 +8,13 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- A generic closure that captures, bound to a callable parameter
+  (`invoke[captured_add]()` with `callback: def[n: Int](Int)
+  capturing[origins] -> Int`), now elaborates and prints what the pin prints
+  (R526): the instance folds the closure's body, takes its by-reference
+  environment as trailing parameters, and calls the body's specialization
+  directly, on the VM and natively.
+
 - A module display constant that applies a callable — a dictionary or set
   one included — is one compile-time application, evaluated once, as at the
   pin, instead of being respelled (and re-run at run time) at each read
