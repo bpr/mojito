@@ -765,8 +765,7 @@ into the one check, every function body keeps its compile-time regions to
 MIR, module constants are parameter expressions, and the AST CTFE route is
 deleted with the `mojito-vm → mojito-checker` and `mojito-comptime →
 mojito-vm` edges. What the bullets below describe is how the code stands;
-R516 and R517 name the residues (dictionary and set display constants,
-non-scalar closed constants).
+R517 names the residue (non-scalar closed constants).
 
 - With no clone left to check, the executable check runs once on the linked
   source, and source validation and the executable check become one process.

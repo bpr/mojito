@@ -450,6 +450,10 @@ pub struct Checker {
     /// statements, which a body before the statement reads; the statement's
     /// own binding replaces the pre-bound one.
     predeclared_constants: HashSet<String>,
+    /// The module constants whose initializer applies a callable, or reads
+    /// such a constant: a parameter expression, never a type, so
+    /// `comptime E = A` over one is a value binding and not an alias.
+    applied_module_constants: HashSet<String>,
     /// The object of the field read being inferred: a compile-time value
     /// read there is projected, never materialized whole.
     projected_object: RefCell<Option<SourceSpan>>,
@@ -970,6 +974,7 @@ impl Checker {
             method_binder_owners: mojito_symbol::symbol::MethodBinderOwners::default(),
             predeclared_structs: HashSet::new(),
             predeclared_constants: HashSet::new(),
+            applied_module_constants: HashSet::new(),
             projected_object: RefCell::new(None),
             predeclared_traits: HashSet::new(),
             traits: HashMap::new(),

@@ -139,24 +139,22 @@ impl Elab<'_> {
                 // asks a layout, or reads such a constant is the parameter
                 // expression the check binds (decision D3): it has no value
                 // here, and the elaborator below MIR evaluates it on first
-                // demand.
-                if !in_fn && self.applied_initializer(value, env) {
+                // demand. So is one calling a method of, or subscripting, a
+                // closed collection constant (`comptime C = M.copy()`), which
+                // reads that constant by its literal form.
+                let applied = if in_fn {
+                    None
+                } else if self.applied_initializer(value, env) {
+                    Some(value.clone())
+                } else {
+                    spelled_value_reads(value, env).filter(|spelled| self.applies_callable(spelled))
+                };
+                if let Some(value) = applied {
                     let marker = CtValue::Marker(CtMarker::Applied);
                     self.top_consts
                         .borrow_mut()
                         .insert(name.clone(), marker.clone());
                     env.insert(name.clone(), marker);
-                    // A display is spelled where it is read, an applied
-                    // display it reads spelled inside it.
-                    let value = self.spell_applied_displays(value);
-                    if matches!(
-                        value.kind,
-                        ExprKind::ListLit(_) | ExprKind::TupleLit(_) | ExprKind::BraceLit(_)
-                    ) {
-                        self.applied_displays
-                            .borrow_mut()
-                            .insert(name.clone(), value.clone());
-                    }
                     out.push(rebuilt(
                         stmt,
                         StmtKind::Comptime {
@@ -861,60 +859,6 @@ impl Elab<'_> {
             || asks_layout(expression)
             || (!applied.is_empty() && expression_names_any(expression, &applied))
     }
-
-    /// `expression` with each value binding of `env` that a method call
-    /// reads (`S.byte_length()`, `M.get("a")`), or a dictionary or set
-    /// binding a subscript reads (`M["a"]`), spelled by its literal form,
-    /// and a pending module constant a method call or a subscript reads
-    /// spelled by its initializer, so that the request the elaborator below MIR serves
-    /// constructs the value itself, as the pin's parameter expression does.
-    /// `None` when it reads none.
-    pub(super) fn spelled_value_reads(
-        &self,
-        expression: &Expr,
-        env: &HashMap<String, CtValue>,
-    ) -> Option<Expr> {
-        struct Spell<'e> {
-            env: &'e HashMap<String, CtValue>,
-            displays: &'e HashMap<String, Expr>,
-            spelled: bool,
-        }
-
-        impl mojito_ast::visit::MutVisitor for Spell<'_> {
-            fn visit_expr_mut(&mut self, expr: &mut Expr) {
-                let subscripted = matches!(expr.kind, ExprKind::Index { .. });
-                let (ExprKind::MethodCall { object, .. } | ExprKind::Index { object, .. }) =
-                    &mut expr.kind
-                else {
-                    return;
-                };
-                let ExprKind::Identifier(name) = &object.kind else {
-                    return;
-                };
-                if let Some(value) = self.env.get(name)
-                    && spelled_receiver(value, subscripted)
-                    && let Some(mut display) = value.materialize(object.span)
-                {
-                    display.source.clone_from(&object.source);
-                    **object = display;
-                    self.spelled = true;
-                } else if let Some(display) = self.displays.get(name) {
-                    **object = super::requests::located(display.clone(), object);
-                    self.spelled = true;
-                }
-            }
-        }
-
-        let mut spelled = expression.clone();
-        let displays = self.applied_displays.borrow();
-        let mut spell = Spell {
-            env,
-            displays: &displays,
-            spelled: false,
-        };
-        mojito_ast::visit::walk_expr_mut(&mut spell, &mut spelled);
-        spell.spelled.then_some(spelled)
-    }
 }
 
 impl mojito_checker::checker::CalleeOracle for Elab<'_> {
@@ -1041,7 +985,7 @@ impl Elab<'_> {
     /// generic `def` being elaborated as a template (`comptime m = N + 1`),
     /// or applies a callable in any body (`comptime x = f(1)`), once the
     /// value bindings a method reads are spelled
-    /// ([`Self::spelled_value_reads`]): the check
+    /// ([`spelled_value_reads`]): the check
     /// binds it with the binders symbolic, the elaborator below MIR
     /// evaluates an application on demand, and the binding is a binder of
     /// the rest of its block, so a `comptime if` over it stays too.
@@ -1073,9 +1017,8 @@ impl Elab<'_> {
         };
         // A value binding read by a method is spelled by its literal form
         // in a request.
-        if let Some(spelled) = self
-            .spelled_value_reads(value, env)
-            .filter(|spelled| self.applies_callable(spelled))
+        if let Some(spelled) =
+            spelled_value_reads(value, env).filter(|spelled| self.applies_callable(spelled))
         {
             binders.insert(name.clone());
             let kind = StmtKind::Comptime {
@@ -1187,6 +1130,52 @@ fn asks_layout(expression: &Expr) -> bool {
     let mut finder = Finder(false);
     mojito_ast::visit::walk_expr(&mut finder, expression);
     finder.0
+}
+
+/// `expression` with each value binding of `env` that a method call
+/// reads (`S.byte_length()`, `M.get("a")`), or a dictionary or set
+/// binding a subscript reads (`M["a"]`), spelled by its literal form, so
+/// that the request the elaborator below MIR serves constructs the value
+/// itself, as the pin's parameter expression does. `None` when it reads
+/// none.
+pub(super) fn spelled_value_reads(
+    expression: &Expr,
+    env: &HashMap<String, CtValue>,
+) -> Option<Expr> {
+    struct Spell<'e> {
+        env: &'e HashMap<String, CtValue>,
+        spelled: bool,
+    }
+
+    impl mojito_ast::visit::MutVisitor for Spell<'_> {
+        fn visit_expr_mut(&mut self, expr: &mut Expr) {
+            let subscripted = matches!(expr.kind, ExprKind::Index { .. });
+            let (ExprKind::MethodCall { object, .. } | ExprKind::Index { object, .. }) =
+                &mut expr.kind
+            else {
+                return;
+            };
+            let ExprKind::Identifier(name) = &object.kind else {
+                return;
+            };
+            if let Some(value) = self.env.get(name)
+                && spelled_receiver(value, subscripted)
+                && let Some(mut display) = value.materialize(object.span)
+            {
+                display.source.clone_from(&object.source);
+                **object = display;
+                self.spelled = true;
+            }
+        }
+    }
+
+    let mut spelled = expression.clone();
+    let mut spell = Spell {
+        env,
+        spelled: false,
+    };
+    mojito_ast::visit::walk_expr_mut(&mut spell, &mut spelled);
+    spell.spelled.then_some(spelled)
 }
 
 /// Whether `expression` spells one of `names` as an identifier, a call, a

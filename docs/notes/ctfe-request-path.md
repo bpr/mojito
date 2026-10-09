@@ -44,10 +44,13 @@ fact (`Checker::module_constant_value`) lowered as `Const::Param`
 hidden slot, `expression_place_root`, `reference_handle`,
 `lower_call_receiver`), the toplevel lowers no `comptime` declaration, and
 `ComptimeThunks::request_applications` lifts the module-scope thunks from
-the declarations alone. A dictionary or set display constant has no
-parameter-expression form yet (R516): the elaborator spells its display
-where a body reads it (`Elab::spell_applied_displays`,
-`comptime/requests.rs`, `comptime(<display>)` for a runtime value read).
+the declarations alone. Every display constant, a dictionary or set one
+included, is one such application (`$comptime$<name>$module`), evaluated
+once whatever reads it: no read spells its display. A lifted constant is
+declared ahead of the first body after which its initializer types
+(`Checker::check_module_block`), so a body declared before it reads it,
+and an alias of an applied constant (`comptime E = D`) takes its
+parameter expression rather than naming a type.
 
 The elaborator above the check (`crates/mojito-comptime`) folds closed
 values only — literals, operators, displays, type and reflection facts, a
@@ -302,4 +305,4 @@ The boundary:
   module constants as parameter expressions (D3), source validation merged
   into the one check, and the AST route deleted with
   `run_function_value`. The instance budget is reachable without
-  exhausting memory (2026-10-03). Residues: R516, R517, R518, R519.
+  exhausting memory (2026-10-03). Residues: R517, R518, R519.

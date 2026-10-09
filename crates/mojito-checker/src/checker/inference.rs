@@ -1094,13 +1094,24 @@ impl Checker {
                     )));
                 }
                 // A read of a module constant is the parameter value its
-                // declaration denotes, as upstream's alias reference is.
+                // declaration denotes, as upstream's alias reference is. A
+                // re-inference keeps the temporary a borrow of the read
+                // already materialized it as, which the borrow's origin
+                // names.
                 if let Some(value) = self.module_constant_value(name) {
-                    self.operation_adjustments.borrow_mut().insert(
+                    let mut adjustments = self.operation_adjustments.borrow_mut();
+                    let materialized = match adjustments.get(&expr.source_span()) {
+                        Some(mojito_checked::checked::SemanticAdjustment::ParamValue {
+                            value: recorded,
+                            materialized,
+                        }) if *recorded == value => *materialized,
+                        _ => None,
+                    };
+                    adjustments.insert(
                         expr.source_span(),
                         mojito_checked::checked::SemanticAdjustment::ParamValue {
                             value,
-                            materialized: None,
+                            materialized,
                         },
                     );
                 }

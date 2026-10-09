@@ -27,6 +27,22 @@ impl Checker {
                 } if mojito_ast::ast::is_nested_origins_read_only(decorators) => Some(name.clone()),
                 _ => None,
             }));
+        for statement in stmts {
+            if let StmtKind::Comptime {
+                name,
+                type_params,
+                value,
+                ..
+            } = &statement.kind
+                && type_params.is_empty()
+                && (super::applies_callable(value, self)
+                    || names_read(value)
+                        .iter()
+                        .any(|read| self.applied_module_constants.contains(read)))
+            {
+                self.applied_module_constants.insert(name.clone());
+            }
+        }
         drop(phase);
         let phase = timing::span("declarations.shells");
         // Same-module declarations resolve order-independently: every
@@ -141,11 +157,95 @@ impl Checker {
         }
         drop(phase);
         let phase = timing::span("bodies");
-        // `ret = None` marks "not inside a function", so a top-level `return`
-        // is rejected; `in_loop = false` likewise rejects a top-level `break`.
-        let result = self.check_block(stmts, None, false);
+        let result = self.check_module_block(stmts);
         drop(phase);
         result
+    }
+
+    /// Check the module's statements in source order. A constant whose
+    /// initializer the check lifts (`comptime D = {"a": f(1)}`) is declared
+    /// ahead of the first declaration after which its initializer types, so
+    /// a body declared before the constant reads it, as at the pin.
+    fn check_module_block(&mut self, stmts: &[Stmt]) -> Result<(), TypeError> {
+        let mut pending: Vec<usize> = (0..stmts.len())
+            .filter(|&index| {
+                matches!(&stmts[index].kind, StmtKind::Comptime { name, type_params, .. }
+                    if type_params.is_empty()
+                        && self.applied_module_constants.contains(name)
+                        && self.lookup(name).is_none())
+            })
+            .collect();
+        for (index, stmt) in stmts.iter().enumerate() {
+            pending.retain(|&constant| constant > index);
+            if matches!(stmt.kind, StmtKind::Def { .. } | StmtKind::Struct { .. }) {
+                let mut waiting = Vec::with_capacity(pending.len());
+                for constant in pending {
+                    if !self.predeclare_lifted_constant(&stmts[constant])? {
+                        waiting.push(constant);
+                    }
+                }
+                pending = waiting;
+            }
+            // `ret = None` marks "not inside a function", so a top-level
+            // `return` is rejected; `in_loop = false` likewise rejects a
+            // top-level `break`.
+            self.check_block(std::slice::from_ref(stmt), None, false)?;
+        }
+        Ok(())
+    }
+
+    /// Bind the module constant `statement` declares ahead of it when the
+    /// check lifts its initializer and the initializer types here: `true`
+    /// once the constant is bound. An initializer naming what is not
+    /// declared yet waits for a later declaration, and its own statement
+    /// reports one that never is; any other rejection of the initializer is
+    /// the constant's, reported here.
+    fn predeclare_lifted_constant(&mut self, statement: &Stmt) -> Result<bool, TypeError> {
+        let StmtKind::Comptime {
+            name, ty, value, ..
+        } = &statement.kind
+        else {
+            return Ok(false);
+        };
+        if self.lookup(name).is_some() {
+            return Ok(true);
+        }
+        let _position = self.comptime_position();
+        let expression = match self.binderless_comptime_expression(name, value) {
+            Ok(Some(expression)) => expression,
+            Ok(None) | Err(TypeError::UndefinedVariable(_)) => return Ok(false),
+            Err(error) => return Err(error),
+        };
+        let declared = match ty {
+            Some(annotation) => {
+                self.resolve_storage_annotation(annotation, super::StorageStrictness::AllowBare)
+            }
+            None => self
+                .infer(value)
+                .and_then(|found| self.inferred_binding_ty(&found, name)),
+        };
+        let Ok(declared) = declared else {
+            return Ok(false);
+        };
+        let Some(scope) = self.local_comptime_parameters.last_mut() else {
+            return Ok(false);
+        };
+        scope.insert(name.clone(), (0, expression));
+        if self.declare_immutable(name, declared).is_err() {
+            return Ok(false);
+        }
+        self.predeclared_constants.insert(name.clone());
+        Ok(true)
+    }
+
+    /// Whether `value` names a module constant whose initializer applies a
+    /// callable (`comptime E = A` over `comptime A = f(1)`): a parameter
+    /// alias of that constant, which takes its parameter expression, not a
+    /// type alias.
+    fn names_applied_module_constant(&self, value: &Expr) -> bool {
+        matches!(&value.kind, ExprKind::Identifier(source)
+            if self.applied_module_constants.contains(source)
+                && !self.module_constant_shadowed(source))
     }
 
     /// Register a module-level `comptime` alias declaration — a generic
@@ -172,6 +272,9 @@ impl Checker {
         let subscript_application = matches!(&value.kind, ExprKind::Index { object, .. }
                 if matches!(&object.kind, ExprKind::Identifier(base)
                     if self.declared_structs.contains(base)));
+        if type_params.is_empty() && self.names_applied_module_constant(value) {
+            return Ok(());
+        }
         if type_params.is_empty()
             && !subscript_application
             && !matches!(
@@ -1711,8 +1814,11 @@ impl Checker {
                     return Ok(());
                 }
                 // A type name takes the alias route; an alias of a value
-                // binder (`comptime lane = dt`) is the ordinary path below.
-                if !self.names_value_binder(value)
+                // binder (`comptime lane = dt`) or of an applied module
+                // constant (`comptime E = D`) is the ordinary path below.
+                let value_alias = self.names_value_binder(value)
+                    || (type_params.is_empty() && self.names_applied_module_constant(value));
+                if !value_alias
                     && (!type_params.is_empty()
                         || self.comptime_aliases.contains_key(name)
                         || matches!(
@@ -1804,6 +1910,10 @@ impl Checker {
                     self.declare_immutable(name, Ty::IntLiteral)?;
                 } else {
                     let ty = self.infer(value)?;
+                    // A compile-time result is a value of its own, copied
+                    // out of a reference result as any compile-time
+                    // result is (`comptime q = QS[2]`).
+                    self.copy_compile_time_result(value, &ty);
                     let declared = self.inferred_binding_ty(&ty, name)?;
                     // The binding is read at run time as its `Float64`
                     // storage type, so the folded literal crosses here.

@@ -8,6 +8,15 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- A module display constant that applies a callable — a dictionary or set
+  one included — is one compile-time application, evaluated once, as at the
+  pin, instead of being respelled (and re-run at run time) at each read
+  (R516). A lifted constant declared after the body that reads it, an alias
+  of an applied constant (`comptime E = D`), `len(D)` or `"a" in D` in a
+  `comptime` binding, and a module `comptime C = M.copy()` over a closed
+  collection now compile; a run-time `T[1]` borrow of a tuple constant's
+  `String` element no longer outlives its materialized temporary.
+
 - Regressions the 2026-10-09 overnight gate found after the cloner and the
   AST compile-time route were deleted (R9, R10) and pointer-backed results
   landed (R196). The VM indexes an elaborated `Tuple$mono$…` result

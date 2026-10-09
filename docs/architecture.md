@@ -869,9 +869,13 @@ applies a callable, asks a layout, or reads such a constant is marked
 module constant in its declaration pass and records a body's read as a
 `SemanticAdjustment::ParamValue` (`Checker::module_constant_value`), which
 MIR lowers as `Const::Param` and `native::mono` folds or demands
-(`docs/notes/ctfe-request-path.md` §Today, decision D3). The toplevel
-lowers no `comptime` declaration; a non-scalar closed constant is still
-spelled into bodies by `materialize_block` (R517).
+(`docs/notes/ctfe-request-path.md` §Today, decision D3). A constant whose
+initializer the check lifts (a display, a method call) is the application
+`$comptime$<name>$module`, evaluated once, and is declared ahead of the
+first body after which its initializer types (`Checker::check_module_block`);
+no read spells its initializer. The toplevel lowers no `comptime`
+declaration; a non-scalar closed constant is still spelled into bodies by
+`materialize_block` (R517).
 
 Compile-time values are represented by:
 

@@ -510,16 +510,26 @@ impl Checker {
             }
             (_, element) => element,
         };
-        // A value pack still a parameter is its own sequence.
-        let sequence = match elements {
-            Some(elements) => Some(
-                self.param_context
-                    .constant(mojito_types::ct::CtValue::List(elements))
-                    .map_err(|error| TypeError::Unsupported(error.to_string()))?,
+        // A value pack still a parameter is its own sequence, as is a
+        // constant the check lifted (`comptime D = {"a": f(1)}`), which the
+        // elaborator below MIR evaluates.
+        let (sequence, requested) = match elements {
+            Some(elements) => (
+                Some(
+                    self.param_context
+                        .constant(mojito_types::ct::CtValue::List(elements))
+                        .map_err(|error| TypeError::Unsupported(error.to_string()))?,
+                ),
+                false,
             ),
-            None => names
-                .or_else(|| self.value_pack_named(&iter))
-                .or_else(|| self.requested_name(&iter)),
+            None => names.or_else(|| self.value_pack_named(&iter)).map_or_else(
+                || {
+                    let requested = self.requested_name(&iter);
+                    let named = requested.is_some();
+                    (requested, named)
+                },
+                |sequence| (Some(sequence), false),
+            ),
         };
         // A display the check does not close is evaluated per instance, as
         // is a sequence a compile-time application builds (`mk(n)`).
@@ -532,7 +542,7 @@ impl Checker {
             && self.reads_compile_time_alone(&iter);
         let element = match element {
             Ty::Struct(name, args)
-                if (evaluated || applied)
+                if (evaluated || applied || requested)
                     && args.is_empty()
                     && mojito_types::types::is_stdlib_string_struct(&name) =>
             {
@@ -1272,6 +1282,26 @@ impl Checker {
             .and_then(|level| self.vparams.get_mut(level))
     }
 
+    /// What a `comptime NAME = value` with no binders in scope denotes
+    /// where it is read at compile time: its parameter expression, or the
+    /// application of the function the check lifts for its initializer. A
+    /// module constant's lifted function is named by the constant
+    /// (`$comptime$NAME$module`), the same in every pass, so a display
+    /// constant is one application, evaluated once, whatever reads it.
+    /// `None` when the initializer denotes nothing.
+    pub(super) fn binderless_comptime_expression(
+        &self,
+        name: &str,
+        value: &Expr,
+    ) -> Result<Option<ParamExpr>, TypeError> {
+        if let Some(expression) = self.comptime_value_expression(value) {
+            return Ok(Some(expression));
+        }
+        Ok(self
+            .requested_binding(value)?
+            .map(|application| self.module_lifted_application(name, value, application)))
+    }
+
     /// Bind a local `comptime NAME = value` over the binders of the template
     /// body being checked, which the elaborator keeps (`comptime m = N + 1`):
     /// a type-valued one is a scoped type alias, and a value-valued one names
@@ -1295,18 +1325,8 @@ impl Checker {
             // A body with no binders keeps a binding only when it applies a
             // callable (`comptime x = f(1)`): its reads in a compile-time
             // position are the application, and the rest of the statement
-            // is typed as any binding is. A module constant's lifted
-            // function is named by the constant, the same in every pass.
-            let module_display =
-                self.function_bases.is_empty() && matches!(value.kind, ExprKind::BraceLit(_));
-            let expression = match self.comptime_value_expression(value) {
-                Some(expression) => Some(expression),
-                None if module_display => None,
-                None => self
-                    .requested_binding(value)?
-                    .map(|application| self.module_lifted_application(name, value, application)),
-            };
-            if let Some(expression) = expression
+            // is typed as any binding is.
+            if let Some(expression) = self.binderless_comptime_expression(name, value)?
                 && let Some(scope) = self.local_comptime_parameters.last_mut()
             {
                 scope.insert(name.to_string(), (0, expression));
@@ -1730,12 +1750,17 @@ impl Checker {
         let ExprKind::Identifier(name) = &expr.kind else {
             return Ok(());
         };
+        // A display constant the check lifted is a parameter list, read
+        // whole at its declared type.
         let requested = self
             .local_comptime_parameters
             .iter()
             .rev()
             .find_map(|scope| scope.get(name))
-            .and_then(|(_, expression)| expression.meta().as_value().cloned())
+            .and_then(|(_, expression)| match expression.meta() {
+                mojito_types::param_expr::MetaTy::ParamList(_) => self.lookup(name).cloned(),
+                meta => meta.as_value().cloned(),
+            })
             .filter(|ty| {
                 self.lookup(name) == Some(ty)
                     && (mojito_types::types::list_element(ty).is_some()
@@ -3269,7 +3294,7 @@ fn record_agreed<V: PartialEq>(recorded: &mut HashMap<String, V>, name: &str, va
 }
 
 /// Every name `expr` reads, in source order.
-fn names_read(expr: &Expr) -> Vec<String> {
+pub(super) fn names_read(expr: &Expr) -> Vec<String> {
     struct Names(Vec<String>);
     impl mojito_ast::visit::Visitor for Names {
         fn visit_expr(&mut self, expr: &Expr) {

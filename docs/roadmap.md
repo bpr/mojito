@@ -50,25 +50,6 @@ Scope: what remains of the plan's stages, and what the pipeline order still
 leaves to close. A defect found on the way is filed by its kind; a
 divergence from the pin goes to a catch-up track, however small.
 
-- [ ] **R516 An applied module dictionary or set display constant is
-  spelled at each read, not bound as a parameter expression**
-
-  Problem: `comptime D = {"a": f(1), "b": 3}` has no parameter-expression
-  form, so the elaborator spells the display where a body reads it.
-  - A method call or subscript of the constant, `materialize[D]()`, a
-    `comptime for` over it, and another constant's initializer each get the
-    display in place (`Elab::spell_applied_displays`), and a runtime value
-    read becomes the request `comptime(<display>)`
-    (`comptime/requests.rs`).
-  - Decision D3 (`docs/notes/ctfe-request-path.md`) wants the constant
-    bound as `Apply(thunk)` like a list display is
-    (`Checker::module_lifted_application`). A module-scope
-    `comptime C = M.copy()` remains this task's binding-shape gap;
-    the body-local copy now freezes and materializes.
-  - Fixture: `assets/ok/ctfe_module_display_constant_requests.mojo`.
-  - Depends on nothing.
-  - Model: Fable, Not Planned.
-
 - [ ] **R517 A closed module constant that is not a scalar is still spelled
   into bodies as a literal**
 

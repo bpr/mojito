@@ -238,6 +238,7 @@ assets/type_error/ctfe_constant_cycle.mojo	compile-reject	agree	error: function 
 assets/type_error/ctfe_list_result_implicit_read.mojo	compile-reject	agree	error: cannot materialize comptime value of type 'List[Int]' to runtime because it is not 'ImplicitlyCopyable'
 assets/type_error/ctfe_local_binding_reaches_print.mojo	runs	subset	the pin runs it, printing at compile time;Mojito rejects: is not safe for VM-backed compile-time execution
 assets/type_error/ctfe_method_reaches_print.mojo	runs	subset	the pin runs it, printing at compile time;Mojito rejects: is not safe for VM-backed compile-time execution
+assets/type_error/ctfe_module_dict_constant_bare_read.mojo	compile-reject	agree	error: cannot materialize comptime value of type 'Dict[String, Int]' to runtime because it is not 'ImplicitlyCopyable'
 assets/type_error/def_typed_element_rejected.mojo	compile-reject	agree	error: 'List' parameter 'T' has 'AnyType' type, but value has type 'AnyTrait[def(Int) -> Int]'
 assets/type_error/def_typed_field_rejected.mojo	compile-reject	agree	error: struct fields do not support trait types; 'def(Int) -> Int' is a trait, use a concrete type or compile-time generic
 assets/type_error/def_typed_local_annotation_rejected.mojo	compile-reject	agree	error: cannot implicitly convert 'def increment(x: Int) thin -> Int' value to 'def(Int) -> Int'

@@ -7642,3 +7642,23 @@ fn value_parameter_field_read_requires_an_implicitly_copyable_field() {
         TypeError::ImplicitCopy { ty, .. } if ty == "In"
     ));
 }
+
+#[test]
+fn lifted_module_constant_declared_after_its_reader_is_bound_ahead() {
+    // A display constant the check lifts is predeclared before the first
+    // body after which its initializer types, and an alias of an applied
+    // constant takes its parameter expression rather than naming a type.
+    ok_std(
+        "def f(x: Int) -> Int:\n    return x * 2\n\ndef main():\n    var d = materialize[D]()\n    print(len(d), len(materialize[E]()), A2)\n\ncomptime D = {\"a\": f(1), \"b\": 3}\ncomptime E = D\ncomptime A = f(2)\ncomptime A2 = A\n",
+    );
+}
+
+#[test]
+fn later_lifted_module_constant_still_reports_its_own_rejection() {
+    let source = "def main():\n    print(X)\n\ncomptime X = {\"a\": 1}[\"a\"]\n";
+    assert!(matches!(
+        err_std(source),
+        TypeError::Unsupported(message)
+            if message.contains("cannot call raising function in comptime initializer")
+    ));
+}

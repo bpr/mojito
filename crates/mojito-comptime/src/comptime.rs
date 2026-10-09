@@ -33,7 +33,7 @@ use mojito_ast::ast::{
 };
 pub use mojito_symbol::symbol::mangle;
 
-use mojito_common::token::{Span, SyntaxId};
+use mojito_common::token::Span;
 use mojito_types::ct::{CtMarker, CtValue};
 use mojito_types::param_expr::{ParamContext, ParamError, ParamExpr};
 use mojito_types::types::{ParamDecl, Ty, TyArg, list_type, tuple_type};
@@ -294,13 +294,11 @@ pub fn elaborate_prepared(program: &[Stmt]) -> Result<Vec<Stmt>, ComptimeError> 
         template_binders: RefCell::new(Vec::new()),
         crossing_templates: Cell::new(0),
         top_consts: RefCell::new(HashMap::new()),
-        applied_displays: RefCell::new(HashMap::new()),
         generic_aliases: RefCell::new(HashMap::new()),
     };
     drop(indexes);
     let mut env = HashMap::new();
     let mut elaborated = elab.block(program, &mut env, false)?;
-    elab.request_display_reads(&mut elaborated);
     // A module constant declared after its use crosses here.
     let consts = elab.top_consts.borrow().clone();
     elab.fold_runtime_crossings(&mut elaborated, &consts)?;
@@ -327,7 +325,6 @@ mod crossing;
 mod elab;
 mod pack_qualification;
 mod params;
-mod requests;
 mod synth;
 
 #[allow(clippy::wildcard_imports, reason = "pages of this split module")]
@@ -391,25 +388,6 @@ const fn is_scalar_constant(value: &CtValue) -> bool {
             | CtValue::Str(_)
             | CtValue::Marker(CtMarker::Applied)
     )
-}
-
-/// Whether `expression` is a literal of a scalar type a loop binder takes.
-fn literal_element(expression: &Expr) -> bool {
-    match &expression.kind {
-        ExprKind::Int(_) | ExprKind::Float(_) | ExprKind::Str(_) | ExprKind::Bool(_) => true,
-        ExprKind::Prefix(PrefixOp::Neg, inner) => {
-            matches!(inner.kind, ExprKind::Int(_) | ExprKind::Float(_))
-        }
-        _ => false,
-    }
-}
-
-/// Whether a brace display is a set or dictionary of literals.
-fn literal_entries(entries: &[(Expr, Option<Expr>)]) -> bool {
-    !entries.is_empty()
-        && entries
-            .iter()
-            .all(|(key, value)| literal_element(key) && value.as_ref().is_none_or(literal_element))
 }
 
 /// The alias a `comptime NAME = Ts[index]` statement declares of an element
@@ -477,78 +455,6 @@ pub(super) fn def_pack_names(type_params: &[TypeParam], params: &[FnParam]) -> H
         .map(|binder| (*binder).to_string())
         .chain(collectors)
         .collect()
-}
-
-/// The names a `def` binds itself, so that a bare name outside them is a
-/// module's: its compile-time and runtime parameters, the locals and loop
-/// variables its body declares, a nested `def`'s included, and each local
-/// `comptime` binding other than one of a literal display, which is a closed
-/// collection wherever the body names it.
-fn def_bound_names(
-    type_params: &[TypeParam],
-    params: &[FnParam],
-    body: &[Stmt],
-) -> HashSet<String> {
-    #[derive(Default)]
-    struct Bound {
-        names: HashSet<String>,
-    }
-
-    impl mojito_ast::visit::Visitor for Bound {
-        fn visit_stmt(&mut self, statement: &Stmt) {
-            match &statement.kind {
-                StmtKind::Comptime {
-                    type_params,
-                    ty: None,
-                    value,
-                    ..
-                } if type_params.is_empty()
-                    && match &value.kind {
-                        ExprKind::ListLit(items) => items.iter().all(literal_element),
-                        ExprKind::BraceLit(entries) => literal_entries(entries),
-                        _ => false,
-                    } => {}
-                StmtKind::Comptime { name, .. }
-                | StmtKind::VarDecl { name, .. }
-                | StmtKind::RefDecl { name, .. }
-                | StmtKind::Assign { name, .. }
-                | StmtKind::Def { name, .. } => {
-                    self.names.insert(name.clone());
-                }
-                StmtKind::For { var, .. } | StmtKind::ComptimeFor { var, .. } => {
-                    self.names.insert(var.clone());
-                }
-                StmtKind::Unpack { targets, .. } => {
-                    self.names
-                        .extend(targets.iter().filter_map(|target| match &target.kind {
-                            ExprKind::Identifier(name) => Some(name.clone()),
-                            _ => None,
-                        }));
-                }
-                StmtKind::Try {
-                    except: Some((name, _)),
-                    ..
-                } => self.names.extend(name.clone()),
-                StmtKind::With { items, .. } => {
-                    self.names
-                        .extend(items.iter().filter_map(|item| item.var.clone()));
-                }
-                _ => {}
-            }
-        }
-    }
-
-    let mut bound = Bound::default();
-    bound.names.extend(
-        type_params
-            .iter()
-            .map(|parameter| parameter.name.trim_start_matches('*').to_string()),
-    );
-    bound
-        .names
-        .extend(params.iter().map(|parameter| parameter.name.clone()));
-    mojito_ast::visit::walk_block(&mut bound, body);
-    bound.names
 }
 
 /// Substitute one now-concrete type binder in a source annotation, wherever
@@ -864,10 +770,6 @@ struct Elab<'a> {
     /// How many function bodies the runtime-crossing pass has descended into.
     crossing_templates: Cell<usize>,
     top_consts: RefCell<HashMap<String, CtValue>>,
-    /// The module constants whose initializer is a display that applies a
-    /// callable, by name, each as the display spelled where it is read
-    /// (`requests.rs`).
-    applied_displays: RefCell<HashMap<String, Expr>>,
     /// Module-scope generic `comptime` aliases in declaration order, name →
     /// (parameters, body). The declarations pass through elaboration for the
     /// checker's alias registry, but an application inside a `comptime if`

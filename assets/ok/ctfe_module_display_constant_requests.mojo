@@ -1,8 +1,9 @@
 # A module constant whose initializer is a display, a tuple, or a subscript
-# that applies a callable waits for its first demand like every other
-# applied constant: a `comptime for`, a body's `comptime` binding, a
-# compile-time condition, a type argument, `materialize`, and a method of a
-# dictionary display all read it.
+# that applies a callable is one application, evaluated once on its first
+# demand like every other applied constant: a `comptime for`, a body's
+# `comptime` binding, a compile-time condition, a type argument,
+# `materialize`, a method of a dictionary or set display, an alias, and a
+# body declared before the constant all read it.
 @fieldwise_init
 struct Q(Copyable, Movable):
     var a: Int
@@ -26,9 +27,19 @@ comptime T = (twice(1), "a")
 comptime Z = T[0]
 comptime D = {"a": f(1), "b": 3}
 comptime A = D.get("a").value()
+comptime E = D
+comptime S = {f(1), 3}
+comptime M = {"a": 1, "b": 2}
+comptime C = M.copy()
+comptime L = [1, 2]
+comptime K = L.copy()
 
 def show[n: Int]():
     print(n)
+
+def early():
+    var d = materialize[LATE]()
+    print(len(d), d.get("x").value())
 
 def main():
     comptime for q in QS:
@@ -47,3 +58,20 @@ def main():
     print(A)
     comptime b = D.get("b").value()
     print(b)
+    var d = materialize[D]()
+    print(len(d), "a" in d)
+    comptime for k in D:
+        print(k)
+    show[len(D)]()
+    var e = materialize[E]()
+    print(len(e))
+    var s = materialize[S]()
+    comptime ns = len(S)
+    print(len(s), 2 in s, ns)
+    var c = materialize[C]()
+    print(len(c), "b" in c)
+    var k = materialize[K]()
+    print(len(k), k[1])
+    early()
+
+comptime LATE = {"x": f(4)}

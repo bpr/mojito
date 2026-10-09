@@ -354,7 +354,10 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `check_comptime_for` checks a loop body under its element type,
   `bind_template_comptime` binds a local `comptime` binding over the
   body's binders (at module scope, a constant's lifted initializer as
-  `$comptime$<name>$module`, `module_lifted_application`), and
+  `$comptime$<name>$module`, `binderless_comptime_expression` over
+  `module_lifted_application`, which `statements.rs:check_module_block`
+  also runs ahead of the first body after which the initializer types,
+  through `predeclare_lifted_constant`), and
   `conformance_arm_assumptions` collects what a `comptime if`'s
   `conforms_to` atoms prove for the arm `statements.rs:check_conditional`
   guards with them. A `DType`- or width-keyed body is
@@ -784,17 +787,11 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   is drawn by: `applies_callable`, over a phase's `CalleeOracle` (the
   elaborator's `Elab`, `comptime/elab.rs`, and the `Checker`), so the two
   phases agree on which bindings are requests by construction.
-  `Elab::spelled_value_reads` spells a dictionary or set binding a method
-  reads by its display first. `comptime/eval.rs` folds closed values only
+  `elab.rs:spelled_value_reads` spells a closed dictionary or set binding a
+  method reads by its display first (R517); a module constant over one
+  (`comptime C = M.copy()`) is then an applied initializer. `comptime/eval.rs` folds closed values only
   and refuses every call (`not_evaluated_here`): no call is evaluated
   above the check.
-- `comptime/requests.rs` owns the applied module display constants (R516):
-  `Elab::spell_applied_displays` spells one by its display in a compile-time
-  position (a condition, a loop header, a `materialize[...]()` operand,
-  another constant's initializer, a method call or subscript of it), and
-  `Elab::request_display_reads` rewrites a body's value read to the request
-  `comptime(<display>)`, extended over the read's field chain, a name the
-  body binds itself left alone.
 - `comptime/crossing.rs` owns the compile-time → runtime crossing fold
   (`fold_runtime_crossings`: `materialize[X]()` and `comptime(e)` become
   literals, and so does a reflection query over a closed handle

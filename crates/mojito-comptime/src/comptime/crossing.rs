@@ -158,7 +158,6 @@ impl Elab<'_> {
             // loop header's sequence, as is one a display's element
             // subscripts (`[L[n], n]`).
             StmtKind::ComptimeFor { iter, body, .. } => {
-                *iter = self.spell_applied_displays(iter);
                 if matches!(iter.kind, ExprKind::ListLit(_) | ExprKind::BraceLit(_)) {
                     let mut subscripts = SubscriptedCollections {
                         env,
@@ -313,9 +312,6 @@ impl Elab<'_> {
                 let [ParamArg::Value(argument)] = param_args.as_mut_slice() else {
                     return Ok(());
                 };
-                // An applied display constant is its display here; any other
-                // applied constant is the check's to bind.
-                *argument = self.spell_applied_displays(argument);
                 let value = match &argument.kind {
                     ExprKind::Identifier(bound) => binding(bound).cloned(),
                     // An operand that applies a callable is the check's to
@@ -342,12 +338,10 @@ impl Elab<'_> {
                 // An operand that applies a callable is a request the
                 // elaborator below MIR serves, a value binding it calls a
                 // method of spelled by its literal form.
-                args[0] = self.spell_applied_displays(&args[0]);
                 if self.applies_callable(&args[0]) {
                     return Ok(());
                 }
-                if let Some(spelled) = self
-                    .spelled_value_reads(&args[0], env)
+                if let Some(spelled) = super::elab::spelled_value_reads(&args[0], env)
                     .filter(|spelled| self.applies_callable(spelled))
                 {
                     args[0] = spelled;
