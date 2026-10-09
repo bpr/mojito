@@ -256,6 +256,9 @@ impl CtValue {
                 .map(|(_, value)| value)
         };
         let storage = |size: &str| {
+            if field(size) == Some(&Self::Int(0)) {
+                return Some(Vec::new());
+            }
             let (
                 Some(Self::Pointer {
                     memory: Some(slots),
@@ -384,7 +387,7 @@ impl CtValue {
 
     /// Whether this value is one a backend materializes as a parameter
     /// constant: a vector, or a struct or tuple whose leaves are scalars,
-    /// vectors, or such aggregates.
+    /// vectors, such aggregates, or frozen pointer memory.
     pub fn is_closed_parameter_value(&self) -> bool {
         match self {
             Self::Simd { .. } => true,

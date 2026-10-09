@@ -1186,6 +1186,24 @@ impl Decoder {
                 self.unknown(fields, &["dtype", "lanes"]);
                 Some(CtValue::Simd { dtype, lanes })
             }
+            ValueKind::Record(tag, fields) if tag == "ct_pointer" => {
+                let offset = self
+                    .field(fields, "offset")
+                    .ok()
+                    .and_then(|v| self.int64(v))?;
+                let slots = self.field(fields, "slots").ok()?;
+                let memory =
+                    if matches!(&slots.kind, ValueKind::Atom(atom) if atom == "dangling") {
+                        None
+                    } else {
+                        Some(self.list(slots).ok()?.iter().map(|slot| {
+                        if matches!(&slot.kind, ValueKind::Atom(atom) if atom == "absent") {
+                            Some(None)
+                        } else { self.ct_value(slot).map(Some) }
+                    }).collect::<Option<Vec<_>>>()?)
+                    };
+                Some(CtValue::Pointer { memory, offset })
+            }
             ValueKind::Record(tag, fields) if tag == "ct_struct" => {
                 let name = self.req(value, fields, "name", Self::symbol)?;
                 let fields_value = self.required(value, fields, "fields")?;

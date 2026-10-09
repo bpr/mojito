@@ -137,21 +137,7 @@ impl FnLowering<'_> {
         use mojito_types::ct::CtValue;
         match value {
             CtValue::Simd { dtype, lanes } => {
-                let lanes = self.parameter_lanes(ctx, *dtype, lanes, dest)?;
-                if let [lane] = lanes.as_slice() {
-                    self.reg_values.insert(dest.0, *lane);
-                    return Ok(());
-                }
-                let vector_ty = self.simd_vector_ty(ctx, *dtype, lanes.len());
-                let poison = PoisonOp::new(ctx, vector_ty);
-                self.append(ctx, poison.get_operation(), Some(dest));
-                let mut vector = poison.get_result(ctx);
-                for (index, lane) in lanes.iter().enumerate() {
-                    let position = self.int_constant(ctx, index as i64);
-                    let insert = InsertElementOp::new(ctx, vector, *lane, position);
-                    self.append(ctx, insert.get_operation(), Some(dest));
-                    vector = insert.get_result(ctx);
-                }
+                let vector = self.parameter_vector(ctx, *dtype, lanes, dest)?;
                 self.simd_store_vector(ctx, dest, *dtype, lanes.len(), vector);
                 Ok(())
             }
@@ -194,6 +180,64 @@ impl FnLowering<'_> {
     ) -> Result<(), PlironError> {
         use mojito_types::ct::CtValue;
         let (leaves, leaf_tys): (Vec<&CtValue>, Vec<Ty>) = match (value, ty) {
+            (CtValue::Simd { dtype, lanes }, _) if lanes.len() > 1 => {
+                let vector = self.parameter_vector(ctx, *dtype, lanes, dest)?;
+                let store = StoreOp::new(ctx, vector, address);
+                self.append(ctx, store.get_operation(), Some(dest));
+                return Ok(());
+            }
+            (CtValue::Pointer { memory, offset }, Ty::Pointer { element, .. }) => {
+                let layout = self.layout.layout_of(element).map_err(|error| {
+                    self.unsupported_reg(format!("frozen pointer element layout ({error})"), dest)
+                })?;
+                let base = if let Some(slots) = memory {
+                    let bytes = layout.size.checked_mul(slots.len() as u64).ok_or_else(|| {
+                        self.unsupported_reg(
+                            "frozen pointer allocation size overflows".to_string(),
+                            dest,
+                        )
+                    })?;
+                    let bytes = self.uint_constant(ctx, bytes);
+                    let base = self.emit_alloc(ctx, bytes, layout.align, dest);
+                    for (index, slot) in slots.iter().enumerate() {
+                        if let Some(slot) = slot {
+                            let address =
+                                self.gep_byte(ctx, base, index as u64 * layout.size, dest);
+                            self.store_parameter_value(ctx, address, slot, element, dest)?;
+                        }
+                    }
+                    base
+                } else {
+                    let ptr_ty: TypeHandle = PointerType::get(ctx, 0).into();
+                    let null = ZeroOp::new(ctx, ptr_ty);
+                    self.append(ctx, null.get_operation(), Some(dest));
+                    null.get_result(ctx)
+                };
+                let pointer = if *offset == 0 {
+                    base
+                } else {
+                    let bytes = self.int_constant(ctx, offset.wrapping_mul(layout.size as i64));
+                    let byte_ty: TypeHandle = IntegerType::get(ctx, 8, Signedness::Signless).into();
+                    let gep =
+                        GetElementPtrOp::new(ctx, base, vec![GepIndex::Value(bytes)], byte_ty);
+                    self.append(ctx, gep.get_operation(), Some(dest));
+                    gep.get_result(ctx)
+                };
+                let store = StoreOp::new(ctx, pointer, address);
+                self.append(ctx, store.get_operation(), Some(dest));
+                return Ok(());
+            }
+            (CtValue::Str(text), Ty::Struct(name, _))
+                if mojito_symbol::symbol::is_stdlib_string_struct(name) =>
+            {
+                let global = self.shared.intern_string(ctx, text.as_bytes());
+                let source = self.global_address(ctx, &global, dest);
+                let length = self.uint_constant(ctx, text.len() as u64);
+                let data = self.emit_alloc(ctx, length, 1, dest);
+                self.mem_copy_dynamic(ctx, data, source, length, dest);
+                self.store_string_fields(ctx, address, data, length, length, dest);
+                return Ok(());
+            }
             (CtValue::Struct { .. } | CtValue::Tuple(_), Ty::Struct(name, _)) => {
                 let Some(decl) = self.struct_decls.get(name.as_str()) else {
                     return Err(self.unsupported_reg(format!("parameter value of `{name}`"), dest));
@@ -239,6 +283,30 @@ impl FnLowering<'_> {
             self.store_parameter_value(ctx, leaf_address, leaf, leaf_ty, dest)?;
         }
         Ok(())
+    }
+
+    fn parameter_vector(
+        &mut self,
+        ctx: &mut Context,
+        dtype: Dtype,
+        lanes: &[mojito_types::ct::CtLane],
+        dest: Reg,
+    ) -> Result<Value, PlironError> {
+        let lanes = self.parameter_lanes(ctx, dtype, lanes, dest)?;
+        if let [lane] = lanes.as_slice() {
+            return Ok(*lane);
+        }
+        let vector_ty = self.simd_vector_ty(ctx, dtype, lanes.len());
+        let poison = PoisonOp::new(ctx, vector_ty);
+        self.append(ctx, poison.get_operation(), Some(dest));
+        let mut vector = poison.get_result(ctx);
+        for (index, lane) in lanes.iter().enumerate() {
+            let position = self.int_constant(ctx, index as i64);
+            let insert = InsertElementOp::new(ctx, vector, *lane, position);
+            self.append(ctx, insert.get_operation(), Some(dest));
+            vector = insert.get_result(ctx);
+        }
+        Ok(vector)
     }
 
     /// One closed scalar of a parameter value at its storage type.

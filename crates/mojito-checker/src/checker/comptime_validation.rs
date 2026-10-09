@@ -1285,9 +1285,6 @@ impl Checker {
             // position are the application, and the rest of the statement
             // is typed as any binding is. A module constant's lifted
             // function is named by the constant, the same in every pass.
-            // A module dictionary or set display has no compile-time form
-            // to lift (roadmap R196): the elaborator spells it where it is
-            // read.
             let module_display =
                 self.function_bases.is_empty() && matches!(value.kind, ExprKind::BraceLit(_));
             let expression = match self.comptime_value_expression(value) {
@@ -1437,16 +1434,6 @@ impl Checker {
         }
         let ty = mojito_types::types::default_literal(&ty?);
         self.copy_compile_time_result(value, &ty);
-        // A dictionary or a set has no compile-time form to freeze
-        // (roadmap R196).
-        if matches!(&ty, Ty::Struct(name, _)
-            if matches!(name.rsplit('.').next(), Some("Dict" | "Set")))
-        {
-            return Err(TypeError::Unsupported(format!(
-                "a compile-time '{ty}' result cannot cross back from VM CTFE; bind a scalar, \
-                 Bool, String, tuple, fieldwise struct, or a display instead"
-            )));
-        }
         let Some(application) = self.named_application(value, &names_read(value), ty) else {
             return Ok(None);
         };
@@ -3054,6 +3041,9 @@ fn materialized_collection_spelling(ty: &Ty) -> String {
     }
     if let Some((key, value)) = mojito_types::types::dict_elements(ty) {
         return format!("Dict[{}, {}]", scalar(key), scalar(value));
+    }
+    if let Some(element) = mojito_types::types::list_element(ty) {
+        return format!("List[{}]", scalar(element));
     }
     if let Some(element) = mojito_types::types::set_element(ty) {
         return format!("Set[{}]", scalar(element));

@@ -371,7 +371,9 @@ impl ParamContext {
             return self.select(elements, index);
         }
         let index = self.intern(index);
-        if let Some(CtValue::Tuple(values) | CtValue::List(values)) = list.as_constant()
+        if let Some(values) = list
+            .as_constant()
+            .and_then(CtValue::comptime_iteration_elements)
             && let Some(position) = index.as_constant().and_then(fold::integer_value)
         {
             let count = values.len();
@@ -572,8 +574,11 @@ impl ParamContext {
     /// a concatenation's, or the builtin application
     /// ([`LIST_LENGTH_FUNCTION`]) to a list that is itself an application.
     pub fn list_length(&self, list: &ParamExpr) -> Result<ParamExpr, ParamError> {
+        let elements = list
+            .as_constant()
+            .and_then(CtValue::comptime_iteration_elements);
         match list.kind() {
-            ParamKind::Constant(CtValue::Tuple(values)) => {
+            ParamKind::Constant(_) if let Some(values) = elements => {
                 let length = i64::try_from(values.len()).map_err(|_| {
                     ParamError::Arithmetic("parameter list is too long to count".to_string())
                 })?;
@@ -2417,6 +2422,7 @@ impl MetaTy {
             CtValue::Struct { name, .. } => {
                 Self::value(Ty::Struct(name.clone(), Vec::new().into()))
             }
+            CtValue::Pointer { .. } => Self::value(Ty::Infer),
             CtValue::Type(_) => Self::Type,
             CtValue::Reflected(_) => Self::ReflectedType,
             CtValue::Expr(expr) => expr.meta().clone(),

@@ -1097,10 +1097,10 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   before `substitute_function`; `outermost_loop` and `loop_body` (dominators)
   pick a loop and its body, `trip_elements` evaluates its sequence — a
   thunk's application through `Specializer::resolve_application`, whose
-  result `VmBackend::freeze` (`freeze_collection`, `backend/vm.rs`) reads
-  out of a nominal `Array`, `List`, `Set`, or `Dict`, freezing a nominal
-  `Tuple` element (`is_nominal_tuple`) to its elements and any other struct
-  to its fields — and
+  result `VmBackend::freeze` (`freeze_value`, `backend/vm.rs`) freezes as
+  nominal fields and `CtValue::Pointer` memory. `CtValue::comptime_iteration_elements`
+  reads the frozen `Array`, `List`, `Set`, or `Dict` storage; a nominal
+  `Tuple` (`is_nominal_tuple`) freezes to its elements — and
   `copy_body` appends one finished copy per
   iteration (fresh registers, a fresh slot from `fresh_slots` for each slot
   whose type names the index (`mojito_types::types::names_binder`),
@@ -1194,7 +1194,7 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `seed_captured_parameter_slots` stores a captured folded slot's constant
   at entry. The VM materializes a folded one through
   `ct_value_as_runtime` (`backend/vm.rs`) and, a tuple at any depth as the nominal `Tuple` its
-  checked type names, `materialize_parameter_value`
+  checked type names, `thaw`
   (`backend/vm/adapters.rs`), and Pliron through `lower_parameter_value`
   and `store_parameter_value` (`lower/consts.rs`). A `comptime for`
   element with a `String` leaf is constructed at each read of its binder
@@ -1348,7 +1348,11 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   survivor; the text form is `comptime_branch` (schema 1.15).
 - `mojito_vm::crossing` owns `ct_to_vm`/`vm_to_ct` and `CTFE_FUEL`;
   `VmBackend::{call_concrete, freeze}` run a verified fragment for the
-  elaborator.
+  elaborator. `call_concrete` accepts compile-time arguments; typed `thaw`
+  (`backend/vm/adapters.rs`) materializes them and `Const::Value` into fresh
+  heap storage. `freeze_value` rejects dead and cyclic pointer allocations.
+  Pliron's `store_parameter_value` (`lower/consts.rs`) writes frozen pointer
+  memory using checked element layouts and reconstructs nested strings.
 - `native::mono`: `InstanceState`, `Specializer::drain`,
   `demand_application` (the demand edge: materialize the instance's
   reference closure — `Specializer::materialize_closure` over the names each

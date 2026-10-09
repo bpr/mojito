@@ -183,9 +183,15 @@ impl Checker {
     /// Whether `expr` reads a compile-time binding (a value parameter, a
     /// `comptime for` variable): the binding itself (`q`) or a pure field
     /// chain off it (`q.i.v`), a parameter expression rather than storage.
+    /// A module constant bound to a requested value is one too: it has no
+    /// storage, and each read materializes it.
     pub(super) fn is_parameter_read(&self, expr: &Expr) -> bool {
         field_chain_root(expr).is_some_and(|root| {
-            root != "Self" && (self.is_compile_time_binding(root) || self.is_value_parameter(root))
+            root != "Self"
+                && (self.is_compile_time_binding(root)
+                    || self.is_value_parameter(root)
+                    || (self.binding_scope(root) == Some(0)
+                        && self.local_comptime_parameters[0].contains_key(root)))
         })
     }
 

@@ -2181,6 +2181,23 @@ fn meta_ty(meta: &MetaTy) -> String {
 
 fn ct_value(value: &CtValue) -> String {
     match value {
+        CtValue::Pointer { memory, offset } => record(
+            "ct_pointer",
+            &[
+                ("offset", offset.to_string()),
+                (
+                    "slots",
+                    memory.as_ref().map_or_else(
+                        || "dangling".to_string(),
+                        |slots| {
+                            list(slots.iter().map(|slot| {
+                                slot.as_ref().map_or_else(|| "absent".to_string(), ct_value)
+                            }))
+                        },
+                    ),
+                ),
+            ],
+        ),
         CtValue::Int(v) => positional("ct_int", &v.to_string()),
         CtValue::UInt(v) => positional("ct_uint", &v.to_string()),
         CtValue::Float(v) => positional("ct_float_bits", &format!("{v:016x}")),

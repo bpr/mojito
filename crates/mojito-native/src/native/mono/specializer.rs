@@ -1044,11 +1044,9 @@ impl<'a> Specializer<'a> {
                 "compile-time execution exceeded the VM CTFE fuel quota".to_string(),
             )
         })?;
-        let (value, remaining) = called
-            .iter()
-            .map(mojito_vm::crossing::ct_to_vm)
-            .collect::<Result<Vec<_>, _>>()
-            .and_then(|called| self.vm.call_concrete(&fragment, &name, called, self.fuel))
+        let (value, remaining) = self
+            .vm
+            .call_concrete(&fragment, &name, &called, self.fuel)
             .map_err(|error| {
                 self.error(
                     Some(template),

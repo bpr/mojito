@@ -245,11 +245,19 @@ impl Checker {
     /// value is no constant — a struct, a tuple, a `String` — is a temporary
     /// the parameter constant materializes into, as upstream's
     /// `kgen.param.constant` is: the read borrows a hidden slot the
-    /// ownership analysis destroys, never storage of the binding's own.
+    /// ownership analysis destroys, never storage of the binding's own. A
+    /// local requested binding read in a compile-time position (`len(xs)`
+    /// in a query's thunk) borrows such a slot too, since the thunk has no
+    /// storage of the binding to borrow.
     pub(in crate::checker) fn materialize_parameter_read(&self, expr: &Expr, ty: &Ty) {
-        if self.comptime_positions.get() == 0
+        let runtime = self.comptime_positions.get() == 0;
+        let read = if runtime {
+            self.is_parameter_read(expr)
+        } else {
+            self.is_requested_binding_read(expr)
+        };
+        if read
             && matches!(ty, Ty::Struct(..))
-            && self.is_parameter_read(expr)
             && self.is_materialized_parameter_read(expr)
             && !self
                 .parameter_field_objects
@@ -828,6 +836,17 @@ impl Checker {
             return Ok(resolved);
         }
         lower_ref_sig(spec, type_params, params, struct_params)
+    }
+
+    /// Whether `expr` names a local `comptime` binding of a requested
+    /// compile-time value.
+    fn is_requested_binding_read(&self, expr: &Expr) -> bool {
+        let ExprKind::Identifier(name) = &expr.kind else {
+            return false;
+        };
+        self.binding_scope(name)
+            .and_then(|scope| self.local_comptime_parameters.get(scope))
+            .is_some_and(|scope| scope.contains_key(name))
     }
 }
 

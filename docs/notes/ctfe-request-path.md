@@ -201,9 +201,12 @@ evaluates by demanding a concrete instance and running it on the VM.**
   `try`, is a checker error on the expression ("cannot call raising
   function in comptime initializer"), since the checker types the thunk
   body. The probe that finds it today goes.
-- `ct_to_vm`, `vm_to_ct`, and `freeze_vm_result` move to `mojito-vm`,
-  unchanged in what they admit. The residues under "Compile-time
-  evaluation residues" in `docs/roadmap.md` stay residues.
+- `mojito-vm` owns the crossing. `VmBackend::freeze` retains live pointer
+  allocations as `CtValue::Pointer`; typed `thaw` allocates fresh memory for
+  VM constants and CTFE call arguments. Nominal collections use this same
+  path as other pointer-owning structs, and Pliron materializes the frozen
+  slots at their checked layouts. Dead or cyclic memory rejects; allocation
+  aliasing remains R522. The checker retains the implicit-copyability gate.
 
 ## D2: where the executor lives
 

@@ -759,3 +759,39 @@ fn answered_type_member_closes_its_enclosing_expression() {
     let replaced = context.replace(&member, &bindings).expect("replaces");
     assert!(matches!(replaced.kind(), ParamKind::TypeMember { name, .. } if name == "K"));
 }
+
+#[test]
+fn frozen_collection_parameter_projection() {
+    let context = ParamContext::detached();
+    let list = |memory, size| CtValue::Struct {
+        name: "List$mono$Int".into(),
+        fields: vec![
+            ("data".into(), CtValue::Pointer { memory, offset: 0 }),
+            ("size".into(), CtValue::Int(size)),
+        ],
+    };
+    let value = list(Some(vec![Some(CtValue::Int(4)), None]), 1);
+    assert!(value.is_closed_parameter_value());
+    let parameter = context.constant(value).expect("frozen list");
+    let zero = context.constant(CtValue::Int(0)).expect("index");
+    assert_eq!(
+        context
+            .list_get(&parameter, &zero)
+            .expect("element")
+            .as_constant(),
+        Some(&CtValue::Int(4))
+    );
+    assert_eq!(
+        context
+            .list_length(&parameter)
+            .expect("length")
+            .as_constant(),
+        Some(&CtValue::Int(1))
+    );
+    assert_eq!(list(None, 0).comptime_iteration_elements(), Some(vec![]));
+    assert!(
+        list(Some(vec![None]), 1)
+            .comptime_iteration_elements()
+            .is_none()
+    );
+}

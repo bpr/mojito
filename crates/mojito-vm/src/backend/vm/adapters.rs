@@ -152,84 +152,126 @@ impl VmBackend {
         })
     }
 
-    /// Materialize a parameter constant's value at its checked type `target`:
+    /// Thaw frozen pointer memory into fresh allocations at the checked element
+    /// type, leaving uninitialized slots unwritten. Materialize the value at `target`:
     /// each tuple, at any depth of tuples and struct fields, becomes the
     /// nominal `Tuple` instance its checked type names over the private pack
     /// storage ([`Self::materialize_checked_result`]), and each string at the
     /// nominal `String` a `String` over a fresh buffer.
-    pub(super) fn materialize_parameter_value(
+    pub(super) fn thaw(
         &mut self,
         prog: &Prog,
-        value: Value,
+        value: &mojito_types::ct::CtValue,
         target: Option<&Ty>,
     ) -> Result<Value, RuntimeError> {
-        match value {
-            Value::Tuple(items) => {
-                let instance = target.and_then(|target| match target {
-                    Ty::Struct(name, _) => {
-                        prog.structs.get(name).map(|definition| (name, definition))
+        use mojito_types::ct::CtValue;
+        let materialized = match value {
+            CtValue::Pointer { memory, offset } => {
+                let Some(Ty::Pointer { element, .. }) = target else {
+                    return Err(RuntimeError::Unsupported(
+                        "frozen pointer has no checked element type".to_string(),
+                    ));
+                };
+                let allocation = match memory {
+                    None => 0,
+                    Some(slots) => {
+                        let Value::Pointer { allocation, .. } =
+                            self.heap_alloc(slots.len() as i64, 8)?
+                        else {
+                            return Err(RuntimeError::Unsupported(
+                                "allocation did not produce a pointer".to_string(),
+                            ));
+                        };
+                        for (index, slot) in slots.iter().enumerate() {
+                            if let Some(slot) = slot {
+                                let value = self.thaw(prog, slot, Some(element))?;
+                                self.heap_store(allocation as usize - 1, index, value);
+                            }
+                        }
+                        allocation
+                    }
+                };
+                Value::Pointer {
+                    allocation,
+                    offset: *offset,
+                }
+            }
+            CtValue::Struct { name, fields } => {
+                let declared = prog.structs.get(name).map(|definition| &definition.fields);
+                let fields = fields
+                    .iter()
+                    .map(|(field, value)| {
+                        let ty = declared.and_then(|fields| {
+                            fields
+                                .iter()
+                                .find(|(name, _)| name == field)
+                                .map(|(_, ty)| ty)
+                        });
+                        Ok((field.clone(), self.thaw(prog, value, ty)?))
+                    })
+                    .collect::<Result<Vec<_>, RuntimeError>>()?;
+                Value::Struct {
+                    name: name.clone(),
+                    fields,
+                }
+            }
+            CtValue::Tuple(items) => {
+                let storage = match target {
+                    Some(Ty::Struct(name, _)) => prog.structs.get(name).and_then(|definition| {
+                        match definition.fields.as_slice() {
+                            [(field, Ty::Tuple(types))] => Some((name, field, types.as_slice())),
+                            _ => None,
+                        }
+                    }),
+                    _ => None,
+                };
+                let types = match (storage, target) {
+                    (Some((_, _, types)), _) => Some(types),
+                    (None, Some(Ty::Tuple(types) | Ty::RuntimePack(types))) => {
+                        Some(types.as_slice())
                     }
                     _ => None,
-                });
-                let storage =
-                    instance.and_then(|(_, definition)| match definition.fields.as_slice() {
-                        [(field, Ty::Tuple(elements))] => Some((field.clone(), elements.clone())),
-                        _ => None,
-                    });
+                };
                 let items = items
-                    .into_iter()
+                    .iter()
                     .enumerate()
                     .map(|(index, item)| {
-                        let element = storage
-                            .as_ref()
-                            .and_then(|(_, elements)| elements.get(index));
-                        self.materialize_parameter_value(prog, item, element)
+                        self.thaw(prog, item, types.and_then(|types| types.get(index)))
                     })
                     .collect::<Result<Vec<_>, _>>()?;
                 // A concrete `Tuple` instance holds the elements as its
                 // storage, each at its storage type.
-                match (instance, storage) {
-                    (Some((name, _)), Some((field, elements)))
-                        if elements.len() == items.len()
-                            && mojito_types::types::pack_spread(&elements).is_none() =>
+                match storage {
+                    Some((name, field, types))
+                        if types.len() == items.len()
+                            && mojito_types::types::pack_spread(types).is_none() =>
                     {
-                        let storage = items
-                            .into_iter()
-                            .zip(&elements)
-                            .map(|(item, ty)| crate::runtime::coerce_checked(item, ty))
-                            .collect();
-                        Ok(Value::Struct {
+                        Value::Struct {
                             name: name.clone(),
-                            fields: vec![(field, Value::Tuple(storage))],
-                        })
+                            fields: vec![(
+                                field.clone(),
+                                Value::Tuple(
+                                    items
+                                        .into_iter()
+                                        .zip(types)
+                                        .map(|(item, ty)| crate::runtime::coerce_checked(item, ty))
+                                        .collect(),
+                                ),
+                            )],
+                        }
                     }
-                    _ => self.materialize_checked_result(prog, Value::Tuple(items), target),
+                    _ => self.materialize_checked_result(prog, Value::Tuple(items), target)?,
                 }
             }
-            Value::Struct { name, fields } => {
-                let declared = prog.structs.get(&name).map(|definition| &definition.fields);
-                let fields = fields
-                    .into_iter()
-                    .map(|(field, value)| {
-                        let ty = declared.and_then(|declared| {
-                            declared
-                                .iter()
-                                .find(|(candidate, _)| *candidate == field)
-                                .map(|(_, ty)| ty)
-                        });
-                        Ok((field, self.materialize_parameter_value(prog, value, ty)?))
-                    })
-                    .collect::<Result<Vec<_>, RuntimeError>>()?;
-                Ok(Value::Struct { name, fields })
+            CtValue::Str(text) if matches!(target, Some(Ty::Struct(name, _)) if mojito_symbol::symbol::is_stdlib_string_struct(name)) => {
+                self.nominal_string_value(prog, text)?
             }
-            Value::Str(text)
-                if matches!(target, Some(Ty::Struct(name, _))
-                    if mojito_symbol::symbol::is_stdlib_string_struct(name)) =>
-            {
-                self.nominal_string_value(prog, &text)
-            }
-            value => Ok(value),
-        }
+            _ => crate::crossing::ct_to_vm(value)?,
+        };
+        Ok(match target {
+            Some(ty) => crate::runtime::coerce_checked(materialized, ty),
+            None => materialized,
+        })
     }
 
     /// Build an uninitialized `self` skeleton for `name` (fields = `None`).

@@ -54,6 +54,9 @@ pub fn ct_to_vm(value: &CtValue) -> Result<Value, RuntimeError> {
         })
     };
     match value {
+        CtValue::Pointer { .. } => Err(RuntimeError::Unsupported(
+            "frozen pointer memory requires a VM heap to thaw".to_string(),
+        )),
         CtValue::Int(n) => Ok(Value::Int(*n)),
         CtValue::UInt(n) => Ok(Value::UInt(*n)),
         CtValue::Float(bits) => Ok(Value::Float64(f64::from_bits(*bits))),

@@ -132,10 +132,17 @@ assets/ok/copyinit_moveinit.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/ctfe_annotated_module_constant.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/ctfe_beside_comptime_if_struct_method.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/ctfe_body_requests.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/ctfe_collection_result_compile_time_reads.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/ctfe_construction_in_body.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/ctfe_dict_set_result.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/ctfe_display_tuple_subscript_in_body.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/ctfe_list_field_struct_result.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/ctfe_list_result_materialize.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/ctfe_module_constant_requests.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/ctfe_module_display_constant_requests.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/ctfe_module_optional_constant.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/ctfe_optional_result.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/ctfe_pointer_struct_result.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/ctfe_projection_of_temporary_in_body.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/ctfe_type_generic_def_in_body.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/decorators.mojo	-	ineligible	no-scalar-entry-shape

@@ -300,6 +300,7 @@ impl Flatten<'_> {
                 .get(&owner)
                 .and_then(|binder| self.enclosing_binders.value_of(binder))
                 .or_else(|| self.enclosing_binders.comptime_value(owner))
+                .or_else(|| self.comptime_thunks.bound_value(owner))
         });
         if let Some(value) = denoted {
             return self.param_value_register(e, value);

@@ -510,8 +510,9 @@ field's constant, or with the field's own construction where it owns a
 function over the binders in scope at the header, as it lifts an uncompiled
 condition, and the header's sequence is that function's application, which
 `native::mono` demands, runs on the VM, and freezes
-(`VmBackend::freeze`, which freezes a nominal `Tuple` to its elements and any
-other struct to its fields) into the list, set, or dictionary it iterates, as
+(`VmBackend::freeze`, which freezes a nominal `Tuple` to its elements, a
+`String` to its text, and other structs to their fields and pointer memory)
+into the collection whose elements `CtValue::comptime_iteration_elements` reads, as
 upstream runs the display on its interpreter per instance. A local
 `comptime` binding of such a display is a compile-time value with no runtime
 form, whatever reads it: the check types the name, records the binding on
@@ -807,7 +808,7 @@ members with the binder symbolic, its template crosses MIR, and
 struct, or tuple binder to a `Const::Value` and a field of a struct-typed one
 (`ParamKind::Field`) to its constant. A `Const::Value` tuple is the nominal
 `Tuple` its register's checked type names, over the private pack storage
-(the VM's `materialize_parameter_value`, Pliron's `store_parameter_value`);
+(the VM's `thaw`, Pliron's `store_parameter_value`);
 a tuple-typed value parameter (`g[p: Tuple[Int, Int]]`) reads the same way.
 A tuple or struct value whose leaves include a `String`
 (`CtValue::is_constructed_parameter_value`) is never folded: no constant
@@ -1353,22 +1354,26 @@ SIMD dtype and width selection is likewise a checked adjustment rather than
 MIR-side syntax evaluation. Span-indexed call/conversion maps remain only as
 public compatibility queries and are not part of lowering.
 
-Specialization value forms include compile-time struct instances and dtypes:
-`CtValue::Dtype` binds a `[dtype: DType]` parameter, and `CtValue::Struct`
-freezes a fieldwise-constructible, recursively pointer-free struct instance
-produced by VM-backed CTFE (a constructor or static-method call runs through a
-synthesized entry against the checked CTFE subprogram; that subprogram
-carries variadic templates other than the public `Tuple`/`TString` as the
-shells pre-check elaboration emits, so a retained body's symbolic
-application checks, and stubs a struct method whose comptime body only
-elaborates with its own parameters bound, as the pre-check does). Both monomorphize
-their declarations before checking — the checker never sees a symbolic dtype
-or struct value, no MIR schema is affected, and a frozen instance materializes
-back as its ordinary fieldwise construction wherever the specialized body
-reads the parameter. Freezing and materialization are inverses by
-construction: the freeze precondition (fieldwise constructor, freezable
-fields) is exactly what guarantees the materialized construction re-creates
-the same value.
+Specialization values include `CtValue::Dtype`, nominal `CtValue::Struct`
+instances, and `CtValue::Pointer { memory, offset }` leaves. A live pointer
+freezes its allocation recursively; an absent slot remains uninitialized,
+`None` memory denotes a dangling pointer, and an empty allocation remains
+separate from a dangling pointer. Dead allocations and cycles reject
+explicitly. Each pointer freezes independently, so allocation aliasing is
+not preserved (R522).
+
+A `Const::Value` carries these values across the verified MIR waist. The
+VM's typed `thaw` and Pliron's `store_parameter_value` allocate fresh storage
+at each materialization, write initialized slots at the checked element
+type, and reconstruct nested strings. CTFE call arguments use the same VM
+thaw path before execution. Nominal collections retain their memory and
+layout rather than rerunning their constructors. The checker owns the
+`ImplicitlyCopyable` crossing rule; an explicit `materialize[...]()` can
+cross a non-implicitly-copyable value. Requested binding reads that need a
+place record a hidden materialized borrow owner, including reads within
+compile-time query thunks. Top-level strings and string-containing
+aggregates still have a constructor path (R524); local implicitly-copyable
+bindings still materialize at their declaration (R523).
 
 `SemanticAdjustment::SelectedCall` is the canonical method-like boundary for
 ordinary method calls and method-dispatched nominal subscripts. It records the exact lowered

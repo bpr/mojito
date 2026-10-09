@@ -1626,7 +1626,7 @@ impl Checker {
                         .then(|| self.nominal_set(element))
                 }
             }
-            CtValue::Type(_) | CtValue::Reflected(_) => {
+            CtValue::Pointer { .. } | CtValue::Type(_) | CtValue::Reflected(_) => {
                 let _ = self_ty;
                 None
             }

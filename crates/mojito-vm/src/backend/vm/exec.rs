@@ -143,17 +143,18 @@ impl VmBackend {
             }
             MirInstr::KeepAlive { .. } => {}
             MirInstr::Const { dest, k } => {
-                let mut value = const_value(k)?;
-                // An aggregate parameter constant holds each tuple as the
-                // nominal `Tuple` its checked type names.
-                if matches!(k, Const::Value(_)) {
-                    let target = prog.mir.functions[function].1.reg_types.get(&dest.0);
-                    value = self.materialize_parameter_value(prog, value, target)?;
-                }
+                let value = match k {
+                    Const::Value(value) => self.thaw(
+                        prog,
+                        value,
+                        prog.mir.functions[function].1.reg_types.get(&dest.0),
+                    )?,
+                    _ => const_value(k)?,
+                };
                 regs[dest.0 as usize] = value;
             }
             MirInstr::ParamListAddress { dest, values } => {
-                let Value::Tuple(items) = const_value(values)? else {
+                let Const::Value(mojito_types::ct::CtValue::Tuple(items)) = values else {
                     return Err(RuntimeError::Unsupported(format!(
                         "the parameter list `{values:?}` has no elements to address"
                     )));

@@ -815,7 +815,7 @@ impl VmBackend {
         &mut self,
         prog: &Prog,
         element: &Ty,
-        values: Vec<Value>,
+        values: &[mojito_types::ct::CtValue],
     ) -> Result<u64, RuntimeError> {
         let key = format!("{element}{values:?}");
         if let Some(allocation) = self.static_param_lists.get(&key) {
@@ -826,8 +826,8 @@ impl VmBackend {
             unreachable!("heap_alloc returns a pointer");
         };
         let region = (allocation - 1) as usize;
-        for (index, value) in values.into_iter().enumerate() {
-            let value = self.materialize_parameter_value(prog, value, Some(element))?;
+        for (index, value) in values.iter().enumerate() {
+            let value = self.thaw(prog, value, Some(element))?;
             self.heap_store(region, index, value);
         }
         self.static_param_lists.insert(key, allocation);

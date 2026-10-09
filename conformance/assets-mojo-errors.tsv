@@ -205,7 +205,6 @@ assets/type_error/comptime_call_signature_identity.mojo	compile-reject	agree	err
 assets/type_error/comptime_collection_runtime_use.mojo	compile-reject	agree	error: cannot materialize comptime value of type 'Dict[String, Int]' to runtime because it is not 'ImplicitlyCopyable'
 assets/type_error/comptime_constants.mojo	compile-reject	agree	error: expression must be mutable in assignment
 assets/type_error/comptime_dict_raising_subscript.mojo	compile-reject	agree	error: cannot call raising function in comptime initializer
-assets/type_error/comptime_dict_result_not_freezable.mojo	runs	subset	the pin runs it; Mojito rejects: cannot cross back from VM CTFE
 assets/type_error/comptime_display_binding_runtime_read.mojo	compile-reject	agree	error: cannot materialize comptime value of type 'Array[Int, Int(2)]' to runtime because it is not 'ImplicitlyCopyable'
 assets/type_error/comptime_display_element_identity.mojo	compile-reject	agree	error: cannot implicitly convert 'SIMD[.int32, (load_from_mem vals.__getitem_param__[Int(1)]())]' value to 'SIMD[.int32, ((load_from_mem vals.__getitem_param__[Int(0)]()) * Int(2))]'
 assets/type_error/comptime_dtype_binding_scope.mojo	compile-reject	agree	error: use of unknown declaration 'lane'
@@ -236,6 +235,7 @@ assets/type_error/copyable_bound_rejects_move_only.mojo	compile-reject	agree	err
 assets/type_error/copyable_field_rejects_move_only.mojo	compile-reject	agree	error: cannot synthesize copy constructor because field 'h' has non-copyable type 'Handle'
 assets/type_error/copy_method_requires_copyable.mojo	compile-reject	agree	error: 'Plain' value has no attribute 'copy'
 assets/type_error/ctfe_constant_cycle.mojo	compile-reject	agree	error: function instantiation failed
+assets/type_error/ctfe_list_result_implicit_read.mojo	compile-reject	agree	error: cannot materialize comptime value of type 'List[Int]' to runtime because it is not 'ImplicitlyCopyable'
 assets/type_error/ctfe_local_binding_reaches_print.mojo	runs	subset	the pin runs it, printing at compile time;Mojito rejects: is not safe for VM-backed compile-time execution
 assets/type_error/ctfe_method_reaches_print.mojo	runs	subset	the pin runs it, printing at compile time;Mojito rejects: is not safe for VM-backed compile-time execution
 assets/type_error/def_typed_element_rejected.mojo	compile-reject	agree	error: 'List' parameter 'T' has 'AnyType' type, but value has type 'AnyTrait[def(Int) -> Int]'

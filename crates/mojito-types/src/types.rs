@@ -3397,6 +3397,22 @@ pub fn rewrite_value(value: &CtValue, rewrite: &mut dyn TyRewrite) -> Result<CtV
     };
     rewrite.value(value);
     Ok(match value {
+        CtValue::Pointer { memory, offset } => CtValue::Pointer {
+            memory: memory
+                .as_ref()
+                .map(|slots| {
+                    slots
+                        .iter()
+                        .map(|slot| {
+                            slot.as_ref()
+                                .map(|value| rewrite_value(value, rewrite))
+                                .transpose()
+                        })
+                        .collect::<Result<Vec<_>, _>>()
+                })
+                .transpose()?,
+            offset: *offset,
+        },
         CtValue::Expr(expr) => rewrite.expr(expr)?.into_value(),
         CtValue::Type(ty) => CtValue::Type(Box::new(rewrite_ty(ty, rewrite)?)),
         CtValue::Reflected(ty) => CtValue::Reflected(Box::new(rewrite_ty(ty, rewrite)?)),
@@ -3816,6 +3832,9 @@ pub fn names_binder(ty: &Ty, binder: &ParamRef) -> bool {
 /// any collection or type handle carrying one.
 pub fn ct_value_is_symbolic(value: &CtValue) -> bool {
     match value {
+        CtValue::Pointer { memory, .. } => {
+            memory.iter().flatten().flatten().any(ct_value_is_symbolic)
+        }
         CtValue::Expr(_) | CtValue::Deferred(_) | CtValue::Marker(_) => true,
         CtValue::Tuple(values)
         | CtValue::List(values)

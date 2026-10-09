@@ -2420,6 +2420,11 @@ pub fn specialization_value_is_closed(value: &CtValue) -> bool {
         CtValue::Struct { fields, .. } => fields
             .iter()
             .all(|(_, value)| specialization_value_is_closed(value)),
+        CtValue::Pointer { memory, .. } => memory
+            .iter()
+            .flatten()
+            .flatten()
+            .all(specialization_value_is_closed),
         CtValue::Type(ty) | CtValue::Reflected(ty) => {
             let mut open = std::collections::HashSet::new();
             mojito_types::types::referenced_parameters(ty, &mut open);
@@ -2443,6 +2448,23 @@ pub fn specialization_value_is_closed(value: &CtValue) -> bool {
 )]
 fn encode_specialization_value(value: &CtValue, out: &mut String) {
     match value {
+        CtValue::Pointer { memory, offset } => {
+            use std::fmt::Write;
+            let _ = write!(out, "p{offset}:");
+            if let Some(slots) = memory {
+                let _ = write!(out, "{}[", slots.len());
+                for slot in slots {
+                    if let Some(value) = slot {
+                        encode_specialization_value(value, out);
+                    } else {
+                        out.push('_');
+                    }
+                }
+                out.push(']');
+            } else {
+                out.push('d');
+            }
+        }
         CtValue::Int(value) => out.push_str(&format!("i{value};")),
         CtValue::UInt(value) => out.push_str(&format!("u{value};")),
         CtValue::Dtype(dtype) => out.push_str(&format!("d{};", dtype.name())),

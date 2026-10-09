@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R522**.
+Next free ID: **R526**.
 
 ## Ordered Work
 
@@ -62,10 +62,11 @@ divergence from the pin goes to a catch-up track, however small.
     (`comptime/requests.rs`).
   - Decision D3 (`docs/notes/ctfe-request-path.md`) wants the constant
     bound as `Apply(thunk)` like a list display is
-    (`Checker::module_lifted_application`); a dictionary's compile-time
-    form is what blocks it.
+    (`Checker::module_lifted_application`). A module-scope
+    `comptime C = M.copy()` remains this task's binding-shape gap;
+    the body-local copy now freezes and materializes.
   - Fixture: `assets/ok/ctfe_module_display_constant_requests.mojo`.
-  - Depends on R196.
+  - Depends on nothing.
   - Model: Fable, Not Planned.
 
 - [ ] **R517 A closed module constant that is not a scalar is still spelled
@@ -1793,6 +1794,15 @@ Track: `comptime`.
 
 Within the track, an entry Mojito runs to a wrong result, or accepts where the pin rejects, comes first; then one it rejects where the pin runs it; then a verdict that is right with the wrong words.
 
+- [ ] **R522 Aliasing inside a frozen value is not preserved**
+
+  Two pointer fields into one compile-time allocation freeze as independent copies.
+  - `CtValue::Pointer` retains contents and offsets without allocation identity.
+  - Preserve an allocation graph when supporting materializable shared storage;
+    cyclic memory currently rejects explicitly.
+  - Depends on nothing.
+  - Model: Fable, Not Planned.
+
 - [ ] **R480 A `comptime if` over an element of a vector-valued binder
   takes the wrong arm**
 
@@ -2446,7 +2456,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     constructor.
   - Mojo materializes the parameter attribute directly, with no
     constructor call.
-  - Not R196: the value is plain fieldwise data, not pointer-backed.
   - Found while landing R456 (2026-10-07).
   - Depends on nothing.
   - Model: Opus, Not Planned.
@@ -3504,6 +3513,14 @@ for it, and an entry that waits on another names it. Five divergences are
 retained on purpose and re-probed rather than fixed; they are listed in
 [`docs/non-goals.md`](non-goals.md).
 
+- [ ] **R525 Materialization errors omit Mojo's contextual notes**
+
+  The crossing diagnostic has one message where Mojo distinguishes a bare read from a call argument.
+  - A bare read suggests `materialize`; a call argument suggests evaluating the whole call with `comptime`.
+  - `TypeError` has no diagnostic-note channel.
+  - Depends on nothing.
+  - Model: Fable, Not Planned.
+
 - [ ] **R162 A compile-time evaluation of a keyed function that recurses
   under a runtime `if` prints a value where the pin expands it without
   end**
@@ -4245,7 +4262,7 @@ retained on purpose and re-probed rather than fixed; they are listed in
   - The stand-in and the checker's `LiteralFormat` adjustment go away when
     `StringLiteral` declares upstream's `format`.
   - Found while landing R421 (2026-10-06).
-  - Depends on R213, R196.
+  - Depends on R213.
   - Model: Fable, Not Planned.
 
 - [ ] **R514 `rebind` between distinct structs of one lowered layout is
@@ -4315,6 +4332,22 @@ below is a candidate port toward Mojo's shape, and a port is preferred over any
 new bridge (2026-09-07 direction). The ports are independent of each other, and
 an entry that waits on another names it. Four runtime services are
 deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
+
+- [ ] **R523 A local implicitly-copyable compile-time binding materializes at its declaration**
+
+  A local `comptime s = label(3)` stores one runtime slot where Mojo materializes each read.
+  - Requested collections already lower without a binding slot.
+  - Move implicitly-copyable bindings to the same parameter-expression read path.
+  - Depends on nothing.
+  - Model: Fable, Not Planned.
+
+- [ ] **R524 Compile-time values still have two materialization mechanisms**
+
+  Top-level strings and string-containing aggregates use constructors while frozen pointer memory uses backend constants.
+  - Unify these at the typed constant boundary, matching Mojo's materialization operation.
+  - Nominal VM-evaluated collections already use frozen storage without constructor replay.
+  - Depends on nothing.
+  - Model: Fable, Not Planned.
 
 - [ ] **R306 A scalar `range(...)` is typed by a checker rule where the
   pin declares infer-only overloads**
@@ -4733,17 +4766,6 @@ I/O residues left behind the landed files, streams, paths, and tempfile stage.
 recorded limit, listed in impact order: soundness of the executable oracle
 first, then everyday spellings that reject today, then parity details. A
 residue found inside a task moves to the task that owns its fix.
-
-- [ ] **R196 A pointer-backed result of VM compile-time evaluation cannot
-  cross back into the program**
-
-  Problem: a VM-evaluated compile-time expression whose result is
-  pointer-backed (`comptime C = M.copy()`, a bare `Optional`, a `String`)
-  fails with `cannot cross back from VM CTFE`, where upstream binds it.
-  - The freezable results today are scalars, Bool, String, tuples, fieldwise
-    structs, and displays.
-  - Depends on nothing.
-  - Model: Fable, Planned.
 
 - [ ] **R197 Compile-time Dict/Set key identity ignores a user struct's
   non-fieldwise `__eq__`**

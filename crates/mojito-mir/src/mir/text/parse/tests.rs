@@ -539,6 +539,52 @@ fn const_value_and_param_field_round_trip() {
 }
 
 #[test]
+fn frozen_pointer_constant_round_trip() {
+    let values = vec![
+        CtValue::Pointer {
+            memory: None,
+            offset: 0,
+        },
+        CtValue::Pointer {
+            memory: Some(vec![]),
+            offset: 0,
+        },
+        CtValue::Pointer {
+            memory: Some(vec![
+                None,
+                Some(CtValue::Str("nested".into())),
+                Some(CtValue::Pointer {
+                    memory: Some(vec![Some(CtValue::Int(7))]),
+                    offset: -1,
+                }),
+            ]),
+            offset: 1,
+        },
+    ];
+    let ty = Ty::Pointer {
+        element: Box::new(Ty::Int),
+        origin: mojito_types::origin::PointerOrigin::Untracked { mutable: true },
+    };
+    let instructions = values
+        .into_iter()
+        .enumerate()
+        .map(|(index, value)| MirInstr::Const {
+            dest: Reg(index as u32),
+            k: Const::Value(value),
+        })
+        .collect();
+    let program = program_with(vec![(
+        "frozen".into(),
+        function_with(vec![ty; 3], instructions),
+    )]);
+    let text = write::program(&program);
+    assert!(text.contains("ct_pointer"));
+    assert!(text.contains("dangling"));
+    assert_reprints(&program);
+    assert!(!diagnostics(&text.replace("slots: dangling", "slots: invalid")).is_empty());
+}
+
+#[test]
 fn unknown_value_grammar_tags_are_diagnosed() {
     assert!(
         diagnostics(&artifact_with_register_type("Frob"))

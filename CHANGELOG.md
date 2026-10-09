@@ -8,6 +8,13 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- VM compile-time results now retain pointer-backed storage (R196).
+  Optional values, nested structs, lists, dictionaries, and sets materialize
+  into fresh allocations in the VM and Pliron, preserving uninitialized
+  capacity. Compile-time queries and explicit collection materialization
+  work; implicit non-copyable reads still reject. Frozen pointers round-trip
+  in MIR schema 1.39.
+
 - The replaced mechanisms are deleted (roadmap R10, P5): the AST cloner
   (`comptime/{mono,specialize,packs,unparse}.rs`), the checker's template
   derivation (`checker/template_facts*`, `mojito-checked/src/templates.rs`,

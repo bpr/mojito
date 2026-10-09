@@ -416,7 +416,7 @@ impl VmBackend {
         &mut self,
         mir: &ConcreteMir,
         name: &str,
-        args: Vec<Value>,
+        args: &[CtValue],
         fuel: usize,
     ) -> Result<(Value, usize), RuntimeError> {
         let mir: &MirProgram = mir;
@@ -429,47 +429,29 @@ impl VmBackend {
         let index = prog
             .index_of(name)
             .ok_or_else(|| RuntimeError::UndefinedVariable(name.to_string()))?;
+        let param_types = &prog.mir.functions[index].1.param_types;
+        if args.len() != param_types.len() {
+            return Err(RuntimeError::ArityMismatch {
+                name: name.to_string(),
+                expected: param_types.len(),
+                got: args.len(),
+            });
+        }
+        let args = args
+            .iter()
+            .zip(param_types)
+            .map(|(value, ty)| self.thaw(&prog, value, Some(ty)))
+            .collect::<Result<Vec<_>, _>>()?;
         self.ctfe_fuel = Some(fuel);
         let result = self.call_function(&prog, index, args);
         let remaining = self.ctfe_fuel.take().unwrap_or(0);
         Ok((result?, remaining))
     }
 
-    /// A compile-time evaluation's result as a compile-time value: a nominal
-    /// `String` becomes its text, a nominal collection (a display's value)
-    /// its frozen elements ([`Self::freeze_collection`]), a nominal `Tuple`
-    /// its frozen elements, any other struct its frozen fields (the checker
-    /// admits only a fieldwise one where a frozen struct is materialized),
-    /// and anything else crosses as [`crate::crossing::vm_to_ct`] admits it.
+    /// Freeze a result while this VM owns its heap. Pointer leaves retain
+    /// allocation contents and uninitialized slots; strings retain their text.
     pub fn freeze(&self, value: Value) -> Result<CtValue, RuntimeError> {
-        if let Some(text) = self.nominal_string_text(&value) {
-            return Ok(CtValue::Str(text));
-        }
-        if let Some(collection) = self.freeze_collection(&value)? {
-            return Ok(collection);
-        }
-        match value {
-            Value::Struct { name, fields } => {
-                if let [(storage, Value::Tuple(elements))] = fields.as_slice()
-                    && storage == "storage"
-                    && is_nominal_tuple(&name)
-                {
-                    return elements
-                        .iter()
-                        .map(|element| self.freeze(element.clone()))
-                        .collect::<Result<Vec<_>, _>>()
-                        .map(CtValue::Tuple);
-                }
-                Ok(CtValue::Struct {
-                    name,
-                    fields: fields
-                        .into_iter()
-                        .map(|(field, value)| Ok((field, self.freeze(value)?)))
-                        .collect::<Result<Vec<_>, RuntimeError>>()?,
-                })
-            }
-            value => crate::crossing::vm_to_ct(value),
-        }
+        self.freeze_value(value, &mut std::collections::HashSet::new())
     }
 
     /// Captured standard output.
@@ -482,98 +464,82 @@ impl VmBackend {
         self.bindings.clone()
     }
 
-    /// A nominal stdlib collection value whose storage lives in this VM's
-    /// heap as the compile-time collection it holds, in insertion order: an
-    /// `Array` or a `List` as a list, a `Set` as a set, a `Dict` as a
-    /// dictionary. `None` for any other value.
-    fn freeze_collection(&self, value: &Value) -> Result<Option<CtValue>, RuntimeError> {
-        use mojito_types::types::{ARRAY_TYPE_NAME, DICT_TYPE_NAME, LIST_TYPE_NAME, SET_TYPE_NAME};
-        let Value::Struct { name, fields, .. } = value else {
-            return Ok(None);
-        };
-        let template = name
-            .split_once("$mono$")
-            .map_or(name.as_str(), |(base, _)| base);
-        let instance_of = |nominal: &str| {
-            template
-                .strip_suffix(nominal)
-                .is_some_and(|module| module.is_empty() || module.ends_with('$'))
-        };
-        let field = |wanted: &str| {
-            fields
-                .iter()
-                .find(|(field, _)| field == wanted)
-                .map(|(_, value)| value)
-        };
-        let buffer = |size: &str| match (field("data"), field(size)) {
-            (Some(Value::Pointer { allocation, offset }), Some(Value::Int(size))) => (0..*size)
-                .map(|index| self.heap_read(*allocation, *offset, index))
-                .collect::<Result<Vec<_>, _>>()
-                .map(Some),
-            _ => Ok(None),
-        };
-        let frozen = |values: Vec<Value>| {
-            values
-                .into_iter()
-                .map(|element| self.freeze(element))
-                .collect::<Result<Vec<_>, _>>()
-        };
-        if instance_of(ARRAY_TYPE_NAME) {
-            return buffer("_size")?
-                .map(|elements| frozen(elements).map(CtValue::List))
-                .transpose();
+    fn freeze_value(
+        &self,
+        value: Value,
+        active: &mut std::collections::HashSet<u64>,
+    ) -> Result<CtValue, RuntimeError> {
+        if let Some(text) = self.nominal_string_text(&value) {
+            return Ok(CtValue::Str(text));
         }
-        if instance_of(LIST_TYPE_NAME) {
-            return buffer("size")?
-                .map(|elements| frozen(elements).map(CtValue::List))
-                .transpose();
-        }
-        if instance_of(SET_TYPE_NAME) {
-            let Some(CtValue::List(elements)) = field("items")
-                .map(|items| self.freeze_collection(items))
-                .transpose()?
-                .flatten()
-            else {
-                return Ok(None);
-            };
-            return Ok(Some(CtValue::set(None, elements)));
-        }
-        if instance_of(DICT_TYPE_NAME) {
-            let Some(Value::Struct { fields: list, .. }) = field("entries") else {
-                return Ok(None);
-            };
-            let (Some(Value::Pointer { allocation, offset }), Some(Value::Int(size))) = (
-                list.iter()
-                    .find(|(name, _)| name == "data")
-                    .map(|(_, value)| value),
-                list.iter()
-                    .find(|(name, _)| name == "size")
-                    .map(|(_, value)| value),
-            ) else {
-                return Ok(None);
-            };
-            let mut entries = Vec::new();
-            for index in 0..*size {
-                let Value::Struct { fields: entry, .. } =
-                    self.heap_read(*allocation, *offset, index)?
-                else {
-                    return Ok(None);
-                };
-                let part = |wanted: &str| {
-                    entry
+        match value {
+            Value::Pointer { allocation, offset } => {
+                let memory = if allocation == 0 {
+                    None
+                } else {
+                    let region = usize::try_from(allocation - 1)
+                        .ok()
+                        .and_then(|index| self.heap.get(index))
+                        .filter(|region| region.live)
+                        .ok_or_else(|| {
+                            RuntimeError::Unsupported(
+                                "cannot freeze a pointer to a dead or invalid allocation"
+                                    .to_string(),
+                            )
+                        })?;
+                    if !active.insert(allocation) {
+                        return Err(RuntimeError::Unsupported(
+                            "cannot freeze cyclic pointer memory".to_string(),
+                        ));
+                    }
+                    let slots = region
+                        .slots
                         .iter()
-                        .find(|(name, _)| name == wanted)
-                        .map(|(_, value)| self.freeze(value.clone()))
-                        .transpose()
+                        .zip(&region.never_written)
+                        .map(|(slot, never)| {
+                            if *never || matches!(slot, Value::Moved) {
+                                Ok(None)
+                            } else {
+                                self.freeze_value(slot.clone(), active).map(Some)
+                            }
+                        })
+                        .collect::<Result<Vec<_>, RuntimeError>>()?;
+                    active.remove(&allocation);
+                    Some(slots)
                 };
-                let (Some(key), Some(value)) = (part("key")?, part("value")?) else {
-                    return Ok(None);
-                };
-                entries.push((key, value));
+                Ok(CtValue::Pointer { memory, offset })
             }
-            return Ok(Some(CtValue::dict(None, entries)));
+            Value::Struct { name, fields } => {
+                if let [(storage, Value::Tuple(elements))] = fields.as_slice()
+                    && storage == "storage"
+                    && is_nominal_tuple(&name)
+                {
+                    return elements
+                        .iter()
+                        .map(|value| self.freeze_value(value.clone(), active))
+                        .collect::<Result<Vec<_>, _>>()
+                        .map(CtValue::Tuple);
+                }
+                Ok(CtValue::Struct {
+                    name,
+                    fields: fields
+                        .into_iter()
+                        .map(|(name, value)| Ok((name, self.freeze_value(value, active)?)))
+                        .collect::<Result<Vec<_>, RuntimeError>>()?,
+                })
+            }
+            Value::Tuple(elements) => elements
+                .into_iter()
+                .map(|value| self.freeze_value(value, active))
+                .collect::<Result<Vec<_>, _>>()
+                .map(CtValue::Tuple),
+            Value::ComptimeList(elements) => elements
+                .into_iter()
+                .map(|value| self.freeze_value(value, active))
+                .collect::<Result<Vec<_>, _>>()
+                .map(CtValue::List),
+            value => crate::crossing::vm_to_ct(value),
         }
-        Ok(None)
     }
 
     /// The text of a nominal stdlib `String` value whose bytes live in this
@@ -971,7 +937,8 @@ fn ct_value_as_runtime(value: CtValue) -> Option<Value> {
                 .map(|(field, value)| Some((field, ct_value_as_runtime(value)?)))
                 .collect::<Option<Vec<_>>>()?,
         },
-        CtValue::Dict { .. }
+        CtValue::Pointer { .. }
+        | CtValue::Dict { .. }
         | CtValue::Set { .. }
         | CtValue::Type(_)
         | CtValue::Reflected(_)
@@ -1400,6 +1367,96 @@ mod pointer_storage_tests {
             structs: HashMap::new(),
             sigs: HashMap::new(),
         }
+    }
+
+    #[test]
+    fn frozen_pointer_round_trip_preserves_holes_offsets_and_independence() {
+        let mut vm = VmBackend::default();
+        let source = vm.heap_alloc(3, 8).expect("allocation");
+        let Value::Pointer { allocation, .. } = source else {
+            unreachable!("heap allocator returns a pointer")
+        };
+        vm.heap_store(allocation as usize - 1, 1, Value::Int(7));
+        let frozen = vm
+            .freeze(Value::Pointer {
+                allocation,
+                offset: 1,
+            })
+            .expect("freeze");
+        assert_eq!(
+            frozen,
+            CtValue::Pointer {
+                memory: Some(vec![None, Some(CtValue::Int(7)), None]),
+                offset: 1
+            }
+        );
+        let ty = Ty::Pointer {
+            element: Box::new(Ty::Int),
+            origin: mojito_types::origin::PointerOrigin::Untracked { mutable: true },
+        };
+        let first = vm.thaw(&empty_program(), &frozen, Some(&ty)).expect("thaw");
+        let second = vm
+            .thaw(&empty_program(), &frozen, Some(&ty))
+            .expect("thaw again");
+        assert_ne!(first, second);
+        assert_ne!(first, source);
+        let Value::Pointer {
+            allocation: first_id,
+            offset,
+        } = first
+        else {
+            unreachable!("heap allocator returns a pointer")
+        };
+        assert_eq!(offset, 1);
+        assert_eq!(
+            vm.heap_read(first_id, offset, 0).expect("initialized"),
+            Value::Int(7)
+        );
+        assert!(vm.heap_read(first_id, 0, 0).is_err());
+        assert!(vm.heap_read(first_id, 0, 2).is_err());
+        vm.heap_store(first_id as usize - 1, 1, Value::Int(9));
+        assert_eq!(vm.freeze(second).expect("independent allocation"), frozen);
+        vm.heap_free(allocation, 0).expect("free source");
+        assert!(vm.freeze(source).is_err());
+        let copy = vm
+            .thaw(&empty_program(), &frozen, Some(&ty))
+            .expect("survives source");
+        assert_eq!(vm.freeze(copy).expect("freeze copy"), frozen);
+    }
+
+    #[test]
+    fn frozen_pointer_distinguishes_dangling_and_empty_and_rejects_cycles() {
+        let mut vm = VmBackend::default();
+        assert_eq!(
+            vm.freeze(Value::Pointer {
+                allocation: 0,
+                offset: 0
+            })
+            .expect("dangling"),
+            CtValue::Pointer {
+                memory: None,
+                offset: 0
+            }
+        );
+        let empty = vm.heap_alloc(0, 8).expect("empty allocation");
+        assert_eq!(
+            vm.freeze(empty).expect("empty"),
+            CtValue::Pointer {
+                memory: Some(vec![]),
+                offset: 0
+            }
+        );
+        let cycle = vm.heap_alloc(1, 8).expect("allocation");
+        let Value::Pointer { allocation, .. } = cycle else {
+            unreachable!("heap allocator returns a pointer")
+        };
+        vm.heap_store(allocation as usize - 1, 0, cycle.clone());
+        assert!(
+            vm.freeze(cycle)
+                .expect_err("cycle")
+                .to_string()
+                .contains("cyclic pointer memory")
+        );
     }
 
     #[test]

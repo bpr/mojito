@@ -1211,13 +1211,24 @@ impl Flatten<'_> {
             }
             variable
         };
-        (
-            value,
-            Some(MirPlace::root(
-                variable,
-                self.var_types.get(&variable).cloned(),
-            )),
-        )
+        // The slot now owns the temporary, so a use that copies it (a
+        // consuming receiver or argument) reads the slot, keeping it live
+        // until the copy, not the register the store moved from.
+        let place = MirPlace::root(variable, self.var_types.get(&variable).cloned());
+        let loaded = self.fresh_typed(
+            expression.source_span(),
+            Some(variable),
+            place
+                .ty
+                .clone()
+                .or_else(|| self.f.reg_types.get(&value.0).cloned())
+                .unwrap_or(Ty::Error),
+        );
+        self.emit(MirInstr::LoadPlace {
+            dest: loaded,
+            place: place.clone(),
+        });
+        (loaded, Some(place))
     }
 
     /// Bind the result of a call whose value no expression consumes (an

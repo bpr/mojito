@@ -92,7 +92,8 @@ Mojo leaves undefined. The 2026-09-12 error-folder sweep, with its 2026-09-13
 divergence triage, measured the gap at 33 fixtures the pin compiles and runs
 while Mojito rejects or traps; the 2026-09-21 re-pin left 32, upstream having
 made a var-less introduction an error of its own
-(`conformance/assets-mojo-errors.tsv`, family `subset`). Invariant 1 permits it:
+(`conformance/assets-mojo-errors.tsv`, family `subset`); R196's landing
+left 31. Invariant 1 permits it:
 Mojito may reject valid Mojo.
 
 - Eleven `ownership_error`/`origin_error` fixtures report `invalidated interior
@@ -105,10 +106,8 @@ Mojito may reject valid Mojo.
   uninitialized `MaybeUninit` storage; the pin runs each one to exit 0.
 - Five more trap on integer division or modulo by zero and on a negative `**`
   exponent, which the pin leaves to the hardware.
-- `assets/type_error/comptime_dict_result_not_freezable.mojo` and
-  `external_call_unknown_callee.mojo` name Mojito's own mechanisms — a VM-CTFE
-  value that cannot cross back, and the libc allowlist — which have no upstream
-  counterpart to agree with.
+- `external_call_unknown_callee.mojo` names Mojito's own mechanism, the libc
+  allowlist, which has no upstream counterpart to agree with.
 - `mapping_key_ref_write.mojo` and `set_element_ref_write.mojo` reject a write
   through a `for ref` key or set element. The pin accepts it and then answers
   membership from a stale hash index (`set-ref-write-gap`).

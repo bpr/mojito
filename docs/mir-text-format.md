@@ -1,4 +1,4 @@
-# Mojito Textual MIR Format, Version 1.38
+# Mojito Textual MIR Format, Version 1.39
 
 This document is the normative specification of Mojito's textual verified-MIR
 artifact. The Rust data model in `src/mir.rs` and `src/mir/ir.rs` remains the
@@ -6,7 +6,7 @@ in-memory authority; this format is its stable inspection and interchange
 boundary. `docs/vm-instruction-set.md` explains execution semantics, while this
 document defines syntax and serialized data.
 
-Version 1.38 is implemented end to end for inspection and loading: canonical
+Version 1.39 is implemented end to end for inspection and loading: canonical
 in-memory disassembly, full-grammar assembly parsing, and artifact-loading
 verification (`mir::text::load_artifact`, which reports canonical-verifier
 findings at artifact source spans). Lossless print → parse → print round trips
@@ -22,10 +22,10 @@ which may be generic; it is always elaborated before it runs.
 Every artifact begins with exactly:
 
 ```text
-mojito-mir 1.38
+mojito-mir 1.39
 ```
 
-The writer emits 1.38. The reader accepts 1.0 through 1.38; *Schema 1.0*
+The writer emits 1.39. The reader accepts 1.0 through 1.39; *Schema 1.0*
 below says how a 1.0 artifact is read, and *Binder identity* under *Types*
 how a binder without an identity is.
 
@@ -505,6 +505,13 @@ application (schema 1.38; a 1.37 artifact's `marker_applied(int)` and
 `marker_layout(type)` read as the same marker). A deferred slot names the binder
 whose slot it fills by a `binder { owner, slot, name }` record.
 
+`ct_pointer { offset: int, slots: dangling | [ct-value | absent, ...] }`
+(schema 1.39) carries frozen memory. `absent` is an uninitialized slot;
+`dangling` is a pointer without an allocation, distinct from `[]`, a live
+zero-length allocation. Offsets count elements and can be negative. The
+checked pointer type supplies the element layout when a backend allocates
+and writes fresh storage. Nested pointers and strings are recursive values.
+
 ### Parameter expressions
 
 A parameter expression is typed and canonical
@@ -797,7 +804,7 @@ Unknown terminators and instructions are fatal for schema major version 1.
 ## Complete Artifact Example
 
 ```text
-mojito-mir 1.38
+mojito-mir 1.39
 artifact {
   features: [],
   files: [file { id: file0, path: present("main.mojo"), module: absent }],
