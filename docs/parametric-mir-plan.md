@@ -42,9 +42,10 @@ instantiation mechanisms where upstream has one.
 
 Consequences of that arrangement:
 
-- The driver re-elaborates and re-checks to a fixpoint, up to five discovery
-  rounds, because only a check can discover the instantiations the next
-  elaboration must clone (`src/compiler.rs:compile_linked`).
+- The driver elaborated and checked to a fixpoint, up to five discovery
+  rounds, because only a check could discover the instantiations the next
+  elaboration must clone; since 2026-10-08 (R9's driver half) it elaborates
+  and checks once (`src/compiler.rs:compile_linked`).
 - A cloned body is checked again per instance. Checked templates
   ([`docs/notes/instantiation-from-template.md`](notes/instantiation-from-template.md))
   replace that check with derived facts for the bodies their certificates
@@ -97,7 +98,7 @@ What stays:
 
 What goes, by the last stage:
 
-- The AST cloner's core and the discovery fixpoint.
+- The AST cloner's core (the discovery fixpoint went on 2026-10-08).
 - Template fact derivation: realization, installation, and the certificate
   grammar in `template_facts.rs`.
 - Erased dispatch in the VM, and the `mir::verify` tolerances that exist only
@@ -755,6 +756,12 @@ regions. Later forms may bump it again (decision D5).
 
 ### P4 — Check once, then elaborate
 
+Landed in part on 2026-10-08: the driver runs one elaboration and one
+check, the discovery rounds, their request plumbing, and the clone census
+are deleted, and a checker-selected scalar `range` is spelled as its
+construction in the same check. The bullets below that are still open are
+R9's remainder on the roadmap.
+
 - With no clone left to check, the executable check runs once on the linked
   source, and source validation and the executable check become one process.
 - The discovery fixpoint becomes the elaborator's worklist: a call in a
@@ -769,8 +776,7 @@ regions. Later forms may bump it again (decision D5).
 
 ### P5 — Delete
 
-- The AST cloner's core, the request plumbing in the driver, and what is left
-  of template derivation.
+- The AST cloner's core and what is left of template derivation.
 - Erased dispatch in the VM and its verifier tolerances. This is the one
   comparison path that outlives its stage, and it goes here.
 - A last pass over `docs/architecture.md`. Each earlier stage already updated

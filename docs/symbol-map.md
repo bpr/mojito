@@ -44,7 +44,6 @@ map and dependency DAG live in `docs/architecture.md` §Workspace Layout.
 | Runtime values/operations | `runtime::{Value, coerce_checked, apply_infix, apply_prefix}` | VM and VM-backed CTFE. |
 | Backend contract | `backend::{Backend, BackendKind}` | Compiler driver and CLI. |
 | Phase timing (`--timings`) | `timing::{enable, enabled, span, round, count, report}` (crate `mojito-common`) | Every phase crate records spans; the CLI enables collection and prints the report; `scripts/bench-compile` and `tools/bench` parse it. Disabled, a span is one relaxed atomic load. |
-| Instantiation census (`--instantiation-census`) | `census::{InstantiationCensus, CloneCensus, CloneClass, ErasedServed}` (crate `mojito-checked`) | The elaborator classifies what it mints (`comptime/census.rs`, `Elaborated::clones`); the checker records distinct inferred and derived instance bodies in `TemplateStats::{inferred_instances, derived_instances}`; `native::mono` reports `SpecializedProgram::parametric` (the template of each instance) and `parametric_bodies`; `CompiledProgram::instantiation_census` assembles them and the CLI prints them. `CloneCensus::minted` says whether the cloner minted a lowered symbol, from the source names `comptime/census.rs` records, which is how a clone that keeps a parameter is counted apart from an erased template. |
 | `print` keywords | `infer_print` (`checker/builtins.rs`) | The VM's `print` arm (`dispatch.rs`; `file=` writes through `host_write_bytes`), pliron's `lower_print` (`lower/print.rs`; a `print_sink` descriptor makes `write_stdout` call libc `write`), `mojito_types::types::is_stdlib_file_descriptor_struct`. |
 | Constructed defaults (`dir: Optional[String] = None`) | `CheckedConst::Construct` in the callee's declaration | The VM's `bind_for_call`; the native monomorphizer's `instantiate_constructed_defaults` (enqueues the constructor instance for the parameter type and respells the default's target), pliron's `reachable_set` (follows the default's target) and `bind_call_slots` (runs the instance over fresh storage). |
 | Evaluated defaults (`s: String = String("a")`) | `mir::lower_default` lowers the default as the zero-parameter function `$default$<owner>$<parameter>` recorded as `CheckedConst::Evaluate`; the checker's `dynamic_default_reference` rejects one naming runtime storage and the elaborator's `check_default_effects` (`comptime/ctfe.rs`) one that does I/O | The VM's `bind_for_call` runs the function per call; pliron calls it from the caller (`evaluated_default_value` in `lower/calls.rs`), releasing a borrowed slot's value through `default_temps`. `native::mono` (`instantiate_constructed_defaults`) and pliron's `reachable_set` carry the edge no call instruction spells; a default function declaring the binders it reads is instantiated under its owner instance's arguments (`default_function_bindings`), and the erased VM refuses it. |
@@ -122,7 +121,7 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   records, by the call's
   origin, each omitted requirement default some conformer's witness
   declares otherwise (`witnesses_default_alike`), the catalog keeps them
-  across discovery rounds (`TemplateCatalog::bound_default_arguments`,
+  across passes (`TemplateCatalog::bound_default_arguments`,
   `BoundDefaultArguments`), and `bind_bound_default_arguments` spells them
   as keyword arguments of the call and of every clone of it, before a pass
   and again, with another pass, when a pass found new ones
@@ -345,10 +344,8 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `note_body_effect_read` beside each `effect_observations` write) are still
   current, and `enter_body_site`/`leave_body_site` bracket an inferred one
   (from `statements.rs:check_def` at module level and
-  `declarations.rs:check_method_inner`). `def_syntax_hash`/`method_syntax_hash`
-  are the syntax fingerprints a later round compares, and
-  `PassCarry::for_next_round`/`sites` are the driver's dirtiness hooks
-  (`compiler.rs:ServedRequests::dirty_sites`).
+  `declarations.rs:check_method_inner`); the carry is private to the
+  passes of one check (`checker.rs:check_program_carrying`).
 - `checker/comptime_validation.rs` owns source validation of compile-time
   control flow: `validate_comptime_templates_into` (in `checker.rs`) runs a
   checker in `source_validation` mode over the prepared program, lending it
@@ -652,11 +649,11 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   The design record is `docs/notes/instantiation-from-template.md`.
   Where each instance obligation goes once clones are gone is
   `docs/notes/generator-contract.md`.
-- `checked.rs`'s `DiscoveryResult` is what a discovery round's check returns
-  (`checker.rs:check_program_for_discovery`, inside the `PassCarry` of
-  `check_program_carrying`): `CheckedProgram::new`'s inputs, owned, with
-  `scan_expressions` for the request collectors and `finalize` for the round
-  that converges. Its tables are `fact_store.rs`'s logged stores.
+- `checked.rs`'s `DiscoveryResult` is what a check returns before its arena
+  is built (`checker.rs:check_program_for_discovery`): `CheckedProgram::new`'s
+  inputs, owned, with `scan_expressions` for a client reading the facts
+  alone and `finalize` for the arena (`check_program_with_templates`, the
+  driver's entry). Its tables are `fact_store.rs`'s logged stores.
 - `fact_store.rs` owns `FactMap`, `FactSet`, and `FactVec`: a `HashMap`,
   `HashSet`, or `Vec` that logs every key written, read through `Deref`,
   with `mark`/`logged` for a range of the log. Every checker fact store is
@@ -958,28 +955,22 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
 - `comptime.rs` owns the staged entry points (`prepare` normalizes
   declarations without selecting or cloning — among them each conformer's
   inherited trait defaults, through `checker::expand_trait_defaults`, `elaborate_prepared` is the
-  already-validated request-driven route the driver re-elaborates each
-  discovery round, its `ElaborationInputs::new` requiring the catalog that
-  holds validation's verdict, `elaborate` composes prepare → validate → elaborate for
-  the stage seam), the `Elab` elaboration driver (`block`/`stmt`; its
+  already-validated route the driver enters once per compilation, its
+  `ElaborationInputs::new` requiring the catalog that holds validation's
+  verdict, `elaborate` composes prepare → validate → elaborate for the stage
+  seam), the `Elab` elaboration driver (`block`/`stmt`; its
   `keep_template_comptime_if` keeps a `comptime if` over a generic `def`'s
   own binders (`Elab::template_binders`) for the check, where every other
   one is selected), type
-  resolution, the template classification (`bound_generic_template_names`,
+  resolution, the template classification (`collect_bound_generic_templates`,
   a type-pack def among them, since every one is template-served; the
   per-declaration predicates `is_specializable_declaration` and
   `pack_keyed_declaration` leave only a value-pack `def` whose binders its
   template does not serve specializable; `Mono::retain_abstract` records a
   template a reference leaves on its abstract path), the
-  origin-slot guards (`ty_mentions_origin_slotted_struct` finds such type
-  arguments, a pointer whose origin is a place
-  `PointerOrigin::clone_bindable_place` admits among them, whose
-  `CloneBinderProjection` the binder's pointer re-applies below the place
-  it binds (`PointerOrigin::without_projection` peels it at the call);
-  `clone_binding` rebinds an instance's slots to the
-  `CloneOriginBinders` a clone declares, named by
-  `symbol::CLONE_ORIGIN_BINDER_PREFIX`, for a bundled template's instance
-  or `def` call as for a user template's, which
+  origin-slot vocabulary (`explicit_origin_slots` lists a struct's explicit
+  origin parameters; `CloneOriginBinders` names the binders a clone declares
+  for them, `symbol::CLONE_ORIGIN_BINDER_PREFIX`, which
   `Checker::clone_origin_binder_ids` leaves unbound for the argument
   exclusivity rule; `pack_element_source_type` spells
   erased slots as `_`), and the free-function/`Mono` support code; `Elab`'s remaining

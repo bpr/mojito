@@ -774,3 +774,27 @@ The first decision point is simple: if link plus initial checking consumes most
 of Hello World, prototype a reusable/precompiled prelude boundary. If repeated
 rounds consume most of it, attack the nested fixpoints first. If neither does,
 the phase report tells us which later component deserves the profiler.
+
+## P4: the driver checks once (2026-10-08)
+
+**Environment.** Baseline commit `b1e6226f` (release binary built at that
+commit) against the same tree with the R9 driver change; rustc 1.96.1;
+the machine of the sections above; VM backend; `--timings` rows in
+microseconds, medians of 5 interleaved runs per binary (`/usr/bin/time`
+for peak RSS). `check` is the one check without its arena build in both
+columns (the baseline's `discovery.initial.check`; the new span nests the
+arena, subtracted here). `round[0]` is the baseline's second elaboration
+plus carried check, which no longer exists.
+
+| Program | compile (base → new) | validation | elaborate | check | round[0] | arena | mir.lower | mono elaborate | concrete fns | peak RSS MB |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| hello | 1126 → 938 (−16.7%) | 51 → 50 | 37 → 37 | 538 → 525 | 169 → 0 | 78 → 77 | 196 → 202 | 145 → 143 | 5 → 5 | 196 → 194 |
+| generic | 1118 → 954 (−14.7%) | 50 → 50 | 37 → 38 | 542 → 530 | 166 → 0 | 77 → 77 | 194 → 201 | 145 → 143 | 25 → 25 | 197 → 196 |
+| keyed | 1111 → 950 (−14.5%) | 52 → 52 | 37 → 39 | 533 → 528 | 165 → 0 | 76 → 77 | 194 → 204 | 144 → 145 | 58 → 58 | 204 → 201 |
+| stdlib_heavy | 1133 → 950 (−16.2%) | 50 → 50 | 37 → 38 | 540 → 523 | 164 → 0 | 77 → 77 | 195 → 203 | 146 → 144 | 165 → 165 | 218 → 215 |
+
+The second elaboration and the carried check are gone, the one check costs
+no more than the old initial check, concrete-MIR instance counts are
+unchanged, and peak RSS is not above the baseline on any row. The
+remaining frontend is the initial check of the bundled library (R11) and
+MIR lowering.

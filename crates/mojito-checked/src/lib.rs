@@ -2,7 +2,6 @@
 //! vocabulary later phases consume instead of re-checking (pipeline
 //! invariant 4).
 
-pub mod census;
 pub mod checked;
 pub mod fact_store;
 pub mod templates;

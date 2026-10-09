@@ -2,15 +2,13 @@
 //!
 //! A body's inference is a function of its syntax, the declarations around
 //! it, and the committed transfer and call-through effects it reads. A
-//! transfer pass re-checks the same elaborated program, and a discovery
-//! round re-checks one that only gained declarations, so a body whose reads
-//! are still current would record byte-identical facts. Each body site
-//! (a module-level `def`, a struct method) therefore records the log ranges
-//! it wrote into every fact store ([`crate::checker::Checker`]'s
-//! [`FactMap`]/[`FactSet`]/[`FactVec`] fields), its exact effect reads, and
-//! a hash of its syntax; the next pass copies the logged entries instead of
-//! inferring when the record is clean and every read still equals the
-//! committed entry.
+//! transfer pass re-checks the same elaborated program, so a body whose
+//! reads are still current would record byte-identical facts. Each body
+//! site (a module-level `def`, a struct method) therefore records the log
+//! ranges it wrote into every fact store ([`crate::checker::Checker`]'s
+//! [`FactMap`]/[`FactSet`]/[`FactVec`] fields) and its exact effect reads;
+//! the next pass copies the logged entries instead of inferring when every
+//! read still equals the committed entry.
 //!
 //! The copy is exact: every writer of a fact store is a logging method, and
 //! the fresh pass redoes everything outside the body window (declaration
@@ -22,8 +20,7 @@
 
 use super::Checker;
 use crate::explicit_destroy::CheckedDeletability;
-use mojito_ast::ast::{Expr, ExprKind, Method, Stmt, StmtKind, Type};
-use mojito_ast::visit::{Visitor, walk_block, walk_expr};
+use mojito_ast::ast::Stmt;
 use mojito_checked::checked::{
     CallThroughEffect, DiscoveryResult, ExplicitDestroyInfo, TransferEffect,
 };
@@ -32,7 +29,7 @@ use mojito_common::timing;
 use mojito_common::token::SourceSpan;
 use mojito_types::origin::OwnerId;
 use std::collections::{HashMap, HashSet};
-use std::hash::{Hash, Hasher};
+use std::hash::Hash;
 use std::ops::Range;
 
 /// What one checker pass leaves for the next: its fact stores, one record
@@ -46,42 +43,11 @@ pub struct PassCarry {
     /// ceiling of a body inferred again inside its own range.
     range_starts: Vec<u32>,
     next_owner: u32,
-    /// Whether a later discovery round (another elaboration) is the reader:
-    /// a site then also proves its syntax unchanged.
-    cross_round: bool,
 }
 
 impl PassCarry {
-    /// The facts of the pass, for the driver's request queries.
-    pub const fn result(&self) -> &DiscoveryResult {
-        &self.result
-    }
-
     pub fn into_result(self) -> DiscoveryResult {
         self.result
-    }
-
-    /// Hand the carry to the next discovery round: every site must then
-    /// also match its syntax hash, and the sites `dirty` names are inferred
-    /// again whatever else they match.
-    #[must_use]
-    pub fn for_next_round(mut self, dirty: &HashSet<SourceSpan>) -> Self {
-        self.cross_round = true;
-        for (key, record) in &mut self.records {
-            record.dirty |= dirty.contains(key);
-        }
-        self
-    }
-
-    /// The body sites of the pass, each with the entries it recorded in
-    /// the stores a request is harvested from, for the driver's dirtiness
-    /// marking.
-    pub fn sites(&self) -> impl Iterator<Item = CarriedSite<'_>> {
-        self.records.iter().map(|(key, record)| CarriedSite {
-            key,
-            carry: self,
-            record,
-        })
     }
 
     /// The committed effect maps, the next pass's seeds.
@@ -113,50 +79,6 @@ impl PassCarry {
     }
 }
 
-/// One body site of a carried pass, seen through its record.
-pub struct CarriedSite<'a> {
-    key: &'a SourceSpan,
-    carry: &'a PassCarry,
-    record: &'a BodyRecord,
-}
-
-impl CarriedSite<'_> {
-    pub const fn key(&self) -> &SourceSpan {
-        self.key
-    }
-
-    /// The generic-struct applications the body reached.
-    pub fn struct_instantiations(&self) -> &[mojito_checked::checked::StructInstantiation] {
-        self.carry
-            .result
-            .struct_instantiations
-            .logged(self.record.range(|marks| marks.struct_instantiations))
-    }
-
-    /// The generic instantiations the body recorded, by callee.
-    pub fn instantiated_callees(&self) -> impl Iterator<Item = &str> {
-        let result = &self.carry.result;
-        result
-            .generic_instantiations
-            .logged(self.record.range(|marks| marks.generic_instantiations))
-            .iter()
-            .filter_map(|span| result.generic_instantiations.get(span))
-            .map(|instantiation| instantiation.callee.as_str())
-    }
-
-    /// The generic method instantiations the body recorded, by owner and
-    /// method.
-    pub fn instantiated_methods(&self) -> impl Iterator<Item = (&str, &str)> {
-        let result = &self.carry.result;
-        result
-            .method_instantiations
-            .logged(self.record.range(|marks| marks.method_instantiations))
-            .iter()
-            .filter_map(|span| result.method_instantiations.get(span))
-            .map(|instantiation| (instantiation.owner.as_str(), instantiation.method.as_str()))
-    }
-}
-
 /// What one body site recorded in one pass.
 #[derive(Debug)]
 pub struct BodyRecord {
@@ -171,10 +93,6 @@ pub struct BodyRecord {
     /// The fresh block it spilled into when inferred again inside a range
     /// it outgrew.
     spill: Option<Range<u32>>,
-    syntax: u64,
-    /// Set by the driver when a request the body recorded was served since:
-    /// its facts would now differ.
-    dirty: bool,
 }
 
 impl BodyRecord {
@@ -195,8 +113,6 @@ pub enum ObservedEffects {
 enum CarryRefusal {
     NoPrevious,
     NoRecord,
-    Dirty,
-    SyntaxChanged,
     StaleRead,
 }
 
@@ -205,8 +121,6 @@ impl CarryRefusal {
         match self {
             Self::NoPrevious => "no previous pass",
             Self::NoRecord => "no record in the previous pass",
-            Self::Dirty => "a request it recorded was served since",
-            Self::SyntaxChanged => "its syntax changed",
             Self::StaleRead => "an effect entry it read changed",
         }
     }
@@ -478,7 +392,6 @@ macro_rules! define_carry_ops {
                     records,
                     range_starts,
                     next_owner: self.fresh_owner_cursor.get().max(self.next_owner.get()),
-                    cross_round: false,
                 }
             }
         }
@@ -497,8 +410,8 @@ impl Checker {
     /// Serve the body site `key` from the previous pass, if its record is
     /// clean and every effect entry it read is still what it read. The
     /// facts are copied and a fresh record is left for the next pass.
-    pub(super) fn carry_body(&mut self, key: &SourceSpan, display: &str, syntax: u64) -> bool {
-        if let Some(refusal) = self.carry_refusal(key, syntax).err() {
+    pub(super) fn carry_body(&mut self, key: &SourceSpan, display: &str) -> bool {
+        if let Some(refusal) = self.carry_refusal(key).err() {
             if !matches!(refusal, CarryRefusal::NoPrevious) {
                 timing::count("body_facts.carry_refused", 1);
                 timing::note("body_facts.carry_refused", || {
@@ -535,7 +448,7 @@ impl Checker {
         }
         *self.site_reads.borrow_mut() = Some(record.reads.clone());
         let (owners, spill) = (record.owners.clone(), record.spill.clone());
-        self.leave_body_site(key.clone(), display, &start, syntax);
+        self.leave_body_site(key.clone(), display, &start);
         let mut records = self.body_records.borrow_mut();
         let recorded = records.get_mut(key).expect("the site was just recorded");
         recorded.owners = owners;
@@ -571,13 +484,7 @@ impl Checker {
 
     /// Close the body site opened at `start`, recording what it wrote, and
     /// return the cursor to the fresh region.
-    pub(super) fn leave_body_site(
-        &self,
-        key: SourceSpan,
-        display: &str,
-        start: &StoreMarks,
-        syntax: u64,
-    ) {
+    pub(super) fn leave_body_site(&self, key: SourceSpan, display: &str, start: &StoreMarks) {
         let reads = self.site_reads.borrow_mut().take().unwrap_or_default();
         let (owners, spill) = if self.owner_ceiling.take().is_none() && self.owner_range_split.get()
         {
@@ -599,8 +506,6 @@ impl Checker {
                 reads,
                 owners,
                 spill,
-                syntax,
-                dirty: false,
             },
         );
     }
@@ -610,15 +515,9 @@ impl Checker {
         !self.source_validation && self.template_catalog.borrow().body_fact_reuse()
     }
 
-    fn carry_refusal(&self, key: &SourceSpan, syntax: u64) -> Result<(), CarryRefusal> {
+    fn carry_refusal(&self, key: &SourceSpan) -> Result<(), CarryRefusal> {
         let previous = self.previous.as_ref().ok_or(CarryRefusal::NoPrevious)?;
         let record = previous.records.get(key).ok_or(CarryRefusal::NoRecord)?;
-        if record.dirty {
-            return Err(CarryRefusal::Dirty);
-        }
-        if previous.cross_round && record.syntax != syntax {
-            return Err(CarryRefusal::SyntaxChanged);
-        }
         let transfers = self.transfer_effects.borrow();
         let throughs = self.call_through_effects.borrow();
         let current = record
@@ -643,111 +542,6 @@ impl Checker {
             return Err(CarryRefusal::StaleRead);
         }
         Ok(())
-    }
-}
-
-/// A hash of a module-level `def` for a record: its syntax identities,
-/// node kinds, the names it calls, its parameter arguments, and its
-/// annotations, which is what an elaboration rewrites in a body it kept.
-pub(super) fn def_syntax_hash(stmt: &Stmt) -> u64 {
-    let mut hasher = SyntaxHasher::default();
-    if let StmtKind::Def {
-        name,
-        type_params,
-        params,
-        ret,
-        raises,
-        raises_type,
-        decorators,
-        where_clauses,
-        ..
-    } = &stmt.kind
-    {
-        name.hash(&mut hasher.state);
-        format!("{type_params:?}{params:?}{ret:?}{raises:?}{raises_type:?}{decorators:?}")
-            .hash(&mut hasher.state);
-        for clause in where_clauses {
-            walk_expr(&mut hasher, clause);
-        }
-    }
-    mojito_ast::visit::walk_stmt(&mut hasher, stmt);
-    hasher.state.finish()
-}
-
-/// [`def_syntax_hash`] for a struct method.
-pub(super) fn method_syntax_hash(m: &Method) -> u64 {
-    let mut hasher = SyntaxHasher::default();
-    m.name.hash(&mut hasher.state);
-    format!(
-        "{:?}{:?}{:?}{:?}{:?}{:?}{:?}{:?}{:?}",
-        m.type_params,
-        m.has_self,
-        m.self_convention,
-        m.self_origin,
-        m.decorators,
-        m.params,
-        m.raises,
-        m.raises_type,
-        m.ret
-    )
-    .hash(&mut hasher.state);
-    for clause in &m.where_clauses {
-        walk_expr(&mut hasher, clause);
-    }
-    walk_block(&mut hasher, &m.body);
-    hasher.state.finish()
-}
-
-#[derive(Default)]
-struct SyntaxHasher {
-    state: std::hash::DefaultHasher,
-}
-
-impl Visitor for SyntaxHasher {
-    fn visit_stmt(&mut self, statement: &Stmt) {
-        statement.syntax_id.hash(&mut self.state);
-        std::mem::discriminant(&statement.kind).hash(&mut self.state);
-        match &statement.kind {
-            StmtKind::VarDecl { name, .. }
-            | StmtKind::RefDecl { name, .. }
-            | StmtKind::Assign { name, .. } => name.hash(&mut self.state),
-            StmtKind::Def {
-                name,
-                type_params,
-                params,
-                ret,
-                ..
-            } => {
-                name.hash(&mut self.state);
-                format!("{type_params:?}{params:?}{ret:?}").hash(&mut self.state);
-            }
-            _ => {}
-        }
-    }
-
-    fn visit_expr(&mut self, expr: &Expr) {
-        expr.syntax_id.hash(&mut self.state);
-        std::mem::discriminant(&expr.kind).hash(&mut self.state);
-        match &expr.kind {
-            ExprKind::Identifier(name) => name.hash(&mut self.state),
-            ExprKind::Call {
-                name, param_args, ..
-            } => {
-                name.hash(&mut self.state);
-                format!("{param_args:?}").hash(&mut self.state);
-            }
-            ExprKind::MethodCall { method, .. } => method.hash(&mut self.state),
-            ExprKind::Member { field, .. } => field.hash(&mut self.state),
-            ExprKind::Int(value) => format!("{value:?}").hash(&mut self.state),
-            ExprKind::Float(value) => format!("{value:?}").hash(&mut self.state),
-            ExprKind::Bool(value) => value.hash(&mut self.state),
-            ExprKind::Str(value) => value.hash(&mut self.state),
-            _ => {}
-        }
-    }
-
-    fn visit_type(&mut self, ty: &Type) {
-        format!("{ty:?}").hash(&mut self.state);
     }
 }
 

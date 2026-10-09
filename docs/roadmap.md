@@ -60,25 +60,39 @@ Frozen: `checker/template_facts.rs` gains no certificate class and no
 recipe. A body the certificates do not cover waits for its stage. A
 correctness fix to existing behavior is allowed.
 
-- [ ] **R9 (P4) The driver elaborates and checks to a fixpoint**
+- [ ] **R9 (P4) Source validation and the executable check are two
+  passes, and the AST evaluates compile-time code above the check**
 
-  Problem: `compile_linked` re-elaborates and re-checks for up to five
-  discovery rounds, because only a check discovers the instances the next
-  elaboration must clone.
-  - With no clone left, the check runs once on the linked source, and source
-    validation and the executable check are one pass.
-  - The elaborator's worklist finds instances transitively from the entries.
-  - CTFE's AST route is deleted, `VmBackend::run_function_value` and the
-    per-round fuel reset with it. The worklist's request path
-    (`docs/notes/ctfe-request-path.md`) is the only one.
+  Problem: the driver elaborates once and checks once (2026-10-08), but
+  the check is still two checker runs over the prepared program, plain
+  bodies are still selected and unrolled above it, module constants are
+  still materialized into bodies as literals, and CTFE still has an AST
+  route beside the worklist's request path.
+  - Every function body keeps its `comptime if`/`comptime for` to MIR, as
+    generic bodies do: the checker types every arm and loop body once with
+    the index a binder, and `native::mono` decides and unrolls. Every
+    sequence shape the AST unroller accepted needs a checker rule; a shape
+    without one is a checker error, never a silent unroll.
   - Module-scope `comptime` values follow decision D3: a constant the
-    `ParamExpr` folder closes is folded before the check, and one whose
-    initializer applies anything is a typed request the elaborator
-    evaluates on first demand. The early folding of applied constants goes
-    here.
-  - The budget is plan decision D4: a stated improvement on the workloads
-    repeated checking dominates, and bounded regressions elsewhere.
-  - Depends on R8.
+    `ParamExpr` folder closes is `Constant(v)`, one whose initializer
+    applies anything is `Apply(thunk)`, and a body read is a `ParamValue`
+    fact lowered as `Const::Param`. Materialization into bodies, the
+    pending/forced machinery, and `ParamKind::Apply::evaluated` go; R139
+    closes with it.
+  - `validate_comptime_templates_into` merges into the one check: each
+    `source_validation` site becomes unconditional, is deleted, or is
+    unified (the two local `comptime` binding rules); `Checker.source_validation`
+    and `ElaborationInputs` go.
+  - CTFE's AST route is deleted with `VmBackend::run_function_value` and
+    the `mojito-vm → mojito-checker` and `mojito-comptime → mojito-vm`
+    edges; the worklist's request path (`docs/notes/ctfe-request-path.md`)
+    is the only one. It waits for the two bullets above, which remove the
+    last module-scope and signature positions that reach `Elab::eval` with
+    a call.
+  - The plan file of 2026-10-08 (slices 3 to 6) orders the work; its
+    budget rule (D4) holds: no row of `docs/performance.md`'s P4 table may
+    regress past 1.20× peak RSS.
+  - Depends on nothing.
   - Model: Fable, Planned.
 
 - [ ] **R10 (P5) The replaced mechanisms are still in the tree**
@@ -3488,23 +3502,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     parametric `def` names; the message follows from that.
   - Model: Opus, Not Planned.
 
-- [ ] **R84 A generic struct's `DType`-keyed method is never cloned
-  without a discovery round**
-
-  Problem: `holder.double[DType.int64](9)`, over `def double[dt:
-  DType](self, a: Scalar[dt]) -> Scalar[dt]` on `struct Holder[T: Copyable
-  & Movable & Deinitable]`, reports "invalid checked program: ... argument 0
-  of 'Holder.double$y3:Int' has type Int64, declared Scalar[dt]"; the pin
-  prints `18`.
-  - The call keeps the per-instance method, whose `dt` lowers untyped,
-    instead of retargeting to a per-call clone.
-  - It runs once another inferred keyed call in the program (a free
-    `twice(Int16(5))`) forces a discovery round, which is why
-    `assets/ok/dtype_keyed_method.mojo`'s `Holder` case passes.
-  - The same method on a plain struct clones without discovery.
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R85 A method forwarding its own `DType` parameter to a sibling
   keyed method is rejected**
 
@@ -4830,8 +4827,8 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   pin declares infer-only overloads**
 
   Problem: `range(Int32(4))` is typed by `Checker::infer_scalar_range`
-  once overload selection fails, and the elaborator rewrites the call into
-  the range struct's construction, where the pin's `std.builtin.range`
+  once overload selection fails, which spells the call as the range
+  struct's construction, where the pin's `std.builtin.range`
   declares `def range[dtype: DType, //](end: Scalar[dtype]) ->
   _ZeroStartingRange[dtype]` and its two- and three-argument siblings.
   - Mojito's float range is a separate `_FloatStridedRange`; the pin's
@@ -4839,9 +4836,9 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     Self.dtype.is_floating_point()`.
   - The overloads reject a float or `Bool` lane with `comptime assert`,
     which Mojito does not parse (R74).
-  - With the overloads in source, `infer_scalar_range`,
-    `scalar_range_requests`, the elaborator's range rewrite, and the
-    checker's discovery-round range shortcuts (`scalar_range_parts`) go.
+  - With the overloads in source, `infer_scalar_range`'s spelled
+    construction and the checker's range shortcuts (`scalar_range_parts`
+    in `iteration.rs`, `indexing.rs`, and `builtins.rs`) go.
   - Depends on R74.
   - Model: Opus, Planned.
 
@@ -5369,19 +5366,6 @@ residue found inside a task moves to the task that owns its fix.
   - Sites: CTFE, which runs before any clone exists.
   - Depends on nothing.
   - Model: Fable, Planned.
-
-- [ ] **R205 Instance clones are minted per whole instance without
-  reachability pruning, inflating compile time**
-
-  Problem: clones are minted per whole instance and re-checked each
-  discovery round.
-  - `benchmarks/compile/stdlib_heavy` is about 2.2x its pre-clone baseline
-    in release (`docs/performance.md`).
-  - The repr methods added 2026-09-05 cost about 5% in debug across the
-    compile benchmarks.
-  - Lever: reachability-pruned minting.
-  - Depends on nothing.
-  - Model: Opus, Planned.
 
 - [ ] **R206 Type-pack calls inside a nested `def` and whole-pack-forwarded
   calls keep the syntactic element-typing path**
@@ -5944,21 +5928,6 @@ Track: `tooling`.
     `def_syntax_hash`).
   - Moving the previous pass's stores into the fresh checker and removing
     the entries of the bodies it infers would replace the copies.
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **R149 A clone appended before older clones loses its carry record**
-
-  Problem: a discovery round that inserts a new clone ahead of existing
-  ones in the elaborated tree renumbers the older clones' duplicate syntax
-  identities, so their records no longer match and they are inferred again.
-  - `--timings` notes show them as `body_facts.carry_refused … its syntax
-    changed` and `no record in the previous pass` (about a hundred per
-    round for Hello World).
-  - The final re-key (`ast.rs:rekey_syntax`) numbers replacement identities
-    in traversal order. Keying a clone's occurrences by the template
-    identity and copy index, as the template mechanism does, would keep
-    them stable.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

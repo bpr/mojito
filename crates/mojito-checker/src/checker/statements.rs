@@ -2753,15 +2753,13 @@ impl Checker {
         // A module-level body is a carry site: its parameter bindings, its
         // frames, and its inference are what the previous pass recorded for
         // it, or what this pass records.
-        let site = (module_level && check_body && self.carries_bodies())
-            .then(|| (stmt.source_span(), super::body_carry::def_syntax_hash(stmt)));
-        let carried = site
-            .as_ref()
-            .is_some_and(|(key, syntax)| self.carry_body(key, name, *syntax));
+        let site =
+            (module_level && check_body && self.carries_bodies()).then(|| stmt.source_span());
+        let carried = site.as_ref().is_some_and(|key| self.carry_body(key, name));
         let site_start = if carried {
             None
         } else {
-            site.as_ref().map(|(key, _)| self.enter_body_site(key))
+            site.as_ref().map(|key| self.enter_body_site(key))
         };
         if carried {
             // Nothing to bind or infer: the pops below balance the pushes above.
@@ -2975,8 +2973,8 @@ impl Checker {
                 self.aggregate_escape_contexts.pop();
             }
         }
-        if let (Some((key, syntax)), Some(start)) = (site, site_start) {
-            self.leave_body_site(key, name, &start, syntax);
+        if let (Some(key), Some(start)) = (site, site_start) {
+            self.leave_body_site(key, name, &start);
         }
         // A function with a non-`None` return type must return on every
         // path (falling off the end would yield `None`).

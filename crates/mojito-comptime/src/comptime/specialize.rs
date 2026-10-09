@@ -10,11 +10,7 @@ impl Elab<'_> {
     /// Specialize every comptime-dependent generic template against the value
     /// arguments at its call sites, replacing each template with its concrete
     /// specializations (which have their `comptime if`/`for` resolved).
-    pub(super) fn monomorphize(
-        &self,
-        program: Vec<Stmt>,
-        def_requests: &[DefSpecializationRequest],
-    ) -> Result<Elaborated, ComptimeError> {
+    pub(super) fn monomorphize(&self, program: Vec<Stmt>) -> Result<Elaborated, ComptimeError> {
         let consts = self.top_consts.borrow().clone();
         let mut mono = Mono::default();
         let mut program = program;
@@ -31,7 +27,6 @@ impl Elab<'_> {
                 .collect(),
         );
         mono.value_scopes.push(module_bindings);
-        self.seed_def_call_targets(def_requests, &mut mono);
         // Rewrite call sites in every non-template statement, seeding the
         // worklist. A bound-generic template's body is live code whether the
         // template is retained or dropped, so it is scanned like any other
@@ -90,48 +85,7 @@ impl Elab<'_> {
             def_traces: Vec::new(),
             generated: super::GeneratedDeclarations::default(),
             ctfe_template_stats: mojito_checked::templates::TemplateStats::default(),
-            clones: mojito_checked::census::CloneCensus::default(),
         })
-    }
-
-    /// Record the clone each checker-discovered inferred bound-generic
-    /// application selects, for `mono_expr` to consult at that occurrence.
-    ///
-    /// Seeding only records the target; the Job queues lazily at the consult,
-    /// so a drifted request produces no dead clone and a never-matched
-    /// request leaves its template correctly retained. The compiler already
-    /// resolved occurrence conflicts, so a duplicate here keeps the first
-    /// target (defensive).
-    fn seed_def_call_targets(&self, def_requests: &[DefSpecializationRequest], mono: &mut Mono) {
-        for request in def_requests {
-            let callee = request.callee();
-            // A scalar-range request names a range-family struct, a generator
-            // the template serves, and its dtype: the call becomes that
-            // struct's construction at the dtype (`_ZeroStartingRange[dt](…)`).
-            if self.struct_names.contains(callee)
-                && let [TyArg::Val(value @ CtValue::Dtype(_))] = request.arguments()
-            {
-                mono.struct_call_targets
-                    .entry(request.occurrence().clone().without_syntax())
-                    .or_insert_with(|| (callee.to_string(), vec![value.clone()]));
-                continue;
-            }
-            if !self.bound_generics.contains(callee) {
-                continue;
-            }
-            let Some(template) = self.specializable.get(callee).copied() else {
-                continue;
-            };
-            let Some(vals) = self.def_request_values(template, request.arguments()) else {
-                continue;
-            };
-            mono.def_call_targets
-                .entry(request.occurrence().clone())
-                .or_insert_with(|| DefCallTarget {
-                    template: callee.to_string(),
-                    vals,
-                });
-        }
     }
 
     /// Whether the template of the `def` `name` serves every closed call of

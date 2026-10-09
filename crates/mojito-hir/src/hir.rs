@@ -1065,8 +1065,8 @@ impl Lower {
     }
 
     /// Replace every spelled sugar in `syntax` (an initializer list, a
-    /// template string, or a value pack read as its `ParameterList`) by the
-    /// construction the checker spelled for it, the
+    /// template string, a value pack read as its `ParameterList`, or a
+    /// scalar `range` call) by the construction the checker spelled for it, the
     /// node the checked arena answers at the sugar's location, so the CFG
     /// lowers the construction where the sugar was written and the sugar's
     /// own operands, cloned into it, keep their identities.
@@ -1083,6 +1083,7 @@ impl Lower {
                         | ExprKind::TString { .. }
                         | ExprKind::Identifier(_)
                         | ExprKind::Member { .. }
+                        | ExprKind::Call { .. }
                 ) {
                     return;
                 }

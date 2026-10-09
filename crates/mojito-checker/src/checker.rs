@@ -182,27 +182,25 @@ pub fn check_program_with_templates(
 ///
 /// Every check that can reject the program has run: the transfer-effect
 /// fixpoint, reference-result reads, context-manager splicing, and explicit
-/// destruction. What is left is building the checked arena, which the
-/// discovery loop needs only for the round that converges
-/// ([`DiscoveryResult::finalize`](mojito_checked::checked::DiscoveryResult::finalize)).
+/// destruction. What is left is building the checked arena
+/// ([`DiscoveryResult::finalize`](mojito_checked::checked::DiscoveryResult::finalize)),
+/// which a client reading the facts alone need not pay for.
 pub fn check_program_for_discovery(
     stmts: &[Stmt],
     catalog: &mut mojito_checked::templates::TemplateCatalog,
 ) -> Result<mojito_checked::checked::DiscoveryResult, TypeError> {
-    check_program_carrying(stmts, catalog, None).map(PassCarry::into_result)
+    check_program_carrying(stmts, catalog).map(PassCarry::into_result)
 }
 
-/// [`check_program_for_discovery`] over the previous discovery round's
-/// carry, returning this round's.
+/// [`check_program_for_discovery`]'s passes, returning the last pass's
+/// carry.
 ///
-/// Each transfer pass, and the first pass of a round given `previous`,
-/// starts from the previous pass's committed effect maps and serves every
-/// body site whose record is clean and whose effect reads are still
-/// current from that pass instead of inferring it (`body_carry`).
-pub fn check_program_carrying(
+/// Each transfer pass after the first starts from the previous pass's
+/// committed effect maps and serves every body site whose effect reads are
+/// still current from that pass instead of inferring it (`body_carry`).
+fn check_program_carrying(
     stmts: &[Stmt],
     catalog: &mut mojito_checked::templates::TemplateCatalog,
-    previous: Option<PassCarry>,
 ) -> Result<PassCarry, TypeError> {
     // Two-phase transfer effects: a call site checked before its callee's
     // body only sees effects already committed, so the check reruns — seeded
@@ -242,10 +240,10 @@ pub fn check_program_carrying(
         catalog.bound_default_arguments(),
     );
     let rebind_targets = erase_rebinds(&mut expanded);
-    // The previous pass: the round's carry for the first pass, then each
-    // stale pass for the next. Its committed maps seed the pass and its
-    // records serve the unchanged bodies.
-    let mut previous = previous.filter(|_| catalog.body_fact_reuse());
+    // The previous pass: none for the first, then each stale pass for the
+    // next. Its committed maps seed the pass and its records serve the
+    // unchanged bodies.
+    let mut previous: Option<PassCarry> = None;
     let mut rounds = 0;
     let checker = loop {
         let _round = timing::round("transfer.round", rounds);
@@ -368,7 +366,7 @@ pub struct ConformanceFailure {
 mod body_carry;
 mod conformance;
 mod overload_support;
-pub use body_carry::{CarriedSite, PassCarry};
+pub use body_carry::PassCarry;
 pub use overload_support::is_bundled_module_source;
 mod traits_support;
 pub use traits_support::expand_trait_defaults;

@@ -46,12 +46,14 @@ subscripts or calls a method of a pending constant spells it by its
 initializer (`Elab::spelled_value_reads`).
 
 The AST route evaluates a compile-time call above the check, in
-`crates/mojito-comptime`, once per discovery round:
+`crates/mojito-comptime`, in the one elaboration of a compilation (since
+2026-10-08 the driver elaborates and checks once; no check feeds a second
+elaboration):
 
 ```text
 src/compiler.rs  compile_linked
-  prepare -> validate_comptime_templates -> elaborate_prepared  (round 0)
-  -> check_program_carrying -> [requests grew?] -> elaborate_prepared (round n ≤ 5)
+  prepare -> validate_comptime_templates -> elaborate_prepared
+  -> check_program_with_templates
   -> lower to MIR -> ownership -> drops -> native::mono::specialize -> VM
 
 comptime/elab.rs  Elab::stmt / comptime if / comptime for / resolve_ct_arg / …
@@ -76,8 +78,7 @@ What that costs, beyond the checker run inside the elaborator that P4
 cannot keep:
 
 - The subprogram is checked twice on the expression path and once on the
-  others, and every evaluation repeats in every discovery round, since each
-  round builds a fresh `Elab`. Nothing is cached.
+  others. Nothing is cached.
 - The VM runs the erased body. A value parameter is reified into the frame
   (`value_params`), so `rep[n - 1]()` under a runtime `if` *runs* where the
   pin expands without end (`conformance/probes/ctfe_plain_keyed_recursion.mojo`).
@@ -85,9 +86,10 @@ cannot keep:
   excluded (`conformance/probes/ctfe_keyed_recursion.mojo`, roadmap R132)
   and a keyed method is a trap stub
   (`conformance/probes/ctfe_calls_comptime_if_struct_method.mojo`, R131).
-- Fuel is `const FUEL: usize = 100_000` in `comptime.rs`, reset per round,
-  burned by `Elab::burn` per entry and per `comptime for` iteration and by
-  the VM per instruction, frame, and block (`burn_ctfe`).
+- Fuel is `const FUEL: usize = 100_000` in `comptime.rs`, one counter per
+  elaboration beside the elaborator's own per-compilation counter, burned
+  by `Elab::burn` per entry and per `comptime for` iteration and by the VM
+  per instruction, frame, and block (`burn_ctfe`).
 - The effect rule is `vm_ctfe_effectful_builtin`: `print` and `input`, plus
   a nested `struct`, `trait`, or `import`. Raising is caught only by the
   probe's non-raising signature, and only on the expression path.
@@ -248,8 +250,7 @@ evaluates by demanding a concrete instance and running it on the VM.**
 - **Fuel** stays shared and separate from expansion: one counter per
   compilation, held by the elaborator, burned per request and handed to
   each `call_concrete`, which burns per instruction, frame, and block and
-  returns the remainder. The per-round reset goes with the rounds. The
-  quota error keeps its text.
+  returns the remainder. The quota error keeps its text.
 
 ## Effects, crossing, raising
 
@@ -362,7 +363,11 @@ The boundary:
   instance-budget stop of R162 hold on the request path; the erased oracle
   evaluates an application constant by calling the function
   (`VmBackend::erased_application`).
-- **Roadmap R9** (P4) deletes the AST route, the early folding of applied
-  constants, and the per-round fuel reset; `run_function_value` goes with
-  it. The instance budget is reachable without exhausting memory
-  (2026-10-03).
+- **Roadmap R9** (P4) landed its driver half on 2026-10-08: one
+  elaboration and one check per compilation, no discovery rounds and no
+  per-round fuel reset. What remains of it is filed again under R9: the AST
+  route's deletion (`run_function_value` goes with it), module constants as
+  parameter expressions (D3, the early folding of applied constants), and
+  plain-body compile-time regions kept to MIR, each of which the one-pass
+  check needs before source validation and the executable check can merge.
+  The instance budget is reachable without exhausting memory (2026-10-03).

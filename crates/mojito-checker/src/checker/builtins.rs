@@ -872,9 +872,10 @@ impl Checker {
     /// host them as source defs. Called only after ordinary overload
     /// selection found no match; returns `None` when no argument names a
     /// concrete non-Int scalar, so the ordinary no-match error stands. On
-    /// success the result is the abstract family type plus a recorded
-    /// instantiation, and the specialization fixpoint rewrites the call into
-    /// a construction of the linked range struct at the dtype.
+    /// success the call is spelled as the construction of the linked range
+    /// struct at the dtype (`SemanticAdjustment::SpelledConstruction`), typed
+    /// as any construction is, and the checked arena hands HIR that
+    /// construction in the call's place.
     pub(super) fn infer_scalar_range(
         &self,
         span: &mojito_common::token::SourceSpan,
@@ -934,7 +935,7 @@ impl Checker {
             ));
         }
         let lane = simd_ty(dtype, 1);
-        for (ty, arg) in tys.iter().zip(args) {
+        for ty in &tys {
             if !splats_to(ty, &SimdDtype::Known(dtype)) {
                 return Err(TypeError::TypeMismatch {
                     expected: lane.to_string(),
@@ -942,29 +943,60 @@ impl Checker {
                     context: "range argument".to_string(),
                 });
             }
-            self.record_literal_materializations(arg, ty, &lane)?;
         }
         let family = if dtype.is_float() {
             mojito_types::types::FLOAT_STRIDED_RANGE
         } else {
             mojito_types::types::SCALAR_RANGE_FAMILY[args.len() - 1]
         };
-        let arguments = vec![TyArg::Val(CtValue::Dtype(dtype))];
-        self.generic_instantiations.borrow_mut().insert(
-            span.clone(),
-            mojito_checked::checked::GenericInstantiation {
-                callee: family.to_string(),
-                // A range family is a struct template, never an overload set:
-                // the seed resolves it by name alone.
-                parameter_names: Vec::new(),
-                parameter_types: Vec::new(),
-                variadic: None,
-                arguments: arguments.clone(),
-                inferred_values: Vec::new(),
-                folded_arguments: Vec::new(),
+        // The pin's overloads return the family struct at the inferred
+        // dtype: the call is spelled as that struct's construction, under
+        // the linked (module-qualified) name the checker registered.
+        let linked = self
+            .structs
+            .keys()
+            .filter(|name| *name == family || name.ends_with(&format!("${family}")))
+            .min()
+            .cloned()
+            .ok_or_else(|| {
+                TypeError::InvariantViolation(format!(
+                    "scalar range family '{family}' is not linked"
+                ))
+            })?;
+        let syntax = span.syntax.ok_or_else(|| {
+            TypeError::InvariantViolation("scalar range call has no syntax identity".to_string())
+        })?;
+        let sugar = Expr {
+            kind: ExprKind::Call {
+                name: "range".to_string(),
+                param_args: Vec::new(),
+                args: args.to_vec(),
+                kwargs: Vec::new(),
+            },
+            span: span.span,
+            source: span.source.clone(),
+            syntax_id: syntax,
+        };
+        let dtype_argument = CtValue::Dtype(dtype)
+            .materialize(span.span)
+            .ok_or_else(|| {
+                TypeError::InvariantViolation(format!(
+                    "range dtype '{}' has no spelling",
+                    dtype.name()
+                ))
+            })?;
+        let construction = super::initializer_list::derived_construction(
+            &sugar,
+            ExprKind::Call {
+                name: linked,
+                param_args: vec![mojito_ast::ast::ParamArg::Value(dtype_argument)],
+                args: args.to_vec(),
+                kwargs: Vec::new(),
             },
         );
-        Ok(Some(Ty::Struct(family.to_string(), arguments.into())))
+        let ty = self.infer(&construction)?;
+        self.record_spelled_construction(&sugar, construction, &ty);
+        Ok(Some(ty))
     }
 
     /// Type a conversion built-in `Int(x)` / `UInt(x)` / `Float64(x)` / `Bool(x)`:

@@ -312,9 +312,6 @@ fn variant_pack_forwarding_through_a_generic_def_runs() {
             std::path::Path::new("/tmp/mojito_variant_type_pack.mojo"),
         )
         .expect("variadic-struct pack forwarding through generic defs");
-    let census = program.instantiation_census();
-    assert_eq!(census.cloned.count(mojito::census::CloneClass::PackDef), 0);
-    assert_eq!(census.cloned.count(mojito::census::CloneClass::TypeDef), 0);
     let output = compiler.execute(&program).expect("run the forwarded packs");
     assert_eq!(output.output, "True\nTrue False\n");
 }
@@ -331,8 +328,6 @@ fn pack_spread_into_own_pack_method_is_template_served() {
             std::path::Path::new("/tmp/mojito_pack_spread_into_method.mojo"),
         )
         .expect("a pack spread into an own-pack method");
-    let census = program.instantiation_census();
-    assert_eq!(census.cloned.count(mojito::census::CloneClass::PackDef), 0);
     let output = compiler.execute(&program).expect("run the served spreads");
     assert_eq!(output.output, "take 2\ntake 2\ndrain 3\n");
 }
@@ -349,8 +344,6 @@ fn pack_spread_into_writer_write_is_template_served() {
             std::path::Path::new("/tmp/mojito_pack_spread_into_write.mojo"),
         )
         .expect("a pack spread into Writer.write");
-    let census = program.instantiation_census();
-    assert_eq!(census.cloned.count(mojito::census::CloneClass::PackDef), 0);
     let output = compiler.execute(&program).expect("run the served spreads");
     assert_eq!(output.output, "1x2.5\n1x2.5\n");
 }
@@ -368,8 +361,6 @@ fn pack_spread_into_string_format_is_template_served() {
             std::path::Path::new("/tmp/mojito_pack_spread_into_format.mojo"),
         )
         .expect("a pack spread into format");
-    let census = program.instantiation_census();
-    assert_eq!(census.cloned.count(mojito::census::CloneClass::PackDef), 0);
     let output = compiler.execute(&program).expect("run the served spreads");
     assert_eq!(output.output, "1 and x\nTrue-Float64(2.5)\n");
 }
@@ -385,8 +376,6 @@ fn pack_spread_into_static_method_after_arguments_is_template_served() {
             std::path::Path::new("/tmp/mojito_pack_spread_into_static.mojo"),
         )
         .expect("a pack spread into a static collector");
-    let census = program.instantiation_census();
-    assert_eq!(census.cloned.count(mojito::census::CloneClass::PackDef), 0);
     let output = compiler.execute(&program).expect("run the served spread");
     assert_eq!(output.output, "3yTrue\n");
 }
@@ -403,9 +392,6 @@ fn pack_def_beside_scalar_value_binder_is_template_served() {
             std::path::Path::new("/tmp/mojito_pack_scalar_value_binder.mojo"),
         )
         .expect("a scalar value binder beside a pack");
-    let census = program.instantiation_census();
-    assert_eq!(census.cloned.count(mojito::census::CloneClass::PackDef), 0);
-    assert_eq!(census.cloned.count(mojito::census::CloneClass::ValueDef), 0);
     let output = compiler.execute(&program).expect("run the served defs");
     assert_eq!(output.output, "1 1.5\na 1.5\nt 2\n7\n1.5\n");
 }
@@ -423,8 +409,6 @@ fn pack_def_unkept_loop_is_template_served() {
             std::path::Path::new("/tmp/mojito_pack_def_unkept_loop.mojo"),
         )
         .expect("a pack def whose loop the template serves");
-    let census = program.instantiation_census();
-    assert_eq!(census.cloned.total(), 0);
     let output = compiler.execute(&program).expect("run the served defs");
     assert_eq!(output.output, "2 2\n5 2\n0 7\n2 b\n0\n2\n");
 }
@@ -441,8 +425,6 @@ fn pack_spread_into_struct_pack_method_is_template_served() {
             std::path::Path::new("/tmp/mojito_pack_spread_into_struct_pack.mojo"),
         )
         .expect("a pack spread into a struct-pack collector");
-    let census = program.instantiation_census();
-    assert_eq!(census.cloned.count(mojito::census::CloneClass::PackDef), 0);
     let output = compiler.execute(&program).expect("run the served spreads");
     assert_eq!(output.output, "0 1\n1 x\nown 1\n0 3\n1 z\n");
 }
@@ -1204,105 +1186,6 @@ fn certified_count(stats: &mojito::templates::TemplateStats, name: &str) -> usiz
         .count()
 }
 
-const CENSUS_BASELINE: &str = "def main():\n    pass\n";
-
-const CENSUS_CLASSES: &str = r"
-def show[T: Writable](x: T):
-    print(x)
-
-def pick[n: Int](x: Int) -> Int:
-    comptime if n > 1:
-        return x * n
-    else:
-        return x
-
-def total[*Ts: Intable](*args: *Ts) -> Int:
-    var s = 0
-    comptime for i in range(args.__len__()):
-        s += Int(args[i])
-    return s
-
-@fieldwise_init
-struct Box[T: Copyable & Movable & Deinitable]:
-    var v: Self.T
-    def get(self) -> Self.T:
-        return self.v.copy()
-
-    def kind(self) -> Int:
-        comptime if Self.T == Int:
-            return 1
-        else:
-            return 2
-
-def main():
-    show(5)
-    show[Int](6)
-    print(pick[3](2))
-    print(total(1, 2, 3))
-    var b = Box[Int](4)
-    print(b.get(), b.kind())
-";
-
-#[test]
-fn instantiation_census_counts_each_cloned_class() {
-    use mojito::census::CloneClass;
-    let census = |source: &str| {
-        Compiler::default()
-            .compile_source(source, std::path::Path::new("census.mojo"))
-            .expect("compile")
-            .instantiation_census()
-    };
-    let baseline = census(CENSUS_BASELINE);
-    let classes = census(CENSUS_CLASSES);
-    let minted = |class: CloneClass| classes.cloned.count(class) - baseline.cloned.count(class);
-    assert_eq!(
-        minted(CloneClass::TypeDef),
-        0,
-        "the template serves show(5) and show[Int](6)"
-    );
-    assert_eq!(
-        minted(CloneClass::ComptimeIfDef),
-        0,
-        "the template serves pick[3]"
-    );
-    assert_eq!(
-        minted(CloneClass::PackDef),
-        0,
-        "the template serves total(1, 2, 3)"
-    );
-    assert_eq!(
-        minted(CloneClass::InstanceMethod),
-        0,
-        "the template serves Box[Int].get"
-    );
-    assert_eq!(
-        minted(CloneClass::InstanceMethodComptime),
-        0,
-        "the template serves Box[Int].kind"
-    );
-    for census in [&baseline, &classes] {
-        assert_eq!(
-            census.inferred + census.derived,
-            census.cloned.total(),
-            "every cloned body is inferred or derived"
-        );
-    }
-    let served = classes.erased_served.expect("main specializes");
-    assert!(served.instances >= served.bodies);
-    for census in [&baseline, &classes] {
-        assert!(census.parametric_clones <= census.cloned.total());
-    }
-    assert_eq!(
-        classes.cloned.total(),
-        baseline.cloned.total(),
-        "the templates serve every body the program adds"
-    );
-    assert!(
-        classes.erased_bodies > baseline.erased_bodies,
-        "`show` and `Box`'s template members stay parametric and are no clone"
-    );
-}
-
 /// One generic `def` per `comptime for` shape its template serves.
 const COMPTIME_FOR_SERVED: &str = "\
 comptime L = [10, 20]
@@ -1386,31 +1269,12 @@ def main():
 
 #[test]
 fn comptime_for_shapes_served_by_the_template_mint_no_clone() {
-    use mojito::census::CloneClass;
     let compile = |source: &str| {
         Compiler::default()
             .compile_source(source, std::path::Path::new("census.mojo"))
             .expect("compile")
     };
     let served = compile(COMPTIME_FOR_SERVED);
-    assert_eq!(
-        served
-            .instantiation_census()
-            .cloned
-            .count(CloneClass::ComptimeForDef),
-        0,
-        "a named collection, a display over a binder, a value pack, a local binding of a \
-         display, one read for an element and its length and materialized, a reflected list, \
-         an applied element, and a constructed field type"
-    );
-    assert_eq!(
-        served
-            .instantiation_census()
-            .cloned
-            .count(CloneClass::TypeDef),
-        0,
-        "a reflected list materialized whole"
-    );
     assert_eq!(
         Compiler::default().execute(&served).expect("run").output,
         "11\n21\n6\n8\n5\n6\n7\n8\n6\n11\n11\n16\n3\n6\n0\n1\n2\nx\ny\nx\ny\n2\n8\n4\n0\n0\n"
@@ -1582,8 +1446,6 @@ fn template_two_arms_are_template_served() {
             .all(|name| !name.starts_with("choose$")),
         "{stats:?}"
     );
-    let census = program.instantiation_census();
-    assert!(!census.cloned.minted("choose"), "{census:?}");
     assert_eq!(
         compiler.execute(&program).expect("execute").output,
         "11\n22\n"
@@ -1658,11 +1520,6 @@ fn template_loop_is_template_served() {
     let source = "def total[n: Int]() -> Int:\n    var sum = 0\n    comptime for i in range(n):\n        comptime if i == 1:\n            sum += 10\n        else:\n            sum += 1\n    return sum\n\ndef main():\n    print(total[0]())\n    print(total[1]())\n    print(total[3]())\n";
     let compiler = Compiler::default();
     let program = compiler.compile_unlinked(source).expect("compile");
-    let census = program.instantiation_census();
-    assert!(
-        !census.cloned.minted("total"),
-        "served by its template: {census:?}"
-    );
     assert_eq!(
         compiler.execute(&program).expect("execute").output,
         "0\n1\n12\n"
@@ -1678,8 +1535,6 @@ fn template_pack_instances_are_template_served() {
     for verify in [false, true] {
         let compiler = Compiler::default().with_template_verification(verify);
         let program = compiler.compile_unlinked(source).expect("compile");
-        let census = program.instantiation_census();
-        assert!(!census.cloned.minted("show"), "{census:?}");
         assert_eq!(
             compiler.execute(&program).expect("execute").output,
             expected
@@ -1692,24 +1547,9 @@ fn pack_keyed_method_is_template_served() {
     // A method keyed on a type pack of its own, on a plain struct and on a
     // generic struct's instance, serves every call from its template: the
     // forwarded pack binds the callee's, and no per-call clone is minted.
-    use mojito::census::CloneClass;
     let source = "struct Box[T: Writable & Copyable & Deinitable]:\n    var v: Self.T\n\n    def __init__(out self, v: Self.T):\n        self.v = v.copy()\n\n    def show[*Ts: Writable](self, *a: *Ts):\n        print(self.v, Ts.length)\n        comptime for i in range(Ts.length):\n            print(a[i])\n\nstruct Sink:\n    def __init__(out self):\n        pass\n\n    def take[*Ts: Writable](self, *a: *Ts):\n        comptime for i in range(a.__len__()):\n            print(a[i])\n\n    def relay[*Ts: Writable](self, *a: *Ts):\n        self.take(*a)\n\ndef main():\n    Box[Int](5).show(1, \"x\")\n    Sink().relay(2, \"two\")\n";
     let compiler = Compiler::default();
-    let baseline = compiler
-        .compile_unlinked(CENSUS_BASELINE)
-        .expect("compile")
-        .instantiation_census();
     let program = compiler.compile_unlinked(source).expect("compile");
-    let census = program.instantiation_census();
-    for name in ["show", "take", "relay"] {
-        assert!(!census.cloned.minted(name), "{name}: {census:?}");
-    }
-    assert_eq!(
-        census.cloned.count(CloneClass::PerCallMethod)
-            - baseline.cloned.count(CloneClass::PerCallMethod),
-        0,
-        "{census:?}"
-    );
     assert_eq!(
         compiler.execute(&program).expect("execute").output,
         "5 2\n1\nx\n2\ntwo\n"
@@ -1724,11 +1564,6 @@ fn template_folded_values_are_template_served() {
     for verify in [false, true] {
         let compiler = Compiler::default().with_template_verification(verify);
         let program = compiler.compile_unlinked(source).expect("compile");
-        let census = program.instantiation_census();
-        assert!(
-            !census.cloned.minted("mixed"),
-            "served by its template: {census:?}"
-        );
         assert_eq!(
             compiler.execute(&program).expect("execute").output,
             "0\n39\n"
@@ -1745,11 +1580,6 @@ fn template_folded_arithmetic_is_template_served() {
     for verify in [false, true] {
         let compiler = Compiler::default().with_template_verification(verify);
         let program = compiler.compile_unlinked(source).expect("compile");
-        let census = program.instantiation_census();
-        assert!(
-            !census.cloned.minted("nested"),
-            "served by its template: {census:?}"
-        );
         assert_eq!(compiler.execute(&program).expect("execute").output, "34\n");
     }
     // Division folds to a `FloatLiteral` materialized to the template's
@@ -1759,11 +1589,6 @@ fn template_folded_arithmetic_is_template_served() {
     for verify in [false, true] {
         let compiler = Compiler::default().with_template_verification(verify);
         let program = compiler.compile_unlinked(folding).expect("compile");
-        let census = program.instantiation_census();
-        assert!(
-            !census.cloned.minted("halves"),
-            "served by its template: {census:?}"
-        );
         assert_eq!(
             compiler.execute(&program).expect("execute").output,
             "-1 True\n-2 True\n-3 False\n1.5\n"
@@ -1784,13 +1609,6 @@ fn template_keyed_runtime_while_is_template_served() {
             &compiler,
             include_str!("../assets/ok/template_keyed_runtime_while.mojo"),
         );
-        let census = program.instantiation_census();
-        for template in ["count", "steps", "gated"] {
-            assert!(
-                !census.cloned.minted(template),
-                "{template} is served by its template: {census:?}"
-            );
-        }
         assert_eq!(
             compiler.execute(&program).expect("execute").output,
             "20 2\n16 1\n13 0\n"
@@ -1809,13 +1627,6 @@ fn template_keyed_runtime_if_is_template_served() {
             &compiler,
             include_str!("../assets/ok/template_keyed_runtime_if.mojo"),
         );
-        let census = program.instantiation_census();
-        for template in ["count", "pick", "nested"] {
-            assert!(
-                !census.cloned.minted(template),
-                "{template} is served by its template: {census:?}"
-            );
-        }
         assert_eq!(
             compiler.execute(&program).expect("execute").output,
             "15 2\n4 1\n2\n4\n6 0\n"
@@ -1898,11 +1709,6 @@ fn template_value_keyed_def_is_template_served() {
     for verify in [false, true] {
         let compiler = Compiler::default().with_template_verification(verify);
         let program = compiler.compile_unlinked(source).expect("compile");
-        let census = program.instantiation_census();
-        assert!(
-            !census.cloned.minted("scaled"),
-            "served by its template: {census:?}"
-        );
         assert_eq!(
             compiler.execute(&program).expect("execute").output,
             "41 18\n"
@@ -1923,13 +1729,6 @@ fn template_print_statement_is_template_served() {
                 std::path::Path::new("/tmp/mojito_template_print_statement.mojo"),
             )
             .expect("compile");
-        let census = program.instantiation_census();
-        for template in ["shown", "plain", "Box.report"] {
-            assert!(
-                !census.cloned.minted(template),
-                "{template} is served by its template: {census:?}"
-            );
-        }
         assert_eq!(
             compiler.execute(&program).expect("execute").output,
             "3 2\n1 5\n6 5\nbig 3\n3 1\ncount 4 2\ncount 9 3\n6 12\n"
@@ -1997,11 +1796,6 @@ fn template_pack_element_construction_derives() {
             .filter(|name| name.ends_with(".defaults") || name.ends_with(".locals"))
             .collect();
         assert_eq!(derived.len(), 4, "every method instance derives: {stats:?}");
-        let census = program.instantiation_census();
-        assert!(
-            !census.cloned.minted("build"),
-            "the template serves build: {census:?}"
-        );
         assert_eq!(
             compiler.execute(&program).expect("execute").output,
             "0\n0.0\nFalse\n0 3\n0.0 3\nFalse 3\n0\nNone\n(0, False)\n0\n0\nFalse\n0 3\n0 3\nFalse 3\nFalse\n0\nFalse\n"
@@ -2049,11 +1843,6 @@ fn template_value_shaped_construction_is_template_served() {
     for verify in [false, true] {
         let compiler = Compiler::default().with_template_verification(verify);
         let program = compiler.compile_unlinked(source).expect("compile");
-        let census = program.instantiation_census();
-        assert!(
-            !census.cloned.minted("both"),
-            "served by its template: {census:?}"
-        );
         assert_eq!(
             compiler.execute(&program).expect("execute").output,
             "42 10\n"
@@ -2071,13 +1860,6 @@ fn template_value_shaped_operations_are_template_served() {
     for verify in [false, true] {
         let compiler = Compiler::default().with_template_verification(verify);
         let program = compiler.compile_unlinked(source).expect("compile");
-        let census = program.instantiation_census();
-        for template in ["sum_lanes", "scale"] {
-            assert!(
-                !census.cloned.minted(template),
-                "{template} is served by its template: {census:?}"
-            );
-        }
         assert_eq!(
             compiler.execute(&program).expect("execute").output,
             "44 110 9 16\n"
@@ -2109,13 +1891,6 @@ fn template_value_shaped_lane_copy_is_template_served() {
     for verify in [false, true] {
         let compiler = Compiler::default().with_template_verification(verify);
         let program = compiler.compile_unlinked(source).expect("compile");
-        let census = program.instantiation_census();
-        for template in ["first_lanes", "widest"] {
-            assert!(
-                !census.cloned.minted(template),
-                "{template} is served by its template: {census:?}"
-            );
-        }
         assert_eq!(
             compiler.execute(&program).expect("execute").output,
             "9 6 12 3 20 14\n"
@@ -2198,8 +1973,6 @@ fn lane_comparisons_are_template_served() {
     }
     assert_struct_is_a_generator(&derived, "W");
     // The lane-keyed `sign` is served by its template at every lane.
-    let census = derived.instantiation_census();
-    assert!(!census.cloned.minted("sign"), "{census:?}");
 }
 
 #[test]
@@ -2656,11 +2429,6 @@ fn template_value_keyed_lane_def_is_template_served() {
     for verify in [false, true] {
         let compiler = Compiler::default().with_template_verification(verify);
         let program = compiler.compile_unlinked(source).expect("compile");
-        let census = program.instantiation_census();
-        assert!(
-            !census.cloned.minted("lane") && !census.cloned.minted("wide"),
-            "the templates serve every call: {census:?}"
-        );
         assert_eq!(
             compiler.execute(&program).expect("execute").output,
             "3 10 4\n"
@@ -2678,11 +2446,6 @@ fn template_overloaded_lane_def_is_template_served() {
     for verify in [false, true] {
         let compiler = Compiler::default().with_template_verification(verify);
         let program = compiler.compile_unlinked(source).expect("compile");
-        let census = program.instantiation_census();
-        assert!(
-            !census.cloned.minted("lane"),
-            "the template serves every lane call: {census:?}"
-        );
         assert_eq!(
             compiler.execute(&program).expect("execute").output,
             "1 1 2\n12 3 3 4\n"
@@ -2700,11 +2463,6 @@ fn template_local_comptime_lane_binding_is_template_served() {
     for verify in [false, true] {
         let compiler = Compiler::default().with_template_verification(verify);
         let program = compiler.compile_unlinked(source).expect("compile");
-        let census = program.instantiation_census();
-        assert!(
-            !census.cloned.minted("rebound") && !census.cloned.minted("single"),
-            "the templates serve every call: {census:?}"
-        );
         assert_eq!(
             compiler.execute(&program).expect("execute").output,
             "7 4.0\n7 2.5\n"
@@ -2723,11 +2481,6 @@ fn template_lane_def_value_binder_outside_lane_is_template_served() {
     for verify in [false, true] {
         let compiler = Compiler::default().with_template_verification(verify);
         let program = compiler.compile_unlinked(source).expect("compile");
-        let census = program.instantiation_census();
-        assert!(
-            !census.cloned.minted("h") && !census.cloned.minted("o2") && !census.cloned.minted("c"),
-            "the templates serve every call: {census:?}"
-        );
         assert_eq!(
             compiler.execute(&program).expect("execute").output,
             "3 2\n5 6\n"
@@ -4834,13 +4587,6 @@ fn keyed_def_over_loan_carrying_argument_is_template_served() {
         compiler.execute(&compiled).expect("execute").output,
         "2 1\n"
     );
-    let census = compiled.instantiation_census();
-    for template in ["inner", "outer"] {
-        assert!(
-            !census.cloned.minted(template),
-            "{template} is served by its template: {census:?}"
-        );
-    }
 }
 
 #[test]

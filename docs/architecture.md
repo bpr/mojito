@@ -107,10 +107,10 @@ canonical text. Post-drop verification findings fold into its
 backends therefore never re-lower checked syntax. `CompilerError` identifies
 the failing stage. Individual stage functions and `Backend::run(&CheckedProgram)` remain
 public compatibility seams for tests and diagnostic tools; that stage-composed
-entry re-checks pre-drop ownership but is non-authoritative for whole-program
-discovery and specialization (a generic body forwarding its own `H` into
-`hash[H](x)` binds the declaration default there, while `Compiler` binds the
-caller's).
+entry re-checks pre-drop ownership but is non-authoritative for the
+whole-program specialization handoff (a generic body forwarding its own `H`
+into `hash[H](x)` binds the declaration default there, while `Compiler` binds
+the caller's).
 
 The design is an hourglass:
 
@@ -884,8 +884,8 @@ policy the checker applies to a closed subject (`ReflectQuery::answer`), and
 a query with no answer fails the instantiation. A field type never crosses.
 
 **Validation is a template producer.** `Compiler::compile_linked` runs
-validation once, on the prepared program that every discovery round then
-re-elaborates, and lends it the compilation's `TemplateCatalog`
+validation once, on the prepared program the one elaboration then
+elaborates, and lends it the compilation's `TemplateCatalog`
 (`validate_comptime_templates_into`). A module-level body validation checks
 is retained there as a `CheckedTemplate`: its facts keyed by its own syntax
 occurrences, with a coverage certificate. The elaborator stubs such a
@@ -922,8 +922,8 @@ parameter's default, a conditional callable default's condition, and a
 dependent type (`DependentType::Parameter`) are the same nodes; there is no
 second expression tree.
 
-- The context rides in `TemplateCatalog`, so source validation and every
-  discovery and transfer round of one compilation share it. Pure helpers in
+- The context rides in `TemplateCatalog`, so source validation, the check,
+  and every transfer round of one compilation share it. Pure helpers in
   `mojito-types` canonicalize on a detached context; equality is structural
   across contexts.
 - The normal form is no stronger than the pinned Mojo's: integer `+`, binary
@@ -1018,9 +1018,9 @@ per instance once its `comptime if`s are decided and erases it, as upstream's
 `processRebindOp` does (`native::mono`'s `discharge_rebinds`,
 `mono/rebind.rs`), failing the instance with a `MonoErrorKind::Instantiation`
 error on a mismatch.
-A value-pack `def` whose binders its template does not serve takes an
-inferred call through discovery instead: the checker's closed recorded
-instantiation names the clone. No `def` is compile-time-keyed: a `comptime
+A value-pack `def` whose binders its template does not serve keeps an
+inferred call on its template's abstract path: nothing above the waist
+replays the checker's recorded instantiation. No `def` is compile-time-keyed: a `comptime
 if`, a `comptime for`, and a `rebind` stay in the template whatever they read,
 and the elaborator below MIR decides them per instance, so every call of a
 generic `def` named once reaches its template, and an overloaded generic name
@@ -1129,32 +1129,20 @@ store `p[] = v` types the pointer as a value read and gates on the pointer
 origin's mutability alone, so a plain `self` method writes through a
 `Pointer[T, Origin[mut=True]]` field as upstream does.
 
-A scalar `range(...)` recorded by the checker is a constructor rewrite
-(`scalar_range_requests`): its range
-struct is a generator, so the call becomes the construction of the linked
-struct at the recorded dtype (`_ZeroStartingRange[DType.int32](…)`), which
-the next round checks as any generic construction.
+A scalar `range(...)` the checker selects (`Checker::infer_scalar_range`,
+once no `Int` overload matches) is spelled in the same check as the
+construction of the linked range struct at the inferred dtype
+(`_ZeroStartingRange[DType.int32](…)`), a `SemanticAdjustment::SpelledConstruction`
+on the call typed as any generic construction, which the checked arena and
+HIR substitute in the call's place as they do an initializer list or a
+t-string.
 
-Inferred applications reach the same clones through the compiler's discovery
-fixpoint. Each round's check stops at a `DiscoveryResult` (Stage 3): the
-requests below are read from it, every round but the converged one is
-discarded without its checked arena being built, and a clone the round's
-`DefInstanceTrace`s tie to a certified template takes its facts from the
-compilation's `TemplateCatalog` rather than being inferred; a pack-keyed
-clone's trace carries the pack's element types, and each unrolled copy of
-its body fixes its element from the loop index the elaborator folded there.
-`Compiler::compile_linked` iterates elaborate→check, deriving
-`DefSpecializationRequest`s from the checker's recorded generic
-instantiations (a bound, pack, compile-time, or `DType`-keyed `def`; a scalar
-`range` family, a constructor rewrite) and
-re-elaborating the original linked program with the accumulated monotone
-request set until a round discovers nothing new; a hard round cap reports inferred polymorphic recursion as a
-dedicated divergence diagnostic. Request seeding records each occurrence's
-target without queuing work; the clone job queues lazily when the soft
-resolution path fails on source arguments and consults the request — so a
-request can only upgrade a call from the abstract path, and a drifted or
-conflicting request (a `comptime for` unrolling duplicates one source
-occurrence) leaves the call abstract. A bound-generic template is
+`Compiler::compile_linked` elaborates once and checks once (since
+2026-10-08): no check feeds a second elaboration, and the instances a
+program needs are found below the MIR waist by `native::mono`'s worklist
+from the entry roots. A clone the elaboration's `DefInstanceTrace`s tie to
+a certified template takes its facts from the compilation's
+`TemplateCatalog` rather than being inferred. A bound-generic template is
 emitted before its specializations because a clone may still reference the
 template abstractly (an inferred recursive call) and the checker binds
 top-level names sequentially.
@@ -1209,8 +1197,8 @@ bound dispatch spells the requirement's parameter otherwise than the
 witness does (`Some[Hasher]` against `[H: Hasher]`;
 `dispatched_overload_target`). The checker still records every closed
 application it reaches as a constructor target or method-call receiver
-(`StructInstantiation`), a checked fact the discovery loop no longer turns
-into requests. Copying, moving, destruction, and the by-name dispatches the
+(`StructInstantiation`), a checked fact nothing above the waist turns into a
+request. Copying, moving, destruction, and the by-name dispatches the
 backends perform on a runtime struct name (`print`/`String(x)`/`repr(x)`/
 `Writer.write` through `write_to`/`write_repr_to`, and `len`/`abs`/`Bool`/
 `Int` and the prefix operators through their dunders) select the method by
@@ -1418,37 +1406,32 @@ Entry point:
 checker::check(program: &[Stmt]) -> Result<(), TypeError>
 checker::check_program(program: &[Stmt]) -> Result<CheckedProgram, TypeError>
 checker::check_program_for_discovery(program, catalog) -> Result<DiscoveryResult, TypeError>
-checker::check_program_carrying(program, catalog, previous: Option<PassCarry>) -> Result<PassCarry, TypeError>
 checker::check_program_with_templates(program, catalog) -> Result<CheckedProgram, TypeError>
 ```
 
 `check` is the compatibility validation wrapper, and `check_program` the
 whole-handoff entry the stage-composed seam, CTFE, and direct clients use.
-The compiler driver calls `check_program_for_discovery`, which runs every
+The compiler driver calls `check_program_with_templates`, which runs every
 rejecting check — the transfer-effect fixpoint, reference-result reads,
-context-manager splicing, explicit destruction — and stops before the checked
-arena is assembled. A `DiscoveryResult` is `CheckedProgram::new`'s inputs,
-owned. The driver's request collectors read it directly, and the two that
-need every expression's types use `DiscoveryResult::scan_expressions`, which
-is the arena builder's own traversal with node construction switched off, so
-they see exactly the expressions the arena would hold. Only the round that
-converges is finalized (`DiscoveryResult::finalize`). A `DiscoveryResult` is
-not executable and never reaches HIR or MIR.
+context-manager splicing, explicit destruction — and then assembles the
+checked arena. `check_program_for_discovery` stops before the arena: a
+`DiscoveryResult` is `CheckedProgram::new`'s inputs, owned, with
+`DiscoveryResult::scan_expressions`, the arena builder's own traversal with
+node construction switched off, for a client that wants exactly the
+expressions the arena would hold without building it, and
+`DiscoveryResult::finalize` for the arena. A `DiscoveryResult` is not
+executable and never reaches HIR or MIR.
 
-The driver actually calls `check_program_carrying`, which returns the
-`DiscoveryResult` inside a `PassCarry`: the pass's fact stores, one record
-per body site, and its binding-identity watermark. Every fact store the
-checker writes during a body is a logged store (`mojito-checked`'s
-`fact_store.rs`: a map, set, or vector plus the log of keys written), so a
-site — a module-level `def` or a struct method — records the log ranges it
-spans, the effect entries it read exactly as read, and a hash of its syntax
-(`checker/body_carry.rs`). The next pass, whether a transfer pass over the
-same tree or the first pass of the next discovery round, starts from the
-previous pass's committed effect maps and, at a site whose record is clean
-and whose reads still equal the committed entries, copies the logged entries
-instead of inferring. The driver marks a record dirty before the next round
-when a request the body recorded was served (`compiler.rs:ServedRequests`),
-and a rewritten call changes the syntax hash. Binding identities never
+The passes of one check hand each other a `PassCarry`: the pass's fact
+stores, one record per body site, and its binding-identity watermark. Every
+fact store the checker writes during a body is a logged store
+(`mojito-checked`'s `fact_store.rs`: a map, set, or vector plus the log of
+keys written), so a site — a module-level `def` or a struct method —
+records the log ranges it spans and the effect entries it read exactly as
+read (`checker/body_carry.rs`). The next transfer pass over the same tree
+starts from the previous pass's committed effect maps and, at a site whose
+reads still equal the committed entries, copies the logged entries instead
+of inferring. Binding identities never
 collide: a pass starts its counter at the previous watermark, and a body
 inferred again allocates inside the range it had (`scopes.rs:reserve_owners`)
 so an unchanged prefix keeps its identities. The copy is exact by
@@ -1624,7 +1607,7 @@ key erases its arguments' origin tails, since the instance symbol spells none �
 keying on them would mint a second instance under the first one's symbol), and
 the checker's
 instantiation records reset it to unbound so a place origin (a per-check owner
-id) never makes an instantiation look new across discovery rounds.
+id) never makes an instantiation look new across passes.
 
 `Ty::Struct`'s argument list is a `TyArgs`, shared between clones, so a nested
 type (`W[W[Int]]`) copied into every register, key, and binding holds its level
@@ -4260,8 +4243,8 @@ reaches the witness nominally. The check records each such call's omitted
 defaults that some witness declares otherwise (`checker/bound_defaults.rs`),
 keyed by the call's origin, and spells them as literal keyword arguments of
 the call and of every clone of it; a pass that finds a new one is followed by
-another over the spelled tree, and the template catalog carries them to later
-discovery rounds so those bind them before their first pass. The spelled
+another over the spelled tree, and the template catalog carries them so a
+later pass binds them before it starts. The spelled
 nodes' identities are derived from the call's, so a clone's traces to the
 template's. A literal means the same at the call as in the trait, so the
 trait's declaration folds each requirement default to one

@@ -714,94 +714,64 @@ impl Elab<'_> {
                     }
                 }
                 self.freeze_struct_value_arguments(name, param_args, consts);
-                // A checker-selected scalar `range(...)`: the construction of
-                // the range-family struct at its dtype, as the pin's
-                // `range[dtype: DType, //]` overloads return it.
-                if name == "range"
-                    && let Some((template, vals)) = mono
-                        .struct_call_targets
-                        .get(&source_span.clone().without_syntax())
-                        .cloned()
-                {
-                    let arguments = vals
-                        .iter()
-                        .map(|value| value.materialize(source_span.span).map(ParamArg::Value))
-                        .collect::<Option<Vec<_>>>()
-                        .ok_or_else(|| {
-                            ComptimeError::NotComptime(format!(
-                                "range dtype of '{template}' has no source spelling"
-                            ))
-                        })?;
-                    *name = template;
-                    *param_args = arguments;
-                    return Ok(());
-                }
                 if mono.resolves_top_template(name) && self.specializable.contains_key(name) {
                     let template = self.specializable[name.as_str()];
-                    let (vals, kept_type_args, whole_pack_abi) = if self
-                        .bound_generics
-                        .contains(name.as_str())
-                    {
-                        // A call the template serves is left as written,
-                        // explicit application included: the elaborator
-                        // instantiates the template's MIR.
-                        if self.template_serves_def(name, template) {
-                            mono.retain_abstract(name);
-                            return Ok(());
-                        }
-                        // Soft resolution: only an explicit application whose
-                        // arguments resolve concretely monomorphizes. A bound
-                        // violation on a resolved argument is a real error;
-                        // any other failure (inference, symbolic arguments)
-                        // leaves the call on the template's abstract path and
-                        // retains the template.
-                        match self.resolve_spec_args_for(
-                            template,
-                            name,
-                            SpecRequest {
-                                param_args,
-                                call_args: args,
-                                kwargs,
-                                consts,
-                                request_site: &request_site,
-                                forwarded_pack_types: None,
-                            },
-                        ) {
-                            Ok((values, kept)) => (values, kept, false),
-                            Err(error @ ComptimeError::GenericBound(_)) => return Err(error),
-                            // Source arguments could not resolve (an inferred
-                            // call or symbolic arguments): consult the
-                            // checker-discovered request for this occurrence
-                            // before falling back to the abstract path.
-                            Err(_) => {
-                                if let Some((values, kept)) =
-                                    self.def_request_target(name, &source_span, param_args, mono)
-                                {
-                                    (values, kept, false)
-                                } else {
+                    let (vals, kept_type_args, whole_pack_abi) =
+                        if self.bound_generics.contains(name.as_str()) {
+                            // A call the template serves is left as written,
+                            // explicit application included: the elaborator
+                            // instantiates the template's MIR.
+                            if self.template_serves_def(name, template) {
+                                mono.retain_abstract(name);
+                                return Ok(());
+                            }
+                            // Soft resolution: only an explicit application whose
+                            // arguments resolve concretely monomorphizes. A bound
+                            // violation on a resolved argument is a real error;
+                            // any other failure (inference, symbolic arguments)
+                            // leaves the call on the template's abstract path and
+                            // retains the template.
+                            match self.resolve_spec_args_for(
+                                template,
+                                name,
+                                SpecRequest {
+                                    param_args,
+                                    call_args: args,
+                                    kwargs,
+                                    consts,
+                                    request_site: &request_site,
+                                    forwarded_pack_types: None,
+                                },
+                            ) {
+                                Ok((values, kept)) => (values, kept, false),
+                                Err(error @ ComptimeError::GenericBound(_)) => return Err(error),
+                                // Source arguments could not resolve (an inferred
+                                // call or symbolic arguments): the call stays on
+                                // the template's abstract path.
+                                Err(_) => {
                                     mono.retain_abstract(name);
                                     return Ok(());
                                 }
                             }
-                        }
-                    } else {
-                        let whole_pack_abi = top_level_whole_pack_forwarding_call(template, args)?;
-                        let forwarded =
-                            top_level_forwarded_pack_types(template, name, args, kwargs, mono)?;
-                        let (values, kept) = self.resolve_spec_args_for(
-                            template,
-                            name,
-                            SpecRequest {
-                                param_args,
-                                call_args: args,
-                                kwargs,
-                                consts,
-                                request_site: &request_site,
-                                forwarded_pack_types: forwarded.as_deref(),
-                            },
-                        )?;
-                        (values, kept, whole_pack_abi)
-                    };
+                        } else {
+                            let whole_pack_abi =
+                                top_level_whole_pack_forwarding_call(template, args)?;
+                            let forwarded =
+                                top_level_forwarded_pack_types(template, name, args, kwargs, mono)?;
+                            let (values, kept) = self.resolve_spec_args_for(
+                                template,
+                                name,
+                                SpecRequest {
+                                    param_args,
+                                    call_args: args,
+                                    kwargs,
+                                    consts,
+                                    request_site: &request_site,
+                                    forwarded_pack_types: forwarded.as_deref(),
+                                },
+                            )?;
+                            (values, kept, whole_pack_abi)
+                        };
                     let original = name.clone();
                     let mut output_name = mangle(name, &vals)?;
                     if whole_pack_abi {
@@ -959,339 +929,6 @@ impl Elab<'_> {
             // nested `def` statement (signature plus body in its own scope).
             ExprKind::Lambda { def } => self.mono_stmt(def, consts, mono),
         }
-    }
-
-    /// Resolve arguments for one concrete declaration. `forwarded_pack_types`
-    /// supplies the element sequence when a specialized runtime pack is being
-    /// forwarded into another heterogeneous collector; ordinary calls infer the
-    /// sequence from their source expressions as before.
-    /// The `vals` a checker-recorded instantiation selects for a
-    /// bound-generic template, aligned with `resolve_spec_args_for`'s shape:
-    /// one value per elaborator-classified parameter, in declaration order —
-    /// so `mangle` and `mono.done` collide correctly with explicit
-    /// applications. The checker's declaration-order `TyArg` list is a strict
-    /// superset of that shape (it keeps callable-value parameters the
-    /// elaborator retains symbolically, and omits Origin/OriginSet binders).
-    /// `None` skips the request: a request can only upgrade a call from the
-    /// abstract path, never introduce a new error.
-    pub(super) fn def_request_values(
-        &self,
-        template: &Stmt,
-        arguments: &[TyArg],
-    ) -> Option<Vec<CtValue>> {
-        let StmtKind::Def {
-            name, type_params, ..
-        } = &template.kind
-        else {
-            return None;
-        };
-        let mut vals = Vec::new();
-        let mut origin_binders = CloneOriginBinders::over_enclosing();
-        // The checker's origin tail has no elaborator slot: origins erase from
-        // every clone.
-        let mut cursor = arguments
-            .iter()
-            .filter(|argument| !matches!(argument, TyArg::Origin(_)));
-        for parameter in type_params {
-            // Origin/OriginSet binders have no checker declaration slot.
-            if matches!(parameter.bounds.as_slice(), [only] if only == "Origin" || only == "OriginSet")
-                || parameter.is_origin_mutability_binder(type_params)
-            {
-                continue;
-            }
-            let argument = cursor.next()?;
-            if retained_specialization_param(parameter, type_params) {
-                // A thin/capturing callable-value parameter keeps a checker
-                // slot (a symbolic placeholder) but stays symbolic here.
-                match argument {
-                    TyArg::Val(CtValue::Expr(_) | CtValue::Deferred(_) | CtValue::Marker(_)) => {
-                        continue;
-                    }
-                    _ => return None,
-                }
-            }
-            let decl = classify_ct_param(parameter, type_params, name)?;
-            let value = match (&decl, argument) {
-                (
-                    ParamDecl::Type {
-                        variadic: false, ..
-                    },
-                    TyArg::Ty(ty),
-                ) => {
-                    // An origin-slotted struct argument binds its slots to the
-                    // clone's own origin binders, a bundled template's as a
-                    // user template's. One with no binder to stand for a slot
-                    // (`_ListIter[Int]`) keeps the abstract path. The call
-                    // infers the binders from its arguments, or supplies
-                    // them explicitly where no runtime parameter spells the
-                    // type parameter (`request_kept_param_args`), a slot
-                    // bound to an enclosing origin parameter by its name.
-                    if self.ty_mentions_origin_slotted_struct(ty) {
-                        let (bound, _) = self.clone_binding(ty, &mut origin_binders)?;
-                        CtValue::Type(Box::new(bound))
-                    } else {
-                        CtValue::Type(Box::new(ty.clone()))
-                    }
-                }
-                (
-                    ParamDecl::Value {
-                        variadic: false,
-                        ty,
-                        ..
-                    },
-                    TyArg::Val(value),
-                ) => {
-                    if matches!(
-                        value,
-                        CtValue::Expr(_) | CtValue::Deferred(_) | CtValue::Marker(_)
-                    ) || !ct_value_has_type(value, ty)
-                    {
-                        return None;
-                    }
-                    value.clone()
-                }
-                // A checker-inferred type pack (`show(w)` on `def show[*Ts:
-                // Writable](*args: *Ts)`): every element is a checked type
-                // satisfying the pack's bounds.
-                (
-                    ParamDecl::Type {
-                        variadic: true,
-                        bounds,
-                        ..
-                    },
-                    TyArg::Val(value @ CtValue::Tuple(elements)),
-                ) => {
-                    for element in elements {
-                        let CtValue::Type(ty) = element else {
-                            return None;
-                        };
-                        if bounds
-                            .iter()
-                            .any(|bound| self.conformance.require(ty, bound).is_err())
-                        {
-                            return None;
-                        }
-                    }
-                    value.clone()
-                }
-                // Any other pairing is a drift signal.
-                _ => return None,
-            };
-            // Drift guard between the checker's conformance and this oracle:
-            // a dropped parameter's bounds are never re-validated later, so a
-            // disagreement must keep the call abstract rather than bake an
-            // unproven type into a clone.
-            if let ParamDecl::Type { bounds, .. } = &decl
-                && spec_type_param_substitution(&decl, &value).is_some()
-            {
-                let CtValue::Type(ty) = &value else {
-                    return None;
-                };
-                if bounds
-                    .iter()
-                    .any(|bound| self.conformance.require(ty, bound).is_err())
-                {
-                    return None;
-                }
-            }
-            vals.push(value);
-        }
-        if cursor.next().is_some() {
-            return None;
-        }
-        Some(vals)
-    }
-
-    /// The checker-requested clone for an inferred bound-generic call whose
-    /// source arguments could not resolve, plus the source arguments the
-    /// rewritten call keeps. `None` leaves the call on the abstract path, as
-    /// a call its template serves is left ([`Elab::template_serves_def`]).
-    fn def_request_target(
-        &self,
-        name: &str,
-        source_span: &SourceSpan,
-        param_args: &[ParamArg],
-        mono: &Mono,
-    ) -> Option<(Vec<CtValue>, Vec<ParamArg>)> {
-        let target = mono
-            .def_call_targets
-            .get(&source_span.clone().without_syntax())?;
-        if target.template != name {
-            // A span collision with a different callee (duplicated source
-            // provenance): stay abstract.
-            return None;
-        }
-        let template = *self.specializable.get(name)?;
-        if self.template_serves_def(name, template) {
-            return None;
-        }
-        let kept = self.request_kept_param_args(template, name, param_args, &target.vals)?;
-        Some((target.vals.clone(), kept))
-    }
-
-    /// The source arguments a request-rewritten call retains: arguments bound
-    /// to symbolically retained parameters and to residual kept type
-    /// parameters. Dropped parameters' arguments are baked into the clone; a
-    /// kept parameter with no source argument contributes nothing (the
-    /// checker re-infers it against the clone's residual signature, and the
-    /// mangle already discriminates the identity).
-    #[allow(
-        clippy::unused_self,
-        reason = "TODO: make an associated function or use the receiver"
-    )]
-    pub(super) fn request_kept_param_args(
-        &self,
-        template: &Stmt,
-        display_name: &str,
-        param_args: &[ParamArg],
-        vals: &[CtValue],
-    ) -> Option<Vec<ParamArg>> {
-        let StmtKind::Def {
-            name,
-            type_params,
-            params,
-            ..
-        } = &template.kind
-        else {
-            return None;
-        };
-        let bound = bind_spec_param_args(type_params, param_args, display_name).ok()?;
-        let mut kept = Vec::new();
-        let mut origins = Vec::new();
-        let mut values = vals.iter();
-        for (parameter, arguments) in type_params.iter().zip(bound) {
-            if retained_specialization_param(parameter, type_params) {
-                kept.extend(arguments.into_iter().cloned());
-                continue;
-            }
-            let decl = classify_ct_param(parameter, type_params, name)?;
-            let value = values.next()?;
-            if let CtValue::Type(ty) = value
-                && !parameter_spelled(parameter, params)
-                && self.ty_mentions_origin_slotted_struct(ty)
-            {
-                let source = match arguments.as_slice() {
-                    [ParamArg::Type(source)] => source,
-                    [ParamArg::Named { value, .. }] => match value.as_ref() {
-                        ParamArg::Type(source) => source,
-                        _ => return None,
-                    },
-                    _ => return None,
-                };
-                self.clone_binder_arguments(ty, source, &mut origins)?;
-            }
-            if matches!(decl, ParamDecl::Type { .. })
-                && spec_type_param_substitution(&decl, value).is_none()
-            {
-                kept.extend(arguments.into_iter().cloned());
-            }
-        }
-        if values.next().is_some() {
-            return None;
-        }
-        // The clone declares an explicit binder for each origin slot of a
-        // type argument no runtime parameter spells, and the call supplies
-        // the origin the application spelled there, in binder order.
-        origins.sort_by_key(|(index, _)| *index);
-        let explicit = self.unspelled_clone_binders(template, vals);
-        if origins.iter().map(|(index, _)| *index).ne(explicit) {
-            return None;
-        }
-        kept.splice(
-            0..0,
-            origins
-                .into_iter()
-                .map(|(_, origin)| ParamArg::Value(origin)),
-        );
-        Some(kept)
-    }
-
-    /// Pair each clone binder `bound` names with the origin `source`, the
-    /// application's own spelling of the same type, gives that slot
-    /// (`Span[Int, __clone_origin0]` against `Span[Int, origin_of(xs)]`).
-    /// `None` when the spelling does not line up with the checked type, as
-    /// through an alias.
-    fn clone_binder_arguments(
-        &self,
-        bound: &Ty,
-        source: &Type,
-        out: &mut Vec<(u32, Expr)>,
-    ) -> Option<()> {
-        // A pointer's origin argument spells its binder's origin
-        // (`Pointer[Int, __clone_origin0]` against `Pointer[Int,
-        // origin_of(x)]`).
-        if let Ty::Pointer { element, origin } = bound {
-            let Type::Named(source_name, source_arguments) = source else {
-                return None;
-            };
-            let [ParamArg::Type(element_source), origin_source] = source_arguments.as_slice()
-            else {
-                return None;
-            };
-            if !matches!(source_name.as_str(), "Pointer" | "UnsafePointer") {
-                return None;
-            }
-            self.clone_binder_arguments(element, element_source, out)?;
-            if let mojito_types::origin::PointerOrigin::Param {
-                id,
-                interior,
-                subtree,
-                ..
-            } = origin
-                && CloneOriginBinders::name(*id).is_some()
-            {
-                out.push((
-                    u32::MAX - id.0,
-                    projected_origin_base(origin_source, interior, *subtree)?,
-                ));
-            }
-            return Some(());
-        }
-        let (Ty::Struct(name, arguments), Type::Named(source_name, source_arguments)) =
-            (bound, source)
-        else {
-            return (!self.ty_mentions_origin_slotted_struct(bound)).then_some(());
-        };
-        if source_name != name {
-            return None;
-        }
-        let declared = self.structs.get(name.as_str())?.source_params;
-        let slots = bind_spec_param_args(declared, source_arguments, name).ok()?;
-        let is_origin = |parameter: &TypeParam| matches!(parameter.bounds.as_slice(), [only] if only == "Origin" || only == "OriginSet");
-        let mut origins = arguments.iter().filter_map(|argument| match argument {
-            TyArg::Origin(origin) => Some(origin),
-            _ => None,
-        });
-        let mut others = arguments
-            .iter()
-            .filter(|argument| !matches!(argument, TyArg::Origin(_)));
-        for (parameter, spelled) in declared.iter().zip(slots) {
-            let spelled = match spelled.as_slice() {
-                [ParamArg::Named { value, .. }] => Some(value.as_ref()),
-                [only] => Some(*only),
-                _ => None,
-            };
-            if is_origin(parameter) {
-                if parameter.infer_only {
-                    continue;
-                }
-                let origin = origins.next()?;
-                if let mojito_types::origin::Origin::Param(id) = origin
-                    && CloneOriginBinders::name(*id).is_some()
-                {
-                    out.push((u32::MAX - id.0, origin_argument_expression(spelled?)?));
-                }
-            } else if !parameter.is_origin_mutability_binder(declared)
-                && let Some(TyArg::Ty(inner)) = others.next()
-                && self.ty_mentions_origin_slotted_struct(inner)
-            {
-                let Some(ParamArg::Type(inner_source)) = spelled else {
-                    return None;
-                };
-                self.clone_binder_arguments(inner, inner_source, out)?;
-            }
-        }
-        (origins.next().is_none() && others.next().is_none()).then_some(())
     }
 
     /// The clone binders `vals` bind for the origin slots of a type argument
@@ -1665,65 +1302,4 @@ fn expr_mentions_any(expression: &Expr, names: &[String]) -> bool {
         }
         _ => false,
     }
-}
-
-/// The origin an application spells in an origin slot, as the expression an
-/// explicit clone binder is supplied with: a value (`origin_of(xs)`, `o`) or
-/// a bare name the parser read as a type (`__clone_origin0` in a clone body).
-fn origin_argument_expression(spelled: &ParamArg) -> Option<Expr> {
-    match spelled {
-        ParamArg::Value(expression) => Some(expression.clone()),
-        ParamArg::Type(Type::Named(name, arguments)) if arguments.is_empty() => {
-            Some(Expr::new(ExprKind::Identifier(name.clone()), (0, 0)))
-        }
-        _ => None,
-    }
-}
-
-/// The origin a binder pointer's spelled origin argument binds its binder
-/// to: the argument with the binder's trailing `._subtree` and
-/// `._get_owned_interior["tag"]` projections peeled, in type-annotation or
-/// expression spelling (`origin_of(x)._get_owned_interior["element"]`
-/// binds `origin_of(x)`).
-fn projected_origin_base(spelled: &ParamArg, interior: &[String], subtree: bool) -> Option<Expr> {
-    let mut spelled = spelled.clone();
-    if subtree {
-        spelled = match spelled {
-            ParamArg::Type(Type::Assoc { base, name, args })
-                if name == "_subtree" && args.is_empty() =>
-            {
-                ParamArg::Type(*base)
-            }
-            ParamArg::Value(Expr {
-                kind: ExprKind::Member { object, field },
-                ..
-            }) if field == "_subtree" => ParamArg::Value(*object),
-            _ => return None,
-        };
-    }
-    for tag in interior.iter().rev() {
-        spelled = match spelled {
-            ParamArg::Type(Type::IndexedProjection { base, index }) => match (*base, &index.kind) {
-                (Type::Assoc { base, name, args }, ExprKind::Str(spelled_tag))
-                    if name == "_get_owned_interior" && args.is_empty() && spelled_tag == tag =>
-                {
-                    ParamArg::Type(*base)
-                }
-                _ => return None,
-            },
-            ParamArg::Value(Expr {
-                kind: ExprKind::Index { object, index },
-                ..
-            }) => match (object.kind, &index.kind) {
-                (ExprKind::Member { object, field }, ExprKind::Str(spelled_tag))
-                    if field == "_get_owned_interior" && spelled_tag == tag =>
-                {
-                    ParamArg::Value(*object)
-                }
-                _ => return None,
-            },
-            _ => return None,
-        };
-    }
-    origin_argument_expression(&spelled)
 }

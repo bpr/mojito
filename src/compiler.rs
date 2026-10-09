@@ -1,12 +1,11 @@
 //! The authoritative whole-program compiler pipeline.
 
 use crate::backend::BackendKind;
-use crate::checked::{CheckedProgram, DiscoveryResult};
+use crate::checked::CheckedProgram;
 use crate::comptime::{
-    ComptimeError, DefSpecializationRequest, Elaborated, ElaborationInputs,
-    bound_generic_template_names, elaborate_prepared, generated_names, instance_traces, prepare,
+    ComptimeError, Elaborated, ElaborationInputs, elaborate_prepared, generated_names,
+    instance_traces, prepare,
 };
-use crate::ct::CtValue;
 use crate::error::{OwnershipError, ParseError, TypeError};
 use crate::mir::MirProgram;
 use crate::mir::text::{DisassembleError, disassemble};
@@ -18,8 +17,6 @@ use crate::runtime::RuntimeError;
 use crate::runtime::Value;
 use crate::timing;
 use crate::{Stmt, ast::StmtKind, parse};
-use crate::{Ty, TyArg};
-use std::collections::HashSet;
 use std::fmt;
 
 use std::path::Path;
@@ -37,47 +34,10 @@ pub struct CompiledProgram {
     elaborated: OnceLock<MirProgram>,
     concrete: OnceLock<Result<SpecializedProgram, MonoError>>,
     template_stats: crate::templates::TemplateStats,
-    clones: crate::census::CloneCensus,
     /// The native target the elaborator answers layout queries for.
     target: Option<crate::native::target::NativeTarget>,
 }
 impl CompiledProgram {
-    /// Which mechanism instantiated each generic body of this compilation.
-    /// Reads the concrete graph to count what the parametric bodies serve,
-    /// so it elaborates the program if nothing has yet.
-    pub fn instantiation_census(&self) -> crate::census::InstantiationCensus {
-        let mir = self.drop_elaborated_mir();
-        // A parametric body the cloner minted is a clone that keeps a
-        // parameter of its own; every other one is a template.
-        let (clones, erased): (Vec<&str>, Vec<&str>) = crate::native::mono::parametric_bodies(mir)
-            .into_iter()
-            .partition(|body| self.clones.minted(body));
-        let served = |minted: bool| {
-            self.concrete_mir().ok().map(|specialized| {
-                let templates: Vec<&str> = specialized
-                    .parametric
-                    .instance_templates
-                    .iter()
-                    .map(String::as_str)
-                    .filter(|template| self.clones.minted(template) == minted)
-                    .collect();
-                crate::census::ErasedServed {
-                    bodies: templates.iter().collect::<HashSet<_>>().len(),
-                    instances: templates.len(),
-                }
-            })
-        };
-        crate::census::InstantiationCensus {
-            cloned: self.clones.clone(),
-            inferred: self.template_stats.inferred_instances.len(),
-            derived: self.template_stats.derived_only_instances(),
-            erased_bodies: erased.len(),
-            erased_served: served(false),
-            parametric_clones: clones.len(),
-            parametric_clones_served: served(true),
-        }
-    }
-
     /// Which generic bodies this compilation inferred, and which clones it
     /// served from a checked template instead.
     pub const fn template_stats(&self) -> &crate::templates::TemplateStats {
@@ -165,13 +125,6 @@ pub enum CompilerError {
     /// violations, never user errors: the checker accepted the program, so an
     /// entry here means lowering produced metadata the backend must refuse.
     Verify(Vec<String>),
-    /// The iterated generic-instantiation discovery loop kept finding new
-    /// closed instantiations after the round cap — e.g. inferred polymorphic
-    /// recursion, where each clone requests one deeper instantiation.
-    SpecializationDivergence {
-        rounds: usize,
-        callee: String,
-    },
     /// The elaborator refused to instantiate a body the entry roots reach.
     Elaborate(MonoError),
     Runtime(RuntimeError),
@@ -187,12 +140,6 @@ impl fmt::Display for CompilerError {
             Self::Verify(findings) => {
                 write!(f, "invalid checked program: {}", findings.join("; "))
             }
-            Self::SpecializationDivergence { rounds, callee } => write!(
-                f,
-                "generic specialization did not converge after {rounds} discovery rounds; \
-                 '{callee}' keeps requesting new instantiations (likely inferred polymorphic \
-                 recursion) — supply explicit compile-time arguments or bound the recursion"
-            ),
             Self::Elaborate(error) => write!(f, "Elaboration error: {error}"),
             Self::Runtime(error) => error.fmt(f),
         }
@@ -360,38 +307,18 @@ impl Compiler {
     /// statement set. Verification, ownership, artifact emission, and backend
     /// execution all consume the one cached `MirProgram` lowered here.
     pub fn compile_linked(&self, linked: &[Stmt]) -> Result<CompiledProgram, CompilerError> {
-        // The element types of a `t"…"` occurrence are semantic facts, and an
-        // inferred bound-generic call's instantiation is likewise resolved
-        // only by the checker: pre-check elaboration cannot infer arbitrary
-        // expression types. Iterate discovery to a fixpoint:
-        // each check pass may record new closed instantiations (a requested
-        // clone's body can itself contain inferred calls), so requests
-        // accumulate monotonically and each round re-elaborates the original
-        // linked program with the full set. Programs without generics converge
-        // after the first pass with no re-elaboration; ownership and MIR
-        // verification run exactly once, on the fixpoint program.
-        const SPECIALIZATION_ROUNDS: usize = 5;
-        let range_templates = scalar_range_template_names(linked);
-        let mut def_requests: Vec<DefSpecializationRequest> = Vec::new();
-        // Occurrences whose recordings conflicted across rounds; determinism
-        // should preclude this, but a poisoned key must stay abstract rather
-        // than oscillate.
-        let mut conflicted = std::collections::HashSet::new();
-        let mut last_new_callee = String::from("Tuple");
         let _compile = timing::span("compile");
-        // Source validation runs once, on the prepared program every
-        // discovery round re-elaborates: each `comptime if` arm and
-        // `comptime for` body is checked with its declaration's parameters
+        // Source validation checks each `comptime if` arm and `comptime for`
+        // body of the prepared program with its declaration's parameters
         // symbolic before elaboration selects, so an untaken arm's type
-        // error is reported as the pinned Mojo reports it. The rounds below
-        // only ever re-elaborate already validated source.
+        // error is reported as the pinned Mojo reports it.
         let prepared = {
             let _prepare = timing::span("prepare");
             prepare(linked.to_vec()).map_err(CompilerError::Comptime)?
         };
-        // The checked templates of this compilation, and the traces of the
-        // elaboration about to be checked. `MOJITO_VERIFY_TEMPLATE_FACTS`
-        // keeps every clone check and compares it with the derived facts.
+        // The checked templates of this compilation.
+        // `MOJITO_VERIFY_TEMPLATE_FACTS` keeps every clone check and
+        // compares it with the derived facts.
         let mut templates_catalog = crate::templates::TemplateCatalog::new(
             self.verify_template_facts.unwrap_or_else(|| {
                 std::env::var_os("MOJITO_VERIFY_TEMPLATE_FACTS")
@@ -403,116 +330,30 @@ impl Compiler {
         }));
         crate::checker::validate_comptime_templates_into(&prepared, &mut templates_catalog)
             .map_err(CompilerError::Type)?;
-        let templates = bound_generic_template_names(linked);
-        // What the elaboration `checked` was checked from minted.
-        let mut clones;
-        let mut checked = {
-            let Elaborated {
-                program: discovery,
-                def_traces,
-                generated,
-                ctfe_template_stats,
-                clones: minted_clones,
-            } = {
-                let _elaborate = timing::span("discovery.initial.elaborate");
-                elaborate_prepared(&prepared, ElaborationInputs::new(&templates_catalog))
-                    .map_err(CompilerError::Comptime)?
-            };
-            clones = minted_clones;
-            if !self.allow_executable_module_scope {
-                validate_module_scope(&discovery).map_err(CompilerError::Type)?;
-            }
-            templates_catalog.stats_mut().absorb(ctfe_template_stats);
-            templates_catalog.set_traces(instance_traces(def_traces));
-            templates_catalog.set_generated(generated_names(generated));
-            let _check = timing::span("discovery.initial.check");
-            crate::checker::check_program_carrying(&discovery, &mut templates_catalog, None)
-                .map_err(CompilerError::Type)?
-        };
-        let mut converged = false;
-        for round in 0..=SPECIALIZATION_ROUNDS {
-            let _round = timing::round("discovery.round", round);
-            let requests = timing::span("requests");
-            let mut grew = false;
-            // What this round serves for the first time: a body that
-            // recorded one of these is inferred again next round, whatever
-            // else its record still matches (`PassCarry::for_next_round`).
-            let mut served = ServedRequests::default();
-            let found = def_specialization_requests(checked.result(), &templates)
-                .into_iter()
-                .chain(scalar_range_requests(checked.result(), &range_templates));
-            for request in found {
-                if conflicted.contains(request.occurrence()) {
-                    continue;
-                }
-                match def_requests
-                    .iter()
-                    .position(|existing| existing.occurrence() == request.occurrence())
-                {
-                    None => {
-                        last_new_callee = request.callee().to_string();
-                        served.callees.push(request.callee().to_string());
-                        def_requests.push(request);
-                        grew = true;
-                    }
-                    Some(index) if def_requests[index] != request => {
-                        conflicted.insert(def_requests.remove(index).occurrence().clone());
-                    }
-                    Some(_) => {}
-                }
-            }
-            drop(requests);
-            timing::count("def_requests", def_requests.len() as u64);
-            if !grew {
-                converged = true;
-                break;
-            }
-            let Elaborated {
-                program: elaborated,
-                def_traces,
-                generated,
-                ctfe_template_stats,
-                clones: minted_clones,
-            } = {
-                let _elaborate = timing::span("elaborate");
-                elaborate_prepared(
-                    &prepared,
-                    ElaborationInputs {
-                        def_requests: &def_requests,
-                        ..ElaborationInputs::new(&templates_catalog)
-                    },
-                )
+        // One elaboration and one check: every generic body is checked once
+        // with its binders symbolic, and the elaborator below MIR finds the
+        // instances the entries reach. Nothing a check discovers feeds a
+        // second elaboration.
+        let Elaborated {
+            program: elaborated,
+            def_traces,
+            generated,
+            ctfe_template_stats,
+        } = {
+            let _elaborate = timing::span("elaborate");
+            elaborate_prepared(&prepared, ElaborationInputs::new(&templates_catalog))
                 .map_err(CompilerError::Comptime)?
-            };
-            clones = minted_clones;
-            if !self.allow_executable_module_scope {
-                validate_module_scope(&elaborated).map_err(CompilerError::Type)?;
-            }
-            templates_catalog.stats_mut().absorb(ctfe_template_stats);
-            templates_catalog.set_traces(instance_traces(def_traces));
-            templates_catalog.set_generated(generated_names(generated));
-            let _check = timing::span("check");
-            let dirty = served.dirty_sites(&checked);
-            timing::count("body_facts.dirty_sites", dirty.len() as u64);
-            checked = crate::checker::check_program_carrying(
-                &elaborated,
-                &mut templates_catalog,
-                Some(checked.for_next_round(&dirty)),
-            )
-            .map_err(CompilerError::Type)?;
+        };
+        if !self.allow_executable_module_scope {
+            validate_module_scope(&elaborated).map_err(CompilerError::Type)?;
         }
-        if !converged {
-            return Err(CompilerError::SpecializationDivergence {
-                rounds: SPECIALIZATION_ROUNDS,
-                callee: last_new_callee,
-            });
-        }
-        // Only the converged round is assembled into the executable handoff:
-        // every earlier round was checked for its requests alone.
+        templates_catalog.stats_mut().absorb(ctfe_template_stats);
+        templates_catalog.set_traces(instance_traces(def_traces));
+        templates_catalog.set_generated(generated_names(generated));
         let checked = {
-            let _arena = timing::span("arena");
-            timing::count("arena_builds", 1);
-            checked.into_result().finalize()
+            let _check = timing::span("check");
+            crate::checker::check_program_with_templates(&elaborated, &mut templates_catalog)
+                .map_err(CompilerError::Type)?
         };
         let mir = {
             let _lower = timing::span("mir.lower");
@@ -525,12 +366,6 @@ impl Compiler {
         timing::count("param_expr.constant_folds", param_stats.constant_folds);
         timing::count("param_expr.replacements", param_stats.replacements);
         timing::count("param_expr.contexts", param_stats.contexts);
-        for class in crate::census::CloneClass::ALL {
-            let bodies = clones.count(class);
-            if bodies > 0 {
-                timing::count(class.counter(), bodies as u64);
-            }
-        }
         let template_stats = templates_catalog.stats();
         timing::count(
             "instantiation.checked.inferred",
@@ -553,7 +388,6 @@ impl Compiler {
             elaborated: OnceLock::new(),
             concrete: OnceLock::new(),
             template_stats: templates_catalog.stats().clone(),
-            clones,
             target: self.target,
         })
     }
@@ -606,542 +440,8 @@ impl Compiler {
     }
 }
 
-/// The requests a discovery round serves for the first time, for telling
-/// which body records of the previous round are stale.
-#[derive(Default)]
-struct ServedRequests {
-    callees: Vec<String>,
-}
-
-impl ServedRequests {
-    /// The body sites whose facts a newly served request would change: those
-    /// that recorded an instantiation of a callee it clones. (A rewritten
-    /// call occurrence changes the body's syntax hash instead.)
-    fn dirty_sites(&self, carry: &crate::checker::PassCarry) -> HashSet<crate::token::SourceSpan> {
-        carry
-            .sites()
-            .filter(|site| {
-                site.instantiated_callees()
-                    .any(|callee| self.callees.iter().any(|served| served == callee))
-            })
-            .map(|site| site.key().clone())
-            .collect()
-    }
-}
-
-/// The checker-recorded inferred bound-generic instantiations that are closed
-/// (fully concrete) and therefore replayable by elaboration. Conflicting
-/// recordings for one source occurrence — `comptime for` unrolling duplicates
-/// source spans across copies — drop the occurrence: those calls keep the
-/// abstract erased path, which is always correct. The result is sorted so
-/// request seeding, and therefore specialization order, is deterministic.
-fn def_specialization_requests(
-    checked: &DiscoveryResult,
-    templates: &std::collections::HashSet<String>,
-) -> Vec<DefSpecializationRequest> {
-    recorded_def_calls(checked, |instantiation| {
-        templates.contains(&instantiation.callee)
-            && instantiation.arguments.iter().all(closed_generic_argument)
-    })
-}
-
-/// The checker-recorded `def` instantiations `keep` accepts, one per source
-/// occurrence and sorted by it.
-fn recorded_def_calls(
-    checked: &DiscoveryResult,
-    keep: impl Fn(&crate::checked::GenericInstantiation) -> bool,
-) -> Vec<DefSpecializationRequest> {
-    use std::collections::hash_map::Entry;
-    let mut by_occurrence = std::collections::HashMap::new();
-    let mut conflicted = std::collections::HashSet::new();
-    for (span, instantiation) in checked.generic_instantiations() {
-        if !keep(instantiation) {
-            continue;
-        }
-        let request = DefSpecializationRequest::new(
-            span.clone(),
-            instantiation.callee.clone(),
-            instantiation.parameter_names.clone(),
-            instantiation.parameter_types.clone(),
-            instantiation.arguments.clone(),
-        )
-        .with_variadic(instantiation.variadic.clone());
-        let key = request.occurrence().clone();
-        if conflicted.contains(&key) {
-            continue;
-        }
-        match by_occurrence.entry(key) {
-            Entry::Occupied(existing) if *existing.get() != request => {
-                let (key, _) = existing.remove_entry();
-                conflicted.insert(key);
-            }
-            Entry::Occupied(_) => {}
-            Entry::Vacant(slot) => {
-                slot.insert(request);
-            }
-        }
-    }
-    let mut requests: Vec<DefSpecializationRequest> = by_occurrence.into_values().collect();
-    requests.sort_by(|a, b| {
-        let key = |request: &DefSpecializationRequest| {
-            (
-                request.occurrence().source.clone(),
-                request.occurrence().span.0,
-                request.occurrence().span.1,
-                request.callee().to_string(),
-            )
-        };
-        key(a).cmp(&key(b))
-    });
-    requests
-}
-
-/// The linked declaration names of the scalar range-family struct templates,
-/// keyed by the plain family name the checker's scalar-`range` inference
-/// records (the checker never sees the dropped comptime-class templates, so
-/// it cannot record the module-mangled spelling itself).
-fn scalar_range_template_names(linked: &[Stmt]) -> std::collections::HashMap<&'static str, String> {
-    let mut names = std::collections::HashMap::new();
-    for statement in linked {
-        let StmtKind::Struct { name, .. } = &statement.kind else {
-            continue;
-        };
-        if let Some(family) = crate::types::SCALAR_RANGE_FAMILY
-            .iter()
-            .chain(std::iter::once(&crate::types::FLOAT_STRIDED_RANGE))
-            .find(|family| name == *family || name.ends_with(&format!("${family}")))
-        {
-            names.entry(*family).or_insert_with(|| name.clone());
-        }
-    }
-    names
-}
-
-/// Checker-recorded scalar-range instantiations, rewritten from the plain
-/// family name to the linked struct-template name and sorted like
-/// [`def_specialization_requests`]. Occurrence conflicts share the caller's
-/// def-request conflict handling.
-fn scalar_range_requests(
-    checked: &DiscoveryResult,
-    templates: &std::collections::HashMap<&'static str, String>,
-) -> Vec<DefSpecializationRequest> {
-    let mut requests: Vec<DefSpecializationRequest> = checked
-        .generic_instantiations()
-        .iter()
-        .filter_map(|(span, instantiation)| {
-            let linked = templates.get(instantiation.callee.as_str())?;
-            if !instantiation.arguments.iter().all(closed_generic_argument) {
-                return None;
-            }
-            Some(DefSpecializationRequest::new(
-                span.clone(),
-                linked.clone(),
-                Vec::new(),
-                Vec::new(),
-                instantiation.arguments.clone(),
-            ))
-        })
-        .collect();
-    requests.sort_by(|a, b| {
-        let key = |request: &DefSpecializationRequest| {
-            (
-                request.occurrence().source.clone(),
-                request.occurrence().span.0,
-                request.occurrence().span.1,
-                request.callee().to_string(),
-            )
-        };
-        key(a).cmp(&key(b))
-    });
-    requests
-}
-
-/// Whether a recorded argument can be replayed as a specialization request.
-/// Replayable is wider than closed: a top-level [`CtValue::Deferred`] is the
-/// checker's callable-value placeholder, which the elaborator's alignment
-/// walk consumes and drops (or rejects) — rejecting it here would wrongly
-/// exclude every call to a generic with a callable-value parameter — and
-/// origins erase from the runtime ABI, so neither gates replay. A residual
-/// parameter expression is neither: a symbolic value names no instance.
-fn closed_generic_argument(argument: &TyArg) -> bool {
-    match argument {
-        TyArg::Ty(ty) => tuple_specialization_type_is_closed(ty),
-        TyArg::Val(CtValue::Deferred(_) | CtValue::Marker(_)) | TyArg::Origin(_) => true,
-        TyArg::Val(value) => {
-            tuple_specialization_value_is_closed_in(value, &ClosingBinders::default())
-        }
-    }
-}
-
-fn tuple_specialization_type_is_closed(ty: &Ty) -> bool {
-    tuple_specialization_type_is_closed_in(ty, &ClosingBinders::default())
-}
-
-fn tuple_specialization_type_is_closed_in(ty: &Ty, binders: &ClosingBinders) -> bool {
-    match ty {
-        Ty::Infer | Ty::SelfType => false,
-        Ty::Param { binder, .. } => binders.ids.contains(&binder.id),
-        Ty::Assoc { base, .. } => tuple_specialization_type_is_closed_in(base, binders),
-        Ty::Dependent(dependent) => {
-            tuple_specialization_ct_expr_is_closed(dependent.expr(), binders)
-        }
-        Ty::Struct(_, arguments) => arguments.iter().all(|argument| match argument {
-            TyArg::Ty(ty) => tuple_specialization_type_is_closed_in(ty, binders),
-            // Origins erase from the runtime ABI and carry no type/value binder.
-            TyArg::Origin(_) => true,
-            TyArg::Val(value) => tuple_specialization_value_is_closed_in(value, binders),
-        }),
-        Ty::Func {
-            params,
-            ret,
-            variadic,
-            kw_variadic,
-            error,
-            ..
-        } => {
-            params
-                .iter()
-                .all(|parameter| tuple_specialization_type_is_closed_in(parameter, binders))
-                && tuple_specialization_type_is_closed_in(ret, binders)
-                && variadic
-                    .as_deref()
-                    .is_none_or(|ty| tuple_specialization_type_is_closed_in(ty, binders))
-                && kw_variadic
-                    .as_deref()
-                    .is_none_or(|ty| tuple_specialization_type_is_closed_in(ty, binders))
-                && error
-                    .as_deref()
-                    .is_none_or(|ty| tuple_specialization_type_is_closed_in(ty, binders))
-        }
-        Ty::GenericFunc {
-            decls,
-            params,
-            ret,
-            variadic,
-            kw_variadic,
-            error,
-            ..
-        } => {
-            let nested = binders.nested(decls);
-            tuple_specialization_decls_are_closed(decls, &nested)
-                && params
-                    .iter()
-                    .all(|parameter| tuple_specialization_type_is_closed_in(parameter, &nested))
-                && tuple_specialization_type_is_closed_in(ret, &nested)
-                && variadic
-                    .as_deref()
-                    .is_none_or(|ty| tuple_specialization_type_is_closed_in(ty, &nested))
-                && kw_variadic
-                    .as_deref()
-                    .is_none_or(|ty| tuple_specialization_type_is_closed_in(ty, &nested))
-                && error
-                    .as_deref()
-                    .is_none_or(|ty| tuple_specialization_type_is_closed_in(ty, &nested))
-        }
-        Ty::Overload(types) | Ty::Tuple(types) | Ty::RuntimePack(types) | Ty::Variant(types) => {
-            types
-                .iter()
-                .all(|ty| tuple_specialization_type_is_closed_in(ty, binders))
-        }
-        Ty::ComptimeList(element) | Ty::VariadicPack(element) | Ty::Pointer { element, .. } => {
-            tuple_specialization_type_is_closed_in(element, binders)
-        }
-        Ty::Ref(reference) => tuple_specialization_type_is_closed_in(&reference.referent, binders),
-        Ty::Simd { dtype, width } => !dtype.is_symbolic() && !width.is_symbolic(),
-        Ty::Int
-        | Ty::UInt
-        | Ty::Bool
-        | Ty::StringLiteral
-        | Ty::Float64
-        | Ty::Dtype
-        | Ty::None
-        | Ty::Never
-        | Ty::IntLiteral
-        | Ty::FloatLiteral
-        | Ty::Error => true,
-    }
-}
-
-fn tuple_specialization_value_is_closed_in(
-    value: &crate::ct::CtValue,
-    binders: &ClosingBinders,
-) -> bool {
-    use crate::ct::CtValue;
-    match value {
-        CtValue::Expr(expression) => tuple_specialization_ct_expr_is_closed(expression, binders),
-        CtValue::Deferred(binder) => binders.ids.contains(&binder.id),
-        CtValue::Marker(_) => false,
-        CtValue::Tuple(values)
-        | CtValue::List(values)
-        | CtValue::Set {
-            elements: values, ..
-        } => values
-            .iter()
-            .all(|value| tuple_specialization_value_is_closed_in(value, binders)),
-        CtValue::Dict { entries, .. } => entries.iter().all(|(key, value)| {
-            tuple_specialization_value_is_closed_in(key, binders)
-                && tuple_specialization_value_is_closed_in(value, binders)
-        }),
-        CtValue::Struct { fields, .. } => fields
-            .iter()
-            .all(|(_, value)| tuple_specialization_value_is_closed_in(value, binders)),
-        CtValue::Type(ty) | CtValue::Reflected(ty) => {
-            tuple_specialization_type_is_closed_in(ty, binders)
-        }
-        CtValue::Int(_)
-        | CtValue::UInt(_)
-        | CtValue::Float(_)
-        | CtValue::IntLiteral(_)
-        | CtValue::FloatLiteral(_)
-        | CtValue::Bool(_)
-        | CtValue::Dtype(_)
-        | CtValue::Simd { .. }
-        | CtValue::Str(_) => true,
-    }
-}
-
-fn tuple_specialization_decls_are_closed(
-    declarations: &[crate::types::ParamDecl],
-    binders: &ClosingBinders,
-) -> bool {
-    declarations.iter().all(|declaration| match declaration {
-        crate::types::ParamDecl::Type {
-            callable_bound,
-            default,
-            constraints,
-            ..
-        } => {
-            callable_bound
-                .as_deref()
-                .is_none_or(|ty| tuple_specialization_type_is_closed_in(ty, binders))
-                && default
-                    .as_deref()
-                    .is_none_or(|ty| tuple_specialization_type_is_closed_in(ty, binders))
-                && constraints.iter().all(|constraint| {
-                    tuple_specialization_constraint_is_closed(constraint, binders)
-                })
-        }
-        crate::types::ParamDecl::Value {
-            ty,
-            default,
-            callable_default,
-            constraints,
-            ..
-        } => {
-            tuple_specialization_type_is_closed_in(ty, binders)
-                && default.as_ref().is_none_or(|expression| {
-                    tuple_specialization_ct_expr_is_closed(expression, binders)
-                })
-                && callable_default.as_ref().is_none_or(|default| {
-                    tuple_specialization_callable_default_is_closed(default, binders)
-                })
-                && constraints.iter().all(|constraint| {
-                    tuple_specialization_constraint_is_closed(constraint, binders)
-                })
-        }
-    })
-}
-
-fn tuple_specialization_ct_expr_is_closed(
-    expression: &crate::param_expr::ParamExpr,
-    binders: &ClosingBinders,
-) -> bool {
-    use crate::param_expr::ParamKind;
-    let mut closed = true;
-    expression.visit(&mut |node| {
-        closed &= match node.kind() {
-            ParamKind::Constant(value) => tuple_specialization_value_is_closed_in(value, binders),
-            ParamKind::DeclRef(reference) => binders.ids.contains(&reference.id),
-            ParamKind::PackQuery { pack, .. } => binders.ids.contains(&pack.id),
-            // An element of a pack that is still a parameter, a reflection
-            // or member read of a symbolic type, or an application the
-            // elaborator has yet to evaluate names no instance.
-            ParamKind::Hole { .. }
-            | ParamKind::ListGet { .. }
-            | ParamKind::ListTabulate { .. }
-            | ParamKind::ListConcat { .. }
-            | ParamKind::Reflect { .. }
-            | ParamKind::TypeMember { .. }
-            | ParamKind::Apply { .. } => false,
-            // A signature slot is bound by the contract that holds it.
-            ParamKind::IndexRef { .. }
-            | ParamKind::Op { .. }
-            | ParamKind::Field { .. }
-            | ParamKind::Identical(..)
-            | ParamKind::Conforms { .. }
-            | ParamKind::Trivial { .. } => true,
-            ParamKind::TypeShape(_) | ParamKind::Select { .. } => node
-                .embedded_types()
-                .into_iter()
-                .all(|ty| tuple_specialization_type_is_closed_in(ty, binders)),
-        };
-    });
-    closed
-}
-
-fn tuple_specialization_callable_default_is_closed(
-    default: &crate::types::CallableDefault,
-    binders: &ClosingBinders,
-) -> bool {
-    use crate::types::CallableDefault;
-    match default {
-        CallableDefault::Symbol(_) => true,
-        CallableDefault::Parameter(parameter) => binders.ids.contains(&parameter.id),
-        CallableDefault::If {
-            condition,
-            then_value,
-            else_value,
-        } => {
-            tuple_specialization_ct_expr_is_closed(condition, binders)
-                && tuple_specialization_callable_default_is_closed(then_value, binders)
-                && tuple_specialization_callable_default_is_closed(else_value, binders)
-        }
-    }
-}
-
-fn tuple_specialization_constraint_is_closed(
-    constraint: &crate::types::GenericConstraint,
-    binders: &ClosingBinders,
-) -> bool {
-    use crate::types::GenericConstraint;
-    match constraint {
-        GenericConstraint::WithMessage(condition, _) => {
-            tuple_specialization_constraint_is_closed(condition, binders)
-        }
-        GenericConstraint::Conforms { param, .. }
-        | GenericConstraint::ConformsPack { param, .. }
-        | GenericConstraint::PackPredicate { param, .. } => binders.ids.contains(&param.id),
-        GenericConstraint::PackContains { param, element } => {
-            binders.ids.contains(&param.id)
-                && tuple_specialization_constraint_operand_is_closed(element, binders)
-        }
-        GenericConstraint::Trivial(_, operand) => {
-            tuple_specialization_constraint_operand_is_closed(operand, binders)
-        }
-        GenericConstraint::Eq(left, right)
-        | GenericConstraint::Ne(left, right)
-        | GenericConstraint::Lt(left, right)
-        | GenericConstraint::Le(left, right)
-        | GenericConstraint::Gt(left, right)
-        | GenericConstraint::Ge(left, right) => {
-            tuple_specialization_constraint_operand_is_closed(left, binders)
-                && tuple_specialization_constraint_operand_is_closed(right, binders)
-        }
-        GenericConstraint::And(left, right) | GenericConstraint::Or(left, right) => {
-            tuple_specialization_constraint_is_closed(left, binders)
-                && tuple_specialization_constraint_is_closed(right, binders)
-        }
-        GenericConstraint::Not(value) => tuple_specialization_constraint_is_closed(value, binders),
-        GenericConstraint::Bool(_) => true,
-    }
-}
-
-fn tuple_specialization_constraint_operand_is_closed(
-    operand: &crate::types::ConstraintOperand,
-    binders: &ClosingBinders,
-) -> bool {
-    match operand {
-        crate::types::ConstraintOperand::Param(param)
-        | crate::types::ConstraintOperand::PackLength(param) => binders.ids.contains(&param.id),
-        crate::types::ConstraintOperand::Value(value) => {
-            tuple_specialization_value_is_closed_in(value, binders)
-        }
-        crate::types::ConstraintOperand::Type(ty) => {
-            tuple_specialization_type_is_closed_in(ty, binders)
-        }
-        crate::types::ConstraintOperand::Expr(expression) => {
-            tuple_specialization_ct_expr_is_closed(expression, binders)
-        }
-    }
-}
-
-/// The binders an enclosing callable contract declares, which a Tuple
-/// element type may mention and still be closed. A type parameter, a value
-/// reference, a `where` operand, a callable default, a deferred slot, and a
-/// pack query all name their binder by identity.
-#[derive(Default, Clone)]
-struct ClosingBinders {
-    ids: std::collections::HashSet<crate::param_expr::ParamId>,
-}
-
-impl ClosingBinders {
-    /// These binders with a nested contract's own `decls` added.
-    fn nested(&self, decls: &[crate::types::ParamDecl]) -> Self {
-        let mut nested = self.clone();
-        nested
-            .ids
-            .extend(decls.iter().map(|declaration| declaration.id().clone()));
-        nested
-    }
-}
-
 impl Default for Compiler {
     fn default() -> Self {
         Self::new(LinkOptions::default(), BackendKind::Vm)
-    }
-}
-
-#[cfg(test)]
-mod tuple_callable_closedness_tests {
-    use super::*;
-    use crate::types::TransferSet;
-
-    /// A test binder's identity is its spelling, so a callable declaring `T`
-    /// binds a parameter spelled `T` and not one spelled `U`.
-    fn test_binder(name: &str) -> crate::param_expr::ParamId {
-        crate::param_expr::ParamId::new(&format!("$test:{name}"), 0)
-    }
-
-    fn type_parameter(name: &str) -> Ty {
-        Ty::Param {
-            binder: crate::param_expr::ParamRef {
-                id: test_binder(name),
-                name: name.into(),
-            },
-            bounds: vec!["Movable".to_string()],
-            callable_bound: None,
-        }
-    }
-
-    fn generic_callable(declared: &str, parameter: Ty) -> Ty {
-        Ty::GenericFunc {
-            environment: crate::origin::CallableEnvironment::Thin,
-            decls: vec![crate::types::ParamDecl::Type {
-                id: test_binder(declared),
-                name: declared.to_string(),
-                bounds: vec!["Movable".to_string()],
-                callable_bound: None,
-                default: None,
-                infer_only: false,
-                variadic: false,
-                constraints: Vec::new(),
-            }],
-            params: vec![parameter.clone()],
-            names: vec!["value".to_string()],
-            ret: Box::new(parameter),
-            required: vec![true],
-            variadic: None,
-            kw_variadic: None,
-            positional_only: None,
-            keyword_only: None,
-            raises: false,
-            error: None,
-            conventions: vec![None],
-            ref_params: Box::new(vec![None]),
-            ref_return: None,
-            transfers: TransferSet::default(),
-        }
-    }
-
-    #[test]
-    fn a_generic_callable_closes_only_its_own_type_parameters() {
-        assert!(tuple_specialization_type_is_closed(&generic_callable(
-            "T",
-            type_parameter("T"),
-        )));
-        assert!(!tuple_specialization_type_is_closed(&generic_callable(
-            "U",
-            type_parameter("T"),
-        )));
     }
 }

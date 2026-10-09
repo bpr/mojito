@@ -2154,8 +2154,8 @@ fn build_checked_expressions(
                 // the construction answers at the sugar's location too, so
                 // HIR lowers the construction where the sugar was written (an
                 // initializer list, a t-string, a value pack read as its
-                // `ParameterList`).
-                BraceLit(_) | TString { .. } | Identifier(_) | Member { .. }
+                // `ParameterList`, a scalar `range` call).
+                BraceLit(_) | TString { .. } | Identifier(_) | Member { .. } | Call { .. }
                     if let Some(SemanticAdjustment::SpelledConstruction { construction }) =
                         self.operation_adjustments.get(&expression.source_span()) =>
                 {

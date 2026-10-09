@@ -41,7 +41,7 @@ use mojito_ast::ast::{
 pub use mojito_symbol::symbol::mangle;
 
 use mojito_ast::call::{CallVariadics, effective_keyword_only_index, match_call_slots};
-use mojito_common::token::{SourceSpan, Span, SyntaxId};
+use mojito_common::token::{Span, SyntaxId};
 use mojito_types::ct::{CtMarker, CtValue};
 use mojito_types::param_expr::{ParamContext, ParamError, ParamExpr};
 use mojito_types::types::{ParamDecl, Ty, TyArg, list_type, tuple_type};
@@ -49,84 +49,6 @@ use mojito_vm::backend::VmBackend;
 use mojito_vm::runtime::Value;
 use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet, VecDeque};
-
-/// One checker-discovered inferred application of a bound-generic `def`
-/// template.
-///
-/// The pre-check elaborator cannot infer types, so the compiler's discovery
-/// loop replays the checker's resolved instantiation at the exact call
-/// occurrence. A request can only upgrade a call from the abstract
-/// erased-dispatch path to a concrete clone; any mismatch, misalignment, or
-/// collision is skipped and the call stays abstract.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct DefSpecializationRequest {
-    /// The call occurrence, stored without its phase-local syntax id.
-    occurrence: SourceSpan,
-    callee: String,
-    /// The selected overload's runtime parameter names, in declaration order:
-    /// which declaration of an overloaded template name the request
-    /// is for. A uniquely named callee ignores it.
-    parameter_names: Vec<String>,
-    /// The same parameters' declared types, mangled as `TypeKey`, breaking a
-    /// tie between overloads that share a parameter-name list.
-    parameter_types: Vec<String>,
-    /// The selected overload's `*args` collector, spelled by neither list:
-    /// what tells two type-pack overloads apart when every regular parameter
-    /// agrees.
-    variadic: Option<mojito_symbol::symbol::VariadicKey>,
-    /// The checker's declaration-order argument list from `resolve_use_params`.
-    arguments: Vec<TyArg>,
-}
-
-impl DefSpecializationRequest {
-    pub const fn new(
-        occurrence: SourceSpan,
-        callee: String,
-        parameter_names: Vec<String>,
-        parameter_types: Vec<String>,
-        arguments: Vec<TyArg>,
-    ) -> Self {
-        Self {
-            occurrence: occurrence.without_syntax(),
-            callee,
-            parameter_names,
-            parameter_types,
-            variadic: None,
-            arguments,
-        }
-    }
-
-    /// Name the selected overload's `*args` collector as well.
-    #[must_use]
-    pub fn with_variadic(mut self, variadic: Option<mojito_symbol::symbol::VariadicKey>) -> Self {
-        self.variadic = variadic;
-        self
-    }
-
-    pub const fn occurrence(&self) -> &SourceSpan {
-        &self.occurrence
-    }
-
-    pub fn callee(&self) -> &str {
-        &self.callee
-    }
-
-    pub fn parameter_names(&self) -> &[String] {
-        &self.parameter_names
-    }
-
-    pub fn parameter_types(&self) -> &[String] {
-        &self.parameter_types
-    }
-
-    pub const fn variadic(&self) -> Option<&mojito_symbol::symbol::VariadicKey> {
-        self.variadic.as_ref()
-    }
-
-    pub fn arguments(&self) -> &[TyArg] {
-        &self.arguments
-    }
-}
 
 /// Comptime-specific accessors on the shared [`CtValue`], reporting a
 /// [`ComptimeError`] when a value is not of the required kind.
@@ -380,29 +302,22 @@ pub struct Elaborated {
     /// What the checks of this elaboration's VM CTFE subprograms derived
     /// and inferred, for the compilation's own template statistics.
     pub ctfe_template_stats: mojito_checked::templates::TemplateStats,
-    /// The bodies this elaboration minted, by class.
-    pub clones: mojito_checked::census::CloneCensus,
 }
 
-/// What the driver's discovery loop hands one elaboration.
+/// What the driver hands the one elaboration of a compilation.
 ///
-/// The requests are the ones the previous round's check discovered; the
-/// templates are the compilation's checked templates, which VM CTFE's
-/// subprogram checks derive their traced clones from, holding the verdict
-/// of the source validation run every elaboration follows.
+/// The compilation's checked templates, which VM CTFE's subprogram checks
+/// derive their traced clones from, holding the verdict of the source
+/// validation run every elaboration follows.
 #[derive(Clone, Copy)]
 pub struct ElaborationInputs<'a> {
-    pub def_requests: &'a [DefSpecializationRequest],
     pub templates: &'a mojito_checked::templates::TemplateCatalog,
 }
 
 impl<'a> ElaborationInputs<'a> {
-    /// A first elaboration under `templates`, with no discovered requests.
+    /// An elaboration under `templates`.
     pub const fn new(templates: &'a mojito_checked::templates::TemplateCatalog) -> Self {
-        Self {
-            def_requests: &[],
-            templates,
-        }
+        Self { templates }
     }
 }
 
@@ -488,27 +403,16 @@ pub fn generated_names(
     }
 }
 
-/// The top-level bound-generic template names of a linked program. The
-/// compiler's discovery loop filters checker-recorded instantiations to these
-/// callees.
-pub fn bound_generic_template_names(program: &[Stmt]) -> HashSet<String> {
-    collect_bound_generic_templates(program)
-}
-
-/// Elaborate a [`prepare`]d, validated program while materializing
-/// checker-discovered inferred bound-generic applications.
+/// Elaborate a [`prepare`]d, validated program.
 ///
 /// This is the already-validated route: ordinary callers use [`elaborate`],
-/// and the compiler's discovery loop — which validates the prepared program
-/// once — supplies requests here each round.
+/// and the compiler — which validates the prepared program once — enters
+/// here.
 pub fn elaborate_prepared(
     program: &[Stmt],
     inputs: ElaborationInputs<'_>,
 ) -> Result<Elaborated, ComptimeError> {
-    let ElaborationInputs {
-        def_requests,
-        templates,
-    } = inputs;
+    let ElaborationInputs { templates } = inputs;
     let indexes = mojito_common::timing::span("indexes");
     let conformance =
         mojito_checker::checker::ConformanceOracle::from_program(program).map_err(|error| {
@@ -575,28 +479,20 @@ pub fn elaborate_prepared(
     }
     elab.restore_forced_constants(&mut materialized, deferred);
     // Monomorphize comptime-dependent generic templates against their call sites.
-    let mut result = elab.monomorphize(materialized, def_requests)?.program;
+    let mut result = elab.monomorphize(materialized)?.program;
     for statement in &mut result {
         if let Some(source) = statement.module.clone() {
             mojito_ast::ast::stamp_source(std::slice::from_mut(statement), &source);
         }
     }
-    let generated = elab.generated.take();
-    let def_traces = elab.def_traces.take();
-    let clones = census::clone_census(&census::Minted {
-        prepared: program,
-        def_traces: &def_traces,
-    });
     Ok(Elaborated {
         program: result,
-        def_traces,
-        generated,
-        clones,
+        def_traces: elab.def_traces.take(),
+        generated: elab.generated.take(),
         ctfe_template_stats: elab.ctfe_template_stats.take(),
     })
 }
 
-mod census;
 mod crossing;
 mod ctfe_calls;
 mod elab;
@@ -634,29 +530,9 @@ const fn rebuilt(source: &Stmt, kind: StmtKind) -> Stmt {
 /// unless the slot fixes its mutability. A binder's `OriginParamId` counts
 /// down from `u32::MAX`, far above any checker slot index, and spells as its
 /// own name wherever the bound type is spelled (`source_type_from_ty`).
-///
-/// A slot already bound to an enclosing declaration's origin parameter
-/// rebinds too only for a binder set built by
-/// [`CloneOriginBinders::over_enclosing`]: a `def` call supplies such a
-/// binder explicitly, spelled as the enclosing parameter's name.
-#[derive(Clone, Default)]
-pub(super) struct CloneOriginBinders {
-    count: u32,
-    params: Vec<TypeParam>,
-    enclosing: bool,
-}
+pub(super) struct CloneOriginBinders;
 
 impl CloneOriginBinders {
-    /// Binders that also stand for a slot bound to an enclosing
-    /// declaration's origin parameter (`Span[Int, o]` inside `def
-    /// slots[o: MutOrigin]`).
-    pub(super) fn over_enclosing() -> Self {
-        Self {
-            enclosing: true,
-            ..Self::default()
-        }
-    }
-
     /// The name a synthetic binder's id spells as.
     fn name(id: mojito_types::origin::OriginParamId) -> Option<String> {
         let index = u32::MAX - id.0;
@@ -669,18 +545,6 @@ impl CloneOriginBinders {
     }
 
     const LIMIT: u32 = 1 << 16;
-
-    fn fresh(&mut self, slot_mutability: Option<&Expr>) -> Option<mojito_types::origin::Origin> {
-        let index = self.count;
-        if index >= Self::LIMIT {
-            return None;
-        }
-        self.count += 1;
-        self.params.extend(Self::declared(index, slot_mutability));
-        Some(mojito_types::origin::Origin::Param(
-            mojito_types::origin::OriginParamId(u32::MAX - index),
-        ))
-    }
 
     /// The binder `index` as declared: its `Bool` mutability binder unless
     /// the slot fixes the mutability, then the `Origin` itself.
@@ -1323,62 +1187,6 @@ impl Elab<'_> {
             }
         }
     }
-
-    /// `ty` with every origin slot of an origin-slotted struct rebound to a
-    /// fresh clone binder; see [`Elab::clone_binding`].
-    fn bind_clone_origins(&self, ty: &Ty, binders: &mut CloneOriginBinders) -> Option<Ty> {
-        if let Ty::Pointer { element, origin } = ty {
-            let element = Box::new(self.bind_clone_origins(element, binders)?);
-            let Some(projection) = origin.clone_bindable_place() else {
-                return Some(Ty::Pointer {
-                    element,
-                    origin: origin.clone(),
-                });
-            };
-            let fixed = Expr::new(
-                ExprKind::Bool(projection.mutable),
-                mojito_common::token::DUMMY_SPAN,
-            );
-            let mojito_types::origin::Origin::Param(id) = binders.fresh(Some(&fixed))? else {
-                return None;
-            };
-            return Some(Ty::Pointer {
-                element,
-                origin: projection.binder_origin(id),
-            });
-        }
-        let Ty::Struct(name, arguments) = ty else {
-            return (!self.ty_mentions_origin_slotted_struct(ty)).then(|| ty.clone());
-        };
-        let slots = self.explicit_origin_slots(name);
-        let tail = arguments
-            .iter()
-            .filter(|argument| matches!(argument, TyArg::Origin(_)))
-            .count();
-        if tail != slots.len() {
-            return None;
-        }
-        let mut slots = slots.into_iter();
-        let arguments = arguments
-            .iter()
-            .map(|argument| match argument {
-                TyArg::Ty(inner) => self.bind_clone_origins(inner, binders).map(TyArg::Ty),
-                TyArg::Val(value) => (!matches!(value, CtValue::Tuple(elements)
-                    if elements.iter().any(|element| matches!(element,
-                        CtValue::Type(inner) if self.ty_mentions_origin_slotted_struct(inner)))))
-                .then(|| argument.clone()),
-                TyArg::Origin(mojito_types::origin::Origin::Param(_)) if !binders.enclosing => None,
-                TyArg::Origin(_) => {
-                    let slot = slots.next()?;
-                    (slot.bounds == ["Origin"])
-                        .then(|| binders.fresh(slot.origin_mutability.as_ref()))
-                        .flatten()
-                        .map(TyArg::Origin)
-                }
-            })
-            .collect::<Option<Vec<_>>>()?;
-        Some(Ty::Struct(name.clone(), arguments.into()))
-    }
 }
 
 /// A compile-time value as the runtime value the VM takes
@@ -1534,12 +1342,6 @@ fn substitute_source_param_arg_binding(argument: &mut ParamArg, binding: &str, r
     }
 }
 
-/// The concrete clone a checker-discovered inferred application selects.
-struct DefCallTarget {
-    template: String,
-    vals: Vec<CtValue>,
-}
-
 /// The monomorphization worklist and its results.
 #[derive(Default)]
 struct Mono {
@@ -1569,15 +1371,6 @@ struct Mono {
     /// (outermost first): a variadic template applied over one of them
     /// stays symbolic instead of failing eager specialization.
     symbolic_type_params: Vec<String>,
-    /// Checker-discovered inferred bound-generic applications: call occurrence
-    /// (without its syntax id) → the concrete clone that call selects.
-    def_call_targets: HashMap<SourceSpan, DefCallTarget>,
-    /// Checker-selected constructor rewrites: call occurrence → the struct
-    /// template plus the values its specialization bakes — a scalar
-    /// `range(...)` with the linked range-family template and its dtype, or a
-    /// bare variadic-struct construction with the pack the checker inferred.
-    /// `mono_expr` rewrites the call into that concrete constructor.
-    struct_call_targets: HashMap<SourceSpan, (String, Vec<CtValue>)>,
     /// Whether the walk is inside an unstamped bundled stdlib declaration:
     /// instances reached only from there keep the erased path.
     in_bundled: bool,
@@ -2000,13 +1793,6 @@ mod specialize;
 use rewrite::*;
 
 impl<'a> Elab<'a> {
-    /// Whether `name` declares an explicit (non-infer-only) `Origin`/
-    /// `OriginSet` parameter — a slot a generated clone can spell only as a
-    /// binder of its own (`Elab::clone_binding`).
-    pub(super) fn struct_has_explicit_origin_slots(&self, name: &str) -> bool {
-        !self.explicit_origin_slots(name).is_empty()
-    }
-
     /// The explicit (non-infer-only) `Origin`/`OriginSet` parameters of the
     /// struct `name`, in the order of a `Ty::Struct`'s origin tail.
     pub(super) fn explicit_origin_slots(&self, name: &str) -> Vec<&'a TypeParam> {
@@ -2025,33 +1811,8 @@ impl<'a> Elab<'a> {
             .unwrap_or_default()
     }
 
-    /// Whether a checked type mentions an origin-slotted struct applied to
-    /// non-origin arguments anywhere (`_ListIter[Int]`, `Named[Int]`,
-    /// `Span[Int, o]`): an inferred type argument of that shape spells its
-    /// slots only through a clone's own binders (`Elab::clone_binding`), and
-    /// otherwise keeps its call on the abstract path (origin-carrying
-    /// references do the same). A struct whose only explicit parameters are
-    /// origins (`RefIter`, `RefBox`) spells bare, which infers per call, so
-    /// it specializes.
-    /// A pointer whose origin names a caller place (`Pointer[Int,
-    /// origin_of(x)]`), or the clone binder standing for one, counts as
-    /// such a slot too.
-    pub(super) fn ty_mentions_origin_slotted_struct(&self, ty: &Ty) -> bool {
-        mojito_types::types::mentions(ty, &|candidate| match candidate {
-            Ty::Struct(name, arguments) => {
-                !arguments.is_empty() && self.struct_has_explicit_origin_slots(name)
-            }
-            Ty::Pointer { origin, .. } => {
-                origin.clone_bindable_place().is_some()
-                    || matches!(origin, mojito_types::origin::PointerOrigin::Param { id, .. }
-                        if CloneOriginBinders::name(*id).is_some())
-            }
-            _ => false,
-        })
-    }
-
-    /// The clone binders the bound values of a `def` clone name
-    /// (`Elab::clone_binding`), declared in binder order.
+    /// The clone binders the bound values of a `def` clone name, declared
+    /// in binder order.
     /// The binders in `explicit` are declared explicit: no argument spells
     /// them, so each call supplies them (`Elab::unspelled_clone_binders`).
     pub(super) fn clone_origin_binder_params(
@@ -2077,34 +1838,6 @@ impl<'a> Elab<'a> {
                 declared
             })
             .collect()
-    }
-
-    /// A type argument a generated clone bakes, as the clone binds and
-    /// spells it. An origin-slotted struct applied with its origin tail
-    /// (`Span[Int, o]`) rebinds each slot to a fresh binder `binders` declares
-    /// on the clone (`Span[Int, __clone_origin0]`), inferred per call from the
-    /// clone's own parameters as the template's type parameter was: the
-    /// checker's instantiation records erase every place origin, so one clone
-    /// serves every origin of that shape. A slot still naming a method's
-    /// receiver origin (`l.__iter__()` recorded as `_ListIter[T,
-    /// origin_of(self)]`) names some caller place, so it binds as one.
-    /// `None` keeps the erased path: a struct applied without its tail
-    /// (`_ListIter[Int]`) or an `OriginSet` slot has no binder to stand for
-    /// it, nor has a slot already bound to an enclosing declaration's origin
-    /// parameter unless `binders` admits one
-    /// ([`CloneOriginBinders::over_enclosing`]).
-    pub(super) fn clone_binding(
-        &self,
-        ty: &Ty,
-        binders: &mut CloneOriginBinders,
-    ) -> Option<(Ty, Type)> {
-        let bound = if self.ty_mentions_origin_slotted_struct(ty) {
-            self.bind_clone_origins(ty, binders)?
-        } else {
-            ty.clone()
-        };
-        let source = source_type_from_ty(&bound)?;
-        Some((bound, source))
     }
 
     /// The source spelling of a heterogeneous pack element type, with every
@@ -2187,285 +1920,6 @@ mod vm_bridge_tests {
         assert_eq!(
             mojito_vm::crossing::vm_to_ct(runtime).expect("VM CTFE list crosses back to CtValue"),
             source
-        );
-    }
-}
-
-/// The request-driven elaboration of an unprepared program, for the unit
-/// tests below: prepare, validate, then elaborate, as [`elaborate`] does.
-#[cfg(test)]
-fn elaborate_with_requests(
-    program: Vec<Stmt>,
-    def_requests: &[DefSpecializationRequest],
-) -> Result<Elaborated, ComptimeError> {
-    let prepared = prepare(program)?;
-    let mut catalog = mojito_checked::templates::TemplateCatalog::new(false);
-    mojito_checker::checker::validate_comptime_templates_into(&prepared, &mut catalog)
-        .map_err(ComptimeError::Type)?;
-    elaborate_prepared(
-        &prepared,
-        ElaborationInputs {
-            def_requests,
-            ..ElaborationInputs::new(&catalog)
-        },
-    )
-}
-
-#[cfg(test)]
-mod def_request_tests {
-    use super::{DefSpecializationRequest, elaborate_with_requests};
-    use mojito::{Ty, parse};
-    use mojito_ast::ast::{ExprKind, StmtKind};
-    use mojito_types::ct::CtValue;
-    use mojito_types::types::TyArg;
-
-    const TEMPLATE: &str = "def ident[T: Copyable & Movable](x: T) -> T:\n    return x\n\n";
-
-    /// The span of the one inferred (argument-less `[...]`) call to `callee`
-    /// inside `main`.
-    fn inferred_call_span(
-        program: &[mojito_ast::ast::Stmt],
-        callee: &str,
-    ) -> mojito_common::token::SourceSpan {
-        fn find(
-            expr: &mojito_ast::ast::Expr,
-            callee: &str,
-        ) -> Option<mojito_common::token::SourceSpan> {
-            let ExprKind::Call {
-                name,
-                param_args,
-                args,
-                ..
-            } = &expr.kind
-            else {
-                return None;
-            };
-            if name == callee && param_args.is_empty() {
-                return Some(expr.source_span());
-            }
-            args.iter().find_map(|argument| find(argument, callee))
-        }
-        program
-            .iter()
-            .find_map(|statement| match &statement.kind {
-                StmtKind::Def { name, body, .. } if name == "main" => {
-                    body.iter().find_map(|statement| match &statement.kind {
-                        StmtKind::Expr(value) => find(value, callee),
-                        _ => None,
-                    })
-                }
-                _ => None,
-            })
-            .expect("test program contains the inferred call")
-    }
-
-    fn def_names(program: &[mojito_ast::ast::Stmt]) -> Vec<&str> {
-        program
-            .iter()
-            .filter_map(|statement| match &statement.kind {
-                StmtKind::Def { name, .. } => Some(name.as_str()),
-                _ => None,
-            })
-            .collect()
-    }
-
-    fn main_call_names(program: &[mojito_ast::ast::Stmt]) -> Vec<String> {
-        fn collect(expr: &mojito_ast::ast::Expr, out: &mut Vec<String>) {
-            if let ExprKind::Call { name, args, .. } = &expr.kind {
-                out.push(name.clone());
-                for argument in args {
-                    collect(argument, out);
-                }
-            }
-        }
-        let mut out = Vec::new();
-        for statement in program {
-            if let StmtKind::Def { name, body, .. } = &statement.kind
-                && name == "main"
-            {
-                for statement in body {
-                    if let StmtKind::Expr(value) = &statement.kind {
-                        collect(value, &mut out);
-                    }
-                }
-            }
-        }
-        out
-    }
-
-    #[test]
-    fn closed_request_on_a_template_served_def_mints_no_clone() {
-        let source = format!("{TEMPLATE}def main():\n    print(ident(2))\n");
-        let parsed = parse(&source).expect("parse");
-        let occurrence = inferred_call_span(&parsed, "ident");
-        let request = DefSpecializationRequest::new(
-            occurrence,
-            "ident".to_string(),
-            vec!["x".to_string()],
-            vec!["T".to_string()],
-            vec![TyArg::Ty(Ty::Int)],
-        );
-
-        let elaborated = elaborate_with_requests(parsed, &[request])
-            .expect("a request on a template-served def must not fail elaboration")
-            .program;
-
-        // A plain trait-bound `def` is served by its template, so the
-        // request is skipped and the call keeps naming the template.
-        let defs = def_names(&elaborated);
-        assert!(defs.contains(&"ident"), "{defs:?}");
-        assert!(
-            !defs.iter().any(|name| name.starts_with("ident$")),
-            "{defs:?}"
-        );
-        assert!(main_call_names(&elaborated).contains(&"ident".to_string()));
-    }
-
-    #[test]
-    fn no_top_level_type_pack_def_is_specializable() {
-        let source = "struct Ints(Movable):\n    var n: Int\n    \
-                      def __init__(out self, *a: Int):\n        self.n = 0\n\n\
-                      def mk(n: Int) raises -> Int:\n    return n\n\n\
-                      def ints[*Ts: Movable](*args: *Ts) -> Int:\n    return Ints(*args).n\n\n\
-                      def nested[*Ts: Writable](*args: *Ts):\n    \
-                      def one() -> Int:\n        return 1\n    print(one())\n\n\
-                      def raising[*Ts: Writable](*args: *Ts) raises:\n    \
-                      comptime for p in [mk(1), 2]:\n        print(p)\n\n\
-                      def runtime_bound[s: Float64, *Ts: Writable](*args: *Ts):\n    \
-                      comptime for i in range(len(args)):\n        print(args[i], s)\n\n\
-                      def keyed[n: Int]():\n    \
-                      comptime for p in [mk(n), 2]:\n        print(p)\n";
-        let parsed = parse(source).expect("parse");
-        let specializable: Vec<&str> = parsed
-            .iter()
-            .filter(|statement| super::is_specializable_declaration(statement))
-            .filter_map(|statement| match &statement.kind {
-                StmtKind::Def { name, .. } => Some(name.as_str()),
-                _ => None,
-            })
-            .collect();
-
-        // Every template serves its body, whatever loop it holds.
-        assert!(specializable.is_empty());
-    }
-
-    #[test]
-    fn a_request_on_a_template_served_pack_overload_mints_no_clone() {
-        let source = "def pos[*Ts: Writable](a: Int, *rest: *Ts) -> Int:\n    return 1\n\n\
-                      def pos[*Ts: Writable](*rest: *Ts, a: Int) -> Int:\n    return 2\n\n\
-                      def main():\n    print(pos(7, a=1))\n";
-        let parsed = parse(source).expect("parse");
-        let occurrence = inferred_call_span(&parsed, "pos");
-        let StmtKind::Def {
-            params,
-            type_params,
-            ..
-        } = &parsed[1].kind
-        else {
-            panic!("the second declaration is a def");
-        };
-        let request = DefSpecializationRequest::new(
-            occurrence,
-            "pos".to_string(),
-            vec!["a".to_string()],
-            vec!["Int".to_string()],
-            vec![TyArg::Val(CtValue::Tuple(vec![CtValue::Type(Box::new(
-                Ty::Int,
-            ))]))],
-        )
-        .with_variadic(mojito_symbol::symbol::VariadicKey::from_ast_params(
-            params,
-            type_params,
-        ));
-
-        let elaborated = elaborate_with_requests(parsed, &[request])
-            .expect("materialize the requested specialization")
-            .program;
-
-        // Both pack-keyed overloads are served by their templates, so the
-        // request selects a declaration but mints no clone of it.
-        let defs = def_names(&elaborated);
-        assert!(
-            !defs.iter().any(|name| name.starts_with("pos$")),
-            "{defs:?}"
-        );
-    }
-
-    #[test]
-    fn misaligned_request_is_skipped_and_the_template_retained() {
-        let source = format!("{TEMPLATE}def main():\n    print(ident(2))\n");
-        let parsed = parse(&source).expect("parse");
-        let occurrence = inferred_call_span(&parsed, "ident");
-        // A value argument cannot bind the type parameter `T`.
-        let request = DefSpecializationRequest::new(
-            occurrence,
-            "ident".to_string(),
-            vec!["x".to_string()],
-            vec!["T".to_string()],
-            vec![TyArg::Val(CtValue::Int(1))],
-        );
-
-        let elaborated = elaborate_with_requests(parsed, &[request])
-            .expect("a skipped request must not fail elaboration")
-            .program;
-
-        let defs = def_names(&elaborated);
-        assert!(defs.contains(&"ident"), "{defs:?}");
-        assert!(
-            !defs.iter().any(|name| name.starts_with("ident$")),
-            "{defs:?}"
-        );
-        assert!(main_call_names(&elaborated).contains(&"ident".to_string()));
-    }
-
-    #[test]
-    fn requested_and_explicit_applications_of_a_template_served_def_mint_no_clone() {
-        let source =
-            format!("{TEMPLATE}def main():\n    print(ident[Int](1))\n    print(ident(2))\n");
-        let parsed = parse(&source).expect("parse");
-        let occurrence = inferred_call_span(&parsed, "ident");
-        let request = DefSpecializationRequest::new(
-            occurrence,
-            "ident".to_string(),
-            vec!["x".to_string()],
-            vec!["T".to_string()],
-            vec![TyArg::Ty(Ty::Int)],
-        );
-
-        let elaborated = elaborate_with_requests(parsed, &[request])
-            .expect("materialize the requested specialization")
-            .program;
-
-        // The template serves the explicit and the inferred application
-        // alike, so neither mints a clone.
-        let defs = def_names(&elaborated);
-        assert!(defs.contains(&"ident"), "{defs:?}");
-        assert!(
-            !defs.iter().any(|name| name.starts_with("ident$")),
-            "{defs:?}"
-        );
-    }
-
-    #[test]
-    fn a_method_display_element_is_template_served_through_the_request_seam() {
-        let source = "@fieldwise_init\nstruct P(Copyable, Movable):\n    var v: Int\n\n    \
-                      def get(self) -> Int:\n        return self.v\n\n\
-                      def show[n: Int]():\n    \
-                      comptime for p in [P(n).get(), n]:\n        print(p)\n\n\
-                      def main():\n    show[3]()\n";
-        let linked = mojito::module::inject_prelude(parse(source).expect("parse")).expect("link");
-
-        let elaborated = elaborate_with_requests(linked, &[])
-            .expect("elaborate")
-            .program;
-
-        // Validation types the method call, so the template serves the loop
-        // and the application keys no clone.
-        let defs = def_names(&elaborated);
-        assert!(defs.contains(&"show"), "{defs:?}");
-        assert!(
-            !defs.iter().any(|name| name.starts_with("show$")),
-            "{defs:?}"
         );
     }
 }

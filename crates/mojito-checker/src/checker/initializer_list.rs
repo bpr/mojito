@@ -165,11 +165,11 @@ pub(super) fn spelled_node(
     }
 }
 
-/// `kind` as the construction spelled for the initializer list
-/// `expression`: its location, with every synthesized node (the call and
-/// its spelled parameter arguments, never the entries) numbered from the
-/// brace's identity.
-fn derived_construction(expression: &Expr, kind: ExprKind) -> Expr {
+/// `kind` as the construction spelled for the sugar `expression` (an
+/// initializer list, a scalar `range` call): its location, with every
+/// synthesized node (the call and its spelled parameter arguments, never the
+/// entries) numbered from the sugar's identity.
+pub(super) fn derived_construction(expression: &Expr, kind: ExprKind) -> Expr {
     let mut identities = mojito_ast::visit::DerivedIdentities {
         parent: expression.syntax_id,
         next: 1,

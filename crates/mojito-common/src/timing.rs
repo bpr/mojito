@@ -4,9 +4,9 @@
 //! Disabled — the default — a span is one relaxed atomic load and nothing
 //! else: no clock read, lock, allocation, or formatting. Enabled, each span
 //! records an enter/exit pair, and [`report`] folds the log into one record
-//! per hierarchical phase path (`compile.discovery.round[1].check.bodies`)
+//! per hierarchical phase path (`compile.check.transfer.round[1].check_program`)
 //! with inclusive time, self time, and invocation count, so repeated work
-//! (a checker pass rerun per discovery round) stays distinguishable from a
+//! (a checker pass rerun per transfer round) stays distinguishable from a
 //! single slow pass. Counters attach to the innermost open span.
 //!
 //! Output is the machine-readable `timing\t<path>\t<inclusive_us>` record

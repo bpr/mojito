@@ -68,7 +68,7 @@ host; `x86_64-unknown-linux-gnu` is currently the only supported triple) and
 optimization profile; both also apply to
 `run --backend pliron`. `--timings` works with every command: it prints one
 `timing\t<phase path>\t<inclusive µs>\t<self µs>\t<count>` record per
-pipeline phase (link, each discovery/transfer round of the checker, MIR
+pipeline phase (link, each transfer round of the checker, MIR
 lowering, ownership, drop elaboration, VM) plus `count\t<path>\t<n>`
 counters to stderr — the benchmark drivers' channel (`scripts/bench-compile`
 times the compiler over `benchmarks/compile/`; `scripts/bench-pliron` runs

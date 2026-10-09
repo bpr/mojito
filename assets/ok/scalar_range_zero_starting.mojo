@@ -1,6 +1,3 @@
-# requires: discovery
-# (The checker-inferred constructor rewrite is a Compiler-owned handoff;
-# the raw verify seam skips this fixture.)
 # The dtype-inferred scalar `range(end)` family: a non-Int integral scalar
 # argument selects the zero-starting range over Scalar[dtype] elements
 # through checker-inferred specialization (upstream's infer-only

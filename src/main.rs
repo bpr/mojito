@@ -2,7 +2,6 @@ use mojito::{
     BackendKind, Compiler, CompilerError, LinkOptions, ModuleError, ParseError, Stmt, lex, parse,
     parse_diagnostics,
 };
-use std::fmt::Write as _;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
@@ -75,10 +74,6 @@ fn main() -> ExitCode {
             "--native-opt, --target, and --native-debug are only valid with the compile and \
              run commands"
         );
-        return ExitCode::FAILURE;
-    }
-    if cli.instantiation_census && (command != Some("run") || cli.backend == BackendKind::Pliron) {
-        eprintln!("--instantiation-census is only valid with the run command on the VM backend");
         return ExitCode::FAILURE;
     }
     if cli.vm_instantiation.is_some()
@@ -157,10 +152,6 @@ struct CliArgs {
     /// each pipeline phase (see `mojito_common::timing`) —
     /// the bench driver's channel.
     timings: bool,
-    /// `--instantiation-census` for `run` on the VM backend: print
-    /// `census\t<name>\t<count>` lines to stderr saying which mechanism
-    /// instantiated each generic body.
-    instantiation_census: bool,
     /// `--erased` for `run` and `exec` on the VM backend: run
     /// drop-elaborated MIR and resolve parameters at run time, instead of
     /// the concrete graph. `None` leaves the choice to `MOJITO_VM_ERASED`.
@@ -186,7 +177,6 @@ fn parse_cli_args(raw: Vec<String>) -> Result<CliArgs, String> {
     let mut target = None;
     let mut print_toolchain = false;
     let mut timings = false;
-    let mut instantiation_census = false;
     let mut vm_instantiation = None;
     let mut native_debug = None;
     let mut runtime_lib = None;
@@ -232,8 +222,6 @@ fn parse_cli_args(raw: Vec<String>) -> Result<CliArgs, String> {
             print_toolchain = true;
         } else if arg == "--timings" {
             timings = true;
-        } else if arg == "--instantiation-census" {
-            instantiation_census = true;
         } else if arg == "--erased" {
             vm_instantiation = Some(mojito::VmInstantiation::Erased);
         } else if let Some(level) = arg.strip_prefix("--native-debug=") {
@@ -263,7 +251,6 @@ fn parse_cli_args(raw: Vec<String>) -> Result<CliArgs, String> {
         target,
         print_toolchain,
         timings,
-        instantiation_census,
         vm_instantiation,
         native_debug,
         runtime_lib,
@@ -438,68 +425,7 @@ fn run_program(file: Option<&str>, backend: BackendKind, cli: &CliArgs) -> Resul
             println!("{n} = {v}");
         }
     }
-    if cli.instantiation_census {
-        eprint!("{}", census_report(&compiled.instantiation_census()));
-    }
     Ok(())
-}
-
-/// The `--instantiation-census` lines: the bodies the AST cloner minted by
-/// class, the ones the checker inferred and derived, what the erased bodies
-/// serve, and the same for the clones that are still parametric.
-fn census_report(census: &mojito::census::InstantiationCensus) -> String {
-    let unreached = || "unavailable".to_string();
-    let mut rows: Vec<(&str, String)> = mojito::census::CloneClass::ALL
-        .iter()
-        .map(|class| (class.counter(), census.cloned.count(*class).to_string()))
-        .collect();
-    rows.extend([
-        (
-            "instantiation.cloned.total",
-            census.cloned.total().to_string(),
-        ),
-        (
-            "instantiation.checked.inferred",
-            census.inferred.to_string(),
-        ),
-        ("instantiation.checked.derived", census.derived.to_string()),
-        (
-            "instantiation.erased.bodies",
-            census.erased_bodies.to_string(),
-        ),
-        (
-            "instantiation.erased.bodies_reached",
-            census
-                .erased_served
-                .map_or_else(unreached, |served| served.bodies.to_string()),
-        ),
-        (
-            "instantiation.erased.instances",
-            census
-                .erased_served
-                .map_or_else(unreached, |served| served.instances.to_string()),
-        ),
-        (
-            "instantiation.cloned_parametric.bodies",
-            census.parametric_clones.to_string(),
-        ),
-        (
-            "instantiation.cloned_parametric.bodies_reached",
-            census
-                .parametric_clones_served
-                .map_or_else(unreached, |served| served.bodies.to_string()),
-        ),
-        (
-            "instantiation.cloned_parametric.instances",
-            census
-                .parametric_clones_served
-                .map_or_else(unreached, |served| served.instances.to_string()),
-        ),
-    ]);
-    rows.iter().fold(String::new(), |mut text, (name, count)| {
-        let _ = writeln!(text, "census\t{name}\t{count}");
-        text
-    })
 }
 
 /// `emit-mir`: compile source through ownership analysis and print the exact
@@ -841,7 +767,6 @@ fn print_usage() {
          \x20 --runtime-lib PATH     explicit runtime archive (first in discovery order)\n\
          \x20 --print-toolchain      report the resolved native toolchain (compile only)\n\
          \x20 --timings              print per-phase timings and counters to stderr\n\
-         \x20 --instantiation-census print which mechanism instantiated each generic body (run, VM)\n\
          \x20 --erased               run generic bodies erased, the differential oracle (run|exec, VM)\n\n\
          commands:\n\
          \x20 lex   [FILE]   print the token stream (one per line)\n\

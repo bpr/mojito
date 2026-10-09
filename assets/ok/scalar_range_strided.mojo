@@ -1,6 +1,3 @@
-# requires: discovery
-# (The checker-inferred constructor rewrite is a Compiler-owned handoff;
-# the raw verify seam skips this fixture.)
 # The three-argument scalar range: stride semantics, O(1) indexing, length,
 # and the zero-step canonical empty range, all at a non-Int dtype.
 def main():

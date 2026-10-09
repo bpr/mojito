@@ -135,11 +135,12 @@ fn expected_substring(source: &str) -> Option<String> {
 }
 
 /// The `# requires: discovery` directive marks a fixture whose semantics need
-/// the `Compiler`'s whole-program discovery/specialization handoff (e.g. the
-/// checker-inferred scalar-range constructor rewrite). The phase-composed
-/// `verify::*` seam is documented as non-authoritative for exactly that
-/// handoff (AGENTS.md), so such fixtures pin lowering and verification
-/// through the authoritative `vm_ok`/`assets_ok` Compiler trials instead.
+/// the `Compiler`'s whole-program specialization handoff (a bound default
+/// bound across passes, a struct instantiation only the driver's catalog
+/// records). The phase-composed `verify::*` seam is documented as
+/// non-authoritative for exactly that handoff (AGENTS.md), so such fixtures
+/// pin lowering and verification through the authoritative
+/// `vm_ok`/`assets_ok` Compiler trials instead.
 fn requires_discovery(path: &Path) -> bool {
     requires(path, "discovery")
 }

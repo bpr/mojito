@@ -216,7 +216,7 @@ symbol.
   since R310, nor per instance since R8 (both 2026-10-08). A method's call
   names its template, which `native::mono` instantiates. The method
   certificate classes still serve a method template's own facts to a later
-  discovery round (`template_bodies.reused`).
+  transfer pass of the one check (`template_bodies.reused`).
   A VM-CTFE subprogram traces the clones it mints into a catalog
   of its own (`TemplateCatalog::for_subprogram`), holding the compilation's
   templates those traces name; the driver's elaboration never sees those
@@ -889,10 +889,10 @@ section 3.
 ## Reuse across passes
 
 A certified surviving template's body is served from its own retained facts in
-every later transfer round and discovery round, under the identity
-substitution. The pre-rekey identities are stable across rounds because every
-round re-elaborates the same prepared source. A template whose callee
-summaries changed is inferred again and re-recorded.
+every later transfer round of the one check, under the identity
+substitution (the driver elaborates and checks once since 2026-10-08; the
+discovery rounds this section once also covered are gone). A template whose
+callee summaries changed is inferred again and re-recorded.
 
 A declaration source validation recorded is, in an elaborated program, that
 template's trapping stub. It is neither recorded nor reused.
@@ -918,13 +918,13 @@ inference per derivable body and is excluded from measurements.
 ## Discovery without the arena
 
 `check_program_for_discovery` runs every rejecting check and returns a
-`DiscoveryResult`: `CheckedProgram::new`'s inputs, owned. The driver's six
-request collectors read it directly. The two that walked the arena use
-`DiscoveryResult::scan_expressions`, which is the arena builder's own
-traversal with node construction switched off, so they see exactly the
-expressions and types the arena would hold
-(`discovery_scan_matches_the_checked_arena`). Only the round that converges is
-finalized.
+`DiscoveryResult`: `CheckedProgram::new`'s inputs, owned. The driver's
+request collectors, which read it directly, went with the discovery rounds
+on 2026-10-08; `DiscoveryResult::scan_expressions`, the arena builder's own
+traversal with node construction switched off, remains for a client that
+wants the facts without the arena and sees exactly the expressions and types
+the arena would hold (`discovery_scan_matches_the_checked_arena`). The driver
+finalizes its one check (`check_program_with_templates`).
 
 ## Diagnostics
 

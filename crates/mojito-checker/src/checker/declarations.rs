@@ -1325,22 +1325,18 @@ impl Checker {
                     || effect_key.clone(),
                     |(_, owner)| format!("{owner}.{}", m.name),
                 );
-                (
-                    first.source_span(),
-                    display,
-                    super::body_carry::method_syntax_hash(m),
-                )
+                (first.source_span(), display)
             });
         let carried = site
             .as_ref()
-            .is_some_and(|(key, display, syntax)| self.carry_body(key, display, *syntax));
+            .is_some_and(|(key, display)| self.carry_body(key, display));
         let mut result = if carried {
             Ok(())
         } else {
-            let start = site.as_ref().map(|(key, _, _)| self.enter_body_site(key));
+            let start = site.as_ref().map(|(key, _)| self.enter_body_site(key));
             let checked = self.bind_and_check_method(self_ty, m, &ret_ty, ref_return, effect_key);
-            if let (Some((key, display, syntax)), Some(start)) = (site, start) {
-                self.leave_body_site(key, &display, &start, syntax);
+            if let (Some((key, display)), Some(start)) = (site, start) {
+                self.leave_body_site(key, &display, &start);
             }
             checked
         };

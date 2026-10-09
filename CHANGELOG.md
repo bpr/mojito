@@ -8,6 +8,17 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- The compiler driver elaborates once and checks once: the discovery
+  rounds that re-elaborated and re-checked every program with the
+  instantiations the previous check recorded are gone, with their request
+  plumbing, the divergence diagnostic, the cross-round body-fact carry, the
+  clone census, and `--instantiation-census`. The instances a program needs
+  are found below the MIR waist by the elaborator's worklist, as at the
+  pin. A checker-selected scalar `range(Int32(4))` is now spelled as the
+  linked range struct's construction in the same check, so it no longer
+  waits for a second round. The release frontend of every compile
+  benchmark drops about 15% (`docs/performance.md`).
+
 - No method of a generic struct is cloned per instance any more, and no
   `def` is compile-time-keyed, as at the pin: every `comptime for` in a
   generic body stays in its template and is unrolled per instance below
