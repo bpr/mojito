@@ -708,6 +708,23 @@ pub fn array_element(ty: &Ty) -> Option<&Ty> {
     Some(element)
 }
 
+/// The template a struct symbol names: a backend-monomorphized instance
+/// (`List$mono$…`) names the struct it instantiates.
+pub fn struct_template(name: &str) -> &str {
+    name.split_once("$mono$")
+        .map_or(name, |(template, _)| template)
+}
+
+/// Whether the struct symbol `name` is the bundled `nominal` struct, by its
+/// bare or module-qualified spelling, a backend-monomorphized instance
+/// included.
+pub fn is_nominal_instance(name: &str, nominal: &str) -> bool {
+    let template = struct_template(name);
+    template
+        .strip_suffix(nominal)
+        .is_some_and(|module| module.is_empty() || module.ends_with('$'))
+}
+
 /// The payload type of compiler-private inline uninit storage
 /// (`__UninitStorage[T]`), including specialization-mangled and
 /// backend-monomorphized (`…$mono$…`) instantiations.

@@ -147,6 +147,19 @@ pub enum CtValue {
         name: String,
         fields: Vec<(String, Self)>,
     },
+    /// The frozen allocation a pointer field of a compile-time value points
+    /// into — what VM compile-time evaluation leaves in its heap behind an
+    /// `Optional`'s or a `List`'s storage pointer — and the pointer's
+    /// element offset into it: one entry per slot, `None` for a slot never
+    /// written or moved out (an empty `Optional`'s one slot, a `List`'s
+    /// spare capacity); a dangling pointer has no memory. Each pointer
+    /// freezes its own copy of its allocation, and a backend materializes
+    /// the value as fresh memory written from the slots, as upstream's
+    /// `materialize_into` copies the parameter domain's memory out.
+    Pointer {
+        memory: Option<Vec<Option<Self>>>,
+        offset: i64,
+    },
     Type(Box<Ty>),
     /// The zero-sized compile-time handle produced by current Mojo's
     /// `reflect[T]` API. Field selection returns another handle, allowing
@@ -222,7 +235,61 @@ impl CtValue {
             Self::Dict { entries, .. } => {
                 Some(entries.iter().map(|(key, _)| key.clone()).collect())
             }
+            Self::Struct { .. } => self.frozen_collection_elements(),
             _ => None,
+        }
+    }
+
+    /// The elements a frozen bundled collection holds, in insertion order:
+    /// an `Array`'s or a `List`'s initialized storage, a `Set`'s items, and
+    /// a `Dict`'s entry keys. `None` for any other value, and for a
+    /// collection whose storage is not fully initialized.
+    fn frozen_collection_elements(&self) -> Option<Vec<Self>> {
+        use crate::types::{ARRAY_TYPE_NAME, DICT_TYPE_NAME, LIST_TYPE_NAME, SET_TYPE_NAME};
+        let Self::Struct { name, fields } = self else {
+            return None;
+        };
+        let field = |wanted: &str| {
+            fields
+                .iter()
+                .find(|(field, _)| field == wanted)
+                .map(|(_, value)| value)
+        };
+        let storage = |size: &str| {
+            let (
+                Some(Self::Pointer {
+                    memory: Some(slots),
+                    offset,
+                }),
+                Some(Self::Int(size)),
+            ) = (field("data"), field(size))
+            else {
+                return None;
+            };
+            let start = usize::try_from(*offset).ok()?;
+            let end = start.checked_add(usize::try_from(*size).ok()?)?;
+            slots.get(start..end)?.iter().cloned().collect()
+        };
+        if crate::types::is_nominal_instance(name, ARRAY_TYPE_NAME) {
+            storage("_size")
+        } else if crate::types::is_nominal_instance(name, LIST_TYPE_NAME) {
+            storage("size")
+        } else if crate::types::is_nominal_instance(name, SET_TYPE_NAME) {
+            field("items")?.frozen_collection_elements()
+        } else if crate::types::is_nominal_instance(name, DICT_TYPE_NAME) {
+            field("entries")?
+                .frozen_collection_elements()?
+                .into_iter()
+                .map(|entry| match entry {
+                    Self::Struct { fields, .. } => fields
+                        .into_iter()
+                        .find(|(field, _)| field == "key")
+                        .map(|(_, key)| key),
+                    _ => None,
+                })
+                .collect()
+        } else {
+            None
         }
     }
 
@@ -407,7 +474,8 @@ impl CtValue {
                 Some(ty) => ty.to_string(),
                 None => format!("Set[{}]", elements.first()?.runtime_type_text()?),
             },
-            Self::Type(_)
+            Self::Pointer { .. }
+            | Self::Type(_)
             | Self::Reflected(_)
             | Self::Expr(_)
             | Self::Deferred(_)
@@ -453,11 +521,14 @@ impl CtValue {
                 };
                 (dtype == target && lanes.len() as i64 == *width).then_some(value)
             }
+            // A frozen instance of a generic struct names its
+            // backend-monomorphized instance; the target names the template.
             (value @ Self::Struct { .. }, Ty::Struct(target, _)) => {
                 let Self::Struct { name, .. } = &value else {
                     unreachable!("guard established a struct value");
                 };
-                (name == target).then_some(value)
+                (crate::types::struct_template(name) == crate::types::struct_template(target))
+                    .then_some(value)
             }
             (Self::IntLiteral(value), Ty::Int) => value.wrapping_signed(64).map(CtValue::Int),
             (Self::IntLiteral(value), Ty::UInt) => value.wrapping_unsigned(64).map(CtValue::UInt),
@@ -661,7 +732,9 @@ impl CtValue {
                     .collect::<Option<Vec<_>>>()?,
                 kwargs: Vec::new(),
             },
-            Self::Type(_)
+            // Frozen memory has no source spelling: a backend writes it.
+            Self::Pointer { .. }
+            | Self::Type(_)
             | Self::Reflected(_)
             | Self::Expr(_)
             | Self::Deferred(_)
@@ -676,18 +749,39 @@ impl CtValue {
     }
 
     /// A field or element of a closed aggregate parameter value: a scalar,
-    /// or itself a closed aggregate.
+    /// itself a closed aggregate, or frozen memory whose present slots are
+    /// closed leaves or strings (a string inside memory is the backend's to
+    /// write, since no constructor builds an arbitrary pointer-owning
+    /// struct).
     fn is_closed_leaf(&self) -> bool {
-        matches!(
-            self,
+        match self {
             Self::Int(_)
-                | Self::UInt(_)
-                | Self::Float(_)
-                | Self::IntLiteral(_)
-                | Self::FloatLiteral(_)
-                | Self::Bool(_)
-                | Self::Dtype(_)
-        ) || self.is_closed_parameter_value()
+            | Self::UInt(_)
+            | Self::Float(_)
+            | Self::IntLiteral(_)
+            | Self::FloatLiteral(_)
+            | Self::Bool(_)
+            | Self::Dtype(_) => true,
+            Self::Pointer { memory, .. } => memory
+                .iter()
+                .flatten()
+                .flatten()
+                .all(Self::is_frozen_memory_slot),
+            _ => self.is_closed_parameter_value(),
+        }
+    }
+
+    /// One initialized slot of frozen memory: a closed leaf, a string, or a
+    /// struct or tuple of such slots.
+    fn is_frozen_memory_slot(&self) -> bool {
+        match self {
+            Self::Str(_) => true,
+            Self::Struct { fields, .. } => fields
+                .iter()
+                .all(|(_, field)| field.is_frozen_memory_slot()),
+            Self::Tuple(elements) => elements.iter().all(Self::is_frozen_memory_slot),
+            _ => self.is_closed_leaf(),
+        }
     }
 }
 
@@ -831,6 +925,28 @@ impl fmt::Display for CtValue {
                         write!(f, ", ")?;
                     }
                     write!(f, "{value}")?;
+                }
+                write!(f, ")")
+            }
+            // Frozen memory reaches instance symbols through a value
+            // argument's spelling, so it is deterministic and `$`-free.
+            Self::Pointer { memory, offset } => {
+                write!(f, "ptr({offset}, ")?;
+                match memory {
+                    None => write!(f, "dangling")?,
+                    Some(slots) => {
+                        write!(f, "[")?;
+                        for (index, slot) in slots.iter().enumerate() {
+                            if index > 0 {
+                                write!(f, ", ")?;
+                            }
+                            match slot {
+                                Some(slot) => write!(f, "{slot}")?,
+                                None => write!(f, "_")?,
+                            }
+                        }
+                        write!(f, "]")?;
+                    }
                 }
                 write!(f, ")")
             }
