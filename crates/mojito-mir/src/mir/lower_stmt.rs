@@ -2368,7 +2368,7 @@ impl Flatten<'_> {
                         src
                     };
                     let pointee_root =
-                        (!p.proj.is_empty() && self.pointer_valued_slot(p.root)).then_some(p.root);
+                        (!p.is_whole_root() && self.pointer_valued_slot(p.root)).then_some(p.root);
                     self.emit(MirInstr::Store { place: p, src });
                     if let Some(pointer) = pointee_root {
                         self.retain_pointee_loans(pointer, value);

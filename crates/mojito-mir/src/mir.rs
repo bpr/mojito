@@ -1786,7 +1786,7 @@ fn mir_place_handle_ty(
         },
         _ => None,
     };
-    if source_mutability.is_some() && place.proj.is_empty() {
+    if source_mutability.is_some() && place.is_whole_root() {
         return Some(root.clone());
     }
     let mutability = source_mutability

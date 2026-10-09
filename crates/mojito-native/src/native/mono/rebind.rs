@@ -1,21 +1,22 @@
 //! The per-instance judgement of a generator's `rebind`s.
 //!
 //! A template reads a `rebind[Dest](x)` operand at `Dest` through a value
-//! rebind or a place whose terminal type is `Dest`. Once an instance's
-//! bindings close both types and its compile-time branches are decided, the
+//! rebind or a place's [`Proj::Rebind`] step. Once an instance's bindings
+//! close both types and its compile-time branches are decided, the
 //! elaborator asserts each surviving rebind's two types equal and erases it,
 //! as upstream's `processRebindOp` does: an untaken arm's rebind is never
 //! judged, and a mismatch fails the instance.
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
-use mojito_mir::mir::verify::{instruction_places, types_agree};
+use mojito_mir::mir::Proj;
+use mojito_mir::mir::verify::{instruction_places_mut, place_base_ty, types_agree};
 use mojito_mir::mir::{instruction_regs_mut, terminator_regs_mut, terminator_targets};
 
 impl Specializer<'_> {
     /// Judge every rebind reachable in the instance `function` of
     /// `template`: a value rebind's `dest` register becomes its operand's,
-    /// and a rebound place keeps its terminal type, which now names the
+    /// and a rebound place loses its step, whose type now names the
     /// storage's own.
     pub(super) fn discharge_rebinds(
         &self,
@@ -61,8 +62,8 @@ type Mismatch = Box<(Ty, Ty)>;
 
 /// Judge the rebinds of the reached blocks of one block list and the regions
 /// below it, recording each value rebind's `dest → value` and removing the
-/// instruction, an unreached one's unjudged; the first mismatch is returned
-/// as its `(input, result)` types.
+/// instruction or place step, an unreached one's unjudged; the first
+/// mismatch is returned as its `(input, result)` types.
 fn judge_blocks(
     blocks: &mut [MirBlock],
     reg_types: &HashMap<u32, Ty>,
@@ -88,10 +89,8 @@ fn judge_blocks(
                     judge_blocks(region, reg_types, aliases)?;
                 }
             }
-            if reached {
-                for place in instruction_places(&instruction) {
-                    judge_place(place)?;
-                }
+            for place in instruction_places_mut(&mut instruction) {
+                discharge_place(place, reached)?;
             }
             if let MirInstr::Rebind { dest, value } = instruction {
                 if reached
@@ -111,27 +110,26 @@ fn judge_blocks(
     Ok(())
 }
 
-/// A rebound place's storage type, its projected one, must agree with the
-/// terminal type the rebind names.
-fn judge_place(place: &MirPlace) -> Result<(), Mismatch> {
-    let projected = match (place.projection_tys.last(), &place.root_ty) {
-        (Some(projected), _) => projected,
-        // A materialized reference-result place keeps the referent's type
-        // behind its hidden `ref` root, as the verifier reads it.
-        (None, Some(Ty::Ref(reference)))
-            if place.through.is_some() && place.ty.as_ref() != place.root_ty.as_ref() =>
-        {
-            &*reference.referent
-        }
-        (None, Some(root)) => root,
-        (None, None) => return Ok(()),
-    };
-    match &place.ty {
-        Some(terminal) if !types_agree(projected, terminal) => {
-            Err(Box::new((projected.clone(), terminal.clone())))
-        }
-        _ => Ok(()),
+/// Erase a place's rebind steps, judging each against the type it applies
+/// to where `judge`: the storage's own type must agree with the one the
+/// rebind names.
+fn discharge_place(place: &mut MirPlace, judge: bool) -> Result<(), Mismatch> {
+    if !place.proj.iter().any(|step| matches!(step, Proj::Rebind)) {
+        return Ok(());
     }
+    if judge {
+        let mut applied = place_base_ty(place);
+        for (step, ty) in place.proj.iter().zip(&place.projection_tys) {
+            if let (Proj::Rebind, Some(input)) = (step, applied)
+                && !types_agree(input, ty)
+            {
+                return Err(Box::new((input.clone(), ty.clone())));
+            }
+            applied = Some(ty);
+        }
+    }
+    *place = place.storage().into_owned();
+    Ok(())
 }
 
 /// Read every use of a judged value rebind's `dest` as its operand.

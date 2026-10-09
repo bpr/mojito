@@ -1,4 +1,4 @@
-# Mojito Textual MIR Format, Version 1.36
+# Mojito Textual MIR Format, Version 1.37
 
 This document is the normative specification of Mojito's textual verified-MIR
 artifact. The Rust data model in `src/mir.rs` and `src/mir/ir.rs` remains the
@@ -6,7 +6,7 @@ in-memory authority; this format is its stable inspection and interchange
 boundary. `docs/vm-instruction-set.md` explains execution semantics, while this
 document defines syntax and serialized data.
 
-Version 1.36 is implemented end to end for inspection and loading: canonical
+Version 1.37 is implemented end to end for inspection and loading: canonical
 in-memory disassembly, full-grammar assembly parsing, and artifact-loading
 verification (`mir::text::load_artifact`, which reports canonical-verifier
 findings at artifact source spans). Lossless print → parse → print round trips
@@ -22,10 +22,10 @@ which may be generic; `exec --erased` runs it as serialized.
 Every artifact begins with exactly:
 
 ```text
-mojito-mir 1.36
+mojito-mir 1.37
 ```
 
-The writer emits 1.36. The reader accepts 1.0 through 1.36; *Schema 1.0*
+The writer emits 1.37. The reader accepts 1.0 through 1.37; *Schema 1.0*
 below says how a 1.0 artifact is read, and *Binder identity* under *Types*
 how a binder without an identity is.
 
@@ -185,12 +185,12 @@ as carrying none.
 
 Minor version 23 adds the instruction `value.rebind { dest, value }`:
 `rebind[Dest](x)` read as a value in a generator, `dest` typed `Dest` and
-`value` typed the operand's own type, as upstream's `kgen.rebind`. A rebound
-place is spelled by its terminal `type`, `Dest`, beside projections typed at
-the storage's own. The elaborator asserts the two types equal per instance,
-after deciding its `comptime_branch`es, and erases both, so elaborated MIR
-holds none and a mismatch fails the instance. A 1.22 consumer rejects the
-instruction as unknown.
+`value` typed the operand's own type, as upstream's `kgen.rebind`. The
+elaborator asserts the two types equal per instance, after deciding its
+`comptime_branch`es, and erases the instruction, so elaborated MIR holds
+none and a mismatch fails the instance. A 1.22 consumer rejects the
+instruction as unknown. A rebound place carries its own step from minor
+version 37.
 
 Minor version 24 carries a whole pack spread into a method's collector: a
 `call.method` gains `spread`, as a `call` did in version 17, the position in
@@ -252,6 +252,15 @@ typed by the member's declared value type. The elaborator answers the node
 from the bound instance's `associated_values`, so elaborated MIR carries
 neither. A 1.35 consumer rejects the node, which is the intended failure; a
 1.36 consumer reads an older struct as carrying no value members.
+
+Minor version 37 adds the projection `rebind`: `rebind[Dest](place)` read or
+written as a place in a generator, the step typed `Dest` and placed after the
+operand's own projections, so a later projection addresses `Dest`, as
+upstream's reference overload applies `kgen.rebind` to the pointer it
+returns. The step selects no storage. The elaborator asserts its type equal
+to the one it applies to per instance and erases the step, so elaborated MIR
+holds none. A 1.36 consumer rejects the projection, which is the intended
+failure.
 
 Artifacts are UTF-8, use LF logical newlines, end in exactly one LF, and contain
 no byte-order mark. The header is followed by one artifact record:
@@ -699,7 +708,8 @@ loan {
 ```
 
 Projection operations are `field(symbol)`, `index(%rN)`, `const_index(uint)`,
-`variant(variant-index)`, and `uninit_payload`. A `variant-index` (schema
+`variant(variant-index)`, `uninit_payload`, and `rebind` (schema 1.37), whose
+type is the rebind's target. A `variant-index` (schema
 1.31) is a known alternative's `uint`, or `ct_expr(param-expr)` in a
 template: upstream's `_get_type_index[T, *Ts]()`, spelled
 `param_pack_query { pack, query: pack_index_of(element) }`, which
@@ -784,7 +794,7 @@ Unknown terminators and instructions are fatal for schema major version 1.
 ## Complete Artifact Example
 
 ```text
-mojito-mir 1.36
+mojito-mir 1.37
 artifact {
   features: [],
   files: [file { id: file0, path: present("main.mojo"), module: absent }],

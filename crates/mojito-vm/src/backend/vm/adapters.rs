@@ -320,6 +320,7 @@ impl VmBackend {
         vars: &mut [Value],
         frame_id: FrameId,
     ) -> Result<Option<Value>, RuntimeError> {
+        let place = &*place.storage();
         let Some((Proj::Index(ireg), prefix)) = place.proj.split_last() else {
             return Ok(None);
         };

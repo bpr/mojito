@@ -450,7 +450,7 @@ fn rebound_variables(function: &MirFunction) -> HashSet<u32> {
             _ => None,
         })
         .collect();
-    let whole = |place: &MirPlace| place.proj.is_empty().then_some(place.root);
+    let whole = |place: &MirPlace| place.is_whole_root().then_some(place.root);
     let mut defined = HashSet::new();
     let mut rebound = HashSet::new();
     for instruction in instructions {

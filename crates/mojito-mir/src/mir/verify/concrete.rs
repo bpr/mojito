@@ -196,8 +196,12 @@ fn concrete_instruction(head: &str, instruction: &MirInstr, errors: &mut Vec<Str
             require_concrete(head, "place", ty, errors);
         }
         for projection in &place.proj {
-            if let Proj::Variant(index) = projection {
-                require_known_alternative(head, index, errors);
+            match projection {
+                Proj::Variant(index) => require_known_alternative(head, index, errors),
+                Proj::Rebind => {
+                    errors.push(format!("{head} keeps a rebound place in elaborated MIR"));
+                }
+                _ => {}
             }
         }
     }

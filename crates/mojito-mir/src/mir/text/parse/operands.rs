@@ -156,6 +156,7 @@ impl Decoder {
     pub(super) fn projection(&mut self, value: &Value) -> Option<Proj> {
         match &value.kind {
             ValueKind::Atom(tag) if tag == "uninit_payload" => Some(Proj::UninitPayload),
+            ValueKind::Atom(tag) if tag == "rebind" => Some(Proj::Rebind),
             ValueKind::Positional(tag, inner) => match tag.as_str() {
                 "field" => self.symbol(inner).map(Proj::Field),
                 "index" => self.reg(inner).map(Proj::Index),

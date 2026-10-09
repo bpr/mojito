@@ -270,6 +270,12 @@ impl FnLowering<'_> {
                     // `unsafe_write`. The enclosing Store marks presence.
                     ty = element;
                 }
+                // The elaborator erases every rebound place's step.
+                Proj::Rebind => {
+                    return Err(
+                        self.unsupported_reg("rebound place in elaborated MIR".into(), dest)
+                    );
+                }
             }
         }
         let address = if offset == 0 {

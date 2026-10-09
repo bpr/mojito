@@ -1834,7 +1834,7 @@ impl VmBackend {
                 // walk. A final dynamic index is `store_at_place`'s own — a
                 // heap element, or a nominal `__setitem__` receiver — and
                 // keeps that path.
-                let handle = if matches!(place.proj.last(), Some(Proj::Index(_))) {
+                let handle = if matches!(place.steps().next_back(), Some(Proj::Index(_))) {
                     self.extend_reference(&vars[place.root as usize], place, regs)?
                 } else {
                     self.place_handle(frame_id, place, regs, vars)?
@@ -1870,7 +1870,7 @@ impl VmBackend {
                 // A pointer-typed variable holding a place handle is the
                 // handle itself, as `UseVar` reads it: the whole slot is
                 // the pointer, not its pointee.
-                let pointer_slot = place.proj.is_empty()
+                let pointer_slot = place.is_whole_root()
                     && place.through.is_none()
                     && matches!(
                         prog.mir.functions[function].1.var_tys.get(&place.root),
@@ -2220,7 +2220,7 @@ impl VmBackend {
             // fill. A named result marked whole has no storage yet: it gets
             // the same unwritten skeleton here.
             MirInstr::MarkInitialized { place } => {
-                if place.proj.is_empty()
+                if place.is_whole_root()
                     && matches!(vars[place.root as usize], Value::None)
                     && let Some(Ty::Struct(name, arguments)) = &place.ty
                     && let Some(mut skeleton) = Self::uninitialized_struct(prog, name)

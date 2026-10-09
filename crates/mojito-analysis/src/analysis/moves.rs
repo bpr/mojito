@@ -72,12 +72,13 @@ pub(super) fn place_path(place: &MirPlace) -> Vec<Key> {
     place
         .proj
         .iter()
-        .map(|p| match p {
-            Proj::Field(f) => Key::Field(f.clone()),
-            Proj::Index(_) => Key::Index,
-            Proj::ConstIndex(index) => Key::ConstIndex(*index),
-            Proj::Variant(index) => Key::Variant(index.known()),
-            Proj::UninitPayload => Key::UninitPayload,
+        .filter_map(|p| match p {
+            Proj::Field(f) => Some(Key::Field(f.clone())),
+            Proj::Index(_) => Some(Key::Index),
+            Proj::ConstIndex(index) => Some(Key::ConstIndex(*index)),
+            Proj::Variant(index) => Some(Key::Variant(index.known())),
+            Proj::UninitPayload => Some(Key::UninitPayload),
+            Proj::Rebind => None,
         })
         .collect()
 }
@@ -426,7 +427,7 @@ pub(super) fn place_uses(i: &MirInstr, refills: &Refills) -> Vec<(VarId, Vec<Key
             let path = place_path(place);
             let mut parent = path.clone();
             if matches!(
-                place.proj.last(),
+                place.steps().next_back(),
                 Some(Proj::Field(_) | Proj::ConstIndex(_))
             ) {
                 parent.pop(); // drop the final sub-place — check its parent
@@ -437,7 +438,7 @@ pub(super) fn place_uses(i: &MirInstr, refills: &Refills) -> Vec<(VarId, Vec<Key
             let path = place_path(place);
             let mut parent = path.clone();
             if matches!(
-                place.proj.last(),
+                place.steps().next_back(),
                 Some(Proj::Field(_) | Proj::ConstIndex(_))
             ) {
                 parent.pop();
@@ -450,7 +451,7 @@ pub(super) fn place_uses(i: &MirInstr, refills: &Refills) -> Vec<(VarId, Vec<Key
             let path = place_path(place);
             let mut parent = path.clone();
             if matches!(
-                place.proj.last(),
+                place.steps().next_back(),
                 Some(Proj::Field(_) | Proj::ConstIndex(_))
             ) {
                 parent.pop();
@@ -468,7 +469,7 @@ pub(super) fn place_uses(i: &MirInstr, refills: &Refills) -> Vec<(VarId, Vec<Key
         MirInstr::VariantSet { place, value, .. } => {
             let path = place_path(place);
             let mut parent = path.clone();
-            if matches!(place.proj.last(), Some(Proj::Field(_))) {
+            if matches!(place.steps().next_back(), Some(Proj::Field(_))) {
                 parent.pop();
             }
             vec![(place.root, path, Touch::Write { parent }, *value)]
@@ -476,7 +477,7 @@ pub(super) fn place_uses(i: &MirInstr, refills: &Refills) -> Vec<(VarId, Vec<Key
         MirInstr::VariantSetInitWith { place, factory, .. } => {
             let path = place_path(place);
             let mut parent = path.clone();
-            if matches!(place.proj.last(), Some(Proj::Field(_))) {
+            if matches!(place.steps().next_back(), Some(Proj::Field(_))) {
                 parent.pop();
             }
             vec![(place.root, path, Touch::Write { parent }, *factory)]
@@ -484,7 +485,7 @@ pub(super) fn place_uses(i: &MirInstr, refills: &Refills) -> Vec<(VarId, Vec<Key
         MirInstr::VariantReplace { place, value, .. } => {
             let path = place_path(place);
             let mut parent = path.clone();
-            if matches!(place.proj.last(), Some(Proj::Field(_))) {
+            if matches!(place.steps().next_back(), Some(Proj::Field(_))) {
                 parent.pop();
             }
             vec![(place.root, path, Touch::Write { parent }, *value)]
@@ -544,7 +545,7 @@ pub(super) fn apply_effects(state: &mut [Node], i: &MirInstr, refills: &Refills)
         | MirInstr::VariantSetInitWith { place, .. }
         | MirInstr::VariantReplace { place, .. }
             if matches!(
-                place.proj.last(),
+                place.steps().next_back(),
                 Some(Proj::Field(_) | Proj::ConstIndex(_))
             ) =>
         {
@@ -984,7 +985,7 @@ fn parameter_refills(f: &MirFunction) -> Refills {
     let mut refills = Refills::new();
     for_each_instr_deep(&f.blocks, &mut |instr| {
         if let MirInstr::MakeRef { dest, place } = instr
-            && place.proj.is_empty()
+            && place.is_whole_root()
             && place.through == Some(place.root)
             && is_reference_parameter(f, place.root)
         {

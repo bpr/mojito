@@ -1392,6 +1392,7 @@ fn projection_value(projection: &Proj) -> String {
         Proj::ConstIndex(v) => positional("const_index", &v.to_string()),
         Proj::Variant(v) => positional("variant", &variant_index(v)),
         Proj::UninitPayload => "uninit_payload".into(),
+        Proj::Rebind => "rebind".into(),
     }
 }
 fn loan(value: &MirLoan) -> String {

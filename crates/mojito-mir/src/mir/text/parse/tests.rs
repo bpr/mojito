@@ -583,9 +583,10 @@ fn sample_place(root: u32) -> MirPlace {
             Proj::ConstIndex(1),
             Proj::Variant(VariantIndex::Known(0)),
             Proj::UninitPayload,
+            Proj::Rebind,
         ],
-        projection_tys: vec![Ty::Int, Ty::Int, Ty::Int, Ty::Int, Ty::Int],
-        ty: Some(Ty::Int),
+        projection_tys: vec![Ty::Int, Ty::Int, Ty::Int, Ty::Int, Ty::Int, Ty::Bool],
+        ty: Some(Ty::Bool),
         through: Some(9),
     }
 }

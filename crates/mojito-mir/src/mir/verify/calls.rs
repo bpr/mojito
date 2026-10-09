@@ -583,7 +583,7 @@ fn enclosing_binders(name: &str, declarations: &MirDeclarations) -> HashSet<Stri
 /// reference, is borrowed as storage and therefore retains `place.ty`.
 pub(super) fn make_ref_target(place: &MirPlace) -> Option<(&Ty, Option<ReferencePermission>)> {
     let root_capability = place.root_ty.as_ref().and_then(reference_capability);
-    match (root_capability, place.proj.is_empty()) {
+    match (root_capability, place.is_whole_root()) {
         (Some(capability), true) => Some((capability.target, Some(capability.permission))),
         (Some(capability), false) => place
             .ty

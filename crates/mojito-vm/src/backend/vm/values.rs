@@ -199,6 +199,7 @@ impl VmBackend {
             StructIndex(Box<MirPlace>, Reg),
             Ordinary,
         }
+        let place = &*place.storage();
         let target = if let Some((Proj::Index(index), prefix)) = place.proj.split_last() {
             let parent = MirPlace {
                 root: place.root,

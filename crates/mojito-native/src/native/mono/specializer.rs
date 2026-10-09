@@ -2503,19 +2503,19 @@ impl<'a> Specializer<'a> {
                     // A projection below a struct-typed parameter value
                     // (`Self.e.rows`) folds through the bound value's fields.
                     MirInstr::LoadPlace { dest, place }
-                        if !place.proj.is_empty()
-                            && place.proj.iter().all(|projection| {
+                        if !place.is_whole_root()
+                            && place.steps().all(|projection| {
                                 matches!(projection, mojito_mir::mir::Proj::Field(_))
                             }) =>
                     {
-                        let mojito_mir::mir::Proj::Field(field) = &place.proj[0] else {
+                        let mut steps = place.steps();
+                        let Some(mojito_mir::mir::Proj::Field(field)) = steps.next() else {
                             continue;
                         };
                         let Some(receiver) = function.var_tys.get(&place.root) else {
                             continue;
                         };
-                        let Some(constant) = place.proj[1..]
-                            .iter()
+                        let Some(constant) = steps
                             .try_fold(
                                 self.value_param_constant(receiver, field),
                                 |constant, projection| {
@@ -2535,10 +2535,8 @@ impl<'a> Specializer<'a> {
                         else {
                             continue;
                         };
-                        *instruction = MirInstr::Const {
-                            dest: *dest,
-                            k: constant,
-                        };
+                        let dest = *dest;
+                        *instruction = MirInstr::Const { dest, k: constant };
                     }
                     // Checker-selected subscript invocations retarget to
                     // their concrete instances exactly like method calls;

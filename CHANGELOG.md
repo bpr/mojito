@@ -1168,6 +1168,15 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- A projection after a `rebind` (`rebind[S](x).f`) is now judged per
+  instance, as at the pin: a rebound place carries an explicit
+  `Proj::Rebind` step (MIR text schema 1.37, the `rebind` projection),
+  which every ownership pass and the VM read through, and the elaborator
+  judges it against the type it applies to and erases it. Before, the
+  step's equality was lost under the later projection, so an instance
+  whose operand was another struct with an `f` field silently read that
+  field, and others failed with unrelated VM or verifier errors.
+
 - A subscript or `ref self` method call on a list display with no
   contextual type (`print([1, 2][0])`, `[1, 2].__getitem__(0)`) now runs as
   at the pin: the `Array` display is materialized as a temporary the

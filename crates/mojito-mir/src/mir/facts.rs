@@ -910,8 +910,8 @@ impl Flatten<'_> {
                             && (place.root as usize) >= this.f.n_params)
                             || loans.iter().any(|loan| {
                                 loan.place.root == place.root
-                                    && loan.place.proj.is_empty()
-                                    && place.proj.is_empty()
+                                    && loan.place.is_whole_root()
+                                    && place.is_whole_root()
                             })
                         {
                             return loans;
@@ -951,12 +951,11 @@ impl Flatten<'_> {
 /// interior. A store over the field invalidates that domain, so the view's
 /// next use is rejected as invalidated, while reads of the field coexist.
 fn field_interior(place: &MirPlace, named: &[String]) -> Option<MirInteriorOrigin> {
-    if named.is_empty() || place.proj.is_empty() {
+    if named.is_empty() || place.is_whole_root() {
         return None;
     }
     let fields = place
-        .proj
-        .iter()
+        .steps()
         .map(|step| match step {
             Proj::Field(name) => Some(mojito_types::origin::OriginSeg::Field(name.clone())),
             _ => None,

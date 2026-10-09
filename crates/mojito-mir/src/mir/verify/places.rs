@@ -275,6 +275,25 @@ pub fn instruction_places_mut(instruction: &mut MirInstr) -> Vec<&mut MirPlace> 
     }
 }
 
+/// The type a place's first step applies to.
+///
+/// That is its root's, or the referent's for a materialized reference-result
+/// place, which is physically rooted in a hidden `ref T` slot while its
+/// projections address the referent. Ordinary substituted local aliases may
+/// instead keep an owned root plus analytical `through` metadata, so only an
+/// actually reference-typed root is unwrapped.
+pub fn place_base_ty(place: &MirPlace) -> Option<&Ty> {
+    match &place.root_ty {
+        Some(Ty::Ref(reference))
+            if place.through.is_some()
+                && (!place.proj.is_empty() || place.ty.as_ref() != place.root_ty.as_ref()) =>
+        {
+            Some(&reference.referent)
+        }
+        other => other.as_ref(),
+    }
+}
+
 pub(super) fn verify_place(
     function_name: &str,
     block: usize,
@@ -355,19 +374,7 @@ pub(super) fn verify_place(
             place.root
         ));
     }
-    // A materialized reference-result place is physically rooted in a hidden
-    // `ref T` slot, while its projections address the referent. Ordinary
-    // substituted local aliases may instead keep an owned root plus analytical
-    // `through` metadata, so only an actually reference-typed root is unwrapped.
-    let mut current = match &place.root_ty {
-        Some(Ty::Ref(reference))
-            if place.through.is_some()
-                && (!place.proj.is_empty() || place.ty.as_ref() != place.root_ty.as_ref()) =>
-        {
-            Some((*reference.referent).clone())
-        }
-        other => other.clone(),
-    };
+    let mut current = place_base_ty(place).cloned();
     for (projection, projected) in place.proj.iter().zip(&place.projection_tys) {
         match projection {
             Proj::Index(register) => {
@@ -473,6 +480,9 @@ pub(super) fn verify_place(
                     ));
                 }
             }
+            // A rebind's two types legitimately differ in a generator; the
+            // elaborator judges them per instance.
+            Proj::Rebind => {}
             Proj::UninitPayload => {
                 if let Some(base) = &current {
                     match mojito_types::types::uninit_storage_element(base) {

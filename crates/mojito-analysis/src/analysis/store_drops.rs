@@ -112,11 +112,10 @@ fn replaced_place<'a>(
 /// over uninitialized storage.
 fn overwrites_initialized(state: &[Node], place: &MirPlace, uninitialized_receiver: bool) -> bool {
     let static_subplace = matches!(
-        place.proj.last(),
+        place.steps().next_back(),
         Some(Proj::Field(_) | Proj::ConstIndex(_))
     ) && !place
-        .proj
-        .iter()
+        .steps()
         .any(|projection| matches!(projection, Proj::UninitPayload));
     let droppable = place
         .ty
@@ -147,7 +146,7 @@ fn overwrites_initialized(state: &[Node], place: &MirPlace, uninitialized_receiv
 /// Only an intact subtree qualifies — dropping a partially moved value whole
 /// would free a hole, which the native lowering has no leaf flag to guard.
 fn overwrites_through_reference(state: &[Node], place: &MirPlace, f: &MirFunction) -> bool {
-    let Some(through) = place.through.filter(|_| place.proj.is_empty()) else {
+    let Some(through) = place.through.filter(|_| place.is_whole_root()) else {
         return false;
     };
     let root = place.root as usize;

@@ -701,9 +701,13 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   applies from the `Assign` arm and `record_assignment_rebind` records,
   reversed, on the assigned value. MIR lowering reads a rebound operand
   through `Flatten::rebind_value` (`MirInstr::Rebind`) or
-  `Flatten::rebound_place` (the place's terminal type), both in
-  `lower_expr/entry.rs`, and `native::mono`'s `discharge_rebinds`
-  (`mono/rebind.rs`) judges and erases them per instance. `RebindTargets::target_spans` names the
+  `Flatten::rebound_place` (a `Proj::Rebind` step), both in
+  `lower_expr/entry.rs`; every pass above the elaborator reads a place
+  through `MirPlace::storage`, `steps`, or `is_whole_root` (`mir/ir.rs`),
+  which see through the step, and `native::mono`'s `discharge_rebinds`
+  (`mono/rebind.rs`) judges and erases both forms per instance, each
+  place step against the type it applies to (`verify::place_base_ty` for
+  the first). `RebindTargets::target_spans` names the
   spans a body's erased targets embed, which template capture tolerates as
   it does a return annotation's. The parser admits the call as an
   assignment and augmented-assignment target (`parser/stmts.rs`).

@@ -94,10 +94,10 @@ fn deinit_root(
             if place.root != var {
                 continue;
             }
-            let Some(Proj::Field(field)) = place.proj.first() else {
+            let Some(Proj::Field(field)) = place.steps().next() else {
                 continue;
             };
-            let deep_move = place.proj.len() > 1
+            let deep_move = place.steps().nth(1).is_some()
                 && matches!(
                     instr,
                     MirInstr::MovePlace { .. } | MirInstr::ConsumePlace { .. }
@@ -519,7 +519,7 @@ fn direct_field_uses(instr: &MirInstr, root: &DeinitRoot) -> FieldSet {
         if place.root != root.var {
             continue;
         }
-        match place.proj.first() {
+        match place.steps().next() {
             Some(Proj::Field(field)) => {
                 if let Some(position) = root.position(field) {
                     set.insert(position);
@@ -542,7 +542,7 @@ fn moved_fields(instr: &MirInstr, root: &DeinitRoot) -> FieldSet {
     | MirInstr::ConsumePlace { place, .. }
     | MirInstr::MarkDestroyed { place } = instr
         && place.root == root.var
-        && let Some(Proj::Field(field)) = place.proj.first()
+        && let Some(Proj::Field(field)) = place.steps().next()
         && let Some(position) = root.position(field)
     {
         set.insert(position);
@@ -551,7 +551,7 @@ fn moved_fields(instr: &MirInstr, root: &DeinitRoot) -> FieldSet {
         for capture in captures {
             if capture.mode == MirCaptureMode::Move
                 && capture.place.root == root.var
-                && let Some(Proj::Field(field)) = capture.place.proj.first()
+                && let Some(Proj::Field(field)) = capture.place.steps().next()
                 && let Some(position) = root.position(field)
             {
                 set.insert(position);
@@ -591,7 +591,7 @@ fn register_field_provenance(blocks: &[MirBlock], root: &DeinitRoot) -> Vec<Vec<
         let mut single_hop = FieldSet::new();
         if let MirInstr::MakeRef { place, .. } | MirInstr::LoadPlace { place, .. } = instr
             && place.root == root.var
-            && let Some(Proj::Field(field)) = place.proj.first()
+            && let Some(Proj::Field(field)) = place.steps().next()
             && let Some(position) = root.position(field)
         {
             let scalar = matches!(instr, MirInstr::LoadPlace { .. })

@@ -216,7 +216,7 @@ pub(super) fn transfer_interior_instruction(
             invalidate_generations_rooted_at(state, *var, generations, || span_for_reg(f, *dest));
             remove_active_interior_reference(state, *var);
         }
-        MirInstr::MovePlace { dest, place } if place.proj.is_empty() => {
+        MirInstr::MovePlace { dest, place } if place.is_whole_root() => {
             invalidate_generations_rooted_at(state, place.root, generations, || {
                 span_for_reg(f, *dest)
             });

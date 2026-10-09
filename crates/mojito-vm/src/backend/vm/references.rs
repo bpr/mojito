@@ -806,6 +806,7 @@ pub(super) fn single_pointee_pointer(ty: Option<&Ty>) -> bool {
 /// through it.
 pub(super) fn place_crosses_reference(place: &MirPlace) -> bool {
     place
+        .storage()
         .projection_tys
         .iter()
         .rev()
@@ -818,6 +819,7 @@ pub(super) fn place_crosses_reference(place: &MirPlace) -> bool {
 /// the element type is a reference: the slot holds the handle, and may still
 /// be uninitialized, so there is no referent to write through.
 pub(super) fn pointer_element_slot(place: &MirPlace) -> bool {
+    let place = &*place.storage();
     let base_ty = match place.proj.len() {
         0 => return false,
         1 => place.root_ty.as_ref(),
@@ -836,6 +838,7 @@ pub(super) fn place_projection_segments(
     place: &MirPlace,
     registers: &[Value],
 ) -> Result<Vec<RefProjection>, RuntimeError> {
+    let place = &*place.storage();
     let mut segments = Vec::with_capacity(place.proj.len());
     for (position, segment) in place.proj.iter().enumerate() {
         let base_ty = if position == 0 {
@@ -854,6 +857,7 @@ pub(super) fn place_projection_segments(
             Proj::ConstIndex(index) => RefProjection::Index(*index),
             Proj::Variant(index) => RefProjection::Variant(known_variant_index(index)?),
             Proj::UninitPayload => RefProjection::UninitPayload,
+            Proj::Rebind => continue,
         });
     }
     Ok(segments)

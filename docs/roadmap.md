@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R514**.
+Next free ID: **R516**.
 
 ## Ordered Work
 
@@ -59,23 +59,6 @@ goes to a catch-up track, however small.
 Frozen: `checker/template_facts.rs` gains no certificate class and no
 recipe. A body the certificates do not cover waits for its stage. A
 correctness fix to existing behavior is allowed.
-
-- [ ] **R314 (P3) A rebound place is spelled by its terminal type rather
-  than an explicit step**
-
-  Problem: MIR reads or writes the operand place of `rebind[Dest](place)`
-  through a place whose terminal type is `Dest` while its projections keep
-  the storage's own type, where upstream's reference overload rebinds the
-  pointer it returns with an explicit `kgen.rebind`.
-  - Only a rebind produces such a place, and `native::mono` judges every
-    place whose two types disagree as one (`mono/rebind.rs`), but nothing in
-    the place itself says it was rebound.
-  - A `Proj::Rebind` step would say it; every ownership pass and the VM
-    test a place for no projections to mean its whole root, so the step
-    must read as transparent there first.
-  - The value form is already explicit (`MirInstr::Rebind`).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
 
 - [ ] **R9 (P4) The driver elaborates and checks to a fixpoint**
 
@@ -4774,6 +4757,46 @@ retained on purpose and re-probed rather than fixed; they are listed in
   - Found while landing R421 (2026-10-06).
   - Depends on R213, R196.
   - Model: Fable, Not Planned.
+
+- [ ] **R514 `rebind` between distinct structs of one lowered layout is
+  rejected, where the pin accepts it**
+
+  Problem: `rebind[S](x)` with `x: U`, where `U` and `S` each hold one
+  `Int` field under any names, fails the instance in Mojito ("rebind input
+  type 'U' does not match result type 'S'"), while the pin runs it by
+  reference and by value.
+  - The pin's `kgen.rebind` compares lowered KGEN types; Mojito's
+    `discharge_rebinds` (`mono/rebind.rs`) compares checked types with
+    `types_agree`, which is nominal.
+  - The pin still rejects a different layout (`UInt` or `Float64` against
+    `Int`, `String` against `S`), as Mojito does.
+  - Following the pin needs a lowered-type identity in the elaborator,
+    from `native-core`'s layouts, which judges the value and place forms
+    alike.
+  - Pinned by `conformance/probes/rebind_layout_identical_struct.mojo`.
+  - Ledger name: `rebind-layout-identical-struct`.
+  - Found while landing R314 (2026-10-08).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R515 Assigning through a whole `rebind` destroys the old value at
+  the operand's type, where the pin destroys it at the target's**
+
+  Problem: `rebind[S](x) = S(9)` with `x: T`, `T: Copyable`, is rejected
+  in Mojito ("'x' abandoned without being explicitly destroyed"), while the
+  pin prints `9`.
+  - The pin assigns through the reference its `ref` overload returns,
+    typed `S`, so the old value is destroyed as an `S`.
+  - Mojito's `erase_rebinds` rewrites the statement into the plain
+    assignment `x = S(9)`, whose destruction is judged at `T`, which is not
+    `Deinitable`.
+  - Following the pin means lowering the statement as a store through the
+    rebound place (its `Proj::Rebind` step) rather than rewriting it.
+  - Pinned by `conformance/probes/rebind_assignment_without_deinitable_bound.mojo`.
+  - Ledger name: `rebind-assignment-without-deinitable-bound`.
+  - Found while landing R314 (2026-10-08).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
 
 - [ ] **R511 A negative literal index into an `Array` traps at run time
   where the pin rejects it at compile time**

@@ -143,8 +143,8 @@ impl Flatten<'_> {
     }
 
     /// `rebind[dest](e)` read as a value: `value` holds the operand at its
-    /// own type, or already at `dest` when its place was retyped
-    /// ([`Self::rebound_place`]).
+    /// own type, or already at `dest` when it was read through its rebound
+    /// place ([`Self::rebound_place`]).
     fn rebind_value(&mut self, e: &Expr, value: Reg, operand: Ty, dest: Ty) -> Reg {
         let source = self.f.reg_types.entry(value.0).or_insert(operand).clone();
         if source == dest {
@@ -158,11 +158,15 @@ impl Flatten<'_> {
         rebound
     }
 
-    /// The place of the operand of `rebind[dest](e)`, retyped to `dest`:
-    /// the same storage, read and written at the type the rebind names.
+    /// The place of the operand of `rebind[dest](e)` followed by a
+    /// [`Proj::Rebind`] step to `dest`: the same storage, read and written at
+    /// the type the rebind names, as upstream's reference overload rebinds
+    /// the pointer it returns. A later projection addresses `dest`.
     pub(in crate::mir) fn rebound_place(&self, e: &Expr, mut place: MirPlace) -> MirPlace {
-        if let Some((_, dest)) = self.rebind_target(e) {
-            place.ty = Some(dest);
+        if let Some((_, dest)) = self.rebind_target(e)
+            && place.ty.as_ref() != Some(&dest)
+        {
+            place.project(Proj::Rebind, dest);
         }
         place
     }

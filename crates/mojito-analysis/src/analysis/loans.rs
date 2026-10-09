@@ -71,7 +71,7 @@ pub(super) fn transfer_loan_generation(
         // Writing through a place releases the interior-domain generations
         // it covers: the overwrite destroyed the stored aliases.
         MirInstr::Store { place, .. } | MirInstr::StoreRef { place, .. } => {
-            if !place.proj.is_empty()
+            if !place.is_whole_root()
                 && let Some(markers) = state.active.get_mut(&place.root)
             {
                 markers.retain(|existing| {
@@ -79,7 +79,9 @@ pub(super) fn transfer_loan_generation(
                         .get(existing)
                         .and_then(|dest| dest.as_ref())
                     {
-                        Some(domain) => !projection_covers_domain(&place.proj, &domain.path),
+                        Some(domain) => {
+                            !projection_covers_domain(&place.storage().proj, &domain.path)
+                        }
                         None => true,
                     }
                 });
@@ -432,7 +434,7 @@ impl LoanCapability for Loan {
 
 pub(super) fn mir_places_overlap(left: &MirPlace, right: &MirPlace) -> bool {
     left.root == right.root
-        && left.proj.iter().zip(&right.proj).all(|(a, b)| {
+        && left.steps().zip(right.steps()).all(|(a, b)| {
             matches!((a, b), (Proj::Field(x), Proj::Field(y)) if x == y)
                 || matches!((a, b), (Proj::Index(_), Proj::Index(_)))
                 || matches!(

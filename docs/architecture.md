@@ -1010,9 +1010,11 @@ mangling, and clone generator. A **comptime-class** template (a `comptime
 if`/`for` body, or a type pack) must specialize at every reference: resolution
 failure is an error, and the template is replaced by its clones (a dead
 template is dropped unchecked). A `rebind` keys nothing: the template
-carries it into MIR, as a value rebind (`MirInstr::Rebind`) or a place whose
-terminal type is the target, and the elaborator asserts each one's equality
-per instance once its `comptime if`s are decided, as upstream's
+carries it into MIR, as a value rebind (`MirInstr::Rebind`) or a place's
+`Proj::Rebind` step typed at the target (upstream's `kgen.rebind` on the
+reference its `ref` overload returns, so a later projection addresses the
+target), and the elaborator judges each one against the type it applies to
+per instance once its `comptime if`s are decided and erases it, as upstream's
 `processRebindOp` does (`native::mono`'s `discharge_rebinds`,
 `mono/rebind.rs`), failing the instance with a `MonoErrorKind::Instantiation`
 error on a mismatch.

@@ -83,7 +83,7 @@ use iteration::verify_iteration_instruction;
 use loans::verify_loan_instruction;
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use places::*;
-pub use places::{instruction_places, instruction_places_mut};
+pub use places::{instruction_places, instruction_places_mut, place_base_ty};
 pub use regs::*;
 pub(crate) use scope::declared_kind;
 use scope::verify_scope;

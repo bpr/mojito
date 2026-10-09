@@ -29,6 +29,7 @@ pub(super) fn store_place(
     place: &MirPlace,
     value: Value,
 ) -> Result<(), RuntimeError> {
+    let place = &*place.storage();
     match place.proj.split_last() {
         None => {
             vars[place.root as usize] = value;
@@ -65,6 +66,7 @@ pub(super) fn load_place(
     regs: &[Value],
     place: &MirPlace,
 ) -> Result<Value, RuntimeError> {
+    let place = &*place.storage();
     if let Some((Proj::Index(ireg), prefix)) = place.proj.split_last() {
         let mut slot = &mut vars[place.root as usize];
         for proj in prefix {
@@ -90,6 +92,7 @@ fn nav_step<'a>(
     regs: &[Value],
 ) -> Result<&'a mut Value, RuntimeError> {
     match proj {
+        Proj::Rebind => Ok(slot),
         Proj::Field(name) => match slot {
             // Search declared fields first, then value parameters (a `Self.n`
             // read) — mirroring `get_field`, so a place read through this matches

@@ -318,7 +318,7 @@ pub(super) fn vars_moved(i: &MirInstr) -> Vec<VarId> {
         // still needs its ordinary drop, so only whole-root moves suppress it.
         MirInstr::MakeClosure { captures, .. } => captures
             .iter()
-            .filter(|capture| capture.mode == MirCaptureMode::Move && capture.place.proj.is_empty())
+            .filter(|capture| capture.mode == MirCaptureMode::Move && capture.place.is_whole_root())
             .map(|capture| capture.place.root)
             .collect(),
         _ => Vec::new(),

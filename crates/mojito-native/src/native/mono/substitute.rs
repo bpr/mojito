@@ -228,7 +228,7 @@ pub(super) fn repair_storage_result_types(function: &mut MirFunction) {
                         }
                     }
                     MirInstr::LoadPlace { dest, place }
-                        if place.proj.is_empty()
+                        if place.is_whole_root()
                             && !retyped_iterator_slots.contains(&place.root) =>
                     {
                         if let Some(ty) = var_tys.get(&place.root) {
@@ -348,10 +348,10 @@ pub(super) fn substitute_value_parameter_reads(
                 && let Some(value) = var_names
                     .get(place.root as usize)
                     .and_then(|name| locals.get(name))
-                && let Some(constant) = if place.proj.is_empty() {
+                && let Some(constant) = if place.is_whole_root() {
                     value_parameter_constant(value, var_tys.get(&place.root))
                 } else {
-                    projected_parameter_constant(value, &place.proj)
+                    projected_parameter_constant(value, &place.storage().proj)
                 }
             {
                 // A whole aggregate parameter read as a place (`h(p)`), or a

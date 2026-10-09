@@ -600,7 +600,8 @@ branch for the class is deleted, and so is its certificate class.
   (a reflected field-name list materialized whole is served since
   2026-10-08, R365). The same step made `rebind` a
   template form: MIR carries it as a value rebind (`MirInstr::Rebind`,
-  schema 1.23) or a place retyped to its target, and the elaborator asserts
+  schema 1.23) or a place's `Proj::Rebind` step (schema 1.37), and the
+  elaborator asserts
   the equality per instance after deciding its branches, as upstream's
   `processRebindOp` does, so a `def` or a method holding one is served too.
 - **P3b. `comptime for` over a value index**, then **heterogeneous pack

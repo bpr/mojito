@@ -777,6 +777,12 @@ pub enum Proj {
     /// A final-step write initializes-or-overwrites without dropping the old
     /// payload; reads trap while the storage is uninitialized.
     UninitPayload,
+    /// `rebind[Dest](place)`: the same storage addressed at `Dest`, the
+    /// step's `projection_tys` entry, as upstream's reference `rebind`
+    /// applies `kgen.rebind` to the pointer it returns. Storage, ownership,
+    /// and execution read through it ([`MirPlace::storage`]); the elaborator
+    /// judges and erases it, so concrete MIR never holds one.
+    Rebind,
 }
 
 /// A writable location: a root variable plus a chain of projections
@@ -818,6 +824,38 @@ impl MirPlace {
 
     pub const fn is_typed(&self) -> bool {
         self.root_ty.is_some() && self.ty.is_some() && self.proj.len() == self.projection_tys.len()
+    }
+
+    /// The storage this place designates: every [`Proj::Rebind`] step and
+    /// its type removed, the terminal type kept. Borrowed when the place has
+    /// no such step, as every concrete place.
+    pub fn storage(&self) -> std::borrow::Cow<'_, Self> {
+        if !self.proj.iter().any(|step| matches!(step, Proj::Rebind)) {
+            return std::borrow::Cow::Borrowed(self);
+        }
+        let mut storage = self.clone();
+        let mut types = std::mem::take(&mut storage.projection_tys).into_iter();
+        let (proj, projection_tys) = std::mem::take(&mut storage.proj)
+            .into_iter()
+            .zip(types.by_ref())
+            .filter(|(step, _)| !matches!(step, Proj::Rebind))
+            .unzip();
+        storage.proj = proj;
+        storage.projection_tys = projection_tys;
+        storage.projection_tys.extend(types);
+        std::borrow::Cow::Owned(storage)
+    }
+
+    /// The steps that select storage: every step but a [`Proj::Rebind`].
+    pub fn steps(&self) -> std::iter::Filter<std::slice::Iter<'_, Proj>, fn(&&Proj) -> bool> {
+        self.proj
+            .iter()
+            .filter(|step| !matches!(step, Proj::Rebind))
+    }
+
+    /// Whether this place designates its whole root, rebound or not.
+    pub fn is_whole_root(&self) -> bool {
+        self.proj.iter().all(|step| matches!(step, Proj::Rebind))
     }
 }
 

@@ -831,7 +831,7 @@ impl Flatten<'_> {
             && !implicitly_copied_receiver
             && let Some(place) = self.try_place(receiver_expr)
         {
-            if place.proj.is_empty() {
+            if place.is_whole_root() {
                 self.emit(MirInstr::ConsumeVar { var: place.root });
             } else {
                 self.emit(MirInstr::ConsumePlace {
