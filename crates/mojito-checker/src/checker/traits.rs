@@ -578,15 +578,35 @@ impl Checker {
             // `Deinitable`-proving bound, unless the struct itself declares
             // `Deinitable` (conditionally, as `Optional`/`List` do), which
             // discharges the field's destructibility to that declaration.
+            // A `Tuple` spreading a pack is `Deinitable` only where every
+            // element is, so the pack's bound must prove it too.
             if !declaration.name.contains('$')
-                && let Ty::Param { binder, bounds, .. } = &ty
-                && !self.bounds_prove_deinitable(bounds)
                 && !declaration.conforms.iter().any(|tr| tr == "Deinitable")
             {
-                return Err(TypeError::FieldNotDeinitable {
-                    field: f.name.clone(),
-                    ty: binder.name.trim_start_matches('*').to_string(),
-                });
+                let undestroyable = match &ty {
+                    Ty::Param { binder, bounds, .. } if !self.bounds_prove_deinitable(bounds) => {
+                        Some(binder.name.trim_start_matches('*').to_string())
+                    }
+                    Ty::Struct(name, arguments)
+                        if mojito_types::types::is_nominal_instance(
+                            name,
+                            mojito_types::types::TUPLE_TYPE_NAME,
+                        ) && matches!(
+                            mojito_types::types::pack_spread_argument(arguments),
+                            Some(Ty::Param { bounds, .. })
+                                if !self.bounds_prove_deinitable(bounds)
+                        ) =>
+                    {
+                        Some(ty.to_string())
+                    }
+                    _ => None,
+                };
+                if let Some(ty) = undestroyable {
+                    return Err(TypeError::FieldNotDeinitable {
+                        field: f.name.clone(),
+                        ty,
+                    });
+                }
             }
             self.declaration_types.borrow_mut().insert(
                 mojito_checked::checked::AnnotationSite::StructField {

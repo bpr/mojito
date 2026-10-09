@@ -1095,8 +1095,9 @@ pub fn tuple_elements(ty: &Ty) -> Option<Vec<&Ty>> {
         return None;
     };
     // `$` cannot be written in a source identifier: besides the ordinary
-    // name, accept the historically module-qualified public one.
-    if name != TUPLE_TYPE_NAME && !name.ends_with(&format!("${TUPLE_TYPE_NAME}")) {
+    // name, accept the historically module-qualified public one and a
+    // backend-monomorphized instance, which keeps its element arguments.
+    if !is_nominal_instance(name, TUPLE_TYPE_NAME) {
         return None;
     }
     arguments

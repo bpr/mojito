@@ -376,6 +376,13 @@ impl Decoder {
                 instantiated_args: self.req(value, fields, "instantiated_args", |d, v| {
                     Some(d.ty_args(v))
                 })?,
+                // Schema 1.40 records the position of a whole pack spread
+                // into a nested `def`'s collector; an older artifact carries
+                // none.
+                spread: self
+                    .field(fields, "spread")
+                    .ok()
+                    .and_then(|found| self.option_uint(found)),
             }),
             "call.method" => Some(MirInstr::MethodCall {
                 dest: self.req(value, fields, "dest", Self::reg)?,

@@ -2858,6 +2858,14 @@ struct CallableSourceParam {
     ordinary: bool,
 }
 
+impl CallableSourceParam {
+    /// Whether the parameter is a pack (`*Ts`, `*values: Int`), which
+    /// collects every positional argument from its slot on.
+    fn variadic(&self) -> bool {
+        self.name.starts_with('*')
+    }
+}
+
 /// Origin-specialization metadata for one declaration in an overload set.
 /// Entries are registered in the same order as `Ty::Overload` candidates.
 #[derive(Clone)]

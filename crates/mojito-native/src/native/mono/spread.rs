@@ -1,6 +1,6 @@
-//! Expanding a whole-pack spread: an instance replaces the collector a call
-//! or a method call spreads (`show(*args)`, `Sink().take(*args)`) with the
-//! bound pack's element places, and retires a value pack spread into a
+//! Expanding a whole-pack spread: an instance replaces the collector a call,
+//! a method call, or a nested `def`'s call spreads (`show(*args)`,
+//! `Sink().take(*args)`, `count(*args^)`) with the bound pack's element places, and retires a value pack spread into a
 //! bracket (`f[*vs]()`) once the call names its instance.
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
@@ -11,8 +11,8 @@ use mojito_mir::mir::Proj;
 /// upstream's pack expansion: the spread argument's register, typed the
 /// collector's tuple once the pack is bound, becomes one register per
 /// element, each read from the collector's element place (or moved out of
-/// it, when the caller transferred the pack), and the call's or method
-/// call's `spread` is cleared. The collector's own read goes with it. A spread whose pack the
+/// it, when the caller transferred the pack), and the call's `spread` is
+/// cleared. The collector's own read goes with it. A spread whose pack the
 /// bindings leave open is the instance's unsupported boundary.
 pub(super) fn expand_pack_spreads(
     template: &str,
@@ -155,8 +155,9 @@ fn expand_in_block(block: &mut MirBlock, tables: &mut SpreadTables<'_>) -> Resul
     Ok(())
 }
 
-/// The operands a whole-pack spread rewrites on a direct call or a method
-/// call: its position, the positional arguments, and their places.
+/// The operands a whole-pack spread rewrites on a direct call, a method
+/// call, or an indirect call of a nested `def`: its position, the positional
+/// arguments, and their places.
 struct SpreadOperands<'a> {
     spread: &'a mut Option<usize>,
     args: &'a mut Vec<Reg>,
@@ -172,6 +173,12 @@ const fn spread_operands(instruction: &mut MirInstr) -> Option<SpreadOperands<'_
             ..
         }
         | MirInstr::MethodCall {
+            spread,
+            args,
+            arg_places,
+            ..
+        }
+        | MirInstr::CallIndirect {
             spread,
             args,
             arg_places,

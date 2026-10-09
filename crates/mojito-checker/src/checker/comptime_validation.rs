@@ -114,7 +114,9 @@ pub(in crate::checker) struct ApplicableFunction {
     params: Vec<ApplicableParameter>,
     positional_only: Option<usize>,
     keyword_only: Option<usize>,
-    result: Ty,
+    /// The declared result: an `Int` or a `Bool`, or a named struct the
+    /// check resolves where a call applies it.
+    result: SourceType,
     /// Whether it is declared `raises`, which no type or parameter argument
     /// may call.
     raises: bool,
@@ -783,6 +785,9 @@ impl Checker {
         let ty = match ty.ok()? {
             Ty::Int | Ty::IntLiteral => Ty::Int,
             Ty::Bool => Ty::Bool,
+            // A struct-valued call is an application the elaborator runs and
+            // materializes; no other struct expression lifts.
+            ty @ Ty::Struct(..) if called.is_some() => ty,
             _ => return None,
         };
         let application = match called {
@@ -809,11 +814,15 @@ impl Checker {
     /// parameter expression.
     fn called_application(&self, expr: &Expr) -> Option<ParamExpr> {
         let (function, arguments) = self.selected_application(expr)?;
+        let result = self
+            .ty_from_anno(&function.result)
+            .ok()
+            .filter(|ty| matches!(ty, Ty::Int | Ty::Bool | Ty::Struct(..)))?;
         (!function.raises).then(|| {
             self.param_context.apply(
                 &function.symbol,
                 &arguments,
-                mojito_types::param_expr::MetaTy::value(function.result.clone()),
+                mojito_types::param_expr::MetaTy::value(result),
             )
         })
     }
@@ -1280,6 +1289,9 @@ impl Checker {
         value: &Expr,
     ) -> Result<bool, TypeError> {
         let Some(level) = self.tparams.len().checked_sub(1) else {
+            if self.bind_compile_time_only_value(name, value)? {
+                return Ok(true);
+            }
             // A body with no binders keeps a binding only when it applies a
             // callable (`comptime x = f(1)`): its reads in a compile-time
             // position are the application, and the rest of the statement
@@ -1363,20 +1375,7 @@ impl Checker {
                 .insert(name.to_string(), display);
             return Ok(true);
         }
-        // A reflection handle, a reflected list (`r.field_names()`), or a
-        // type list computed from the body's packs
-        // (`TypeList._concat[Self.Ts.values, OtherTs.values]()`), is a
-        // compile-time-only value inlined at its uses.
-        if matches!(&value.kind, ExprKind::TypeApply { name, .. } if name == "reflect")
-            || matches!(self.reflection_list(value), Ok(Some(_)))
-            || matches!(self.type_list_operand(value), Ok(Some(_)))
-        {
-            self.local_comptime_values
-                .last_mut()
-                .ok_or_else(|| {
-                    TypeError::InvariantViolation("checker scope stack is empty".to_string())
-                })?
-                .insert(name.to_string(), value.clone());
+        if self.bind_compile_time_only_value(name, value)? {
             return Ok(true);
         }
         if denoted.is_none()
@@ -1386,6 +1385,32 @@ impl Checker {
             scope.insert(name.to_string(), (level, expression));
         }
         Ok(false)
+    }
+
+    /// Bind a reflection handle (`reflect[T]`, `r.field["x"]`), a reflected
+    /// list (`r.field_names()`), or a
+    /// type list computed from the body's packs
+    /// (`TypeList._concat[Self.Ts.values, OtherTs.values]()`): a
+    /// compile-time-only value inlined at its uses. `false` when `value` is
+    /// none of these.
+    fn bind_compile_time_only_value(
+        &mut self,
+        name: &str,
+        value: &Expr,
+    ) -> Result<bool, TypeError> {
+        if !(matches!(self.reflection_handle(value), Ok(Some(_)))
+            || matches!(self.reflection_list(value), Ok(Some(_)))
+            || matches!(self.type_list_operand(value), Ok(Some(_))))
+        {
+            return Ok(false);
+        }
+        self.local_comptime_values
+            .last_mut()
+            .ok_or_else(|| {
+                TypeError::InvariantViolation("checker scope stack is empty".to_string())
+            })?
+            .insert(name.to_string(), value.clone());
+        Ok(true)
     }
 
     /// The application a local `comptime` binding of a body denotes when
@@ -3005,7 +3030,10 @@ impl ApplicableShape<'_> {
             params,
             positional_only: self.positional_only,
             keyword_only: self.keyword_only,
-            result: scalar(self.ret)?,
+            result: match self.ret {
+                SourceType::Int | SourceType::Bool | SourceType::Named(..) => self.ret.clone(),
+                _ => return None,
+            },
             raises: self.raises,
         })
     }

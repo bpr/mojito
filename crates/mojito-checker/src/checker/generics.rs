@@ -254,27 +254,40 @@ pub(super) fn expand_solved_packs(ty: &Ty, decls: &[ParamDecl], tyargs: &[TyArg]
 }
 
 /// The pack a closed application of a variadic struct binds, with its
-/// element types, in either spelling; `None` while the pack is open (a
-/// forwarded spread) or the struct has no pack.
+/// element types, in either spelling — the pack's own argument beside the
+/// struct's other parameters (`Bad[Int, Bool]` of `Bad[T, *Ts]`), or the
+/// sole pack's elements spelled positionally; `None` while the pack is open
+/// (a forwarded spread) or the struct has no pack.
 pub(super) fn bound_pack_elements(
     decls: &[ParamDecl],
     targs: &[TyArg],
 ) -> Option<(String, Vec<Ty>)> {
-    let (pack, binding) = match (decls, targs) {
-        (
-            [
-                ParamDecl::Type {
-                    name,
-                    variadic: true,
-                    ..
-                },
-            ],
-            [TyArg::Val(binding @ CtValue::Tuple(_))],
-        ) => (name.trim_start_matches('*').to_string(), binding.clone()),
-        _ => positional_pack_binding(decls, targs).and_then(|(pack, binding)| match binding {
-            TyArg::Val(value) => Some((pack, value)),
-            _ => None,
-        })?,
+    let solved = (decls.len() == targs.len())
+        .then(|| {
+            decls
+                .iter()
+                .zip(targs)
+                .find_map(|(decl, argument)| match (decl, argument) {
+                    (
+                        ParamDecl::Type {
+                            name,
+                            variadic: true,
+                            ..
+                        },
+                        TyArg::Val(binding @ CtValue::Tuple(_)),
+                    ) => Some((name.trim_start_matches('*').to_string(), binding.clone())),
+                    _ => None,
+                })
+        })
+        .flatten();
+    let (pack, binding) = match solved {
+        Some(solved) => solved,
+        None => {
+            positional_pack_binding(decls, targs).and_then(|(pack, binding)| match binding {
+                TyArg::Val(value) => Some((pack, value)),
+                _ => None,
+            })?
+        }
     };
     let CtValue::Tuple(types) = binding else {
         return None;
@@ -698,9 +711,11 @@ fn solve_applied_args(
 /// Callable specialization and method-generic instantiation moved from `checker.rs`.
 impl Checker {
     /// Split the source parameter list at an explicit specialization site.
-    /// Ordinary arguments are rewritten as named arguments before being handed
-    /// to the generic binder; this preserves their source slot even when an
-    /// erased or infer-only semantic parameter precedes them.
+    /// Origin arguments are erased from the ordinary list handed to the
+    /// generic binder, which skips infer-only slots as this split does, so an
+    /// ordinary argument keeps its source form. A positional argument that
+    /// reaches a pack (`*Ts`, `*values: Int`) stays there: the pack collects
+    /// every positional argument after it.
     pub(super) fn split_callable_specialization(
         &self,
         name: &str,
@@ -717,6 +732,7 @@ impl Checker {
         let mut ordinary = Vec::new();
         let mut next_positional = 0;
         for argument in arguments {
+            let is_named = matches!(argument, ParamArg::Named { .. });
             let (index, value) = match argument {
                 ParamArg::Named {
                     name: argument_name,
@@ -735,7 +751,8 @@ impl Checker {
                 other => {
                     while next_positional < signature.source.len()
                         && (signature.source[next_positional].infer_only
-                            || supplied[next_positional])
+                            || (supplied[next_positional]
+                                && !signature.source[next_positional].variadic()))
                     {
                         next_positional += 1;
                     }
@@ -751,7 +768,9 @@ impl Checker {
                         });
                     }
                     let index = next_positional;
-                    next_positional += 1;
+                    if !signature.source[index].variadic() {
+                        next_positional += 1;
+                    }
                     (index, other.clone())
                 }
             };
@@ -762,7 +781,7 @@ impl Checker {
                     parameter.name
                 )));
             }
-            if supplied[index] {
+            if supplied[index] && (is_named || !parameter.variadic()) {
                 return Err(TypeError::BadCall {
                     func: name.to_string(),
                     reason: format!("parameter '{}' was supplied twice", parameter.name),
@@ -778,9 +797,13 @@ impl Checker {
                 }
                 origins[origin_index] = Some(self.explicit_origin_argument(&value)?);
             } else if parameter.ordinary {
-                ordinary.push(ParamArg::Named {
-                    name: parameter.name.trim_start_matches('*').to_string(),
-                    value: Box::new(value),
+                ordinary.push(if is_named {
+                    ParamArg::Named {
+                        name: parameter.name.trim_start_matches('*').to_string(),
+                        value: Box::new(value),
+                    }
+                } else {
+                    value
                 });
             } else {
                 return Err(TypeError::Unsupported(format!(

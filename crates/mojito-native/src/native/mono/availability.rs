@@ -393,17 +393,22 @@ fn bind_struct_arguments(
             let (prefix, rest) = arguments.split_at(leading.len());
             bind_ty_args(leading, prefix, bindings).ok()?;
             let elements = match rest {
-                [TyArg::Val(packed @ CtValue::Tuple(_))] => packed.clone(),
-                rest => CtValue::Tuple(
-                    rest.iter()
-                        .map(|argument| match argument {
-                            TyArg::Ty(ty) => Some(CtValue::Type(Box::new(ty.clone()))),
-                            _ => None,
-                        })
-                        .collect::<Option<Vec<_>>>()?,
-                ),
+                [TyArg::Val(CtValue::Tuple(packed))] => packed
+                    .iter()
+                    .map(|element| match element {
+                        CtValue::Type(ty) => Some((**ty).clone()),
+                        _ => None,
+                    })
+                    .collect::<Option<Vec<_>>>()?,
+                rest => rest
+                    .iter()
+                    .map(|argument| match argument {
+                        TyArg::Ty(ty) => Some(ty.clone()),
+                        _ => None,
+                    })
+                    .collect::<Option<Vec<_>>>()?,
             };
-            bindings.values.insert(pack.binder(), elements);
+            bind_pack(&pack.binder(), elements, bindings);
             Some(())
         }
         _ if arguments.len() < decls.len() => None,

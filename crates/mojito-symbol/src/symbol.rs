@@ -2041,13 +2041,16 @@ pub fn unqualified_instance_name(ty: &Ty) -> String {
                     .join(", ");
                 return format!("Tuple[{elements}]");
             }
+            // An elaborated instance (`AHasher$mono$…`) keeps its arguments
+            // and spells its template's name.
+            let name = mojito_types::types::struct_template(name);
             let (base, baked) = match demangle_specialization(name) {
                 Some((template, values)) => (
                     unqualified_type_name(&Ty::Struct(template.to_string(), Vec::new().into())),
                     values,
                 ),
                 None => (
-                    unqualified_type_name(&Ty::Struct(name.clone(), Vec::new().into())),
+                    unqualified_type_name(&Ty::Struct(name.to_string(), Vec::new().into())),
                     Vec::new(),
                 ),
             };

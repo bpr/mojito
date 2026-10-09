@@ -1489,7 +1489,10 @@ def main():
     assert!(
         instrs.iter().any(|instruction| matches!(
             instruction,
-            MirInstr::Call { func, .. } if func.0.contains("__init__$ov$StringLiteral")
+            MirInstr::Call { func, .. }
+                if mojito_symbol::symbol::init_overload_struct(&func.0).is_some()
+                    && mojito_symbol::symbol::overload_qualifier(&func.0)
+                        .is_some_and(|qualifier| qualifier.ends_with("StringLiteral"))
         )),
         "the instance builds its `String` element: {instrs:?}"
     );

@@ -1603,10 +1603,12 @@ impl ComptimeThunks {
             .declarations
             .iter()
             .map(|declaration| {
+                // A pack binder is referenced by its bare spelling, as every
+                // other read of it is.
                 let binder = declaration.binder();
                 context.decl_ref(
                     binder.id.clone(),
-                    &binder.name,
+                    binder.name.trim_start_matches('*'),
                     verify::declared_kind(declaration),
                 )
             })
@@ -3318,7 +3320,6 @@ impl Flatten<'_> {
     /// slots with the callee's declarations positionally, so a dropped slot
     /// would shift the reified arguments after it (`Dict[String, Int, H]`).
     fn param_arg_regs(&mut self, call: &Expr, arguments: &[ParamArg]) -> Vec<MirParamArg> {
-        let site = span(call);
         let folded = self
             .checked_adjustments(call)
             .into_iter()
@@ -3329,13 +3330,35 @@ impl Flatten<'_> {
                 _ => None,
             })
             .unwrap_or_default();
+        self.param_arg_regs_folding(call, arguments, &folded)
+    }
+
+    /// The compile-time argument slots of an indirect call. A folded
+    /// argument's value travels in the instantiated arguments, which only
+    /// an instantiated callable contract carries: without one, the slot
+    /// keeps its register.
+    fn indirect_param_arg_regs(&mut self, call: &Expr, arguments: &[ParamArg]) -> Vec<MirParamArg> {
+        if self.instantiated_callable_contract(call).is_some() {
+            self.param_arg_regs(call, arguments)
+        } else {
+            self.param_arg_regs_folding(call, arguments, &[])
+        }
+    }
+
+    fn param_arg_regs_folding(
+        &mut self,
+        call: &Expr,
+        arguments: &[ParamArg],
+        folded: &[SourceSpan],
+    ) -> Vec<MirParamArg> {
+        let site = span(call);
         let mut registers = Vec::new();
         for argument in arguments {
             let name = match argument {
                 ParamArg::Named { name, .. } => Some(name.clone()),
                 ParamArg::Type(_) | ParamArg::Value(_) => None,
             };
-            let value = if self.param_arg_has_no_runtime_form(argument, &folded) {
+            let value = if self.param_arg_has_no_runtime_form(argument, folded) {
                 None
             } else {
                 self.param_arg_reg(argument, &site)

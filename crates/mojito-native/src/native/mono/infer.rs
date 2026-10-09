@@ -107,8 +107,18 @@ impl Specializer<'_> {
                 &[],
             )?
         } else {
-            let (bindings, arguments, _) =
-                self.infer_receiver_call(owner, &target, &receiver_ty, result, &explicit)?;
+            let (bindings, arguments, _) = self.infer_receiver_call(
+                owner,
+                &target,
+                &receiver_ty,
+                result,
+                &explicit,
+                &call
+                    .arguments
+                    .iter()
+                    .map(|argument| &argument.parameter_ty)
+                    .collect::<Vec<_>>(),
+            )?;
             (target, bindings, arguments)
         };
         let declared = &self.declarations[target.as_str()].param_decls;
@@ -587,7 +597,7 @@ impl Specializer<'_> {
             ));
         }
         let (bindings, arguments, result) =
-            self.infer_receiver_call(owner, &target, receiver, result, &[])?;
+            self.infer_receiver_call(owner, &target, receiver, result, &[], &[])?;
         let concrete = self.enqueue(&target, bindings, arguments)?;
         Ok((concrete, result))
     }
@@ -629,9 +639,11 @@ impl Specializer<'_> {
         )
     }
 
-    /// The receiver-typed sibling of [`Self::infer_call`] for nullary method
-    /// calls carried by iterator instructions, which name their receiver as a
-    /// variable slot rather than a register.
+    /// The receiver-typed sibling of [`Self::infer_call`] for method calls
+    /// carried by iterator and subscript instructions, which name their
+    /// receiver as a variable slot or carry no argument registers. A
+    /// subscript's checked `parameters` (its index and stored value, past the
+    /// receiver) bind the method's own parameters.
     pub(super) fn infer_receiver_call(
         &self,
         owner: &str,
@@ -639,6 +651,7 @@ impl Specializer<'_> {
         receiver: &Ty,
         result: Option<&Ty>,
         explicit: &[(ParamRef, CtValue)],
+        parameters: &[&Ty],
     ) -> Result<(Bindings, Vec<InstanceArg>, Ty), MonoError> {
         let declaration = self.declarations.get(target).copied().ok_or_else(|| {
             self.error(
@@ -687,6 +700,16 @@ impl Specializer<'_> {
             })?;
         unify(receiver_pattern, receiver, &mut bindings)
             .map_err(|e| self.error(Some(owner), format!("monomorphizing `{target}`: {e}")))?;
+        let patterns = self
+            .functions
+            .get(target)
+            .map(|function| function.param_types.iter().skip(1))
+            .into_iter()
+            .flatten();
+        for (pattern, parameter) in patterns.zip(parameters) {
+            unify(pattern, parameter, &mut bindings)
+                .map_err(|e| self.error(Some(owner), format!("monomorphizing `{target}`: {e}")))?;
+        }
         if let Some(result) = result {
             unify_result(&declaration.ret_ty, result, &mut bindings).map_err(|e| {
                 self.error(

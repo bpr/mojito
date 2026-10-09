@@ -632,6 +632,20 @@ impl Prog {
         self.mir.functions.iter().position(|(n, _)| n == name)
     }
 
+    /// The struct a lifecycle constructor `symbol` builds and the lifecycle
+    /// name it runs, when the program declares that struct and the symbol's
+    /// declaration takes a receiver: a `def` nested in a constructor is
+    /// lifted under the constructor's name but builds nothing.
+    fn lifecycle_constructor<'s>(&self, symbol: &'s str) -> Option<(&'s str, &'s str)> {
+        mojito_symbol::symbol::lifecycle_constructor(symbol).filter(|(struct_name, _)| {
+            self.structs.contains_key(*struct_name)
+                && self
+                    .sigs
+                    .get(symbol)
+                    .is_none_or(|signature| signature.has_receiver)
+        })
+    }
+
     /// The `hasher`'s `_update_with_simd` a scalar `__hash__` leaf of type
     /// `leaf` calls: the instance the elaborator minted at the leaf's vector
     /// type, else the symbol as named.
@@ -824,6 +838,9 @@ struct FnSig {
     /// Indexes into the regular-parameter list.
     positional_only: Option<usize>,
     keyword_only: Option<usize>,
+    /// Whether the callable takes a receiver (a method or a lifecycle
+    /// constructor), as opposed to a free or nested `def`.
+    has_receiver: bool,
 }
 
 impl FnSig {
@@ -1084,6 +1101,7 @@ fn build_sigs(declarations: &mojito_mir::mir::MirDeclarations) -> HashMap<String
                     owned_pack_slot: declaration.owned_pack_slot(),
                     positional_only: declaration.positional_only,
                     keyword_only: declaration.keyword_only,
+                    has_receiver: declaration.has_receiver,
                 },
             )
         })

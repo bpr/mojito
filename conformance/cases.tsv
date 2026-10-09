@@ -249,7 +249,7 @@ contextual-member-static	run	assets/ok/contextual_member_static.mojo
 contextual-member-no-context	reject	assets/type_error/contextual_member_no_context.mojo
 contextual-member-unknown	reject	assets/type_error/contextual_member_unknown.mojo
 contextual-member-nonstruct	reject	assets/type_error/contextual_member_nonstruct.mojo
-contextual-member-value	mojo-only	conformance/fixtures/contextual_member_value.mojo
+contextual-member-value	run	conformance/fixtures/contextual_member_value.mojo
 list-anytype-element	run	assets/ok/list_anytype_element.mojo
 list-anytype-append	reject	assets/type_error/list_anytype_append_requires_movable.mojo
 list-element-view-method-result	run	assets/ok/list_element_view_method_result.mojo

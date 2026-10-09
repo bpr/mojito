@@ -371,6 +371,9 @@ pub enum TypeError {
     /// and `Set` are not implicitly copyable, so they cross only through
     /// `materialize[...]()`. Carries the collection's type as written.
     ComptimeCrossing(String),
+    /// A runtime binding initialized with a type (`var x = Pair`), which has
+    /// no runtime value. Carries the binding's name.
+    DynamicTypeValue(String),
     /// A parameter default names runtime storage (an enclosing local or a
     /// parameter): a default is evaluated at compile time.
     DynamicDefault(String),
@@ -839,6 +842,11 @@ impl fmt::Display for TypeError {
             Self::NotComptime(what) => {
                 write!(f, "not a compile-time Int constant: {what}")
             }
+            Self::DynamicTypeValue(_) => write!(
+                f,
+                "dynamic type values not permitted yet; try creating a 'comptime' instead of a \
+                 'var'"
+            ),
             Self::ComptimeCrossing(ty) => write!(
                 f,
                 "cannot materialize comptime value of type '{ty}' to runtime because it is not \

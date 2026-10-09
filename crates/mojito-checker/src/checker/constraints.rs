@@ -16,7 +16,7 @@ impl Checker {
     ) -> Result<mojito_common::literal::IntLiteral, TypeError> {
         match &expr.kind {
             ExprKind::Int(n) => Ok(n.clone()),
-            ExprKind::Identifier(name) => self.comptimes.get(name).cloned().ok_or_else(|| {
+            ExprKind::Identifier(name) => self.module_comptime(name).ok_or_else(|| {
                 // A bare struct value parameter (`SIMD[d, length]`) is
                 // upstream's `use 'Self.length'` error, not a missing constant.
                 if self.is_enclosing_struct_param(name) {
@@ -257,11 +257,13 @@ impl Checker {
                 }
                 // An applied constant is its application in a type
                 // position, whatever literal the elaborator folded it to.
-                if let Some(applied) = self.comptime_applied.get(name) {
-                    return Ok(CtValue::Expr(applied.clone()));
-                }
-                if let Some(n) = self.comptimes.get(name) {
-                    return Ok(CtValue::IntLiteral(n.clone()));
+                if !self.module_constant_shadowed(name) {
+                    if let Some(applied) = self.comptime_applied.get(name) {
+                        return Ok(CtValue::Expr(applied.clone()));
+                    }
+                    if let Some(n) = self.comptimes.get(name) {
+                        return Ok(CtValue::IntLiteral(n.clone()));
+                    }
                 }
                 // A local `comptime` `DType` binding (`comptime c = pick(True)`)
                 // is its dtype, known or the expression a template names.
@@ -661,6 +663,20 @@ impl Checker {
         context.constant(value).ok()
     }
 
+    /// Whether a binding nearer than the module scope (a local, a
+    /// parameter) hides the module constant `name`.
+    pub(super) fn module_constant_shadowed(&self, name: &str) -> bool {
+        self.binding_scope(name).is_some_and(|scope| scope != 0)
+    }
+
+    /// The folded `Int` module constant `name`, unless a nearer binding
+    /// shadows it.
+    pub(super) fn module_comptime(&self, name: &str) -> Option<mojito_common::literal::IntLiteral> {
+        (!self.module_constant_shadowed(name))
+            .then(|| self.comptimes.get(name).cloned())
+            .flatten()
+    }
+
     /// The symbolic value of a module constant's initializer that applies a
     /// function: an application of a module `def` with a declared result to
     /// compile-time arguments, a layout query, an earlier applied constant,
@@ -896,8 +912,8 @@ impl Checker {
             // contract's own binder) shadows a same-named module constant.
             ExprKind::Identifier(name) => match self.value_parameter_in_scope(name) {
                 Some(reference) => Ok(reference),
-                None => match self.comptimes.get(name) {
-                    Some(value) => constant(CtValue::IntLiteral(value.clone())),
+                None => match self.module_comptime(name) {
+                    Some(value) => constant(CtValue::IntLiteral(value)),
                     None if self.is_enclosing_struct_param(name) => {
                         Err(TypeError::UnqualifiedStructParam(name.clone()))
                     }

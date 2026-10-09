@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R526**.
+Next free ID: **R532**.
 
 ## Ordered Work
 
@@ -318,6 +318,14 @@ change that needs a new `MJRT_ABI_VERSION`.
 Track: `ownership`.
 
 Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the track, an entry Mojito runs to a wrong result, or accepts where the pin rejects, comes first; then one it rejects where the pin runs it; then a verdict that is right with the wrong words.
+
+- [ ] **R529 A `ref` element of a `Tuple` field loses its reference handle**
+
+  Problem: `struct RefTuple[o]: var values: Tuple[ref[o] Int, ref[o] Int]` constructed from two refs prints wrong or fails with "expected reference handle" on read, since `Tuple` became a library struct generator.
+  - Mojito-only: the pin has no `ref` element types; `vm_test::nested_reference_aggregate_preserves_handles` pins it.
+  - Either carry handles through `Tuple`'s pack storage or withdraw the form as an extension.
+  - Depends on nothing.
+  - Model: Opus, Planned.
 
 - [ ] **R473 A discard `_ = x` copies its source instead of taking it**
 
@@ -1793,6 +1801,39 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
 Track: `comptime`.
 
 Within the track, an entry Mojito runs to a wrong result, or accepts where the pin rejects, comes first; then one it rejects where the pin runs it; then a verdict that is right with the wrong words.
+
+- [ ] **R527 An explicitly specialized generic `def` converts to a plain function type**
+
+  Problem: `apply(ident[Int], 1)` against `cb: def(Int) -> Int` checks, then fails at run time with "'ident' is not callable"; the pin rejects the conversion.
+  - The unspecialized `ident` is already rejected with the pin's message.
+  - Reject the specialized form at the call argument the same way.
+  - Depends on nothing.
+  - Model: Opus, Planned.
+
+- [ ] **R531 The non-`Deinitable` field rule covers only a `Tuple` over a pack**
+
+  Problem: a struct field of type `Tuple[*Self.Ts]` now needs a pack bound proving `Deinitable`, as at the pin, but a field of any other struct whose `Deinitable` conformance depends on its arguments is not checked.
+  - The rule lives in `checker/traits.rs`.
+  - Generalize it to the field type's conditional `Deinitable` conformance.
+  - Depends on nothing.
+  - Model: Opus, Planned.
+
+- [ ] **R526 A capturing generic callable bound to a callable parameter does not elaborate**
+
+  Problem: `invoke_captured[captured_add]()`, where the parameter is `def[n: Int](Int) capturing[origins] -> Int`, fails with "place keeps symbolic type" in `native::mono`; the pin prints 42 (`conformance/fixtures/generic_anonymous_callables.mojo`).
+  - The callable is promoted to a runtime parameter that keeps its generic contract type.
+  - The body's `callback[2](40)` needs the closure's `n = 2` instance called with the passed environment.
+  - Also fails `param_callable_value_test::generic_callable_contract_defaults_override_implementation_defaults`.
+  - Depends on nothing.
+  - Model: Opus, Planned.
+
+- [ ] **R528 A default value that does I/O is rejected; the pin evaluates it once**
+
+  Problem: `def f(x: Int = tick())` where `tick` prints is rejected by `native::mono`, where the pin evaluates the default once at compile time.
+  - The rejection keeps Mojito a subset; without it each call would print.
+  - Evaluate a default once at compile time, as the pin does, then drop the rejection.
+  - Depends on nothing.
+  - Model: Opus, Planned.
 
 - [ ] **R522 Aliasing inside a frozen value is not preserved**
 
@@ -5336,6 +5377,14 @@ residue found inside a task moves to the task that owns its fix.
 ### Packaging, Artifacts, And Developer Tooling
 
 Track: `tooling`.
+
+- [ ] **R530 `benchmarks/compile/tuple.mojo` is not valid Mojo**
+
+  Problem: the pin rejects the benchmark (`p[0]` against `__getitem__[i: Int](self)`, and a non-`Deinitable` field), and Mojito now rejects it too.
+  - `compiler_test::discovery_scan_matches_the_checked_arena` dropped it from its list.
+  - Rewrite it in the pin's spelling (`__getitem_param__`, a `Deinitable` bound) and restore it.
+  - Depends on nothing.
+  - Model: Opus, Planned.
 
 - [ ] **R145 The corpus sweeps no longer run in the overnight gate**
 

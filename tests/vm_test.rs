@@ -1589,11 +1589,12 @@ fn runtime_returned_interior_reference_stores_in_fieldwise_aggregate() {
 #[test]
 fn nested_reference_aggregate_preserves_handles() {
     // Mojito-only executable-ref-field proof; current Mojo uses origin-bearing
-    // pointer aggregates for stored provenance.
-    let tuple = "@fieldwise_init\nstruct RefTuple[origin: Origin[mut=True]]:\n    var values: Tuple[ref[origin] Int, ref[origin] Int]\n\ndef main():\n    var left = 4\n    var right = 8\n    ref a = left\n    ref b = right\n    var pair = RefTuple((a, b))\n    print(pair.values[0], pair.values[1])\n";
+    // pointer aggregates for stored provenance. One origin binder takes one
+    // origin, as at the pin, so both elements view the same place.
+    let tuple = "@fieldwise_init\nstruct RefTuple[origin: Origin[mut=True]]:\n    var values: Tuple[ref[origin] Int, ref[origin] Int]\n\ndef main():\n    var left = 4\n    ref a = left\n    ref b = left\n    var pair = RefTuple((a, b))\n    print(pair.values[0], pair.values[1])\n";
     assert_eq!(
         run_compiled(tuple).expect("compile reference-valued nominal Tuple"),
-        "4 8\n"
+        "4 4\n"
     );
 
     let list = "@fieldwise_init\nstruct RefList[origin: Origin[mut=True]]:\n    var values: List[ref[origin] Int]\n\ndef main():\n    var left = 4\n    var right = 8\n    ref a = left\n    ref b = right\n    var pair = RefList([a, b])\n    pair.values[1] += 2\n    print(left, right)\n";

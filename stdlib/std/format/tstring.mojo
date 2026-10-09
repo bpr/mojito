@@ -6,7 +6,7 @@
 # string).  Formatting is deferred: write_to streams the captured elements in
 # source order, so print/String() consume a TString through the ordinary
 # Writable machinery.
-struct TString[*Ts: Movable & Writable](Movable, Writable):
+struct TString[*Ts: Movable & Writable](Deinitable, Movable, Writable):
     var storage: Tuple[*Self.Ts]
 
     def __init__(out self, var *args: *Self.Ts):

@@ -388,16 +388,16 @@ impl Flatten<'_> {
             // A `mut` parameter's slot holds the handle to the caller's
             // storage, so the transfer takes the referent out through it. A
             // value that owns no storage transfers as a copy and leaves the
-            // caller's value in place.
+            // caller's value in place; a captured pack owns its elements.
             if (var as usize) < self.f.n_params
                 && self.runtime_aliases.contains(&var)
                 && !self.pointer_valued_slot(var)
             {
                 let ty = self.var_types.get(&var).cloned();
-                if !ty
-                    .as_ref()
-                    .is_some_and(crate::mir::calls::owns_droppable_storage)
-                {
+                if !ty.as_ref().is_some_and(|ty| {
+                    crate::mir::calls::owns_droppable_storage(ty)
+                        || matches!(ty, Ty::VariadicPack(_))
+                }) {
                     return self.expr(inner);
                 }
                 let d = self.fresh(span(e), Some(var));

@@ -350,13 +350,8 @@ impl VmBackend {
                 // A handwritten constructor receives reference arguments as
                 // caller-frame handles, just like an ordinary ref-parameter call.
                 // Its synthetic `self` occupies parameter slot zero.
-                let constructor_index = if let Some((struct_name, _)) =
-                    mojito_symbol::symbol::lifecycle_constructor(&func.0)
-                {
-                    prog.structs
-                        .contains_key(struct_name)
-                        .then(|| prog.index_of(&func.0))
-                        .flatten()
+                let constructor_index = if prog.lifecycle_constructor(&func.0).is_some() {
+                    prog.index_of(&func.0)
                 } else if prog.structs.contains_key(&func.0) {
                     prog.index_of(&prog.constructor_name(&func.0, args.len()))
                 } else {

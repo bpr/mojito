@@ -207,7 +207,9 @@ pub fn match_fieldwise_slots(
     .map(|matched| matched.slots)
 }
 
-/// Convert a parser marker to the regular-parameter index space used by calls.
+/// Convert a parser marker to the regular-parameter index space used by
+/// calls. A named `out` result is not part of that space: the caller never
+/// supplies it.
 #[allow(
     clippy::single_option_map,
     reason = "all 14 call sites thread Option<usize> through unchanged"
@@ -216,7 +218,9 @@ pub fn regular_marker_index(params: &[FnParam], marker: Option<usize>) -> Option
     marker.map(|index| {
         params[..index]
             .iter()
-            .filter(|parameter| parameter.kind == ParamKind::Regular)
+            .filter(|parameter| {
+                parameter.kind == ParamKind::Regular && !parameter.is_named_result()
+            })
             .count()
     })
 }

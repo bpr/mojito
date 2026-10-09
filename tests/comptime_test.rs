@@ -162,7 +162,8 @@ fn variadic_construction_in_untaken_arm_is_matched_against_its_constructor() {
     // An explicit construction of a variadic struct inside an untaken arm is
     // matched against the template's constructor rather than typed from its
     // arguments alone: a collector takes exactly the bound elements, a
-    // fieldwise constructor its one tuple, and a `Tuple` its element list.
+    // fieldwise constructor its one tuple, and a `Tuple`'s collector its
+    // element list (the pin: "no matching function in initialization").
     let bag = "struct Bag[*Ts: Copyable & Movable & Deinitable](Copyable, Movable):\n    var storage: Tuple[*Self.Ts]\n\n    def __init__(out self, var *args: *Self.Ts):\n        self.storage = Tuple(*args^)\n\ndef f[n: Int]() -> Int:\n    comptime if n == 0:\n        return 1\n    else:\n        var b = Bag[Int, String](1)\n        return 2\n\ndef main():\n    print(f[0]())\n";
     let err = run(bag).unwrap_err();
     assert!(err.contains("no constructor overload matches"), "{err}");
@@ -172,7 +173,7 @@ fn variadic_construction_in_untaken_arm_is_matched_against_its_constructor() {
     let tuple = "def f[n: Int]() -> Int:\n    comptime if n == 0:\n        return 1\n    else:\n        var t = Tuple[Int, Bool](1, \"x\", 3.5)\n        return 2\n\ndef main():\n    print(f[0]())\n";
     let err = run(tuple).unwrap_err();
     assert!(
-        err.contains("'Tuple' expects 2 argument(s), got 3"),
+        err.contains("invalid call to 'Tuple': no constructor overload matches"),
         "{err}"
     );
 }
@@ -326,15 +327,16 @@ fn rebind_retypes_its_operand_and_checks_the_instantiation() {
 #[test]
 fn rebind_keys_specialization_without_compile_time_control_flow() {
     // A `rebind` alone makes a parametric body specialize per instantiation:
-    // the assertion is made on each clone, so an instantiation that satisfies
-    // it runs, one that does not is rejected, and a template no call
-    // instantiates is never judged.
+    // the assertion is made on each instance, so an instantiation that
+    // satisfies it runs, one that does not is rejected with the pin's
+    // "rebind input type ... does not match result type ...", and a template
+    // no call instantiates is never judged.
     let src = "def bump[T: Copyable](mut x: T):\n    rebind[Int](x) += 1\n\ndef main():\n    var v = 3\n    bump(v)\n    print(v)\n";
     assert_eq!(run(src).unwrap(), "4\n");
     let mismatch = "def bump[T: Copyable](mut x: T):\n    rebind[Int](x) += 1\n\ndef main():\n    var s = String(\"a\")\n    bump(s)\n    print(s)\n";
     let err = run(mismatch).unwrap_err();
     assert!(
-        err.contains("rebind: the input type does not match the result type"),
+        err.contains("rebind input type 'String' does not match result type 'Int'"),
         "{err}"
     );
     let uninstantiated =
@@ -425,7 +427,7 @@ fn runtime_pack_spread_rejects_shadowing_value_bindings() {
     let nested = "def inspect[*Ts: Movable & Deinitable](var *args: *Ts):\n    def nested(var args: Tuple[Int, Int]):\n        print(Tuple(*args^))\n    nested(Tuple(9, 10))\n\ndef main():\n    inspect(1, True)\n";
     let loop_binding = "def inspect[*Ts: Movable & Deinitable](var *args: *Ts):\n    for args in [Tuple(9, 10)]:\n        print(Tuple(*args))\n\ndef main():\n    inspect(1, True)\n";
     let comprehension = "def inspect[*Ts: Movable & Deinitable](var *args: *Ts):\n    var lengths = [len(Tuple(*args)) for args in [Tuple(9, 10)]]\n    print(lengths[0])\n\ndef main():\n    inspect(1, True)\n";
-    let sibling_method = "struct Pair[*Ts: Copyable & Movable](Copyable, Movable):\n    var storage: Tuple[*Self.Ts]\n    def __init__(out self, var *args: *Self.Ts):\n        self.storage = Tuple(*args^)\n    def shadow(self, var args: Tuple[Int, Int]):\n        print(Tuple(*args^))\n\ndef main():\n    var pair = Pair[Int](1)\n    pair.shadow(Tuple(9, 10))\n";
+    let sibling_method = "struct Pair[*Ts: Copyable & Deinitable](Copyable, Movable):\n    var storage: Tuple[*Self.Ts]\n    def __init__(out self, var *args: *Self.Ts):\n        self.storage = Tuple(*args^)\n    def shadow(self, var args: Tuple[Int, Int]):\n        print(Tuple(*args^))\n\ndef main():\n    var pair = Pair[Int](1)\n    pair.shadow(Tuple(9, 10))\n";
 
     for source in [block, nested, loop_binding, comprehension, sibling_method] {
         let error = run(source).unwrap_err();
@@ -499,13 +501,17 @@ fn nested_pack_reference_return_preserves_the_caller_handle() {
 
 #[test]
 fn nested_pack_forwarding_transfers_move_only_elements() {
-    let src = "struct Item(Movable):\n    var value: Int\n    def __init__(out self, value: Int):\n        self.value = value\n    def __init__(out self, *, deinit move: Self):\n        self.value = move.value\n    def __deinit__(deinit self):\n        print(\"drop\", self.value)\n\ndef outer() -> Int:\n    def first[*Ts: Movable & Deinitable](var *args: *Ts) -> Int:\n        return args[0].value\n    def relay[*Ts: Movable & Deinitable](var *args: *Ts) -> Int:\n        return first(*args^)\n    return relay(Item(42))\n\ndef main():\n    print(outer())\n";
+    // A pack body is checked once from its template, so the element is
+    // opaque and `rebind[Item]` licenses the field read, as at the pin
+    // (verified 2026-10-09: `drop 42` then `42`).
+    let src = "struct Item(Movable):\n    var value: Int\n    def __init__(out self, value: Int):\n        self.value = value\n    def __init__(out self, *, deinit move: Self):\n        self.value = move.value\n    def __deinit__(deinit self):\n        print(\"drop\", self.value)\n\ndef outer() -> Int:\n    def first[*Ts: Movable & Deinitable](var *args: *Ts) -> Int:\n        return rebind[Item](args[0]).value\n    def relay[*Ts: Movable & Deinitable](var *args: *Ts) -> Int:\n        return first(*args^)\n    return relay(Item(42))\n\ndef main():\n    print(outer())\n";
     assert_eq!(run(src).unwrap(), "drop 42\n42\n");
 }
 
 #[test]
 fn nested_whole_pack_forwarding_preserves_fixed_prefix_and_keyword_tail() {
-    let src = "struct Item(Movable):\n    var value: Int\n    def __init__(out self, value: Int):\n        self.value = value\n    def __init__(out self, *, deinit move: Self):\n        self.value = move.value\n    def __deinit__(deinit self):\n        print(\"drop\", self.value)\n\ndef outer() -> Int:\n    def score[*Ts: Movable & Deinitable](out result: Int, head: Int, var *values: *Ts, scale: Int = 1):\n        result = (head + values[0].value) * scale\n    def relay[*Ts: Movable & Deinitable](var *values: *Ts) -> Int:\n        return score(1, *values^, scale=2)\n    return relay(Item(20))\n\ndef main():\n    print(outer())\n";
+    // Verified on the pin 2026-10-09: `drop 20` then `42`.
+    let src = "struct Item(Movable):\n    var value: Int\n    def __init__(out self, value: Int):\n        self.value = value\n    def __init__(out self, *, deinit move: Self):\n        self.value = move.value\n    def __deinit__(deinit self):\n        print(\"drop\", self.value)\n\ndef outer() -> Int:\n    def score[*Ts: Movable & Deinitable](out result: Int, head: Int, var *values: *Ts, scale: Int = 1):\n        result = (head + rebind[Item](values[0]).value) * scale\n    def relay[*Ts: Movable & Deinitable](var *values: *Ts) -> Int:\n        return score(1, *values^, scale=2)\n    return relay(Item(20))\n\ndef main():\n    print(outer())\n";
     assert_eq!(run(src).unwrap(), "drop 20\n42\n");
 }
 
@@ -591,29 +597,22 @@ fn nested_pack_forwarding_rejects_multiple_or_mixed_segments() {
     let top_level_multiple = "def count[*Ts: Movable & Deinitable](var *values: *Ts) -> Int:\n    return len(values)\n\ndef relay[*Ts: Movable & Deinitable](var *values: *Ts) -> Int:\n    return count(*values^, *values^)\n\ndef main():\n    print(relay(1, True))\n";
     let top_level_mixed = "def count[*Ts: Movable & Deinitable](var *values: *Ts) -> Int:\n    return len(values)\n\ndef relay[*Ts: Movable & Deinitable](var *values: *Ts) -> Int:\n    return count(*values^, 9)\n\ndef main():\n    print(relay(1, True))\n";
 
-    // A top-level pack body is validated from its template, where the
-    // spread's placement is a structural call error; a body nested in a
-    // non-generic `def` is not validated and the elaborator reports it.
-    let error = run(multiple).unwrap_err();
-    assert!(
-        error.contains("at most one runtime-pack spread"),
-        "got: {error}"
-    );
-    let error = run(top_level_multiple).unwrap_err();
-    assert!(
-        error.contains("unpack markers must not appear more than once in a call"),
-        "got: {error}"
-    );
-    let error = run(mixed).unwrap_err();
-    assert!(
-        error.contains("cannot be mixed with explicit overflow arguments"),
-        "got: {error}"
-    );
-    let error = run(top_level_mixed).unwrap_err();
-    assert!(
-        error.contains("positional argument must not follow an unpack"),
-        "got: {error}"
-    );
+    // The spread's placement is a structural call error wherever the pack
+    // body is declared, with the pin's wording.
+    for source in [multiple, top_level_multiple] {
+        let error = run(source).unwrap_err();
+        assert!(
+            error.contains("unpack markers must not appear more than once in a call"),
+            "got: {error}"
+        );
+    }
+    for source in [mixed, top_level_mixed] {
+        let error = run(source).unwrap_err();
+        assert!(
+            error.contains("positional argument must not follow an unpack"),
+            "got: {error}"
+        );
+    }
 }
 
 #[test]
@@ -627,7 +626,7 @@ fn pack_forwarding_to_fixed_arity_remains_rejected() {
     let src = "def outer() -> Int:\n    def fixed(value: Int) -> Int:\n        return value\n    def relay[*Ts: Movable & Deinitable](var *args: *Ts) -> Int:\n        return fixed(*args^)\n    return relay(42)\n\ndef main():\n    print(outer())\n";
     let error = run(src).unwrap_err();
     assert!(
-        error.contains("call spread outside a specialized type pack"),
+        error.contains("unpack is only supported when the callee accepts a variadic"),
         "got: {error}"
     );
 }
@@ -654,22 +653,22 @@ fn nested_pack_named_result_is_not_part_of_the_call_abi() {
 
 #[test]
 fn nested_whole_pack_forwarding_can_chain_without_copying() {
-    let src = "struct Item(Movable):\n    var value: Int\n    def __init__(out self, value: Int):\n        self.value = value\n    def __init__(out self, *, deinit move: Self):\n        self.value = move.value\n\ndef outer() -> Int:\n    def first[*Ts: Movable & Deinitable](var *args: *Ts) -> Int:\n        return args[0].value\n    def second[*Ts: Movable & Deinitable](var *args: *Ts) -> Int:\n        return first(*args^)\n    def third[*Ts: Movable & Deinitable](var *args: *Ts) -> Int:\n        return second(*args^)\n    return third(Item(42))\n\ndef main():\n    print(outer())\n";
+    // Verified on the pin 2026-10-09: `42`.
+    let src = "struct Item(Movable):\n    var value: Int\n    def __init__(out self, value: Int):\n        self.value = value\n    def __init__(out self, *, deinit move: Self):\n        self.value = move.value\n\ndef outer() -> Int:\n    def first[*Ts: Movable & Deinitable](var *args: *Ts) -> Int:\n        return rebind[Item](args[0]).value\n    def second[*Ts: Movable & Deinitable](var *args: *Ts) -> Int:\n        return first(*args^)\n    def third[*Ts: Movable & Deinitable](var *args: *Ts) -> Int:\n        return second(*args^)\n    return third(Item(42))\n\ndef main():\n    print(outer())\n";
     assert_eq!(run(src).unwrap(), "42\n");
 }
 
 #[test]
 fn a_walrus_cannot_target_a_pack_template_name() {
-    // A walrus updates a variable already in scope, so a pack template's name
-    // is not a target: it never shadowed one, it is simply not a variable. The
-    // pinned Mojo rejects the same programs with "expression must be mutable in
-    // assignment".
+    // A walrus updates a variable already in scope, and a function's name,
+    // module-level or nested, is not one: the pin rejects both programs with
+    // "expression must be mutable in assignment".
     let top_level = "def choose[*Ts: Movable & Deinitable](var *args: *Ts) -> Int:\n    return len(args)\n\ndef main():\n    if True:\n        var ignored = (choose := 5)\n    print(choose(2))\n";
     let nested = "def outer():\n    def choose[*Ts: Movable & Deinitable](var *args: *Ts) -> Int:\n        return len(args)\n    if True:\n        var ignored = (choose := 5)\n    print(choose(2))\n\ndef main():\n    outer()\n";
     for source in [top_level, nested] {
         let error = run(source).unwrap_err();
         assert!(
-            error.contains("cannot assign to undeclared variable 'choose'"),
+            error.contains("expression must be mutable in assignment ('choose')"),
             "got: {error}"
         );
     }
@@ -983,15 +982,11 @@ fn heterogeneous_pack_indexes_expose_concrete_element_types() {
 }
 
 #[test]
-fn comptime_for_over_non_scalar_elements_in_a_generic_def_is_rejected() {
-    // The template carries a loop variable of a scalar element only; the
-    // elements of a module constant are typed, never dumped.
+fn comptime_for_over_non_scalar_elements_in_a_generic_def_unrolls() {
+    // A generic def's `comptime for` over a module constant of tuples
+    // unrolls once per element, as at the pin.
     let src = "comptime PAIRS = [(1, 2), (3, 4)]\n\ndef f[n: Int]():\n    comptime for p in PAIRS:\n        print(n)\n\ndef main():\n    f[1]()\n";
-    let error = run(src).unwrap_err();
-    assert!(
-        error.contains("'comptime for' over elements of type 'Tuple[Int, Int]' in a generic body"),
-        "{error}"
-    );
+    assert_eq!(run(src).unwrap(), "1\n1\n");
 }
 
 #[test]
@@ -1125,7 +1120,7 @@ fn value_struct_specialization_validates_a_diagnostic_where_clause() {
 
 #[test]
 fn variadic_struct_specialization_folds_a_diagnostic_where_clause() {
-    let template = "@fieldwise_init\nstruct CopyPack[*Ts: AnyType] where (conforms_to(Ts.values, Copyable), \"pack elements must be Copyable\"):\n    var values: Tuple[*Self.Ts]\n\n";
+    let template = "@fieldwise_init\nstruct CopyPack[*Ts: Movable & Deinitable] where (conforms_to(Ts.values, Copyable), \"pack elements must be Copyable\"):\n    var values: Tuple[*Self.Ts]\n\n";
     assert_eq!(
         run(&format!(
             "{template}def main():\n    var value = CopyPack[Int, Bool]((1, True))\n    print(value.values[0])\n"
@@ -1148,7 +1143,7 @@ fn variadic_struct_specialization_folds_a_diagnostic_where_clause() {
 fn variadic_struct_specializes_with_per_index_typed_storage() {
     // `p.storage[0]` has the exact element type (Int here), so it participates
     // in Int arithmetic; `p.storage[1]` is exactly Bool.
-    let src = "@fieldwise_init\nstruct Pair[*Ts: Copyable & Movable](Copyable, Movable):\n    var storage: Tuple[*Self.Ts]\n\ndef main():\n    var p = Pair[Int, Bool]((1, True))\n    var n: Int = p.storage[0] + 41\n    var b: Bool = p.storage[1]\n    print(n)\n    print(b)\n";
+    let src = "@fieldwise_init\nstruct Pair[*Ts: Copyable & Deinitable](Copyable, Movable):\n    var storage: Tuple[*Self.Ts]\n\ndef main():\n    var p = Pair[Int, Bool]((1, True))\n    var n: Int = p.storage[0] + 41\n    var b: Bool = p.storage[1]\n    print(n)\n    print(b)\n";
     assert_eq!(run(src).unwrap(), "42\nTrue\n");
 }
 
@@ -1156,7 +1151,7 @@ fn variadic_struct_specializes_with_per_index_typed_storage() {
 fn variadic_struct_element_type_mismatch_is_rejected() {
     // Per-index typing is exact: reading the Int element into a Bool is a type
     // error, not a common-bound erasure.
-    let src = "@fieldwise_init\nstruct Pair[*Ts: Copyable & Movable](Copyable, Movable):\n    var storage: Tuple[*Self.Ts]\n\ndef main():\n    var p = Pair[Int, Bool]((1, True))\n    var b: Bool = p.storage[0]\n    print(b)\n";
+    let src = "@fieldwise_init\nstruct Pair[*Ts: Copyable & Deinitable](Copyable, Movable):\n    var storage: Tuple[*Self.Ts]\n\ndef main():\n    var p = Pair[Int, Bool]((1, True))\n    var b: Bool = p.storage[0]\n    print(b)\n";
     let err = run(src).unwrap_err();
     assert!(err.contains("expected Bool, found Int"), "got: {err}");
 }
@@ -1166,7 +1161,7 @@ fn variadic_struct_distinct_instantiations_coexist() {
     // Two specializations of one template are distinct concrete structs with
     // independent field types (regression: annotation sites keyed by span
     // collided across specializations sharing the template's span).
-    let src = "@fieldwise_init\nstruct Pair[*Ts: Copyable & Movable](Copyable, Movable):\n    var storage: Tuple[*Self.Ts]\n\ndef main():\n    var a = Pair[Int, Bool]((1, True))\n    var b = Pair[Int, Int]((2, 3))\n    var c = Pair[String]((\"solo\",))\n    print(a.storage[0] + b.storage[1])\n    print(c.storage[0])\n";
+    let src = "@fieldwise_init\nstruct Pair[*Ts: Copyable & Deinitable](Copyable, Movable):\n    var storage: Tuple[*Self.Ts]\n\ndef main():\n    var a = Pair[Int, Bool]((1, True))\n    var b = Pair[Int, Int]((2, 3))\n    var c = Pair[String]((\"solo\",))\n    print(a.storage[0] + b.storage[1])\n    print(c.storage[0])\n";
     assert_eq!(run(src).unwrap(), "4\nsolo\n");
 }
 
@@ -1175,7 +1170,7 @@ fn variadic_struct_annotations_and_methods_use_the_specialization() {
     // The struct type appears in a def parameter annotation (rewritten to the
     // specialized struct), and a concrete method runs against the expanded
     // storage.
-    let src = "@fieldwise_init\nstruct Pair[*Ts: Copyable & Movable](Copyable, Movable):\n    var storage: Tuple[*Self.Ts]\n\n    def size(self) -> Int:\n        return len(self.storage)\n\ndef first_int(p: Pair[Int, Bool]) -> Int:\n    return p.storage[0]\n\ndef main():\n    var p: Pair[Int, Bool] = Pair[Int, Bool]((1, True))\n    var q = p.copy()\n    print(first_int(q))\n    print(q.size())\n";
+    let src = "@fieldwise_init\nstruct Pair[*Ts: Copyable & Deinitable](Copyable, Movable):\n    var storage: Tuple[*Self.Ts]\n\n    def size(self) -> Int:\n        return len(self.storage)\n\ndef first_int(p: Pair[Int, Bool]) -> Int:\n    return p.storage[0]\n\ndef main():\n    var p: Pair[Int, Bool] = Pair[Int, Bool]((1, True))\n    var q = p.copy()\n    print(first_int(q))\n    print(q.size())\n";
     assert_eq!(run(src).unwrap(), "1\n2\n");
 }
 
@@ -1183,34 +1178,42 @@ fn variadic_struct_annotations_and_methods_use_the_specialization() {
 fn variadic_struct_infers_type_arguments_from_constructor() {
     // A bare construction solves `*Ts` from the fieldwise `Tuple[*Self.Ts]`
     // field against the display it stores, through the discovery loop.
-    let src = "@fieldwise_init\nstruct Pair[*Ts: Copyable & Movable](Copyable, Movable):\n    var storage: Tuple[*Self.Ts]\n\ndef main():\n    var p = Pair((1, True))\n    print(p.storage[0])\n    print(p.storage[1])\n";
+    let src = "@fieldwise_init\nstruct Pair[*Ts: Copyable & Deinitable](Copyable, Movable):\n    var storage: Tuple[*Self.Ts]\n\ndef main():\n    var p = Pair((1, True))\n    print(p.storage[0])\n    print(p.storage[1])\n";
     assert_eq!(run(src).unwrap(), "1\nTrue\n");
 }
 
 #[test]
 fn variadic_struct_bare_template_use_is_rejected() {
-    let src = "@fieldwise_init\nstruct Pair[*Ts: Copyable & Movable](Copyable, Movable):\n    var storage: Tuple[*Self.Ts]\n\ndef main():\n    var x = Pair\n    print(\"unreachable\")\n";
+    // A type has no runtime value, as the pin reports.
+    let src = "@fieldwise_init\nstruct Pair[*Ts: Copyable & Deinitable](Copyable, Movable):\n    var storage: Tuple[*Self.Ts]\n\ndef main():\n    var x = Pair\n    print(\"unreachable\")\n";
     let err = run(src).unwrap_err();
     assert!(
-        err.contains("variadic struct 'Pair' requires explicit compile-time type arguments"),
+        err.contains(
+            "dynamic type values not permitted yet; try creating a 'comptime' instead of a 'var'"
+        ),
         "got: {err}"
     );
 }
 
 #[test]
-fn variadic_struct_supports_exactly_one_pack() {
-    // One trailing pack and no other compile-time parameters (current scope).
-    let src = "@fieldwise_init\nstruct Bad[T: Copyable & Movable, *Ts: Copyable & Movable](Copyable, Movable):\n    var storage: Tuple[*Self.Ts]\n\ndef main():\n    var x = Bad[Int, Bool]((True,))\n    print(\"unreachable\")\n";
-    let err = run(src).unwrap_err();
+fn variadic_struct_binds_its_pack_beside_another_parameter() {
+    // A trailing pack after an ordinary type parameter binds the remaining
+    // arguments, as at the pin.
+    let src = "@fieldwise_init\nstruct Two[T: Copyable & Deinitable, *Ts: Copyable & Deinitable](Copyable, Movable):\n    var head: Self.T\n    var storage: Tuple[*Self.Ts]\n\ndef main():\n    var x = Two[Int, Bool, String](3, (True, \"s\"))\n    print(x.head, x.storage[0], x.storage[1])\n    var y = Two[Int, Bool](1, (False,))\n    print(y.storage[0])\n";
+    assert_eq!(run(src).unwrap(), "3 True s\nFalse\n");
+    // Without a `Deinitable` bound on the pack, the `Tuple` field over it is
+    // not destructible.
+    let undestroyable = "struct Pair[*Ts: Copyable](Copyable):\n    var storage: Tuple[*Self.Ts]\n\ndef main():\n    pass\n";
+    let err = run(undestroyable).unwrap_err();
     assert!(
-        err.contains("supports exactly one type-parameter pack"),
+        err.contains("field 'storage' has non-'Deinitable' type 'Tuple[*Ts]'"),
         "got: {err}"
     );
 }
 
 #[test]
 fn variadic_struct_runtime_index_is_rejected() {
-    let src = "@fieldwise_init\nstruct Pair[*Ts: Copyable & Movable](Copyable, Movable):\n    var storage: Tuple[*Self.Ts]\n\ndef main():\n    var p = Pair[Int, Bool]((1, True))\n    var i = 0\n    print(p.storage[i])\n";
+    let src = "@fieldwise_init\nstruct Pair[*Ts: Copyable & Deinitable](Copyable, Movable):\n    var storage: Tuple[*Self.Ts]\n\ndef main():\n    var p = Pair[Int, Bool]((1, True))\n    var i = 0\n    print(p.storage[i])\n";
     let err = run(src).unwrap_err();
     assert!(err.contains("compile-time Int index"), "got: {err}");
 }
@@ -1220,13 +1223,13 @@ fn variadic_struct_pack_init_constructs_per_position() {
     // Real Mojo's Tuple constructor shape: `var *args: *Ts` binds the
     // heterogeneous pack (each argument checked against its per-index element
     // type) and `Tuple(*args^)` transfers the elements into storage.
-    let src = "struct Pair[*Ts: Copyable & Movable](Copyable, Movable):\n    var storage: Tuple[*Self.Ts]\n\n    def __init__(out self, var *args: *Self.Ts):\n        self.storage = Tuple(*args^)\n\n    def size(self) -> Int:\n        return len(self.storage)\n\ndef main():\n    var p = Pair[Int, String, Bool](7, \"x\", False)\n    print(p.size())\n    print(p.storage[0])\n    print(p.storage[1])\n    print(p.storage[2])\n";
+    let src = "struct Pair[*Ts: Copyable & Deinitable](Copyable, Movable):\n    var storage: Tuple[*Self.Ts]\n\n    def __init__(out self, var *args: *Self.Ts):\n        self.storage = Tuple(*args^)\n\n    def size(self) -> Int:\n        return len(self.storage)\n\ndef main():\n    var p = Pair[Int, String, Bool](7, \"x\", False)\n    print(p.size())\n    print(p.storage[0])\n    print(p.storage[1])\n    print(p.storage[2])\n";
     assert_eq!(run(src).unwrap(), "3\n7\nx\nFalse\n");
 }
 
 #[test]
 fn variadic_struct_pack_init_rejects_wrong_arity_and_types() {
-    let template = "struct Pair[*Ts: Copyable & Movable](Copyable, Movable):\n    var storage: Tuple[*Self.Ts]\n\n    def __init__(out self, var *args: *Self.Ts):\n        self.storage = Tuple(*args^)\n\n";
+    let template = "struct Pair[*Ts: Copyable & Deinitable](Copyable, Movable):\n    var storage: Tuple[*Self.Ts]\n\n    def __init__(out self, var *args: *Self.Ts):\n        self.storage = Tuple(*args^)\n\n";
     // Too few arguments for the pack.
     let arity = format!(
         "{template}def main():\n    var p = Pair[Int, String](1)\n    print(p.storage[0])\n"
@@ -1249,11 +1252,11 @@ fn variadic_struct_pack_init_rejects_wrong_arity_and_types() {
 
 #[test]
 fn variadic_struct_dependent_getitem_unrolls_per_element() {
-    // Real Mojo's dependent accessor `def __getitem__[i: Int](self) -> Ts[i]`
-    // unrolls into one concrete accessor per pack element at specialization;
-    // `p[k]` requires a compile-time-constant index, has the exact element
-    // type, and dispatches the checker-resolved accessor.
-    let src = "struct Pair[*Ts: Copyable & Movable](Copyable, Movable):\n    var storage: Tuple[*Self.Ts]\n\n    def __init__(out self, var *args: *Self.Ts):\n        self.storage = Tuple(*args^)\n\n    def __getitem__[i: Int](self) -> Self.Ts[i]:\n        return self.storage[i].copy()\n\n    def __len__(self) -> Int:\n        return len(self.storage)\n\ndef main():\n    var p = Pair[Int, String, Bool](7, \"mid\", True)\n    var n: Int = p[0]\n    var s: String = p[1]\n    var b: Bool = p[2]\n    print(n)\n    print(s)\n    print(b)\n    print(len(p))\n";
+    // The dependent accessor `def __getitem_param__[i: Int](self) -> Ts[i]`
+    // is instantiated per pack element; `p[k]` requires a compile-time-constant
+    // index, has the exact element type, and dispatches the checker-resolved
+    // accessor.
+    let src = "struct Pair[*Ts: Copyable & Deinitable](Copyable, Movable, Sized):\n    var storage: Tuple[*Self.Ts]\n\n    def __init__(out self, var *args: *Self.Ts):\n        self.storage = Tuple(*args^)\n\n    def __getitem_param__[i: Int](self) -> Self.Ts[i]:\n        return self.storage[i].copy()\n\n    def __len__(self) -> Int:\n        return len(self.storage)\n\ndef main():\n    var p = Pair[Int, String, Bool](7, \"mid\", True)\n    var n: Int = p[0]\n    var s: String = p[1]\n    var b: Bool = p[2]\n    print(n)\n    print(s)\n    print(b)\n    print(len(p))\n";
     assert_eq!(run_compiled(src).unwrap(), "7\nmid\nTrue\n3\n");
 }
 
@@ -1262,13 +1265,13 @@ fn current_getitem_param_hook_handles_places_and_rvalues() {
     // Current Mojo spells a compile-time parameter subscript hook
     // `__getitem_param__`. A place preserves its reference result, while an
     // implicitly-copyable rvalue uses the generated value-returning twin.
-    let src = "struct CurrentPair[*Ts: ImplicitlyCopyable & Copyable & Movable](Copyable, Movable):\n    var storage: Tuple[*Self.Ts]\n\n    def __init__(out self, var *args: *Self.Ts):\n        self.storage = Tuple(*args^)\n\n    def __getitem_param__[i: Int](ref self) -> ref[origin_of(self.storage)] Self.Ts[i]:\n        return self.storage[i]\n\ndef main():\n    var pair = CurrentPair[Int, String](7, \"current\")\n    print(pair[0], pair[1])\n    print(CurrentPair[Int, String](9, \"rvalue\")[0])\n";
+    let src = "struct CurrentPair[*Ts: ImplicitlyCopyable & Copyable & Deinitable](Copyable, Movable):\n    var storage: Tuple[*Self.Ts]\n\n    def __init__(out self, var *args: *Self.Ts):\n        self.storage = Tuple(*args^)\n\n    def __getitem_param__[i: Int](ref self) -> ref[origin_of(self.storage)] Self.Ts[i]:\n        return self.storage[i]\n\ndef main():\n    var pair = CurrentPair[Int, String](7, \"current\")\n    print(pair[0], pair[1])\n    print(CurrentPair[Int, String](9, \"rvalue\")[0])\n";
     assert_eq!(run_compiled(src).unwrap(), "7 current\n9\n");
 }
 
 #[test]
 fn current_getitem_param_reference_result_can_bind_an_explicit_ref() {
-    let src = "struct CurrentPair[*Ts: ImplicitlyCopyable & Copyable & Movable](Copyable, Movable):\n    var storage: Tuple[*Self.Ts]\n\n    def __init__(out self, var *args: *Self.Ts):\n        self.storage = Tuple(*args^)\n\n    def __getitem_param__[i: Int](ref self) -> ref[origin_of(self.storage)] Self.Ts[i]:\n        return self.storage[i]\n\ndef main():\n    var pair = CurrentPair[Int, String](7, \"current\")\n    ref alias = pair[0]\n    alias += 5\n    print(alias)\n    print(pair[0])\n";
+    let src = "struct CurrentPair[*Ts: ImplicitlyCopyable & Copyable & Deinitable](Copyable, Movable):\n    var storage: Tuple[*Self.Ts]\n\n    def __init__(out self, var *args: *Self.Ts):\n        self.storage = Tuple(*args^)\n\n    def __getitem_param__[i: Int](ref self) -> ref[origin_of(self.storage)] Self.Ts[i]:\n        return self.storage[i]\n\ndef main():\n    var pair = CurrentPair[Int, String](7, \"current\")\n    ref alias = pair[0]\n    alias += 5\n    print(alias)\n    print(pair[0])\n";
     assert_eq!(run_compiled(src).unwrap(), "12\n12\n");
 }
 
@@ -1281,24 +1284,36 @@ fn general_getitem_param_hook_uses_a_checked_value_parameter() {
 #[test]
 fn variadic_struct_dependent_getitem_dispatches_per_instantiation() {
     // Two specializations resolve their own accessor families independently.
-    let src = "struct Pair[*Ts: Copyable & Movable](Copyable, Movable):\n    var storage: Tuple[*Self.Ts]\n\n    def __init__(out self, var *args: *Self.Ts):\n        self.storage = Tuple(*args^)\n\n    def __getitem__[i: Int](self) -> Self.Ts[i]:\n        return self.storage[i].copy()\n\ndef main():\n    var a = Pair[Int, Bool](1, True)\n    var b = Pair[String, Int](\"s\", 5)\n    print(a[0] + b[1])\n    print(b[0])\n";
+    let src = "struct Pair[*Ts: Copyable & Deinitable](Copyable, Movable):\n    var storage: Tuple[*Self.Ts]\n\n    def __init__(out self, var *args: *Self.Ts):\n        self.storage = Tuple(*args^)\n\n    def __getitem_param__[i: Int](self) -> Self.Ts[i]:\n        return self.storage[i].copy()\n\ndef main():\n    var a = Pair[Int, Bool](1, True)\n    var b = Pair[String, Int](\"s\", 5)\n    print(a[0] + b[1])\n    print(b[0])\n";
     assert_eq!(run_compiled(src).unwrap(), "6\ns\n");
 }
 
 #[test]
 fn variadic_struct_dependent_getitem_rejects_bad_indices() {
-    let template = "struct Pair[*Ts: Copyable & Movable](Copyable, Movable):\n    var storage: Tuple[*Self.Ts]\n\n    def __init__(out self, var *args: *Self.Ts):\n        self.storage = Tuple(*args^)\n\n    def __getitem__[i: Int](self) -> Self.Ts[i]:\n        return self.storage[i].copy()\n\n";
+    let template = "struct Pair[*Ts: Copyable & Deinitable](Copyable, Movable):\n    var storage: Tuple[*Self.Ts]\n\n    def __init__(out self, var *args: *Self.Ts):\n        self.storage = Tuple(*args^)\n\n    def __getitem_param__[i: Int](self) -> Self.Ts[i]:\n        return self.storage[i].copy()\n\n";
+    // A compile-time subscript is `__getitem_param__`: `p[0]` passes no
+    // runtime argument a `__getitem__[i: Int](self)` could take.
+    let plain = template.replace("__getitem_param__", "__getitem__");
+    let err = run(&format!(
+        "{plain}def main():\n    var p = Pair[Int, Bool](1, True)\n    print(p[0])\n"
+    ))
+    .unwrap_err();
+    assert!(err.contains("invalid call to '__getitem__'"), "got: {err}");
     // A runtime-varying index cannot select among heterogeneous elements.
     let runtime = format!(
         "{template}def main():\n    var p = Pair[Int, Bool](1, True)\n    var i = 0\n    print(p[i])\n"
     );
     let err = run(&runtime).unwrap_err();
     assert!(err.contains("compile-time Int index"), "got: {err}");
-    // A constant index outside the pack.
+    // A constant index outside the pack names no element, so the read has
+    // no capability the pin's `print` could use.
     let range =
         format!("{template}def main():\n    var p = Pair[Int, Bool](1, True)\n    print(p[5])\n");
     let err = run(&range).unwrap_err();
-    assert!(err.contains("pack index in 0..2"), "got: {err}");
+    assert!(
+        err.contains("does not conform to trait 'Writable'"),
+        "got: {err}"
+    );
     // No `__setitem__`: element writes are rejected (immutability preserved).
     let write = format!(
         "{template}def main():\n    var p = Pair[Int, Bool](1, True)\n    p[0] = 9\n    print(p[0])\n"
@@ -1309,13 +1324,15 @@ fn variadic_struct_dependent_getitem_rejects_bad_indices() {
 
 #[test]
 fn variadic_struct_bound_violation_rejects_via_spec_conformance() {
-    // A pack element that breaks the struct's own conformance surface
-    // (non-Copyable element inside a Copyable struct) is rejected when the
-    // specialization's declared conformances are verified. Def-pack bounds are
-    // diagnosed independently at their requesting call, before specialization.
-    let src = "struct NoCopy(Movable):\n    var x: Int\n\n    def __init__(out self, x: Int):\n        self.x = x\n\nstruct Pair[*Ts: Copyable & Movable](Copyable, Movable):\n    var storage: Tuple[*Self.Ts]\n\n    def __init__(out self, var *args: *Self.Ts):\n        self.storage = Tuple(*args^)\n\ndef main():\n    var p = Pair[NoCopy, Int](NoCopy(1), 2)\n    print(p.storage[1])\n";
+    // A pack element that breaks the pack's bound (a non-Copyable element)
+    // is rejected at the construction that binds it, as the pin rejects the
+    // `Pair[NoCopy, Int]` application.
+    let src = "struct NoCopy(Movable):\n    var x: Int\n\n    def __init__(out self, x: Int):\n        self.x = x\n\nstruct Pair[*Ts: Copyable & Deinitable](Copyable, Movable):\n    var storage: Tuple[*Self.Ts]\n\n    def __init__(out self, var *args: *Self.Ts):\n        self.storage = Tuple(*args^)\n\ndef main():\n    var p = Pair[NoCopy, Int](NoCopy(1), 2)\n    print(p.storage[1])\n";
     let err = run(src).unwrap_err();
-    assert!(err.contains("not Copyable"), "got: {err}");
+    assert!(
+        err.contains("type 'NoCopy' for parameter '*Ts' does not conform to trait 'Copyable'"),
+        "got: {err}"
+    );
 }
 
 #[test]
@@ -1439,8 +1456,8 @@ fn module_comptime_binding_does_not_shadow_specialized_type_parameters() {
 fn nested_tuple_type_arguments_resolve_in_every_position() {
     // A `Tuple[...]` application resolves as a nested type argument (the
     // nullary default over a nested element, a `T: Defaultable` bound), and
-    // bare `Tuple(...)` calls nest without an annotation: the specialization
-    // key spells a minted element canonically across discovery rounds.
+    // bare `Tuple(...)` calls nest without an annotation. A value where an
+    // element type belongs is rejected whichever constructor would apply.
     let src = "def make[T: Defaultable]() -> T:\n    return T()\n\ndef main():\n    var t = Tuple[Int, Tuple[Int, Bool]]()\n    print(t[0], t[1][0], t[1][1])\n    var x = Tuple(1, True)\n    var u = Tuple(x, 2)\n    print(u[0][0], u[0][1], u[1])\n    var v = Tuple(Tuple(3, False), 4)\n    print(v[1])\n    var m = make[Tuple[Int, Tuple[Int]]]()\n    print(m[1][0])\n";
     assert_eq!(run_compiled(src).unwrap(), "0 0 False\n1 True 2\n4\n0\n");
     let err = run_compiled("def main():\n    var t = Tuple[Int, Tuple[3]]()\n    print(t[0])\n")

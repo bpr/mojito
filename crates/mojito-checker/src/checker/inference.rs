@@ -235,17 +235,35 @@ impl Checker {
                 .last()
                 .copied()
                 .unwrap_or_else(|| self.scopes.len().saturating_sub(1));
-            // A walrus only updates a name already in scope; it never introduces
-            // one, so an unknown target is the same defect as a var-less
-            // assignment.
+            // A walrus only updates a variable already in scope; it never
+            // introduces one, so an unknown target is the same defect as a
+            // var-less assignment, and a function's name is no variable.
             let Some(existing) = self.scopes[base..]
                 .iter()
                 .rev()
                 .find_map(|scope| scope.get(name))
                 .cloned()
             else {
-                return Err(TypeError::AssignToUndeclared(name.clone()));
+                let names_function = self
+                    .scopes
+                    .iter()
+                    .rev()
+                    .find_map(|scope| scope.get(name))
+                    .is_some_and(|ty| {
+                        matches!(
+                            ty,
+                            Ty::Func { .. } | Ty::GenericFunc { .. } | Ty::Overload(_)
+                        )
+                    });
+                return Err(if names_function {
+                    TypeError::ImmutableBinding(name.clone())
+                } else {
+                    TypeError::AssignToUndeclared(name.clone())
+                });
             };
+            if !self.is_binding_mutable(name) {
+                return Err(TypeError::ImmutableBinding(name.clone()));
+            }
             if !self.value_coerces(&found, &existing) {
                 return Err(TypeError::TypeMismatch {
                     expected: existing.to_string(),

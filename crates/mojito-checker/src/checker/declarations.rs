@@ -2403,6 +2403,19 @@ impl Checker {
                     Self::reject_unconstrained_pack(name, &decls, param_args, &patterns).and_then(
                         |()| self.resolve_use_params(name, &decls, param_args, &patterns, &arg_tys),
                     );
+                // A value spelled where the struct takes a type
+                // (`Tuple[Int, Tuple[3]]()`) is wrong whichever constructor
+                // the arguments select.
+                if let Err(
+                    error @ TypeError::TypeMismatch {
+                        expected, found, ..
+                    },
+                ) = &resolved_use
+                    && expected == "a type"
+                    && found == "a value"
+                {
+                    return Err(error.clone());
+                }
                 if let Err(
                     error @ (TypeError::TraitNotSatisfied { .. }
                     | TypeError::CannotInferTypeParam { .. }),

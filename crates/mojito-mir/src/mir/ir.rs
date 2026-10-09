@@ -1175,6 +1175,11 @@ pub enum MirInstr {
         /// `instantiated_contract` without inspecting the instructions which
         /// materialized compile-time argument registers.
         instantiated_args: Vec<TyArg>,
+        /// Like `Call::spread`: the position in `args` of a whole type pack
+        /// spread into a generic nested `def`'s collector
+        /// (`count(*args^)`). The elaborator expands it before it names the
+        /// lifted body's instance; concrete MIR carries none.
+        spread: Option<usize>,
     },
     /// A method call `recv.method(args)`. `recv_place` is `Some` when the receiver
     /// is a writable place (a variable / field-index chain), so a `mut self` method

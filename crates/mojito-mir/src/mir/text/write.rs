@@ -740,6 +740,7 @@ fn instruction_value(instruction: &MirInstr) -> String {
             param_decls,
             instantiated_contract,
             instantiated_args,
+            spread,
         } => record(
             tag,
             &[
@@ -768,6 +769,10 @@ fn instruction_value(instruction: &MirInstr) -> String {
                 (
                     "instantiated_args",
                     list(instantiated_args.iter().map(ty_arg)),
+                ),
+                (
+                    "spread",
+                    option(spread.map(|position| position.to_string())),
                 ),
             ],
         ),

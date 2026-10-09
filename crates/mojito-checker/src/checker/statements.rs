@@ -692,6 +692,15 @@ impl Checker {
                     }
                     return Ok(());
                 }
+                // A type has no runtime value: it binds through `comptime`.
+                if let ExprKind::Identifier(source) = &value.kind
+                    && self.lookup(source).is_none()
+                    && (self.structs.contains_key(source)
+                        || self.traits.contains_key(source)
+                        || self.comptime_aliases.contains_key(source))
+                {
+                    return Err(TypeError::DynamicTypeValue(name.clone()));
+                }
                 self.register_named_bindings(value)?;
                 let (contextual, origin_demands) = match ty.as_ref() {
                     Some(annotation) => {
@@ -2533,7 +2542,8 @@ impl Checker {
             },
             fn_ty.clone(),
         );
-        if let Err(e) = self.declare(name, fn_ty.clone()) {
+        // A function's name is not a variable: assigning it is rejected.
+        if let Err(e) = self.declare_immutable(name, fn_ty.clone()) {
             self.tparams.pop();
             return Err(e);
         }

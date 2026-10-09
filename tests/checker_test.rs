@@ -157,19 +157,26 @@ fn checked_declarations_preserve_shadowed_function_and_unused_capture_identities
 }
 
 #[test]
-fn checked_boundary_rekeys_cloned_source_provenance_by_occurrence() {
+fn checked_boundary_keys_template_source_provenance_by_occurrence() {
     let source = "def outer[*Ts: ImplicitlyCopyable & Writable & Deinitable](*args: *Ts):\n    comptime for i in range(Ts.length):\n        if True:\n            var x = args[i]\n            def show() {x}:\n                print(x)\n            show()\n\ndef main():\n    outer(1, True)\n";
     let parsed = parse(source).expect("parse");
     let elaborated = mojito::elaborate(parsed).expect("elaborate");
     let checked = check_program(&elaborated).expect("check");
-    // The clone unrolls the loop twice; the template's own `x` is not one
-    // of its copies.
-    let clone = checked
+    // The check types the template once: its `comptime for` stays in the
+    // body for the elaborator to unroll, so its `x` is one declaration and
+    // no instance of `outer` is declared above MIR.
+    assert!(
+        checked
+            .declarations()
+            .iter()
+            .all(|declaration| !declaration.name.starts_with("outer$"))
+    );
+    let template = checked
         .declarations()
         .iter()
-        .find(|declaration| declaration.name.starts_with("outer$"))
-        .expect("outer's clone");
-    let mut pending = clone.children.clone();
+        .find(|declaration| declaration.name == "outer")
+        .expect("outer's template");
+    let mut pending = template.children.clone();
     let mut xs = Vec::new();
     while let Some(id) = pending.pop() {
         let declaration = checked.declaration(id).expect("a child declaration");
@@ -178,9 +185,7 @@ fn checked_boundary_rekeys_cloned_source_provenance_by_occurrence() {
         }
         pending.extend(declaration.children.iter().copied());
     }
-    assert_eq!(xs.len(), 2);
-    assert!(xs[0].location.same_provenance(&xs[1].location));
-    assert_ne!(xs[0].location.syntax, xs[1].location.syntax);
+    assert_eq!(xs.len(), 1);
 
     for expression in checked.expressions() {
         assert_eq!(
@@ -954,13 +959,15 @@ fn rejects_type_arguments_on_non_generic_struct() {
 #[test]
 fn generic_call_sites_record_their_resolved_instantiations() {
     // Every bound-generic call site retains its resolved application (callee
-    // plus exact compile-time arguments) for instantiation discovery —
-    // explicit and inferred alike.
-    let program = Parser::new(Lexer::new(
+    // plus exact compile-time arguments) for the elaborator — explicit and
+    // inferred alike. A string literal argument materializes as `String`,
+    // so the program links the prelude.
+    let linked = mojito::link_source(
         "def pick[T: Movable](var x: T) -> T:\n    return x^\n\ndef main():\n    var a = pick[Int](1)\n    var b = pick(\"s\")\n",
-    ))
-    .parse_program()
-    .expect("parse error");
+        std::path::Path::new("checker_test.mojo"),
+    )
+    .expect("link error");
+    let program = mojito::elaborate(linked).expect("elaborate");
     let checked = check_program(&program).expect("check");
     let picks: Vec<String> = checked
         .generic_instantiations()
@@ -3009,8 +3016,10 @@ fn consuming_tuple_transforms_copy_only_implicitly_copyable_places() {
 }
 
 #[test]
-fn public_tuple_structurally_satisfies_comparable_during_discovery() {
-    ok(
+fn public_tuple_satisfies_comparable() {
+    // `Tuple` is the bundled stdlib's struct, so its conformance needs the
+    // standard library linked.
+    ok_std(
         "def ordered[T: Comparable](left: T, right: T) -> Bool:\n    return left < right\n\ndef main():\n    print(ordered(Tuple(1, 2), Tuple(1, 3)))\n",
     );
 }
@@ -3100,9 +3109,12 @@ fn rejects_tuple_wrong_element_type() {
 
 #[test]
 fn rejects_runtime_tuple_index() {
+    // `Tuple`'s subscript is its `__getitem_param__`, whose index is a
+    // parameter, as the pin's "cannot use a dynamic value in a parameter list".
     let e = err_std("var t: Tuple[Int, String] = (1, \"x\")\nvar i: Int = 0\nvar y = t[i]\n");
     assert!(
-        matches!(&e, TypeError::TypeMismatch { expected, .. } if expected == "a compile-time Int index"),
+        matches!(&e, TypeError::BadCall { func, reason }
+            if func == "__getitem_param__" && reason.contains("compile-time Int index")),
         "got {e:?}"
     );
 }
@@ -3168,7 +3180,7 @@ fn transferred_string_dict_can_forward_keyword_arguments() {
 
 #[test]
 fn generic_and_method_kwargs_share_collection_and_forwarding_checks() {
-    ok(
+    ok_std(
         "def generic_size[T: Copyable & Movable & Deinitable](var **options: T) -> Int:\n    return 0\n\n@fieldwise_init\nstruct Counter:\n    var bias: Int\n    def size[T: Copyable & Movable & Deinitable](self, var **options: T) -> Int:\n        return self.bias\n    def relay(self, var **options: Int) -> Int:\n        return self.size(**options^)\n    @staticmethod\n    def static_size[T: Copyable & Movable & Deinitable](var **options: T) -> Int:\n        return 0\n\ndef main():\n    var counter = Counter(10)\n    print(generic_size(first=1, second=2))\n    print(counter.size(left=\"a\", right=\"b\"))\n    print(counter.relay(one=1, two=2, three=3))\n    print(Counter.static_size(a=1, b=2, c=3, d=4))\n",
     );
     assert!(matches!(
@@ -3697,14 +3709,11 @@ fn method_argument_markers_and_keywords_are_checked() {
 }
 
 #[test]
-fn flags_advanced_forms_on_methods_and_traits() {
+fn accepts_advanced_forms_on_methods_and_traits() {
     ok(
         "@fieldwise_init\nstruct C:\n    var n: Int\n\n    def f(self, k: Int = 1):\n        pass\n\nvar c: C = C(0)\nc.f()\n",
     );
-    assert!(matches!(
-        err("trait T:\n    def m(self, *args: Int) -> Int:\n        ...\n"),
-        TypeError::Unsupported(_)
-    ));
+    ok("trait T:\n    def m(self, *args: Int) -> Int:\n        ...\n");
 }
 
 #[test]
@@ -4620,7 +4629,7 @@ fn trait_bound_diagnostics_name_the_blocking_field_or_operation() {
         "got {hashable}"
     );
 
-    let numeric = err(
+    let numeric = err_std(
         "def magnitude[T: Absable](value: T) -> T:\n    return abs(value)\n\ndef main():\n    print(magnitude(\"nope\"))\n",
     );
     assert!(
@@ -5945,13 +5954,16 @@ fn owned_iterable_rejects_the_legacy_owned_iter_member_name() {
 }
 
 #[test]
-fn variadic_struct_template_cannot_be_checked_raw() {
-    // A `struct S[*Ts]` template is compiled by compile-time specialization;
-    // reaching the checker unspecialized (i.e. without elaboration) is rejected
-    // with a contextual error rather than checked erased.
+fn variadic_struct_tuple_field_needs_a_destructible_pack() {
+    // A `struct S[*Ts]` template is checked once, with its pack symbolic. A
+    // `Tuple` field over the pack is `Deinitable` only when the pack's bound
+    // proves it, as the pin requires.
+    ok_std(
+        "struct Pair[*Ts: Copyable & Deinitable](Copyable, Movable):\n    var storage: Tuple[*Self.Ts]\n\ndef main():\n    pass\n",
+    );
     assert!(matches!(
-        err("struct Pair[*Ts: Copyable & Movable](Copyable, Movable):\n    var storage: Tuple[*Ts]\n\ndef main():\n    pass\n"),
-        TypeError::Unsupported(message) if message.contains("variadic struct 'Pair' is compiled by compile-time specialization")
+        err_std("struct Pair[*Ts: Copyable](Copyable, Movable):\n    var storage: Tuple[*Self.Ts]\n\ndef main():\n    pass\n"),
+        TypeError::FieldNotDeinitable { field, ty } if field == "storage" && ty == "Tuple[*Ts]"
     ));
 }
 

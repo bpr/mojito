@@ -141,9 +141,30 @@ pub(in crate::mir) fn instantiate_generic_callable_contract(
         ));
     }
     let argument_maps = generic_argument_maps(decls, arguments)?;
+    let packs = solved_packs(decls, arguments);
     let bound = HashSet::new();
-    let mut instantiate =
-        |ty: &Ty| instantiate_checked_type(ty, &argument_maps.types, &argument_maps.values, &bound);
+    let mut instantiate = |ty: &Ty| {
+        // A collector typed by a solved pack (`*args: *Ts`) collects its
+        // elements; a spread of it elsewhere (`Tuple[*Ts]`) lists them.
+        let expanded = match ty {
+            Ty::Param { binder, .. } => packs
+                .iter()
+                .find(|(pack, _)| *pack == binder.name.trim_start_matches('*'))
+                .map_or_else(
+                    || ty.clone(),
+                    |(_, elements)| Ty::RuntimePack(elements.clone()),
+                ),
+            _ => packs.iter().fold(ty.clone(), |ty, (pack, elements)| {
+                mojito_types::types::expand_pack_spread(&ty, pack, elements)
+            }),
+        };
+        instantiate_checked_type(
+            &expanded,
+            &argument_maps.types,
+            &argument_maps.values,
+            &bound,
+        )
+    };
     let instantiated = Ty::Func {
         environment: environment.clone(),
         params: params
@@ -377,4 +398,24 @@ pub(super) fn verify_callable_contract_call(
             ));
         }
     }
+}
+
+/// The packs `declarations` declares that `arguments` solve, each with its
+/// element types.
+fn solved_packs<'a>(declarations: &'a [ParamDecl], arguments: &[TyArg]) -> Vec<(&'a str, Vec<Ty>)> {
+    declarations
+        .iter()
+        .zip(arguments)
+        .filter_map(|(declaration, argument)| match (declaration, argument) {
+            (ParamDecl::Type { variadic: true, .. }, TyArg::Val(CtValue::Tuple(values))) => values
+                .iter()
+                .map(|value| match value {
+                    CtValue::Type(ty) => Some((**ty).clone()),
+                    _ => None,
+                })
+                .collect::<Option<Vec<_>>>()
+                .map(|elements| (declaration.name().trim_start_matches('*'), elements)),
+            _ => None,
+        })
+        .collect()
 }

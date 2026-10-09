@@ -1478,6 +1478,22 @@ impl<'a> Specializer<'a> {
             // A lowered default function has one instance per assignment of
             // the binders it reads, which only this default reaches.
             if let Some(CheckedConst::Evaluate { function }) = default {
+                // The pin evaluates a default once, at compile time, where
+                // the VM runs it at each call leaving the slot out: the two
+                // agree only for a default that does no I/O.
+                if let Some(effectful) = effectful_callee(self.source, function) {
+                    let parameter = declaration
+                        .param_names
+                        .get(index)
+                        .map_or("_", String::as_str);
+                    return Err(self.error(
+                        Some(owner),
+                        format!(
+                            "the default value of parameter '{parameter}' of '{owner}' is not \
+                             safe for VM-backed compile-time execution: it reaches `{effectful}`"
+                        ),
+                    ));
+                }
                 if self.functions.contains_key(function.as_str()) {
                     let (default_bindings, arguments) =
                         self.default_function_bindings(function, bindings)?;
@@ -1521,7 +1537,7 @@ impl<'a> Specializer<'a> {
                 continue;
             }
             let (bindings, arguments, _) =
-                self.infer_receiver_call(owner, target, param_ty, None, &[])?;
+                self.infer_receiver_call(owner, target, param_ty, None, &[], &[])?;
             let instance = self.enqueue(target, bindings, arguments)?;
             *target = instance;
         }
@@ -2205,6 +2221,7 @@ impl<'a> Specializer<'a> {
                                         &receiver_ty,
                                         None,
                                         &[],
+                                        &[],
                                     )?;
                                     self.enqueue(&write_string, bindings, arguments)?;
                                     // Each argument is formatted through its
@@ -2700,11 +2717,14 @@ impl<'a> Specializer<'a> {
             // A static method being run at compile time may be what a field
             // type of its own struct applies (`SIMD[dt, Self.width()]`): the
             // struct is declared by the body that uses it, once the method
-            // has run.
-            if self.demand_stack.iter().any(|demanded| {
-                mojito_symbol::symbol::split_method_symbol(demanded)
-                    .is_some_and(|(instance, _)| instance == name)
-            }) {
+            // has run. A struct whose field types are closed lays out now,
+            // for the method to construct it.
+            if template.fields.iter().any(|(_, ty)| is_symbolic(ty))
+                && self.demand_stack.iter().any(|demanded| {
+                    mojito_symbol::symbol::split_method_symbol(demanded)
+                        .is_some_and(|(instance, _)| instance == name)
+                })
+            {
                 self.discovered_types.remove(&Ty::Struct(name, arguments));
                 continue;
             }
@@ -2799,8 +2819,17 @@ impl<'a> Specializer<'a> {
             declaration.conformances = self.instance_conformances(template, &bindings);
             self.declare_output_struct(declaration);
             // The nominal String's `__copyinit__` stays too: native lowering
-            // bridges it and never reaches the body, but the VM runs it.
-            for method in ["__init__", "__copyinit__", "__moveinit__", "__deinit__"] {
+            // bridges it and never reaches the body, but the VM runs it. A
+            // `__call__` joins them: a value of the struct passed where a
+            // function type is expected is called through its dispatch
+            // symbol, which names no instance.
+            for method in [
+                "__init__",
+                "__copyinit__",
+                "__moveinit__",
+                "__deinit__",
+                "__call__",
+            ] {
                 let base = format!("{template_name}.{method}");
                 let candidates = self
                     .functions

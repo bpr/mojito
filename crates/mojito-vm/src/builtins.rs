@@ -51,7 +51,6 @@ pub const BUILTIN_CALLEES: &[&str] = &[
 /// `runtime::simd_method`, and the `DType` predicates.
 pub const INTRINSIC_METHODS: &[&str] = &[
     "__hash__",
-    "_update_with_simd",
     "__floor__",
     "__ceil__",
     "__trunc__",

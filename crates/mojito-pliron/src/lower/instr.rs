@@ -669,6 +669,7 @@ impl FnLowering<'_> {
                 param_decls,
                 instantiated_contract,
                 instantiated_args,
+                spread: _,
             } => {
                 // The contract is authoritative for the raising ABI; the
                 // checker-selected nominal target is consumed by

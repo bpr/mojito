@@ -313,7 +313,7 @@ impl Checker {
 
     /// The subject type of a reflection handle expression: `reflect[X]`, a
     /// bound handle name, or a `field_at[i]` / `field[name]` selection on one.
-    fn reflection_handle(&self, expr: &Expr) -> Result<Option<Ty>, TypeError> {
+    pub(super) fn reflection_handle(&self, expr: &Expr) -> Result<Option<Ty>, TypeError> {
         match &expr.kind {
             ExprKind::TypeApply { name, args } if name == "reflect" => {
                 self.reflection_subject(args).map(Some)

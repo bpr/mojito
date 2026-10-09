@@ -206,8 +206,13 @@ impl Elab<'_> {
                 env.insert(name.clone(), v);
                 // A `TypeList` value has no literal form: the binding stays
                 // for the check, which reads a kept condition's proposition
-                // over it (`tl.contains[Int]()`) from its initializer.
-                if in_fn && env[name].typelist_elements().is_some() {
+                // over it (`tl.contains[Int]()`) from its initializer, as does
+                // a reflection handle such an initializer may name
+                // (`comptime types = r.field_types()`).
+                if in_fn
+                    && (env[name].typelist_elements().is_some()
+                        || matches!(env[name], CtValue::Reflected(_)))
+                {
                     out.push(stmt.clone());
                     return Ok(());
                 }

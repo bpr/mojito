@@ -3441,19 +3441,24 @@ fn conflict_retained_template_keeps_dispatch_and_adapter_under_the_compiler() {
 }
 
 #[test]
-fn function_value_reference_retains_the_bound_generic_template() {
-    // A residual callable argument has no application to instantiate
-    // against above MIR, so the template is what the check keeps. (Local
-    // callable storage no longer infers a generic specialization, so the
-    // argument channel carries this shape.)
-    let mir = compiled_mir(
-        "def ident[T: ImplicitlyCopyable & Movable](x: T) -> T:\n    return x\n\ndef apply(cb: def(Int) -> Int, x: Int) -> Int:\n    return (cb)(x)\n\ndef main():\n    print(apply(ident, 41))\n",
-    );
-    let names = function_names(&mir);
-    assert!(names.contains(&"ident"), "{names:?}");
+fn generic_function_value_does_not_convert_to_a_concrete_callable() {
+    // A generic template has no application to instantiate against, so
+    // passing it where a concrete callable is expected is rejected at the
+    // call, as at the pin.
+    let error = Compiler::default()
+        .with_snippet_module_scope()
+        .compile_source(
+            "def ident[T: ImplicitlyCopyable & Movable](x: T) -> T:\n    return x\n\ndef apply(cb: def(Int) -> Int, x: Int) -> Int:\n    return (cb)(x)\n\ndef main():\n    print(apply(ident, 41))\n",
+            Path::new("mir_test.mojo"),
+        )
+        .expect_err("a generic function value is not a concrete callable");
     assert!(
-        !names.iter().any(|name| name.starts_with("ident$")),
-        "{names:?}"
+        matches!(
+            &error,
+            mojito::CompilerError::Type(mojito::TypeError::BadCall { func, reason })
+                if func == "apply" && reason.contains("value passed to 'cb' cannot be converted")
+        ),
+        "{error}"
     );
 }
 

@@ -127,6 +127,7 @@ impl Flatten<'_> {
             param_decls,
             instantiated_contract,
             instantiated_args,
+            spread: spread_position(args),
         });
         self.emit_nested_closure_argument_keepalives(args, kwargs);
         self.install_call_transfers(e, transfer_recv_place.as_ref(), &transfer_arg_places);
@@ -347,6 +348,7 @@ impl Flatten<'_> {
             param_decls,
             instantiated_contract,
             instantiated_args,
+            spread: spread_position(args),
         });
         self.emit_nested_closure_argument_keepalives(args, kwargs);
         self.install_call_transfers(e, None, &transfer_arg_places);

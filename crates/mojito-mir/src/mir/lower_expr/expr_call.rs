@@ -205,6 +205,7 @@ impl Flatten<'_> {
                 param_decls: Vec::new(),
                 instantiated_contract: None,
                 instantiated_args: Vec::new(),
+                spread: None,
             });
             let dest = self.fresh(span(e), None);
             self.emit(MirInstr::MakeVariant {
@@ -264,7 +265,7 @@ impl Flatten<'_> {
                 .and_then(|variable| self.var_types.get(&(variable as VarId)))
                 .cloned()
                 .or_else(|| self.f.reg_types.get(&callee.0).cloned());
-            let param_arg_regs = self.param_arg_regs(e, param_args);
+            let param_arg_regs = self.indirect_param_arg_regs(e, param_args);
             let param_decls = callable_ty
                 .as_ref()
                 .map(generic_callable_param_decls)
@@ -303,6 +304,7 @@ impl Flatten<'_> {
                 param_decls,
                 instantiated_contract,
                 instantiated_args,
+                spread: spread_position(args),
             });
             self.install_call_transfers(e, transfer_recv_place.as_ref(), &transfer_arg_places);
             return dest;
@@ -504,7 +506,7 @@ impl Flatten<'_> {
             let place = MirPlace::root(slot, callable_ty.clone());
             callee_place = place.is_typed().then_some(place);
         }
-        let param_arg_regs = self.param_arg_regs(e, param_args);
+        let param_arg_regs = self.indirect_param_arg_regs(e, param_args);
         let resolved = self.resolved_callable(e);
         let raises = self.checked_raises(e);
         self.emit_indirect_invocation(

@@ -261,9 +261,7 @@ impl VmBackend {
         // A resolved constructor symbol — an overload, or a closed instance's
         // own clone (`Box.__init__$y3:Int`) — constructs its struct through
         // that exact body.
-        if let Some((struct_name, "__init__")) = mojito_symbol::symbol::lifecycle_constructor(name)
-            && prog.structs.contains_key(struct_name)
-        {
+        if let Some((struct_name, "__init__")) = prog.lifecycle_constructor(name) {
             return self.construct_via_init(prog, struct_name, Some(name), args, kwargs);
         }
         match name {

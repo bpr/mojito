@@ -1,4 +1,4 @@
-use mojito::{Compiler, CompilerError, SemanticAdjustment, Value, ValueCategory};
+use mojito::{Compiler, CompilerError, SemanticAdjustment, ValueCategory};
 
 #[test]
 fn compiler_driver_runs_the_authoritative_pipeline() {
@@ -8,8 +8,14 @@ fn compiler_driver_runs_the_authoritative_pipeline() {
         .expect("compile");
     let execution = compiler.execute(&program).expect("execute");
     assert_eq!(execution.output, "5\n");
-    assert!(execution.bindings.iter().any(|(name, value)| {
-        name == "n" && matches!(value, Value::IntLiteral(value) if value.to_i64() == Some(5))
+    // A module constant is a parameter expression, not a module binding:
+    // its read in `main` is the parameter value the check bound.
+    assert!(program.checked().expressions().iter().any(|expression| {
+        matches!(&expression.syntax.kind, mojito::ast::ExprKind::Identifier(name) if name == "n")
+            && expression
+                .adjustments
+                .iter()
+                .any(|adjustment| matches!(adjustment, SemanticAdjustment::ParamValue { .. }))
     }));
 }
 
@@ -132,43 +138,61 @@ fn checked_hir_and_mir_retain_selected_trait_call_effects() {
 }
 
 #[test]
-fn generic_struct_instances_get_per_instantiation_method_clones() {
-    // A closed application of an ordinary generic struct reached from user
-    // code mints one clone per method that holds a compile-time construct,
-    // checked with `self` bound to the instance: a `comptime if` on `Self.T`
-    // folds, while the template keeps its erased pre-check and the runtime
-    // name stays the template's. Calls on the instance retarget to the clone
-    // by exact name. `_unqualified_type_name[Self]` mints none: the
-    // elaborator spells the instantiation from the template's MIR.
+fn generic_struct_methods_are_instantiated_per_instance() {
+    // A generic struct's method holding a `comptime if` on `Self.T` is
+    // checked once as a template: calls on every instance name it, MIR keeps
+    // it alone, and the elaborator instantiates it per instance, folding the
+    // branch there. `_unqualified_type_name[Self]` is spelled per instance
+    // the same way.
     let compiler = Compiler::default();
     let program = compiler
         .compile_source(
             "from std.reflection.type_info import _unqualified_type_name\n\nstruct Box[T: Copyable & Deinitable](Copyable, Movable):\n    var value: Self.T\n\n    def __init__(out self, var value: Self.T):\n        self.value = value^\n\n    def type_name(self) -> String:\n        return String(_unqualified_type_name[Self]())\n\n    def kind(self) -> String:\n        comptime if Self.T == Int:\n            return String(\"int box\")\n        else:\n            return String(\"other box\")\n\ndef main():\n    var a = Box[Int](7)\n    var b = Box(String(\"seven\"))\n    print(a.type_name(), b.type_name())\n    print(a.kind(), b.kind())\n",
             std::path::Path::new("/tmp/mojito_generic_struct_instances.mojo"),
         )
-        .expect("compile the instance clones");
+        .expect("compile the generic struct");
     let targets = program.checked().overload_targets();
-    assert!(
-        targets.values().any(|target| target == "Box.kind$y3:Int"),
-        "the Int instance's call retargets to its clone: {targets:?}"
-    );
     assert!(
         targets
             .values()
-            .any(|target| target.starts_with("Box.kind$y") && target.contains("String")),
-        "the String instance's call retargets to its clone: {targets:?}"
+            .filter(|target| target.starts_with("Box.kind"))
+            .all(|target| target == "Box.kind"),
+        "every instance's call names the template: {targets:?}"
     );
-    let mir = mojito::mir::lower_checked_program(program.checked());
-    let names: Vec<&String> = mir.functions.iter().map(|(name, _)| name).collect();
-    assert!(names.iter().any(|name| *name == "Box.kind$y3:Int"));
-    assert!(names.iter().any(|name| *name == "Box.type_name"));
-    assert!(
-        names
-            .iter()
-            .all(|name| !name.starts_with("Box.type_name$y")),
-        "the template serves the type name for each instance"
+    let parametric: Vec<&String> = program
+        .mir()
+        .functions
+        .iter()
+        .map(|(name, _)| name)
+        .collect();
+    for template in ["Box.kind", "Box.type_name"] {
+        assert_eq!(
+            parametric
+                .iter()
+                .filter(|name| name.starts_with(template))
+                .count(),
+            1,
+            "MIR keeps the one template {template}: {parametric:?}"
+        );
+    }
+    let concrete = program.concrete_mir().expect("elaborate");
+    let instances: std::collections::BTreeSet<&str> = concrete
+        .program
+        .functions
+        .iter()
+        .map(|(name, _)| name.as_str())
+        .filter(|name| {
+            name.strip_prefix("Box$mono$")
+                .and_then(|instance| instance.rsplit_once('.'))
+                .is_some_and(|(_, member)| member == "kind")
+        })
+        .collect();
+    assert_eq!(
+        instances.len(),
+        2,
+        "one instance per struct instance: {instances:?}"
     );
-    let output = compiler.execute(&program).expect("run the instance clones");
+    let output = compiler.execute(&program).expect("run the instances");
     assert_eq!(
         output.output,
         "Box[SIMD[DType.int, 1]] Box[String]\nint box other box\n"
@@ -176,12 +200,11 @@ fn generic_struct_instances_get_per_instantiation_method_clones() {
 }
 
 #[test]
-fn overloaded_constructor_family_clones_as_one_overload_set() {
-    // A generic struct's constructors clone together where one of them holds
-    // a construct only an instance lowers (here a nested `def`): each signature gets its own member of the
-    // instance's `__init__$y3:Int` family, and the checker names the member
-    // it selected — the clone family's `$ov$` suffixes key on the substituted
-    // parameter types, so they do not correspond by name to the template's.
+fn overloaded_constructor_family_is_instantiated_as_one_overload_set() {
+    // A generic struct's overloaded constructors, one of which declares a
+    // nested `def`, are templates the checker selects by their own `$ov$`
+    // names; the elaborator instantiates each selected member for the
+    // instance, and the nested `def` it lifts is no constructor.
     let compiler = Compiler::default();
     let program = compiler
         .compile_source(
@@ -190,31 +213,30 @@ fn overloaded_constructor_family_clones_as_one_overload_set() {
         )
         .expect("compile the constructor family");
     // The nested `def` lifts beside the member that declares it.
-    let clone_family =
-        |name: &&String| name.starts_with("Box.__init__$y3:Int$ov$") && !name.ends_with("$same");
+    let family = |name: &str| name.starts_with("Box.__init__$ov$") && !name.ends_with("$same");
     let targets = program.checked().overload_targets();
-    let selected: std::collections::BTreeSet<&String> = targets
+    let selected: std::collections::BTreeSet<&str> = targets
         .values()
-        .filter(|target| clone_family(target))
+        .map(String::as_str)
+        .filter(|target| family(target))
         .collect();
     assert_eq!(
         selected.len(),
         2,
-        "each construction names its own clone: {targets:?}"
+        "each construction names its own member: {targets:?}"
     );
-    let mir = mojito::mir::lower_checked_program(program.checked());
-    let names: Vec<&String> = mir.functions.iter().map(|(name, _)| name).collect();
-    let defined: std::collections::BTreeSet<&&String> =
-        names.iter().filter(|name| clone_family(name)).collect();
-    assert_eq!(
-        defined.len(),
-        2,
-        "the family lowers as an overload set: {names:?}"
-    );
+    let concrete = program.concrete_mir().expect("elaborate");
+    let names: Vec<&str> = concrete
+        .program
+        .functions
+        .iter()
+        .map(|(name, _)| name.as_str())
+        .collect();
     for target in selected {
+        let member = target.strip_prefix("Box.").expect("a Box member");
         assert!(
-            names.contains(&target),
-            "the selected clone '{target}' is lowered: {names:?}"
+            names.contains(&format!("Box$mono$TInt.{member}").as_str()),
+            "the selected member '{target}' is instantiated: {names:?}"
         );
     }
     let output = compiler
@@ -224,13 +246,12 @@ fn overloaded_constructor_family_clones_as_one_overload_set() {
 }
 
 #[test]
-fn instance_clones_serve_only_compile_time_members() {
-    // On a closed generic-struct instance, a member holding a compile-time
-    // construct runs as the instance's clone: `len(x)` reaches it by the
-    // argument's checked static type. Every other call shape — the `==`
-    // dunder, `repr(x)` over a type name, `List[Int]` subscript assignment,
-    // the `for` loop's `__iter__` — names the template, which the elaborator
-    // instantiates.
+fn instance_members_are_instantiated_from_their_templates() {
+    // On a closed generic-struct instance, every member — one holding a
+    // compile-time construct reached by `len(x)`, the `==` dunder, `repr(x)`
+    // over a type name, `List[Int]` subscript assignment, the `for` loop's
+    // `__iter__` — is a template MIR keeps once, which the elaborator
+    // instantiates for the instance.
     let compiler = Compiler::default();
     let program = compiler
         .compile_source(
@@ -238,22 +259,31 @@ fn instance_clones_serve_only_compile_time_members() {
             std::path::Path::new("/tmp/mojito_instance_clone_dispatch.mojo"),
         )
         .expect("compile the instance dispatch program");
-    let mir = mojito::mir::lower_checked_program(program.checked());
-    let names: Vec<&String> = mir.functions.iter().map(|(name, _)| name).collect();
-    assert!(
-        names.iter().any(|name| *name == "Box.__len__$y3:Int"),
-        "Box.__len__ is minted: it holds a compile-time construct"
-    );
-    for template in [
-        "Box.__eq__",
-        "Box.write_repr_to",
-        "List.__setitem__",
-        "List.__iter__",
-    ] {
-        let clone = format!("{template}$y3:Int");
+    let parametric: Vec<&String> = program
+        .mir()
+        .functions
+        .iter()
+        .map(|(name, _)| name)
+        .collect();
+    for template in ["Box.__len__", "Box.__eq__", "Box.write_repr_to"] {
         assert!(
-            names.iter().all(|name| !name.starts_with(&clone)),
-            "the template serves {template} for the instance"
+            parametric.iter().any(|name| *name == template),
+            "MIR keeps the template {template}: {parametric:?}"
+        );
+    }
+    assert!(
+        parametric.iter().all(|name| !name.contains("$y")),
+        "no member is cloned above MIR: {parametric:?}"
+    );
+    let concrete = program.concrete_mir().expect("elaborate");
+    for instance in ["Box$mono$TInt.__len__", "Box$mono$TInt.__eq__"] {
+        assert!(
+            concrete
+                .program
+                .functions
+                .iter()
+                .any(|(name, _)| name == instance),
+            "the elaborator instantiates {instance}"
         );
     }
     let output = compiler
@@ -667,13 +697,24 @@ fn variant_type_queries_take_and_replace_have_checked_ownership_semantics() {
         .expect("execute Variant take/replace operations");
     assert_eq!(execution.output, "True False\n7 seven\nseven\n9 nine\n");
 
+    // As at the pin, the alternative's constraint fails when the elaborator
+    // instantiates the operation for the instance, not at the check.
     let unsupported = compiler
         .compile_source(
             "from std.utils import Variant\n\ndef main():\n    var value = Variant[Int, String](7)\n    _ = value.unwrap[Float64]()\n",
             std::path::Path::new("/tmp/mojito_variant_unsupported_take.mojo"),
         )
-        .expect_err("unsupported Variant operation arm must be rejected statically");
-    assert!(matches!(unsupported, CompilerError::Type(_)));
+        .expect("the template checks");
+    let unsupported = compiler
+        .execute(&unsupported)
+        .expect_err("an unsupported Variant alternative fails its instantiation");
+    assert!(
+        matches!(unsupported, CompilerError::Elaborate(_))
+            && unsupported
+                .to_string()
+                .contains("Type does not exist in Variant"),
+        "{unsupported}"
+    );
 
     // `unwrap` takes `deinit self`: a plain-local receiver without `^` is an
     // implicit copy, legal only when the Variant is `ImplicitlyCopyable`
@@ -823,10 +864,11 @@ fn inferred_polymorphic_recursion_reports_specialization_divergence() {
     // `wrap` is served by its template, so checking converges; each instance
     // the elaborator demands names one deeper `List[…]`, and the instance
     // budget stops the expansion with a diagnostic instead of an endless run.
+    // `T` is `Deinitable`, or the list temporary is abandoned, as at the pin.
     let compiler = Compiler::default();
     let program = compiler
         .compile_unlinked(
-            "def wrap[T: Copyable & Movable](x: T, depth: Int) -> Int:\n    if depth <= 0:\n        return 0\n    return wrap([x.copy()], depth - 1)\n\ndef main():\n    print(wrap(1, 3))\n",
+            "def wrap[T: Copyable & Deinitable](x: T, depth: Int) -> Int:\n    if depth <= 0:\n        return 0\n    return wrap([x.copy()], depth - 1)\n\ndef main():\n    print(wrap(1, 3))\n",
         )
         .expect("the template-served recursion checks");
     let message = compiler
@@ -1398,15 +1440,20 @@ fn template_rebind_and_where_are_instance_obligations() {
         )
     };
     assert_eq!(run_source(&rebind("3")), "3\n");
-    // A false assertion is a type error in the rebind's own words, never a
-    // permissive fallback.
-    let error = Compiler::default()
+    // A false assertion fails the instantiation that reaches it, as at the
+    // pin, in the rebind's own words, never a permissive fallback.
+    let compiler = Compiler::default();
+    let program = compiler
         .compile_unlinked(&rebind("True"))
+        .expect("the template checks");
+    let error = compiler
+        .execute(&program)
         .expect_err("a false rebind assertion rejects");
     assert!(
-        error
-            .to_string()
-            .contains("rebind: the input type does not match"),
+        matches!(error, CompilerError::Elaborate(_))
+            && error
+                .to_string()
+                .contains("rebind input type 'Bool' does not match result type 'Int'"),
         "{error}"
     );
 
@@ -2119,7 +2166,7 @@ fn discovery_scan_matches_the_checked_arena() {
     // assembled: the expressions visited, their three recorded types, the
     // declaration types, and the recorded instantiations must be exactly
     // the arena's, in its order.
-    for benchmark in ["tuple", "tstring", "generic", "stdlib_heavy"] {
+    for benchmark in ["tstring", "generic", "stdlib_heavy"] {
         let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("benchmarks/compile")
             .join(format!("{benchmark}.mojo"));

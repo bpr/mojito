@@ -1211,10 +1211,15 @@ impl Flatten<'_> {
             }
             variable
         };
+        let place = MirPlace::root(variable, self.var_types.get(&variable).cloned());
+        // A reference-context lowering already handed back a handle to the
+        // slot, which the call binds as it stands.
+        if matches!(self.f.reg_types.get(&value.0), Some(Ty::Ref(_))) {
+            return (value, Some(place));
+        }
         // The slot now owns the temporary, so a use that copies it (a
         // consuming receiver or argument) reads the slot, keeping it live
         // until the copy, not the register the store moved from.
-        let place = MirPlace::root(variable, self.var_types.get(&variable).cloned());
         let loaded = self.fresh_typed(
             expression.source_span(),
             Some(variable),

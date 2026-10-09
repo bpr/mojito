@@ -566,7 +566,7 @@ impl VmBackend {
         else {
             return Ok(None);
         };
-        if mojito_symbol::symbol::lifecycle_constructor(&func.0).is_some() {
+        if prog.lifecycle_constructor(&func.0).is_some() {
             return Ok(None);
         }
         let Some(index) = prog.index_of(&func.0) else {

@@ -613,7 +613,7 @@ fn param_expr_closed_specialization_keys() {
         },
         CtValue::Type(Box::new(Ty::Struct(
             "Buf".into(),
-            vec![TyArg::Val(n.clone())].into(),
+            vec![TyArg::Val(n)].into(),
         ))),
     ];
     for value in &open {

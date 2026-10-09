@@ -169,14 +169,17 @@ fn copyable_nominal_tuple_element_transfer_remains_a_copy() {
 #[test]
 fn moved_variadic_pack_becomes_tuple_storage_without_double_drop() {
     let src = format!(
-        "{MOVABLE_NOISY}struct PackHolder[*Ts: Movable](Movable):\n    var storage: Tuple[*Self.Ts]\n\n    def __init__(out self, var *args: *Self.Ts):\n        self.storage = Tuple(*args^)\n\ndef main():\n    var value = PackHolder[Noisy, Int](Noisy(7), 9)\n    print(\"use\", value.storage[1])\n    var keep_alive = value.storage[1]\n"
+        "{MOVABLE_NOISY}struct PackHolder[*Ts: Movable & Deinitable](Movable):\n    var storage: Tuple[*Self.Ts]\n\n    def __init__(out self, var *args: *Self.Ts):\n        self.storage = Tuple(*args^)\n\ndef main():\n    var value = PackHolder[Noisy, Int](Noisy(7), 9)\n    print(\"use\", value.storage[1])\n    var keep_alive = value.storage[1]\n"
     );
     let compiler = Compiler::default().with_snippet_module_scope();
     let compiled = compiler
         .compile_source(&src, Path::new("drops_test.mojo"))
         .expect("compile heterogeneous pack transfer");
-    let mir = mojito::mir::lower_checked_program(compiled.checked());
-    let moved_indices = mir
+    // The template moves the collector whole; its instance moves each
+    // element out of it.
+    let concrete = compiled.concrete_mir().expect("elaborate");
+    let moved_indices = concrete
+        .program
         .functions
         .iter()
         .flat_map(|(_, function)| &function.blocks)

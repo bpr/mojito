@@ -6,6 +6,24 @@ to evolve under the `0.x` compatibility rules.
 
 ## [Unreleased]
 
+### Fixed
+
+- Regressions the 2026-10-09 overnight gate found after the cloner and the
+  AST compile-time route were deleted (R9, R10) and pointer-backed results
+  landed (R196). The VM indexes an elaborated `Tuple$mono$…` result
+  (`divmod`, `Slice.indices`); a callable struct passed as a function value
+  keeps its `__call__`; a generic `__setitem__[T]` and a nested generic
+  `def` over a pack instantiate, a nested call recording its `*args^` spread
+  (MIR text schema 1.40); a closed bracket argument on an indirect call keeps
+  its register; a struct-returning static method in a type argument
+  (`Tagged[Extent.square(4)]`) is evaluated by the elaborator; a temporary
+  bound to a `ref` field constructor stays borrowed; an elaborated type name
+  spells its template (`AHasher[...]`); a module constant no longer leaks
+  into a stdlib local of the same name; and the checker again reports the
+  pin's rejections for a bare struct value, a non-`Deinitable` pack field, a
+  walrus onto a function name, and a captured pack moved out whole.
+  Residues: R526–R531.
+
 ### Added
 
 - VM compile-time results now retain pointer-backed storage (R196).

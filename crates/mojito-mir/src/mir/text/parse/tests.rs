@@ -881,6 +881,7 @@ fn instruction_families_reprint_byte_identically() {
                 transfers: TransferSet(Vec::new()),
             }),
             instantiated_args: vec![TyArg::Ty(Ty::Int)],
+            spread: None,
         },
         MirInstr::MethodCall {
             dest: Reg(12),
