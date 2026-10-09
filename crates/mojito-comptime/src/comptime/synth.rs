@@ -97,7 +97,6 @@ pub(super) fn synthesize_copyable_copy(program: &mut [Stmt]) {
             raises_type,
             ret: Some(Type::SelfType),
             where_clauses,
-            self_ty: None,
             body,
             provenance: mojito_ast::ast::MethodProvenance::SynthesizedDefault,
         });
@@ -197,7 +196,6 @@ pub(super) fn synthesize_hashable_hash(program: &mut [Stmt]) {
             raises_type: None,
             ret: None,
             where_clauses,
-            self_ty: None,
             body,
             provenance: mojito_ast::ast::MethodProvenance::SynthesizedDefault,
         });

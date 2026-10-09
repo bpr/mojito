@@ -984,6 +984,13 @@ impl Checker {
             {
                 projection
             }
+            // A type's value member (`T.K`, `Self.T.K`): the member read the
+            // elaborator answers per instance.
+            ExprKind::Member { object, field }
+                if let Some(member) = self.type_member_value(object, field) =>
+            {
+                member
+            }
             // A comparison, a boolean connective, `not`, or a conditional
             // over compile-time values, in the operators' canonical form.
             ExprKind::Infix(

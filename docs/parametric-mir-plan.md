@@ -418,30 +418,24 @@ interleaved, debug profile, `total` from `--timings`, median of three:
 
 #### The first step (2026-10-01)
 
-A method of an ordinary generic struct with no compile-time construct in its
-body mints no clone on a plain-data instance. The elaborator instantiates
-its template's MIR, lifecycle members and constructors included.
+No method of an ordinary generic struct mints a clone, per instance or per
+call. The elaborator instantiates its template's MIR, lifecycle members and
+constructors included, whatever compile-time construct the body holds or
+reaches, and no `def` is compile-time-keyed (R8, 2026-10-08).
 
-- **What still clones.** A method whose body holds or reaches a compile-time
-  construct, and every method of an instance whose argument carries a loan or
-  a callable. Roadmap track `pmir` has one entry for each reason.
 - **Discovery.** No clone check walks a template-served body at an instance's
-  arguments. The driver reads from the template's checked types which
-  instances the body reaches and which methods only an instance's own check
-  can serve (`src/compiler/template_reach.rs`), and the elaborator hands a
-  template body's call on a closed receiver to that instance's clone where
-  one exists.
+  arguments, and the driver requests no instance: `native::mono` finds the
+  instances a template body reaches from its MIR.
 - **The declaration checks the contract named.** A `^` transfer of a
   parameter type needs a bound proving `Movable` (row 10). An `@implicit`
-  conversion is selected once where the template serves the method (row 20);
-  a method that still clones repeats it, and that is roadmap R112.
+  conversion is selected once, on the declaration (row 20).
 - **The serialized `Call`.** A static call records its spelled receiver type,
   from which the elaborator binds the struct's parameters (text schema 1.8).
 - **The erased oracle.** It agrees on every fixture but the
   `ERASED_VM_RESIDUE` rows (`tests/corpus_test.rs`). An erased value carries
-  no type arguments, so the oracle cannot hand a template-served body's call
-  to the receiver instance's clone as the elaborator does, and it cannot
-  tell a place pointer bound to a parameter from a reference.
+  no type arguments, so the oracle cannot spell a type name over a
+  parameter, and it cannot tell a place pointer bound to a parameter from a
+  reference.
 - **Availability.** A member's `where` clause and each struct's conformance
   rows reach MIR, and the elaborator decides the clause. Its `speculative`
   set and the rollback are gone (text schema 1.9).

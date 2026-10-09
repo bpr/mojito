@@ -524,8 +524,8 @@ fn param_expr_closed_specialization_keys() {
     use mojito::ast::Dtype;
     use mojito::ct::CtLane;
     use mojito::param_expr::{MetaTy, ParamContext, ParamId};
-    use mojito::symbol::{SpecializationKeyPart, mangle, mangle_parts, specialized_method_values};
-    use mojito::{CtValue, ParamDecl, Ty, TyArg};
+    use mojito::symbol::{SpecializationKeyPart, mangle, mangle_parts};
+    use mojito::{CtValue, Ty, TyArg};
 
     let float_literal = mojito::literal::FloatLiteral::parse_exact("157/50").expect("exact");
     let rendered = float_literal.to_string();
@@ -620,34 +620,6 @@ fn param_expr_closed_specialization_keys() {
         let error = mangle("f", &[CtValue::Int(1), value.clone()]).expect_err("a residual key");
         assert_eq!(error.template, "f");
     }
-
-    // A residual value is not silently omitted from a method's value list; a
-    // deferred callable slot is the one intentional omission.
-    let value_decl = |name: &str| ParamDecl::Value {
-        id: mojito::param_expr::ParamId::new(&format!("$test:{name}"), 0),
-        name: name.into(),
-        ty: Box::new(Ty::Int),
-        default: None,
-        callable_default: None,
-        infer_only: false,
-        variadic: false,
-        constraints: Vec::new(),
-    };
-    let decls = [value_decl("a"), value_decl("b")];
-    assert_eq!(
-        specialized_method_values(&decls, &[TyArg::Val(CtValue::Int(1)), TyArg::Val(n)]),
-        None
-    );
-    assert_eq!(
-        specialized_method_values(
-            &decls,
-            &[
-                TyArg::Val(CtValue::Int(1)),
-                TyArg::Val(CtValue::Deferred(decls[1].binder()))
-            ]
-        ),
-        Some(vec![CtValue::Int(1)])
-    );
 }
 
 #[test]

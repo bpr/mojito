@@ -85,7 +85,6 @@ impl Elab<'_> {
     ) -> Result<(), ComptimeError> {
         // Monomorphization substitutes one concrete parameter environment and
         // rewrites nested calls to their specialized symbols.
-        let declaration_site = s.source_span();
         match &mut s.kind {
             StmtKind::VarDecl { ty, value, .. } => {
                 if let Some(ty) = ty {
@@ -220,18 +219,6 @@ impl Elab<'_> {
                 body,
                 ..
             } => {
-                // A generic `def` declared directly in another body runs only
-                // through the instances the elaborator below MIR mints, so it
-                // owns the references its body leaves abstract, as a
-                // top-level bound-generic body does.
-                let nested_generic = mono.def_depth == 1 && !type_params.is_empty();
-                let enclosing_owner = nested_generic
-                    .then(|| {
-                        mono.abstract_owner
-                            .replace(nested_body_owner(&declaration_site))
-                    })
-                    .flatten();
-                mono.def_depth += 1;
                 let inner_consts = consts_without_type_params(consts, type_params);
                 let symbolic_base = mono.push_symbolic_type_params(type_params);
                 let result = (|| {
@@ -259,14 +246,9 @@ impl Elab<'_> {
                     result
                 })();
                 mono.symbolic_type_params.truncate(symbolic_base);
-                mono.def_depth -= 1;
-                if nested_generic {
-                    mono.abstract_owner = enclosing_owner;
-                }
                 result
             }
             StmtKind::Struct {
-                name,
                 type_params,
                 callable_conformance,
                 conformance_conditions,
@@ -329,21 +311,7 @@ impl Elab<'_> {
                         self.mono_expr(&mut member.value, &member_consts, mono)?;
                     }
                     for m in methods.iter_mut() {
-                        // An erased method body of a user struct that mints
-                        // clones runs only on the paths
-                        // `Elab::unserved_template_uses` accounts for, so a
-                        // reference it leaves abstract is owned by the method
-                        // rather than unserved. A bundled struct, and a struct
-                        // whose parameters mint no clones, keeps no owner.
-                        let enclosing = mono.abstract_owner.take();
-                        if !mono.in_bundled
-                            && (self.instance_template(name) || !m.type_params.is_empty())
-                        {
-                            mono.abstract_owner = Some(method_owner(name, &m.name));
-                        }
-                        let walked = self.mono_method(m, &struct_consts, mono);
-                        mono.abstract_owner = enclosing;
-                        walked?;
+                        self.mono_method(m, &struct_consts, mono)?;
                     }
                     Ok(())
                 })();
@@ -487,9 +455,7 @@ impl Elab<'_> {
         for parameter in &m.params {
             mono.bind_parameter(parameter);
         }
-        mono.def_depth += 1;
         let result = self.mono_block_contents(&mut m.body, method_consts, mono);
-        mono.def_depth -= 1;
         mono.pop_function_scope();
         result
     }
@@ -580,83 +546,6 @@ impl Elab<'_> {
         }
     }
 
-    pub(super) fn instance_template(&self, name: &str) -> bool {
-        if self.specializable.contains_key(name) {
-            return false;
-        }
-        let Some(info) = self.structs.get(name) else {
-            return false;
-        };
-        let type_params = info.source_params;
-        !type_params.is_empty()
-            && classify_ct_params(type_params, name).iter().all(|decl| {
-                matches!(
-                    decl,
-                    ParamDecl::Type {
-                        variadic: false,
-                        callable_bound: None,
-                        ..
-                    } | ParamDecl::Value {
-                        variadic: false,
-                        ..
-                    }
-                )
-            })
-            && type_params.iter().all(|parameter| {
-                super::specialize::method_parameter_is_baked(parameter, type_params)
-            })
-    }
-
-    /// Queue a closed application of an instance template for clone minting;
-    /// a symbolic application (inside a template body) is left alone.
-    pub(super) fn request_instance(
-        &self,
-        name: &str,
-        param_args: &[ParamArg],
-        consts: &HashMap<String, CtValue>,
-        mono: &mut Mono,
-    ) {
-        if mono.in_bundled {
-            return;
-        }
-        let Some(info) = self.structs.get(name) else {
-            return;
-        };
-        if param_args.len() > info.source_params.len() {
-            return;
-        }
-        let mut values = Vec::with_capacity(info.source_params.len());
-        for argument in param_args {
-            let Ok(ty) = self.param_arg_type(argument, consts) else {
-                return;
-            };
-            if !closed_instance_argument(&ty) {
-                return;
-            }
-            values.push(CtValue::Type(Box::new(ty)));
-        }
-        // Trailing defaulted parameters (`H: Hasher = default_hasher`) fill
-        // from their declared defaults.
-        for parameter in &info.source_params[param_args.len()..] {
-            let Some(default) = &parameter.default else {
-                return;
-            };
-            let Ok(CtValue::Type(ty)) = self.eval(default, consts) else {
-                return;
-            };
-            if !closed_instance_argument(&ty) {
-                return;
-            }
-            values.push(CtValue::Type(ty));
-        }
-        // Every value is a closed type here, so the key always forms.
-        if let Ok(key) = mangle(name, &values)
-            && mono.instances_done.insert(key)
-        {
-            mono.instance_jobs.push_back((name.to_string(), values));
-        }
-    }
-
     /// Rewrite variadic-struct template names inside a type annotation to their
     /// specialized (mangled) names, enqueueing the needed instantiations.
     pub(super) fn mono_type(
@@ -670,11 +559,7 @@ impl Elab<'_> {
                 for argument in arguments.iter_mut() {
                     self.mono_param_arg(argument, consts, mono)?;
                 }
-                if self.instance_template(name) {
-                    self.request_instance(name, arguments, consts, mono);
-                } else {
-                    self.freeze_struct_value_arguments(name, arguments, consts);
-                }
+                self.freeze_struct_value_arguments(name, arguments, consts);
                 Ok(())
             }
             Type::Assoc { base, args, .. } => {
@@ -782,18 +667,12 @@ impl Elab<'_> {
                 // A function-value use of a bound generic pins the abstract
                 // template: there is no application to monomorphize against.
                 if mono.resolves_top_template(name) && self.bound_generics.contains(name.as_str()) {
-                    mono.retain_abstract(name, &source_span, true);
+                    mono.retain_abstract(name);
                 }
                 Ok(())
             }
             ExprKind::TypeApply { name, args } => {
-                if self.instance_template(name) {
-                    // A static call through an explicit instance
-                    // (`Box[Int].filled(7)`) mints that instance's clones.
-                    self.request_instance(name, args, consts, mono);
-                } else {
-                    self.freeze_struct_value_arguments(name, args, consts);
-                }
+                self.freeze_struct_value_arguments(name, args, consts);
                 Ok(())
             }
             ExprKind::Prefix(_, inner) | ExprKind::Transfer(inner) | ExprKind::Spread(inner) => {
@@ -833,12 +712,6 @@ impl Elab<'_> {
                     for argument in param_args.iter_mut() {
                         self.mono_param_arg(argument, consts, mono)?;
                     }
-                    // A closed constructor application of an ordinary generic
-                    // struct (`Optional[Int](5)`) mints that instance's
-                    // method clones in this elaboration.
-                    if self.instance_template(name) {
-                        self.request_instance(name, param_args, consts, mono);
-                    }
                 }
                 self.freeze_struct_value_arguments(name, param_args, consts);
                 // A checker-selected scalar `range(...)`: the construction of
@@ -864,61 +737,16 @@ impl Elab<'_> {
                     return Ok(());
                 }
                 if mono.resolves_top_template(name) && self.specializable.contains_key(name) {
-                    // Which declaration of an overloaded template family
-                    // this call selected; `None` on every other path.
-                    let mut selected_decl = None;
-                    let (vals, kept_type_args, whole_pack_abi) = if self.overload_family(name) {
-                        // A call selecting a member the template serves is
-                        // left as written, as a uniquely named served
-                        // `def`'s call is: the elaborator instantiates that
-                        // declaration's MIR. The checker's selection decides
-                        // this even while the call's arguments are symbolic
-                        // (a served body's call over its own binder).
-                        if self.family_call_is_served(name, &source_span, mono) {
-                            return Ok(());
-                        }
-                        // An overloaded template name cannot be
-                        // resolved syntactically at all: explicit `[...]`
-                        // arguments name type arguments, not an overload, and
-                        // overload selection is the checker's. Inferred and
-                        // explicit calls alike are specialized only from the
-                        // checker's closed recorded instantiation.
-                        // A clone forwarding its own specialized pack
-                        // whole (`tally(*a)`) is the one call no check can
-                        // record: the checker sees the spread only once it
-                        // is expanded, so the collector the call binds
-                        // structurally is the declaration.
-                        let target =
-                            match self.def_request_target(name, &source_span, param_args, mono) {
-                                Some((values, kept, decl)) => Some((values, kept, decl, false)),
-                                None => self
-                                    .forwarded_family_target(
-                                        name,
-                                        SpecRequest {
-                                            param_args,
-                                            call_args: args,
-                                            kwargs,
-                                            consts,
-                                            request_site: &request_site,
-                                            forwarded_pack_types: None,
-                                        },
-                                        mono,
-                                    )
-                                    .map(|(values, kept, decl)| (values, kept, Some(decl), true)),
-                            };
-                        let Some((values, kept, decl, whole_pack_abi)) = target else {
-                            mono.retain_abstract(name, &source_span, false);
-                            return Ok(());
-                        };
-                        selected_decl = decl;
-                        (values, kept, whole_pack_abi)
-                    } else if self.bound_generics.contains(name.as_str()) {
+                    let template = self.specializable[name.as_str()];
+                    let (vals, kept_type_args, whole_pack_abi) = if self
+                        .bound_generics
+                        .contains(name.as_str())
+                    {
                         // A call the template serves is left as written,
                         // explicit application included: the elaborator
                         // instantiates the template's MIR.
-                        let template = self.specializable[name.as_str()];
-                        if self.template_serves_def(name, template, mono) {
-                            mono.retain_abstract(name, &source_span, false);
+                        if self.template_serves_def(name, template) {
+                            mono.retain_abstract(name);
                             return Ok(());
                         }
                         // Soft resolution: only an explicit application whose
@@ -946,37 +774,21 @@ impl Elab<'_> {
                             // checker-discovered request for this occurrence
                             // before falling back to the abstract path.
                             Err(_) => {
-                                if let Some((values, kept, _)) =
+                                if let Some((values, kept)) =
                                     self.def_request_target(name, &source_span, param_args, mono)
                                 {
                                     (values, kept, false)
                                 } else {
-                                    mono.retain_abstract(name, &source_span, false);
+                                    mono.retain_abstract(name);
                                     return Ok(());
                                 }
                             }
                         }
-                    } else if self.comptime_generics.contains(name.as_str())
-                        && omits_required_param(self.specializable[name.as_str()], param_args)
-                    {
-                        // An inferred application of a compile-time-keyed
-                        // template: only the checker can solve its arguments,
-                        // so consult the recorded instantiation for this
-                        // occurrence, else keep the template as a stub for the
-                        // discovery check.
-                        let Some((values, kept, _)) =
-                            self.def_request_target(name, &source_span, param_args, mono)
-                        else {
-                            mono.retain_abstract(name, &source_span, false);
-                            return Ok(());
-                        };
-                        (values, kept, false)
                     } else {
-                        let template = self.specializable[name.as_str()];
                         let whole_pack_abi = top_level_whole_pack_forwarding_call(template, args)?;
                         let forwarded =
                             top_level_forwarded_pack_types(template, name, args, kwargs, mono)?;
-                        let resolved = self.resolve_spec_args_for(
+                        let (values, kept) = self.resolve_spec_args_for(
                             template,
                             name,
                             SpecRequest {
@@ -987,29 +799,7 @@ impl Elab<'_> {
                                 request_site: &request_site,
                                 forwarded_pack_types: forwarded.as_deref(),
                             },
-                        );
-                        let (values, kept) = match resolved {
-                            // An explicit application of a compile-time-keyed
-                            // template over an enclosing body's own parameters
-                            // (`show[T](x)`) stays on the stub, as an inferred
-                            // one does.
-                            Err(_)
-                                if self.comptime_generics.contains(name.as_str())
-                                    && param_args_mention_any(
-                                        param_args,
-                                        &mono.symbolic_type_params,
-                                    ) =>
-                            {
-                                let Some((values, kept, _)) =
-                                    self.def_request_target(name, &source_span, param_args, mono)
-                                else {
-                                    mono.retain_abstract(name, &source_span, false);
-                                    return Ok(());
-                                };
-                                (values, kept)
-                            }
-                            resolved => resolved?,
-                        };
+                        )?;
                         (values, kept, whole_pack_abi)
                     };
                     let original = name.clone();
@@ -1017,10 +807,9 @@ impl Elab<'_> {
                     if whole_pack_abi {
                         output_name.push_str("$whole_pack");
                     }
-                    if mono.queue_specialization(&output_name, selected_decl) {
+                    if mono.queue_specialization(&output_name) {
                         mono.queue.push_back(Job {
                             orig: original,
-                            decl: selected_decl,
                             vals,
                             site: request_site,
                             output_name: output_name.clone(),
@@ -1040,12 +829,10 @@ impl Elab<'_> {
             ExprKind::Member { object, .. } => self.mono_expr(object, consts, mono),
             ExprKind::MethodCall {
                 object,
-                method,
                 args,
                 kwargs,
                 ..
             } => {
-                mono.record_method_edge(method);
                 self.mono_expr(object, consts, mono)?;
                 for a in args.iter_mut() {
                     self.mono_expr(a, consts, mono)?;
@@ -1325,7 +1112,7 @@ impl Elab<'_> {
         source_span: &SourceSpan,
         param_args: &[ParamArg],
         mono: &Mono,
-    ) -> Option<(Vec<CtValue>, Vec<ParamArg>, Option<usize>)> {
+    ) -> Option<(Vec<CtValue>, Vec<ParamArg>)> {
         let target = mono
             .def_call_targets
             .get(&source_span.clone().without_syntax())?;
@@ -1334,92 +1121,12 @@ impl Elab<'_> {
             // provenance): stay abstract.
             return None;
         }
-        // An overloaded template name resolves to the declaration
-        // the request selected, not to the registry's name-level entry.
-        let template = match target.decl {
-            Some(_) => self.selected_declaration(name, target.decl),
-            None => *self.specializable.get(name)?,
-        };
-        if self.template_serves_def(name, template, mono) {
+        let template = *self.specializable.get(name)?;
+        if self.template_serves_def(name, template) {
             return None;
         }
         let kept = self.request_kept_param_args(template, name, param_args, &target.vals)?;
-        Some((target.vals.clone(), kept, target.decl))
-    }
-
-    /// Whether the checker's selection for this call of the overload family
-    /// `name` — its recorded instantiation, closed or not — is a declaration
-    /// the template serves (one that is not specializable), so the call
-    /// stays as written.
-    fn family_call_is_served(&self, name: &str, source_span: &SourceSpan, mono: &Mono) -> bool {
-        let occurrence = source_span.clone().without_syntax();
-        let closed = mono
-            .def_call_targets
-            .get(&occurrence)
-            .filter(|target| target.template == name)
-            .and_then(|target| target.decl);
-        let unclosed = || {
-            mono.family_selections
-                .get(&occurrence)
-                .filter(|(family, _)| family == name)
-                .map(|(_, decl)| *decl)
-        };
-        closed
-            .or_else(unclosed)
-            .is_some_and(|decl| !self.is_specializable(self.selected_declaration(name, Some(decl))))
-    }
-
-    /// The one declaration of the overload family `name` whose positional
-    /// collector a whole forward of a specialized runtime pack binds
-    /// (`request.call_args` spreads it after exactly the fixed positional
-    /// prefix), with its specialization values. `None` when the call
-    /// forwards no specialized pack or when several declarations bind it,
-    /// which leaves the call to the checker's recorded instantiation.
-    fn forwarded_family_target(
-        &self,
-        name: &str,
-        request: SpecRequest<'_>,
-        mono: &Mono,
-    ) -> Option<(Vec<CtValue>, Vec<ParamArg>, usize)> {
-        let forwards_specialized_pack = request.call_args.iter().any(|argument| {
-            runtime_pack_spread_source(argument)
-                .is_some_and(|pack| mono.resolve_runtime_pack(pack).is_some())
-        });
-        if !forwards_specialized_pack {
-            return None;
-        }
-        let mut bound = self
-            .overload_families
-            .get(name)?
-            .iter()
-            .enumerate()
-            .filter(|(_, template)| {
-                top_level_whole_pack_forwarding_call(template, request.call_args)
-                    .is_ok_and(|forwards| forwards)
-            })
-            .filter_map(|(index, template)| {
-                let forwarded = top_level_forwarded_pack_types(
-                    template,
-                    name,
-                    request.call_args,
-                    request.kwargs,
-                    mono,
-                )
-                .ok()??;
-                let (values, kept) = self
-                    .resolve_spec_args_for(
-                        template,
-                        name,
-                        SpecRequest {
-                            forwarded_pack_types: Some(&forwarded),
-                            ..request
-                        },
-                    )
-                    .ok()?;
-                Some((values, kept, index))
-            });
-        let only = bound.next()?;
-        bound.next().is_none().then_some(only)
+        Some((target.vals.clone(), kept))
     }
 
     /// The source arguments a request-rewritten call retains: arguments bound
@@ -1821,36 +1528,6 @@ impl Elab<'_> {
     }
 }
 
-/// Whether a call leaves a parameter of `template` that needs an argument
-/// without one.
-fn omits_required_param(template: &Stmt, param_args: &[ParamArg]) -> bool {
-    !omitted_required_params(template, param_args).is_empty()
-}
-
-/// The parameters of `template` a call leaves without an argument: no source
-/// argument, no default, not infer-only, and not a symbolically retained
-/// binder. A source list that does not bind at all omits nothing; it keeps its
-/// binding diagnostic.
-fn omitted_required_params<'t>(template: &'t Stmt, param_args: &[ParamArg]) -> Vec<&'t TypeParam> {
-    let StmtKind::Def { type_params, .. } = &template.kind else {
-        return Vec::new();
-    };
-    let Ok(bound) = bind_spec_param_args(type_params, param_args, "") else {
-        return Vec::new();
-    };
-    type_params
-        .iter()
-        .zip(bound)
-        .filter(|(parameter, arguments)| {
-            arguments.is_empty()
-                && !parameter.infer_only
-                && parameter.default.is_none()
-                && !retained_specialization_param(parameter, type_params)
-        })
-        .map(|(parameter, _)| parameter)
-        .collect()
-}
-
 fn consts_without_type_params(
     consts: &HashMap<String, CtValue>,
     parameters: &[TypeParam],
@@ -1934,37 +1611,6 @@ fn bind_spec_param_args<'t>(
         )));
     }
     Ok(bound)
-}
-
-/// Whether a type is a closed instance argument: a scalar, or a struct
-/// application whose type arguments are closed. Anything else — a type
-/// parameter, an associated or dependent type — keeps the erased path
-/// (conservative: no clone is minted for it). An origin tail never opens an
-/// instance: origins erase from the runtime ABI, so every origin-differing
-/// instance shares one clone.
-fn closed_instance_argument(ty: &Ty) -> bool {
-    match ty {
-        Ty::Int | Ty::UInt | Ty::Bool | Ty::Float64 | Ty::StringLiteral | Ty::None => true,
-        Ty::Simd { dtype, width } => !dtype.is_symbolic() && !width.is_symbolic(),
-        Ty::Struct(_, arguments) => arguments.iter().all(|argument| match argument {
-            TyArg::Ty(ty) => closed_instance_argument(ty),
-            TyArg::Val(value) => !matches!(
-                value,
-                CtValue::Expr(_) | CtValue::Deferred(_) | CtValue::Marker(_)
-            ),
-            TyArg::Origin(_) => true,
-        }),
-        _ => false,
-    }
-}
-
-/// Whether any compile-time argument spells one of `names` (an enclosing
-/// declaration's type parameters, packs included) anywhere in a type or
-/// type-valued expression position.
-fn param_args_mention_any(param_args: &[ParamArg], names: &[String]) -> bool {
-    param_args
-        .iter()
-        .any(|argument| param_arg_mentions_any(argument, names))
 }
 
 fn param_arg_mentions_any(argument: &ParamArg, names: &[String]) -> bool {

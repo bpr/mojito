@@ -448,9 +448,7 @@ impl Checker {
     /// availability clause (`__eq__ ... where conforms_to(Self.T,
     /// Equatable)`) is judged against the receiver's arguments, as a method
     /// call judges it; a failing clause leaves the operator undefined for
-    /// these operands. A closed receiver instance dispatches the dunder's
-    /// per-instantiation clone (`__eq__$y3:Int`), selected among the clone
-    /// family by the same operand.
+    /// these operands.
     ///
     /// `None` when the left operand has no dunder for the pair.
     pub(super) fn struct_infix_dispatch(
@@ -521,29 +519,13 @@ impl Checker {
         let reads = |convention: Option<ArgConvention>| {
             matches!(convention, None | Some(ArgConvention::Imm))
         };
-        let (dispatched, selected, overloaded) = match self
-            .instance_method_clone(sname, dunder, targs)
-            .and_then(|clone| {
-                self.struct_dunder_signature_for(lt, &clone, &[&operand_ty])
-                    .map(|(_, sig, _)| (clone, sig))
-            }) {
-            Some((clone, sig)) => {
-                let overloaded = info.methods.get(&clone).is_some_and(|sigs| sigs.len() > 1);
-                (clone, sig, overloaded)
-            }
-            None => (dunder.to_string(), selected, overloaded),
-        };
-        let target = (overloaded || dispatched != dunder).then(|| {
-            if overloaded {
-                method_lowered_name(
-                    sname,
-                    &dispatched,
-                    selected,
-                    self.self_instance_ty(sname).as_ref(),
-                )
-            } else {
-                format!("{sname}.{dispatched}")
-            }
+        let target = overloaded.then(|| {
+            method_lowered_name(
+                sname,
+                dunder,
+                selected,
+                self.self_instance_ty(sname).as_ref(),
+            )
         });
         Ok(Some(StructInfixDispatch {
             target,

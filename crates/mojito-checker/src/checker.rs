@@ -147,13 +147,6 @@ pub fn validate_comptime_templates_into(
         .template_catalog
         .borrow_mut()
         .set_applied_constants(checker.comptime_applied.clone());
-    let scalar_calls = checker.scalar_calls(&expanded);
-    let aggregate_elements = checker.aggregate_elements(&expanded);
-    {
-        let mut catalog = checker.template_catalog.borrow_mut();
-        catalog.set_scalar_calls(scalar_calls);
-        catalog.set_aggregate_elements(aggregate_elements);
-    }
     *catalog = checker.template_catalog.take();
     body_check.and_then(|()| {
         with_stmt::splice_with_desugars(&mut expanded, &checker.with_desugars.borrow());
@@ -698,8 +691,7 @@ pub struct Checker {
     method_instantiations:
         RefCell<FactMap<SourceSpan, mojito_checked::checked::MethodInstantiation>>,
     /// Every generic-struct application reached as a constructor target or
-    /// method-call receiver, retained for per-instantiation method-clone
-    /// discovery (the driver keeps the closed ones).
+    /// method-call receiver, a checked fact of the call.
     struct_instantiations: RefCell<FactVec<mojito_checked::checked::StructInstantiation>>,
     /// Per-body accumulation frames for inferred loan-transfer effects.
     transfer_frames: RefCell<Vec<TransferFrame>>,
@@ -1802,22 +1794,11 @@ impl Checker {
         match matches.as_slice() {
             [] => Ok(None),
             [sig] => {
-                // A closed instance converts through its own constructor
-                // clone, exactly as a written construction does.
-                let target = self
-                    .constructor_clone_target(name, args, sig, &subst)
-                    .unwrap_or_else(|| {
-                        if constructors.len() == 1 {
-                            name.clone()
-                        } else {
-                            method_lowered_name(
-                                name,
-                                "__init__",
-                                sig,
-                                self.self_instance_ty(name).as_ref(),
-                            )
-                        }
-                    });
+                let target = if constructors.len() == 1 {
+                    name.clone()
+                } else {
+                    method_lowered_name(name, "__init__", sig, self.self_instance_ty(name).as_ref())
+                };
                 let source_borrow = sig
                     .ref_params
                     .first()
@@ -2271,15 +2252,6 @@ struct MethodSig {
     /// check an explicitly applied origin against the argument filling that
     /// slot. `None` for every other parameter.
     origin_binders: Vec<Option<mojito_types::origin::PointerOrigin>>,
-    /// A per-instantiation clone's declared receiver instance, resolved with
-    /// the clone's own origin binders in scope
-    /// (`Bag[Span[Int, __clone_origin0]]`), so a call binds them from its
-    /// receiver as well as from its arguments. `None` for every other method.
-    receiver: Option<Ty>,
-    /// The method is a clone declaring the elaborator's origin binders for a
-    /// loan-carrying type argument (`__clone_origin0`), which a call binds
-    /// from its receiver and arguments.
-    clone_origins: bool,
     /// A synthesized trait default ([`mojito_ast::ast::MethodProvenance::SynthesizedDefault`]):
     /// the elaborator mints no per-instance clone of it.
     synthesized_default: bool,
@@ -2328,8 +2300,6 @@ impl MethodSig {
             implicit: false,
             parametric_origin_writes: Vec::new(),
             origin_binders: vec![None; len],
-            receiver: None,
-            clone_origins: false,
             synthesized_default: false,
             nested_origins: NestedOrigins::AsDeclared,
             template_ret: None,

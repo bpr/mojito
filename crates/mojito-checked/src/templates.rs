@@ -2419,16 +2419,6 @@ pub struct TemplateCatalog {
     /// The executable check, which sees the elaborator's folded literal,
     /// keeps each constant's identity from here.
     applied_constants: std::collections::HashMap<String, mojito_types::param_expr::ParamExpr>,
-    /// The calls and method calls source validation typed as a scalar a
-    /// `comptime for` binder takes (`Int`, `Bool`, `Float64`, a string), with
-    /// no raise, by the syntax identity every copy keeps: the elaborator's
-    /// template-served decision reads a display element's type from here.
-    scalar_calls: std::collections::HashSet<SyntaxId>,
-    /// The tuple displays, calls, and method calls source validation typed
-    /// as a closed aggregate a `comptime for` binder takes (a tuple or
-    /// fieldwise struct of numbers and booleans), with no raise, by the same
-    /// syntax identity.
-    aggregate_elements: std::collections::HashSet<SyntaxId>,
 }
 
 /// The declarations the elaboration being checked generated, as the
@@ -2436,13 +2426,10 @@ pub struct TemplateCatalog {
 ///
 /// A generated declaration is never a template. This list is the only test:
 /// a `$` in a name proves nothing, since a module-qualified source name
-/// (`__module$std$string$String`) carries one too. A per-instantiation method
-/// clone is recognized by its explicit receiver type and is not listed.
+/// (`__module$std$string$String`) carries one too.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct GeneratedNames {
     pub defs: std::collections::HashSet<String>,
-    /// Per-call method clones, as (owner, clone name).
-    pub methods: std::collections::HashSet<(String, String)>,
 }
 
 /// What the catalog did over one compilation, by declaration name. A name
@@ -2544,8 +2531,6 @@ impl TemplateCatalog {
             verify: self.verify,
             body_fact_reuse: false,
             param_context: self.param_context.clone(),
-            scalar_calls: self.scalar_calls.clone(),
-            aggregate_elements: self.aggregate_elements.clone(),
             ..Self::default()
         };
         catalog.set_traces(traces);
@@ -2589,28 +2574,6 @@ impl TemplateCatalog {
         &self,
     ) -> &std::collections::HashMap<String, mojito_types::param_expr::ParamExpr> {
         &self.applied_constants
-    }
-
-    /// The calls source validation typed as a `comptime for` binder's
-    /// scalar.
-    pub const fn scalar_calls(&self) -> &std::collections::HashSet<SyntaxId> {
-        &self.scalar_calls
-    }
-
-    /// Keep the scalar-typed calls source validation found.
-    pub fn set_scalar_calls(&mut self, calls: std::collections::HashSet<SyntaxId>) {
-        self.scalar_calls = calls;
-    }
-
-    /// The display elements source validation typed as a `comptime for`
-    /// binder's closed aggregate.
-    pub const fn aggregate_elements(&self) -> &std::collections::HashSet<SyntaxId> {
-        &self.aggregate_elements
-    }
-
-    /// Keep the aggregate-typed display elements source validation found.
-    pub fn set_aggregate_elements(&mut self, elements: std::collections::HashSet<SyntaxId>) {
-        self.aggregate_elements = elements;
     }
 
     /// Keep the applied module constants source validation found.
@@ -2689,12 +2652,6 @@ impl TemplateCatalog {
     }
 
     /// Whether `owner.method` is a generated per-call clone.
-    pub fn generated_method(&self, owner: &str, method: &str) -> bool {
-        self.generated
-            .methods
-            .contains(&(owner.to_string(), method.to_string()))
-    }
-
     pub fn trace(&self, instance: &InstanceName) -> Option<&InstanceTrace> {
         self.traces.get(instance)
     }

@@ -368,7 +368,7 @@ impl Elab<'_> {
             } => {
                 // A comptime-dependent generic template can't be elaborated now (its
                 // parameter value is unknown); keep it verbatim for monomorphization.
-                if is_specializable_declaration(stmt, &self.scalar_reads) {
+                if is_specializable_declaration(stmt) {
                     out.push(stmt.clone());
                     return Ok(());
                 }
@@ -405,13 +405,6 @@ impl Elab<'_> {
                 methods,
                 fieldwise_init,
             } => {
-                // A variadic struct template's members reference the unbound pack;
-                // keep it verbatim for monomorphization (mirrors def templates).
-                // DType-/struct-valued parameter templates are kept the same way.
-                if self.is_specializable(stmt) {
-                    out.push(stmt.clone());
-                    return Ok(());
-                }
                 let methods = methods
                     .iter()
                     .map(|m| {
@@ -425,18 +418,14 @@ impl Elab<'_> {
                             self.def_body(type_params, &m.type_params, &m.params, &m.body, env);
                         m.body = match body {
                             Ok(body) => body,
-                            // A method whose body only elaborates with the
-                            // struct's parameters bound becomes a trap stub
-                            // on the template; every concrete call retargets
-                            // to a per-instantiation clone, which folds it
-                            // bound.
-                            Err(error) if names_struct_parameter(&error, type_params) => {
-                                vec![super::specialize::unspecialized_method_stub(name, &m)]
-                            }
-                            // One that fails over its own binders fails
-                            // where a call reaches an instance of it, as
-                            // upstream instantiates a method only there.
-                            Err(error) if names_method_parameter(&error, &m) => {
+                            // A method whose body fails over the struct's
+                            // binders or its own fails where a call reaches
+                            // an instance of it, as upstream instantiates a
+                            // method only there.
+                            Err(error)
+                                if names_struct_parameter(&error, type_params)
+                                    || names_method_parameter(&error, &m) =>
+                            {
                                 vec![super::specialize::instantiation_failure_stub(
                                     name, &m.name, &m, &error,
                                 )]
@@ -1074,23 +1063,8 @@ impl Elab<'_> {
                 .iter()
                 .map(|parameter| self_qualified(&parameter.name)),
         );
-        self.template_loop_names
-            .borrow_mut()
-            .push(TemplateLoopNames {
-                value_packs: def_value_pack_names(type_params, "")
-                    .into_iter()
-                    .chain(
-                        def_value_pack_names(struct_params, "")
-                            .iter()
-                            .map(|name| self_qualified(name)),
-                    )
-                    .collect(),
-                displays: served_display_bindings(&binders, &self.scalar_reads, body),
-                requested: requested_bindings(body),
-            });
         self.template_binders.borrow_mut().push(binders);
         let body = self.block(body, env, true);
-        self.template_loop_names.borrow_mut().pop();
         self.template_binders.borrow_mut().pop();
         body
     }
@@ -1306,15 +1280,16 @@ impl Elab<'_> {
         mojito_ast::visit::walk_block_mut(&mut Indices { elab: self, env }, stmts);
     }
 
-    /// Keep a `comptime for` the template serves
-    /// ([`comptime_for_is_template_served`]) in the body of the generic `def`
-    /// being elaborated as a template: the body is elaborated with the loop
-    /// variable a binder too, so a `comptime if` or a loop over it stays, and
-    /// the statement is rebuilt for the check, which types the body once
-    /// with the index symbolic and records the range for the MIR loop header
-    /// the elaborator below MIR unrolls — a compile-time `break` and
-    /// `continue` are that loop's. Returns `false`, emitting nothing, for any
-    /// other loop, which is unrolled here.
+    /// Keep every `comptime for` in the body of a generic `def` or method
+    /// being elaborated as a template, as upstream keeps its parameter `for`:
+    /// the body is elaborated with the loop variable a binder too, so a
+    /// `comptime if` or a loop over it stays, and the statement is rebuilt
+    /// for the check, which types the body once with the index symbolic and
+    /// records the sequence for the MIR loop header the elaborator below MIR
+    /// unrolls — a compile-time `break` and `continue` are that loop's. A
+    /// pending module constant the loop iterates is forced here, a loop
+    /// header being a reader above the check. Returns `false`, emitting
+    /// nothing, outside a template body, where the loop is unrolled here.
     fn keep_template_comptime_for(
         &self,
         stmt: &Stmt,
@@ -1325,34 +1300,17 @@ impl Elab<'_> {
         let StmtKind::ComptimeFor { var, iter, body } = &stmt.kind else {
             return Ok(false);
         };
+        if !in_fn {
+            return Ok(false);
+        }
         let Some(mut binders) = self.template_binders.borrow().last().cloned() else {
             return Ok(false);
         };
-        let TemplateLoopNames {
-            value_packs,
-            displays,
-            requested,
-        } = self
-            .template_loop_names
-            .borrow()
-            .last()
-            .cloned()
-            .unwrap_or_default();
-        let names = LoopNames {
-            packs: &binders,
-            value_packs: &value_packs,
-            displays: &displays,
-            collection: &|name| {
-                !binders.contains(name)
-                    && env
-                        .get(name)
-                        .is_some_and(CtValue::is_parameter_value_collection)
-            },
-            scalars: &self.scalar_reads,
-            requested: &requested,
-        };
-        if !in_fn || !comptime_for_is_template_served(iter, body, &names) {
-            return Ok(false);
+        if let ExprKind::Identifier(name) = &iter.kind
+            && !binders.contains(name)
+            && !env.contains_key(name)
+        {
+            self.force_constant(name)?;
         }
         binders.insert(var.clone());
         self.template_binders.borrow_mut().push(binders);

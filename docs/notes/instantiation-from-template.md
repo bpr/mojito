@@ -42,7 +42,7 @@ HIR or MIR.
 | Re-selection of a call through a bound (`bound_witness`, `realize_bound_dispatch`, `realize_inverted_writes`, `realize_bound_builtin`) | `crates/mojito-checker/src/checker/template_facts/bound_dispatch.rs` |
 | Body entry points | `template_facts.rs:Checker::check_def_body` (from `statements.rs:check_def_inner`) and `check_method_body` (from `declarations.rs:bind_and_check_method`), both over one `BodySite` |
 | Occurrence-level trace | `crates/mojito-ast/src/ast.rs:rekey_syntax` returning `SyntaxOrigins` |
-| Declaration-level trace | `crates/mojito-comptime/src/comptime.rs:DefInstanceTrace` (`specialize.rs:generate_def_spec`) and `MethodInstanceTrace` (`generate_instance_clones`) |
+| Declaration-level trace | `crates/mojito-comptime/src/comptime.rs:DefInstanceTrace` (`specialize.rs:generate_def_spec`) |
 | What the elaborator generated | `comptime.rs:GeneratedDeclarations`, carried as `templates.rs:GeneratedNames` |
 | Statement identity through elaboration | `comptime.rs:rebuilt` |
 | Catalog lifetime, trace hand-over, one finalization | `src/compiler.rs:compile_linked`, `instance_traces` |
@@ -212,15 +212,11 @@ symbol.
   types written for each baked type pack, and the parameters the clone still
   declares. The driver converts these to `InstanceTrace` and hands them to
   the catalog before each check.
-- **Declaration level, methods.** A per-instantiation clone is appended to its
-  template struct's own method list (`get$y3:Int` on `Box`, with
-  `Method::self_ty = Some(Box[Int])`). `generate_instance_clones` records a
-  `MethodInstanceTrace`, and the clone is named by its struct, its name, its
-  body's source tag, and the range of its body's first statement
-  (`InstanceName`): same-name overloads clone under one name and one tag.
-  No method mints a per-call clone since R310 (2026-10-08): a call of a
-  method with binders of its own names the method's template, which
-  `native::mono` instantiates per call.
+- **Declaration level, methods.** No method mints a clone: not per call
+  since R310, nor per instance since R8 (both 2026-10-08). A method's call
+  names its template, which `native::mono` instantiates. The method
+  certificate classes still serve a method template's own facts to a later
+  discovery round (`template_bodies.reused`).
   A VM-CTFE subprogram traces the clones it mints into a catalog
   of its own (`TemplateCatalog::for_subprogram`), holding the compilation's
   templates those traces name; the driver's elaboration never sees those
@@ -344,18 +340,15 @@ no clone is minted per origin, and a clone keeps the binder and binds it
 symbolically as the template does. A body that writes through a `MutOrigin`
 is judged per instantiation and stays a clone check. A receiver origin
 naming one of those binders is admitted the same way. A struct's own origin
-or scalar value parameter is never cloned whole (`generate_instance_clones`
-keeps it on the erased path), so its methods are certified for reuse across
-passes only: a pointer field whose provenance is the struct's origin names no
+or scalar value parameter is never cloned whole, so its methods are
+certified for reuse across passes only: a pointer field whose provenance is the struct's origin names no
 checker-local place. A `Self.rows` read of a closed scalar value binder is
 a runtime read of the reified value, typed at the binder's declared type and
 recording nothing else, so the executable check admits it as a scalar operand
 (`BodyShape::struct_value`, filled by `struct_scalar_binders`). A receiver
 origin naming anything else, the copy and move initializers, and any other
 binder stay outside. A `where`
-clause is the declaration's constraint: `generate_instance_clones` mints a
-clone only where it evaluates true, a trace exists only for a minted clone, and
-a clone's signature no longer states it.
+clause is the declaration's constraint, judged at each instance.
 
 A field the body reads is a field of `self`, of a field of `self` holding a
 struct (`self.scaler.base`), of a `var` local, or of a parameter holding a

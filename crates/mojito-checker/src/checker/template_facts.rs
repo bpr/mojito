@@ -212,9 +212,6 @@ struct Occurrence {
     member_base: Option<SyntaxId>,
     /// A method call's receiver occurrence and method name.
     method_call: Option<(SyntaxId, String)>,
-    /// The struct and `[...]` arguments a method call's receiver applies,
-    /// where it is a type application (`Pair[Self.T].pick(v, 1)`).
-    type_receiver: Option<(String, Vec<mojito_ast::ast::ParamArg>)>,
     /// An admitted operator's kind, its operand occurrences, and whether
     /// its right operand is a place, which a consuming dunder copies.
     operator: Option<(mojito_ast::ast::InfixOp, SyntaxId, SyntaxId, bool)>,
@@ -394,8 +391,8 @@ impl Checker {
     /// Check a struct method's body, or serve it from a checked template.
     ///
     /// `owner` and `module` name the declaring struct, `receiver` is the type
-    /// `self` has in this body (the instance, for a per-instantiation clone),
-    /// and `decls` are the struct's binders followed by the method's own.
+    /// `self` has in this body, and `decls` are the struct's binders followed
+    /// by the method's own.
     pub(super) fn check_method_body(
         &mut self,
         owner: &str,
@@ -411,16 +408,6 @@ impl Checker {
             self.classify_params(&self.method_binder_owner(owner, m), &m.type_params)?;
         let mut decls = self.self_decls.clone();
         decls.extend(method_decls.iter().cloned());
-        // A per-instantiation clone carries its receiver type. Every other
-        // generated method is one the elaborator listed: a per-call clone.
-        let generated = m.self_ty.is_some()
-            || self
-                .template_catalog
-                .borrow()
-                .generated_method(owner, &m.name);
-        if m.self_ty.is_some() {
-            timing::count("body_sites.instance_clone", 1);
-        }
         let template_id = TemplateId {
             module: module.cloned(),
             owner: Some(owner.to_string()),
@@ -439,7 +426,7 @@ impl Checker {
                 name: m.name.clone(),
                 body: Some(first.span),
             },
-            role: BodyRole::of(!decls.is_empty(), generated, stub),
+            role: BodyRole::of(!decls.is_empty(), false, stub),
             decls: &decls,
             ret_ty,
             participates: true,

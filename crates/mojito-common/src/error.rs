@@ -76,7 +76,7 @@ impl ParseError {
 
 /// Errors from semantic checking, produced before HIR/MIR lowering. These cover
 /// type, declaration, call, trait, convention, and locally decidable borrow rules.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TypeError {
     UndefinedVariable(String),
     /// A storage annotation (a struct field or local `var` type) applied a
@@ -406,14 +406,6 @@ pub enum TypeError {
     /// Carries a message describing the feature. The runtime analogue is
     /// `RuntimeError::Unsupported`.
     Unsupported(String),
-    /// A per-instantiation method clone of a generic struct failed to check
-    /// with the parameters bound (Mojo's post-instantiation diagnostic): the
-    /// instance, the source method, and the concrete error.
-    PostInstantiation {
-        receiver: String,
-        method: String,
-        error: Box<Self>,
-    },
     /// A compiler phase received state that violates a contract established by
     /// an earlier phase. This is a Mojito bug, not an error in the source file.
     InvariantViolation(String),
@@ -662,13 +654,6 @@ impl fmt::Display for TypeError {
                     f,
                     "cannot return reference with incompatible origin: the returned place lies within the declared origin but is not that origin"
                 )
-            }
-            Self::PostInstantiation {
-                receiver,
-                method,
-                error,
-            } => {
-                write!(f, "in '{method}' instantiated for '{receiver}': {error}")
             }
             Self::TransferEffectDivergence { rounds, callable } => {
                 write!(

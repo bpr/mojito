@@ -32,11 +32,6 @@ impl Elab<'_> {
         value
     }
 
-    /// Specializability under this elaboration's served `def` sets.
-    pub(super) fn is_specializable(&self, statement: &Stmt) -> bool {
-        is_specializable_declaration(statement, &self.scalar_reads)
-    }
-
     pub(super) fn ctfe_call(
         &self,
         name: &str,
@@ -143,7 +138,7 @@ impl Elab<'_> {
             .program
             .iter()
             .filter_map(|statement| match &statement.kind {
-                StmtKind::Def { name, .. } if !self.is_specializable(statement) => {
+                StmtKind::Def { name, .. } if !is_specializable_declaration(statement) => {
                     Some(name.clone())
                 }
                 _ => None,
@@ -169,7 +164,7 @@ impl Elab<'_> {
         for statement in self.program {
             if matches!(&statement.kind, StmtKind::Trait { .. })
                 || (matches!(&statement.kind, StmtKind::Struct { .. })
-                    && !self.is_specializable(statement))
+                    && !is_specializable_declaration(statement))
             {
                 let mut calls = HashSet::new();
                 collect_vm_ctfe_stmt_calls(statement, &mut calls);
@@ -185,7 +180,7 @@ impl Elab<'_> {
             let mut calls = HashSet::new();
             for statement in self.program {
                 if matches!(&statement.kind, StmtKind::Def { name: candidate, .. } if candidate == &name)
-                    && !self.is_specializable(statement)
+                    && !is_specializable_declaration(statement)
                 {
                     collect_vm_ctfe_stmt_calls(statement, &mut calls);
                 }
@@ -737,14 +732,10 @@ impl Elab<'_> {
             return true;
         }
         let safe = self.program.iter().all(|stmt| match &stmt.kind {
-            StmtKind::Struct { name, methods, .. }
-                if name == struct_name && !self.is_specializable(stmt) =>
-            {
-                methods
-                    .iter()
-                    .filter(|method| method.name == "__init__")
-                    .all(|method| self.vm_ctfe_safe_block(&method.body, visiting, needed))
-            }
+            StmtKind::Struct { name, methods, .. } if name == struct_name => methods
+                .iter()
+                .filter(|method| method.name == "__init__")
+                .all(|method| self.vm_ctfe_safe_block(&method.body, visiting, needed)),
             _ => true,
         });
         visiting.remove(&guard);
@@ -1370,7 +1361,7 @@ impl Elab<'_> {
             return true;
         }
         let safe = self.program.iter().all(|stmt| match &stmt.kind {
-            StmtKind::Struct { methods, .. } if !self.is_specializable(stmt) => methods
+            StmtKind::Struct { methods, .. } => methods
                 .iter()
                 .filter(|candidate| candidate.name == method)
                 .all(|candidate| self.vm_ctfe_safe_block(&candidate.body, visiting, needed)),
@@ -1403,23 +1394,7 @@ impl Elab<'_> {
                 // boundary. Linked `$` spelling is neither a dependency nor a
                 // specialization test.
                 StmtKind::Def { name, .. } => declarations.contains(name),
-                // A variadic struct template is a monomorphizer input and cannot
-                // cross the ordinary checked boundary. Concrete CTFE uses have
-                // already been specialized; an unused public `Tuple[*Ts]`
-                // template must not invalidate an otherwise scalar subprogram.
-                StmtKind::Struct {
-                    name, type_params, ..
-                } => {
-                    !self.is_specializable(stmt)
-                        || (type_params
-                            .iter()
-                            .any(|parameter| parameter.name.starts_with('*'))
-                            && !matches!(
-                                name.rsplit('$').next().unwrap_or(name),
-                                "Tuple" | "TString"
-                            ))
-                }
-                StmtKind::Trait { .. } => true,
+                StmtKind::Struct { .. } | StmtKind::Trait { .. } => true,
                 // Module-scope literal constants are part of the declaration
                 // environment elaboration would otherwise fold into the
                 // retained bodies (a hasher body names its multiplier). Type
@@ -1513,11 +1488,10 @@ impl Elab<'_> {
                         || super::synth::constructs_at_own_lane(method)
                 };
                 if keyed {
-                    method.body = vec![super::specialize::unspecialized_method_stub(name, method)];
+                    method.body = vec![unspecialized_method_stub(name, method)];
                 }
             }
         }
-        let first_trace = self.method_traces.borrow().len();
         let generated = GeneratedDeclarations::default();
         let type_aliases = self.vm_ctfe_type_aliases();
         if !type_aliases.is_empty() {
@@ -1526,13 +1500,9 @@ impl Elab<'_> {
                 *statement = super::rewrite::rewrite_stmt_cloned(statement, &subs, true);
             }
         }
-        // The clones minted here are the subprogram's, never the
-        // elaboration's: the driver's program mints its own.
-        let traces = self.method_traces.borrow_mut().split_off(first_trace);
-        let templates = self.templates.for_subprogram(
-            instance_traces(Vec::new(), traces),
-            generated_names(generated),
-        );
+        let templates = self
+            .templates
+            .for_subprogram(instance_traces(Vec::new()), generated_names(generated));
         Ok((program, templates))
     }
 
@@ -1615,4 +1585,15 @@ impl Elab<'_> {
         }
         Ok(())
     }
+}
+
+/// The trap a VM-CTFE subprogram's struct method stands as when its body
+/// holds compile-time control flow keyed on parameters the subprogram does
+/// not bind: no compile-time program calls it unspecialized.
+fn unspecialized_method_stub(owner: &str, method: &mojito_ast::ast::Method) -> Stmt {
+    super::specialize::intrinsic_statement(
+        "_mojito_abort",
+        format!("{owner}.{}: unspecialized type-keyed method", method.name),
+        method,
+    )
 }

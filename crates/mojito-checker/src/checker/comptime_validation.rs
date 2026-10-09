@@ -200,32 +200,6 @@ pub(super) fn applicable_functions(
 }
 
 impl Checker {
-    /// The calls, method calls, and field reads of `program` this validation
-    /// typed as a scalar a `comptime for` binder takes (`Int`, `Bool`,
-    /// `Float64`, a string) without raising, by the syntax identity the elaborated
-    /// program keeps. A node copied more than once (a trait default per
-    /// conformer) qualifies only when every copy did.
-    pub(super) fn scalar_calls(&self, program: &[Stmt]) -> HashSet<mojito_common::token::SyntaxId> {
-        self.typed_display_elements(program, false, &|ty| match ty {
-            Ty::Int | Ty::Bool | Ty::Float64 | Ty::StringLiteral => true,
-            Ty::Struct(name, args) => {
-                args.is_empty() && mojito_types::types::is_stdlib_string_struct(name)
-            }
-            _ => false,
-        })
-    }
-
-    /// The tuple displays, calls, and method calls of `program` this
-    /// validation typed as a parameter aggregate a `comptime for` binder takes
-    /// ([`Self::parameter_aggregate_element`]) without raising, under the
-    /// verdict rule of [`Self::scalar_calls`].
-    pub(super) fn aggregate_elements(
-        &self,
-        program: &[Stmt],
-    ) -> HashSet<mojito_common::token::SyntaxId> {
-        self.typed_display_elements(program, true, &|ty| self.parameter_aggregate_element(ty))
-    }
-
     /// Check the method bodies of a struct that hold compile-time control
     /// flow, each with `self` bound at the struct's own parameters, and every
     /// body constructing a vector at a lane its method's own binders spell
@@ -1345,66 +1319,6 @@ impl Checker {
         evaluated_display(iter, element)
             || (matches!(&iter.kind, ExprKind::ListLit(items) if !items.is_empty())
                 && self.parameter_aggregate_element(element))
-    }
-
-    /// The calls and method calls of `program`, and its tuple displays when
-    /// `tuples` holds or its field reads when it does not, this validation typed as `accept` takes without
-    /// raising, by the syntax identity the elaborated program keeps. A node
-    /// copied more than once qualifies only when every copy did.
-    fn typed_display_elements(
-        &self,
-        program: &[Stmt],
-        tuples: bool,
-        accept: &dyn Fn(&Ty) -> bool,
-    ) -> HashSet<mojito_common::token::SyntaxId> {
-        struct Elements<'a> {
-            checker: &'a Checker,
-            tuples: bool,
-            accept: &'a dyn Fn(&Ty) -> bool,
-            verdicts: HashMap<mojito_common::token::SyntaxId, bool>,
-        }
-        impl mojito_ast::visit::Visitor for Elements<'_> {
-            fn visit_expr(&mut self, expression: &Expr) {
-                let candidate = match expression.kind {
-                    ExprKind::Call { .. } | ExprKind::MethodCall { .. } => true,
-                    ExprKind::TupleLit(_) => self.tuples,
-                    ExprKind::Member { .. } => !self.tuples,
-                    _ => false,
-                };
-                if !candidate {
-                    return;
-                }
-                let span = expression.source_span();
-                let accepted = self
-                    .checker
-                    .expression_types
-                    .borrow()
-                    .get(&span)
-                    .is_some_and(|ty| (self.accept)(ty));
-                let raises = self
-                    .checker
-                    .expression_effects
-                    .borrow()
-                    .get(&span)
-                    .is_some_and(|effects| effects.raises.is_some());
-                *self
-                    .verdicts
-                    .entry(self.checker.syntax_origins.origin(expression.syntax_id))
-                    .or_insert(true) &= accepted && !raises;
-            }
-        }
-        let mut elements = Elements {
-            checker: self,
-            tuples,
-            accept,
-            verdicts: HashMap::new(),
-        };
-        mojito_ast::visit::walk_block(&mut elements, program);
-        elements
-            .verdicts
-            .into_iter()
-            .filter_map(|(element, accepted)| accepted.then_some(element))
-            .collect()
     }
 
     /// The value-parameter scope beside the innermost open type-parameter

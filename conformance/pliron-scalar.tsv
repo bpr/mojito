@@ -833,6 +833,7 @@ assets/ok/template_served_loan_carrying_instance.mojo	-	ineligible	no-scalar-ent
 assets/ok/template_tuple_default_initializer.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/template_two_arms.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/template_two_types.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/template_type_member_loop_bound.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/template_value_keyed_def.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/template_value_keyed_lane_def.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/template_value_keyed_struct.mojo	-	ineligible	no-scalar-entry-shape

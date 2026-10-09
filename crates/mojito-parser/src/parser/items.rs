@@ -701,7 +701,6 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
             raises_type,
             ret,
             where_clauses,
-            self_ty: None,
             body,
             provenance: mojito_ast::ast::MethodProvenance::Source,
         })

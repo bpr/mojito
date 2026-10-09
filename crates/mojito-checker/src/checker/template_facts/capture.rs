@@ -299,7 +299,6 @@ impl Checker {
                     identifier: false,
                     member_base: None,
                     method_call: None,
-                    type_receiver: None,
                     operator: None,
                     prefix: None,
                     augmented: None,
@@ -405,18 +404,6 @@ impl Checker {
                         }
                         _ => None,
                     },
-                    type_receiver: match &expr.kind {
-                        ExprKind::MethodCall { object, .. } => Some(object.as_ref()),
-                        ExprKind::Invoke { callee, .. } => match &callee.kind {
-                            ExprKind::Member { object, .. } => Some(object.as_ref()),
-                            _ => None,
-                        },
-                        _ => None,
-                    }
-                    .and_then(|object| match &object.kind {
-                        ExprKind::TypeApply { name, args } => Some((name.clone(), args.clone())),
-                        _ => None,
-                    }),
                     operator: match &expr.kind {
                         ExprKind::Infix(op, left, right) if operator_dispatch(*op) => Some((
                             *op,

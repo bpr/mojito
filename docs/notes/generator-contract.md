@@ -354,11 +354,12 @@ still symbolic, as its own check records it.
 P2's first step (2026-10-01) serves a generic struct's method from its
 template's MIR where the body holds no compile-time construct and the
 instance's arguments are plain data. Since 2026-10-02 the instance's
-arguments may carry a loan too (§Carried sources).
+arguments may carry a loan too (§Carried sources), and since 2026-10-08
+(R8) no method is cloned per instance whatever its body holds.
 
 | Rows | State |
 |---|---|
-| 1, 4, 5, 8 | Done for those methods: the elaborator binds the owner's parameters from the receiver, or from `Call.receiver` for a static call, and the driver reads the instances a template body reaches off its checked types (`src/compiler/template_reach.rs`). |
+| 1, 4, 5, 8 | Done for those methods: the elaborator binds the owner's parameters from the receiver, or from `Call.receiver` for a static call, and `native::mono` finds the instances a template body reaches from its MIR. |
 | 3, 10, 11 | Proved on the declaration. Row 10 is new. |
 | 14 | A call site keeps a source only where a loan can ride it. A symbolic value read out of the frame's own storage lends that storage latently. A store of a symbolic value publishes its stored type as a carried source, and a call through a struct receiver closes it (§Carried sources). An instance over a loan-carrying argument clones no more than a plain-data one. |
 | 15 | The elaborator selects the dunder. A `!=` with no `__ne__` negates `__eq__`, and a sized-scalar comparison the template typed `Bool` converts its mask. |

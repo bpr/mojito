@@ -24,14 +24,12 @@ impl Checker {
     /// target. A hand-written constructor family keeps the template's
     /// member, whose parameters the arguments' types still match exactly
     /// under the struct's own type and value arguments (`substitute_at`),
-    /// and takes the instance's clone of
-    /// that member as its target (`constructor_clone_target`), the template's
-    /// spelling where the instance mints none. A family the instance
-    /// collapses, a constructor with binders of its own, and an argument
-    /// whose type no longer matches its parameter refuse.
+    /// and keeps the template's spelling as its target. A family the
+    /// instance collapses, a constructor with binders of its own, and an
+    /// argument whose type no longer matches its parameter refuse.
     pub(super) fn realize_construction(
         &self,
-        facts: &mut CheckedBodyFacts,
+        facts: &CheckedBodyFacts,
         id: OccurrenceId,
         occurrences: &[Occurrence],
         substitution: &TySubst,
@@ -57,8 +55,6 @@ impl Checker {
         if copied {
             return Ok(());
         }
-        let struct_substitution =
-            mojito_types::types::struct_argument_substitution(&info.decls, &arguments);
         let declared_at = |ty: &Ty| substitute_at(ty, info, &arguments);
         let at = |syntax| OccurrenceId {
             syntax,
@@ -99,14 +95,6 @@ impl Checker {
                     ) == *recorded
                 }) {
                     Some(member) => member,
-                    // A struct closed already in the template selected its
-                    // clone there, on the arguments a clone check ranks too.
-                    None if self
-                        .instance_method_clone(&name, "__init__", &arguments)
-                        .is_some_and(|clone| super::names_method(recorded, &name, &clone)) =>
-                    {
-                        return Ok(());
-                    }
                     None => return Err("a construction's selected overload is not declared"),
                 }
             }
@@ -124,33 +112,12 @@ impl Checker {
         if !closed_family && !exact_binding(declared, &declared_at, &positional, &keywords)? {
             return Err("a constructor overload declares a parameter of a parameter type");
         }
-        let target =
-            self.constructor_clone_target(&name, &arguments, declared, &struct_substitution);
-        match target {
-            Some(target) => match facts
-                .overload_targets
-                .iter_mut()
-                .find(|(site, _)| *site == id)
-            {
-                Some(entry) => entry.1 = target,
-                None => facts.overload_targets.push((id, target)),
-            },
-            None if self
-                .instance_method_clone(&name, "__init__", &arguments)
-                .is_some() =>
-            {
-                return Err("a constructor's clone family has no member for the selected overload");
-            }
-            // No clone of the constructor: the template's spelling stands, an
-            // overloaded member's lowered name or nothing at all. Its `where`
-            // clause, which a clone would have met to exist, is owed here.
-            None => {
-                if !substitution.is_empty()
-                    && !self.method_constraints_apply(declared, &[], &info.decls, &arguments)
-                {
-                    return Err("a constructor's availability condition fails for the instance");
-                }
-            }
+        // The template's spelling stands, an overloaded member's lowered name
+        // or nothing at all. Its `where` clause is owed here.
+        if !substitution.is_empty()
+            && !self.method_constraints_apply(declared, &[], &info.decls, &arguments)
+        {
+            return Err("a constructor's availability condition fails for the instance");
         }
         Ok(())
     }

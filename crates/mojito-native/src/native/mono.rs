@@ -320,9 +320,6 @@ struct Specializer<'a> {
     /// The target every layout query is answered for.
     target: Option<&'a NativeTarget>,
     functions: HashMap<&'a str, &'a MirFunction>,
-    /// The source's function symbols in order, so the clones of one method
-    /// are found as a range of names extending its symbol.
-    function_names: BTreeSet<&'a str>,
     declarations: HashMap<&'a str, &'a MirFunctionDeclaration>,
     structs: HashMap<&'a str, &'a MirStructDeclaration>,
     generic_templates: Rc<HashSet<String>>,

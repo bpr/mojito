@@ -14,7 +14,6 @@ impl<'a> Specializer<'a> {
                 .iter()
                 .map(|(n, f)| (n.as_str(), f))
                 .collect(),
-            function_names: source.functions.iter().map(|(n, _)| n.as_str()).collect(),
             declarations: source
                 .declarations
                 .functions
@@ -230,9 +229,9 @@ impl<'a> Specializer<'a> {
                 ),
             ));
         }
-        let (owner, owner_arity) = match bindings.self_instance.as_ref() {
-            Some((_, Ty::Struct(name, arguments))) => (Some(name.clone()), arguments.len()),
-            _ => (None, 0),
+        let owner = match bindings.self_instance.as_ref() {
+            Some((_, Ty::Struct(name, _))) => Some(name.clone()),
+            _ => None,
         };
 
         // Origins erase from the runtime ABI and from the instance symbol, so
@@ -268,20 +267,7 @@ impl<'a> Specializer<'a> {
         // A generic struct's method takes its concrete owner's spelling
         // (`List$mono$TInt.grow`), so lowering's name-composed lifecycle and
         // overload lookups against the instance struct name keep working.
-        let name = if let Some(name) =
-            lifecycle_clone_instance_symbol(template, key.owner.as_deref(), owner_arity)
-        {
-            // A per-instantiation lifecycle clone is the instance's lifecycle
-            // body: it takes the plain symbol lowering composes by name
-            // (`Box$mono$TInt.__deinit__`), whichever site enqueues it first.
-            // A variadic initializer's clone is keyed by each call's pack
-            // length and only ever reached through its call sites.
-            if key.arguments.is_empty() {
-                name
-            } else {
-                mojito_symbol::symbol::instance_symbol(&name, &key.arguments)
-            }
-        } else if let Some(owner) = &key.owner {
+        let name = if let Some(owner) = &key.owner {
             let base = mojito_symbol::symbol::retarget_method_symbol(template, owner).ok_or_else(
                 || {
                     self.error(
@@ -1814,9 +1800,7 @@ impl<'a> Specializer<'a> {
                             Some(Ty::Struct(..))
                         )
                     {
-                        let resolved = self.instance_dunder_target(function, args[0], method);
-                        *instruction =
-                            dunder_method_call(*dest, args[0], method, resolved, Vec::new());
+                        *instruction = dunder_method_call(*dest, args[0], method, None, Vec::new());
                     }
                 }
                 // A prefix `-`/`~` on a nominal operand is the VM's dunder
@@ -1832,8 +1816,7 @@ impl<'a> Specializer<'a> {
                         Some(Ty::Struct(..))
                     )
                 {
-                    let resolved = self.instance_dunder_target(function, *a, op.dunder());
-                    *instruction = dunder_method_call(*dest, *a, op.dunder(), resolved, Vec::new());
+                    *instruction = dunder_method_call(*dest, *a, op.dunder(), None, Vec::new());
                 }
                 // A binary operator on a nominal left operand is the same VM
                 // dunder dispatch (`apply_binop` → `call_dunder`): rewrite to
@@ -1876,12 +1859,9 @@ impl<'a> Specializer<'a> {
                                 a: equal,
                             },
                         ));
-                        let resolved = self.instance_dunder_target(function, *a, "__eq__");
-                        *instruction = dunder_method_call(equal, *a, "__eq__", resolved, vec![*b]);
+                        *instruction = dunder_method_call(equal, *a, "__eq__", None, vec![*b]);
                     } else {
-                        let resolved = resolved
-                            .take()
-                            .or_else(|| self.instance_dunder_target(function, *a, method));
+                        let resolved = resolved.take();
                         *instruction = dunder_method_call(*dest, *a, method, resolved, vec![*b]);
                     }
                 }
@@ -2032,11 +2012,6 @@ impl<'a> Specializer<'a> {
                                 } else {
                                     self.runtime_pack_constructor(&init_base).unwrap_or(init)
                                 };
-                                // A closed instance constructs through its own
-                                // clone, as struct discovery enqueues it.
-                                let init = self
-                                    .instance_dunder_target(function, *dest, "__init__")
-                                    .unwrap_or(init);
                                 if self.functions.contains_key(init.as_str()) {
                                     let (target, bindings, arguments) = self.infer_call(
                                         owner,
@@ -2259,14 +2234,6 @@ impl<'a> Specializer<'a> {
                         {
                             *result_adapter = None;
                         }
-                        let target = self
-                            .instance_method_target(
-                                function,
-                                *recv,
-                                &target,
-                                args.len() + kwargs.len(),
-                            )
-                            .unwrap_or(target);
                         let (target, bindings, arguments) = self.infer_call(
                             owner,
                             function,
@@ -2844,27 +2811,6 @@ impl<'a> Specializer<'a> {
             // The nominal String's `__copyinit__` stays too: native lowering
             // bridges it and never reaches the body, but the VM runs it.
             for method in ["__init__", "__copyinit__", "__moveinit__", "__deinit__"] {
-                // A closed instance whose clone of this lifecycle method
-                // exists runs that body, under the template-shaped symbol
-                // lowering composes for the instance. The clone was minted
-                // over the checker's spelling of the arguments, so a nested
-                // instance argument (`List$mono$TInt`) names its template.
-                let clone = self
-                    .instance_method_clone(&template_name, method, &arguments)
-                    .map(|clone| format!("{template_name}.{clone}"))
-                    .filter(|symbol| self.functions.contains_key(symbol.as_str()));
-                if let Some(clone) = clone {
-                    // A variadic initializer's clone needs a call-site arity;
-                    // those sites enqueue it.
-                    if !self
-                        .declarations
-                        .get(clone.as_str())
-                        .is_some_and(|decl| arity_keyed_variadic(decl))
-                    {
-                        self.enqueue(&clone, bindings.clone(), Vec::new())?;
-                    }
-                    continue;
-                }
                 let base = format!("{template_name}.{method}");
                 let candidates = self
                     .functions
@@ -3035,75 +2981,6 @@ impl<'a> Specializer<'a> {
 const fn arity_keyed_variadic(declaration: &MirFunctionDeclaration) -> bool {
     matches!(&declaration.variadic, Some(element)
         if !matches!(element, Ty::RuntimePack(_) | Ty::Tuple(_)))
-}
-
-/// `arguments` with every monomorphized struct (`List$mono$TInt[Int]`)
-/// respelled as its template application (`List[Int]`), the spelling the
-/// checker mangled its per-instantiation clones over.
-pub(super) fn template_spelled_arguments(arguments: &[TyArg]) -> Vec<TyArg> {
-    struct TemplateSpelling;
-    impl mojito_types::types::TyRewrite for TemplateSpelling {
-        fn visits_closed(&self) -> bool {
-            true
-        }
-
-        fn whole(&mut self, ty: &Ty) -> Option<Ty> {
-            let Ty::Struct(name, arguments) = ty else {
-                return None;
-            };
-            let template = nominal_template(name);
-            if template == name {
-                return None;
-            }
-            let arguments = mojito_types::types::rewrite_tyargs(arguments, self).ok()?;
-            Some(Ty::Struct(template.to_string(), arguments.into()))
-        }
-
-        fn expr(
-            &mut self,
-            expr: &mojito_types::param_expr::ParamExpr,
-        ) -> Result<mojito_types::param_expr::ParamExpr, mojito_types::param_expr::ParamError>
-        {
-            Ok(expr.clone())
-        }
-    }
-    mojito_types::types::map_tyargs(arguments, |ty| {
-        mojito_types::types::rewrite_ty(ty, &mut TemplateSpelling).unwrap_or_else(|_| ty.clone())
-    })
-}
-
-/// The instance symbol a per-instantiation lifecycle clone is emitted under
-/// (`Box.__deinit__$y3:Int` bound to owner `Box$mono$TInt` becomes
-/// `Box$mono$TInt.__deinit__`), or `None` for any other method.
-///
-/// Lowering composes a struct's lifecycle symbols by name, so the clone must
-/// answer to the plain one; its template is never instantiated for that
-/// instance beside it. A per-call clone of a generic constructor bakes the
-/// call's values after the instance's `owner_arity`
-/// (`C.__init__$y3:Int$y6:String`): one instance has several, reached only
-/// through their call sites, so each keeps its own symbol.
-fn lifecycle_clone_instance_symbol(
-    template: &str,
-    owner: Option<&str>,
-    owner_arity: usize,
-) -> Option<String> {
-    let owner = owner?;
-    let (_, method) = mojito_symbol::symbol::split_method_symbol(template)?;
-    let base = mojito_symbol::symbol::instance_clone_base(method);
-    if !matches!(
-        base,
-        "__init__" | "__copyinit__" | "__moveinit__" | "__deinit__"
-    ) {
-        return None;
-    }
-    // Only a per-instantiation clone renames. A signature-qualified overload
-    // of the template itself (`Optional.__init__$ov$None`) keeps its own
-    // symbol: its siblings answer to the same base name.
-    let baked = method.strip_prefix(base)?;
-    let per_call = mojito_symbol::symbol::specialization_arity(method)
-        .is_some_and(|baked| baked > owner_arity);
-    (!baked.is_empty() && !baked.contains(mojito_symbol::symbol::OV_SEP) && !per_call)
-        .then(|| format!("{owner}.{base}"))
 }
 
 /// `ty` with every pointer origin reset to the static one. A pointer's

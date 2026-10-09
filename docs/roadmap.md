@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R513**.
+Next free ID: **R514**.
 
 ## Ordered Work
 
@@ -59,35 +59,6 @@ goes to a catch-up track, however small.
 Frozen: `checker/template_facts.rs` gains no certificate class and no
 recipe. A body the certificates do not cover waits for its stage. A
 correctness fix to existing behavior is allowed.
-
-- [ ] **R8 (P3) A method that reaches a compile-time construct still
-  clones per instance**
-
-  Problem: a generic struct's method keeps its per-instantiation clone where
-  its body holds or reaches a construct MIR cannot express yet, so
-  clone-symbol retargeting and the method certificate classes are still live.
-  - Decided from syntax by the cloner (`keyed_methods`,
-    `comptime/specialize.rs`): a `comptime if` or `comptime for`, a `rebind`,
-    a nested `def` or a lambda, and a call that reaches a
-    compile-time-keyed `def`.
-  - Read from the template's checked types by the driver
-    (`src/compiler/template_reach.rs`): a tuple or a struct specialized whole
-    over the struct's parameters, and a call of an overloaded method with
-    binders of its own.
-  - Each class goes with the entry that gives it a MIR form.
-  - The erased oracle cannot follow a template-served body's call to an
-    instance's clone, because an erased value carries no type arguments:
-    `--erased` stops with "Box.kind: unspecialized type-keyed method" where
-    concrete MIR names the clone from the substituted receiver type.
-    `assets/ok/generic_struct_template_reach.mojo` is the `ERASED_VM_RESIDUE`
-    row (`tests/corpus_test.rs`), and it goes when these clones do. The
-    stage-composed `Backend::run` seam and CTFE run erased bodies too.
-  - When the last goes, delete `generate_instance_clones`, the driver's
-    keyed-method and template-reach plumbing, the clone-symbol retargeting in
-    the checker, the VM, and `native::mono`, and the method certificate
-    classes in `checker/template_facts`.
-  - Depends on R1, R4, R5, and R6.
-  - Model: Fable, Planned.
 
 - [ ] **R314 (P3) A rebound place is spelled by its terminal type rather
   than an explicit step**
@@ -3379,6 +3350,21 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Probe: `conformance/probes/associated_value_self_read.mojo`.
   - Depends on nothing.
   - Model: Opus, Planned.
+
+- [ ] **R513 A `comptime for` over another struct's compile-time list is
+  rejected**
+
+  Problem: `comptime for v in K.L`, where `struct K` declares `comptime L =
+  [1, 2, 3]`, sums the list at the pin, while Mojito reports "Undefined
+  variable 'K'".
+  - It fails the same way in a plain function and in a generic struct's
+    method, so it is the loop header's reading of a type's member, not a
+    template gap.
+  - `Self.L` over the struct's own list is R279's spelling.
+  - Probe: `conformance/probes/comptime_for_other_struct_list.mojo`.
+  - Found while landing R8 (2026-10-08).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
 
 - [ ] **R500 A trait's compile-time value member read through a type
   parameter in a compile-time position is rejected**

@@ -833,6 +833,7 @@ assets/ok/template_served_loan_carrying_instance.mojo	main	exe-differential	sani
 assets/ok/template_tuple_default_initializer.mojo	main	exe-differential	sanitized
 assets/ok/template_two_arms.mojo	main	exe-differential	sanitized
 assets/ok/template_two_types.mojo	main	exe-differential	sanitized
+assets/ok/template_type_member_loop_bound.mojo	main	exe-differential	sanitized
 assets/ok/template_value_keyed_def.mojo	main	exe-differential	sanitized
 assets/ok/template_value_keyed_lane_def.mojo	main	exe-differential	sanitized
 assets/ok/template_value_keyed_struct.mojo	main	exe-differential	sanitized

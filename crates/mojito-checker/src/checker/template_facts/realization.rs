@@ -1083,11 +1083,9 @@ impl Checker {
             }
             self.realize_method_call(&mut facts, index, occurrences, substitution, &substitute)?;
         }
-        self.realize_static_overloads(&mut facts, occurrences, substitution)?;
-        // A construction selected its constructor from the arguments' types
-        // and named the instance's clone of it, where one exists.
+        // A construction selected its constructor from the arguments' types.
         for construction in &template.constructions {
-            self.realize_construction(&mut facts, *construction, occurrences, substitution)?;
+            self.realize_construction(&facts, *construction, occurrences, substitution)?;
         }
         for operator in &template.operators {
             self.realize_operator(template, &mut facts, *operator, occurrences)?;

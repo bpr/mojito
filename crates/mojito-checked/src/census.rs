@@ -29,10 +29,13 @@ pub enum CloneClass {
     /// flow in its template.
     ValueDef,
     /// A per-instantiation method clone whose template body holds no
-    /// compile-time control flow.
+    /// compile-time control flow. Every such method is served by its
+    /// template, so the class counts none: it is kept as a regression
+    /// counter.
     InstanceMethod,
     /// A per-instantiation method clone whose template body holds a
-    /// `comptime if` or a `comptime for`.
+    /// `comptime if` or a `comptime for`, kept as a regression counter for
+    /// the same reason.
     InstanceMethodComptime,
     /// A per-call method clone, for the method's own compile-time
     /// parameters. Every such method is served by its template, so the

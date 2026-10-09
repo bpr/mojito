@@ -3,10 +3,8 @@
 use crate::backend::BackendKind;
 use crate::checked::{CheckedProgram, DiscoveryResult};
 use crate::comptime::{
-    ComptimeError, DefSpecializationRequest, Elaborated, ElaborationInputs, RecordedKeys,
-    StructInstanceRequest, UnservedTemplateUse, bound_generic_template_names,
-    comptime_generic_template_names, elaborate_prepared, generated_names, instance_traces,
-    overload_family_names, prepare, unserved_template_parameter,
+    ComptimeError, DefSpecializationRequest, Elaborated, ElaborationInputs,
+    bound_generic_template_names, elaborate_prepared, generated_names, instance_traces, prepare,
 };
 use crate::ct::CtValue;
 use crate::error::{OwnershipError, ParseError, TypeError};
@@ -24,7 +22,6 @@ use crate::{Ty, TyArg};
 use std::collections::HashSet;
 use std::fmt;
 
-mod template_reach;
 use std::path::Path;
 use std::sync::OnceLock;
 /// A program that has passed linking, comptime elaboration, semantic checking,
@@ -376,12 +373,6 @@ impl Compiler {
         const SPECIALIZATION_ROUNDS: usize = 5;
         let range_templates = scalar_range_template_names(linked);
         let mut def_requests: Vec<DefSpecializationRequest> = Vec::new();
-        // The checker's selection at each unclosed call of an overload
-        // family, so elaboration serves a call whose selected declaration
-        // the template serves even while its arguments are symbolic.
-        let mut def_selections: Vec<DefSpecializationRequest> = Vec::new();
-        let mut struct_requests: Vec<StructInstanceRequest> = Vec::new();
-        let mut template_demand = template_reach::TemplateDemand::new();
         // Occurrences whose recordings conflicted across rounds; determinism
         // should preclude this, but a poisoned key must stay abstract rather
         // than oscillate.
@@ -412,28 +403,13 @@ impl Compiler {
         }));
         crate::checker::validate_comptime_templates_into(&prepared, &mut templates_catalog)
             .map_err(CompilerError::Type)?;
-        // Which `def`s are templates reads the scalar calls validation typed.
-        let templates = {
-            let mut templates = bound_generic_template_names(linked, &templates_catalog);
-            templates.extend(comptime_generic_template_names(linked, &templates_catalog));
-            templates
-        };
-        let families = overload_family_names(linked, &templates_catalog);
-        // The abstract references of the elaboration `checked` was checked
-        // from, and the generic structs whose erased method bodies can reach
-        // a compile-time-keyed stub.
-        let mut unserved_template_uses;
-        let mut stub_reaching_structs;
+        let templates = bound_generic_template_names(linked);
         // What the elaboration `checked` was checked from minted.
         let mut clones;
         let mut checked = {
             let Elaborated {
                 program: discovery,
-                instances: minted,
-                stub_reaching_structs: stub_reaching,
-                unserved_template_uses: unserved,
                 def_traces,
-                method_traces,
                 generated,
                 ctfe_template_stats,
                 clones: minted_clones,
@@ -442,15 +418,12 @@ impl Compiler {
                 elaborate_prepared(&prepared, ElaborationInputs::new(&templates_catalog))
                     .map_err(CompilerError::Comptime)?
             };
-            struct_requests.extend(minted);
             clones = minted_clones;
-            unserved_template_uses = unserved;
-            stub_reaching_structs = stub_reaching;
             if !self.allow_executable_module_scope {
                 validate_module_scope(&discovery).map_err(CompilerError::Type)?;
             }
             templates_catalog.stats_mut().absorb(ctfe_template_stats);
-            templates_catalog.set_traces(instance_traces(def_traces, method_traces));
+            templates_catalog.set_traces(instance_traces(def_traces));
             templates_catalog.set_generated(generated_names(generated));
             let _check = timing::span("discovery.initial.check");
             crate::checker::check_program_carrying(&discovery, &mut templates_catalog, None)
@@ -465,92 +438,38 @@ impl Compiler {
             // recorded one of these is inferred again next round, whatever
             // else its record still matches (`PassCarry::for_next_round`).
             let mut served = ServedRequests::default();
-            let discovered = [
-                (
-                    &mut def_requests,
-                    def_specialization_requests(checked.result(), &templates)
-                        .into_iter()
-                        .chain(scalar_range_requests(checked.result(), &range_templates))
-                        .collect::<Vec<_>>(),
-                ),
-                (
-                    &mut def_selections,
-                    def_family_selections(checked.result(), &families),
-                ),
-            ];
-            for (accumulated, found) in discovered {
-                for request in found {
-                    if conflicted.contains(request.occurrence()) {
-                        continue;
+            let found = def_specialization_requests(checked.result(), &templates)
+                .into_iter()
+                .chain(scalar_range_requests(checked.result(), &range_templates));
+            for request in found {
+                if conflicted.contains(request.occurrence()) {
+                    continue;
+                }
+                match def_requests
+                    .iter()
+                    .position(|existing| existing.occurrence() == request.occurrence())
+                {
+                    None => {
+                        last_new_callee = request.callee().to_string();
+                        served.callees.push(request.callee().to_string());
+                        def_requests.push(request);
+                        grew = true;
                     }
-                    match accumulated
-                        .iter()
-                        .position(|existing| existing.occurrence() == request.occurrence())
-                    {
-                        None => {
-                            last_new_callee = request.callee().to_string();
-                            served.callees.push(request.callee().to_string());
-                            accumulated.push(request);
-                            grew = true;
-                        }
-                        Some(index) if accumulated[index] != request => {
-                            conflicted.insert(accumulated.remove(index).occurrence().clone());
-                        }
-                        Some(_) => {}
+                    Some(index) if def_requests[index] != request => {
+                        conflicted.insert(def_requests.remove(index).occurrence().clone());
                     }
+                    Some(_) => {}
                 }
             }
-            let mut instances_grew = false;
-            // An instance of a struct whose erased method body can reach a
-            // compile-time-keyed stub must mint its clones: keeping the
-            // erased path at the cap below would trap at run time.
-            let mut stub_reaching_instance = None;
-            for request in struct_instance_requests(checked.result()) {
-                if !struct_requests.contains(&request) {
-                    last_new_callee = request.template().to_string();
-                    if stub_reaching_structs.contains(request.template()) {
-                        stub_reaching_instance = Some(request.template().to_string());
-                    }
-                    served.instances.push(request.clone());
-                    struct_requests.push(request);
-                    instances_grew = true;
-                }
-            }
-            // A template method that mints no clone is not checked at an
-            // instance's arguments, so what its body reaches there is read
-            // off the template's own checked types.
-            let reached =
-                template_demand.request(checked.result(), &mut struct_requests, &mut served);
-            grew |= reached.is_some();
-            last_new_callee = reached.unwrap_or(last_new_callee);
             drop(requests);
             timing::count("def_requests", def_requests.len() as u64);
-            timing::count("struct_requests", struct_requests.len() as u64);
-            if !grew && !instances_grew {
-                converged = true;
-                break;
-            }
-            // Instance clones only upgrade calls from the erased template, so
-            // an instance discovered at the round cap keeps that path rather
-            // than reporting divergence — unless that path can run a
-            // compile-time-keyed stub, which has no body.
-            if !grew && round == SPECIALIZATION_ROUNDS {
-                if let Some(template) = stub_reaching_instance {
-                    return Err(CompilerError::SpecializationDivergence {
-                        rounds: SPECIALIZATION_ROUNDS,
-                        callee: template,
-                    });
-                }
+            if !grew {
                 converged = true;
                 break;
             }
             let Elaborated {
                 program: elaborated,
-                instances: minted,
-                stub_reaching_structs: stub_reaching,
-                unserved_template_uses: unserved,
                 def_traces,
-                method_traces,
                 generated,
                 ctfe_template_stats,
                 clones: minted_clones,
@@ -560,31 +479,17 @@ impl Compiler {
                     &prepared,
                     ElaborationInputs {
                         def_requests: &def_requests,
-                        def_selections: &def_selections,
-                        struct_requests: &struct_requests,
-                        keyed_methods: template_demand.keyed_methods(),
                         ..ElaborationInputs::new(&templates_catalog)
                     },
                 )
                 .map_err(CompilerError::Comptime)?
             };
-            unserved_template_uses = unserved;
-            stub_reaching_structs = stub_reaching;
             clones = minted_clones;
-            // Instances the specializer minted on its own (closed applications
-            // reached from user code and from other clones) are already
-            // served; the checker's recordings of them are not new work.
-            for instance in minted {
-                if !struct_requests.contains(&instance) {
-                    served.instances.push(instance.clone());
-                    struct_requests.push(instance);
-                }
-            }
             if !self.allow_executable_module_scope {
                 validate_module_scope(&elaborated).map_err(CompilerError::Type)?;
             }
             templates_catalog.stats_mut().absorb(ctfe_template_stats);
-            templates_catalog.set_traces(instance_traces(def_traces, method_traces));
+            templates_catalog.set_traces(instance_traces(def_traces));
             templates_catalog.set_generated(generated_names(generated));
             let _check = timing::span("check");
             let dirty = served.dirty_sites(&checked);
@@ -609,7 +514,6 @@ impl Compiler {
             timing::count("arena_builds", 1);
             checked.into_result().finalize()
         };
-        reject_unserved_template_calls(&checked, linked, &unserved_template_uses)?;
         let mir = {
             let _lower = timing::span("mir.lower");
             crate::mir::lower_checked_program(&checked)
@@ -707,103 +611,22 @@ impl Compiler {
 #[derive(Default)]
 struct ServedRequests {
     callees: Vec<String>,
-    methods: Vec<(String, String)>,
-    instances: Vec<StructInstanceRequest>,
-    /// Struct templates one of whose methods mints per-instance clones from
-    /// this round on: a body that reached an instance of one names the
-    /// template's method until it is inferred again.
-    keyed_templates: Vec<String>,
 }
 
 impl ServedRequests {
-    /// The body sites whose facts a newly served request would change:
-    /// those that reached a struct application it instantiates, or recorded
-    /// an instantiation of a callee or method it clones. (A rewritten call
-    /// occurrence changes the body's syntax hash instead.)
+    /// The body sites whose facts a newly served request would change: those
+    /// that recorded an instantiation of a callee it clones. (A rewritten
+    /// call occurrence changes the body's syntax hash instead.)
     fn dirty_sites(&self, carry: &crate::checker::PassCarry) -> HashSet<crate::token::SourceSpan> {
-        let instances: Vec<(&str, &[TyArg])> = self
-            .instances
-            .iter()
-            .map(|instance| (instance.template(), instance.arguments()))
-            .collect();
         carry
             .sites()
             .filter(|site| {
-                site.struct_instantiations().iter().any(|reached| {
-                    instances.contains(&(reached.template.as_str(), reached.arguments.as_slice()))
-                        || self.keyed_templates.contains(&reached.template)
-                }) || site
-                    .instantiated_callees()
+                site.instantiated_callees()
                     .any(|callee| self.callees.iter().any(|served| served == callee))
-                    || site.instantiated_methods().any(|(owner, method)| {
-                        self.methods.iter().any(|(served_owner, served_method)| {
-                            // A request against a closed instance is keyed
-                            // by the instance (`C$y3:Int`); the site records
-                            // the template it constructed.
-                            served_method == method
-                                && (served_owner == owner
-                                    || crate::symbol::specialization_template(served_owner)
-                                        == Some(owner))
-                        })
-                    })
             })
             .map(|site| site.key().clone())
             .collect()
     }
-}
-
-/// Reject a reference the discovery fixpoint left on an abstract path that
-/// can run a compile-time-keyed template's stub. A served call names its
-/// clone, so a surviving use (an argument the checker could not close, or a
-/// function-value use of a `def` whose abstract body calls such a template)
-/// would otherwise trap at run time. A call from inside an abstract generic
-/// body is not a use: that body runs only through one.
-fn reject_unserved_template_calls(
-    checked: &CheckedProgram,
-    linked: &[Stmt],
-    uses: &[UnservedTemplateUse],
-) -> Result<(), CompilerError> {
-    let unserved = uses.iter().find_map(|reference| {
-        let instantiation = checked
-            .generic_instantiations()
-            .iter()
-            .find(|(span, instantiation)| {
-                span.source == reference.site.source
-                    && span.span == reference.site.span
-                    && instantiation.callee == reference.callee
-            })
-            .map(|(_, instantiation)| {
-                (
-                    RecordedKeys {
-                        names: &instantiation.parameter_names,
-                        types: &instantiation.parameter_types,
-                        variadic: instantiation.variadic.as_ref(),
-                    },
-                    instantiation.arguments.as_slice(),
-                )
-            });
-        match instantiation {
-            Some(recorded) => Some((reference, recorded)),
-            None if reference.function_value => {
-                Some((reference, (RecordedKeys::default(), &[][..])))
-            }
-            None => None,
-        }
-    });
-    let Some((unserved, (recorded, arguments))) = unserved else {
-        return Ok(());
-    };
-    let parameter = unserved_template_parameter(
-        linked,
-        &unserved.callee,
-        recorded,
-        arguments,
-        &closed_generic_argument,
-    );
-    Err(CompilerError::Comptime(ComptimeError::Arity(format!(
-        "generic '{}' requires compile-time parameter '{parameter}'",
-        &unserved.callee
-    ))))
 }
 
 /// The checker-recorded inferred bound-generic instantiations that are closed
@@ -819,20 +642,6 @@ fn def_specialization_requests(
     recorded_def_calls(checked, |instantiation| {
         templates.contains(&instantiation.callee)
             && instantiation.arguments.iter().all(closed_generic_argument)
-    })
-}
-
-/// The checker-recorded instantiations of overload families that are not
-/// closed: each names the declaration the checker selected while the call's
-/// arguments are still symbolic, as [`def_specialization_requests`] does for
-/// a closed one, conflicts and order included.
-fn def_family_selections(
-    checked: &DiscoveryResult,
-    families: &std::collections::HashSet<String>,
-) -> Vec<DefSpecializationRequest> {
-    recorded_def_calls(checked, |instantiation| {
-        families.contains(&instantiation.callee)
-            && !instantiation.arguments.iter().all(closed_generic_argument)
     })
 }
 
@@ -945,32 +754,6 @@ fn scalar_range_requests(
         key(a).cmp(&key(b))
     });
     requests
-}
-
-/// Whether a recorded instantiation argument is concrete enough to replay.
-/// The checker-recorded generic-struct applications that are closed and
-/// therefore replayable as per-instantiation method clones. A symbolic value
-/// argument (`Array[Int, n]` inside a generic body) is not an instance.
-fn struct_instance_requests(checked: &DiscoveryResult) -> Vec<StructInstanceRequest> {
-    checked
-        .struct_instantiations()
-        .iter()
-        .filter(|instantiation| {
-            instantiation.arguments.iter().all(|argument| {
-                closed_generic_argument(argument)
-                    && !matches!(
-                        argument,
-                        TyArg::Val(CtValue::Deferred(_) | CtValue::Marker(_))
-                    )
-            })
-        })
-        .map(|instantiation| {
-            StructInstanceRequest::new(
-                instantiation.template.clone(),
-                instantiation.arguments.clone(),
-            )
-        })
-        .collect()
 }
 
 /// Whether a recorded argument can be replayed as a specialization request.

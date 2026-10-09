@@ -515,7 +515,6 @@ pub fn walk_method<V: Visitor>(visitor: &mut V, method: &Method) {
     walk_fn_params(visitor, &method.params);
     walk_optional_type(visitor, method.raises_type.as_ref());
     walk_optional_type(visitor, method.ret.as_ref());
-    walk_optional_type(visitor, method.self_ty.as_ref());
     walk_exprs(visitor, &method.where_clauses);
     walk_block(visitor, &method.body);
 }

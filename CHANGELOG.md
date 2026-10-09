@@ -8,6 +8,19 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- No method of a generic struct is cloned per instance any more, and no
+  `def` is compile-time-keyed, as at the pin: every `comptime for` in a
+  generic body stays in its template and is unrolled per instance below
+  MIR. A loop bound that reads a type's value member through a binder
+  (`range(T.K)`, `range(Self.T.K)`) or a field of a struct-valued parameter
+  (`range(Self.e.w)`) is now a parameter expression, which fixes a method's
+  own binder failing with "'T' is not a compile-time type" and a
+  struct-valued instance aborting with "unspecialized type-keyed method"
+  at run time. A loop over a module constant list of struct values forces
+  the constant at the header. The per-instance cloner, the driver's
+  instance requests and template-reach analysis, and the clone-symbol
+  lookups in the checker, the VM, and `native::mono` are deleted.
+
 - A module constant whose initializer is a display, a tuple, or a subscript
   that applies a callable (`comptime QS = [Q(1, "x"), mk(7)]`,
   `comptime T = (f(1), "a")`, `comptime Y = XS[1]`) now waits for its first

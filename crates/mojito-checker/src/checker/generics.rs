@@ -1066,7 +1066,7 @@ impl Checker {
     }
 
     /// Record a generic-struct application reached as a constructor target or
-    /// method-call receiver, for per-instantiation method-clone discovery.
+    /// method-call receiver.
     pub(super) fn record_struct_instantiation(
         &self,
         template: &str,
@@ -1100,13 +1100,11 @@ impl Checker {
     }
 
     /// The materialized declaration-order arguments of a closed instance of
-    /// an ordinary generic struct that gets per-instantiation clones, or
-    /// `None` when the application keeps the erased path. Only a struct whose
-    /// parameters are all plain type or value parameters qualifies (the
-    /// elaborator's `instance_template`): packs, callable-bounded parameters,
-    /// and origin binders keep the erased path, as does a `StringLiteral` or
-    /// an open value argument (`instance_method_clone_name` names it no
-    /// clone).
+    /// an ordinary generic struct, which key a call's instantiation record,
+    /// or `None` when the application keys none. Only a struct whose
+    /// parameters are all plain type or value parameters qualifies: packs,
+    /// callable-bounded parameters, and origin binders key none, as does a
+    /// `StringLiteral` or an open value argument.
     pub(super) fn instance_arguments(
         &self,
         template: &str,
@@ -1143,30 +1141,6 @@ impl Checker {
                 .map(materialized_instantiation_argument)
                 .collect()
         })
-    }
-
-    /// The per-instantiation clone of `method` on the struct instance
-    /// `owner[arguments]` (`get$y3:Int`), once the elaborator has appended it
-    /// to the template's method list. The value list agrees with the
-    /// elaborator's `method_request_values` over the struct's parameters.
-    ///
-    /// A clone is minted from its source method only, so a `method` that is
-    /// already a clone has none: keying it by the instance would spell a
-    /// sibling's per-call clone (`pick$y3:Int` at `[Int]` is
-    /// `pick[U]`'s clone `pick$y3:Int$y3:Int`).
-    pub(super) fn instance_method_clone(
-        &self,
-        owner: &str,
-        method: &str,
-        arguments: &[TyArg],
-    ) -> Option<String> {
-        if mojito_symbol::symbol::specialization_template(method).is_some() {
-            return None;
-        }
-        let info = self.structs.get(owner)?;
-        let name =
-            mojito_symbol::symbol::instance_method_clone_name(method, &info.decls, arguments)?;
-        info.methods.contains_key(&name).then_some(name)
     }
 
     #[allow(clippy::too_many_arguments)]

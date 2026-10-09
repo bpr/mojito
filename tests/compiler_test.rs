@@ -2932,10 +2932,7 @@ fn assert_methods_derive(source: &str, expected: &str, methods: &[(&str, usize)]
         compiler.execute(&verified).expect("execute").output,
         expected
     );
-    assert_eq!(
-        clones_and_requests(&derived),
-        clones_and_requests(&verified)
-    );
+    assert_eq!(struct_requests(&derived), struct_requests(&verified));
     let stats = derived.template_stats();
     for (method, instances) in methods {
         let clone = format!("{method}$");
@@ -4648,25 +4645,8 @@ fn template_def_converting_argument_is_template_served() {
     );
 }
 
-/// The per-instantiation method clones of a compiled program, as
-/// `Owner.clone` names, and the instances its checked facts request.
-fn clones_and_requests(program: &mojito::compiler::CompiledProgram) -> (Vec<String>, Vec<String>) {
-    let mut clones: Vec<String> = program
-        .checked()
-        .statements()
-        .iter()
-        .filter_map(|statement| match &statement.kind {
-            mojito::ast::StmtKind::Struct { name, methods, .. } => Some((name, methods)),
-            _ => None,
-        })
-        .flat_map(|(owner, methods)| {
-            methods
-                .iter()
-                .filter(|method| method.self_ty.is_some())
-                .map(move |method| format!("{owner}.{}", method.name))
-        })
-        .collect();
-    clones.sort();
+/// The instances a compiled program's checked facts request.
+fn struct_requests(program: &mojito::compiler::CompiledProgram) -> Vec<String> {
     let mut requests: Vec<String> = program
         .checked()
         .struct_instantiations()
@@ -4674,7 +4654,7 @@ fn clones_and_requests(program: &mojito::compiler::CompiledProgram) -> (Vec<Stri
         .map(|instantiation| format!("{instantiation:?}"))
         .collect();
     requests.sort();
-    (clones, requests)
+    requests
 }
 
 #[test]
@@ -4695,10 +4675,7 @@ fn template_method_requests_match_an_inferred_run() {
         &Compiler::default().with_template_verification(true),
         source,
     );
-    assert_eq!(
-        clones_and_requests(&derived),
-        clones_and_requests(&inferred)
-    );
+    assert_eq!(struct_requests(&derived), struct_requests(&inferred));
     let compiler = Compiler::default();
     assert_eq!(
         compiler.execute(&derived).expect("execute").output,
@@ -4895,14 +4872,6 @@ fn loan_carrying_instance_is_served_by_its_template() {
         compiler.execute(&compiled).expect("execute").output,
         "1 2\n1 5\n2 9\n0\n1 3\n"
     );
-    let (clones, _) = clones_and_requests(&compiled);
-    for method in ["Bag.push", "Bag.push_copy", "Bag.first", "Cell.put"] {
-        let clone = format!("{method}$");
-        assert!(
-            clones.iter().all(|name| !name.starts_with(&clone)),
-            "{method} mints no clone: {clones:?}"
-        );
-    }
 }
 
 #[test]

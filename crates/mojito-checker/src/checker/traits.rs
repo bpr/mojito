@@ -250,8 +250,6 @@ impl Checker {
                     implicit: false,
                     parametric_origin_writes: Vec::new(),
                     origin_binders: vec![None; regular_params.len()],
-                    receiver: None,
-                    clone_origins: false,
                     synthesized_default: false,
                     nested_origins: NestedOrigins::AsDeclared,
                     template_ret: None,
@@ -350,10 +348,7 @@ impl Checker {
             .methods
             .iter()
             .filter(|method| {
-                // A per-instantiation clone of the destructor (`__deinit__$y3:Int`)
-                // is the same whole-value destructor, not a named one.
-                mojito_symbol::symbol::instance_clone_base(&method.name) != "__deinit__"
-                    && method.self_convention == Some(ArgConvention::Deinit)
+                method.name != "__deinit__" && method.self_convention == Some(ArgConvention::Deinit)
             })
             .map(|method| (method.name.clone(), method.raises))
             .collect::<HashMap<_, _>>();
@@ -672,16 +667,6 @@ impl Checker {
                 .enclosing_struct_type_params
                 .replace(saved_method_type_params.len());
             self.enclosing_type_params.extend(m.type_params.clone());
-            // A per-instantiation clone declares its receiver type: its
-            // signature resolves `Self` against that instance.
-            let receiver_override = m
-                .self_ty
-                .as_ref()
-                .map(|ty| self.ty_from_anno(ty))
-                .transpose()?;
-            let saved_self_ty = receiver_override
-                .as_ref()
-                .map(|ty| self.self_ty.replace(ty.clone()));
             // The method's own `where` clause refines its signature exactly as
             // it refines its body: a conditionally available method may name
             // types its receiver's bare bounds do not admit.
@@ -699,23 +684,6 @@ impl Checker {
                 }
                 Err(error) => Err(error),
             };
-            if let Some(saved) = saved_self_ty {
-                self.self_ty = saved;
-            }
-            let signature = signature.map(|(all_types, mut sig)| {
-                sig.receiver.clone_from(&receiver_override);
-                (all_types, sig)
-            });
-            if let Some(receiver) = receiver_override {
-                self.declaration_types.borrow_mut().insert(
-                    mojito_checked::checked::AnnotationSite::MethodSelf {
-                        module: declaration.module.clone(),
-                        declaration: name.to_string(),
-                        method: method_index,
-                    },
-                    receiver,
-                );
-            }
             self.enclosing_type_params = saved_method_type_params;
             self.enclosing_struct_type_params.set(saved_struct_count);
             self.tparams.pop();
@@ -919,45 +887,14 @@ impl Checker {
             *overload_indices
                 .get_mut(&method_name)
                 .expect("inserted above") += 1;
-            // A per-instantiation clone checks with `self`/`Self` bound to its
-            // declared receiver instance rather than the parametric struct.
-            // The signature pass resolved it with the clone's own origin
-            // binders in scope (`Bag[Span[Int, __clone_origin0]]`).
-            let receiver_site = mojito_checked::checked::AnnotationSite::MethodSelf {
-                module: declaration.module.clone(),
-                declaration: name.to_string(),
-                method: method_index,
-            };
-            let recorded_receiver = self.declaration_types.borrow().get(&receiver_site).cloned();
-            let receiver_override = m
-                .self_ty
-                .as_ref()
-                .map(|ty| recorded_receiver.map_or_else(|| self.ty_from_anno(ty), Ok))
-                .transpose()?;
-            let method_self_ty = receiver_override.clone().unwrap_or_else(|| self_ty.clone());
-            let method_self_ty_override = receiver_override.clone();
-            let saved_self_ty = receiver_override.map(|ty| self.self_ty.replace(ty));
-            let result = self.check_method(
-                &method_self_ty,
+            self.check_method(
+                self_ty,
                 m,
                 declaration.module.clone().as_ref(),
                 name,
                 method_index,
                 overload_index,
-            );
-            if let Some(saved) = saved_self_ty {
-                self.self_ty = saved;
-            }
-            // A clone's failure is a post-instantiation error: report the
-            // instance and the source method the clone was minted from.
-            if let (Err(error), Some(receiver)) = (&result, &method_self_ty_override) {
-                return Err(TypeError::PostInstantiation {
-                    receiver: receiver.to_string(),
-                    method: m.name.split('$').next().unwrap_or(&m.name).to_string(),
-                    error: Box::new(error.clone()),
-                });
-            }
-            result?;
+            )?;
         }
         Ok(())
     }
@@ -1413,8 +1350,6 @@ impl Checker {
             implicit: req_sig.implicit,
             parametric_origin_writes: req_sig.parametric_origin_writes.clone(),
             origin_binders: req_sig.origin_binders.clone(),
-            receiver: None,
-            clone_origins: false,
             synthesized_default: false,
             nested_origins: req_sig.nested_origins,
             template_ret: None,

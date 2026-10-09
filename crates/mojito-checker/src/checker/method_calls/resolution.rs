@@ -67,38 +67,27 @@ impl Checker {
         })
     }
 
-    /// A generic method's resolved compile-time arguments, and a concrete
-    /// generic-struct receiver's instantiation, feed specialization
-    /// discovery; once the elaborator has minted the clone, the call retargets
-    /// to it by exact name and this returns its type.
-    pub(super) fn retarget_to_method_clone(
+    /// Record a generic method's resolved compile-time arguments, and a
+    /// concrete generic-struct receiver's instantiation, as the call's
+    /// checked facts.
+    pub(super) fn record_method_call_instantiation(
         &self,
         site: MethodCallSite<'_>,
         resolved: &MethodCallResolution,
-    ) -> Result<Option<Ty>, TypeError> {
+    ) {
         let MethodCallSite {
             span,
-            object,
             method,
             call,
             obj_ty,
+            ..
         } = site;
-        let MethodCallArguments {
-            param_args,
-            args,
-            kwargs,
-            parameterized_syntax,
-            preserves_receiver_interiors,
-        } = call;
+        let param_args = call.param_args;
         if let (Ty::Struct(sname, targs), Some(arguments)) = (obj_ty, &resolved.instantiation) {
-            // On a closed instance of an ordinary generic struct the request
-            // (and the clone) is keyed by the instance: its arguments bake
+            // On a closed instance of an ordinary generic struct the
+            // instantiation is keyed by the instance: its arguments come
             // before the call's.
             let owner_arguments = self.instance_arguments(sname, targs).unwrap_or_default();
-            // A call already retargeted to the per-instantiation clone
-            // (`name$y3:Int`) requests the clone of the source method: the
-            // elaborator selects by source name and mints from the template.
-            let source_method = method.split('$').next().unwrap_or(method);
             let overload = resolved
                 .lowered_name
                 .as_deref()
@@ -110,7 +99,7 @@ impl Checker {
                 mojito_checked::checked::MethodInstantiation {
                     owner: sname.clone(),
                     owner_arguments,
-                    method: source_method.to_string(),
+                    method: method.to_string(),
                     parameter_names: resolved.parameter_names.clone(),
                     overload,
                     arguments: arguments.clone(),
@@ -123,33 +112,11 @@ impl Checker {
                 },
             );
         }
-        // A concrete generic-struct receiver records its instantiation for
-        // per-instantiation method-clone discovery and, once the elaborator
-        // has appended the clone to the template, retargets to it by exact
-        // name (the clone keeps the method's own parameters, so explicit
-        // arguments pass through).
         if let Ty::Struct(sname, targs) = obj_ty
             && !targs.is_empty()
         {
             self.record_struct_instantiation(sname, targs, span.source.as_deref());
-            if let Some(clone) = self.instance_method_clone(sname, method, targs) {
-                return self
-                    .infer_method_call(
-                        span,
-                        object,
-                        &clone,
-                        MethodCallArguments {
-                            param_args,
-                            args,
-                            kwargs,
-                            parameterized_syntax,
-                            preserves_receiver_interiors,
-                        },
-                    )
-                    .map(Some);
-            }
         }
-        Ok(None)
     }
 
     /// A nominal struct's declared method, substituted at the receiver's type
@@ -165,7 +132,6 @@ impl Checker {
             object,
             method,
             call,
-            obj_ty,
             ..
         } = site;
         let MethodCallArguments {
@@ -238,18 +204,6 @@ impl Checker {
                     continue;
                 }
             };
-            let Ok(clone_origins) = self.bind_clone_receiver_origins(
-                &format!("{sname}.{method}"),
-                sig,
-                Some(obj_ty),
-                &params,
-                args,
-                kwargs,
-            ) else {
-                continue;
-            };
-            let params = clone_origins.substitute_all(&params);
-            let variadic = variadic.map(|element| clone_origins.substitute(&element));
             let instantiation = method_instantiation_arguments(sig, &method_arguments);
             if let Err(failure) =
                 self.method_constraint_result(sig, &method_arguments, &info.decls, targs)
@@ -299,7 +253,7 @@ impl Checker {
                     // caller's binder of the same identity
                     // (`result[Self.Ts.length + i]` inside a method of the
                     // struct), which the receiver's must not rewrite.
-                    return_type: clone_origins.substitute(&self.close_method_values(
+                    return_type: self.close_method_values(
                         self.close_pack_elements(
                             substitute(
                                 &super::super::generics::expand_solved_packs(
@@ -316,7 +270,7 @@ impl Checker {
                         ),
                         &sig.decls,
                         &method_arguments,
-                    )),
+                    ),
                     result_adapter: None,
                     raises: sig.raises,
                     error: sig.error.as_ref().map(|error| {
@@ -358,7 +312,7 @@ impl Checker {
                     declared_return: Some(
                         sig.template_ret.clone().unwrap_or_else(|| sig.ret.clone()),
                     ),
-                    declared_params: clone_origins.substitute_all(&sig.params),
+                    declared_params: sig.params.clone(),
                     nested_origins: sig.nested_origins,
                     param_types: params,
                     param_decls: sig.decls.clone(),

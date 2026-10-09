@@ -389,7 +389,6 @@ impl VmBackend {
             parameter_arguments: param_arg_regs,
             parameter_declarations: param_decls,
             instantiated_arguments: instantiated,
-            argument_types: arg_types,
         } = invocation;
         let CallerFrame {
             id: frame_id,
@@ -446,7 +445,6 @@ impl VmBackend {
                                     parameter_arguments: param_arg_regs,
                                     parameter_declarations: param_decls,
                                     instantiated_arguments: instantiated,
-                                    argument_types: Vec::new(),
                                 },
                                 CallerFrame {
                                     id: frame_id,
@@ -543,9 +541,8 @@ impl VmBackend {
                 // a synchronous call does.
                 let stack_base = self.push_caller_mirror(frame_id, regs, vars);
                 let formatted = (|| {
-                    for (index, argument) in args.into_iter().enumerate() {
-                        let static_ty = arg_types.get(index).and_then(Option::as_ref);
-                        text.push_str(&self.format_value(prog, argument, false, static_ty)?);
+                    for argument in args {
+                        text.push_str(&self.format_value(prog, argument, false)?);
                     }
                     Ok::<_, RuntimeError>(())
                 })();
@@ -624,9 +621,8 @@ impl VmBackend {
                 // references into this caller (see the builtin-string arm).
                 let stack_base = self.push_caller_mirror(frame_id, regs, vars);
                 let written = (|| {
-                    for (position, argument) in args.into_iter().enumerate() {
-                        let static_ty = arg_types.get(position).and_then(Option::as_ref);
-                        let text = self.format_value(prog, argument, false, static_ty)?;
+                    for argument in args {
+                        let text = self.format_value(prog, argument, false)?;
                         // `write_string` borrows a view over a temporary buffer
                         // that lives exactly as long as the call.
                         let (payload, allocation) = self.temporary_string_span(prog, &text)?;

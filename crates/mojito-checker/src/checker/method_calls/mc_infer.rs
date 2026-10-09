@@ -163,9 +163,7 @@ impl Checker {
             parameterized_syntax,
             ..
         } = call;
-        if let Some(ty) = self.retarget_to_method_clone(site, &resolved)? {
-            return Ok(ty);
-        }
+        self.record_method_call_instantiation(site, &resolved);
         if parameterized_syntax {
             self.parameterized_method_calls
                 .borrow_mut()

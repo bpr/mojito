@@ -611,53 +611,23 @@ impl Checker {
         if request.is_some() && closed > 0 && closed < binders.len() {
             return Err("the instance would bake some witness binders and not others");
         }
-        let target = if self
-            .instance_method_clone(owner, method, struct_arguments)
-            .is_some()
+        // The witness's template serves the instance, its availability
+        // condition judged at the instance's arguments.
+        if !declared.availability.is_empty()
+            && !struct_arguments.is_empty()
+            && !self.method_constraints_apply(declared, &[], &info.decls, struct_arguments)
         {
-            if declared.decls.is_empty() {
-                self.method_clone_target(owner, method, struct_arguments, declared, &substitution)
-                    .ok_or("the instance's witness clone family has no member for it")?
-            } else {
-                // A witness with binders of its own keeps them in its clone:
-                // a lone declaration's clone is a lone clone, and an overload
-                // set's clone family carries each member's qualifier.
-                let clone = self
-                    .instance_method_clone(owner, method, struct_arguments)
-                    .ok_or("the instance's witness has no clone")?;
-                if overloaded {
-                    self.clone_family_member(
-                        owner,
-                        &clone,
-                        struct_arguments,
-                        declared,
-                        &substitution,
-                    )
-                    .ok_or("the instance's clone family has no one member for the witness")?
-                } else {
-                    format!("{owner}.{clone}")
-                }
-            }
+            return Err("the instance's witness is unavailable at the instance");
+        }
+        let target = if overloaded {
+            crate::checker::overload_support::method_lowered_name(
+                owner,
+                method,
+                declared,
+                self.self_instance_ty(owner).as_ref(),
+            )
         } else {
-            // No clone of the witness: its template serves the instance, its
-            // availability condition judged at the instance's arguments as
-            // the clone check judges it.
-            if !declared.availability.is_empty()
-                && !struct_arguments.is_empty()
-                && !self.method_constraints_apply(declared, &[], &info.decls, struct_arguments)
-            {
-                return Err("the instance's witness is unavailable at the instance");
-            }
-            if overloaded {
-                crate::checker::overload_support::method_lowered_name(
-                    owner,
-                    method,
-                    declared,
-                    self.self_instance_ty(owner).as_ref(),
-                )
-            } else {
-                format!("{owner}.{method}")
-            }
+            format!("{owner}.{method}")
         };
         Ok(BoundWitness::Method {
             owner,

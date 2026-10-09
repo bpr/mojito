@@ -367,8 +367,10 @@ const ERASED_VM_RESIDUE: &[&str] = &[
     // reaches the VM with its slot symbolic.
     "comptime_layout_constant",
     // R301, the erased oracle: a kept `comptime for` bounded by a value
-    // parameter or a pack's length has no runtime value to stop at.
+    // parameter, a pack's length, or a type's value member has no runtime
+    // value to stop at.
     "comptime_for_template_served",
+    "template_type_member_loop_bound",
     // R323, the erased oracle: an erased frame carries no type argument to
     // answer a reflection query over a type parameter from.
     "dtype_keyed_overload_beside_keyed",

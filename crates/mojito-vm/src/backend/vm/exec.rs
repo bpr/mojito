@@ -91,13 +91,7 @@ impl VmBackend {
             MirInstr::CopyValue { dest, value } => {
                 let source = regs[value.0 as usize].clone();
                 regs[dest.0 as usize] = if self.has_copyinit {
-                    let ty = prog.mir.functions[function]
-                        .1
-                        .reg_types
-                        .get(&value.0)
-                        .or_else(|| prog.mir.functions[function].1.reg_types.get(&dest.0))
-                        .cloned();
-                    self.clone_typed_value(prog, &source, ty.as_ref())?
+                    self.clone_value(prog, &source)?
                 } else {
                     source
                 };
@@ -120,7 +114,7 @@ impl VmBackend {
                         MirCaptureMode::Copy => {
                             let value = self.read_reference(&reference, frame_id, vars)?;
                             if self.has_copyinit {
-                                self.clone_typed_value(prog, &value, capture.place.ty.as_ref())?
+                                self.clone_value(prog, &value)?
                             } else {
                                 value
                             }
@@ -129,7 +123,7 @@ impl VmBackend {
                             let value = self.read_reference(&reference, frame_id, vars)?;
                             self.write_reference(&reference, frame_id, vars, Value::Moved)?;
                             if self.has_moveinit {
-                                self.move_typed_value(prog, value, capture.place.ty.as_ref())?
+                                self.move_typed_value(prog, value)?
                             } else {
                                 value
                             }
@@ -170,9 +164,8 @@ impl VmBackend {
                 // A field chain of a parameter the erased frame holds
                 // (`q.s` in `def f[q: Q]()`) is a fresh copy of that field,
                 // as an instance's construction of it is.
-                let target = prog.mir.functions[function].1.reg_types.get(&dest.0);
                 regs[dest.0 as usize] = if self.has_copyinit {
-                    self.clone_typed_value(prog, field, target)?
+                    self.clone_value(prog, field)?
                 } else {
                     field.clone()
                 };
@@ -409,11 +402,10 @@ impl VmBackend {
                 // handle ABI predates explicit LoadPlace/ReadRef. Checked
                 // reference-valued storage sites use Borrow adjustments and do
                 // not rely on that compatibility path.
-                let slot_ty = prog.mir.functions[function].1.var_tys.get(var).cloned();
                 let value = if matches!(mode, mojito_mir::mir::UseMode::Move) {
                     let moved = std::mem::replace(&mut vars[slot], Value::Moved);
                     if self.has_moveinit {
-                        self.move_typed_value(prog, moved, slot_ty.as_ref())?
+                        self.move_typed_value(prog, moved)?
                     } else {
                         moved
                     }
@@ -439,7 +431,7 @@ impl VmBackend {
                         // otherwise a plain deep `Clone`.
                         mojito_mir::mir::UseMode::Copy if self.has_copyinit => {
                             let value = vars[slot].clone();
-                            self.clone_typed_value(prog, &value, slot_ty.as_ref())?
+                            self.clone_value(prog, &value)?
                         }
                         mojito_mir::mir::UseMode::Copy => vars[slot].clone(),
                     }
@@ -751,11 +743,6 @@ impl VmBackend {
                                 .cloned()
                         })
                         .collect();
-                    let result_ty = prog.mir.functions[function]
-                        .1
-                        .reg_types
-                        .get(&dest.0)
-                        .cloned();
                     let outcome = self.call_named(
                         prog,
                         &func.0,
@@ -764,7 +751,6 @@ impl VmBackend {
                         &CallTypes {
                             param_vals: &pvals,
                             arg_types: &arg_types,
-                            result_ty: result_ty.as_ref(),
                             static_receiver: &static_receiver,
                         },
                     );
@@ -1029,16 +1015,6 @@ impl VmBackend {
                             parameter_arguments: param_arg_regs,
                             parameter_declarations: param_decls,
                             instantiated_arguments: instantiated_args,
-                            argument_types: args
-                                .iter()
-                                .map(|reg| {
-                                    prog.mir.functions[function]
-                                        .1
-                                        .reg_types
-                                        .get(&reg.0)
-                                        .cloned()
-                                })
-                                .collect(),
                         },
                         CallerFrame {
                             id: frame_id,
@@ -1081,12 +1057,12 @@ impl VmBackend {
                 dest,
                 pointer,
                 index,
-                element,
+                ..
             } => {
                 let index = value_as_index(&regs[index.0 as usize])?;
                 match regs[pointer.0 as usize] {
                     Value::Pointer { allocation, offset } => {
-                        self.heap_destroy(prog, allocation, offset, index, Some(element))?;
+                        self.heap_destroy(prog, allocation, offset, index)?;
                     }
                     // A place pointer's element is trivially destructible
                     // (checker-proved): destroying it has no effect.
@@ -1109,14 +1085,10 @@ impl VmBackend {
                 let storage = std::mem::replace(&mut regs[storage.0 as usize], Value::Moved);
                 regs[dest.0 as usize] = Self::uninit_storage_payload(storage, "take")?;
             }
-            MirInstr::UninitStorageDestroy {
-                dest,
-                storage,
-                element,
-            } => {
+            MirInstr::UninitStorageDestroy { dest, storage, .. } => {
                 let storage = std::mem::replace(&mut regs[storage.0 as usize], Value::Moved);
                 let payload = Self::uninit_storage_payload(storage, "destroy")?;
-                self.drop_typed_value(prog, payload, Some(element))?;
+                self.drop_value(prog, payload)?;
                 regs[dest.0 as usize] = Value::None;
             }
             MirInstr::GetField { dest, base, field } => {
@@ -1213,7 +1185,6 @@ impl VmBackend {
                             parameter_arguments: &call.param_arg_regs,
                             parameter_declarations: &call.param_decls,
                             instantiated_arguments: &[],
-                            argument_types: Vec::new(),
                         },
                         CallerFrame {
                             id: frame_id,
@@ -1334,7 +1305,6 @@ impl VmBackend {
                             parameter_arguments: &call.param_arg_regs,
                             parameter_declarations: &call.param_decls,
                             instantiated_arguments: &[],
-                            argument_types: Vec::new(),
                         },
                         CallerFrame {
                             id: frame_id,
@@ -1420,7 +1390,6 @@ impl VmBackend {
                         parameter_arguments: &call.param_arg_regs,
                         parameter_declarations: &call.param_decls,
                         instantiated_arguments: &[],
-                        argument_types: Vec::new(),
                     },
                     CallerFrame {
                         id: frame_id,
@@ -1493,7 +1462,6 @@ impl VmBackend {
                         parameter_arguments: &call.param_arg_regs,
                         parameter_declarations: &call.param_decls,
                         instantiated_arguments: &[],
-                        argument_types: Vec::new(),
                     },
                     CallerFrame {
                         id: frame_id,
@@ -2204,8 +2172,7 @@ impl VmBackend {
             // use, running its `__deinit__` if it has one.
             MirInstr::DropVar { var } => {
                 let v = std::mem::replace(&mut vars[*var as usize], Value::None);
-                let (name, body) = &prog.mir.functions[function];
-                let ty = body.var_tys.get(var).cloned();
+                let name = &prog.mir.functions[function].0;
                 match v {
                     Value::Tuple(items)
                         if prog
@@ -2213,9 +2180,9 @@ impl VmBackend {
                             .get(name)
                             .is_some_and(|sig| sig.owned_pack_slot == Some(*var)) =>
                     {
-                        self.drop_owned_pack(prog, items, ty.as_ref())?;
+                        self.drop_owned_pack(prog, items)?;
                     }
-                    v => self.drop_typed_value(prog, v, ty.as_ref())?,
+                    v => self.drop_value(prog, v)?,
                 }
             }
             MirInstr::ConsumeVar { var } => {
@@ -2223,12 +2190,11 @@ impl VmBackend {
                 if let Value::Struct { name, .. } = &value {
                     self.record_lifecycle(format!("consume {name}"));
                 }
-                if let Value::Struct { name, fields, .. } = value {
+                if let Value::Struct { fields, .. } = value {
                     // The named explicit destructor owns the aggregate: its
                     // residual fields receive their ordinary declaration-order
                     // destruction here, at the receiver's last use.
-                    let ty = prog.mir.functions[function].1.var_tys.get(var).cloned();
-                    self.drop_struct_fields(prog, &name, fields, ty.as_ref())?;
+                    self.drop_struct_fields(prog, fields)?;
                 }
             }
             // The place's value was moved out through pointers: what its
@@ -2238,8 +2204,8 @@ impl VmBackend {
             }
             MirInstr::ConsumePlace { place, .. } => {
                 let value = std::mem::replace(nav_mut(vars, regs, place)?, Value::Moved);
-                if let Value::Struct { name, fields, .. } = value {
-                    self.drop_struct_fields(prog, &name, fields, place.ty.as_ref())?;
+                if let Value::Struct { fields, .. } = value {
+                    self.drop_struct_fields(prog, fields)?;
                 }
             }
             // A field's whole-value destruction, leaving a tombstone: a
@@ -2287,7 +2253,7 @@ impl VmBackend {
                 } else {
                     std::mem::replace(nav_mut(vars, regs, place)?, Value::Moved)
                 };
-                self.drop_typed_value(prog, value, place.ty.as_ref())?;
+                self.drop_value(prog, value)?;
             }
             MirInstr::Unsupported(what) => {
                 return Err(RuntimeError::Unsupported(format!(
@@ -2364,7 +2330,6 @@ impl VmBackend {
         regions: &TryRegions<'_>,
         frame: CallerFrame<'_>,
     ) -> Result<Flow, RuntimeError> {
-        let function = scope.function;
         let TryRegions {
             body,
             handler,
@@ -2384,7 +2349,7 @@ impl VmBackend {
             // locals as they go out of scope), then dispatch to the handler or
             // re-propagate.
             Err(RuntimeError::Raised(error)) => {
-                self.run_cleanup(prog, cleanup, function, vars)?;
+                self.run_cleanup(prog, cleanup, vars)?;
                 match handler {
                     Some((err_slot, hblocks)) => {
                         if let Value::Error(message) = &error {
@@ -2404,7 +2369,7 @@ impl VmBackend {
             // locals go out of scope here too. `else` runs only on *normal*
             // completion; a `return` from the body skips `else` and carries out.
             Ok(flow) => {
-                self.run_cleanup(prog, cleanup, function, vars)?;
+                self.run_cleanup(prog, cleanup, vars)?;
                 match flow {
                     Flow::Normal => match orelse {
                         Some(eblocks) => self.run_region(prog, scope, eblocks, regs, vars),
@@ -2443,11 +2408,11 @@ impl VmBackend {
                     });
                 }
                 Ok(non_normal) => {
-                    self.run_cleanup(prog, &pending_cleanup, function, vars)?;
+                    self.run_cleanup(prog, &pending_cleanup, vars)?;
                     return Ok(non_normal);
                 }
                 Err(error) => {
-                    self.run_cleanup(prog, &pending_cleanup, function, vars)?;
+                    self.run_cleanup(prog, &pending_cleanup, vars)?;
                     return Err(error);
                 }
             }
@@ -2462,13 +2427,11 @@ impl VmBackend {
         &mut self,
         prog: &Prog,
         cleanup: &[VarId],
-        function: usize,
         vars: &mut [Value],
     ) -> Result<(), RuntimeError> {
         for &v in cleanup {
             let old = std::mem::replace(&mut vars[v as usize], Value::None);
-            let ty = prog.mir.functions[function].1.var_tys.get(&v).cloned();
-            self.drop_typed_value(prog, old, ty.as_ref())?;
+            self.drop_value(prog, old)?;
         }
         Ok(())
     }
@@ -2569,7 +2532,7 @@ impl VmBackend {
                 // region's escape-edge cleanup (values that die leaving the region),
                 // then carry the resolved target out as a `Flow::Jump`.
                 MirTerm::EscapeJump { target, cleanup } => {
-                    self.run_cleanup(prog, cleanup, function, vars)?;
+                    self.run_cleanup(prog, cleanup, vars)?;
                     return Ok(Flow::Jump(*target));
                 }
             }

@@ -485,14 +485,9 @@ which it reads as parameter references (`Const::Param`) — (`ComptimeThunks`,
 `lower_expression_thunk`), and its branch carries the
 thunk's application, which the elaborator evaluates on the VM
 ([`docs/notes/ctfe-request-path.md`](notes/ctfe-request-path.md)). The
-template keeps a `comptime for` over a `range` of parameter expressions
-(a reflection count among them), a list, set, or dictionary display of
-scalars, a list display of parameter aggregates (tuples, or non-generic
-fieldwise structs, of numbers, booleans, and strings, nested ones
-included), a named closed collection of either, the `def`'s own value pack, or a
-reflected field-name list, whose body binds by `comptime` only parameter
-expressions over the binders (`comptime_for_is_template_served`,
-`comptime/elab.rs::keep_template_comptime_for`): the checker types the body
+template keeps every `comptime for` in a generic body, as upstream keeps its
+parameter `for` (`comptime/elab.rs::keep_template_comptime_for`, which
+forces a pending module constant the loop iterates): the checker types the body
 once with the variable a symbolic binder of the loop's own, of the element's
 type, and records what the loop iterates
 (`SemanticAdjustment::ComptimeIteration`, its `ComptimeSource` a compiled
@@ -732,16 +727,7 @@ again as a retained bound generic by the executable pass when its template
 serves it. Bodies
 without such constructs are declared but left to the
 executable check. Validation
-records, beside the applied module constants, the calls and method calls it
-typed as a scalar a `comptime for` binder takes without raising
-(`Checker::scalar_calls` into `TemplateCatalog::scalar_calls`, keyed by
-syntax identity), and the tuple displays, calls, and method calls it typed
-as a parameter aggregate such a binder takes (`Checker::aggregate_elements`
-into `TemplateCatalog::aggregate_elements`): the elaborator's
-template-served decision for a display element (`ScalarReads`,
-`comptime.rs`) and the driver's template-name sets
-read that verdict alone, with no fallback on the callee's declaration, so
-they are computed after validation, and every elaboration — the driver's
+records the applied module constants, and every elaboration — the driver's
 and `comptime::elaborate` alike — follows a validation run. Validation then runs the
 explicit-destruction analysis over exactly those bodies
 (`explicit_destroy::check` with `DestroyScope::ValidatedTemplates`): a
@@ -1030,92 +1016,14 @@ per instance once its `comptime if`s are decided, as upstream's
 `processRebindOp` does (`native::mono`'s `discharge_rebinds`,
 `mono/rebind.rs`), failing the instance with a `MonoErrorKind::Instantiation`
 error on a mismatch.
-Two comptime-class subsets take an inferred
-call through discovery instead: a type pack whose element types are not
-statically evident, and a **compile-time-keyed** `def`
-specialized only for its `comptime if`/`for` body or `rebind` (no pack,
-`DType`, or SIMD-width parameter; `comptime_generic_template_names`) called
-without an argument for a required parameter. A `DType`- or lane-keyed `def`
-is in neither: its template serves it. An overloaded name with a
-compile-time-keyed declaration, or a type-pack one the template does not
-serve, among its overloads is a *family*
-(`collect_overload_families`); a member the template serves forms none. A
-call selecting such a served member is left as written, as a uniquely named
-served `def`'s call is (`Elab::family_call_is_served`), even while its
-arguments are symbolic: a template-served body's call over its own binder
-(`kind[n](a)` in `by_value[n: Int]`) is not closed, so the driver ships the
-checker's selection at each unclosed family call as
-`ElaborationInputs::def_selections`, and a new selection counts as discovery
-growth. A selection of a member the cloner specializes keeps the abstract
-path, and its body is cloned. No other call to it is
-ever resolved syntactically, since explicit `[...]` arguments name type
-arguments rather than an overload and overload selection is the checker's.
-Every call is served from the checker's recorded instantiation, which names
-the selected overload by its runtime parameter names, and where two overloads
-share those by their mangled parameter types. A variadic parameter is
-caller-visible but is spelled by neither key, so where two share both the
-request's `symbol::VariadicKey` tells them apart — the `*args` collector's
-position among the regular parameters and its element key, which carries a
-pack's bounds — and last whether the request's own arguments bind the
-declaration's parameters at all. Two type-pack overloads of one name are
-therefore ordinary members of a family, never resolved against the first
-declaration. One call has no recorded instantiation to serve it: a clone
-forwarding its own specialized pack whole to a sibling (`tally(*rest)`),
-which the checker sees only once the spread is expanded.
-`forwarded_family_target` binds it to the one declaration whose positional
-collector the spread follows, with the whole-pack ABI; where several would
-bind it, the call stays on the abstract path.
-
-A family may mix specialization classes, because the class is a property of a
-*declaration* and not of a name: a keyed `def kind[T](a: T)` beside a type
-pack `def kind[*Ts](*xs: *Ts)` is two templates of two classes at one name,
-and the request's selected declaration index is the only thing that tells a
-call which class serves it. The registries above stay name-keyed only as the
-question "is this name a template at all"; admission, routing, and the
-program rebuild's choice of stub all decide per declaration.
-
-Two declarations specialized at
-the same values mangle to one clone name and become an ordinary overload set
-there, which `$ov$` qualifies at lowering exactly as it qualifies the sources;
-a plain overload sharing the family's name is not a template and survives the
-rebuild unchanged. Until the checker's request is served,
-such a template survives as a signature-only `template_stub` whose body
-traps, so the discovery check can type the call against it. The stub stays
-in the program for a call from a retained bound-generic body over that body's
-own parameters (`show(x)` or `show[T](x)` in `def forward[T]`), and that call
-lowers to a call of the stub. It never runs. A generic struct's
-erased method body is such a body too (`Box[T].f` calling `show(self.x)`): it
-runs only on the paths listed below, so the references it leaves are owned by
-the method (`Struct.method`) rather than unserved. The elaborator lists
-every reference it leaves on an abstract path
-(`Elaborated::unserved_template_uses`) that can reach a stub: a reference to a
-compile-time-keyed template, or to a bound-generic `def` or struct method
-whose own body reaches one, transitively — through a call it left abstract, or
-through a by-name method edge, since the receiver's type is the checker's to
-solve. A reference made inside such a body is not listed, because that body
-runs only through a listed reference. At the fixpoint
-`reject_unserved_template_calls` rejects a listed call the checker still
-records against its template, and any listed function-value use, so no
-accepted program reaches the trap.
-
-Such a method is served, or rejected, on the paths its erased body can run. A
-closed receiver reaches the method's clone, and construction, copying, moving
-and destruction reach the instance's lifecycle clones. An instance the
-elaborator queued but could not clone the method for — a bound violation, an
-argument with no source spelling, a clone whose own walk fails — reports that
-method's references as unserved (`Mono::unclonable_methods`); an instance that
-merely withholds the method, because a `where` clause or a conditional
-conformance makes it unavailable there, does not, since no call can reach that
-body either. An instance the fixpoint discovers at the round cap reports
-`SpecializationDivergence` rather than converging on the erased path
-(`Elaborated::stub_reaching_structs`). A bundled struct's method, and a struct
-whose parameters mint no clones at all (value, callable-bounded, or origin
-binders), keep no owner, so their references stay unserved as before. What is
-left is the erased dispatch no checked static type reaches — an operator or
-protocol dunder called from another erased body, an instance the checker
-records no instantiation for (a type parameter inferred as the compile-time
-`StringLiteral`), and CTFE, which runs before any clone exists — where such a
-method still traps at run time (`docs/roadmap.md`).
+A value-pack `def` whose binders its template does not serve takes an
+inferred call through discovery instead: the checker's closed recorded
+instantiation names the clone. No `def` is compile-time-keyed: a `comptime
+if`, a `comptime for`, and a `rebind` stay in the template whatever they read,
+and the elaborator below MIR decides them per instance, so every call of a
+generic `def` named once reaches its template, and an overloaded generic name
+is the checker's to select among, each declaration served by its own
+template.
 
 A **bound-generic** template — a plain
 trait-bound generic `def` with no comptime constructs and a unique top-level
@@ -1151,28 +1059,20 @@ respells to the constructor's instance), a method keyed on its own `DType`
 or lane binder (the checker closes the binder in the call's result type),
 and a body whose `comptime if` or `comptime for` reads only its own binders,
 which the elaborator keeps in the template (`Elab::def_body`) and decides per
-call. The driver reads what such a body reaches at each closed call
-(`TemplateReach::method_call`).
+call. `native::mono` finds what such a body reaches from its MIR.
 
 A method keyed on a type pack of its own is served the same way: its
 template body opens the pack (`Elab::def_body`), and the call's solved pack
-binds it below MIR. No method mints a per-call AST clone: every `comptime
-for` a method's body holds is kept in its template
-(`comptime_for_is_template_served`), its sequence and the bindings its body
+binds it below MIR. No method mints an AST clone, per call or per
+instance: every `comptime for` a method's body holds is kept in its template
+(`keep_template_comptime_for`), its sequence and the bindings its body
 declares evaluated per instance below MIR (`ComptimeSource::Applied` for a
 sequence a compile-time application builds, `EvaluatedRange` for a bound,
 an R7 request for a binding). A method body that still fails to elaborate
-over its own binders becomes, on its template, the one compiler-private
-call `_mojito_instantiation_failed("…")` (`instantiation_failure_stub`),
-and one that fails over a generic struct's parameters the
-`unspecialized_method_stub` trap that its per-instantiation clone replaces.
-A pack binding expands `*args: *Ts` to the `$pack[...]` element list inside
-`specialize_method_clone` exactly as a def specialization does. An
-instance clone of a stubbed method that fails to elaborate for its instance
-is still minted, with the instance's signature over the
-`_mojito_instantiation_failed` call: the template has no erased body to
-fall back to, and the failure is the pin's `function instantiation failed`,
-reported only where the program reaches the instance. `native::mono`
+over its own binders or its struct's becomes, on its template, the one
+compiler-private call `_mojito_instantiation_failed("…")`
+(`instantiation_failure_stub`): the failure is the pin's `function
+instantiation failed`, reported only where the program reaches an instance. `native::mono`
 reports it per reached instance after branch selection
 (`discharge_instantiation_failures`, `mono/failure.rs`) as a
 `MonoErrorKind::Instantiation` error. A template-served body fails the
@@ -1182,20 +1082,10 @@ iteration's failure waits in `unreached_failures` until branch selection
 has pruned the arms the instance never takes (`reached_failure`,
 `mono/failure.rs`). A member of a vector- or struct-keyed
 specialization that its template serves keeps its own binders and mints no
-clone, as a non-generic struct's method does.
-`specialize_method_clone` bakes
-the clone's *value* bindings into its signature types before its type
-bindings, as a def specialization does, so a value parameter standing in a
-type position (`a: Scalar[dt]`, `-> SIMD[DType.int32, w]`) spells its bound
-value on a clone that no longer declares the binder. In the checker,
+clone, as a non-generic struct's method does. In the checker,
 `instantiate_method_generics` resolves an inferred pack's variadic element to
 the heterogeneous `RuntimePack` so each overflow argument scores and converts
-against its own element. An instance call records the clone's name as its
-target; a static call, whose syntax still names the template, records it
-through `record_static_clone_target`. Every instance clone's body, found
-by its `self_ty`, gets its own source tag after the uniform module stamp,
-so span-keyed facts (including the requests of calls inside it) stay
-separate across a template's clones.
+against its own element.
 
 Temporaries borrow for their statement through three anchors. A temporary
 receiver of a `ref[self]`-returning method is materialized like a temporary
@@ -1296,120 +1186,34 @@ the struct's parameters as binders of each method's body (`Elab::def_body`),
 as `Self.`-qualified names only, with a collector of the struct's pack
 (`*b: *Self.Ts`) a binder as a method's own collector is, so
 `native::mono` decides the branch and
-unrolls the loop per instance; a `rebind` stays too. The methods that still
-clone are the ones MIR cannot express yet (`keyed_methods`,
-`comptime/specialize.rs`): a body the template stubs (a local `comptime`
-binding over the struct's parameters, a `comptime for` the template does not
-serve), and one that reaches a compile-time-keyed `def`. A type name over
-the struct's parameters clones nothing: the template carries the type in
+unrolls the loop per instance; a `rebind`, a nested `def`, and a lambda stay
+too. No method mints a per-instantiation clone, whatever its body holds or
+reaches. A type name over the struct's parameters is carried in
 `MirInstr::TypeName`, and the elaborator writes the name from the
-substituted type. The driver adds the ones only checked types show
-(`src/compiler/template_reach.rs`): a body whose types hold a tuple over
-the struct's parameters, and one that calls an
-overloaded method with binders of its own. An instance whose argument
-carries a loan clones no more than a plain-data one. A plain trait-bound
+substituted type. A plain trait-bound
 generic `def` keeps its template at every closed call, inferred or explicit
 (`Elab::template_serves_def`): it mints a clone only where it carries a
-value parameter, or where its body holds or reaches such a construct, and a
+value parameter its template does not serve, and a
 clone at a loan-carrying argument is spelled over clone origin binders. MIR
 records the compile-time arguments the checker solved on the call
 (`MirInstr::Call::instantiated_args`), so the elaborator binds a type
 parameter no runtime parameter or result spells (`bytes[Int]()`); an
 associated type the signature does not spell (`C.Element` as a loop
 variable's type) is solved from `MirStructDeclaration.associated_types` once
-`C` is bound. Because no clone check walks a template-served body at the
-instance's arguments, the driver also reads from the template's checked
-types which closed instances that body reaches (`Box[List[Self.T]]`),
-transitively, and requests them (a served `def`'s body is read the same way,
-at the types each closed call binds), so a struct reached only from such a
-body still mints the clones it keeps; `native::mono` then targets that
-clone where a template body calls the method on a closed receiver
-(`instance_method_target`), and selects the receiver's own overload where a
+`C` is bound. `native::mono` finds the closed instances a template body
+reaches (`Box[List[Self.T]]`) from its MIR, transitively, and selects the
+receiver's own overload where a
 bound dispatch spells the requirement's parameter otherwise than the
 witness does (`Some[Hasher]` against `[H: Hasher]`;
-`dispatched_overload_target`).
-
-Such a struct gains those **per-instantiation method clones** appended
-to its own method list. The checker records every closed application it
-reaches from a non-bundled source as a constructor target or method-call
-receiver (`StructInstantiation`; instances seen only inside unstamped
-bundled stdlib bodies keep the erased path, so a program without its own
-instantiations mints nothing); the driver replays them as
-`StructInstanceRequest`s, and the specializer also mints, within one
-elaboration, every closed application it meets while walking user code and
-the clones themselves (annotations, constructor calls, static receivers, and
-the instance's substituted field types), reporting that minted set back so
-the checker's recordings of it are not new discoveries. A clone
-(`get$y3:Int`, the method name mangled with the baked struct arguments, one
-per same-name overload) has every `T`/`Self.T` respelled concretely, its
-`comptime if` folded, and an explicit receiver type (`Method::self_ty`,
-`self: Optional[Int]`) the checker binds `self`/`Self` to instead of the
-struct scope's parametric `Self` (`AnnotationSite::MethodSelf` types the MIR
-receiver); a method whose `where` clause is false — or unevaluable — for the
-instance, a requirement of a trait whose conditional conformance is false
-for the instance (`Iterator where conforms_to(T, Movable)` withholds
-`__next__` from `_ListOwnedIter[Pinned]`: Mojo instantiates it only through
-the conformance), and an overload family that collapses to one shape on the
-instance stay uncloned. A user struct's lifecycle methods clone like any
-other, under the name they are registered and dispatched by — a copy
-constructor as `__copyinit__$y3:Int` — and the whole pipeline recovers the
-source name through `symbol::instance_clone_base` at the gates that test for
-one (`out self`, `@implicit`, the copy/move shapes, the named-destructor
-list). A construction retargets in the checker like any other call, but by
-signature rather than by name, because a constructor family's clones do not
-share the template's `$ov$` symbols: `constructor_clone_target` takes the
-member whose signature is the selected template signature with the instance's
-arguments substituted and records its lowered name, for a written
-construction and for an `@implicit` conversion alike. A family therefore
-clones as one overload set (`__init__$y3:Int$ov$Int` beside
-`__init__$y3:Int$ov$Int$Bool`), minted whole or not at all, and a clone keeps
-the struct's parameter list as its compile-time interface, as the template
-does. Copying, moving and destruction retarget nowhere: the VM selects the
-instance's `__copyinit__`/`__moveinit__`/`__deinit__` clone from the checked
-static type of the value being copied, moved or destroyed
-(`Prog::lifecycle_symbol`, with `instance_field_types` carrying the
-substituted field types into a whole-value drop or copy), and the native
-monomorphizer emits such a clone under the instance's plain lifecycle symbol
-(`lifecycle_clone_instance_symbol`), which is what the Pliron lowering
-composes by name — a signature-qualified constructor clone keeps its own
-symbol there, since its siblings answer to the same base name, and a
-variadic initializer's clone, keyed by each call's element count, appends
-that count as an ordinary instance suffix. Struct discovery finds the clone
-over the checker's spelling of the instance's arguments, so a nested
-instance argument (`List$mono$TInt`) names its template (`List[Int]`). A bundled
-template's constructors stay on the erased path (its `__deinit__` clones,
-which the elaborator already minted, are now reached like any other). An
-instantiation whose argument mentions `StringLiteral` mints no clones and
-names none (`instance_method_clone_name`; a method-level type argument
-inferred from a string literal still materializes `String`, as the call
-argument does): its values keep the literal runtime
-representation while an un-annotated binding of the type materializes
-`String`, so a clone body would neither type against its own `Self.T` nor
-share values with the nominal-`String` instance. Type identity is
-unchanged (`Optional[Int]` is still `Ty::Struct("Optional", [Int])` and the
-runtime struct name stays `Optional`), so a call whose receiver instance has
-no clone simply keeps today's erased path; a call on a closed receiver
-retargets to the clone by exact name (`instance_method_clone`): method and static calls, operator dunders
-(re-selected among the clone family by operand), subscript assignment, and
-`for` iteration (`__iter__` by receiver convention) all record the clone
-symbol. The by-name dispatches the backends perform on a runtime struct
-name — `print`/`String(x)`/`repr(x)`/`Writer.write` through
-`write_to`/`write_repr_to`, and `len`/`abs`/`Bool`/`Int` and the prefix
-operators through their dunders — select the clone from the argument's
-*checked static type* instead (the VM's `format_value`/`call_typed_dunder`
-read the caller's register types; the native monomorphizer's
-`enqueue_display_instance`/`instance_dunder_target` read `reg_types`), all
-through the symbol crate's one identity helper `instance_method_clone_name`;
-with no clone the runtime-name path serves the call exactly as before. An
-inferred application of a bound-generic `def` whose clone already exists
-(`existing_def_clone`: `mangle(name, values)` declared as a concrete
-function) retargets to it directly and records no request, so a clone body
-calling an already-cloned def costs no discovery round. A clone that fails
-to check reports `TypeError::PostInstantiation` naming the instance and the
-source method. A
-template method whose body only elaborates with the struct's parameters
-bound becomes an `_mojito_abort` stub, exactly as in a variadic
-specialization.
+`dispatched_overload_target`). The checker still records every closed
+application it reaches as a constructor target or method-call receiver
+(`StructInstantiation`), a checked fact the discovery loop no longer turns
+into requests. Copying, moving, destruction, and the by-name dispatches the
+backends perform on a runtime struct name (`print`/`String(x)`/`repr(x)`/
+`Writer.write` through `write_to`/`write_repr_to`, and `len`/`abs`/`Bool`/
+`Int` and the prefix operators through their dunders) select the method by
+the runtime struct name alone, on the erased path, and by the instance
+struct `native::mono` built on concrete MIR.
 
 Under the production compiler, the erased-dispatch machinery
 (`__trait_dispatch.*`/`__iterator_dispatch.*` symbols, VM retargeting, and
@@ -2003,10 +1807,9 @@ and its soundness argument, is
   keep the clone check.
 - **The trace is explicit.** The elaborator records which prepared declaration
   each `def` clone instantiates and what each compile-time parameter became
-  (`DefInstanceTrace`), the same for each per-instantiation method clone
-  (`MethodInstanceTrace`), and everything it generated
-  (`GeneratedDeclarations`). Only that list, or a clone's explicit receiver
-  type, says a declaration is generated: a module-qualified source name
+  (`DefInstanceTrace`), and everything it generated
+  (`GeneratedDeclarations`). Only that list says a declaration is
+  generated: a module-qualified source name
   carries a `$` too. A clone node keeps the syntax identity of the template
   node it was copied from, and `rekey_syntax` returns the identity each
   re-keyed node had before (`SyntaxOrigins`). No correspondence is inferred
@@ -2015,7 +1818,7 @@ and its soundness argument, is
   discharges the `rebind` equalities, the implicit copies, `Movable` at each
   transfer, the deletability of each local of a parameter type, the clone
   lookup of each retained application, the built-in `len` witness, the
-  retarget of each closed method call (`method_clone_target`), and the empty
+  availability of each closed method call at the instance, and the empty
   effect summaries. A method beyond a scalar getter also owes that every
   instance argument is plain data. It also records the generic-struct applications the body
   reaches, substituted, so a derived clone requests the instances an inferred

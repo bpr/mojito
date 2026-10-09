@@ -691,7 +691,6 @@ pub(super) fn method_syntax_hash(m: &Method) -> u64 {
         m.ret
     )
     .hash(&mut hasher.state);
-    format!("{:?}", m.self_ty).hash(&mut hasher.state);
     for clause in &m.where_clauses {
         walk_expr(&mut hasher, clause);
     }

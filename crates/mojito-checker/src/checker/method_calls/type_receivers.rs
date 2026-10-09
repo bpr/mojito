@@ -237,18 +237,6 @@ impl Checker {
             else {
                 continue;
             };
-            let Ok(clone_origins) = self.bind_clone_receiver_origins(
-                &format!("{sname}.{method}"),
-                sig,
-                None,
-                &params,
-                args,
-                kwargs,
-            ) else {
-                continue;
-            };
-            let params = clone_origins.substitute_all(&params);
-            let variadic = variadic.map(|element| clone_origins.substitute(&element));
             if let Err(failure) =
                 self.method_constraint_result(sig, &method_arguments, &info.decls, &[])
             {
@@ -290,7 +278,7 @@ impl Checker {
                     keyword_element: kw_variadic.clone(),
                     conventions: sig.conventions.clone(),
                     self_convention: sig.self_convention,
-                    return_type: clone_origins.substitute(&self.close_method_values(
+                    return_type: self.close_method_values(
                         substitute(
                             &super::super::generics::expand_solved_packs(
                                 &sig.ret,
@@ -301,7 +289,7 @@ impl Checker {
                         ),
                         &sig.decls,
                         &method_arguments,
-                    )),
+                    ),
                     result_adapter: None,
                     raises: sig.raises,
                     error: sig

@@ -35,7 +35,7 @@
 //! compile-time-only `Type` and symbolic `Param` facts.
 
 use mojito_ast::ast::{
-    ArgConvention, Expr, ExprKind, FnParam, InfixOp, ParamArg, ParamKind, PrefixOp, Stmt, StmtKind,
+    Expr, ExprKind, FnParam, InfixOp, ParamArg, ParamKind, PrefixOp, Stmt, StmtKind,
     StructComptime, TStringPart, Type, TypeParam, WithItem,
 };
 pub use mojito_symbol::symbol::mangle;
@@ -121,36 +121,6 @@ impl DefSpecializationRequest {
 
     pub const fn variadic(&self) -> Option<&mojito_symbol::symbol::VariadicKey> {
         self.variadic.as_ref()
-    }
-
-    pub fn arguments(&self) -> &[TyArg] {
-        &self.arguments
-    }
-}
-
-/// One checker-discovered closed application of an ordinary generic struct
-/// (`Optional[Int]`): the template name and its declaration-order arguments.
-///
-/// The specializer appends one clone per available method to the live template
-/// with the struct's parameters baked (`get$y3:Int`), and the checker
-/// retargets calls on that instance to the clones by exact name on the next
-/// discovery round.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct StructInstanceRequest {
-    template: String,
-    arguments: Vec<TyArg>,
-}
-
-impl StructInstanceRequest {
-    pub const fn new(template: String, arguments: Vec<TyArg>) -> Self {
-        Self {
-            template,
-            arguments,
-        }
-    }
-
-    pub fn template(&self) -> &str {
-        &self.template
     }
 
     pub fn arguments(&self) -> &[TyArg] {
@@ -398,27 +368,11 @@ pub fn prepare(mut program: Vec<Stmt>) -> Result<Vec<Stmt>, ComptimeError> {
     Ok(program)
 }
 
-/// An elaborated program plus the generic-struct instances the specializer
-/// minted method clones for along the way.
-///
-/// The instances are the closed applications reached from user code and from
-/// other clones, so the driver's discovery loop does not treat the checker's
-/// recordings of those instances as new work. `unserved_template_uses` are
-/// the references this elaboration left on an abstract path that can reach a
-/// compile-time-keyed template's stub; the driver rejects any that survive
-/// its discovery fixpoint. `stub_reaching_structs` are the generic structs
-/// with such a method: an instance of one that the fixpoint discovers too
-/// late to mint clones for would run that method erased, so the driver
-/// reports divergence rather than converging on the erased path.
+/// An elaborated program, with what its cloner generated along the way.
 pub struct Elaborated {
     pub program: Vec<Stmt>,
-    pub instances: Vec<StructInstanceRequest>,
-    pub stub_reaching_structs: HashSet<String>,
-    pub unserved_template_uses: Vec<UnservedTemplateUse>,
     /// How each generated `def` clone came from its template.
     pub def_traces: Vec<DefInstanceTrace>,
-    /// How each per-instantiation method clone came from its template.
-    pub method_traces: Vec<MethodInstanceTrace>,
     /// Every declaration this elaboration generated rather than kept: a
     /// consumer asks this list, never a `$` in a name, since a
     /// module-qualified source name carries one too.
@@ -439,14 +393,6 @@ pub struct Elaborated {
 #[derive(Clone, Copy)]
 pub struct ElaborationInputs<'a> {
     pub def_requests: &'a [DefSpecializationRequest],
-    /// The checker's selection at each unclosed call of an overload family:
-    /// which declaration the call names, with nothing to bake.
-    pub def_selections: &'a [DefSpecializationRequest],
-    pub struct_requests: &'a [StructInstanceRequest],
-    /// Template methods of ordinary generic structs, as (struct, method),
-    /// whose checked bodies hold a type only an instance can lower: each
-    /// keeps its per-instantiation clone.
-    pub keyed_methods: &'a [(String, String)],
     pub templates: &'a mojito_checked::templates::TemplateCatalog,
 }
 
@@ -455,9 +401,6 @@ impl<'a> ElaborationInputs<'a> {
     pub const fn new(templates: &'a mojito_checked::templates::TemplateCatalog) -> Self {
         Self {
             def_requests: &[],
-            def_selections: &[],
-            struct_requests: &[],
-            keyed_methods: &[],
             templates,
         }
     }
@@ -468,45 +411,6 @@ impl<'a> ElaborationInputs<'a> {
 pub struct GeneratedDeclarations {
     /// `def` clones, by output name.
     pub defs: Vec<String>,
-    /// Per-call method clones, as (owner, clone name). A per-instantiation
-    /// clone is recognized by its explicit receiver type instead.
-    pub methods: Vec<(String, String)>,
-}
-
-/// The declaration-level expansion trace of one per-instantiation or
-/// per-call method clone.
-///
-/// The clone is appended to its template struct's own method list
-/// (`get$y3:Int` on `Box`, `kind$y3:Int$y4:Bool` for a call of `kind[Bool]`
-/// on `Box[Int]`), so it is identified by that struct, its name, the source
-/// tag stamped on its body, and the byte range of its own body's first
-/// statement — same-name overloads clone under one name and one tag, and a
-/// `Method` has no range of its own.
-#[derive(Debug, Clone, PartialEq)]
-pub struct MethodInstanceTrace {
-    /// The struct the clone is a method of, whose method it instantiates.
-    pub owner: String,
-    /// The template struct's module.
-    pub owner_module: Option<String>,
-    pub clone_name: String,
-    /// The source tag stamped on every node of the clone's body.
-    pub clone_module: String,
-    pub template_name: String,
-    /// The first statement of the template method's body.
-    pub body: mojito_common::token::Span,
-    /// The first statement of the clone's own body: the template's where the
-    /// body is copied whole, or the first statement the elaborator kept of a
-    /// body that opens with compile-time control flow.
-    pub clone_body: mojito_common::token::Span,
-    /// The struct's type parameters, then a per-call clone's own, with the
-    /// source type written for each.
-    pub type_bindings: Vec<(String, Type)>,
-    /// A per-call clone's own value parameters, or a value-keyed struct's,
-    /// folded into its body.
-    pub value_bindings: Vec<(String, CtValue)>,
-    /// A per-call clone's own type packs, or a variadic struct's, each with
-    /// the source element types written in its signature.
-    pub pack_bindings: Vec<(String, Vec<Type>)>,
 }
 
 /// The declaration-level expansion trace of one generated `def` clone.
@@ -544,57 +448,35 @@ pub struct DefInstanceTrace {
 /// VM CTFE to its subprogram's.
 pub fn instance_traces(
     defs: Vec<DefInstanceTrace>,
-    methods: Vec<MethodInstanceTrace>,
 ) -> Vec<(
     mojito_checked::templates::InstanceName,
     mojito_checked::templates::InstanceTrace,
 )> {
     use mojito_checked::templates::{InstanceName, InstanceTrace, TemplateId};
-    let defs = defs.into_iter().map(|trace| {
-        (
-            InstanceName {
-                module: Some(trace.clone_module),
-                owner: None,
-                name: trace.clone_name,
-                body: None,
-            },
-            InstanceTrace {
-                template: TemplateId {
-                    module: trace.template_module,
+    defs.into_iter()
+        .map(|trace| {
+            (
+                InstanceName {
+                    module: Some(trace.clone_module),
                     owner: None,
-                    name: trace.template_name,
-                    declaration: trace.template_span,
+                    name: trace.clone_name,
+                    body: None,
                 },
-                type_bindings: trace.type_bindings,
-                value_bindings: trace.value_bindings,
-                pack_bindings: trace.pack_bindings,
-                residual: trace.residual,
-            },
-        )
-    });
-    let methods = methods.into_iter().map(|trace| {
-        (
-            InstanceName {
-                module: Some(trace.clone_module),
-                owner: Some(trace.owner.clone()),
-                name: trace.clone_name,
-                body: Some(trace.clone_body),
-            },
-            InstanceTrace {
-                template: TemplateId {
-                    module: trace.owner_module,
-                    owner: Some(trace.owner),
-                    name: trace.template_name,
-                    declaration: trace.body,
+                InstanceTrace {
+                    template: TemplateId {
+                        module: trace.template_module,
+                        owner: None,
+                        name: trace.template_name,
+                        declaration: trace.template_span,
+                    },
+                    type_bindings: trace.type_bindings,
+                    value_bindings: trace.value_bindings,
+                    pack_bindings: trace.pack_bindings,
+                    residual: trace.residual,
                 },
-                type_bindings: trace.type_bindings,
-                value_bindings: trace.value_bindings,
-                pack_bindings: trace.pack_bindings,
-                residual: Vec::new(),
-            },
-        )
-    });
-    defs.chain(methods).collect()
+            )
+        })
+        .collect()
 }
 
 /// The elaborator's generated-declaration list in the checker's terms.
@@ -603,199 +485,14 @@ pub fn generated_names(
 ) -> mojito_checked::templates::GeneratedNames {
     mojito_checked::templates::GeneratedNames {
         defs: generated.defs.into_iter().collect(),
-        methods: generated.methods.into_iter().collect(),
     }
 }
 
-/// A reference to a template that stays on its abstract path and can run a
-/// compile-time-keyed stub, which has no executable body.
-///
-/// The callee is a compile-time-keyed template, or a bound-generic `def`
-/// whose abstract body reaches one. A reference made inside such a
-/// bound-generic body is not listed: that body runs only through a listed
-/// reference.
-///
-/// A call is abstract only while the checker still records its instantiation
-/// against the template: the checker retargets an inferred call to a clone
-/// that already exists without a request. A function-value use has no
-/// instantiation and always stays abstract.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct UnservedTemplateUse {
-    pub callee: String,
-    pub site: SourceSpan,
-    pub function_value: bool,
-}
-
-/// The top-level bound-generic template names of a linked program.
-///
-/// They are the names the elaborator will classify so under `templates`, the
-/// catalog source validation filled (`TemplateCatalog::scalar_calls`). The
+/// The top-level bound-generic template names of a linked program. The
 /// compiler's discovery loop filters checker-recorded instantiations to these
 /// callees.
-pub fn bound_generic_template_names(
-    program: &[Stmt],
-    templates: &mojito_checked::templates::TemplateCatalog,
-) -> HashSet<String> {
-    collect_bound_generic_templates(program, &ScalarReads::of(program, templates))
-}
-
-/// The top-level compile-time-keyed template names (`def show[T: Copyable](x:
-/// T)` whose body holds a `comptime if`/`comptime for`) of a linked program.
-///
-/// A call that omits a parameter is minted from the checker-recorded
-/// instantiation on the next discovery round; until then the template stands
-/// in as a signature-only stub. A call from an abstract generic body over its
-/// own parameters stays on that stub; any other reference that can reach it
-/// at the fixpoint is rejected ([`Elaborated::unserved_template_uses`],
-/// [`unserved_template_parameter`]).
-pub fn comptime_generic_template_names(
-    program: &[Stmt],
-    templates: &mojito_checked::templates::TemplateCatalog,
-) -> HashSet<String> {
-    collect_comptime_generic_templates(program, &ScalarReads::of(program, templates))
-}
-
-/// The overloaded template names of a linked program: a name declared more
-/// than once with a declaration the template does not serve among them.
-///
-/// A call of one is served only from the checker's selection
-/// ([`ElaborationInputs::def_selections`] while its arguments are symbolic).
-pub fn overload_family_names(
-    program: &[Stmt],
-    templates: &mojito_checked::templates::TemplateCatalog,
-) -> HashSet<String> {
-    collect_overload_families(program, &ScalarReads::of(program, templates))
-        .into_keys()
-        .collect()
-}
-
-/// The keys a checker recording names its selected overload by: its
-/// caller-visible parameter names, their mangled types, and its `*args`
-/// collector.
-#[derive(Debug, Clone, Copy, Default)]
-pub struct RecordedKeys<'a> {
-    pub names: &'a [String],
-    pub types: &'a [String],
-    pub variadic: Option<&'a mojito_symbol::symbol::VariadicKey>,
-}
-
-/// The parameter an inferred application of `template` failed to close.
-///
-/// That is the declaration of the first checker argument that is not closed;
-/// `arguments` is the checker's declaration-order list.
-pub fn unserved_template_parameter(
-    program: &[Stmt],
-    template: &str,
-    recorded: RecordedKeys<'_>,
-    arguments: &[TyArg],
-    is_closed: &dyn Fn(&TyArg) -> bool,
-) -> String {
-    let Some(parameters) = declaration_type_params(program, template, recorded) else {
-        return String::new();
-    };
-    let mut cursor = arguments
-        .iter()
-        .filter(|argument| !matches!(argument, TyArg::Origin(_)));
-    let mut first = None;
-    for parameter in parameters {
-        if matches!(parameter.bounds.as_slice(), [only] if only == "Origin" || only == "OriginSet")
-            || parameter.is_origin_mutability_binder(parameters)
-        {
-            continue;
-        }
-        first.get_or_insert(parameter);
-        match cursor.next() {
-            Some(argument) if is_closed(argument) => {}
-            _ => return parameter.name.trim_start_matches('*').to_string(),
-        }
-    }
-    first.map_or_else(String::new, |parameter| {
-        parameter.name.trim_start_matches('*').to_string()
-    })
-}
-
-/// The type parameters of the `def` named `template`, at any nesting depth.
-///
-/// A nested `def` is reported by the same diagnostics as a top-level one, and
-/// it is spelled by the name the search is given: its qualified marker while
-/// the discovery check sees it, its source name otherwise. An overloaded name
-/// resolves to the declaration whose runtime parameters the call supplied, so
-/// the message names that overload's parameter rather than a sibling's.
-fn declaration_type_params<'a>(
-    program: &'a [Stmt],
-    template: &str,
-    recorded: RecordedKeys<'_>,
-) -> Option<&'a Vec<TypeParam>> {
-    fn in_block<'a>(block: &'a [Stmt], template: &str, found: &mut Vec<&'a Stmt>) {
-        for statement in block {
-            match &statement.kind {
-                StmtKind::Def { name, body, .. } => {
-                    if name == template {
-                        found.push(statement);
-                    }
-                    in_block(body, template, found);
-                }
-                StmtKind::Struct { methods, .. } => {
-                    for method in methods {
-                        in_block(&method.body, template, found);
-                    }
-                }
-                _ => {}
-            }
-        }
-    }
-    let mut declarations = Vec::new();
-    in_block(program, template, &mut declarations);
-    let selected = recorded_overloads(
-        declarations.iter().copied().enumerate(),
-        recorded.names,
-        recorded.types,
-        recorded.variadic,
-    )
-    .first()
-    .map(|(_, declaration)| *declaration)
-    .or_else(|| declarations.first().copied())?;
-    match &selected.kind {
-        StmtKind::Def { type_params, .. } => Some(type_params),
-        _ => None,
-    }
-}
-
-/// The declarations among `declarations` a checker recording names, by its
-/// caller-visible parameter names, then their mangled types, then its `*args`
-/// collector. Names must match; a later key that rules out every remaining
-/// candidate is not applied. Empty when no declaration takes the names.
-fn recorded_overloads<'s>(
-    declarations: impl IntoIterator<Item = (usize, &'s Stmt)>,
-    parameter_names: &[String],
-    parameter_types: &[String],
-    variadic: Option<&mojito_symbol::symbol::VariadicKey>,
-) -> Vec<(usize, &'s Stmt)> {
-    let narrow = |candidates: Vec<(usize, &'s Stmt)>, takes: &dyn Fn(&Stmt) -> bool| {
-        if candidates.len() < 2 {
-            return candidates;
-        }
-        let narrowed: Vec<_> = candidates
-            .iter()
-            .copied()
-            .filter(|(_, declaration)| takes(declaration))
-            .collect();
-        if narrowed.is_empty() {
-            candidates
-        } else {
-            narrowed
-        }
-    };
-    let by_name = declarations
-        .into_iter()
-        .filter(|(_, declaration)| declaration_takes_names(declaration, parameter_names))
-        .collect();
-    let by_type = narrow(by_name, &|declaration| {
-        declaration_takes_types(declaration, parameter_types)
-    });
-    narrow(by_type, &|declaration| {
-        declaration_takes_variadic(declaration, variadic)
-    })
+pub fn bound_generic_template_names(program: &[Stmt]) -> HashSet<String> {
+    collect_bound_generic_templates(program)
 }
 
 /// Elaborate a [`prepare`]d, validated program while materializing
@@ -810,18 +507,8 @@ pub fn elaborate_prepared(
 ) -> Result<Elaborated, ComptimeError> {
     let ElaborationInputs {
         def_requests,
-        def_selections,
-        struct_requests,
-        keyed_methods,
         templates,
     } = inputs;
-    let mut instance_requests: HashMap<String, Vec<Vec<TyArg>>> = HashMap::new();
-    for request in struct_requests {
-        instance_requests
-            .entry(request.template().to_string())
-            .or_default()
-            .push(request.arguments().to_vec());
-    }
     let indexes = mojito_common::timing::span("indexes");
     let conformance =
         mojito_checker::checker::ConformanceOracle::from_program(program).map_err(|error| {
@@ -829,8 +516,7 @@ pub fn elaborate_prepared(
                 "could not build the specialization conformance oracle: {error}"
             ))
         })?;
-    let scalar_reads = ScalarReads::of(program, templates);
-    let bound_generics = collect_bound_generic_templates(program, &scalar_reads);
+    let bound_generics = collect_bound_generic_templates(program);
     let elab = Elab {
         program,
         fns: collect_fns(program),
@@ -842,7 +528,7 @@ pub fn elaborate_prepared(
                 _ => None,
             })
             .collect(),
-        specializable: collect_specializable(program, &bound_generics, &scalar_reads),
+        specializable: collect_specializable(program, &bound_generics),
         bound_generics,
         pack_defs: program
             .iter()
@@ -852,21 +538,13 @@ pub fn elaborate_prepared(
                 _ => None,
             })
             .collect(),
-        comptime_generics: collect_comptime_generic_templates(program, &scalar_reads),
-        overload_families: collect_overload_families(program, &scalar_reads),
-        scalar_reads,
-        instance_requests,
-        keyed_methods: keyed_methods.iter().cloned().collect(),
         templates,
         ctfe_template_stats: RefCell::new(mojito_checked::templates::TemplateStats::default()),
-        template_served_defs: RefCell::new(HashMap::new()),
         conformance,
         fuel: Cell::new(FUEL),
         template_binders: RefCell::new(Vec::new()),
-        template_loop_names: RefCell::new(Vec::new()),
         crossing_templates: Cell::new(0),
         def_traces: RefCell::new(Vec::new()),
-        method_traces: RefCell::new(Vec::new()),
         generated: RefCell::new(GeneratedDeclarations::default()),
         top_consts: RefCell::new(HashMap::new()),
         pending_constants: RefCell::new(HashMap::new()),
@@ -897,52 +575,21 @@ pub fn elaborate_prepared(
     }
     elab.restore_forced_constants(&mut materialized, deferred);
     // Monomorphize comptime-dependent generic templates against their call sites.
-    let Elaborated {
-        program: mut result,
-        instances,
-        stub_reaching_structs,
-        unserved_template_uses,
-        def_traces: _,
-        method_traces: _,
-        generated: _,
-        ctfe_template_stats: _,
-        clones: _,
-    } = elab.monomorphize(materialized, def_requests, def_selections)?;
+    let mut result = elab.monomorphize(materialized, def_requests)?.program;
     for statement in &mut result {
         if let Some(source) = statement.module.clone() {
             mojito_ast::ast::stamp_source(std::slice::from_mut(statement), &source);
         }
     }
-    // Per-instantiation method clones reuse their template's spans; each
-    // clone's body gets its own source tag after the uniform module stamp
-    // above (the discipline struct specializations follow), keeping
-    // span-keyed checked facts separate across instantiations.
-    for statement in &mut result {
-        let module = statement.module.clone();
-        if let StmtKind::Struct { name, methods, .. } = &mut statement.kind {
-            for method in methods.iter_mut().filter(|method| method.self_ty.is_some()) {
-                let tag = clone_source_tag(module.as_deref(), name, &method.name);
-                mojito_ast::ast::stamp_source(&mut method.body, &tag);
-            }
-        }
-    }
     let generated = elab.generated.take();
     let def_traces = elab.def_traces.take();
-    let method_traces = elab.method_traces.take();
     let clones = census::clone_census(&census::Minted {
         prepared: program,
-        elaborated: &result,
         def_traces: &def_traces,
-        method_traces: &method_traces,
-        generated: &generated,
     });
     Ok(Elaborated {
         program: result,
-        instances,
-        stub_reaching_structs,
-        unserved_template_uses,
         def_traces,
-        method_traces,
         generated,
         clones,
         ctfe_template_stats: elab.ctfe_template_stats.take(),
@@ -962,7 +609,6 @@ mod unparse;
 
 #[allow(clippy::wildcard_imports, reason = "pages of this split module")]
 use ctfe_calls::*;
-use mojito_ast::simd_width::def_uses_layout_dependent_param;
 #[allow(clippy::wildcard_imports, reason = "pages of this split module")]
 use packs::*;
 #[allow(clippy::wildcard_imports, reason = "pages of this split module")]
@@ -1009,11 +655,6 @@ impl CloneOriginBinders {
             enclosing: true,
             ..Self::default()
         }
-    }
-
-    /// The declared binders, in the order a clone lists them first.
-    pub(super) fn params(&self) -> &[TypeParam] {
-        &self.params
     }
 
     /// The name a synthetic binder's id spells as.
@@ -1114,629 +755,6 @@ fn block_has_comptime(stmts: &[Stmt]) -> bool {
     })
 }
 
-/// Whether a block contains a `comptime for` its template does not serve,
-/// under the same scope rule as [`block_has_comptime`], looking into the arms
-/// of a `comptime if` and the body of a served `comptime for`: the template
-/// keeps both, so an unserved loop inside them still needs a clone.
-fn block_has_unkept_comptime_for(stmts: &[Stmt], names: &LoopNames<'_>) -> bool {
-    let has = |block: &[Stmt]| block_has_unkept_comptime_for(block, names);
-    block_has_statement(stmts, &|kind| match kind {
-        StmtKind::ComptimeFor { iter, body, .. } => {
-            !comptime_for_is_template_served(iter, body, names) || has(body)
-        }
-        StmtKind::ComptimeIf { branches, orelse } => {
-            branches.iter().any(|(_, b)| has(b)) || orelse.as_ref().is_some_and(|b| has(b))
-        }
-        _ => false,
-    })
-}
-
-/// The names a `comptime for` reads that decide whether its template serves
-/// it ([`comptime_for_is_template_served`]).
-pub(super) struct LoopNames<'a> {
-    /// The `def`'s type packs and their collectors ([`def_pack_names`]), an
-    /// enclosing struct's as `Self.Ts`. The elaborator passes every binder
-    /// in scope, which holds them.
-    pub(super) packs: &'a HashSet<String>,
-    /// The `def`'s value packs (`*vals: Int`), bare, and an enclosing
-    /// struct's as `Self.vals`.
-    pub(super) value_packs: &'a HashSet<String>,
-    /// The body's local bindings of a display over the binders
-    /// ([`served_display_bindings`]).
-    pub(super) displays: &'a HashSet<String>,
-    /// Whether a bare name is a closed collection constant: a module
-    /// `comptime` constant, or a local `comptime` binding of a literal
-    /// display.
-    pub(super) collection: &'a dyn Fn(&str) -> bool,
-    /// The module's scalar-valued declarations ([`ScalarReads`]).
-    pub(super) scalars: &'a ScalarReads,
-    /// The body's local `comptime` bindings of a compile-time application
-    /// ([`requested_bindings`]).
-    pub(super) requested: &'a HashSet<String>,
-}
-
-/// The names a generic `def` body open as a template gives the loops it
-/// keeps ([`LoopNames`]): its value packs (`*vals: Int`, bare) and its local
-/// bindings of a display over the binders
-/// ([`served_display_bindings`]).
-#[derive(Default, Clone)]
-pub(super) struct TemplateLoopNames {
-    pub(super) value_packs: HashSet<String>,
-    pub(super) displays: HashSet<String>,
-    pub(super) requested: HashSet<String>,
-}
-
-/// What shows a compile-time display's element is a scalar a loop binder
-/// takes (`Int`, `Bool`, `String`, `Float64`) ([`scalar_shaped`]).
-///
-/// A call, method call, or field read shows it when source validation typed
-/// it so, with the binders symbolic (`TemplateCatalog::scalar_calls`): the
-/// check, not the callee's spelling, decides `twice(n)`, `P(n).get()`,
-/// `S[n].g(n)`, or `P(n).twin().v`, a field read off a scalar or a parameter
-/// aggregate. A
-/// subscript shows it when it reads a module `comptime` list display of
-/// literals of one kind.
-///
-/// A tuple display, call, or method call shows a display element is a
-/// closed aggregate a loop binder takes (a tuple or fieldwise struct of
-/// numbers and booleans) only by source validation's verdict
-/// (`TemplateCatalog::aggregate_elements`).
-#[derive(Clone)]
-pub(super) struct ScalarReads {
-    lists: HashSet<String>,
-    checked: HashSet<SyntaxId>,
-    aggregates: HashSet<SyntaxId>,
-}
-
-impl ScalarReads {
-    pub(super) fn of(
-        program: &[Stmt],
-        templates: &mojito_checked::templates::TemplateCatalog,
-    ) -> Self {
-        Self {
-            lists: program
-                .iter()
-                .filter_map(|statement| match &statement.kind {
-                    StmtKind::Comptime {
-                        name,
-                        type_params,
-                        value,
-                        ..
-                    } if type_params.is_empty() && literal_list(value) => Some(name.clone()),
-                    _ => None,
-                })
-                .collect(),
-            checked: templates.scalar_calls().clone(),
-            aggregates: templates.aggregate_elements().clone(),
-        }
-    }
-
-    /// Whether the tuple display, call, or method call `expression` is a
-    /// closed aggregate a loop binder takes.
-    fn aggregate(&self, expression: &Expr) -> bool {
-        self.aggregates.contains(&expression.syntax_id)
-    }
-
-    /// Whether the call, method call, or field read `expression` is a
-    /// scalar a loop binder takes.
-    fn call(&self, expression: &Expr) -> bool {
-        self.checked.contains(&expression.syntax_id)
-    }
-}
-
-/// Whether a generic `def`'s template serves a `comptime for`. Its iterable
-/// is one of:
-///
-/// - a `range` whose bounds are parameter expressions — literals, names,
-///   `Self.` members, the length of one of the `def`'s packs as the pin
-///   spells it at compile time (`args.__len__()`, `Ts.length`, `len(Ts)`;
-///   `len(args)` is a runtime value there), a reflection count
-///   ([`reflection_count`]), and arithmetic over them — or that apply a
-///   callable ([`requests_application`]);
-/// - a list, set, or dictionary display of literals, which the check
-///   closes, or of scalar expressions over the binders — literals, names,
-///   `Self.` members, a pack length, and arithmetic, comparison, and boolean
-///   operators over them ([`scalar_shaped`]), or applications of a callable
-///   — which it leaves for the elaborator below MIR to evaluate per
-///   instance;
-/// - a named closed collection ([`LoopNames::collection`]);
-/// - a local binding of a display over the binders
-///   ([`LoopNames::displays`]), or of a compile-time application
-///   ([`LoopNames::requested`]);
-/// - one of the `def`'s value packs;
-/// - a reflected field-name list ([`reflected_names`]);
-/// - a sequence a compile-time application builds (`mk(n)`).
-///
-/// And each `comptime` binding its body declares is an alias of a pack
-/// element ([`pack_element_alias`]), a literal, a tuple of scalars, a
-/// parameter expression over the binders and the loop variable, an element
-/// of a named compile-time list at one, an application of a callable to
-/// them ([`applied_bound`], [`requests_application`]), a display a loop
-/// iterates ([`LoopNames::displays`]), a type, or a binding whose
-/// annotation converts its value, which the check binds with them symbolic
-/// or types as a runtime binding. Such a loop is checked once with the
-/// variable symbolic, carried by MIR as a loop header, and unrolled below
-/// MIR; any other is unrolled in the AST, on a clone per instantiation of a
-/// `def`.
-pub(super) fn comptime_for_is_template_served(
-    iter: &Expr,
-    body: &[Stmt],
-    names: &LoopNames<'_>,
-) -> bool {
-    let packs = names.packs;
-    let sequence = match &iter.kind {
-        ExprKind::Call { name, args, .. } if name == "range" => {
-            !args.is_empty()
-                && args.iter().all(|bound| {
-                    parameter_shaped(bound, packs)
-                        || display_read_shaped(bound, packs, names.displays, names.scalars)
-                        || applied_bound(bound, packs, names.displays, names.scalars)
-                        || requests_application(bound)
-                })
-        }
-        ExprKind::ListLit(items) => {
-            (!items.is_empty()
-                && items
-                    .iter()
-                    .all(|item| literal_element(item) || literal_tuple(item)))
-                || evaluated_display_shaped(iter, packs, names.displays, names.scalars)
-        }
-        ExprKind::BraceLit(entries) => {
-            literal_entries(entries)
-                || evaluated_display_shaped(iter, packs, names.displays, names.scalars)
-        }
-        ExprKind::Identifier(name) => {
-            names.value_packs.contains(name)
-                || names.displays.contains(name)
-                || names.requested.contains(name)
-                || (names.collection)(name)
-        }
-        ExprKind::Member { object, field } if matches!(&object.kind, ExprKind::Identifier(name) if name == "Self") => {
-            names.value_packs.contains(&format!("Self.{field}"))
-        }
-        ExprKind::MethodCall { .. } => reflected_names(iter) || requests_application(iter),
-        ExprKind::Call { .. } | ExprKind::Index { .. } => requests_application(iter),
-        _ => false,
-    };
-    sequence
-        && !block_has_statement(body, &|kind| match kind {
-            // An annotation naming the parameter expression's own type
-            // (`comptime m: Int = i * n`) leaves the binding the checker's to
-            // type; any other annotation converts, which no parameter
-            // expression does.
-            // A converting annotation types the binding as a runtime binding
-            // of it is typed (`comptime s: Float64 = 1.5`), and a type is a
-            // local alias (`comptime V = SIMD[DType.int32, i + 1]`,
-            // `comptime F = reflect[T].field_types()[i]`).
-            StmtKind::Comptime {
-                type_params,
-                ty,
-                where_clauses,
-                value,
-                ..
-            } if !matches!(ty, None | Some(Type::Int | Type::Bool))
-                || matches!(
-                    value.kind,
-                    ExprKind::TypeApply { .. } | ExprKind::TypeValue(_)
-                )
-                || matches!(&value.kind, ExprKind::Index { object, .. }
-                    if reflection_method(object, &["field_types"])) =>
-            {
-                !(type_params.is_empty() && where_clauses.is_empty())
-            }
-            StmtKind::Comptime {
-                name,
-                type_params,
-                ty: None | Some(Type::Int | Type::Bool),
-                where_clauses,
-                value,
-            } => {
-                // An element of a named compile-time list, or of a literal
-                // display, at a parameter expression (`names[i]`, `[1, 2][i]`).
-                let element = matches!(&value.kind, ExprKind::Index { object, index }
-                    if (matches!(object.kind, ExprKind::Identifier(_)) || literal_list(object))
-                        && parameter_shaped(index, packs));
-                !(type_params.is_empty()
-                    && where_clauses.is_empty()
-                    && (literal_element(value)
-                        || literal_tuple(value)
-                        || matches!(&value.kind, ExprKind::TupleLit(items)
-                            if items.iter().all(|item| literal_element(item)
-                                || scalar_shaped(item, packs, names.displays, names.scalars)))
-                        || parameter_shaped(value, packs)
-                        || condition_shaped(value, packs)
-                        || element
-                        || names.displays.contains(name)
-                        || display_read_shaped(value, packs, names.displays, names.scalars)
-                        || applied_bound(value, packs, names.displays, names.scalars)
-                        || requests_application(value)))
-                    && pack_element_alias(kind, &|base| packs.contains(base)).is_none()
-            }
-            StmtKind::Comptime { .. } => true,
-            _ => false,
-        })
-}
-
-/// Whether `expression` is the length of one of `packs` as the pin spells it
-/// at compile time. A `def`'s pack is named bare, an enclosing struct's as
-/// `Self.Ts`.
-fn pack_length(expression: &Expr, packs: &HashSet<String>) -> bool {
-    let names_pack = |expression: &Expr| match &expression.kind {
-        ExprKind::Identifier(name) => packs.contains(name),
-        ExprKind::Member { object, field } => {
-            matches!(&object.kind, ExprKind::Identifier(base) if base == "Self")
-                && packs.contains(&format!("Self.{field}"))
-        }
-        _ => false,
-    };
-    match &expression.kind {
-        ExprKind::Call {
-            name,
-            param_args,
-            args,
-            kwargs,
-        } => {
-            name == "len"
-                && param_args.is_empty()
-                && kwargs.is_empty()
-                && matches!(args.as_slice(), [pack] if names_pack(pack))
-        }
-        ExprKind::MethodCall {
-            object,
-            method,
-            args,
-            kwargs,
-        } => method == "__len__" && args.is_empty() && kwargs.is_empty() && names_pack(object),
-        ExprKind::Member { object, field } => field == "length" && names_pack(object),
-        _ => false,
-    }
-}
-
-/// Whether `expression` is spelled as a parameter expression: literals,
-/// names, `Self.` members, a pack length ([`pack_length`]), and arithmetic
-/// over them.
-fn parameter_shaped(expression: &Expr, packs: &HashSet<String>) -> bool {
-    match &expression.kind {
-        ExprKind::Int(_) | ExprKind::Identifier(_) => true,
-        ExprKind::Member { object, .. } => {
-            matches!(&object.kind, ExprKind::Identifier(base) if base == "Self")
-                || pack_length(expression, packs)
-        }
-        ExprKind::Call { .. } | ExprKind::MethodCall { .. } | ExprKind::Invoke { .. } => {
-            pack_length(expression, packs) || reflection_count(expression)
-        }
-        ExprKind::Prefix(PrefixOp::Neg, inner) => parameter_shaped(inner, packs),
-        ExprKind::Infix(
-            InfixOp::Add
-            | InfixOp::Sub
-            | InfixOp::Mul
-            | InfixOp::FloorDiv
-            | InfixOp::Mod
-            | InfixOp::Pow
-            | InfixOp::Shl,
-            left,
-            right,
-        ) => parameter_shaped(left, packs) && parameter_shaped(right, packs),
-        _ => false,
-    }
-}
-
-/// Whether `expression` is spelled as a `Bool` parameter expression: a
-/// comparison of parameter expressions (`i > 0`), or a negation or
-/// conjunction of such.
-fn condition_shaped(expression: &Expr, packs: &HashSet<String>) -> bool {
-    match &expression.kind {
-        ExprKind::Bool(_) => true,
-        ExprKind::Prefix(PrefixOp::Not, inner) => condition_shaped(inner, packs),
-        ExprKind::Infix(InfixOp::And | InfixOp::Or, left, right) => {
-            condition_shaped(left, packs) && condition_shaped(right, packs)
-        }
-        ExprKind::Infix(
-            InfixOp::Eq | InfixOp::Ne | InfixOp::Lt | InfixOp::Gt | InfixOp::Le | InfixOp::Ge,
-            left,
-            right,
-        ) => parameter_shaped(left, packs) && parameter_shaped(right, packs),
-        _ => false,
-    }
-}
-
-/// Whether `expression` is spelled as a reflection handle: `reflect[T]`, or
-/// a name bound to one.
-fn reflection_handle_shaped(expression: &Expr) -> bool {
-    match &expression.kind {
-        ExprKind::Identifier(_) => true,
-        ExprKind::TypeApply { name, .. } => name == "reflect",
-        _ => false,
-    }
-}
-
-/// Whether `expression` is spelled as a handle's query `method`, called with
-/// no argument.
-fn reflection_method(expression: &Expr, wanted: &[&str]) -> bool {
-    matches!(&expression.kind, ExprKind::MethodCall { object, method, args, kwargs }
-        if wanted.contains(&method.as_str())
-            && args.is_empty()
-            && kwargs.is_empty()
-            && reflection_handle_shaped(object))
-}
-
-/// Whether `expression` is spelled as a reflected field-name list:
-/// `X.field_names()` over a handle `X`.
-fn reflected_names(expression: &Expr) -> bool {
-    reflection_method(expression, &["field_names"])
-}
-
-/// Whether `expression` is spelled as a reflection count: `X.field_count()`
-/// or `X.field_index["name"]()` over a handle `X`, or the length of a
-/// reflected list, `len(L)` over a name or over `X.field_names()` /
-/// `X.field_types()`.
-fn reflection_count(expression: &Expr) -> bool {
-    let list = |expression: &Expr| {
-        matches!(expression.kind, ExprKind::Identifier(_))
-            || reflection_method(expression, &["field_names", "field_types"])
-    };
-    match &expression.kind {
-        ExprKind::MethodCall { .. } => reflection_method(expression, &["field_count"]),
-        ExprKind::Invoke {
-            callee,
-            args,
-            kwargs,
-            ..
-        } => {
-            args.is_empty()
-                && kwargs.is_empty()
-                && matches!(&callee.kind, ExprKind::Member { object, field }
-                    if field == "field_index" && reflection_handle_shaped(object))
-        }
-        ExprKind::Call {
-            name,
-            param_args,
-            args,
-            kwargs,
-        } => {
-            name == "len"
-                && param_args.is_empty()
-                && kwargs.is_empty()
-                && matches!(args.as_slice(), [measured] if list(measured))
-        }
-        _ => false,
-    }
-}
-
-/// Whether `expression` is spelled as a scalar a loop binder takes (`Int`,
-/// `Bool`, `String`, `Float64`) over the binders: a literal, a name, a
-/// `Self.` member, a pack length ([`pack_length`]), an element or the length
-/// of one of the body's display bindings (`L[0]`, `len(L)`), an element of
-/// a module list of scalars or a call of a `def` returning one
-/// ([`ScalarReads`]), or an arithmetic, comparison, or boolean operator over
-/// those. Any other call or subscript, or a nested display, does not show
-/// its type.
-fn scalar_shaped(
-    expression: &Expr,
-    packs: &HashSet<String>,
-    displays: &HashSet<String>,
-    scalars: &ScalarReads,
-) -> bool {
-    let shaped = |operand: &Expr| scalar_shaped(operand, packs, displays, scalars);
-    let display = |operand: &Expr| matches!(&operand.kind, ExprKind::Identifier(name) if displays.contains(name));
-    let list = |operand: &Expr| matches!(&operand.kind, ExprKind::Identifier(name) if scalars.lists.contains(name));
-    match &expression.kind {
-        ExprKind::Int(_)
-        | ExprKind::Float(_)
-        | ExprKind::Str(_)
-        | ExprKind::Bool(_)
-        | ExprKind::Identifier(_) => true,
-        ExprKind::Member { object, .. } => {
-            matches!(&object.kind, ExprKind::Identifier(base) if base == "Self")
-                || pack_length(expression, packs)
-                || (scalars.call(expression)
-                    && (shaped(object) || aggregate_shaped(object, packs, displays, scalars)))
-        }
-        ExprKind::Index { object, index } => (display(object) || list(object)) && shaped(index),
-        ExprKind::Call {
-            name,
-            param_args,
-            args,
-            kwargs,
-        } if name == "len" && param_args.is_empty() && kwargs.is_empty() => {
-            matches!(args.as_slice(), [measured] if display(measured))
-                || pack_length(expression, packs)
-        }
-        ExprKind::Call {
-            name,
-            param_args,
-            args,
-            kwargs,
-        } if scalars.call(expression) => {
-            param_args
-                .iter()
-                .all(|argument| scalar_parameter_argument(argument, &shaped))
-                && args.iter().all(shaped)
-                && kwargs.iter().all(|argument| shaped(&argument.value))
-        }
-        ExprKind::MethodCall { args, kwargs, .. } if scalars.call(expression) => {
-            args.iter().all(shaped) && kwargs.iter().all(|argument| shaped(&argument.value))
-        }
-        ExprKind::Call { .. } | ExprKind::MethodCall { .. } => pack_length(expression, packs),
-        ExprKind::Prefix(PrefixOp::Neg | PrefixOp::Not, inner) => shaped(inner),
-        ExprKind::Infix(
-            InfixOp::Add
-            | InfixOp::Sub
-            | InfixOp::Mul
-            | InfixOp::FloorDiv
-            | InfixOp::Mod
-            | InfixOp::Pow
-            | InfixOp::Shl
-            | InfixOp::Eq
-            | InfixOp::Ne
-            | InfixOp::Lt
-            | InfixOp::Le
-            | InfixOp::Gt
-            | InfixOp::Ge
-            | InfixOp::And
-            | InfixOp::Or,
-            left,
-            right,
-        ) => shaped(left) && shaped(right),
-        ExprKind::Compare { first, rest } => {
-            shaped(first) && rest.iter().all(|(_, operand)| shaped(operand))
-        }
-        _ => false,
-    }
-}
-
-/// Whether `expression` is spelled as a list, set, or dictionary display of
-/// scalars over the binders and the body's display bindings
-/// ([`scalar_shaped`]), or a list display of parameter aggregates
-/// ([`literal_tuple`], [`aggregate_shaped`]), which the elaborator below MIR
-/// evaluates per instance.
-fn evaluated_display_shaped(
-    expression: &Expr,
-    packs: &HashSet<String>,
-    displays: &HashSet<String>,
-    scalars: &ScalarReads,
-) -> bool {
-    let shaped =
-        |item: &Expr| scalar_shaped(item, packs, displays, scalars) || requests_application(item);
-    match &expression.kind {
-        ExprKind::ListLit(items) => {
-            !items.is_empty()
-                && items.iter().all(|item| {
-                    shaped(item)
-                        || literal_tuple(item)
-                        || aggregate_shaped(item, packs, displays, scalars)
-                })
-        }
-        ExprKind::BraceLit(entries) => {
-            !entries.is_empty()
-                && entries
-                    .iter()
-                    .all(|(key, value)| shaped(key) && value.as_ref().is_none_or(shaped))
-        }
-        _ => false,
-    }
-}
-
-/// Whether `expression` is a display element source validation typed as a
-/// parameter aggregate a loop binder takes ([`ScalarReads::aggregate`]) whose
-/// operands are scalars over the binders ([`scalar_shaped`]) or such
-/// aggregates: `(3, n)`, `P(1, n)`, `mk(n)`. The elaborator below MIR
-/// evaluates the display per instance.
-fn aggregate_shaped(
-    expression: &Expr,
-    packs: &HashSet<String>,
-    displays: &HashSet<String>,
-    scalars: &ScalarReads,
-) -> bool {
-    let shaped = |operand: &Expr| {
-        scalar_shaped(operand, packs, displays, scalars)
-            || aggregate_shaped(operand, packs, displays, scalars)
-    };
-    scalars.aggregate(expression)
-        && match &expression.kind {
-            ExprKind::TupleLit(items) => items.iter().all(shaped),
-            ExprKind::Call {
-                param_args,
-                args,
-                kwargs,
-                ..
-            } => {
-                param_args
-                    .iter()
-                    .all(|argument| scalar_parameter_argument(argument, &shaped))
-                    && args.iter().all(shaped)
-                    && kwargs.iter().all(|argument| shaped(&argument.value))
-            }
-            ExprKind::MethodCall { args, kwargs, .. } => {
-                args.iter().all(shaped) && kwargs.iter().all(|argument| shaped(&argument.value))
-            }
-            _ => false,
-        }
-}
-
-/// Whether `expression` is spelled as a scalar read off one of the body's
-/// display bindings (`len(L)`, `L[i] + 1`): the check does not close it, and
-/// the elaborator below MIR evaluates it per instance.
-fn display_read_shaped(
-    expression: &Expr,
-    packs: &HashSet<String>,
-    displays: &HashSet<String>,
-    scalars: &ScalarReads,
-) -> bool {
-    elab::expression_names_any(expression, displays)
-        && scalar_shaped(expression, packs, displays, scalars)
-}
-
-/// Whether a loop bound, or a loop-body `comptime` binding, applies a
-/// function to compile-time values (`range(f(n))`, `comptime w = f(i)`):
-/// the application the elaborator below MIR demands.
-fn applied_bound(
-    expression: &Expr,
-    packs: &HashSet<String>,
-    displays: &HashSet<String>,
-    scalars: &ScalarReads,
-) -> bool {
-    struct Calls<'s> {
-        scalars: &'s ScalarReads,
-        found: bool,
-    }
-
-    impl mojito_ast::visit::Visitor for Calls<'_> {
-        fn visit_expr(&mut self, expression: &Expr) {
-            self.found |= matches!(
-                expression.kind,
-                ExprKind::Call { .. } | ExprKind::MethodCall { .. }
-            ) && self.scalars.call(expression);
-        }
-    }
-
-    let mut calls = Calls {
-        scalars,
-        found: false,
-    };
-    mojito_ast::visit::walk_expr(&mut calls, expression);
-    calls.found && scalar_shaped(expression, packs, displays, scalars)
-}
-
-/// Whether a loop bound, or a loop-body `comptime` binding, applies a
-/// callable whatever its result (`range(len(mk(n)))`, `comptime t =
-/// mk(n)[i]`): the check lifts it as a request over the binders in scope,
-/// the loop variable included, which the elaborator below MIR evaluates per
-/// instance.
-fn requests_application(expression: &Expr) -> bool {
-    struct Calls(bool);
-
-    impl mojito_ast::visit::Visitor for Calls {
-        fn visit_expr(&mut self, expression: &Expr) {
-            self.0 |= match &expression.kind {
-                ExprKind::Call { name, .. } => !matches!(
-                    name.as_str(),
-                    "len" | "range" | "reflect" | "conforms_to" | "materialize"
-                ),
-                ExprKind::MethodCall { object, .. } => {
-                    matches!(object.kind, ExprKind::Identifier(_))
-                }
-                _ => false,
-            };
-        }
-    }
-
-    if !matches!(
-        expression.kind,
-        ExprKind::Call { .. }
-            | ExprKind::MethodCall { .. }
-            | ExprKind::Index { .. }
-            | ExprKind::Infix(..)
-            | ExprKind::Prefix(..)
-            | ExprKind::Compare { .. }
-    ) {
-        return false;
-    }
-    let mut calls = Calls(false);
-    mojito_ast::visit::walk_expr(&mut calls, expression);
-    calls.0
-}
-
 /// Whether `expression` is a literal of a scalar type a loop binder takes.
 fn literal_element(expression: &Expr) -> bool {
     match &expression.kind {
@@ -1746,38 +764,6 @@ fn literal_element(expression: &Expr) -> bool {
         }
         _ => false,
     }
-}
-
-/// Whether `expression` is a tuple display of number, boolean, and string
-/// literals, nested tuples included: a parameter value a loop binder holds.
-fn literal_tuple(expression: &Expr) -> bool {
-    matches!(&expression.kind, ExprKind::TupleLit(items) if !items.is_empty()
-    && items.iter().all(|item| literal_tuple(item) || literal_element(item)))
-}
-
-/// Whether a compile-time argument is a type or a value `shaped` accepts.
-fn scalar_parameter_argument(argument: &ParamArg, shaped: &dyn Fn(&Expr) -> bool) -> bool {
-    match argument {
-        ParamArg::Type(_) => true,
-        ParamArg::Value(value) => shaped(value),
-        ParamArg::Named { value, .. } => scalar_parameter_argument(value, shaped),
-    }
-}
-
-/// Whether `expression` is a list display of literals of one kind, numbers
-/// counting as one.
-fn literal_list(expression: &Expr) -> bool {
-    let ExprKind::ListLit(items) = &expression.kind else {
-        return false;
-    };
-    let kind = |item: &Expr| match &item.kind {
-        ExprKind::Str(_) => 0,
-        ExprKind::Bool(_) => 1,
-        _ => 2,
-    };
-    !items.is_empty()
-        && items.iter().all(literal_element)
-        && items.iter().all(|item| kind(item) == kind(&items[0]))
 }
 
 /// Whether a brace display is a set or dictionary of literals.
@@ -1869,36 +855,6 @@ fn block_keys_specialization(stmts: &[Stmt]) -> bool {
     block_has_comptime(stmts) || block_has_rebind(stmts)
 }
 
-/// Whether a top-level `def`'s body keys a clone per instantiation: it
-/// holds a `comptime for` its template does not serve
-/// ([`comptime_for_is_template_served`]). A `comptime if`, a served
-/// `comptime for`, and a `rebind`, its own or a nested `def`'s, do not: the
-/// template keeps the region or the assertion, the check types it with the
-/// binders symbolic, and the elaborator below MIR selects, unrolls, or
-/// judges it.
-fn def_body_keys_specialization(
-    type_params: &[TypeParam],
-    params: &[FnParam],
-    owner: &str,
-    body: &[Stmt],
-    scalars: &ScalarReads,
-) -> bool {
-    let packs = def_pack_names(type_params, params);
-    let value_packs = def_value_pack_names(type_params, owner);
-    let bound = def_bound_names(type_params, params, body);
-    let displays = served_display_bindings(&packs, scalars, body);
-    let requested = requested_bindings(body);
-    let names = LoopNames {
-        packs: &packs,
-        value_packs: &value_packs,
-        displays: &displays,
-        collection: &|name| !bound.contains(name),
-        scalars,
-        requested: &requested,
-    };
-    block_has_unkept_comptime_for(body, &names)
-}
-
 /// The names a `def`'s type packs go by in its body: each `*Ts` binder,
 /// bare, and each collector that spreads one (`*args: *Ts`).
 pub(super) fn def_pack_names(type_params: &[TypeParam], params: &[FnParam]) -> HashSet<String> {
@@ -1918,227 +874,6 @@ pub(super) fn def_pack_names(type_params: &[TypeParam], params: &[FnParam]) -> H
         .map(|binder| (*binder).to_string())
         .chain(collectors)
         .collect()
-}
-
-/// The names a `def`'s value packs go by in its body: each `*vals: Int`
-/// binder, bare.
-pub(super) fn def_value_pack_names(type_params: &[TypeParam], owner: &str) -> HashSet<String> {
-    type_params
-        .iter()
-        .filter(|parameter| {
-            matches!(
-                classify_ct_param(parameter, type_params, owner),
-                Some(ParamDecl::Value { variadic: true, .. })
-            )
-        })
-        .filter_map(|parameter| parameter.name.strip_prefix('*'))
-        .map(str::to_string)
-        .collect()
-}
-
-/// The local `comptime` bindings of a generic `def` body its template
-/// serves as compile-time displays: `comptime L = [n, n * 2]`, a display of
-/// scalars over the binders and the other served displays
-/// ([`evaluated_display_shaped`]) under a name the body binds once
-/// ([`mojito_ast::visit::display_bindings`]). The check types the display
-/// with the binders symbolic and gives it no runtime form; MIR lifts it, and
-/// each compile-time expression that reads it, as a function the elaborator
-/// below MIR runs per instance.
-pub(super) fn served_display_bindings(
-    packs: &HashSet<String>,
-    scalars: &ScalarReads,
-    body: &[Stmt],
-) -> HashSet<String> {
-    let bindings = mojito_ast::visit::display_bindings(body);
-    let mut served: HashSet<String> = bindings.keys().cloned().collect();
-    // A display that reads an unserved one is unserved too.
-    loop {
-        let kept: HashSet<String> = served
-            .iter()
-            .filter(|name| evaluated_display_shaped(&bindings[*name], packs, &served, scalars))
-            .cloned()
-            .collect();
-        if kept.len() == served.len() {
-            break;
-        }
-        served = kept;
-    }
-    if display_in_unserved_argument(body, &served, &bindings) {
-        served.clear();
-    }
-    served
-}
-
-/// The names of `body`'s local `comptime` bindings of a compile-time
-/// application ([`requests_application`]), outside a nested declaration: a
-/// loop over one iterates the sequence its request builds per instance
-/// (`comptime l = mk(n)`, then `comptime for x in l`).
-pub(super) fn requested_bindings(body: &[Stmt]) -> HashSet<String> {
-    fn collect(stmts: &[Stmt], names: &RefCell<HashSet<String>>) {
-        block_has_statement(stmts, &|kind| {
-            match kind {
-                StmtKind::Comptime {
-                    name,
-                    type_params,
-                    value,
-                    ..
-                } if type_params.is_empty() && requests_application(value) => {
-                    names.borrow_mut().insert(name.clone());
-                }
-                StmtKind::ComptimeFor { body, .. } => collect(body, names),
-                StmtKind::ComptimeIf { branches, orelse } => {
-                    for (_, branch) in branches {
-                        collect(branch, names);
-                    }
-                    if let Some(orelse) = orelse {
-                        collect(orelse, names);
-                    }
-                }
-                _ => {}
-            }
-            false
-        });
-    }
-
-    let names = RefCell::new(HashSet::new());
-    collect(body, &names);
-    names.into_inner()
-}
-
-/// Whether `body` spells one of its `displays` whole, or a local `comptime`
-/// collection built from one, as a type or parameter argument, which the
-/// template does not serve. An `Int` or a `Bool` read off a display is
-/// served however it is computed: an element by position or the length,
-/// alone or under integer arithmetic (`SIMD[DType.int32, L[0]]`, `g[len(L) +
-/// 1]()`), is a parameter expression over the binding's sequence, and any
-/// other one (`g[h(L[0])]()`, `flag[L[0] > 2]()`) is the application of a
-/// function lifted for it, as is a local `comptime` value bound to either
-/// (`f[e]()` after `comptime e = h(L[0])`). The display itself (`g[L]()`)
-/// is a value only an instantiation's elaboration computes.
-/// `materialize[L]()` is a crossing, not an argument.
-fn display_in_unserved_argument(
-    body: &[Stmt],
-    displays: &HashSet<String>,
-    bindings: &HashMap<String, Expr>,
-) -> bool {
-    struct Finder<'a> {
-        displays: &'a HashSet<String>,
-        /// The displays a subscript reads by position.
-        positional: HashSet<&'a str>,
-        /// The displays, and each local `comptime` value read off them.
-        derived: HashSet<String>,
-        /// The derived values that are collections.
-        collections: HashSet<String>,
-        found: bool,
-    }
-
-    impl Finder<'_> {
-        /// Whether `expression` is one of the displays, or a collection
-        /// derived from them, by its name or as a display of its own.
-        fn collection(&self, expression: &Expr) -> bool {
-            match &expression.kind {
-                ExprKind::Identifier(name) => {
-                    self.displays.contains(name) || self.collections.contains(name)
-                }
-                ExprKind::ListLit(_) | ExprKind::TupleLit(_) | ExprKind::BraceLit(_) => {
-                    elab::expression_names_any(expression, &self.derived)
-                }
-                _ => false,
-            }
-        }
-
-        /// Whether the index of a capitalized subscript (`L[0]`, which
-        /// parses as a type application) is a parameter expression over the
-        /// displays' sequences, or reads none of them.
-        fn denotes(&self, expression: &Expr) -> bool {
-            match &expression.kind {
-                ExprKind::Identifier(name) => !self.derived.contains(name),
-                ExprKind::Prefix(PrefixOp::Neg, value) => self.denotes(value),
-                ExprKind::Infix(
-                    InfixOp::Add
-                    | InfixOp::Sub
-                    | InfixOp::Mul
-                    | InfixOp::FloorDiv
-                    | InfixOp::Mod
-                    | InfixOp::Pow
-                    | InfixOp::Shl,
-                    left,
-                    right,
-                ) => self.denotes(left) && self.denotes(right),
-                _ => !elab::expression_names_any(expression, &self.derived),
-            }
-        }
-
-        fn serves(&self, argument: &ParamArg) -> bool {
-            match argument {
-                ParamArg::Value(value) => !self.collection(value),
-                // `L[0]` parses as a type application under a capitalized
-                // name.
-                ParamArg::Type(Type::Named(name, arguments)) if self.displays.contains(name) => {
-                    self.positional.contains(name.as_str())
-                        && matches!(arguments.as_slice(),
-                            [ParamArg::Value(index)] if self.denotes(index))
-                }
-                ParamArg::Type(Type::Named(name, arguments)) => {
-                    !self.collections.contains(name)
-                        && arguments.iter().all(|argument| self.serves(argument))
-                }
-                ParamArg::Type(_) => true,
-                ParamArg::Named { value, .. } => self.serves(value),
-            }
-        }
-    }
-
-    impl mojito_ast::visit::Visitor for Finder<'_> {
-        fn visit_stmt(&mut self, statement: &Stmt) {
-            if let StmtKind::Comptime { name, value, .. } = &statement.kind
-                && !self.displays.contains(name)
-                && elab::expression_names_any(value, &self.derived)
-            {
-                if self.collection(value) {
-                    self.collections.insert(name.clone());
-                }
-                self.derived.insert(name.clone());
-            }
-        }
-
-        fn visit_expr(&mut self, expression: &Expr) {
-            let arguments = match &expression.kind {
-                ExprKind::Call {
-                    name, param_args, ..
-                } if name != "materialize" => param_args,
-                ExprKind::Invoke { param_args, .. } => param_args,
-                ExprKind::TypeApply { args, .. } => args,
-                _ => return,
-            };
-            self.found |= !arguments.iter().all(|argument| self.serves(argument));
-        }
-
-        fn visit_type(&mut self, ty: &Type) {
-            if let Type::Named(name, arguments) = ty
-                && !self.displays.contains(name)
-            {
-                self.found |= !arguments.iter().all(|argument| self.serves(argument));
-            }
-        }
-    }
-
-    if displays.is_empty() {
-        return false;
-    }
-    let mut finder = Finder {
-        displays,
-        positional: bindings
-            .iter()
-            .filter(|(_, display)| matches!(display.kind, ExprKind::ListLit(_)))
-            .map(|(name, _)| name.as_str())
-            .collect(),
-        derived: displays.clone(),
-        collections: HashSet::new(),
-        found: false,
-    };
-    mojito_ast::visit::walk_block(&mut finder, body);
-    finder.found
 }
 
 /// The names a `def` binds itself, so that a bare name outside them is a
@@ -2685,28 +1420,21 @@ struct CtStruct<'a> {
 }
 
 /// Whether a declaration must remain a template until a concrete call selects
-/// its compile-time arguments: a generic `def` whose body keys a clone per
-/// instantiation ([`def_body_keys_specialization`]), or one keyed on a value
-/// pack whose binders its template does not serve
-/// ([`template_serves_binders`]). A `def` keyed on a type pack never does: its
+/// its compile-time arguments: a generic `def` keyed on a value pack whose
+/// binders its template does not serve ([`template_serves_binders`]). A `def` keyed on a type pack never does: its
 /// template serves the body, as upstream's does, with the collector a pack of
 /// the symbolic `Ts`, and the elaborator below MIR binds the pack from the
 /// call. This predicate is intentionally independent of the top-level
 /// registry, so a nested `def` answers it the same way.
-fn is_specializable_declaration(statement: &Stmt, scalars: &ScalarReads) -> bool {
+fn is_specializable_declaration(statement: &Stmt) -> bool {
     match &statement.kind {
         StmtKind::Def {
-            name,
-            type_params,
-            params,
-            body,
-            ..
+            name, type_params, ..
         } => {
             !type_params.is_empty()
                 && !pack_keyed_declaration(statement)
-                && (def_body_keys_specialization(type_params, params, name, body, scalars)
-                    || (variadic_keyed_declaration(statement)
-                        && !template_serves_binders(type_params, name)))
+                && variadic_keyed_declaration(statement)
+                && !template_serves_binders(type_params, name)
         }
         _ => false,
     }
@@ -2738,26 +1466,6 @@ struct Elab<'a> {
     /// Top-level type-pack `def`s, every one served by its template: a
     /// clone's spread of its own pack into one expands element by element.
     pack_defs: HashSet<String>,
-    /// The module's scalar-valued declarations ([`ScalarReads`]).
-    scalar_reads: ScalarReads,
-    /// The subset of `specializable` specialized only for its compile-time
-    /// control flow (unique name, no pack, `DType`, or SIMD-width parameter).
-    /// A call that omits a parameter consults the checker-recorded
-    /// instantiation for its occurrence; a deferred call keeps the template as
-    /// a signature-only stub for the discovery check.
-    comptime_generics: HashSet<String>,
-    /// The declarations of every overloaded template name, in
-    /// declaration order (see [`collect_overload_families`]). A call
-    /// to such a name is served only from the checker's recorded
-    /// instantiation, which names the selected overload.
-    overload_families: HashMap<String, Vec<&'a Stmt>>,
-    /// Checker-discovered closed applications of ordinary generic structs, by
-    /// template name: each mints per-instantiation method clones on the
-    /// template.
-    instance_requests: HashMap<String, Vec<Vec<TyArg>>>,
-    /// Driver-reported template methods that keep their per-instantiation
-    /// clones, as (struct, method).
-    keyed_methods: HashSet<(String, String)>,
     /// Checker-owned declaration facts used to validate inferred pack bounds
     /// before specialization consumes the source generic call.
     conformance: mojito_checker::checker::ConformanceOracle,
@@ -2766,24 +1474,16 @@ struct Elab<'a> {
     templates: &'a mojito_checked::templates::TemplateCatalog,
     /// What those checks derived and inferred.
     ctfe_template_stats: RefCell<mojito_checked::templates::TemplateStats>,
-    /// Whether a bound-generic `def`'s template serves its closed calls, by
-    /// name, as first decided ([`Elab::template_serves_def`]).
-    template_served_defs: RefCell<HashMap<String, bool>>,
     fuel: Cell<usize>,
     /// The compile-time parameter names of each generic `def` whose body is
     /// being elaborated as a template, innermost last. A `comptime if`
     /// whose condition names one is kept for the check: its arms are the
     /// template's, and the elaborator below MIR selects.
     template_binders: RefCell<Vec<HashSet<String>>>,
-    /// The loop names of each generic `def` body open in
-    /// [`Self::template_binders`].
-    template_loop_names: RefCell<Vec<TemplateLoopNames>>,
     /// How many generic bodies the runtime-crossing pass has descended into.
     crossing_templates: Cell<usize>,
     /// The declaration-level trace of every `def` clone generated so far.
     def_traces: RefCell<Vec<DefInstanceTrace>>,
-    /// The same for every whole-instance method clone.
-    method_traces: RefCell<Vec<MethodInstanceTrace>>,
     /// The `def` clones and per-call method clones generated so far.
     generated: RefCell<GeneratedDeclarations>,
     top_consts: RefCell<HashMap<String, CtValue>>,
@@ -2837,108 +1537,7 @@ fn substitute_source_param_arg_binding(argument: &mut ParamArg, binding: &str, r
 /// The concrete clone a checker-discovered inferred application selects.
 struct DefCallTarget {
     template: String,
-    /// Which declaration of an overloaded template name the request
-    /// selected, as an index into [`Elab::overload_families`]. `None` for
-    /// every uniquely named template.
-    decl: Option<usize>,
     vals: Vec<CtValue>,
-}
-
-/// The source tag a per-instantiation or per-call method clone's body carries:
-/// the module, the owning struct, and the clone's own name.
-///
-/// Clones reuse their template's spans, so this tag is what keeps span-keyed
-/// checked facts — recorded instantiations above all — separate across
-/// instantiations. A clone is stamped before it is walked, so the walk's own
-/// span-keyed lookups (`def_call_targets` and its siblings) find the
-/// checker's records for that clone rather than the template's.
-fn clone_source_tag(module: Option<&str>, owner: &str, method: &str) -> String {
-    match module {
-        Some(module) => format!("{module}${owner}${method}"),
-        None => format!("{owner}${method}"),
-    }
-}
-
-/// The key [`Mono::abstract_owner`] gives a struct method's erased body.
-/// Neither half can contain a `.`, so [`owner_method`] recovers the method.
-fn method_owner(owner: &str, method: &str) -> String {
-    format!("{owner}.{method}")
-}
-
-/// The method half of a [`method_owner`] key, or `None` for a `def` owner.
-fn owner_method(owner: &str) -> Option<&str> {
-    if owner.starts_with(NESTED_OWNER_PREFIX) {
-        return None;
-    }
-    owner.split_once('.').map(|(_, method)| method)
-}
-
-/// The prefix of a [`nested_body_owner`] key, which a source path's `.` would
-/// otherwise make [`owner_method`] read as a method name.
-const NESTED_OWNER_PREFIX: &str = "$nested-body$";
-
-/// The key [`Mono::abstract_owner`] gives a generic nested `def`'s body.
-///
-/// A nested `def` has no unique name — the same spelling may declare
-/// unrelated helpers in two enclosing bodies — so the key is its declaration
-/// site.
-fn nested_body_owner(site: &SourceSpan) -> String {
-    format!(
-        "{NESTED_OWNER_PREFIX}{}${}${}",
-        site.source.as_deref().unwrap_or(""),
-        site.span.0,
-        site.span.1
-    )
-}
-
-/// The stub-reaching bodies `body` can run: the callees of the references it
-/// left abstract, and every stub-reaching method its by-name method edges
-/// can dispatch to.
-fn body_callees<'a>(
-    body: &str,
-    stubbed: &HashSet<&'a str>,
-    uses: &'a [AbstractUse],
-    edges: &'a [(String, String)],
-) -> Vec<&'a str> {
-    let called = uses
-        .iter()
-        .filter(|reference| reference.owner.as_deref() == Some(body))
-        .map(|reference| reference.callee.as_str())
-        .filter(|callee| stubbed.contains(callee));
-    let dispatched = edges
-        .iter()
-        .filter(|(owner, _)| owner == body)
-        .flat_map(|(_, method)| {
-            stubbed
-                .iter()
-                .copied()
-                .filter(|reached| owner_method(reached) == Some(method.as_str()))
-        });
-    called.chain(dispatched).collect()
-}
-
-/// What one closed instance of a generic struct mints: its per-instantiation
-/// method clones, its storage types with the parameters baked, and the
-/// methods it withholds — unavailable through a false `where` clause or a
-/// false conditional conformance, so no call reaches their erased bodies —
-/// and, by clone name, the template method of each clone whose template body
-/// is the trap stub, so a clone of one that fails its walk reports the
-/// failure rather than falling back to the trap.
-#[derive(Default)]
-struct InstanceClones {
-    clones: Vec<mojito_ast::ast::Method>,
-    field_types: Vec<Type>,
-    withheld: HashSet<String>,
-    stubbed: HashMap<String, String>,
-}
-
-/// One reference [`Mono::retain_abstract`] left on a template's abstract
-/// path.
-struct AbstractUse {
-    callee: String,
-    site: SourceSpan,
-    function_value: bool,
-    owner: Option<String>,
 }
 
 /// The monomorphization worklist and its results.
@@ -2947,11 +1546,6 @@ struct Mono {
     queue: VecDeque<Job>,
     /// Mangled names already requested (dedups identical instantiations).
     done: HashSet<String>,
-    /// The same dedup for an overloaded template family, where two
-    /// declarations specialized at the same values share one mangled name and
-    /// are told apart only by the declaration index. `done` cannot serve here:
-    /// it is shared with struct instances.
-    overload_done: HashSet<(String, usize)>,
     /// Generated specializations, by template name (in generation order).
     generated: HashMap<String, Vec<Stmt>>,
     /// Lexical value bindings visible while call sites are rewritten. `true`
@@ -2978,86 +1572,28 @@ struct Mono {
     /// Checker-discovered inferred bound-generic applications: call occurrence
     /// (without its syntax id) → the concrete clone that call selects.
     def_call_targets: HashMap<SourceSpan, DefCallTarget>,
-    /// The checker's selection at an unclosed overload-family call: call
-    /// occurrence (without its syntax id) → the family name and the selected
-    /// declaration's index.
-    family_selections: HashMap<SourceSpan, (String, usize)>,
     /// Checker-selected constructor rewrites: call occurrence → the struct
     /// template plus the values its specialization bakes — a scalar
     /// `range(...)` with the linked range-family template and its dtype, or a
     /// bare variadic-struct construction with the pack the checker inferred.
     /// `mono_expr` rewrites the call into that concrete constructor.
     struct_call_targets: HashMap<SourceSpan, (String, Vec<CtValue>)>,
-    /// Closed applications of ordinary generic structs found while walking
-    /// (annotations, constructor calls, and generated clones themselves):
-    /// template → baked type values, minted as per-instantiation method
-    /// clones within this elaboration. `instances_done` dedups by the
-    /// mangled instance key.
-    instance_jobs: VecDeque<(String, Vec<CtValue>)>,
-    instances_done: HashSet<String>,
-    /// Instances minted in this elaboration, reported to the driver so the
-    /// checker's recordings of them do not count as new discoveries.
-    minted_instances: Vec<StructInstanceRequest>,
     /// Whether the walk is inside an unstamped bundled stdlib declaration:
     /// instances reached only from there keep the erased path.
     in_bundled: bool,
-    /// The body the walk is inside when that body runs only on an abstract
-    /// path: a top-level bound-generic `def` by name, the erased template of
-    /// a struct method as `Struct.method`, or a generic nested `def` by its
-    /// [`nested_body_owner`] site. A `def`'s body runs only through a
-    /// reference that stays abstract; a method's erased body only where
-    /// [`Elab::unserved_template_uses`]'s table says so; a nested `def`'s
-    /// body only through the instances the elaborator below MIR mints.
-    abstract_owner: Option<String>,
-    /// How many function bodies enclose the walk. A generic `def` declared
-    /// directly in one (`def_depth == 1` on entry) owns its abstract
-    /// references.
-    def_depth: usize,
-    /// Every reference left on a bound-generic or compile-time-keyed
-    /// template's abstract path, with the body it was made from.
-    abstract_uses: Vec<AbstractUse>,
-    /// Stub-reaching methods (`Struct.method`) an instance minted no clone
-    /// for: that instance's calls keep the erased body, whose stub cannot
-    /// run, so the references it holds are reported unserved.
-    unclonable_methods: Vec<String>,
-    /// Method calls made from an abstract body, as (owner, method name). The
-    /// receiver's type is the checker's to solve, so the edge is by name: an
-    /// owner that can call a stub-reaching method of that name reaches a stub
-    /// itself.
-    method_edges: Vec<(String, String)>,
 }
 
 impl Mono {
     /// Whether a specialization named `output_name` is new and should be
-    /// queued. Two declarations of an overloaded template family
-    /// specialized at the same values share one mangled name, so they dedup
-    /// on the declaration index instead.
-    fn queue_specialization(&mut self, output_name: &str, decl: Option<usize>) -> bool {
-        match decl {
-            Some(index) => self.overload_done.insert((output_name.to_string(), index)),
-            None => self.done.insert(output_name.to_string()),
-        }
+    /// queued.
+    fn queue_specialization(&mut self, output_name: &str) -> bool {
+        self.done.insert(output_name.to_string())
     }
 
     /// Leave the call or function-value use of `template` at `site` on its
     /// abstract path.
-    fn retain_abstract(&mut self, template: &str, site: &SourceSpan, function_value: bool) {
+    fn retain_abstract(&mut self, template: &str) {
         self.retained.insert(template.to_string());
-        self.abstract_uses.push(AbstractUse {
-            callee: template.to_string(),
-            site: site.clone(),
-            function_value,
-            owner: self.abstract_owner.clone(),
-        });
-    }
-
-    /// Record that the body being walked can call `method` on a receiver the
-    /// checker types. Only an abstract body needs the edge: a concrete one
-    /// reaches its callee's clone.
-    fn record_method_edge(&mut self, method: &str) {
-        if let Some(owner) = &self.abstract_owner {
-            self.method_edges.push((owner.clone(), method.to_string()));
-        }
     }
 
     /// Bring a declaration's type parameters into the symbolic set for the
@@ -3261,156 +1797,27 @@ fn collect_structs(program: &[Stmt]) -> HashMap<String, CtStruct<'_>> {
     structs
 }
 
-/// Collect the top-level generic `def`s that must be monomorphized (roadmap
-/// milestones 6/7): a generic `def` (type and/or value parameters) whose body
-/// contains a `comptime if`/`comptime for`, plus every heterogeneous type-pack
-/// function.
-/// Such a construct may depend on the parameters
-/// (e.g. `comptime if is_same_type[T, Int]()`), so it can only be resolved per call
-/// site — each specialization binds the concrete arguments and resolves the
-/// comptime construct, so only the *selected* branch is type-checked. The
-/// elaborator does not infer types: an inferred call to a type-pack or
-/// compile-time-keyed template is served from the checker's recorded
-/// instantiation, and every other such `def` needs explicit `[...]` arguments.
+/// Collect the top-level generic `def`s that are templates: the bound-generic
+/// ones, which resolve softly, and the value-pack ones whose binders their
+/// template does not serve ([`is_specializable_declaration`]), which
+/// specialize per call. An inferred call to one is served from the checker's
+/// recorded instantiation, since the elaborator does not infer types.
 fn collect_specializable<'a>(
     program: &'a [Stmt],
     bound_generics: &HashSet<String>,
-    scalars: &ScalarReads,
 ) -> HashMap<String, &'a Stmt> {
     let mut m = HashMap::new();
     for s in program {
         if let StmtKind::Def { name, .. } | StmtKind::Struct { name, .. } = &s.kind
-            && (is_specializable_declaration(s, scalars) || bound_generics.contains(name))
+            && (is_specializable_declaration(s) || bound_generics.contains(name))
         {
             // An overloaded name has one entry here, the first declaration:
             // this registry answers the name-level question "is this a
-            // template at all?". Which declaration of an overloaded
-            // template name a call selects is
-            // [`Elab::family_declaration`]'s to answer, from
-            // [`collect_overload_families`].
+            // template at all?".
             m.entry(name.clone()).or_insert(s);
         }
     }
     m
-}
-
-/// The declarations of every overloaded template name, in declaration order:
-/// a name declared more than once with a compile-time-keyed declaration or
-/// a type-pack one the template does not serve among them.
-///
-/// Overload selection is the checker's, so the elaborator cannot pick among
-/// these itself: a call reaches one of them only through the checker's
-/// recorded instantiation, which names the selected overload by its runtime
-/// parameter names. A family may mix specialization classes — a keyed
-/// declaration beside a type pack, or beside a template-served one — because
-/// the class is a property of a declaration, not of the name:
-/// the request's selected declaration index is what tells a call which class
-/// serves it.
-fn collect_overload_families<'a>(
-    program: &'a [Stmt],
-    scalars: &ScalarReads,
-) -> HashMap<String, Vec<&'a Stmt>> {
-    let mut families: HashMap<String, Vec<&Stmt>> = HashMap::new();
-    for statement in program {
-        if let StmtKind::Def { name, .. } = &statement.kind {
-            families.entry(name.clone()).or_default().push(statement);
-        }
-    }
-    families.retain(|_, declarations| {
-        declarations.len() > 1
-            && declarations
-                .iter()
-                .any(|s| comptime_keyed_declaration(s, scalars))
-    });
-    families
-}
-
-/// Whether `statement`'s caller-visible runtime parameters are exactly
-/// `parameter_names`.
-///
-/// This must agree with how the checker builds `Ty::GenericFunc::names`
-/// (`caller_regular`, `checker/statements.rs`): regular parameters in
-/// declaration order, with an `out` named result excluded, since a caller
-/// never supplies one.
-fn declaration_takes_names(statement: &Stmt, parameter_names: &[String]) -> bool {
-    declaration_takes(statement, parameter_names, |parameter| {
-        parameter.name.clone()
-    })
-}
-
-/// Whether `statement`'s caller-visible parameters are declared with exactly
-/// `parameter_types`, mangled the way the checker mangles the resolved types it
-/// recorded. [`mojito_symbol::symbol::TypeKey`] aligns its declaration and
-/// call-resolution sides precisely so these compare.
-fn declaration_takes_types(statement: &Stmt, parameter_types: &[String]) -> bool {
-    let StmtKind::Def { type_params, .. } = &statement.kind else {
-        return false;
-    };
-    declaration_takes(statement, parameter_types, |parameter| {
-        mojito_symbol::symbol::TypeKey::from_ast_in_scope(&parameter.ty, type_params)
-            .as_str()
-            .to_string()
-    })
-}
-
-/// Whether `statement`'s `*args` collector is `variadic`: the same position
-/// among its caller-visible parameters and the same element key, or no
-/// collector on either side.
-fn declaration_takes_variadic(
-    statement: &Stmt,
-    variadic: Option<&mojito_symbol::symbol::VariadicKey>,
-) -> bool {
-    let StmtKind::Def {
-        params,
-        type_params,
-        ..
-    } = &statement.kind
-    else {
-        return false;
-    };
-    mojito_symbol::symbol::VariadicKey::from_ast_params(params, type_params).as_ref() == variadic
-}
-
-fn declaration_takes(
-    statement: &Stmt,
-    expected: &[String],
-    spell: impl Fn(&mojito_ast::ast::FnParam) -> String,
-) -> bool {
-    let StmtKind::Def { params, .. } = &statement.kind else {
-        return false;
-    };
-    let mut caller_visible = params
-        .iter()
-        .filter(|parameter| {
-            parameter.kind == mojito_ast::ast::ParamKind::Regular
-                && !matches!(parameter.convention, Some(ArgConvention::Out))
-        })
-        .map(spell);
-    expected
-        .iter()
-        .all(|wanted| caller_visible.next().as_ref() == Some(wanted))
-        && caller_visible.next().is_none()
-}
-
-/// Whether a top-level `def` is specializable only because its body holds
-/// compile-time control flow or a `rebind` over its own parameters — the
-/// compile-time-keyed class's per-declaration predicate.
-fn comptime_keyed_declaration(statement: &Stmt, scalars: &ScalarReads) -> bool {
-    let StmtKind::Def {
-        name,
-        type_params,
-        params,
-        body,
-        ..
-    } = &statement.kind
-    else {
-        return false;
-    };
-    def_body_keys_specialization(type_params, params, name, body, scalars)
-        && admits_comptime_keying(statement)
-        && type_params
-            .iter()
-            .any(|parameter| !retained_specialization_param(parameter, type_params))
 }
 
 /// Whether every compile-time parameter of a `def` is one its template
@@ -3439,20 +1846,6 @@ pub(super) fn template_serves_binders(type_params: &[TypeParam], owner: &str) ->
                 _ => false,
             }
         })
-}
-
-/// Whether a declaration's own parameters permit the compile-time-keyed class.
-/// A pack, a `DType` parameter, or a layout-dependent parameter cannot stand
-/// in as a checkable stub, so such a declaration whose body keys a clone
-/// resolves its applications explicitly.
-fn admits_comptime_keying(statement: &Stmt) -> bool {
-    let StmtKind::Def { type_params, .. } = &statement.kind else {
-        return false;
-    };
-    !type_params.iter().any(|parameter| {
-        parameter.name.starts_with('*')
-            || matches!(parameter.bounds.as_slice(), [only] if only == "DType")
-    }) && !def_uses_layout_dependent_param(statement)
 }
 
 /// How many top-level `def`s share each name: the name-keyed template classes
@@ -3491,24 +1884,6 @@ fn variadic_keyed_declaration(statement: &Stmt) -> bool {
         if type_params.iter().any(|parameter| parameter.name.starts_with('*')))
 }
 
-fn collect_comptime_generic_templates(program: &[Stmt], scalars: &ScalarReads) -> HashSet<String> {
-    let families = collect_overload_families(program, scalars);
-    let def_counts = def_name_counts(program);
-    program
-        .iter()
-        .filter_map(|statement| {
-            let StmtKind::Def { name, .. } = &statement.kind else {
-                return None;
-            };
-            // A unique name joins on its own declaration; an overloaded name
-            // joins as a family, whose members the request path tells apart.
-            let admitted = (def_counts[name.as_str()] == 1 || families.contains_key(name.as_str()))
-                && comptime_keyed_declaration(statement, scalars);
-            admitted.then(|| name.clone())
-        })
-        .collect()
-}
-
 /// Top-level trait-bound generic `def`s with no comptime constructs. These
 /// monomorphize per explicit concrete application like the comptime class, but
 /// resolution is soft — an unresolvable call (inference, symbolic arguments)
@@ -3517,7 +1892,7 @@ fn collect_comptime_generic_templates(program: &[Stmt], scalars: &ScalarReads) -
 /// Mojo-style pre-check of the uninstantiated body. An overloaded name stays
 /// entirely on the abstract path: the registry is name-keyed and overload
 /// selection is the checker's.
-fn collect_bound_generic_templates(program: &[Stmt], scalars: &ScalarReads) -> HashSet<String> {
+fn collect_bound_generic_templates(program: &[Stmt]) -> HashSet<String> {
     let def_counts = def_name_counts(program);
     program
         .iter()
@@ -3528,7 +1903,7 @@ fn collect_bound_generic_templates(program: &[Stmt], scalars: &ScalarReads) -> H
             else {
                 return None;
             };
-            if is_specializable_declaration(statement, scalars) || def_counts[name.as_str()] != 1 {
+            if is_specializable_declaration(statement) || def_counts[name.as_str()] != 1 {
                 return None;
             }
             let has_type_binder = type_params.iter().any(|parameter| {
@@ -3574,10 +1949,6 @@ fn block_has_statement(stmts: &[Stmt], wanted: &dyn Fn(&StmtKind) -> bool) -> bo
 /// A pending specialization request: template `orig`, specialized for `vals`.
 struct Job {
     orig: String,
-    /// The selected declaration of an overloaded template name; see
-    /// [`DefCallTarget::decl`]. The drain resolves the template through it,
-    /// since `orig` names a whole family.
-    decl: Option<usize>,
     vals: Vec<CtValue>,
     site: String,
     output_name: String,
@@ -3629,75 +2000,6 @@ mod specialize;
 use rewrite::*;
 
 impl<'a> Elab<'a> {
-    /// The one declaration of overloaded template `name` whose
-    /// runtime parameters are `parameter_names`, with its index.
-    ///
-    /// The checker records the selected overload's parameter names in
-    /// declaration order, excluding an `out` named result, so this is how a
-    /// request names one overload of a template. Overloads that share a
-    /// parameter-name list are told apart by their mangled parameter types.
-    /// A variadic parameter is caller-visible but is named by neither key, so
-    /// overloads that share both are told apart by their `*args` collector —
-    /// its position and element key — and then by whether the request's own
-    /// arguments bind the declaration's parameters at all. A family ambiguous
-    /// under all four leaves the call abstract, and the driver's unserved-use
-    /// check rejects it in the caller's own terms.
-    pub(super) fn family_declaration(
-        &self,
-        name: &str,
-        request: &DefSpecializationRequest,
-    ) -> Option<(usize, &'a Stmt)> {
-        let declarations = self.overload_families.get(name)?;
-        let candidates = recorded_overloads(
-            declarations.iter().copied().enumerate(),
-            request.parameter_names(),
-            request.parameter_types(),
-            request.variadic(),
-        );
-        if let [only] = candidates.as_slice() {
-            return Some(*only);
-        }
-        let mut by_shape = candidates.into_iter().filter(|(_, declaration)| {
-            self.def_request_values(declaration, request.arguments())
-                .is_some()
-        });
-        let only = by_shape.next()?;
-        by_shape.next().is_none().then_some(only)
-    }
-
-    /// Whether `statement` shares an overloaded template name
-    /// without being a template of any class itself — a plain
-    /// `def kind(a: Int, b: Int)` beside a `def kind[T](a: T)` whose body holds
-    /// a `comptime if`.
-    ///
-    /// Such a declaration specializes nothing: the walk and the program
-    /// rebuild must treat it as an ordinary statement, since both otherwise
-    /// decide by name alone and would drop it. A sibling that *is* a template
-    /// of some other class — a type pack beside the keyed declaration — must
-    /// not answer yes here, or the rebuild would push its unspecialized body
-    /// through verbatim.
-    pub(super) fn shares_a_family_name(&self, statement: &Stmt) -> bool {
-        let StmtKind::Def { name, .. } = &statement.kind else {
-            return false;
-        };
-        self.overload_families.contains_key(name)
-            && !is_specializable_declaration(statement, &self.scalar_reads)
-    }
-
-    /// Whether `name` is an overloaded template family: a call to it
-    /// is served only from the checker's recorded instantiation, never
-    /// resolved syntactically.
-    pub(super) fn overload_family(&self, name: &str) -> bool {
-        self.overload_families.contains_key(name)
-    }
-
-    /// The declaration a job or call target selected, or the sole declaration
-    /// the name-keyed registry holds.
-    pub(super) fn selected_declaration(&self, name: &str, decl: Option<usize>) -> &'a Stmt {
-        decl.and_then(|index| self.overload_families.get(name)?.get(index).copied())
-            .unwrap_or_else(|| self.specializable[name])
-    }
-
     /// Whether `name` declares an explicit (non-infer-only) `Origin`/
     /// `OriginSet` parameter — a slot a generated clone can spell only as a
     /// binder of its own (`Elab::clone_binding`).
@@ -3895,7 +2197,6 @@ mod vm_bridge_tests {
 fn elaborate_with_requests(
     program: Vec<Stmt>,
     def_requests: &[DefSpecializationRequest],
-    struct_requests: &[StructInstanceRequest],
 ) -> Result<Elaborated, ComptimeError> {
     let prepared = prepare(program)?;
     let mut catalog = mojito_checked::templates::TemplateCatalog::new(false);
@@ -3905,7 +2206,6 @@ fn elaborate_with_requests(
         &prepared,
         ElaborationInputs {
             def_requests,
-            struct_requests,
             ..ElaborationInputs::new(&catalog)
         },
     )
@@ -4006,7 +2306,7 @@ mod def_request_tests {
             vec![TyArg::Ty(Ty::Int)],
         );
 
-        let elaborated = elaborate_with_requests(parsed, &[request], &[])
+        let elaborated = elaborate_with_requests(parsed, &[request])
             .expect("a request on a template-served def must not fail elaboration")
             .program;
 
@@ -4036,53 +2336,17 @@ mod def_request_tests {
                       def keyed[n: Int]():\n    \
                       comptime for p in [mk(n), 2]:\n        print(p)\n";
         let parsed = parse(source).expect("parse");
-        let scalars = super::ScalarReads::of(
-            &parsed,
-            &mojito_checked::templates::TemplateCatalog::new(false),
-        );
         let specializable: Vec<&str> = parsed
             .iter()
-            .filter(|statement| super::is_specializable_declaration(statement, &scalars))
+            .filter(|statement| super::is_specializable_declaration(statement))
             .filter_map(|statement| match &statement.kind {
                 StmtKind::Def { name, .. } => Some(name.as_str()),
                 _ => None,
             })
             .collect();
 
-        // Every type-pack `def`'s template serves its body, whatever it
-        // holds; a body without a pack still keys a clone.
-        assert_eq!(specializable, ["keyed"]);
-    }
-
-    #[test]
-    fn a_display_element_validation_types_as_a_scalar_is_template_served() {
-        let source = "@fieldwise_init\nstruct P(Copyable, Movable):\n    var v: Int\n\n    \
-                      def get(self) -> Int:\n        return self.v\n\n    \
-                      def twin(self) -> P:\n        return P(self.v)\n\n\
-                      def method[n: Int]():\n    \
-                      comptime for p in [P(n).get(), 2]:\n        print(p)\n\n\
-                      def structural[n: Int]():\n    \
-                      comptime for p in [P(n).twin().v, 2]:\n        print(p)\n\n\
-                      def whole[n: Int]():\n    \
-                      comptime for p in [P(n).twin(), P(2)]:\n        print(p.v)\n";
-        let linked = mojito::module::inject_prelude(parse(source).expect("parse")).expect("link");
-        let prepared = super::prepare(linked).expect("prepare");
-        let mut catalog = mojito_checked::templates::TemplateCatalog::new(false);
-        mojito_checker::checker::validate_comptime_templates_into(&prepared, &mut catalog)
-            .expect("validate");
-        let scalars = super::ScalarReads::of(&prepared, &catalog);
-        let served = |name: &str| {
-            prepared.iter().any(|statement| {
-                matches!(&statement.kind, StmtKind::Def { name: def, .. } if def == name)
-                    && !super::is_specializable_declaration(statement, &scalars)
-            })
-        };
-
-        // The method's name says nothing about its result; the check does.
-        assert!(served("method"));
-        // A field read off a method's result is typed by the check too.
-        assert!(served("structural"));
-        assert!(served("whole"));
+        // Every template serves its body, whatever loop it holds.
+        assert!(specializable.is_empty());
     }
 
     #[test]
@@ -4114,7 +2378,7 @@ mod def_request_tests {
             type_params,
         ));
 
-        let elaborated = elaborate_with_requests(parsed, &[request], &[])
+        let elaborated = elaborate_with_requests(parsed, &[request])
             .expect("materialize the requested specialization")
             .program;
 
@@ -4141,7 +2405,7 @@ mod def_request_tests {
             vec![TyArg::Val(CtValue::Int(1))],
         );
 
-        let elaborated = elaborate_with_requests(parsed, &[request], &[])
+        let elaborated = elaborate_with_requests(parsed, &[request])
             .expect("a skipped request must not fail elaboration")
             .program;
 
@@ -4168,7 +2432,7 @@ mod def_request_tests {
             vec![TyArg::Ty(Ty::Int)],
         );
 
-        let elaborated = elaborate_with_requests(parsed, &[request], &[])
+        let elaborated = elaborate_with_requests(parsed, &[request])
             .expect("materialize the requested specialization")
             .program;
 
@@ -4191,7 +2455,7 @@ mod def_request_tests {
                       def main():\n    show[3]()\n";
         let linked = mojito::module::inject_prelude(parse(source).expect("parse")).expect("link");
 
-        let elaborated = elaborate_with_requests(linked, &[], &[])
+        let elaborated = elaborate_with_requests(linked, &[])
             .expect("elaborate")
             .program;
 

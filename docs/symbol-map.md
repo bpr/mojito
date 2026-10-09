@@ -225,16 +225,11 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `bind_constructor_origins`/`record_constructor_reference_borrows`, retaining
   `mut`/`ref` argument places via `solve_call_origins`, and alias-checking;
   both method paths and the constructor paths record
-  `checked::MethodInstantiation`s, which name the method's template (a
-  static retargeted to its per-instantiation clone names it through
-  `record_static_clone_target`); the method-call, static, and
-  constructor paths also record every closed generic-struct application
-  reached from a non-bundled source (`record_struct_instantiation` →
-  `checked::StructInstantiation`) and retarget a closed receiver's call to
-  its per-instantiation clone by exact name (`instance_method_clone`,
-  `generics.rs`, over `symbol::instance_method_clone_name`); `operators.rs`,
-  `indexing.rs` (`resolve_struct_setitem`), and `iteration.rs` (the
-  `__iter__` prepare symbol) apply the same lookup, and
+  `checked::MethodInstantiation`s, which name the method's template
+  (`method_calls/resolution.rs:record_method_call_instantiation`); the
+  method-call, static, and constructor paths also record every closed
+  generic-struct application reached from a non-bundled source
+  (`record_struct_instantiation` → `checked::StructInstantiation`), and
   `call_inference.rs::existing_def_clone` retargets an inferred bound-generic
   call to an already-declared def clone; `unify_through_callable_bounds`
   solves an infer-only type parameter through a callable-bounded sibling)
@@ -534,9 +529,8 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `fold_vector_values` tells from the template's syntax and
   `construct_folded_vectors` records; `operators.rs:vector_alias` types a
   vector alias's call (`U256(...)`) as the `SIMD` it spells.
-  `realize_method_call` retargets a closed method call to the clone member
-  `declarations.rs:method_clone_target` finds (the helper
-  `constructor_clone_target` shares; its `realize_method_contract` half also
+  `realize_method_call` realizes a closed method call's contract at the
+  instance (its `realize_method_contract` half also
   realizes an element store's embedded value getter,
   `realize_element_getters`, and `realize_element_dunders` re-selects an
   embedded in-place dunder dispatched through a bound,
@@ -585,9 +579,8 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   (`realize_construction`): the template's member must still bind every
   recorded argument type exactly (`exact_binding`, over
   `call.rs:match_call_slots`; a fieldwise struct's fields likewise, over
-  `match_fieldwise_slots`), and
-  the target becomes the instance's clone of it through
-  `declarations.rs:constructor_clone_target`. The submodule
+  `match_fieldwise_slots`), and the template's spelling stays its target.
+  The submodule
   `template_facts/iterations.rs` keeps a runtime `for`'s protocol as the
   inputs it is selected from (`captured_iterations`, a `TemplateIteration`
   proven by rebuilding the recorded protocol), selects it again from an
@@ -641,8 +634,7 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   exhaustive
   `derive_adjustment`) is `crates/mojito-checked/src/templates.rs`. The
   declaration-level trace is `comptime.rs`'s `DefInstanceTrace` (type,
-  value, and pack bindings), recorded by `specialize.rs:generate_def_spec`,
-  and `MethodInstanceTrace`, recorded by `generate_instance_clones`;
+  value, and pack bindings), recorded by `specialize.rs:generate_def_spec`;
   `GeneratedDeclarations` lists what an elaboration generated; the
   occurrence-level trace is `ast.rs:rekey_syntax`'s `SyntaxOrigins` (which
   traces a `mojito-common` `token.rs:SyntaxId::derived` node through its
@@ -969,44 +961,12 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `keep_template_comptime_if` keeps a `comptime if` over a generic `def`'s
   own binders (`Elab::template_binders`) for the check, where every other
   one is selected), type
-  resolution, the template classifications (`bound_generic_template_names`,
-  a type-pack def among them, since every one is template-served, and
-  `comptime_generic_template_names` for defs keyed only by a `comptime
-  if`/`for` body, whose inferred calls do the same, gated by
-  `omits_required_param` in `comptime/mono.rs`; a `DType`- or lane-keyed
-  def is in none of them unless its body keys a clone — each
-  classification is a per-declaration predicate
-  (`comptime_keyed_declaration`, `pack_keyed_declaration`) that an
-  overloaded name admits one declaration at
-  a time, so one family may hold two classes, or two type packs, and
-  `Elab::family_declaration` picks the declaration a request selected by its
-  parameter names, parameter types, and `symbol::VariadicKey`
-  (`recorded_overloads` in `comptime.rs`, shared with
-  `unserved_template_parameter`, whose `RecordedKeys` carry the three keys),
-  `seed_family_selections` (`comptime/specialize.rs`) records the
-  checker's selection at an unclosed family call
-  (`ElaborationInputs::def_selections`, which the driver's
-  `def_family_selections` collects over `overload_family_names`) into
-  `Mono::family_selections`, which `Elab::family_call_is_served` consults
-  after the closed `Mono::def_call_targets`, and
-  `Elab::forwarded_family_target` (`comptime/mono.rs`) the one declaration a
-  clone's whole-pack forward to a sibling binds; `template_stub` in
-  `comptime/specialize.rs` stands in for either deferred template;
-  `Mono::retain_abstract` records each abstract reference and
-  `Mono::record_method_edge` each by-name method call from an abstract body,
-  the specializer's `stub_reaching_bodies` closes both over
-  `Mono::abstract_owner` (a bound-generic `def`, a struct method as
-  `method_owner`'s `Struct.method`, or a generic nested `def` as
-  `nested_body_owner`'s declaration site), `unserved_template_uses` keeps the
-  references that can reach a stub from outside a stub-reaching body — plus
-  those of a method no instance could clone (`Mono::unclonable_methods`) — as
-  `Elaborated::unserved_template_uses` (`UnservedTemplateUse`),
-  `Elaborated::stub_reaching_structs` stops the driver's round cap from
-  converging on such an instance, and `unserved_template_parameter` names the
-  parameter for the driver's `reject_unserved_template_calls`;
-  `clone_source_tag` stamps each method clone's body before it is walked, so
-  its span-keyed requests find the checker's records for that
-  instantiation), the
+  resolution, the template classification (`bound_generic_template_names`,
+  a type-pack def among them, since every one is template-served; the
+  per-declaration predicates `is_specializable_declaration` and
+  `pack_keyed_declaration` leave only a value-pack `def` whose binders its
+  template does not serve specializable; `Mono::retain_abstract` records a
+  template a reference leaves on its abstract path), the
   origin-slot guards (`ty_mentions_origin_slotted_struct` finds such type
   arguments, a pointer whose origin is a place
   `PointerOrigin::clone_bindable_place` admits among them, whose
@@ -1072,34 +1032,23 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   diagnostics (`render_where_clause`, `violated_constraint_message`: the
   clause as declared with `Self.` dropped, upstream's note text).
 - `comptime/specialize.rs` owns monomorphization and `def` specialization
-  synthesis (`generate_def_spec`, request seeding), and the per-instantiation method clones of
-  ordinary generic structs (`generate_instance_clones`, driven by
-  `StructInstanceRequest`s and by the in-elaboration instance worklist
-  `mono.rs` feeds through `instance_template`/`request_instance`; the clone
-  carries `ast::Method::self_ty`, which the checker binds `self`/`Self` to
-  and records as `AnnotationSite::MethodSelf` for MIR; the body check reads
-  that record back, and `MethodSig::receiver` keeps it so a call binds the
-  clone's origin binders from its receiver, `bind_clone_receiver_origins` in
-  `checker/origins/construct.rs`). `keyed_methods` there says which methods
-  of an instance still clone: the ones whose template body is the trap stub,
-  the stub-reaching ones, and the driver-reported ones
-  (`ElaborationInputs::keyed_methods`). Every other method mints no clone,
-  whatever the instance's arguments carry, and no method mints a per-call
-  clone: a `comptime if`/`comptime for` over a method's own binders stays in
-  its template (`Elab::def_body`), and a body that still fails over them
-  becomes `instantiation_failure_stub`'s body there. A clone of a stubbed method that fails to elaborate is
-  minted by `failed_method_clone` with `instantiation_failure_stub`'s body,
-  the compiler-private `_mojito_instantiation_failed("…")` the checker types
-  like `_mojito_abort` (`call_inference.rs`, diverging in
+  synthesis (`generate_def_spec`, request seeding). No method mints a
+  clone, per call or per instance: a `comptime if`/`comptime for` over a
+  method's own binders or its struct's stays in its template
+  (`Elab::def_body`), and a body that still fails over them becomes
+  `instantiation_failure_stub`'s body there, the compiler-private
+  `_mojito_instantiation_failed("…")` the checker types like `_mojito_abort`
+  (`call_inference.rs`, diverging in
   `declarations.rs:is_diverging_intrinsic`), so `native::mono` reports it
   where it is reached (`mono/failure.rs`); the erased VM raises it as
-  unsupported. `template_serves_def` says
+  unsupported. A VM-CTFE subprogram still stubs a struct method holding
+  compile-time control flow with `ctfe.rs:unspecialized_method_stub`.
+  `template_serves_def` says
   which generic `def` keeps its template at every closed call: a plain
   trait-bound one, with type parameters and scalar or `DType` value
   parameters (`template_serves_binders`, a value inferred from any argument
-  type included), and no such construct; a `DType`- or lane-keyed `def`,
-  overloaded or not, is an ordinary generic `def`, specializable only when
-  its body keys a clone (`is_specializable_declaration`). An
+  type included); a `DType`- or lane-keyed `def`,
+  overloaded or not, is an ordinary generic `def`. An
   associated type its body names is solved below
   the waist, from `MirStructDeclaration.associated_types`
   (`declared_associated_type` over `struct_instance`,
@@ -1108,20 +1057,6 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   owns the carried source that lets both (`SigOrigin::Carried`, recorded by
   `record_transfer_effect` and closed by `replay_transfer_effects` with the
   receiver's arguments and the call's own bindings, `call_closed`).
-- `src/compiler/template_reach.rs` owns what a template-served body reaches
-  once its owner's parameters are bound (`TemplateReach`): a method at an
-  instance, and a generic `def` at a closed call (`closed_def_calls`). It is
-  read from one check's facts: the
-  closed instances its checked types name once the struct's parameters are
-  bound (`instances`, requested like checker-recorded ones), and the methods
-  whose checked bodies only an instance's own check can serve
-  (`keyed_methods`; a `def` is listed with an empty method name). A
-  method with compile-time parameters of its own is read at each closed
-  call the checker recorded (`closed_method_calls`, `method_call`), its
-  struct's and its own binders bound: the instances its body applies are
-  requested. `compile_linked` consults it every discovery round, and
-  a body that reached a struct whose method becomes keyed is inferred again
-  (`ServedRequests::keyed_templates`).
 - `comptime/mono.rs` owns the monomorphizing AST rewrite (`mono_type` and
   friends) and struct-specialization argument resolution.
 - `comptime/rewrite.rs` owns AST substitution and value materialization.
@@ -1156,16 +1091,11 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `mojito-types`; `nominal_string_literal_ctor_symbol`, the literal→`String`
   wrap MIR emits), the list-literal initializer predicate
   `is_list_literal_constructor` (the checker's display construction and
-  mono's `Array` parameter-value construction), and the
-  instance-clone identity shared by the checker and both backends:
-  `specialized_method_values`,
-  `materialized_instantiation_argument`, and `instance_method_clone_name`
-  (the VM's `instance_dunder_symbol` in `backend/vm.rs` and the native
-  monomorphizer's `instance_dunder_target`/`enqueue_display_instance` in
-  `native/mono/instances.rs` select clones through it from checked register
-  types, as does `instance_method_target`, which hands a template body's
-  method call on a closed receiver to that instance's clone where one
-  exists, and `dispatched_overload_target`, which selects the receiver's
+  mono's `Array` parameter-value construction), and
+  `materialized_instantiation_argument`, the spelling a `def` clone bakes
+  (the native monomorphizer's `enqueue_display_instance` in
+  `native/mono/instances.rs` instantiates a printed instance's `write_to`,
+  and `dispatched_overload_target` selects the receiver's
   own overload for a bound dispatch whose qualifier spells the requirement's
   parameter otherwise than the witness
   (`__hash__$ov$Some$u5B$Hasher$u5D$$Hasher` against `Twin.__hash__$ov$H$Hasher`),
@@ -1189,19 +1119,11 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   its inferred value parameters (`MethodInstantiation::inferred_values`) passed
   as named arguments as a `def`'s are); the checker closes a method's own value
   binders in its result (`Checker::close_method_values`) and types a spelled
-  `DType` argument (`record_dtype_parameter_arguments`); `instance_clone_base` recovers a clone's source method name for the
-  exact-name lifecycle gates, `split_method_symbol` splits a lowered method
+  `DType` argument (`record_dtype_parameter_arguments`); `split_method_symbol` splits a lowered method
   symbol from its receiver at the last `.` outside brackets (a clone's baked
   `SIMD[DType.float32, 2]` keeps its `.`; the MIR verifier, template facts,
   and the monomorphizer parse method symbols through it), and `lifecycle_constructor` recognizes a
-  construction through a clone or an overload. The VM's `lifecycle_symbol`
-  and `instance_field_types` (`backend/vm.rs`) pick an instance's
-  `__init__`/`__copyinit__`/`__moveinit__`/`__deinit__` clone from a checked
-  static type, substituting `types::struct_argument_substitution` into the
-  fields a whole-value drop or copy reaches; the native side names such a
-  clone by its instance (`lifecycle_clone_instance_symbol` in
-  `native/mono/specializer.rs`), which is the symbol Pliron's lowering
-  composes.
+  construction through an overload.
 - A closed bracket argument is compile-time data on its call: the checker's
   `folded_parameter_arguments` (`checker/call_inference.rs`, over
   `bracket_argument_slots`, the one bracket-to-declaration binding
@@ -1444,46 +1366,20 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   it (`Lanes[i]`) stays for the checker. `comptime_for_next`
   (`backend/vm.rs`) runs the header on the erased path from the slot and a
   per-frame cursor (`VmBackend::comptime_cursors`).
-- The cloner keys a top-level `def` on a `comptime for` its template does
-  not serve (`comptime_for_is_template_served`, `comptime.rs`, over the
-  `LoopNames` of the `def`: its packs, its value packs
-  (`def_value_pack_names`), its
-  local bindings of a display over the binders
-  (`served_display_bindings` over `mojito_ast::visit::display_bindings`,
-  none when `display_in_unserved_argument` finds a type or parameter
-  argument that is a display itself or a collection built from one, which
-  the elaborator holds per open template body in
-  `TemplateLoopNames`), its local bindings of a compile-time application
-  (`requested_bindings`), and
-  which bare names are closed collections, `def_bound_names` telling a
-  module constant from a name the `def` binds; `parameter_shaped`,
-  `scalar_shaped`, `display_read_shaped`, `reflection_count`,
-  `reflected_names`, and `requests_application` (a bound, binding, or
-  sequence that applies a callable whatever its result) are the admitted
-  spellings, a converting annotation or a type alias in the body admitted
-  whatever its value, a call or method call
-  admitted by `ScalarReads::call` from the verdict source validation
-  recorded alone (no declaration fallback), `Checker::scalar_calls` (`checker/comptime_validation.rs`) into
-  `TemplateCatalog::scalar_calls`; a closed-aggregate display element by
-  `literal_tuple` or by `aggregate_shaped` over `ScalarReads::aggregate`,
-  from `Checker::aggregate_elements` into
-  `TemplateCatalog::aggregate_elements`, the checker's own test being
-  `Checker::parameter_aggregate_element`; a named collection by
-  `CtValue::is_parameter_value_collection`), on a reflected list materialized whole
-  (`ReflectedLists::materialized_in`), or a nested `def` holding a
-  `rebind`. The crossing pass spells a named collection as its display in
+- Every `comptime for` in a generic body is kept in its template
+  (`Elab::keep_template_comptime_for`, `comptime/elab.rs`, which forces a
+  pending module constant the loop iterates); no top-level `def` is keyed on
+  one. The crossing pass spells a named collection as its display in
   a kept header (`cross_stmt`, `comptime/crossing.rs`), and leaves a
   `comptime(e)` it cannot evaluate in a generic body for the check
   (`in_template_body`);
-  `Elab::keep_template_comptime_for` keeps the served loop and
-  `Elab::unroll_comptime_for` unrolls the rest, refusing a compile-time
+  `Elab::unroll_comptime_for` unrolls a loop outside a template body, refusing a compile-time
   `break`/`continue` it would splice into the wrong loop (`comptime/elab.rs`).
 - Every type pack is template-served: `is_specializable_declaration`
   (`comptime.rs`) never names a `def` that `pack_keyed_declaration` holds,
   and `Elab::pack_defs` feeds `PackRewriter::served_callees`
   (`comptime/rewrite.rs`), which spells a clone's spread into such a callee
-  element by element; `comptime_for_is_template_served` admits a pack's
-  length as a bound; a whole-pack spread is `MirInstr::Call::spread` or
+  element by element; a whole-pack spread is `MirInstr::Call::spread` or
   `MirInstr::MethodCall::spread`
   (`lower_pack_spread_argument`, `mir/calls.rs`; `verify_pack_spread`,
   `verify/calls.rs`; `splice_pack_spread`, `backend/vm/calls.rs`, for the
@@ -1644,8 +1540,7 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `infer_value_pack_element` records `values[i]` at a compile-time index as
   a `ListGet`, while `infer_len`, the intrinsic `__len__` receiver, and
   `pack_length_binder` record its length, and `comptime_iteration_element`
-  types a `comptime for` over it; `LoopNames::value_packs` admits a
-  `comptime for` over `Self.values` to a method's template. Any other read
+  types a `comptime for` over it. Any other read
   (`for v in values`, a runtime index, a whole binding) is the bundled
   `ParameterList[*values]()` (`stdlib/std/builtin/variadics.mojo`, with
   `_ParameterListIter`): `Checker::infer_value_pack_read` (top of
@@ -1751,10 +1646,8 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   the parameter-domain cycle), `resolve_applications` over a branch
   condition, `demand_layout` and `LayoutOracle` (`Bindings::layout`, read by
   `eval_ct` for `size_of[T]()`), `select_comptime_branches`, and
-  `FunctionFrame` around a nested materialization. The cloner's
-  `comptime if` class is gone: `def_body_keys_specialization` keys a
-  top-level `def` on an unserved `comptime for` or a nested `def`'s
-  `rebind` only, and
+  `FunctionFrame` around a nested materialization. No `def` is keyed on
+  its compile-time control flow, and
   `template_serves_binders` admits a scalar value parameter an application
   binds (`Int`, `UInt`, `Bool`, `Float64`, `StringLiteral`, `DType`), and
   native `mono::substitute`'s `scalar_parameter_ty` types its read at the

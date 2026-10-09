@@ -5,13 +5,11 @@
 use super::*;
 
 /// The checked types a named call carries: the compile-time value arguments
-/// its callee reifies, its argument types, and the type of the value it
-/// produces — which names the instance a construction builds.
+/// its callee reifies and its argument types.
 #[derive(Default)]
 pub(super) struct CallTypes<'a> {
     pub(super) param_vals: &'a [Option<Value>],
     pub(super) arg_types: &'a [Option<mojito_types::types::Ty>],
-    pub(super) result_ty: Option<&'a mojito_types::types::Ty>,
     /// The bindings a static method call's spelled receiver gives its frame
     /// ([`VmBackend::static_receiver_binding`]).
     pub(super) static_receiver: &'a [(String, Value)],
@@ -63,29 +61,15 @@ impl VmBackend {
         }
     }
 
-    /// Recursively destroy a value (ASAP drop): run a struct's `__deinit__` if
-    /// it defines one (its body consumes the receiver's fields at their last
-    /// use), else drop the fields in declaration order — Mojo's order.
-    /// Internal tuple/compile-time storage recurses through its elements.
-    /// Scalars are a no-op.
-    pub(super) fn drop_value(&mut self, prog: &Prog, v: Value) -> Result<(), RuntimeError> {
-        self.drop_typed_value(prog, v, None)
-    }
-
-    /// Destroy the residual fields of a consumed aggregate, each with its own
-    /// type from the receiver's instance (a named destructor's receiver, or a
-    /// consumed place).
+    /// Destroy the residual fields of a consumed aggregate (a named
+    /// destructor's receiver, or a consumed place).
     pub(super) fn drop_struct_fields(
         &mut self,
         prog: &Prog,
-        name: &str,
         fields: Vec<(String, Value)>,
-        static_ty: Option<&Ty>,
     ) -> Result<(), RuntimeError> {
-        let field_types = super::instance_field_types(prog, name, static_ty);
-        for (field, value) in fields {
-            let ty = field_types.as_ref().and_then(|types| types.get(&field));
-            self.drop_typed_value(prog, value, ty)?;
+        for (_, value) in fields {
+            self.drop_value(prog, value)?;
         }
         Ok(())
     }
@@ -96,28 +80,19 @@ impl VmBackend {
         &mut self,
         prog: &Prog,
         items: Vec<Value>,
-        static_ty: Option<&Ty>,
     ) -> Result<(), RuntimeError> {
-        let elements = match static_ty.map(super::peel_references) {
-            Some(Ty::Tuple(elements)) => elements.as_slice(),
-            _ => &[],
-        };
-        for (index, item) in items.into_iter().enumerate().rev() {
-            self.drop_typed_value(prog, item, elements.get(index))?;
+        for item in items.into_iter().rev() {
+            self.drop_value(prog, item)?;
         }
         Ok(())
     }
 
-    /// Destroy a value whose checked static type is known, so a closed
-    /// generic-struct instance runs its own `__deinit__` clone rather than the
-    /// template's erased body. The fields, elements, and payloads reached
-    /// below carry their own substituted types.
-    pub(super) fn drop_typed_value(
-        &mut self,
-        prog: &Prog,
-        v: Value,
-        static_ty: Option<&Ty>,
-    ) -> Result<(), RuntimeError> {
+    /// Recursively destroy a value (ASAP drop): run a struct's `__deinit__` if
+    /// it defines one (its body consumes the receiver's fields at their last
+    /// use), else drop the fields in declaration order — Mojo's order.
+    /// Internal tuple/compile-time storage recurses through its elements.
+    /// Scalars are a no-op.
+    pub(super) fn drop_value(&mut self, prog: &Prog, v: Value) -> Result<(), RuntimeError> {
         match v {
             Value::Struct { name, fields, .. } => {
                 // A partial aggregate cannot run its whole-value destructor:
@@ -127,21 +102,18 @@ impl VmBackend {
                 // an intact linear value never reaches an automatic DropVar, so
                 // this rule does not need to reconstruct generic conditional
                 // deletability from the erased runtime struct name.
-                let field_types = super::instance_field_types(prog, &name, static_ty);
-                let field_ty =
-                    |field: &str| field_types.as_ref().and_then(|types| types.get(field));
                 if fields
                     .iter()
                     .any(|(_, value)| matches!(value, Value::Moved))
                 {
-                    for (field, value) in fields {
+                    for (_, value) in fields {
                         if !matches!(value, Value::Moved) {
-                            self.drop_typed_value(prog, value, field_ty(&field))?;
+                            self.drop_value(prog, value)?;
                         }
                     }
                     return Ok(());
                 }
-                let del = super::lifecycle_symbol(prog, &name, "__deinit__", static_ty, 0);
+                let del = format!("{name}.__deinit__");
                 if let Some(idx) = prog.index_of(&del) {
                     self.record_lifecycle(format!("drop {name}"));
                     // `self` is the whole struct, owned by the destructor: its
@@ -155,8 +127,8 @@ impl VmBackend {
                     self.call_function(prog, idx, vec![self_val], &[])?;
                     return Ok(());
                 }
-                for (field, value) in fields {
-                    self.drop_typed_value(prog, value, field_ty(&field))?;
+                for (_, value) in fields {
+                    self.drop_value(prog, value)?;
                 }
             }
             Value::ComptimeList(items) => {
@@ -168,21 +140,11 @@ impl VmBackend {
             // the nominal wrapper reaches it through the struct branch above.
             // An owning collector goes through `drop_owned_pack` instead.
             Value::Tuple(items) => {
-                let elements = match static_ty.map(super::peel_references) {
-                    Some(Ty::Tuple(elements)) => elements.as_slice(),
-                    _ => &[],
-                };
-                for (index, item) in items.into_iter().enumerate() {
-                    self.drop_typed_value(prog, item, elements.get(index))?;
+                for item in items {
+                    self.drop_value(prog, item)?;
                 }
             }
-            // A variant carries its alternatives, so the live payload's own
-            // type is on the value itself.
-            Value::Variant {
-                alternatives,
-                index,
-                value,
-            } => self.drop_typed_value(prog, *value, alternatives.get(index))?,
+            Value::Variant { value, .. } => self.drop_value(prog, *value)?,
             Value::Closure { captures, .. } => {
                 for capture in captures.into_iter().rev() {
                     if capture.owned && !matches!(capture.value, Value::Moved) {
@@ -299,7 +261,6 @@ impl VmBackend {
         let CallTypes {
             param_vals,
             arg_types,
-            result_ty,
             static_receiver,
         } = *types;
         // Built-ins take positional arguments only, and user functions handle
@@ -378,17 +339,16 @@ impl VmBackend {
             // captured stream is unbuffered).
             "print" => {
                 let mut cells = Vec::with_capacity(args.len());
-                for (index, value) in args.into_iter().enumerate() {
-                    let static_ty = arg_types.get(index).and_then(Option::as_ref);
-                    cells.push(self.format_value(prog, value, false, static_ty)?);
+                for value in args {
+                    cells.push(self.format_value(prog, value, false)?);
                 }
                 let mut sep = " ".to_string();
                 let mut end = "\n".to_string();
                 let mut fd = 1;
                 for (key, value) in kwargs {
                     match key.as_str() {
-                        "sep" => sep = self.format_value(prog, value, false, None)?,
-                        "end" => end = self.format_value(prog, value, false, None)?,
+                        "sep" => sep = self.format_value(prog, value, false)?,
+                        "end" => end = self.format_value(prog, value, false)?,
                         "flush" => {}
                         "file" => fd = descriptor_value(&value)?,
                         other => {
@@ -443,17 +403,11 @@ impl VmBackend {
                 _ => "function instantiation failed".to_string(),
             })),
             "String" => Ok(Value::Str(match args.into_iter().next() {
-                Some(value) => {
-                    let static_ty = arg_types.first().and_then(Option::as_ref);
-                    self.format_value(prog, value, false, static_ty)?
-                }
+                Some(value) => self.format_value(prog, value, false)?,
                 None => String::new(),
             })),
             "repr" => match args.into_iter().next() {
-                Some(value) => {
-                    let static_ty = arg_types.first().and_then(Option::as_ref);
-                    Ok(Value::Str(self.format_value(prog, value, true, static_ty)?))
-                }
+                Some(value) => Ok(Value::Str(self.format_value(prog, value, true)?)),
                 None => Err(RuntimeError::ArityMismatch {
                     name: "repr".to_string(),
                     expected: 1,
@@ -479,8 +433,7 @@ impl VmBackend {
                         fields,
                         value_params,
                     };
-                    let static_ty = arg_types.first().and_then(Option::as_ref);
-                    self.call_typed_dunder(prog, &name, "__len__", vec![recv], static_ty)
+                    self.call_dunder(prog, &name, "__len__", vec![recv])
                 }
                 _ => Err(RuntimeError::Unsupported(
                     "vm: len supports String, internal Tuple storage, SIMD, and nominal structs with __len__"
@@ -592,8 +545,7 @@ impl VmBackend {
                         _ => "__int__",
                     };
                     let sname = sname.clone();
-                    let static_ty = arg_types.first().and_then(Option::as_ref);
-                    return self.call_typed_dunder(prog, &sname, dunder, vec![value], static_ty);
+                    return self.call_dunder(prog, &sname, dunder, vec![value]);
                 }
                 builtin_convert(name, value)
             }
@@ -620,21 +572,14 @@ impl VmBackend {
             // takes precedence over the fieldwise constructor: build an uninitialized
             // `self` skeleton, run `__init__`, and return the initialized value.
             _ if prog.structs.contains_key(name) => {
-                // A closed instance constructs through its own `__init__`
-                // clone when the elaborator minted one, exactly as its
-                // destruction and copying reach theirs.
-                let clone =
-                    super::instance_dunder_symbol(prog, name, "__init__", result_ty, args.len());
-                let constructor = clone.clone().unwrap_or_else(|| {
-                    prog.constructor_name(name, args.len())
-                });
+                let constructor = prog.constructor_name(name, args.len());
                 if (!args.is_empty() || kwargs.len() != 1 || kwargs[0].0 != "copy")
                     && prog.index_of(&constructor).is_some()
                 {
                     return self.construct_via_init(
                         prog,
                         name,
-                        clone.as_deref(),
+                        None,
                         args,
                         kwargs,
                         ConstructorParameters {
@@ -644,12 +589,12 @@ impl VmBackend {
                     );
                 }
                 if !kwargs.is_empty() {
-                    self.construct_via_copy(prog, name, &args, &kwargs, param_vals, result_ty)
+                    self.construct_via_copy(prog, name, &args, &kwargs, param_vals)
                 } else if prog.index_of(&constructor).is_some() {
                     self.construct_via_init(
                         prog,
                         name,
-                        clone.as_deref(),
+                        None,
                         args,
                         Vec::new(),
                         ConstructorParameters {
@@ -727,7 +672,6 @@ impl VmBackend {
         prog: &Prog,
         value: Value,
         repr: bool,
-        static_ty: Option<&mojito_types::types::Ty>,
     ) -> Result<String, RuntimeError> {
         let Value::Struct {
             name,
@@ -760,8 +704,7 @@ impl VmBackend {
         };
         let method = if repr { "write_repr_to" } else { "write_to" };
         let source = format!("{name}.{method}");
-        let symbol = super::instance_dunder_symbol(prog, &name, method, static_ty, 1)
-            .or_else(|| super::specialized_witness_symbol(prog, &name, method))
+        let symbol = super::specialized_witness_symbol(prog, &name, method)
             .unwrap_or_else(|| prog.overload_name(&source, 1));
         // Monomorphization binds the protocol's writer to the builtin
         // string writer.
@@ -789,10 +732,7 @@ impl VmBackend {
         }
         let mut cells = Vec::with_capacity(fields.len());
         for (field, value) in fields {
-            cells.push(format!(
-                "{field}={}",
-                self.format_value(prog, value, repr, None)?
-            ));
+            cells.push(format!("{field}={}", self.format_value(prog, value, repr)?));
         }
         Ok(format!("{name}({})", cells.join(", ")))
     }

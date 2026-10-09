@@ -345,14 +345,13 @@ impl VmBackend {
         allocation: u64,
         base: i64,
         offset: i64,
-        element: Option<&mojito_types::types::Ty>,
     ) -> Result<(), RuntimeError> {
         let (region, slot) = self.heap_index(allocation, base, offset)?;
         if std::mem::replace(&mut self.heap[region].never_written[slot], false) {
             return Ok(());
         }
         let value = self.heap_take(allocation, base, offset)?;
-        self.drop_typed_value(prog, value, element)
+        self.drop_value(prog, value)
     }
 
     /// Move the payload out of a consumed inline uninit-storage value
@@ -397,22 +396,6 @@ impl VmBackend {
         args: Vec<Value>,
     ) -> Result<Value, RuntimeError> {
         self.call_resolved_dunder(prog, sname, method, args, None)
-    }
-
-    /// Dispatch a dunder by runtime struct name, preferring the
-    /// per-instantiation clone (`__len__$y3:Int`) that the argument's
-    /// checked static type names when the program declares it.
-    fn call_typed_dunder(
-        &mut self,
-        prog: &Prog,
-        sname: &str,
-        method: &str,
-        args: Vec<Value>,
-        static_ty: Option<&mojito_types::types::Ty>,
-    ) -> Result<Value, RuntimeError> {
-        let resolved =
-            instance_dunder_symbol(prog, sname, method, static_ty, args.len().saturating_sub(1));
-        self.call_resolved_dunder(prog, sname, method, args, resolved.as_deref())
     }
 
     fn call_resolved_dunder(
@@ -803,88 +786,21 @@ struct Prog {
     sigs: HashMap<String, FnSig>,
 }
 
-/// The declared per-instantiation clone symbol of `method` on `sname` for
-/// the closed instance a checked static type names (`Box.__len__$y3:Int`
-/// for a `Box[Int]` register), or `None` when the type is not a closed
-/// instance or the program declares no such clone — the runtime-name path
-/// then serves the call, as it does for every erased body.
-fn instance_dunder_symbol(
-    prog: &Prog,
-    sname: &str,
-    method: &str,
-    static_ty: Option<&mojito_types::types::Ty>,
-    argc: usize,
-) -> Option<String> {
-    let mojito_types::types::Ty::Struct(_, arguments) = peel_references(static_ty?) else {
-        return None;
-    };
-    let decls = &prog.structs.get(sname)?.param_decls;
-    let clone = mojito_symbol::symbol::instance_method_clone_name(method, decls, arguments)?;
-    let symbol = prog.overload_name(&format!("{sname}.{clone}"), argc);
-    prog.index_of(&symbol).is_some().then_some(symbol)
-}
-
-/// The display witness of a specialized instance struct: the instance's
-/// per-instantiation clone re-owned to it (`List$mono$TInt.write_to$y3:Int`),
-/// which is the only `method` body a specialized program keeps for the
-/// instance. `None` when the struct declares the plain method, or when the
-/// clone is not the one body of that name.
+/// The display witness of a specialized instance struct: the one `method`
+/// body a specialized program keeps for the instance under a suffixed name
+/// (`Wrap$mono$TInt.write_to$mono$…`, the writer-generic method's own
+/// instance). `None` when the struct declares the plain method, or when no
+/// one body of that name exists.
 fn specialized_witness_symbol(prog: &Prog, sname: &str, method: &str) -> Option<String> {
     if prog.index_of(&format!("{sname}.{method}")).is_some() {
         return None;
     }
     let mut witnesses = prog.mir.functions.iter().filter_map(|(name, _)| {
         let member = name.strip_prefix(sname)?.strip_prefix('.')?;
-        (member != method && mojito_symbol::symbol::instance_clone_base(member) == method)
-            .then_some(name)
+        (member != method && member.split('$').next() == Some(method)).then_some(name)
     });
     let witness = witnesses.next()?;
     witnesses.next().is_none().then(|| witness.clone())
-}
-
-/// The lifecycle body a value runs: the per-instantiation clone its checked
-/// static type names (`Box.__deinit__$y3:Int`) when the program declares one,
-/// and the template's erased body otherwise.
-///
-/// A value destroyed, copied, or moved inside an erased body has a symbolic
-/// static type, so it keeps the erased path, as every by-name dispatch does.
-fn lifecycle_symbol(
-    prog: &Prog,
-    sname: &str,
-    lifecycle: &str,
-    static_ty: Option<&mojito_types::types::Ty>,
-    argc: usize,
-) -> String {
-    instance_dunder_symbol(prog, sname, lifecycle, static_ty, argc)
-        .unwrap_or_else(|| format!("{sname}.{lifecycle}"))
-}
-
-/// The static types of a struct value's fields, with the instance's arguments
-/// substituted for the declaration's parameters — the types the fields' own
-/// lifecycle dispatch needs while a whole value is destroyed or copied.
-fn instance_field_types(
-    prog: &Prog,
-    sname: &str,
-    static_ty: Option<&mojito_types::types::Ty>,
-) -> Option<HashMap<String, mojito_types::types::Ty>> {
-    let mojito_types::types::Ty::Struct(_, arguments) = peel_references(static_ty?) else {
-        return None;
-    };
-    let declaration = prog.structs.get(sname)?;
-    let substitution =
-        mojito_types::types::struct_argument_substitution(&declaration.param_decls, arguments);
-    Some(
-        declaration
-            .fields
-            .iter()
-            .map(|(field, ty)| {
-                (
-                    field.clone(),
-                    mojito_types::types::substitute(ty, &substitution),
-                )
-            })
-            .collect(),
-    )
 }
 
 /// A static type with its reference layers removed: a place or parameter
@@ -1868,11 +1784,6 @@ struct MethodInvocation<'a> {
     /// The method's own compile-time arguments the checker solved
     /// (`MirInstr::MethodCall::instantiated_args`).
     instantiated_arguments: &'a [TyArg],
-    /// The checked static type of each argument register, when the caller
-    /// has them: a `Writer.write` argument whose static type is a closed
-    /// generic-struct instance formats through that instance's
-    /// per-instantiation `write_to` clone.
-    argument_types: Vec<Option<mojito_types::types::Ty>>,
 }
 
 /// Recover the retained caller place selected for one bound parameter. Keyword
@@ -2961,7 +2872,7 @@ mod pointer_storage_tests {
             slot,
             Value::Tuple(vec![Value::Int(1), Value::Int(2)]),
         );
-        vm.heap_destroy(&empty_program(), allocation, offset, 0, None)
+        vm.heap_destroy(&empty_program(), allocation, offset, 0)
             .expect("initialized destroy");
         assert!(vm.heap_read(allocation, offset, 0).is_err());
     }
@@ -2975,10 +2886,10 @@ mod pointer_storage_tests {
         // Never written: a read traps, a destroy is a no-op, a take yields the
         // tombstone once and leaves a taken slot that traps thereafter.
         assert!(vm.heap_read(allocation, offset, 0).is_err());
-        vm.heap_destroy(&empty_program(), allocation, offset, 0, None)
+        vm.heap_destroy(&empty_program(), allocation, offset, 0)
             .expect("destroying a never-written slot is a no-op");
         assert!(
-            vm.heap_destroy(&empty_program(), allocation, offset, 0, None)
+            vm.heap_destroy(&empty_program(), allocation, offset, 0)
                 .is_err()
         );
         assert!(matches!(
@@ -2990,7 +2901,7 @@ mod pointer_storage_tests {
         // Storing the tombstone re-marks the slot; storing a value clears it.
         let (region, slot) = vm.heap_index(allocation, offset, 1).expect("slot");
         vm.heap_store(region, slot, Value::Moved);
-        vm.heap_destroy(&empty_program(), allocation, offset, 1, None)
+        vm.heap_destroy(&empty_program(), allocation, offset, 1)
             .expect("a forwarded never-written slot destroys as a no-op");
         vm.heap_store(region, slot, Value::Int(3));
         assert_eq!(

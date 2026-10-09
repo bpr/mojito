@@ -656,14 +656,13 @@ impl VmBackend {
         args: &[Value],
         kwargs: &[(String, Value)],
         param_vals: &[Option<Value>],
-        result_ty: Option<&Ty>,
     ) -> Result<Value, RuntimeError> {
         if !args.is_empty() || kwargs.len() != 1 || kwargs[0].0 != "copy" {
             return Err(RuntimeError::Unsupported(format!(
                 "vm: keyword arguments to '{name}' are not supported"
             )));
         }
-        let copy = super::lifecycle_symbol(prog, name, "__copyinit__", result_ty, 1);
+        let copy = format!("{name}.__copyinit__");
         let fidx = prog.index_of(&copy).ok_or_else(|| {
             RuntimeError::Unsupported(format!("vm: struct '{name}' has no copy constructor"))
         })?;
@@ -697,36 +696,22 @@ impl VmBackend {
     /// Internal tuple/compile-time storage recurses element-wise. Only reached
     /// when `has_copyinit` is set.
     pub(super) fn clone_value(&mut self, prog: &Prog, v: &Value) -> Result<Value, RuntimeError> {
-        self.clone_typed_value(prog, v, None)
-    }
-
-    /// Copy a value whose checked static type is known, so a closed
-    /// generic-struct instance runs its own `__copyinit__` clone rather than
-    /// the template's erased body.
-    pub(super) fn clone_typed_value(
-        &mut self,
-        prog: &Prog,
-        v: &Value,
-        static_ty: Option<&Ty>,
-    ) -> Result<Value, RuntimeError> {
         match v {
             Value::Struct {
                 name,
                 fields,
                 value_params,
             } => {
-                let copy = super::lifecycle_symbol(prog, name, "__copyinit__", static_ty, 1);
+                let copy = format!("{name}.__copyinit__");
                 if let Some(fidx) = prog.index_of(&copy) {
                     let skeleton = self.struct_skeleton(prog, name, value_params.clone());
                     let (_, frame_vars) =
                         self.call_frame(prog, fidx, vec![skeleton, v.clone()], &[])?;
                     Ok(frame_vars.into_iter().next().unwrap_or(Value::None))
                 } else {
-                    let field_types = super::instance_field_types(prog, name, static_ty);
                     let mut new_fields = Vec::with_capacity(fields.len());
                     for (f, fv) in fields {
-                        let ty = field_types.as_ref().and_then(|types| types.get(f));
-                        new_fields.push((f.clone(), self.clone_typed_value(prog, fv, ty)?));
+                        new_fields.push((f.clone(), self.clone_value(prog, fv)?));
                     }
                     Ok(Value::Struct {
                         name: name.clone(),
@@ -743,13 +728,9 @@ impl VmBackend {
                 Ok(Value::ComptimeList(out))
             }
             Value::Tuple(items) => {
-                let elements = match static_ty.map(super::peel_references) {
-                    Some(Ty::Tuple(elements)) => elements.as_slice(),
-                    _ => &[],
-                };
                 let mut out = Vec::with_capacity(items.len());
-                for (index, it) in items.iter().enumerate() {
-                    out.push(self.clone_typed_value(prog, it, elements.get(index))?);
+                for it in items {
+                    out.push(self.clone_value(prog, it)?);
                 }
                 Ok(Value::Tuple(out))
             }
@@ -760,7 +741,7 @@ impl VmBackend {
             } => Ok(Value::Variant {
                 alternatives: alternatives.clone(),
                 index: *index,
-                value: Box::new(self.clone_typed_value(prog, value, alternatives.get(*index))?),
+                value: Box::new(self.clone_value(prog, value)?),
             }),
             Value::Closure {
                 function,
@@ -861,18 +842,11 @@ impl VmBackend {
         &mut self,
         prog: &Prog,
         v: Value,
-        static_ty: Option<&Ty>,
     ) -> Result<Value, RuntimeError> {
         if let Value::Struct {
             name, value_params, ..
         } = &v
-            && let Some(fidx) = prog.index_of(&super::lifecycle_symbol(
-                prog,
-                name,
-                "__moveinit__",
-                static_ty,
-                1,
-            ))
+            && let Some(fidx) = prog.index_of(&format!("{name}.__moveinit__"))
         {
             let skeleton = self.struct_skeleton(prog, name, value_params.clone());
             let (_, frame_vars) = self.call_frame(prog, fidx, vec![skeleton, v], &[])?;

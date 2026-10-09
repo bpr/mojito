@@ -562,12 +562,6 @@ impl Checker {
                 .iter()
                 .map(|param| self.reference_parameter_struct_binder(param.origin.as_deref()))
                 .collect(),
-            receiver: None,
-            clone_origins: method.type_params.iter().any(|parameter| {
-                parameter
-                    .name
-                    .starts_with(mojito_symbol::symbol::CLONE_ORIGIN_BINDER_PREFIX)
-            }),
             synthesized_default: method.provenance
                 == mojito_ast::ast::MethodProvenance::SynthesizedDefault,
             nested_origins: NestedOrigins::of(&method.decorators),
@@ -1218,7 +1212,7 @@ impl Checker {
             Some(_) => false,
         };
         if is_implicit
-            && (mojito_symbol::symbol::instance_clone_base(&m.name) != "__init__"
+            && (m.name != "__init__"
                 || !m.has_self
                 || m.self_convention != Some(ArgConvention::Out)
                 || m.params.len() != 1
@@ -1257,7 +1251,7 @@ impl Checker {
         // whose bodies assign `self`'s fields. `ref self`, and `out self` elsewhere,
         // stay flagged.
         let is_lifecycle_init = matches!(
-            mojito_symbol::symbol::instance_clone_base(&m.name),
+            m.name.as_str(),
             "__init__" | "__copyinit__" | "__moveinit__"
         );
         let out_init = matches!(m.self_convention, Some(mojito_ast::ast::ArgConvention::Out))
@@ -1500,7 +1494,7 @@ impl Checker {
         let saved = std::mem::replace(&mut self.self_mutable, self_writable);
         let initializing = matches!(m.self_convention, Some(mojito_ast::ast::ArgConvention::Out))
             && matches!(
-                mojito_symbol::symbol::instance_clone_base(lifecycle_method_name(m)),
+                lifecycle_method_name(m),
                 "__init__" | "__copyinit__" | "__moveinit__"
             );
         let saved_initializing = std::mem::replace(&mut self.self_initializing, initializing);
@@ -1767,108 +1761,6 @@ impl Checker {
             );
         }
         nested
-    }
-
-    /// The per-instantiation constructor clone a construction of
-    /// `name[arguments]` runs: the member of the instance's `__init__` clone
-    /// family (`Box.__init__$y3:Int$ov$Int`) whose signature is the selected
-    /// template signature with the instance's arguments substituted. The
-    /// elaborator mints such a family whole or not at all, so the match is
-    /// unique when it exists.
-    ///
-    /// `None` keeps the template target: an instance that mints no family, a
-    /// constructor carrying its own compile-time parameters (which
-    /// `record_constructor_instantiation` retargets to a per-call clone
-    /// instead), or a signature no member matches — a `Self`-typed parameter
-    /// keeps the template spelling on the clone side, so such a constructor
-    /// stays on the erased path.
-    pub(super) fn constructor_clone_target(
-        &self,
-        name: &str,
-        arguments: &[TyArg],
-        sig: &MethodSig,
-        subst: &TySubst,
-    ) -> Option<String> {
-        // A per-call clone of a generic constructor baked at the same type
-        // (`__init__$y3:Int` for `T = Int`) shares the instance family's
-        // name and declares no receiver instance: it is not that family.
-        let family = self.instance_method_clone(name, "__init__", arguments)?;
-        self.structs
-            .get(name)?
-            .methods
-            .get(&family)?
-            .iter()
-            .all(|member| member.receiver.is_some())
-            .then(|| self.method_clone_target(name, "__init__", arguments, sig, subst))
-            .flatten()
-    }
-
-    /// The lowered target of `method`'s per-instantiation clone on
-    /// `name[arguments]` that stands for the template signature `sig`: the
-    /// member of the clone family whose signature is `sig` with the
-    /// instance's arguments substituted. `None` when the instance has no
-    /// such clone, the method carries its own compile-time parameters, or no
-    /// one member matches.
-    pub(super) fn method_clone_target(
-        &self,
-        name: &str,
-        method: &str,
-        arguments: &[TyArg],
-        sig: &MethodSig,
-        subst: &TySubst,
-    ) -> Option<String> {
-        if !sig.decls.is_empty() {
-            return None;
-        }
-        let clone = self.instance_method_clone(name, method, arguments)?;
-        self.clone_family_member(name, &clone, arguments, sig, subst)
-    }
-
-    /// The lowered target of the member of `name[arguments]`'s clone family
-    /// `clone` that stands for the template signature `sig`, binders of its
-    /// own included: the clone keeps them, so the member's signature is
-    /// `sig` with only the instance's arguments substituted. `None` when no
-    /// one member matches.
-    pub(super) fn clone_family_member(
-        &self,
-        name: &str,
-        clone: &str,
-        arguments: &[TyArg],
-        sig: &MethodSig,
-        subst: &TySubst,
-    ) -> Option<String> {
-        let sigs = self.structs.get(name)?.methods.get(clone)?;
-        // A lone clone is not an overload set: its definition keeps the plain
-        // clone name, so naming a signature suffix here would target a symbol
-        // no lowered function has.
-        if sigs.len() == 1 {
-            return Some(format!("{name}.{clone}"));
-        }
-        let self_ty = self.self_instance_ty(name);
-        // `sig` is declared over the struct's own binders, and `arguments`
-        // may still name the caller's, which `subst` binds: a call from
-        // another struct's method passes that method's substitution.
-        let own = mojito_types::types::struct_argument_substitution(
-            &self.structs.get(name)?.decls,
-            arguments,
-        );
-        let substituted = |ty: &Ty| substitute(&substitute(ty, &own), subst);
-        let selected = MethodSig {
-            params: sig.params.iter().map(substituted).collect(),
-            variadic: sig.variadic.as_deref().map(substituted).map(Box::new),
-            kw_variadic: sig.kw_variadic.as_deref().map(substituted).map(Box::new),
-            ..sig.clone()
-        };
-        // The lowered name is the comparison: it carries the variadic element
-        // at its declared index and the keyword names, so two members differing
-        // only there stay distinct.
-        let wanted = method_lowered_name(name, clone, &selected, self_ty.as_ref());
-        let mut matches = sigs
-            .iter()
-            .map(|candidate| method_lowered_name(name, clone, candidate, self_ty.as_ref()))
-            .filter(|candidate| *candidate == wanted);
-        let target = matches.next()?;
-        matches.next().is_none().then_some(target)
     }
 
     /// The pack a bare construction of a variadic struct (`Pair((1, True))`,
@@ -2374,11 +2266,6 @@ impl Checker {
                     &partitioned.explicit_origins,
                 )?;
                 self.record_constructor_instantiation(span, name, &tyargs, sig, &subst);
-                if let Some(target) = self.constructor_clone_target(name, &tyargs, sig, &subst) {
-                    self.overload_targets
-                        .borrow_mut()
-                        .insert(span.clone(), target);
-                }
                 self.record_struct_instantiation(name, &tyargs, span.source.as_deref());
                 let values = solved_value_bindings(&decls, &tyargs);
                 for (i, (aty, pty)) in arg_tys.iter().zip(&params).enumerate() {
@@ -2728,20 +2615,15 @@ impl Checker {
                         )?;
                     }
                 }
-                // The instance's own constructor clone when it has one, else
-                // the template overload the source spelled.
-                let target = self
-                    .constructor_clone_target(name, &tyargs, &sig, &subst)
-                    .or_else(|| {
-                        overloaded.then(|| {
-                            method_lowered_name(
-                                name,
-                                "__init__",
-                                &sig,
-                                self.self_instance_ty(name).as_ref(),
-                            )
-                        })
-                    });
+                // The template overload the source spelled.
+                let target = overloaded.then(|| {
+                    method_lowered_name(
+                        name,
+                        "__init__",
+                        &sig,
+                        self.self_instance_ty(name).as_ref(),
+                    )
+                });
                 if let Some(target) = target {
                     self.overload_targets
                         .borrow_mut()

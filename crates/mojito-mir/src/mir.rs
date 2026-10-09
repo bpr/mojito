@@ -739,14 +739,12 @@ pub fn lower_checked_program(checked: &CheckedProgram) -> MirProgram {
                         .generic_parameters_at(&generic_site)
                         .unwrap_or(&[])
                         .to_vec();
-                    if mojito_symbol::symbol::instance_clone_base(method_name) == "__init__" {
+                    if method_name == "__init__" {
                         // A constructor's compile-time interface is the struct's
                         // parameter list: an explicit `Array[Int, 3](fill=7)`
                         // call supplies the struct arguments, and the VM reifies
                         // the constructed value's `value_params` in this
-                        // declaration order. A per-instantiation clone keeps
-                        // that interface — the construction that reaches it
-                        // still spells `Box[Int](3)`.
+                        // declaration order.
                         let struct_decls = checked
                             .generic_parameters_at(&GenericSite::Struct {
                                 module: s.module.clone(),
@@ -927,19 +925,7 @@ pub fn lower_checked_program(checked: &CheckedProgram) -> MirProgram {
                     let mut refp: Vec<bool> = Vec::new();
                     if m.has_self {
                         names.push("self".to_string());
-                        // A per-instantiation clone declares its receiver
-                        // type (`self: Optional[Int]`); an ordinary method's
-                        // receiver is the declaring struct.
-                        ptys.push(
-                            checked
-                                .checked_type_at(&AnnotationSite::MethodSelf {
-                                    module: s.module.clone(),
-                                    declaration: name.clone(),
-                                    method: method_index,
-                                })
-                                .cloned()
-                                .unwrap_or_else(|| Ty::Struct(name.clone(), Vec::new().into())),
-                        );
+                        ptys.push(Ty::Struct(name.clone(), Vec::new().into()));
                         owned.push(is_owned(&m.self_convention));
                         deinit.push(is_deinit(&m.self_convention));
                         refp.push(is_ref(&m.self_convention));

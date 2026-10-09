@@ -123,94 +123,6 @@ impl Specializer<'_> {
             .map(drop)
     }
 
-    /// Enqueue the `write_to` instance a lowered `print` of a nominal struct
-    /// calls — the VM's `format_value` dispatch. The receiver binds the
-    /// owner's parameters; the writer parameter instantiates at the builtin
-    /// string (the VM's `Value::Str` accumulator).
-    /// The per-instantiation clone a by-name dunder rewrite dispatches on a
-    /// receiver whose checked static type is a closed generic-struct
-    /// instance (`Box.__len__$y3:Int` for a `Box[Int]` register), when the
-    /// checker minted it; `None` keeps the template's method, as the VM's
-    /// runtime-name dispatch does for every erased body.
-    pub(super) fn instance_dunder_target(
-        &self,
-        function: &MirFunction,
-        receiver: Reg,
-        method: &str,
-    ) -> Option<String> {
-        let Ty::Struct(name, arguments) = peel_refs(function.reg_types.get(&receiver.0)?) else {
-            return None;
-        };
-        let template = nominal_template(name);
-        let clone = self.instance_method_clone(template, method, arguments)?;
-        let target = format!("{template}.{clone}");
-        self.functions
-            .contains_key(target.as_str())
-            .then_some(target)
-    }
-
-    /// The per-instantiation clone that serves a call of the template method
-    /// `target` on `receiver`, when the checker minted one for the
-    /// receiver's instance: a method holding a compile-time construct keeps
-    /// its clones, and a template body that calls it names the template.
-    pub(super) fn instance_method_target(
-        &self,
-        function: &MirFunction,
-        receiver: Reg,
-        target: &str,
-        argc: usize,
-    ) -> Option<String> {
-        let Ty::Struct(name, arguments) = peel_refs(function.reg_types.get(&receiver.0)?) else {
-            return None;
-        };
-        let template = nominal_template(name);
-        let method = target.strip_prefix(template)?.strip_prefix('.')?;
-        if mojito_symbol::symbol::specialization_template(method).is_some() {
-            return None;
-        }
-        let source = mojito_symbol::symbol::overload_qualifier(method)
-            .map_or(method, |qualifier| {
-                &method[..method.len() - qualifier.len()]
-            });
-        let clone = self.instance_method_clone(template, source, arguments)?;
-        let selected = mojito_symbol::symbol::resolve_method_symbol(
-            self.functions.iter().map(|(name, f)| CallableCandidate {
-                name,
-                n_params: f.n_params,
-            }),
-            template,
-            &clone,
-            None,
-            argc,
-        );
-        self.functions
-            .contains_key(selected.as_str())
-            .then_some(selected)
-    }
-
-    /// The symbol the checker mints a per-instantiation clone of
-    /// `template`'s `method` under for the instance over `arguments`
-    /// (`__len__$y3:Int` for `Box[Int]`), or `None` when it minted no clone
-    /// of the method at all. Spelling the arguments walks every level of a
-    /// nested type, so the second answer comes first.
-    pub(super) fn instance_method_clone(
-        &self,
-        template: &str,
-        method: &str,
-        arguments: &[TyArg],
-    ) -> Option<String> {
-        let clone_prefix = format!("{template}.{method}$");
-        self.function_names
-            .range(clone_prefix.as_str()..)
-            .next()
-            .filter(|name| name.starts_with(&clone_prefix))?;
-        mojito_symbol::symbol::instance_method_clone_name(
-            method,
-            &self.structs.get(template)?.param_decls,
-            &super::specializer::template_spelled_arguments(arguments),
-        )
-    }
-
     /// The receiver's own overload a bound dispatch `dispatch` selects
     /// (`__trait_dispatch.__hash__$ov$Some$u5B$Hasher$u5D$$Hasher` on
     /// `Twin`), when no lowered symbol spells its qualifier: the requirement
@@ -323,25 +235,17 @@ impl Specializer<'_> {
             }
             return Ok(());
         }
-        // A closed instance displays through its per-instantiation
-        // `write_to` clone when the checker minted one; otherwise the
-        // template's erased `write_to` is instantiated for the receiver.
-        let clone_target = self
-            .instance_method_clone(nominal_template(name), method, arguments)
-            .map(|clone| format!("{}.{clone}", nominal_template(name)))
-            .filter(|target| self.functions.contains_key(target.as_str()));
-        let target = clone_target.unwrap_or_else(|| {
-            mojito_symbol::symbol::resolve_method_symbol(
-                self.functions.iter().map(|(name, f)| CallableCandidate {
-                    name,
-                    n_params: f.n_params,
-                }),
-                nominal_template(name),
-                method,
-                None,
-                1,
-            )
-        });
+        // The template's `write_to` is instantiated for the receiver.
+        let target = mojito_symbol::symbol::resolve_method_symbol(
+            self.functions.iter().map(|(name, f)| CallableCandidate {
+                name,
+                n_params: f.n_params,
+            }),
+            nominal_template(name),
+            method,
+            None,
+            1,
+        );
         // Beside a rival of the same arity (`write_to[U](self, mut writer:
         // List[U])`), no symbol answers by arity; the overload whose first
         // parameter is a `Writer` is the protocol's witness.

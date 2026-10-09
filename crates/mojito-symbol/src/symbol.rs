@@ -29,9 +29,7 @@ use mojito_ast::ast::{
 };
 use mojito_common::literal::{FloatLiteral, IntLiteral};
 use mojito_types::ct::{CtLane, CtValue};
-use mojito_types::types::{
-    ParamDecl, Ty, TyArg, canonical_simd_ty, contains_string_literal, default_literal,
-};
+use mojito_types::types::{Ty, TyArg, canonical_simd_ty, default_literal};
 use sha2::{Digest, Sha256};
 
 /// The lowered symbol of `std._intrinsics._pow_int`.
@@ -187,10 +185,6 @@ pub fn resolve_method_symbol<'a>(
 /// the ordinary literal conversion), so two applications differing only in
 /// literal-ness share one clone instead of minting two symbol-equivalent
 /// overloads.
-///
-/// A generic *struct* instance is the exception: its stored values keep the
-/// literal representation, so `instance_method_clone_name` refuses a
-/// `StringLiteral` argument before this materialization.
 pub fn materialized_instantiation_argument(argument: &TyArg) -> TyArg {
     use mojito_types::types::erase_origin_arguments;
     match argument {
@@ -213,101 +207,6 @@ pub fn materialized_instantiation_argument(argument: &TyArg) -> TyArg {
         )),
         other => other.clone(),
     }
-}
-
-/// The list `mangle` bakes into a clone's name for a method or struct
-/// instantiation: its specialization values in declaration order.
-///
-/// `None` when the instantiation cannot name a clone: a pack bound any way but
-/// to a closed tuple, or a value that is still a residual parameter
-/// expression, is unspecializable. Callable-bounded type parameters and
-/// deferred callable-value slots stay symbolic on the clone and contribute
-/// nothing — the one intentional omission.
-///
-/// The checker's retargeting, the specializer's `method_request_values`, and
-/// the backends' instance lookups all agree through this one function.
-pub fn specialized_method_values(decls: &[ParamDecl], arguments: &[TyArg]) -> Option<Vec<CtValue>> {
-    let mut values = Vec::new();
-    for (decl, argument) in decls.iter().zip(arguments) {
-        let argument = &materialized_instantiation_argument(argument);
-        match (decl, argument) {
-            (
-                ParamDecl::Type {
-                    callable_bound: Some(_),
-                    ..
-                },
-                _,
-            ) => continue,
-            // A method-level pack bound to a closed tuple of types
-            // (`fields(1, "a")` infers `Ts = (Int, String)`) bakes like any
-            // other parameter; a pack bound any other way is unspecializable.
-            (ParamDecl::Type { variadic: true, .. }, TyArg::Val(value @ CtValue::Tuple(_))) => {
-                values.push(value.clone());
-            }
-            (ParamDecl::Type { variadic: true, .. }, _) => return None,
-            (ParamDecl::Type { .. }, TyArg::Ty(ty)) => {
-                values.push(CtValue::Type(Box::new(ty.clone())));
-            }
-            (ParamDecl::Value { .. }, TyArg::Val(CtValue::Deferred(_) | CtValue::Marker(_))) => {
-                continue;
-            }
-            (ParamDecl::Value { .. }, TyArg::Val(value))
-                if specialization_value_is_closed(value) =>
-            {
-                values.push(value.clone());
-            }
-            _ => return None,
-        }
-    }
-    Some(values)
-}
-
-/// The per-instantiation clone name of `method` on a generic struct instance
-/// (`get$y3:Int` for `Optional[Int]`), or `None` when the instance cannot name
-/// one.
-///
-/// Callers check that the declaration exists: an instance without clones keeps
-/// the template's erased path.
-pub fn instance_method_clone_name(
-    method: &str,
-    decls: &[ParamDecl],
-    arguments: &[TyArg],
-) -> Option<String> {
-    if decls.is_empty() || arguments.is_empty() {
-        return None;
-    }
-    // A struct instance over the compile-time string keeps the erased path:
-    // its values keep the literal runtime representation while an
-    // un-annotated binding of the type materializes `String`, so a clone body
-    // would neither type against its own `Self.T` nor share values with the
-    // nominal-`String` instance (the elaborator mints none either).
-    if arguments
-        .iter()
-        .any(|argument| matches!(argument, TyArg::Ty(ty) if contains_string_literal(ty)))
-    {
-        return None;
-    }
-    let arguments: Vec<TyArg> = arguments
-        .iter()
-        .map(materialized_instantiation_argument)
-        .collect();
-    let values = specialized_method_values(decls, &arguments)?;
-    if values.is_empty() {
-        return None;
-    }
-    mangle(method, &values).ok()
-}
-
-/// The method a per-instantiation or per-call clone was minted from
-/// (`__init__` for `__init__$y3:Int`), or the name itself when it is not a
-/// clone.
-///
-/// A source method name carries no `$`, so the first one starts the baked
-/// values. This is for *source* method names only: a lowered symbol's tails
-/// have their own recognizers ([`is_overload_of`], [`init_overload_struct`],
-/// [`is_initializer_symbol`]).
-pub fn instance_clone_base(method: &str) -> &str {
-    method.split_once('$').map_or(method, |(base, _)| base)
 }
 
 /// A method symbol split at its receiver separator (`Box` and
@@ -667,9 +566,7 @@ pub fn method_symbol(type_name: &str, method: &str, sig: &SignatureKey) -> Strin
 /// Current Mojo overloads them purely on the receiver (borrowed vs owned
 /// `__iter__`, `ref` vs `deinit` `unsafe_assume_init`) with identical explicit
 /// parameters, so the convention participates in registration and symbol
-/// mangling.
-///
-/// A specialization clone (`__iter__$y3:Int`) keeps its source method's rule.
+/// mangling. A `$`-suffixed spelling keeps its source method's rule.
 pub fn receiver_overloaded_method(method: &str) -> bool {
     matches!(
         method.split('$').next().unwrap_or(method),
@@ -1005,15 +902,7 @@ pub fn lowered_method_name(
 /// Current Mojo spells the copy constructor as an `__init__` overload with an
 /// `out self, copy: Self` shape, which the whole pipeline models as
 /// `__copyinit__`.
-///
-/// A per-instantiation clone is already minted under its lifecycle name
-/// (`__copyinit__$y3:Int`), and registers and counts as its own method: were
-/// it folded back onto the template's name, it would join the template's
-/// overload set and every by-name lifecycle lookup would miss.
 pub fn lifecycle_method_name(m: &Method) -> &str {
-    if instance_clone_base(&m.name) != m.name {
-        return &m.name;
-    }
     if is_mojo_copy_constructor(m) {
         "__copyinit__"
     } else if is_mojo_move_constructor(m) {
@@ -1056,7 +945,7 @@ impl MethodBinderOwners {
             .flat_map(|(name, type_params, methods)| {
                 methods
                     .iter()
-                    .filter(|m| m.self_ty.is_none() && specialization_template(&m.name).is_none())
+                    .filter(|m| specialization_template(&m.name).is_none())
                     .filter_map(move |m| {
                         let source = format!("{name}.{}", lifecycle_method_name(m));
                         let lowered =
@@ -1176,8 +1065,7 @@ pub fn init_overload_struct(symbol: &str) -> Option<&str> {
 
 /// The struct a constructor symbol builds, and the lifecycle name it runs.
 ///
-/// A bare `__init__`, its per-instantiation clone (`Box.__init__$y3:Int`), or
-/// either one's signature-qualified overload all answer here.
+/// A bare `__init__` and its signature-qualified overload both answer here.
 ///
 /// The copy and move constructors answer here too: a construction that names
 /// one builds its receiver the same way.
@@ -2047,7 +1935,7 @@ fn keyword_only_names(params: &[FnParam], keyword_only: Option<usize>) -> Vec<St
 }
 
 fn is_mojo_move_constructor(m: &Method) -> bool {
-    matches!(instance_clone_base(&m.name), "__init__" | "__moveinit__")
+    matches!(m.name.as_str(), "__init__" | "__moveinit__")
         && m.has_self
         && matches!(m.self_convention, Some(ArgConvention::Out))
         && m.positional_only.is_none()
@@ -2064,7 +1952,7 @@ fn is_mojo_move_constructor(m: &Method) -> bool {
 }
 
 fn is_mojo_copy_constructor(m: &Method) -> bool {
-    matches!(instance_clone_base(&m.name), "__init__" | "__copyinit__")
+    matches!(m.name.as_str(), "__init__" | "__copyinit__")
         && m.has_self
         && matches!(m.self_convention, Some(ArgConvention::Out))
         && m.positional_only.is_none()

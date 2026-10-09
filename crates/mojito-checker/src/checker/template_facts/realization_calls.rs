@@ -16,22 +16,12 @@ impl Checker {
     /// Realize one closed method call for an instance: its target, and its
     /// result type by substitution.
     ///
-    /// A clone check retargets a method call on a closed struct instance to
-    /// that instance's clone of the method, when the elaborator has minted
-    /// one (`instance_method_clone`), and records the clone as the call's
-    /// target, its overload target, and the key of the effect summaries it
-    /// reads. Nothing else in a [`closed_method_contract`] can change.
-    ///
     /// The template's selection stands: the declared member is the one whose
-    /// lowered name the template recorded, and the clone member is the one
-    /// with that signature (`method_clone_target`). A clone check ranks the
-    /// clone family again, on arguments that are closed scalars in both
-    /// checks, so every member of an overloaded family must declare closed
-    /// parameter types for the two rankings to agree. The callee has no
-    /// binders of its own. A clone that exists has met its `where` clauses; a
-    /// callee with an availability condition and no clone is left to the
-    /// clone check, as is an instance that has clones but not this one
-    /// (withheld, or a collapsed overload family).
+    /// lowered name the template recorded. A clone check ranks the family
+    /// again, on arguments that are closed scalars in both checks, so every
+    /// member of an overloaded family must declare closed parameter types
+    /// for the two rankings to agree. The callee has no binders of its own,
+    /// and an availability condition is judged at the instance.
     pub(super) fn realize_method_call(
         &self,
         facts: &mut CheckedBodyFacts,
@@ -67,17 +57,13 @@ impl Checker {
         } else {
             method
         };
-        let Some(target) = self.realize_method_contract(
+        let target = self.realize_method_contract(
             &facts.expression_types,
             &mut facts.selected_calls[index].1,
             (&owner, &arguments),
             &method,
             (substitution, substitute),
-        )?
-        else {
-            note_realized_callee(facts, &selected, &selected);
-            return Ok(());
-        };
+        )?;
         if let Some((_, parameters)) = facts
             .call_parameters
             .iter_mut()
@@ -135,15 +121,13 @@ impl Checker {
                 return Err("an element store's subscripted value is not a nominal struct");
             };
             let selected = getter.contract.target.clone();
-            let target = self
-                .realize_method_contract(
-                    &facts.expression_types,
-                    getter,
-                    (owner, arguments),
-                    &method,
-                    (substitution, substitute),
-                )?
-                .unwrap_or_else(|| selected.clone());
+            let target = self.realize_method_contract(
+                &facts.expression_types,
+                getter,
+                (owner, arguments),
+                &method,
+                (substitution, substitute),
+            )?;
             realized.push((selected, target));
         }
         for (selected, target) in realized {
@@ -215,15 +199,13 @@ impl Checker {
             let method = mojito_symbol::symbol::split_method_symbol(&selected)
                 .and_then(|(_, method)| method.split('$').next())
                 .ok_or("an in-place update names no method")?;
-            let target = self
-                .realize_method_contract(
-                    &facts.expression_types,
-                    call,
-                    (owner, arguments),
-                    method,
-                    (substitution, substitute),
-                )?
-                .unwrap_or_else(|| selected.clone());
+            let target = self.realize_method_contract(
+                &facts.expression_types,
+                call,
+                (owner, arguments),
+                method,
+                (substitution, substitute),
+            )?;
             if let Some((_, parameters)) = facts
                 .call_parameters
                 .iter_mut()
@@ -256,128 +238,6 @@ impl Checker {
             note_realized_callee(facts, &selected, &target);
         }
         Ok(())
-    }
-
-    /// Realize each overloaded static a body calls on a generic struct's
-    /// type application (`Pair[Self.T].pick(v, 1)`,
-    /// [`BodyShape::static_call`]): the member the template ranked, on the
-    /// instance's clone of the static where the receiver's arguments,
-    /// resolved in the instance, have one.
-    ///
-    /// The template ranked the family with the struct's parameters
-    /// symbolic, and every instance keeps that member, as the pin does, even
-    /// where its own argument types would rank another best: the instance
-    /// calls its clone of the member (`method_clone_target`). An instance
-    /// whose substitution makes two members identical has no clone of the
-    /// family ([`collapses`]) and keeps the erased member, as does a
-    /// receiver with no clone of a family differing only in closed parameter
-    /// types, or a static on an inferred or contextual receiver, which no
-    /// instance retargets. A member with binders of its own names itself
-    /// (`realize_static_instantiations`).
-    pub(super) fn realize_static_overloads(
-        &self,
-        facts: &mut CheckedBodyFacts,
-        occurrences: &[Occurrence],
-        substitution: &TySubst,
-    ) -> Result<(), &'static str> {
-        for index in 0..facts.overload_targets.len() {
-            let (id, selected) = &facts.overload_targets[index];
-            if facts.selected_calls.iter().any(|(call, _)| call == id)
-                || fact_at(&facts.method_instantiations, *id).is_some()
-            {
-                continue;
-            }
-            let Some(occurrence) = occurrences.iter().find(|occurrence| occurrence.id == *id)
-            else {
-                continue;
-            };
-            let (Some((owner, applied)), Some((_, method))) =
-                (&occurrence.type_receiver, &occurrence.method_call)
-            else {
-                continue;
-            };
-            let Some(info) = self
-                .structs
-                .get(owner)
-                .filter(|info| !info.decls.is_empty())
-            else {
-                continue;
-            };
-            let arguments = self
-                .partition_struct_origin_args(owner, &info.source_params, applied)
-                .and_then(|partitioned| {
-                    self.resolve_use_params(owner, &info.decls, &partitioned.forwarded, &[], &[])
-                })
-                .map_err(|_| "a static's receiver arguments do not resolve in the instance")?
-                .1;
-            // No clone of the static: the template's selected member serves
-            // the instance.
-            let Some(clone) = self.instance_method_clone(owner, method, &arguments) else {
-                continue;
-            };
-            // A lone clone is no overload set, and its call records no member.
-            if info
-                .methods
-                .get(&clone)
-                .is_none_or(|family| family.len() < 2)
-            {
-                return Err("an instance collapsed a static's overload family");
-            }
-            let self_ty = self.self_instance_ty(owner);
-            let declared = info
-                .methods
-                .get(method)
-                .and_then(|family| {
-                    family.iter().find(|member| {
-                        crate::checker::overload_support::method_lowered_name(
-                            owner,
-                            method,
-                            member,
-                            self_ty.as_ref(),
-                        ) == *selected
-                    })
-                })
-                .ok_or("a static's selected overload is not declared")?;
-            let target = self
-                .method_clone_target(owner, method, &arguments, declared, substitution)
-                .ok_or("a static's clone family has no overloaded member for the selection")?;
-            facts.overload_targets[index].1 = target;
-        }
-        // A lone static records no member under the template, and the
-        // instance names its struct's clone of it.
-        for occurrence in occurrences {
-            let (Some((owner, applied)), Some((_, method))) =
-                (&occurrence.type_receiver, &occurrence.method_call)
-            else {
-                continue;
-            };
-            if applied.is_empty()
-                || fact_at(&facts.overload_targets, occurrence.id).is_some()
-                || fact_at(&facts.method_instantiations, occurrence.id).is_some()
-            {
-                continue;
-            }
-            let Some(info) = self
-                .structs
-                .get(owner)
-                .filter(|info| !info.decls.is_empty())
-            else {
-                continue;
-            };
-            let arguments = self
-                .partition_struct_origin_args(owner, &info.source_params, applied)
-                .and_then(|partitioned| {
-                    self.resolve_use_params(owner, &info.decls, &partitioned.forwarded, &[], &[])
-                })
-                .map_err(|_| "a static's receiver arguments do not resolve in the instance")?
-                .1;
-            if let Some(clone) = self.instance_method_clone(owner, method, &arguments) {
-                facts
-                    .overload_targets
-                    .push((occurrence.id, format!("{owner}.{clone}")));
-            }
-        }
-        self.realize_static_instantiations(facts, occurrences)
     }
 
     /// Realize one call through a callable parameter for an instance.
@@ -914,13 +774,11 @@ impl Checker {
     }
 
     /// Rewrite one method call's contract for an instance whose receiver is
-    /// the struct `owner` under `arguments`: the target is the instance's
-    /// clone of the selected declaration, where one exists, and the result,
-    /// raised, parameter, and referent types substitute under the whole
-    /// instance (`substitute`: its packs and folded values too). The
-    /// receiver's own arguments judge an availability condition under
-    /// `substitution`. `None` where the template already selected the
-    /// receiver's clone, whose contract stands.
+    /// the struct `owner` under `arguments`: the target is the selected
+    /// declaration, and the result, raised, parameter, and referent types
+    /// substitute under the whole instance (`substitute`: its packs and
+    /// folded values too). The receiver's own arguments judge an
+    /// availability condition under `substitution`.
     fn realize_method_contract(
         &self,
         types: &[(OccurrenceId, Ty)],
@@ -928,7 +786,7 @@ impl Checker {
         (owner, arguments): (&str, &[mojito_types::types::TyArg]),
         method: &str,
         (substitution, substitute): (&TySubst, &dyn Fn(&Ty) -> Ty),
-    ) -> Result<Option<String>, &'static str> {
+    ) -> Result<String, &'static str> {
         let info = self
             .structs
             .get(owner)
@@ -939,16 +797,6 @@ impl Checker {
             .get(method)
             .ok_or("a called method is missing")?;
         let self_ty = self.self_instance_ty(owner);
-        let clone_name =
-            mojito_symbol::symbol::instance_method_clone_name(method, &info.decls, arguments);
-        // A receiver whose type was already closed in the template (`List[Pair]`)
-        // selected its clone there, on the arguments a clone check ranks too.
-        let selected_clone = clone_name
-            .as_deref()
-            .is_some_and(|clone| names_method(selected, owner, clone));
-        if selected_clone {
-            return Ok(None);
-        }
         let declared = match family.as_slice() {
             [only] => only,
             members => members
@@ -974,9 +822,7 @@ impl Checker {
                     .all(|ty| !mojito_types::types::is_symbolic(ty))
             });
         // An argument whose own type is its parameter's matches it exactly
-        // under every instance, which no other member can outrank; two
-        // members an instance makes identical collapse, and
-        // `method_clone_target` finds no single clone for them.
+        // under every instance, which no other member can outrank.
         let exact = call.contract.arguments.iter().all(|parameter| {
             call.arguments
                 .iter()
@@ -987,32 +833,24 @@ impl Checker {
         if !closed_family && !exact {
             return Err("an overloaded callee declares a parameter of a parameter type");
         }
-        let target = if self
-            .instance_method_clone(owner, method, arguments)
-            .is_some()
-        {
-            self.method_clone_target(owner, method, arguments, declared, substitution)
-                .ok_or("a called method's clone family has no member for the selected overload")?
-        } else {
-            // No clone of this method: its template serves the instance. Its
-            // availability condition is judged at the instance's receiver
-            // arguments, as the clone check judges it.
-            if !declared.availability.is_empty() && !substitution.is_empty() {
-                let Ty::Struct(_, bound) = mojito_types::types::substitute(
-                    &Ty::Struct(owner.to_string(), arguments.to_vec().into()),
-                    substitution,
-                ) else {
-                    return Err("a called method has an availability condition and no clone");
-                };
-                if self
-                    .method_constraint_result(declared, &[], &info.decls, &bound)
-                    .is_err()
-                {
-                    return Err("a called method is unavailable at the instance");
-                }
+        // The method's template serves the instance. Its availability
+        // condition is judged at the instance's receiver arguments, as the
+        // clone check judges it.
+        if !declared.availability.is_empty() && !substitution.is_empty() {
+            let Ty::Struct(_, bound) = mojito_types::types::substitute(
+                &Ty::Struct(owner.to_string(), arguments.to_vec().into()),
+                substitution,
+            ) else {
+                return Err("a called method has an availability condition");
+            };
+            if self
+                .method_constraint_result(declared, &[], &info.decls, &bound)
+                .is_err()
+            {
+                return Err("a called method is unavailable at the instance");
             }
-            selected.clone()
-        };
+        }
+        let target = selected.clone();
         // The callee has no binders of its own, so its parameter types were
         // recorded at the receiver's arguments: in the caller's binder scope,
         // whether the receiver is `self` or a field of another struct.
@@ -1026,51 +864,7 @@ impl Checker {
         if let Some(reference) = &mut call.reference_result {
             reference.referent = substitute(&reference.referent);
         }
-        Ok(Some(target))
-    }
-
-    /// Reject an instance whose body calls a static with binders of its own
-    /// on a generic struct's type application (`Pair[Self.T].show(n)`,
-    /// [`BodyShape::static_call`]) where the instance declares its own clone
-    /// of that static, which the clone check calls and no recipe repeats.
-    /// Any other such call names the erased static in both.
-    fn realize_static_instantiations(
-        &self,
-        facts: &CheckedBodyFacts,
-        occurrences: &[Occurrence],
-    ) -> Result<(), &'static str> {
-        for (id, _) in &facts.method_instantiations {
-            let Some(occurrence) = occurrences.iter().find(|occurrence| occurrence.id == *id)
-            else {
-                continue;
-            };
-            let (Some((owner, applied)), Some((_, method))) =
-                (&occurrence.type_receiver, &occurrence.method_call)
-            else {
-                continue;
-            };
-            let Some(info) = self
-                .structs
-                .get(owner)
-                .filter(|info| !info.decls.is_empty())
-            else {
-                continue;
-            };
-            let arguments = self
-                .partition_struct_origin_args(owner, &info.source_params, applied)
-                .and_then(|partitioned| {
-                    self.resolve_use_params(owner, &info.decls, &partitioned.forwarded, &[], &[])
-                })
-                .map_err(|_| "a static's receiver arguments do not resolve in the instance")?
-                .1;
-            if self
-                .instance_method_clone(owner, method, &arguments)
-                .is_some()
-            {
-                return Err("an instance calls its own clone of a static with binders");
-            }
-        }
-        Ok(())
+        Ok(target)
     }
 
     fn realize_stringify(

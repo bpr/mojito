@@ -292,18 +292,6 @@ impl Checker {
             else {
                 continue;
             };
-            let Ok(clone_origins) = self.bind_clone_receiver_origins(
-                &format!("{sname}.{method}"),
-                sig,
-                None,
-                &params,
-                args,
-                kwargs,
-            ) else {
-                continue;
-            };
-            let params = clone_origins.substitute_all(&params);
-            let variadic = variadic.map(|element| clone_origins.substitute(&element));
             let instantiation = method_instantiation_arguments(sig, &method_arguments);
             if let Err(failure) =
                 self.method_constraint_result(sig, &method_arguments, &info.decls, &tyargs)
@@ -346,7 +334,7 @@ impl Checker {
                     keyword_element: kw_variadic.clone(),
                     conventions: sig.conventions.clone(),
                     self_convention: sig.self_convention,
-                    return_type: clone_origins.substitute(&self.close_method_values(
+                    return_type: self.close_method_values(
                         substitute(
                             &super::super::generics::expand_solved_packs(
                                 &substitute_at(&sig.ret, info, &tyargs),
@@ -357,7 +345,7 @@ impl Checker {
                         ),
                         &sig.decls,
                         &method_arguments,
-                    )),
+                    ),
                     result_adapter: None,
                     raises: sig.raises,
                     error: sig.error.as_ref().map(|error| {
@@ -390,7 +378,7 @@ impl Checker {
                     view_return_interior: sig.view_return_interior.clone(),
                     view_return: sig.view_return.clone(),
                     declared_return: None,
-                    declared_params: clone_origins.substitute_all(&sig.params),
+                    declared_params: sig.params.clone(),
                     nested_origins: sig.nested_origins,
                 });
             }
@@ -459,30 +447,12 @@ impl Checker {
             );
         }
         // An explicit receiver instance (`Dict[String, Int].fromkeys(...)`)
-        // records its instantiation and retargets to the per-instantiation
-        // clone once minted; an inferred receiver keeps the erased path.
+        // records its instantiation.
         if !struct_targs.is_empty()
             && let Ok((_, tyargs)) =
                 self.resolve_use_params(sname, &info.decls, forwarded, &[], &[])
         {
             self.record_struct_instantiation(sname, &tyargs, span.source.as_deref());
-            if let Some(clone) = self.instance_method_clone(sname, method, &tyargs) {
-                let ty = self.infer_struct_static_method(
-                    span.clone(),
-                    sname,
-                    struct_targs,
-                    &clone,
-                    MethodCallArguments {
-                        param_args,
-                        args,
-                        kwargs,
-                        parameterized_syntax,
-                        preserves_receiver_interiors: false,
-                    },
-                )?;
-                self.record_static_clone_target(span, sname, &clone);
-                return Ok(ty);
-            }
         }
         self.finish_static_call(
             span,
@@ -642,16 +612,6 @@ impl Checker {
             self.require_error(format!("call to raising method '{sname}.{method}'"), error)?;
         }
         Ok(selected.return_type)
-    }
-
-    /// Target a static call retargeted to its per-instantiation clone `clone`: the
-    /// clone's sole signature names no target of its own, and the call's
-    /// syntax still names the template.
-    pub(super) fn record_static_clone_target(&self, span: SourceSpan, sname: &str, clone: &str) {
-        self.overload_targets
-            .borrow_mut()
-            .entry(span)
-            .or_insert_with(|| format!("{sname}.{clone}"));
     }
 
     /// Solve a struct's compile-time parameters for a static-method call:

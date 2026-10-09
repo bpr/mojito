@@ -1637,14 +1637,6 @@ pub enum AnnotationSite {
         declaration: String,
         method: usize,
     },
-    /// The checked receiver type of a struct method that declares an explicit
-    /// `self` type (a per-instantiation clone, `self: Optional[Int]`); absent
-    /// for an ordinary method, whose receiver is the declaring struct.
-    MethodSelf {
-        module: Option<String>,
-        declaration: String,
-        method: usize,
-    },
 }
 
 /// Declaration-owned identity for a checked compile-time parameter list.
