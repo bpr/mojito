@@ -33,7 +33,10 @@ plan file at the repository root gets a plan session before the session that
 carries it out, which is handed the plan; a plan pass that fails or writes no
 plan file leaves the task unexecuted. `--no-auto-plan` skips that pass,
 `--auto-plan-all` gives it to `Not Planned` entries too, and a plan file
-already at the root is handed to the executing session either way.
+already at the root is handed to the executing session either way. A plan
+counts only while its name matches the entry's current title: one left under
+the same ID by an entry since rewritten in place is stale, so the entry counts
+as unplanned, and its plan pass reads the old plan as background.
 `--model Opus` or `--model Fable` overrides every entry's model choice (say,
 when Fable usage runs out); planning still follows the bullet.
 
@@ -133,7 +136,16 @@ def build_prompt(task: Task, mode: str, has_plan: bool | None = None) -> str:
         "up nothing.\n"
     )
     if mode == "plan":
-        return header + (
+        stale = stale_plans(task)
+        background = (
+            "\nAn older plan under this ID, "
+            + ", ".join(f"`{p.name}`" for p in stale)
+            + ", was written before the entry was rewritten in place; part of "
+            "it has likely landed. Read it as background only, check against "
+            "the code what is still open, and leave it alone.\n"
+            if stale else ""
+        )
+        return header + background + (
             "\nPlan this task; do not carry it out. Investigate the code the "
             f"entry names, then write the plan to `{plan_path(task).name}` at "
             "the repository root, sliced so each slice has a stop condition and "
@@ -189,13 +201,17 @@ def build_prompt(task: Task, mode: str, has_plan: bool | None = None) -> str:
 
 
 def plan_path(task: Task) -> Path:
-    """Where the task's plan is: an existing `R12-*-plan.md` (or a plan named
-    by the title alone, from before IDs) wins over the fresh name."""
-    existing = sorted(ROOT.glob(f"{task.id}-*-plan.md"))
-    if existing:
-        return existing[0]
+    """Where the task's plan is: `R12-<slug>-plan.md` named after the entry's
+    current title, or a plan named by the title alone, from before IDs."""
     legacy = ROOT / f"{task.slug}-plan.md"
     return legacy if legacy.exists() else ROOT / f"{task.id}-{task.slug}-plan.md"
+
+
+def stale_plans(task: Task) -> list[Path]:
+    """Plans under the task's ID written for an earlier title: the entry was
+    rewritten in place since, so they plan work that may already have landed."""
+    current = plan_path(task)
+    return [p for p in sorted(ROOT.glob(f"{task.id}-*-plan.md")) if p != current]
 
 
 def plan_written(task: Task, since: float) -> bool:
@@ -429,6 +445,10 @@ def main() -> int:
     while tasks := pending(args, done, troubled, skip):
         current = tasks[0]
         modes = modes_for(args, current)
+        for stale in stale_plans(current):
+            print(f"claude_loop: {stale.name} was written for an earlier title of "
+                  f"{current.id}; not handing it to the session as its plan",
+                  file=sys.stderr)
         for mode in modes:
             prompt = build_prompt(current, mode, True if "plan" in modes else None)
             model = model_for(args, current)
