@@ -17,8 +17,10 @@ use crate::timing;
 use crate::{Stmt, ast::StmtKind, parse};
 use std::fmt;
 
+use crate::interface::PackageInterface;
+use crate::package::ImportedPackage;
 use std::path::Path;
-use std::sync::OnceLock;
+use std::sync::{Arc, OnceLock};
 /// A program that has passed linking, comptime elaboration, semantic checking,
 /// and ownership analysis and is therefore ready for any backend.
 ///
@@ -30,29 +32,44 @@ pub struct CompiledProgram {
     checked: CheckedProgram,
     mir: MirProgram,
     elaborated: OnceLock<MirProgram>,
+    /// With an imported package, the elaborated program with every package
+    /// body joined to it.
+    complete: OnceLock<MirProgram>,
     concrete: OnceLock<Result<SpecializedProgram, MonoError>>,
     /// The native target the elaborator answers layout queries for.
     target: Option<crate::native::target::NativeTarget>,
+    /// The compiled package the program imports, whose bodies were checked
+    /// and lowered when it was built.
+    package: Option<Arc<ImportedPackage>>,
 }
 impl CompiledProgram {
     /// The semantically checked program carried by this ownership-verified
-    /// pipeline result.
+    /// pipeline result. An imported package's bodies are not in it.
     pub const fn checked(&self) -> &CheckedProgram {
         &self.checked
     }
 
     /// Parametric MIR: the ownership-verified, pre-drop MIR produced by the
     /// authoritative compiler pipeline, whose generic bodies still name their
-    /// parameters. The later phases derive from it.
+    /// parameters. The later phases derive from it. With an imported
+    /// package it holds the program's own functions and every declaration,
+    /// the package's included; the package's bodies stay in the package.
     pub const fn mir(&self) -> &MirProgram {
         &self.mir
     }
 
-    /// Drop-elaborated MIR: parametric MIR with drops inserted, re-verified.
-    /// It may still be generic. It is the serialized artifact and the
-    /// elaborator's input. Post-drop verification findings are folded into
-    /// `invariant_errors`; consumers refuse a non-empty list.
-    pub fn drop_elaborated_mir(&self) -> &MirProgram {
+    /// The compiled package the program imports, if any.
+    pub fn imported_package(&self) -> Option<&ImportedPackage> {
+        self.package.as_deref()
+    }
+
+    /// The program's own drop-elaborated MIR, re-verified: [`Self::mir`]
+    /// with drops inserted. It is the elaborator's input, beside an
+    /// imported package's bodies, whose drops are inserted as each is
+    /// materialized.
+    /// Post-drop verification findings are folded into `invariant_errors`;
+    /// consumers refuse a non-empty list.
+    pub fn elaborated_mir(&self) -> &MirProgram {
         self.elaborated.get_or_init(|| {
             let mut mir = {
                 let _drops = timing::span("drops.elaborate");
@@ -65,16 +82,36 @@ impl CompiledProgram {
         })
     }
 
+    /// Drop-elaborated MIR: parametric MIR with drops inserted, re-verified.
+    /// It may still be generic. It is the whole program: an imported
+    /// package's bodies, every one decoded, join [`Self::elaborated_mir`],
+    /// so it serializes as one artifact.
+    pub fn drop_elaborated_mir(&self) -> &MirProgram {
+        let elaborated = self.elaborated_mir();
+        let Some(package) = &self.package else {
+            return elaborated;
+        };
+        self.complete.get_or_init(|| {
+            let mut complete = elaborated.clone();
+            complete.functions.extend(package.bodies.all());
+            complete.invariant_errors.extend(package.bodies.failures());
+            complete
+        })
+    }
+
     /// Concrete MIR: the drop-elaborated program elaborated by
     /// `native::mono` from its entry roots and verified concrete. Every
-    /// backend consumes this one graph; no backend elaborates again.
+    /// backend consumes this one graph; no backend elaborates again. An
+    /// imported package's body is decoded when the elaboration first
+    /// reaches it.
     pub fn concrete_mir(&self) -> Result<&SpecializedProgram, CompilerError> {
         self.concrete
             .get_or_init(|| {
-                let mir = self.drop_elaborated_mir();
+                let mir = self.elaborated_mir();
                 let _elaborate = timing::span("elaborate");
-                let concrete = crate::native::mono::specialize(
+                let concrete = crate::native::mono::specialize_importing(
                     mir,
+                    self.package.as_deref().map(|package| &package.bodies),
                     &crate::native::mono::entry_roots(mir),
                     self.target.as_ref(),
                 );
@@ -82,6 +119,12 @@ impl CompiledProgram {
                     timing::count(
                         "concrete_functions",
                         concrete.program.functions.len() as u64,
+                    );
+                }
+                if let Some(package) = &self.package {
+                    timing::count(
+                        "package_bodies_decoded",
+                        package.bodies.materialized() as u64,
                     );
                 }
                 concrete
@@ -150,6 +193,10 @@ pub struct Compiler {
     /// `--target` of a native compile, otherwise the host. `None` on a host
     /// with no native target, where a program that asks a layout fails.
     target: Option<crate::native::target::NativeTarget>,
+    /// Import the bundled library's compiled package instead of checking
+    /// its bodies again. `None` defers to the `MOJITO_STD_PACKAGE`
+    /// environment variable (`0` compiles the library from source).
+    std_package: Option<bool>,
 }
 /// Reject runtime statements at module scope, matching Mojo's source rules.
 /// Declarations, imports, compile-time constants, and `pass` are permitted.
@@ -199,6 +246,7 @@ impl Compiler {
             backend,
             allow_executable_module_scope: false,
             body_fact_reuse: None,
+            std_package: None,
             target: match crate::native::target::Triple::host() {
                 Some(triple) => Some(crate::native::target::NativeTarget::new(triple)),
                 None => None,
@@ -216,6 +264,13 @@ impl Compiler {
     #[must_use]
     pub const fn with_body_fact_reuse(mut self, reuse: bool) -> Self {
         self.body_fact_reuse = Some(reuse);
+        self
+    }
+    /// Import the bundled library's compiled package, or compile the
+    /// library from source, whatever the environment says.
+    #[must_use]
+    pub const fn with_std_package(mut self, import: bool) -> Self {
+        self.std_package = Some(import);
         self
     }
     /// Permit executable module-scope statements for isolated compiler tests.
@@ -252,13 +307,46 @@ impl Compiler {
     /// Elaborate, check, verify, and ownership-verify an already linked
     /// statement set. Verification, ownership, artifact emission, and backend
     /// execution all consume the one cached `MirProgram` lowered here.
+    ///
+    /// The bundled library's declarations are imported from its compiled
+    /// package when the program links the bundled library and declares
+    /// none of its names again: its bodies are not checked or lowered.
     pub fn compile_linked(&self, linked: &[Stmt]) -> Result<CompiledProgram, CompilerError> {
+        let package = self
+            .std_package
+            .unwrap_or_else(|| {
+                std::env::var_os("MOJITO_STD_PACKAGE").is_none_or(|value| value != "0")
+            })
+            .then(crate::package::bundled_std_package)
+            .flatten()
+            .filter(|package| imports_cleanly(linked, &package.interface));
+        self.compile_importing(linked, package)
+            .map(|(program, _)| program)
+    }
+
+    /// Compile `linked` from source, with the effect summaries of its
+    /// module-level callables, the interface of a package built from it.
+    pub(crate) fn compile_for_package(
+        &self,
+        linked: &[Stmt],
+    ) -> Result<(CompiledProgram, PackageInterface), CompilerError> {
+        self.compile_importing(linked, None)
+    }
+
+    fn compile_importing(
+        &self,
+        linked: &[Stmt],
+        package: Option<Arc<ImportedPackage>>,
+    ) -> Result<(CompiledProgram, PackageInterface), CompilerError> {
         let _compile = timing::span("compile");
         let prepared = {
             let _prepare = timing::span("prepare");
             prepare(linked.to_vec()).map_err(CompilerError::Comptime)?
         };
         let mut context = CheckContext::new();
+        if let Some(package) = &package {
+            context.import_package(Arc::clone(&package.interface));
+        }
         context.set_body_fact_reuse(self.body_fact_reuse.unwrap_or_else(|| {
             std::env::var_os("MOJITO_BODY_FACT_REUSE").is_none_or(|value| value != "0")
         }));
@@ -280,7 +368,12 @@ impl Compiler {
         };
         let mir = {
             let _lower = timing::span("mir.lower");
-            crate::mir::lower_checked_program(&checked)
+            crate::mir::lower_checked_program_importing(
+                &checked,
+                package
+                    .as_deref()
+                    .map(|package| (&*package.interface, &package.declarations)),
+            )
         };
         timing::count("mir_functions", mir.functions.len() as u64);
         let param_stats = context.param_context().stats();
@@ -292,17 +385,40 @@ impl Compiler {
         if !mir.invariant_errors.is_empty() {
             return Err(CompilerError::Verify(mir.invariant_errors));
         }
+        if let Some(package) = &package {
+            let shared: Vec<String> = mir
+                .functions
+                .iter()
+                .filter(|(name, _)| package.bodies.contains(name))
+                .map(|(name, _)| format!("`{name}` is defined by the program and by its package"))
+                .collect();
+            if !shared.is_empty() {
+                return Err(CompilerError::Verify(shared));
+            }
+        }
         {
             let _ownership = timing::span("ownership");
-            crate::analysis::check_ownership_program(&mir).map_err(CompilerError::Ownership)?;
+            crate::analysis::check_ownership_importing(
+                &mir,
+                package
+                    .iter()
+                    .flat_map(|package| package.bodies.ref_params()),
+            )
+            .map_err(CompilerError::Ownership)?;
         }
-        Ok(CompiledProgram {
-            checked,
-            mir,
-            elaborated: OnceLock::new(),
-            concrete: OnceLock::new(),
-            target: self.target,
-        })
+        let summaries = context.take_summaries();
+        Ok((
+            CompiledProgram {
+                checked,
+                mir,
+                elaborated: OnceLock::new(),
+                complete: OnceLock::new(),
+                concrete: OnceLock::new(),
+                target: self.target,
+                package,
+            },
+            summaries,
+        ))
     }
     /// Execute an ownership-verified program using the configured backend.
     pub fn execute(&self, program: &CompiledProgram) -> Result<Execution, CompilerError> {
@@ -311,7 +427,7 @@ impl Compiler {
         })?;
         let elaborated = {
             let _prepare = timing::span("prepare");
-            program.drop_elaborated_mir()
+            program.elaborated_mir()
         };
         if !elaborated.invariant_errors.is_empty() {
             return Err(CompilerError::Verify(elaborated.invariant_errors.clone()));
@@ -337,6 +453,23 @@ impl Compiler {
         let program = self.compile_path(entry)?;
         self.execute(&program)
     }
+}
+
+/// Whether `linked` can import `package`: a statement from one of the
+/// package's modules is a declaration the package made, and none of the
+/// program's own reuses a name the package declares, as a second copy of a
+/// packaged module, or an entry file inside the library, would.
+fn imports_cleanly(linked: &[Stmt], package: &PackageInterface) -> bool {
+    linked.iter().all(|statement| {
+        let declared = match &statement.kind {
+            StmtKind::Def { name, .. }
+            | StmtKind::Struct { name, .. }
+            | StmtKind::Trait { name, .. }
+            | StmtKind::Comptime { name, .. } => package.names.contains(name),
+            _ => false,
+        };
+        declared == package.compiles(statement.module.as_deref())
+    })
 }
 
 impl Default for Compiler {

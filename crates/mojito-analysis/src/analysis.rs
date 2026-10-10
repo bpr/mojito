@@ -26,7 +26,7 @@ use mojito_common::error::OwnershipError;
 use mojito_common::timing;
 use mojito_hir::hir::VarId;
 use mojito_mir::mir::{
-    MirBlock, MirCaptureMode, MirFunction, MirFunctionDeclaration, MirInstr, MirInteriorOrigin,
+    MirBlock, MirCaptureMode, MirDeclarations, MirFunction, MirInstr, MirInteriorOrigin,
     MirIntrinsicSubscript, MirPlace, MirProgram, MirTerm, Proj, Reg, SpanTable, UseMode,
     binder_scope, materialized_parameter_slots,
 };
@@ -51,11 +51,25 @@ pub fn check_ownership_checked(
 /// standalone-MIR core the pipeline composes with `mir::verify` so production
 /// MIR is fully verified before execution.
 pub fn check_ownership_program(prog: &MirProgram) -> Result<(), OwnershipError> {
+    check_ownership_importing(prog, std::iter::empty())
+}
+
+/// [`check_ownership_program`] for a program that imports a package.
+///
+/// The package's bodies were analyzed when it was built; `imported` gives
+/// each one's reference-parameter mask, which a call into it reads.
+pub fn check_ownership_importing<'a>(
+    prog: &'a MirProgram,
+    imported: impl IntoIterator<Item = (&'a str, &'a [bool])>,
+) -> Result<(), OwnershipError> {
     let callees = CalleeRefParams {
-        ref_params: prog
-            .functions
-            .iter()
-            .map(|(name, function)| (name.as_str(), function.ref_params.as_slice()))
+        ref_params: imported
+            .into_iter()
+            .chain(
+                prog.functions
+                    .iter()
+                    .map(|(name, function)| (name.as_str(), function.ref_params.as_slice())),
+            )
             .collect(),
         param_writes: prog
             .declarations
@@ -149,28 +163,20 @@ impl CalleeRefParams<'_> {
 /// Applied by the VM before execution so a struct's `__deinit__` fires at the
 /// value's last use (not at scope end), and a replaced field's at the store.
 pub fn elaborate_drops_program(prog: MirProgram) -> MirProgram {
-    let declarations: HashMap<&str, &MirFunctionDeclaration> = prog
-        .declarations
-        .functions
-        .iter()
-        .map(|declaration| (declaration.lowered_name.as_str(), declaration))
-        .collect();
     let functions = prog
         .functions
         .into_iter()
-        .map(|(name, mut f)| {
-            elaborate_store_drops(&mut f, &name, &prog.declarations.structs);
+        .map(|(name, f)| {
             // Module-scope (`__toplevel__`) variables live until program end, so
             // they are not ASAP-dropped — that also keeps their final values
             // intact for the CLI/`bindings()` global dump (a `DropVar` would
             // clear the slot).
             let elaborated = if name == "__toplevel__" {
+                let mut f = f;
+                elaborate_store_drops(&mut f, &name, &prog.declarations.structs);
                 f
             } else {
-                let scope = binder_scope(&name, |name| declarations.get(name).copied());
-                let mut elaborated = elaborate_drops(&f, &materialized_parameter_slots(&f, &scope));
-                refine_deinit_fields(&mut elaborated, &prog.declarations.structs);
-                elaborated
+                elaborate_drops_function(&name, f, &prog.declarations)
             };
             (name, elaborated)
         })
@@ -180,6 +186,27 @@ pub fn elaborate_drops_program(prog: MirProgram) -> MirProgram {
         declarations: prog.declarations,
         invariant_errors: prog.invariant_errors,
     }
+}
+
+/// [`elaborate_drops_program`] for the one function `name` of a program
+/// whose declarations are `declarations`: an imported package's body is
+/// drop-elaborated as it is materialized.
+pub fn elaborate_drops_function(
+    name: &str,
+    mut function: MirFunction,
+    declarations: &MirDeclarations,
+) -> MirFunction {
+    elaborate_store_drops(&mut function, name, &declarations.structs);
+    let scope = binder_scope(name, |name| {
+        declarations
+            .functions
+            .iter()
+            .find(|declaration| declaration.lowered_name == name)
+    });
+    let mut elaborated =
+        elaborate_drops(&function, &materialized_parameter_slots(&function, &scope));
+    refine_deinit_fields(&mut elaborated, &declarations.structs);
+    elaborated
 }
 
 mod drops;

@@ -816,6 +816,19 @@ form before a program runs. The bullets below are what the stage covered.
   dependency identities, source provenance, compiler and schema
   compatibility, target assumptions, and cache invalidation.
 
+Landed 2026-10-09 (R11), following upstream's boundary more closely than
+the bullets above chose: the package holds ownership-checked MIR *before*
+drop elaboration, and the importer inserts a body's drops when the
+elaborator first decodes it, as upstream runs its lifetime pass on a
+materialized body. The bundled library is compiled once per compiler build
+into a cached `std` package (`src/package.rs`, `mir::text::package`); an
+importer checks and lowers none of its bodies, reads the package's effect
+summaries at its call sites (`checked::interface::PackageInterface`), links
+the package's MIR declarations (`mir::link`), and decodes a body on demand
+(`native::mono::specialize_importing`). Two gaps remain, each a `pmir`
+entry: the package holds CFG MIR where upstream's holds post-parse IR, and
+an importer still registers the library's declarations from its source.
+
 ## Decisions for the owner
 
   The second step landed 2026-10-07 (R6): a nested `def` or lambda is a

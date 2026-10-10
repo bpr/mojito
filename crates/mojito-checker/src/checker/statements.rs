@@ -193,10 +193,17 @@ impl Checker {
                 }
                 pending = waiting;
             }
+            self.in_package.set(
+                self.package
+                    .as_ref()
+                    .is_some_and(|package| package.compiles(stmt.module.as_deref())),
+            );
             // `ret = None` marks "not inside a function", so a top-level
             // `return` is rejected; `in_loop = false` likewise rejects a
             // top-level `break`.
-            self.check_block(std::slice::from_ref(stmt), None, false)?;
+            let checked = self.check_block(std::slice::from_ref(stmt), None, false);
+            self.in_package.set(false);
+            checked?;
         }
         Ok(())
     }
@@ -2821,8 +2828,10 @@ impl Checker {
         // A module-level body is a carry site: its parameter bindings, its
         // frames, and its inference are what the previous pass recorded for
         // it, or what this pass records.
-        let site = (module_level && self.carries_bodies()).then(|| stmt.source_span());
-        let carried = site.as_ref().is_some_and(|key| self.carry_body(key, name));
+        // A package's body was checked when the package was built.
+        let packaged = module_level && self.in_package.get();
+        let site = (module_level && !packaged && self.carries_bodies()).then(|| stmt.source_span());
+        let carried = packaged || site.as_ref().is_some_and(|key| self.carry_body(key, name));
         let site_start = if carried {
             None
         } else {
@@ -3005,6 +3014,11 @@ impl Checker {
                 self.return_ref_contracts.pop();
                 self.raise_observation_frames.borrow_mut().pop();
                 if let Some(frame) = self.transfer_frames.borrow_mut().pop() {
+                    if module_level {
+                        self.top_level_callables
+                            .borrow_mut()
+                            .insert(frame.callable.clone());
+                    }
                     if !frame.effects.is_empty() {
                         self.transfer_effects
                             .borrow_mut()

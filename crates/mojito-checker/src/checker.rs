@@ -123,6 +123,13 @@ pub struct CheckContext {
     /// Per call through a bound, by the syntax identity the call keeps across
     /// passes, the requirement defaults it binds (`bound_defaults.rs`).
     bound_default_arguments: HashMap<SyntaxId, BoundDefaultArguments>,
+    /// The compiled package whose bodies this check takes as checked: its
+    /// declarations are registered from their source, its bodies are not
+    /// checked again, and a call into it reads the package's summaries.
+    package: Option<std::sync::Arc<mojito_checked::interface::PackageInterface>>,
+    /// The effect summaries of every module-level callable and method the
+    /// last check recorded, the interface of a package built from it.
+    summaries: mojito_checked::interface::PackageInterface,
 }
 
 impl CheckContext {
@@ -131,7 +138,24 @@ impl CheckContext {
             param_context: ParamContext::new(),
             body_fact_reuse: true,
             bound_default_arguments: HashMap::new(),
+            package: None,
+            summaries: mojito_checked::interface::PackageInterface::default(),
         }
+    }
+
+    /// Check against `package`: a declaration from one of its modules keeps
+    /// its body unchecked.
+    pub fn import_package(
+        &mut self,
+        package: std::sync::Arc<mojito_checked::interface::PackageInterface>,
+    ) {
+        self.package = Some(package);
+    }
+
+    /// The effect summaries the last check recorded for its module-level
+    /// callables and methods; its `modules` are empty.
+    pub fn take_summaries(&mut self) -> mojito_checked::interface::PackageInterface {
+        std::mem::take(&mut self.summaries)
     }
 
     pub const fn param_context(&self) -> &ParamContext {
@@ -229,9 +253,15 @@ fn check_program_carrying(
     let mut rounds = 0;
     let checker = loop {
         let _round = timing::round("transfer.round", rounds);
-        let (transfer_seed, call_through_seed) =
+        let (mut transfer_seed, mut call_through_seed) =
             previous.as_ref().map(PassCarry::seeds).unwrap_or_default();
+        // A package's summaries are committed before any body is checked.
+        if let Some(package) = &context.package {
+            transfer_seed.extend(package.transfer_effects.clone());
+            call_through_seed.extend(package.call_through_effects.clone());
+        }
         let mut checker = Checker::new_seeded(transfer_seed, call_through_seed);
+        checker.package.clone_from(&context.package);
         if let Some(previous) = &previous {
             checker.next_owner.set(previous.next_owner());
             checker.fresh_owner_cursor.set(previous.next_owner());
@@ -294,10 +324,27 @@ fn check_program_carrying(
     // Context managers are desugared by the checker; later phases see only
     // the ordinary statements it checked.
     with_stmt::splice_with_desugars(&mut expanded, &checker.with_desugars.borrow());
+    // A package's bodies were checked and lowered when it was built; the
+    // handoff keeps its declarations alone.
+    if let Some(package) = &context.package {
+        strip_package_bodies(&mut expanded, package);
+    }
+    context.summaries = checker.effect_summaries();
     let explicit_destroy_types = {
         let _finish = timing::span("explicit_destroy");
         let explicit_destroy_types = explicit_destroy_types(&checker);
-        run_explicit_destroy(&checker, &expanded, &explicit_destroy_types)?;
+        // A package's bodies met their obligations when it was built.
+        match &context.package {
+            Some(package) => {
+                let own: Vec<Stmt> = expanded
+                    .iter()
+                    .filter(|statement| !package.compiles(statement.module.as_deref()))
+                    .cloned()
+                    .collect();
+                run_explicit_destroy(&checker, &own, &explicit_destroy_types)?;
+            }
+            None => run_explicit_destroy(&checker, &expanded, &explicit_destroy_types)?,
+        }
         explicit_destroy_types
     };
     let conformances = checker.conformance_facts();
@@ -921,6 +968,14 @@ pub struct Checker {
     /// The module and name of the struct whose method is being checked, for
     /// the method's display name.
     method_site: Option<(Option<String>, String)>,
+    /// The compiled package whose bodies are taken as checked.
+    package: Option<std::sync::Arc<mojito_checked::interface::PackageInterface>>,
+    /// Whether the module-level declaration being checked is the package's,
+    /// whose body is not checked again.
+    in_package: std::cell::Cell<bool>,
+    /// The identity of every module-level callable and method whose body
+    /// this pass checked, whose effect summaries a package keeps.
+    top_level_callables: RefCell<HashSet<String>>,
     /// The previous checker pass, whose facts a body site with unchanged
     /// inputs takes instead of being inferred (`body_carry`).
     previous: Option<PassCarry>,
@@ -933,6 +988,32 @@ pub struct Checker {
 impl Checker {
     pub fn new() -> Self {
         Self::new_seeded(HashMap::new(), HashMap::new())
+    }
+
+    /// The effect summaries this pass recorded for the module-level
+    /// callables and methods whose bodies it checked.
+    fn effect_summaries(&self) -> mojito_checked::interface::PackageInterface {
+        let callables = self.top_level_callables.borrow();
+        let summarized = |callable: &String| callables.contains(callable);
+        mojito_checked::interface::PackageInterface {
+            modules: std::collections::BTreeSet::new(),
+            names: std::collections::BTreeSet::new(),
+            asked_traits: self.constrained_traits(),
+            transfer_effects: self
+                .transfer_effects
+                .borrow()
+                .iter()
+                .filter(|(callable, _)| summarized(callable))
+                .map(|(callable, effects)| (callable.clone(), effects.clone()))
+                .collect(),
+            call_through_effects: self
+                .call_through_effects
+                .borrow()
+                .iter()
+                .filter(|(callable, _)| summarized(callable))
+                .map(|(callable, effects)| (callable.clone(), effects.clone()))
+                .collect(),
+        }
     }
 
     fn new_seeded(
@@ -1098,6 +1179,9 @@ impl Checker {
             context: RefCell::new(CheckContext::default()),
             syntax_origins: mojito_ast::ast::SyntaxOrigins::default(),
             bound_default_arguments: RefCell::new(HashMap::new()),
+            package: None,
+            in_package: std::cell::Cell::new(false),
+            top_level_callables: RefCell::new(HashSet::new()),
             rebind_assertions: RefCell::new(FactMap::default()),
             method_site: None,
             previous: None,
@@ -2349,6 +2433,28 @@ impl StructInfo {
                 TyArg::Ty(_) | TyArg::Val(_) => None,
             })
             .collect()
+    }
+}
+
+/// Empty the body of every declaration `package` compiled: its function and
+/// method bodies, which the package already lowered.
+fn strip_package_bodies(
+    program: &mut [Stmt],
+    package: &mojito_checked::interface::PackageInterface,
+) {
+    for statement in program {
+        if !package.compiles(statement.module.as_deref()) {
+            continue;
+        }
+        match &mut statement.kind {
+            StmtKind::Def { body, .. } => body.clear(),
+            StmtKind::Struct { methods, .. } => {
+                for method in methods {
+                    method.body.clear();
+                }
+            }
+            _ => {}
+        }
     }
 }
 

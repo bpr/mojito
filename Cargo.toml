@@ -20,6 +20,7 @@ include = [
     "/docs/**",
     "/Cargo.toml",
     "/Cargo.lock",
+    "/build.rs",
     "/rust-toolchain.toml",
     "/rustfmt.toml",
     "/.gitignore",

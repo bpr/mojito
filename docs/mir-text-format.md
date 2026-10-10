@@ -845,6 +845,45 @@ artifact {
 }
 ```
 
+## Package Container
+
+A compiled package (`mir::text::package`) wraps MIR text in a line-framed
+container, one file per package. The bundled library's is the only producer
+today (`src/package.rs`). The format line is `mojito-package 1`.
+
+```text
+mojito-package 1
+package std
+compiler <build identity>
+source <source digest>
+interface <bytes>
+<interface record>
+declarations <bytes>
+<a MIR artifact with an empty function list>
+function <bytes> <params> <ref mask> <name>
+<one function record>
+end
+```
+
+- Each section's text is exactly its byte count, then a newline. A body is
+  located by its range and decoded on first use, against the declarations
+  artifact's `files` table, which every body's locations name.
+- The interface record is
+  `interface { modules, names, asked_traits, transfer_effects,
+  call_through_effects }`. A summary is `summary { callable, effects }`; a
+  transfer effect is the `transfer` record of a function type, and a
+  call-through effect is
+  `call_through { callee: runtime_param(n) | value_param(name), args: [arg
+  { place: option<sig origin>, carried: [sig origin...], local: bool }] }`.
+- A body is ownership-checked MIR before drop elaboration. The importer
+  inserts its drops and verifies it as it is decoded.
+- `<params>` is the runtime parameter count and `<ref mask>` the
+  `ref_params` mask as `0`/`1` digits (`-` when empty), so overload
+  resolution and the loan analysis read a body's signature without
+  decoding it.
+- The importer refuses a package whose `compiler` or `source` line differs
+  from its own build identity and the library's source digest.
+
 ## Serialization Inventory
 
 | In-memory data | Treatment |

@@ -536,7 +536,7 @@ fn compile_native_module(
     // Each phase computes once and caches; time the first call of each as
     // its own phase, then borrow the cached concrete graph.
     cli_timing("mir-elaborate", || {
-        compiled.drop_elaborated_mir();
+        compiled.elaborated_mir();
     });
     let concrete = cli_timing("mir-concrete", || compiled.concrete_mir())
         .map_err(|error| error.to_string())?;

@@ -275,18 +275,18 @@ the list in view.
 | Exported signature: runtime parameters, conventions, result, raise contract | `MirFunctionDeclaration` |
 | Binders, bounds, binder constraints | `param_decls`, serialized |
 | Member availability clauses | `MirFunctionDeclaration.availability`, serialized |
-| Bodies, drop-elaborated | MIR text |
+| Bodies, ownership-checked, before drop elaboration | MIR text, one record per body in the package container (`mir::text::package`); the importer inserts drops as it decodes one |
 | Struct layout inputs: fields over binders | `MirStructDeclaration.fields` |
-| A struct's conformances, with their conditions | `MirStructDeclaration.conformances`, for the traits a clause or a condition names |
-| Trait declarations: requirements and defaults | Names only (`MirDeclarations.traits`). A witness request names the requirement's symbol only |
-| Transfer and call-through summaries | Missing. Checker tables only |
-| Instantiation-time predicates of a body (`rebind`, lane constraints) | Missing. Derivation holds them as `RebindAssertion` |
-| Export set: every template, reached or not | The artifact holds one program's whole drop-elaborated MIR. It records no export set |
-| Dependency identities of imported packages | Missing |
-| Source provenance | File and module ids on locations |
-| Schema compatibility | `mir::text::version_header`. A compiler build identity is missing |
+| A struct's conformances, with their conditions | `MirStructDeclaration.conformances`, for the traits a clause or a condition names; the package's `asked_traits` makes an importer answer the ones its bodies ask, and an importer adds its own rows to a package struct |
+| Trait declarations: requirements and defaults | Names only (`MirDeclarations.traits`). An importer reads requirements and defaults from the library's source |
+| Transfer and call-through summaries | The package interface (`checked::interface::PackageInterface`), per module-level callable |
+| Instantiation-time predicates of a body (`rebind`, lane constraints) | In the MIR body, which is all the elaborator reads of it (`value.rebind`, discharged per instance by `mono/rebind.rs`) |
+| Export set: every template, reached or not | Every function of every module the package compiled, with the modules' stamped paths and top-level names |
+| Dependency identities of imported packages | None: the library imports no package |
+| Source provenance | File paths on locations; the container's declarations artifact holds the `files` table |
+| Schema compatibility | `mir::text::version_header` on the declarations artifact, and the container's `compiler` line: the build identity (`MOJITO_BUILD_ID`) |
 | Target assumptions | None in parametric MIR. Layout is asked only of concrete types |
-| Cache key: source hash, compiler identity, dependency keys | Missing |
+| Cache key: source hash, compiler identity, dependency keys | The build identity and a digest of the library's source and its root path (`src/package.rs`) |
 
 P2 added two rows: availability clauses, and the conformance rows the
 elaborator's verdicts need. Both are declaration metadata, and both are in

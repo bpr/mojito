@@ -150,7 +150,7 @@ impl Specializer<'_> {
                 // canonicalize to.
                 let self_ty = declaration
                     .has_receiver
-                    .then(|| self.functions.get(*name)?.param_types.first())
+                    .then(|| self.functions.get(name)?.param_types.first())
                     .flatten()
                     .map(peel_refs);
                 let keywords = declaration
@@ -237,10 +237,7 @@ impl Specializer<'_> {
         }
         // The template's `write_to` is instantiated for the receiver.
         let target = mojito_symbol::symbol::resolve_method_symbol(
-            self.functions.iter().map(|(name, f)| CallableCandidate {
-                name,
-                n_params: f.n_params,
-            }),
+            self.functions.candidates(),
             nominal_template(name),
             method,
             None,
@@ -312,10 +309,7 @@ impl Specializer<'_> {
             return Ok(());
         };
         let target = mojito_symbol::symbol::resolve_method_symbol(
-            self.functions.iter().map(|(name, f)| CallableCandidate {
-                name,
-                n_params: f.n_params,
-            }),
+            self.functions.candidates(),
             nominal_template(name),
             "__int__",
             None,
@@ -375,10 +369,7 @@ impl Specializer<'_> {
             return Ok(None);
         };
         let target = mojito_symbol::symbol::resolve_method_symbol(
-            self.functions.iter().map(|(name, f)| CallableCandidate {
-                name,
-                n_params: f.n_params,
-            }),
+            self.functions.candidates(),
             nominal_template(name),
             method,
             None,

@@ -774,6 +774,12 @@ impl Linker {
             // the provisional local exports published below.
             return Ok(());
         }
+        // A module under a search root is named by its path there, as Mojo
+        // names a symbol by its module path, whichever import first reached
+        // it: `from .file import FileHandle` inside `std/io` loads
+        // `std.io.file`.
+        let rooted = self.rooted_module_name(&canon);
+        let module_name = rooted.as_deref().unwrap_or(module_name);
         let program = read_and_parse_named(path, module_name)?;
         let dir = path.parent().unwrap_or_else(|| Path::new("."));
         let mut local = HashMap::new();
@@ -1207,6 +1213,26 @@ impl Linker {
             }
         }
         Ok(())
+    }
+
+    /// The dotted module path of the file `canon` under the first search
+    /// root holding it (`std/io/file.mojo` is `std.io.file`, a package's
+    /// `__init__.mojo` its directory), or `None` outside every root.
+    fn rooted_module_name(&self, canon: &Path) -> Option<String> {
+        let relative = self
+            .options
+            .search_roots
+            .iter()
+            .find_map(|root| canon.strip_prefix(canonical(root)).ok())?;
+        let mut parts: Vec<String> = relative
+            .components()
+            .map(|component| component.as_os_str().to_string_lossy().into_owned())
+            .collect();
+        let file = parts.pop()?;
+        if file != "__init__.mojo" {
+            parts.push(file.strip_suffix(".mojo")?.to_string());
+        }
+        (!parts.is_empty()).then(|| parts.join("."))
     }
 
     fn resolve_module(

@@ -6,6 +6,20 @@ to evolve under the `0.x` compatibility rules.
 
 ## [Unreleased]
 
+### Changed
+
+- The bundled standard library is imported from a compiled package instead
+  of being checked and lowered again in every compilation (R11), as Mojo
+  imports its precompiled `std.mojoc`. The package is built once per
+  compiler build and cached under `target/mojito-cache`; a compilation
+  checks only its own bodies, and the elaborator decodes a library body,
+  inserts its drops, and verifies it when it first reaches it. Hello World
+  now compiles and runs in 0.15 s release (from 0.93 s) and 0.5 s debug
+  (from 4.8 s). `MOJITO_STD_PACKAGE=0` compiles the library from source.
+- A module under a search root is linked under its path there, whichever
+  import reaches it first: `std/io/file.mojo` declares
+  `__module$std$io$file$…`, not `__module$file$…`.
+
 ### Fixed
 
 - A local `comptime` display binding, a `Dict[...]`/`Set[...]` constructor

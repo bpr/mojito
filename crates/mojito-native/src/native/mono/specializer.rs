@@ -9,11 +9,10 @@ impl<'a> Specializer<'a> {
         Self {
             source,
             target,
-            functions: source
-                .functions
-                .iter()
-                .map(|(n, f)| (n.as_str(), f))
-                .collect(),
+            functions: bodies::Bodies::new(
+                source.functions.iter().map(|(n, f)| (n.as_str(), f)),
+                None,
+            ),
             declarations: source
                 .declarations
                 .functions
@@ -100,6 +99,18 @@ impl<'a> Specializer<'a> {
         }
     }
 
+    /// Elaborate against `package` too: a callee the program does not
+    /// define is the package's.
+    pub(super) fn importing(mut self, package: Option<&'a PackageBodies>) -> Self {
+        if package.is_some() {
+            self.functions = bodies::Bodies::new(
+                self.source.functions.iter().map(|(n, f)| (n.as_str(), f)),
+                package,
+            );
+        }
+        self
+    }
+
     /// The declarations a parameter value's construction names.
     pub(super) const fn construction_decls(&self) -> ConstructionDecls<'_, 'a> {
         ConstructionDecls {
@@ -112,7 +123,7 @@ impl<'a> Specializer<'a> {
         let mut entry_map = HashMap::new();
         for entry in entries {
             let decl = self.declarations.get(entry.as_str()).copied();
-            self.functions.get(entry.as_str()).copied().ok_or_else(|| {
+            self.functions.get(entry.as_str()).ok_or_else(|| {
                 self.error(
                     None,
                     format!("entry function `{entry}` (not found in the MIR program)"),
@@ -132,8 +143,16 @@ impl<'a> Specializer<'a> {
             .source
             .functions
             .iter()
+            .map(|(name, _)| name.as_str())
+            .chain(self.functions.keys().filter(|name| {
+                !self
+                    .source
+                    .functions
+                    .iter()
+                    .any(|(resident, _)| resident == name)
+            }))
             .enumerate()
-            .map(|(index, (name, _))| (name.as_str(), index))
+            .map(|(index, name)| (name, index))
             .collect::<HashMap<_, _>>();
         let instance_templates = self
             .instances
@@ -585,16 +604,12 @@ impl<'a> Specializer<'a> {
         bindings: &Bindings,
     ) -> Result<(), MonoError> {
         let name = self.instance_name(key).to_string();
-        let template = self
-            .functions
-            .get(key.template.as_str())
-            .copied()
-            .ok_or_else(|| {
-                self.error(
-                    Some(&key.template),
-                    format!("callee `{}` has no MIR body", key.template),
-                )
-            })?;
+        let template = self.functions.get(key.template.as_str()).ok_or_else(|| {
+            self.error(
+                Some(&key.template),
+                format!("callee `{}` has no MIR body", key.template),
+            )
+        })?;
         let scope = &self.binder_scope(&key.template);
         let bindings = &Bindings {
             layout: self.layout_oracle(),
@@ -1594,7 +1609,7 @@ impl<'a> Specializer<'a> {
                     .generic_templates
                     .contains(nominal_template(struct_name))
             {
-                let Some(body) = self.functions.get(target.as_str()).copied() else {
+                let Some(body) = self.functions.get(target.as_str()) else {
                     continue;
                 };
                 if function_types(body).any(is_symbolic) {
@@ -1786,16 +1801,8 @@ impl<'a> Specializer<'a> {
             return Some(target.to_string());
         }
         let init = format!("{target}.__init__");
-        let resolved = mojito_symbol::symbol::resolve_callable_symbol(
-            self.functions.iter().map(|(name, function)| {
-                mojito_symbol::symbol::CallableCandidate {
-                    name,
-                    n_params: function.n_params,
-                }
-            }),
-            &init,
-            1,
-        );
+        let resolved =
+            mojito_symbol::symbol::resolve_callable_symbol(self.functions.candidates(), &init, 1);
         self.functions
             .contains_key(resolved.as_str())
             .then_some(resolved)
@@ -2075,10 +2082,7 @@ impl<'a> Specializer<'a> {
                                 }
                                 let init_base = format!("{}.__init__", func.0);
                                 let init = mojito_symbol::symbol::resolve_callable_symbol(
-                                    self.functions.iter().map(|(name, f)| CallableCandidate {
-                                        name,
-                                        n_params: f.n_params,
-                                    }),
+                                    self.functions.candidates(),
                                     &init_base,
                                     args.len() + kwargs.len(),
                                 );
@@ -2246,10 +2250,7 @@ impl<'a> Specializer<'a> {
                         // resolves against `List.*` and gets its instance
                         // identity from `infer_call`'s receiver binding.
                         let mut target = mojito_symbol::symbol::resolve_method_symbol(
-                            self.functions.iter().map(|(name, f)| CallableCandidate {
-                                name,
-                                n_params: f.n_params,
-                            }),
+                            self.functions.candidates(),
                             nominal_template(receiver_name),
                             method,
                             resolved.as_deref(),
@@ -2273,10 +2274,7 @@ impl<'a> Specializer<'a> {
                             // instance for the lowered expansion.
                             if method == mojito_symbol::symbol::WRITE_FORMATTED {
                                 let write_string = mojito_symbol::symbol::resolve_callable_symbol(
-                                    self.functions.iter().map(|(name, f)| CallableCandidate {
-                                        name,
-                                        n_params: f.n_params,
-                                    }),
+                                    self.functions.candidates(),
                                     &format!("{}.write_string", nominal_template(receiver_name)),
                                     1,
                                 );
@@ -2483,10 +2481,7 @@ impl<'a> Specializer<'a> {
                             continue;
                         };
                         let target = mojito_symbol::symbol::resolve_method_symbol(
-                            self.functions.iter().map(|(name, f)| CallableCandidate {
-                                name,
-                                n_params: f.n_params,
-                            }),
+                            self.functions.candidates(),
                             nominal_template(receiver_name),
                             "__call__",
                             resolved.as_deref(),
@@ -2552,7 +2547,7 @@ impl<'a> Specializer<'a> {
                         k: Const::Function(target),
                         ..
                     } => {
-                        let Some(body) = self.functions.get(target.as_str()).copied() else {
+                        let Some(body) = self.functions.get(target.as_str()) else {
                             continue;
                         };
                         if function_types(body).any(is_symbolic)
@@ -2905,12 +2900,12 @@ impl<'a> Specializer<'a> {
                 let base = format!("{template_name}.{method}");
                 let candidates = self
                     .functions
-                    .iter()
-                    .filter(|(candidate, _)| {
-                        **candidate == base
+                    .keys()
+                    .filter(|candidate| {
+                        *candidate == base
                             || mojito_symbol::symbol::is_overload_of(candidate, &base)
                     })
-                    .map(|(candidate, _)| (*candidate).to_string())
+                    .map(str::to_string)
                     .collect::<Vec<_>>();
                 for candidate in candidates {
                     let Some(function_decl) = self.declarations.get(candidate.as_str()).copied()

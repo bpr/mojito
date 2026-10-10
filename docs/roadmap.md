@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R544**.
+Next free ID: **R548**.
 
 ## Ordered Work
 
@@ -50,19 +50,56 @@ Scope: what remains of the plan's stages, and what the pipeline order still
 leaves to close. A defect found on the way is filed by its kind; a
 divergence from the pin goes to a catch-up track, however small.
 
-- [ ] **R11 (P6) The standard library is checked again in every
-  compilation**
+- [ ] **R545 (P6) An importer still reads the bundled library's
+  declarations from source**
 
-  Problem: Mojo imports a package without checking its source again, and
-  Mojito re-parses and re-checks the bundled library each time.
-  - Serialize verified, drop-elaborated generators as a package artifact.
-    That boundary is Mojito's choice. Upstream's `.mojoc` holds the
-    post-parse IR, written before lowering.
-  - A package keeps every exported template, reached by an entry or not.
-  - Importing skips the source check. It still validates the artifact and
-    checks each instance's obligations.
-  - The bundled library is the first consumer, built once per compiler build.
-  - Depends on R10.
+  Every compilation links, parses, elaborates, and registers each library
+  declaration again; only the library's bodies come from its package.
+  - Upstream registers a package's declarations from the package, and ships
+    no library source.
+  - That work is most of Hello World's 140 ms release
+    (`docs/performance.md` §P6): the prelude's link (33 ms), comptime
+    elaboration (26 ms), and most of the 37 ms check.
+  - The lever is a declaration interface in the package: the tables a user
+    check reads (`StructInfo`, `TraitInfo`, method signatures, aliases,
+    constants, overload sets, generic parameters, explicit-destroy facts,
+    the conformance oracle), named by linked names and installed instead of
+    checked.
+  - Default-argument and literal expressions are AST inside those tables.
+  - Depends on R544, since a conformer needs the source of every trait
+    default it inherits.
+  - Model: Fable, Planned.
+
+- [ ] **R544 A conformer gets a copy of a trait default's body instead of
+  a wrapper that calls the default**
+
+  `expand_trait_defaults` clones a trait's default body into every
+  conforming struct that does not spell the method, and the struct checks
+  the copy as its own method.
+  - Upstream gives the conformer a forwarding wrapper
+    (`synthesizeDefaultTraitMethodWrapper`, `StructEmitter.cpp`) and checks
+    the default once, in its trait.
+  - So a struct conforming to `Writer` needs the library source of
+    `Writer.write`, even though the library is imported from its package.
+  - Sites: `checker/traits_support.rs`, called from `comptime.rs` and
+    `checker.rs`.
+  - Depends on nothing.
+  - Model: Fable, Planned.
+
+- [ ] **R547 A function the check lifts from a body is numbered per
+  compilation, so the bundled library cannot contain one**
+
+  `$comptime$$<n>` and a display binding's `$comptime$<binding>$<n>` count
+  binding identities, which every compilation restarts.
+  - An importer's own lifted function could reuse a name a package body
+    calls.
+  - So the package build refuses such a body (`lifted_name_is_stable` in
+    `src/package.rs`), and the library then compiles from source after a
+    warning. No library body lifts one today.
+  - Upstream names a lifted parameter function by its declaration.
+  - The lever: name it by its owning declaration and an index within it, as
+    MIR's own `$comptime$<function>$<k>` is.
+  - Depends on nothing.
   - Model: Fable, Planned.
 
 - [ ] **R474 (P5) A closed parameter argument outside a generic call's
@@ -102,6 +139,19 @@ divergence from the pin goes to a catch-up track, however small.
   - A `Tuple` type over an open pack has no declaration to serve a static
     member until `Tuple` is a generator.
   - Depends on R4.
+  - Model: Fable, Planned.
+
+- [ ] **R546 (P6) A package holds lowered CFG MIR where upstream's holds
+  post-parse IR**
+
+  The bundled library's package keeps each body as ownership-checked CFG
+  MIR, where upstream's `.mojoc` keeps the structured IR written just after
+  the semantic checks, which its importer lowers.
+  - The importer inserts a decoded body's drops, as upstream runs its
+    lifetime pass on a materialized body, but repeats nothing earlier.
+  - Closing it needs a serializable checked IR above the MIR waist
+    (`docs/pliron-future.md`).
+  - Depends on R545, the declaration half of the same package.
   - Model: Fable, Planned.
 
 ### Native Backend

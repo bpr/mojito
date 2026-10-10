@@ -1,5 +1,5 @@
 pub use mojito_ast::{ast, call};
-pub use mojito_checked::checked;
+pub use mojito_checked::{checked, interface};
 pub use mojito_checker::{checker, explicit_destroy};
 pub use mojito_common::{error, literal, timing, token};
 pub use mojito_comptime::comptime;
@@ -31,6 +31,7 @@ pub use mojito_vm::runtime;
 pub mod artifact;
 pub mod backend;
 pub mod compiler;
+pub mod package;
 
 // Re-export commonly used types at the crate root for convenience
 pub use analysis::{check_ownership_checked, check_ownership_program};

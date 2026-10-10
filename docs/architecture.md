@@ -71,9 +71,65 @@ each named by its accessor and each computed once:
 
 | Phase | Accessor | What it is | Who consumes it |
 |---|---|---|---|
-| Parametric MIR | `mir()` | The ownership-verified, pre-drop `MirProgram` the driver lowered; generic bodies name their parameters | Ownership analysis |
-| Drop-elaborated MIR | `drop_elaborated_mir()` | Parametric MIR with drops inserted, re-verified; may still be generic | The elaborator; `emit_mir` and the serialized artifact |
+| Parametric MIR | `mir()` | The ownership-verified, pre-drop `MirProgram` the driver lowered; generic bodies name their parameters. With an imported package, the program's own functions and every declaration, the package's included | Ownership analysis |
+| Drop-elaborated MIR | `elaborated_mir()` | Parametric MIR with drops inserted, re-verified; may still be generic | The elaborator, beside an imported package's bodies |
+| Whole drop-elaborated MIR | `drop_elaborated_mir()` | `elaborated_mir()` with every package body joined, decoded and drop-elaborated; the same program when nothing is imported | `emit_mir` and the serialized artifact |
 | Concrete MIR | `concrete_mir()` | The elaborator's entry-rooted output, a `SpecializedProgram` whose `mir::ConcreteMir` passed `verify_concrete` | The VM and the native backend |
+
+### The Bundled Library Is An Imported Package
+
+Mojo imports a precompiled package without checking its source again. The
+bundled library is imported the same way, as one compiled package per
+compiler build (`src/package.rs`):
+
+```text
+build (once per compiler build, then cached):
+  every std module -> link -> elaborate -> check -> MIR -> ownership
+    -> std package: interface + MIR declarations + pre-drop bodies
+
+import (every compilation that links the bundled library):
+  source -> link -> elaborate -> check (package bodies not checked)
+    -> MIR of the program's own declarations, linked with the package's
+       MIR declarations -> verify + ownership (own functions)
+    -> drop elaboration (own functions)
+    -> native::mono, which decodes a package body when it first reaches
+       it and inserts its drops then -> VM
+```
+
+- **The package file** (`mir::text::package`) holds a header (package,
+  compiler build identity, source digest), the checker interface
+  (`checked::interface::PackageInterface`), the package's MIR declarations,
+  and each function body as MIR text, before drop elaboration. Bodies decode
+  on demand: Hello World decodes three of about 875.
+- **The interface** is what an importer's check reads from the package's
+  bodies: the modules the package compiled, their top-level names, each
+  module-level callable's transfer and call-through effect summaries, and
+  the traits the package's bodies ask a type's conformance to.
+- **The check** registers the package's declarations from their source as
+  for any module, takes the summaries as committed effects, and checks no
+  package body: a module-level `def` or method from a package module is a
+  carried site with nothing to copy (`Checker::in_package`). After the check
+  the package's bodies are emptied from the handoff, so the checked arena,
+  explicit destruction, and lowering see its declarations alone.
+- **Lowering** (`mir::lower_checked_program_importing`) skips the package's
+  declarations and links its MIR declarations (`mir::link`) before closing
+  and verifying the program's own functions. A package struct gains the
+  importer's conformance row for each trait the package never asked about.
+- **The elaborator** (`native::mono::specialize_importing`) reads a callee
+  the program does not define from the package. The body is drop-elaborated
+  and verified as it is decoded, as upstream materializes a package body
+  and runs its lifetime pass in the importer.
+- **Identity.** A package names its modules by stamped path and its
+  declarations by linked name. The build id (`MOJITO_BUILD_ID`, a digest of
+  the compiler's sources) and the library's source digest key the cache
+  (`target/mojito-cache` in the development tree). A program that declares
+  one of the package's names again, as a second copy of a bundled module
+  would, compiles the library from source. So does `MOJITO_STD_PACKAGE=0`,
+  or `Compiler::with_std_package(false)`.
+- **Divergences.** Upstream's package holds post-parse IR, and its importer
+  registers the package's declarations from the package. Mojito's holds
+  lowered MIR and re-reads the declarations from the library's source
+  (`docs/roadmap.md`, `pmir` track).
 
 `native::mono` is the one elaborator below the waist. `concrete_mir()` runs it
 from the program's entry roots and caches the graph, so the VM and the native
@@ -401,7 +457,10 @@ Currently it supports:
   breaking by canonical path
 
 Imported declarations receive module-qualified internal names before they are
-hoisted. Import bindings are rewritten to those names, so two modules can export
+hoisted. A module under a search root is named by its path under that root
+(`std/io/file.mojo` is `std.io.file`), whichever import first reaches it, so a
+declaration's linked name is the same in every program, as a compiled
+package needs. Import bindings are rewritten to those names, so two modules can export
 the same source name without merging declarations or overload sets. A module
 exports top-level `def`, `struct`, `trait`, and `comptime` declarations except
 `main`; wildcard imports omit underscore-prefixed names.

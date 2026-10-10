@@ -24,13 +24,14 @@ use unify::*;
 use availability::Availability;
 use mojito_ast::call::{ArgSlot, CallVariadics, match_call_slots};
 use mojito_checked::checked::CheckedConst;
+use mojito_mir::mir::text::package::PackageBodies;
 use mojito_mir::mir::{
     ConcreteMir, Const, MirBlock, MirCaptureMode, MirClosureCapture, MirDeclarations, MirFunction,
     MirFunctionDeclaration, MirInstr, MirPlace, MirProgram, MirStructDeclaration, MirTerm, Reg,
 };
 use mojito_native_core::layout::StructFieldIndex;
 use mojito_native_core::target::NativeTarget;
-use mojito_symbol::symbol::{CallableCandidate, InstanceArg};
+use mojito_symbol::symbol::InstanceArg;
 use mojito_types::ct::CtValue;
 use mojito_types::param_expr::{
     PackQuery, ParamBindings, ParamContext, ParamExpr, ParamKind, ParamRef, SIZE_OF_FUNCTION,
@@ -113,6 +114,18 @@ pub fn specialize(
     entries: &[String],
     target: Option<&NativeTarget>,
 ) -> Result<SpecializedProgram, MonoError> {
+    specialize_importing(program, None, entries, target)
+}
+
+/// [`specialize`] for a program that imports a compiled package: a callee
+/// the program does not define is the package's, whose body is decoded the
+/// first time the elaboration reaches it.
+pub fn specialize_importing(
+    program: &MirProgram,
+    package: Option<&PackageBodies>,
+    entries: &[String],
+    target: Option<&NativeTarget>,
+) -> Result<SpecializedProgram, MonoError> {
     // Expanding polymorphic recursion nests each instance's types one level
     // deeper than the last, and the type walks recurse on that nesting, so
     // the elaborator runs on a stack deep enough to reach the instance
@@ -121,9 +134,17 @@ pub fn specialize(
         std::thread::Builder::new()
             .name("elaborator".to_string())
             .stack_size(ELABORATOR_STACK_BYTES)
-            .spawn_scoped(scope, || Specializer::new(program, target).run(entries))
+            .spawn_scoped(scope, || {
+                Specializer::new(program, target)
+                    .importing(package)
+                    .run(entries)
+            })
             .map_or_else(
-                |_| Specializer::new(program, target).run(entries),
+                |_| {
+                    Specializer::new(program, target)
+                        .importing(package)
+                        .run(entries)
+                },
                 |elaborator| {
                     elaborator
                         .join()
@@ -337,7 +358,7 @@ struct Specializer<'a> {
     source: &'a MirProgram,
     /// The target every layout query is answered for.
     target: Option<&'a NativeTarget>,
-    functions: HashMap<&'a str, &'a MirFunction>,
+    functions: bodies::Bodies<'a>,
     declarations: HashMap<&'a str, &'a MirFunctionDeclaration>,
     structs: HashMap<&'a str, &'a MirStructDeclaration>,
     generic_templates: Rc<HashSet<String>>,
@@ -417,6 +438,7 @@ struct Specializer<'a> {
 }
 
 mod availability;
+mod bodies;
 mod equiv;
 mod failure;
 mod gather;

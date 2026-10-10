@@ -3834,3 +3834,61 @@ fn ctfe_subprogram_hasher_leaves_run() {
     let program = compile_entry(&compiler, include_str!("../assets/ok/comptime_hash.mojo"));
     compiler.execute(&program).expect("execute");
 }
+
+#[test]
+fn the_bundled_library_is_imported_from_its_compiled_package() {
+    // The library's bodies were checked and lowered when its package was
+    // built: the program's own MIR holds only its own functions, and the
+    // run matches compiling the library from source.
+    let source = "def main() raises:\n    var xs: List[Int] = [3, 1, 2]\n    var d = Dict[String, Int]()\n    d[\"a\"] = len(xs)\n    print(xs[0], d[\"a\"], String(\"x\") + \"y\")\n";
+    let entry = std::path::Path::new("imported_library.mojo");
+    let importing = Compiler::default().with_std_package(true);
+    let imported = importing.compile_source(source, entry).expect("compile");
+    assert!(imported.imported_package().is_some());
+    let own: Vec<&str> = imported
+        .mir()
+        .functions
+        .iter()
+        .map(|(name, _)| name.as_str())
+        .collect();
+    assert_eq!(own, ["main", "__toplevel__"]);
+    let checking = Compiler::default().with_std_package(false);
+    let checked = checking.compile_source(source, entry).expect("compile");
+    assert!(checked.imported_package().is_none());
+    assert_eq!(
+        importing.execute(&imported).expect("execute").output,
+        checking.execute(&checked).expect("execute").output,
+    );
+}
+
+#[test]
+fn a_package_reads_back_to_the_text_it_was_written_as() {
+    use mojito::mir::text::package::{PackageHeader, read_package, write_package};
+    let compiled = Compiler::default()
+        .with_std_package(false)
+        .compile_unlinked("def main():\n    var xs: List[Int] = [1]\n    print(len(xs))\n")
+        .expect("compile");
+    let program = compiled.drop_elaborated_mir();
+    let header = PackageHeader {
+        package: "probe".to_string(),
+        compiler: "test".to_string(),
+        source: "0".to_string(),
+    };
+    let interface = mojito::interface::PackageInterface::default();
+    let text = write_package(&header, &interface, program).expect("write");
+    let package = read_package(text.clone()).expect("read");
+    assert_eq!(package.header, header);
+    assert_eq!(package.bodies.materialized(), 0, "bodies decode on demand");
+    let again = mojito::mir::MirProgram {
+        functions: package.bodies.all(),
+        declarations: package.declarations,
+        invariant_errors: Vec::new(),
+    };
+    assert!(package.bodies.failures().is_empty());
+    assert_eq!(
+        write_package(&header, &package.interface, &again).expect("rewrite"),
+        text
+    );
+    let truncated = text[..text.len() - 4].to_string();
+    assert!(read_package(truncated).is_err());
+}

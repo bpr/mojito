@@ -821,3 +821,28 @@ before (every plain body's `comptime if` and `comptime for` is now typed
 once and every module constant read is a checked fact), concrete-MIR
 instance counts are unchanged, and peak RSS is below the baseline on
 every row; D4's 1.20× alarm is not approached.
+
+## P6: the bundled library is a compiled package (2026-10-09)
+
+**Environment.** One release binary built from the R11 tree, run with the
+library compiled from source (`MOJITO_STD_PACKAGE=0`, the old pipeline) and
+imported from its cached package; rustc 1.96.1; the machine of the sections
+above; VM backend; `--timings` rows in microseconds, the middle of 3 runs
+per mode (`/usr/bin/time -f %M` for peak RSS). `elaborate` is the backend's
+mono elaboration, which now also decodes, drop-elaborates, and verifies each
+package body it reaches.
+
+| Program | total (source → package) | compile | check | mir.lower | elaborate | bodies decoded | concrete fns | peak RSS MB |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| hello | 936 → 140 (−85%) | 707 → 73 | 432 → 32 | 201 → 2 | 2 → 3 | 3 | 5 → 5 | 193 → 75 |
+| generic | 940 → 150 (−84%) | 706 → 76 | 430 → 35 | 202 → 3 | 4 → 8 | 16 | 25 → 25 | 195 → 78 |
+| keyed | 947 → 172 (−82%) | 705 → 79 | 427 → 36 | 203 → 4 | 10 → 22 | 32 | 58 → 58 | 201 → 83 |
+| stdlib_heavy | 973 → 209 (−79%) | 709 → 77 | 430 → 35 | 200 → 3 | 27 → 56 | 70 | 165 → 165 | 216 → 94 |
+
+The check and lowering now cover the program's own bodies only, and the
+concrete-MIR instance counts are unchanged. What remains of Hello World's
+140 ms is mostly the library's declarations, still read from source: the
+prelude's link and parse (33), comptime elaboration (26), the declaration
+phases of the check (about 25), and reading the package itself (about 27).
+Building the package costs one source-mode compilation of every library
+module, once per compiler build (about 1.3 s release, 6 s debug).

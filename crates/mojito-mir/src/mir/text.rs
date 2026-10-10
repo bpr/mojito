@@ -557,6 +557,7 @@ fn resolve_candidate_span(source_map: &ArtifactSourceMap, candidates: &[String])
     ("artifact".to_string(), (0, 0))
 }
 
+pub mod package;
 mod parse;
 mod write;
 

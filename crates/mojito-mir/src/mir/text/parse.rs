@@ -127,6 +127,7 @@ mod decls;
 mod instrs;
 mod operands;
 mod origins;
+pub(super) mod package;
 mod prims;
 mod reader;
 mod types;

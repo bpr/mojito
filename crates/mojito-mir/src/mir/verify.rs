@@ -43,6 +43,18 @@ pub fn verify(program: &MirProgram) -> Vec<String> {
     errors
 }
 
+/// [`verify`] for the one function `name` of a program whose declarations
+/// are `declarations`.
+pub fn verify_function_in(
+    name: &str,
+    function: &MirFunction,
+    declarations: &MirDeclarations,
+) -> Vec<String> {
+    let mut errors = Vec::new();
+    verify_function(name, function, declarations, &mut errors);
+    errors
+}
+
 /// [`verify`] for elaborated MIR: the same structural rules, plus the
 /// rejection of every symbolic type, compile-time parameter, and
 /// erased-dispatch contract. Parametric MIR never passes this mode.

@@ -1996,10 +1996,15 @@ impl Checker {
         Some(register_passable)
     }
 
-    /// Every trait a member's availability clause or a struct's conformance
-    /// condition names, sorted.
-    fn constrained_traits(&self) -> std::collections::BTreeSet<String> {
-        let mut named = std::collections::BTreeSet::new();
+    /// Every trait a member's availability clause, a struct's conformance
+    /// condition, or a recorded `comptime if` condition names, and every
+    /// trait an imported package's bodies ask, sorted.
+    pub(super) fn constrained_traits(&self) -> std::collections::BTreeSet<String> {
+        let mut named = self
+            .package
+            .as_ref()
+            .map(|package| package.asked_traits.clone())
+            .unwrap_or_default();
         for info in self.structs.values() {
             for condition in info.conformance_conditions.values() {
                 if let Ok(condition) = self.compile_condition(&info.decls, condition) {

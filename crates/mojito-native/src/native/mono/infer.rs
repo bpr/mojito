@@ -33,10 +33,7 @@ impl Specializer<'_> {
             "__setitem__"
         };
         let target = mojito_symbol::symbol::resolve_method_symbol(
-            self.functions.iter().map(|(name, f)| CallableCandidate {
-                name,
-                n_params: f.n_params,
-            }),
+            self.functions.candidates(),
             nominal_template(receiver_name),
             method,
             Some(&call.target),
@@ -628,10 +625,7 @@ impl Specializer<'_> {
         selected: Option<&str>,
     ) -> String {
         mojito_symbol::symbol::resolve_method_symbol(
-            self.functions.iter().map(|(name, f)| CallableCandidate {
-                name,
-                n_params: f.n_params,
-            }),
+            self.functions.candidates(),
             nominal_template(receiver_name),
             method,
             selected,
@@ -764,10 +758,7 @@ impl Specializer<'_> {
             return false;
         };
         let target = mojito_symbol::symbol::resolve_method_symbol(
-            self.functions.iter().map(|(name, f)| CallableCandidate {
-                name,
-                n_params: f.n_params,
-            }),
+            self.functions.candidates(),
             nominal_template(name),
             "__next__",
             None,

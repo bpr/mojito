@@ -937,3 +937,28 @@ fn std_memory_package_does_not_export_unsafe_alloc() {
         "unexpected error: {err}"
     );
 }
+
+#[test]
+fn a_rooted_module_is_named_by_its_path_whichever_import_reaches_it() {
+    // `pkg/__init__.mojo` reaches `pkg/tool.mojo` by a relative import, and
+    // the entry by an absolute one: both name it `pkg.tool`, as Mojo names
+    // a symbol by its module path, so its linked names do not depend on
+    // which import loaded it first.
+    let d = TempDir::new();
+    d.write("lib/pkg/__init__.mojo", "from .tool import answer\n");
+    d.write("lib/pkg/tool.mojo", "def answer() -> Int:\n    return 42\n");
+    let main = d.write(
+        "src/main.mojo",
+        "import pkg\nfrom pkg.tool import answer\n\ndef main():\n    print(answer())\n",
+    );
+    let options = LinkOptions {
+        search_roots: vec![d.0.join("lib")],
+    };
+    let program = mojito::link_with_options(&main, options.clone()).expect("link");
+    assert_eq!(declaration_count(&program, "__module$pkg$tool$answer"), 1);
+    assert_eq!(declaration_count(&program, "__module$tool$answer"), 0);
+    let execution = Compiler::new(options, BackendKind::Vm)
+        .run_path(&main)
+        .unwrap();
+    assert_eq!(execution.output, "42\n");
+}

@@ -65,18 +65,7 @@ pub(super) fn schema_findings(program: &MirProgram) -> Vec<String> {
 pub(super) fn program(program: &MirProgram) -> String {
     let files = files(program);
     let mut output = String::new();
-    writeln!(output, "{}", version_header()).unwrap();
-    writeln!(output, "artifact {{").unwrap();
-    writeln!(output, "  features: [],").unwrap();
-    write_files(&mut output, &files);
-    writeln!(
-        output,
-        "  traits: {},",
-        list(program.declarations.traits.iter().map(|name| symbol(name)))
-    )
-    .unwrap();
-    write_structs(&mut output, &program.declarations.structs);
-    write_declarations(&mut output, &program.declarations.functions);
+    write_artifact_head(&mut output, program, &files);
     writeln!(output, "  functions: [").unwrap();
     for (index, (name, function)) in program.functions.iter().enumerate() {
         write_function(&mut output, name, function, &files, 2);
@@ -94,6 +83,133 @@ pub(super) fn program(program: &MirProgram) -> String {
     writeln!(output, "  ]").unwrap();
     writeln!(output, "}}").unwrap();
     output
+}
+
+/// A package's MIR parts: its declarations as an artifact whose function
+/// list is empty, whose `files` table every body's locations name, and each
+/// function's own record.
+pub(super) fn package_parts(program: &MirProgram) -> (String, Vec<String>) {
+    let files = files(program);
+    let mut declarations = String::new();
+    write_artifact_head(&mut declarations, program, &files);
+    writeln!(declarations, "  functions: []").unwrap();
+    writeln!(declarations, "}}").unwrap();
+    let functions = program
+        .functions
+        .iter()
+        .map(|(name, function)| {
+            let mut output = String::new();
+            write_function(&mut output, name, function, &files, 0);
+            output
+        })
+        .collect();
+    (declarations, functions)
+}
+
+/// A package's interface: the modules it compiled, the traits its bodies
+/// ask, and its callables' effect summaries.
+pub(super) fn package_interface(interface: &mojito_checked::interface::PackageInterface) -> String {
+    let summary = |callable: &str, effects: String| {
+        record(
+            "summary",
+            &[("callable", symbol(callable)), ("effects", effects)],
+        )
+    };
+    record(
+        "interface",
+        &[
+            (
+                "modules",
+                list(interface.modules.iter().map(|module| quote(module))),
+            ),
+            (
+                "names",
+                list(interface.names.iter().map(|name| symbol(name))),
+            ),
+            (
+                "asked_traits",
+                list(interface.asked_traits.iter().map(|name| symbol(name))),
+            ),
+            (
+                "transfer_effects",
+                list(
+                    interface
+                        .transfer_effects
+                        .iter()
+                        .map(|(callable, effects)| {
+                            summary(
+                                callable,
+                                transfer_set(&mojito_checked::checked::TransferSet(
+                                    effects.clone(),
+                                )),
+                            )
+                        }),
+                ),
+            ),
+            (
+                "call_through_effects",
+                list(
+                    interface
+                        .call_through_effects
+                        .iter()
+                        .map(|(callable, effects)| {
+                            summary(callable, list(effects.iter().map(call_through)))
+                        }),
+                ),
+            ),
+        ],
+    )
+}
+
+fn call_through(effect: &mojito_checked::checked::CallThroughEffect) -> String {
+    let callee = match &effect.callee {
+        mojito_checked::checked::CallThroughCallee::RuntimeParam(slot) => {
+            positional("runtime_param", &slot.to_string())
+        }
+        mojito_checked::checked::CallThroughCallee::ValueParam(name) => {
+            positional("value_param", &symbol(name))
+        }
+    };
+    record(
+        "call_through",
+        &[
+            ("callee", callee),
+            (
+                "args",
+                list(effect.args.iter().map(|argument| {
+                    record(
+                        "arg",
+                        &[
+                            ("place", option(argument.place.as_ref().map(sig_origin))),
+                            ("carried", list(argument.carried.iter().map(sig_origin))),
+                            ("local", argument.local.to_string()),
+                        ],
+                    )
+                })),
+            ),
+        ],
+    )
+}
+
+/// The version header and an artifact's leading fields, through its
+/// function declarations.
+fn write_artifact_head(
+    output: &mut String,
+    program: &MirProgram,
+    files: &BTreeMap<Option<String>, usize>,
+) {
+    writeln!(output, "{}", version_header()).unwrap();
+    writeln!(output, "artifact {{").unwrap();
+    writeln!(output, "  features: [],").unwrap();
+    write_files(output, files);
+    writeln!(
+        output,
+        "  traits: {},",
+        list(program.declarations.traits.iter().map(|name| symbol(name)))
+    )
+    .unwrap();
+    write_structs(output, &program.declarations.structs);
+    write_declarations(output, &program.declarations.functions);
 }
 
 fn files(program: &MirProgram) -> BTreeMap<Option<String>, usize> {

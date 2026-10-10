@@ -26,6 +26,7 @@ use mojito_ast::ast::{
 use mojito_ast::call::{effective_keyword_only_index, regular_marker_index};
 use mojito_checked::checked::{AnnotationSite, GenericSite};
 use mojito_checked::checked::{CheckedConst, CheckedProgram, StructConformance};
+use mojito_checked::interface::PackageInterface;
 use mojito_common::timing;
 use mojito_common::token::{DUMMY_SPAN, SourceSpan};
 use mojito_hir::hir::{self, Cfg, HirInstr, Terminator, VarId};
@@ -43,6 +44,7 @@ pub mod verify;
 
 mod calls;
 mod facts;
+pub mod link;
 mod lower_expr;
 mod lower_stmt;
 
@@ -340,8 +342,25 @@ pub fn materialized_parameter_slots(
 ///
 /// Panics if a checked declaration names a parameter absent from its own
 /// signature, which `CheckedProgram` construction rules out.
-#[allow(clippy::too_many_lines, reason = "TODO: split this pass")]
 pub fn lower_checked_program(checked: &CheckedProgram) -> MirProgram {
+    lower_checked_program_importing(checked, None)
+}
+
+/// [`lower_checked_program`] for a program that imports a compiled package.
+///
+/// A declaration the package compiled is not lowered again, and the
+/// package's MIR declarations join the program's before its functions are
+/// closed and verified. The package's functions stay out of the result; a
+/// consumer reaches them through the package.
+///
+/// # Panics
+///
+/// As [`lower_checked_program`].
+#[allow(clippy::too_many_lines, reason = "TODO: split this pass")]
+pub fn lower_checked_program_importing(
+    checked: &CheckedProgram,
+    package: Option<(&PackageInterface, &MirDeclarations)>,
+) -> MirProgram {
     let program = checked.statements();
     let mut functions = Vec::new();
     let mut declarations = MirDeclarations {
@@ -356,7 +375,10 @@ pub fn lower_checked_program(checked: &CheckedProgram) -> MirProgram {
         mojito_symbol::symbol::OverloadSets::scan(program)
     };
 
-    for s in program {
+    for s in program
+        .iter()
+        .filter(|s| package.is_none_or(|(interface, _)| !interface.compiles(s.module.as_deref())))
+    {
         let _stmt = timing::span(match &s.kind {
             StmtKind::Def { .. } => "def",
             StmtKind::Struct { .. } => "struct",
@@ -1027,6 +1049,9 @@ pub fn lower_checked_program(checked: &CheckedProgram) -> MirProgram {
     // The synthetic module initializer returns nothing and never raises.
     toplevel_fn.ret_ty = Some(Ty::None);
     functions.push(("__toplevel__".to_string(), toplevel_fn));
+    if let Some((_, compiled)) = package {
+        link::link_declarations(&mut declarations, compiled, &checked.conformances().structs);
+    }
     {
         let _close = timing::span("close_register_types");
         for (name, function) in &mut functions {
