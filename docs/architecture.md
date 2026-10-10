@@ -120,7 +120,9 @@ import (every compilation that links the bundled library):
   (`mir::link::link_declarations`): the importer's `MirDeclarations` holds
   its own declarations and an `ImportedDeclarations`, the shared
   `PackageDeclarations` beside the conformance rows the importer adds to
-  package structs. `MirDeclarations::{function, structure}` answer from the
+  package structs: its answers for a trait the package never asked, and an
+  empty row for each foreign trait (one the importer declares afresh),
+  joined on a struct's first lookup. `MirDeclarations::{function, structure}` answer from the
   program's own declarations first, then the package's, so every phase
   looks a declaration up by name; only a consumer of the whole program
   (the disassembler, through `MirDeclarations::materialized`) decodes them
@@ -184,8 +186,8 @@ import (every compilation that links the bundled library):
   binding resolves below the module scope, with an owner from a block each
   pass reserves for every reached binding, numbered as the modules were
   reached and then by name (`Checker::installed_binding`). Only a whole-
-  table walk decodes every record of its table: the conformance rows still
-  walk every struct (R556). A record that does not decode is a lookup
+  table walk decodes every record of its table, and the check makes none
+  on the importer path. A record that does not decode is a lookup
   miss and fails the compilation (`InstalledInterfaces::failures`).
 - **Above the waist no package body or declaration is prepared,
   elaborated, or checked again.** The driver partitions the link into the
@@ -209,8 +211,13 @@ import (every compilation that links the bundled library):
   statements, reads the checker's overload sets
   (`CheckedProgram::overloads`, the package's included), and links the
   package's MIR declarations (`mir::link`) before closing and verifying the
-  program's own functions. A package struct gains the importer's
-  conformance row for each trait the package never asked about.
+  program's own functions. The check answers conformance rows for the
+  program's own structs alone (`Checker::conformance_facts`), as upstream's
+  importer decides only its own types' conformances: a package struct's
+  rows for the traits the package asked are in its MIR declaration, it
+  gains an empty row for each foreign trait at the link, and the check
+  answers it only for a builtin or package trait the package never asked
+  (R564).
 - **The elaborator** (`native::mono::specialize_importing`) reads a callee
   the program does not define from the package. The body is drop-elaborated
   and verified as it is decoded, as upstream materializes a package body
@@ -2601,7 +2608,10 @@ A struct member's `where` clause is declaration metadata:
 `MirStructDeclaration.conformances` holds, per trait a clause or a
 conformance condition names, the conditions under which an instance conforms,
 and `MirDeclarations.traits` lists the declared traits. The checker builds
-the rows (`Checker::conformance_facts`), and the elaborator evaluates a clause
+the rows (`Checker::conformance_facts`); an importer's check builds them
+for its own structs, a package struct carrying the package build's, and
+`mir::link` joins an empty row for each trait the importer declares
+afresh. The elaborator evaluates a clause
 under an instance's bindings (`mono/availability.rs`) without ranking or
 re-deriving anything. A member its instance disproves is skipped when struct
 discovery reaches it and is an error when a call demands it. An instance that

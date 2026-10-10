@@ -66,6 +66,12 @@ to evolve under the `0.x` compatibility rules.
   The elaborator's conformance oracle shares those records with every
   checker pass, so a library declaration decodes once per compilation for
   all of them (R558).
+- An importer's check no longer answers every reached library struct's
+  conformances again (R556): a library struct's rows are the package's,
+  the link gives it an empty row for each trait the program declares, and
+  the check answers only the program's own structs, as Mojo's importer
+  decides only its own types' conformances. Hello World compiles and runs
+  in 8.8 ms release, from 12.4 ms.
 - A module under a search root is linked under its path there, whichever
   import reaches it first: `std/io/file.mojo` declares
   `__module$std$io$file$…`, not `__module$file$…`.

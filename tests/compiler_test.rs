@@ -3877,6 +3877,26 @@ fn a_package_function_is_a_value_in_an_importer() {
 }
 
 #[test]
+fn an_importer_answers_no_package_struct_conformance_again() {
+    // A package struct's rows for the traits its package asked are the
+    // package's, and a trait the importer declares afresh gets an empty row
+    // from the link: the importer's check answers only its own struct.
+    let source = "trait Greeter:\n    def greet(self) -> String:\n        ...\n\n\n@fieldwise_init\nstruct Hi(Copyable, Greeter, Movable):\n    var n: Int\n\n    def greet(self) -> String:\n        return \"hi\"\n\n\ndef pick[T: AnyType]() -> String:\n    comptime if conforms_to(T, Greeter):\n        return \"greeter\"\n    else:\n        return \"plain\"\n\n\ndef main():\n    print(pick[Hi]())\n    print(pick[List[Int]]())\n";
+    let entry = std::path::Path::new("importer_conformances.mojo");
+    let importing = Compiler::default().with_std_package(true);
+    let imported = importing.compile_source(source, entry).expect("compile");
+    assert!(imported.imported_package().is_some());
+    let conformances = imported.checked().conformances();
+    let answered: Vec<&str> = conformances.structs.keys().map(String::as_str).collect();
+    assert_eq!(answered, ["Hi"]);
+    assert_eq!(conformances.foreign_traits, ["Greeter"]);
+    assert_eq!(
+        importing.execute(&imported).expect("execute").output,
+        "greeter\nplain\n"
+    );
+}
+
+#[test]
 fn a_package_reads_back_to_the_bytes_it_was_written_as() {
     use mojito::mir::text::package::{PackageBytes, PackageHeader, read_package, write_package};
     let compiled = Compiler::default()

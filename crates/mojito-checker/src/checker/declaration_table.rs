@@ -115,11 +115,6 @@ impl<V: 'static> DeclarationTable<V> {
     pub(super) const fn own(&self) -> &HashMap<String, V> {
         &self.own
     }
-
-    /// Every value, which resolves every installed record holding one.
-    pub(super) fn values(&self) -> impl Iterator<Item = &V> {
-        self.iter().map(|(_, value)| value)
-    }
 }
 
 impl<V: 'static> Default for DeclarationTable<V> {

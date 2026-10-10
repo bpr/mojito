@@ -1142,7 +1142,13 @@ pub fn lower_checked_program_importing(
     toplevel_fn.ret_ty = Some(Ty::None);
     functions.push(("__toplevel__".to_string(), toplevel_fn));
     if let Some((_, compiled)) = package {
-        link::link_declarations(&mut declarations, compiled, &checked.conformances().structs);
+        let conformances = checked.conformances();
+        link::link_declarations(
+            &mut declarations,
+            compiled,
+            &conformances.structs,
+            &conformances.foreign_traits,
+        );
     }
     {
         let _close = timing::span("close_register_types");

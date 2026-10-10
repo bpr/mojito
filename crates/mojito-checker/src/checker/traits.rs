@@ -3,6 +3,7 @@
 //! trait-method/associated-member lookup. Extracted from `checker.rs`;
 //! see `docs/symbol-map.md`.
 
+use super::interface::Table;
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 
@@ -1816,30 +1817,62 @@ impl Checker {
     /// the declared traits, and each registered struct's answer for every
     /// trait a member's availability clause or a conformance condition
     /// names. Each answer is the one [`Self::conforms_to`] gives that struct.
+    ///
+    /// An importer answers its own structs only, as upstream's importer
+    /// decides only its own types' conformances: a package struct's MIR
+    /// declaration carries its answer for every trait the package asked,
+    /// and `mir::link` joins an empty row for each foreign trait. A package
+    /// struct is answered here only for a trait the package never asked
+    /// that the importer names and does not declare afresh.
     pub(super) fn conformance_facts(&self) -> mojito_checked::checked::ConformanceFacts {
         let mut traits: Vec<String> = self.traits.keys().cloned().collect();
         traits.sort();
         let named = self.constrained_traits();
-        let structs = self
+        let foreign_traits = self.foreign_traits(&named);
+        let computed: Vec<&String> = self.package.as_ref().map_or_else(Vec::new, |package| {
+            named
+                .iter()
+                .filter(|required| {
+                    !package.asked_traits.contains(*required)
+                        && foreign_traits.binary_search(required).is_err()
+                })
+                .collect()
+        });
+        let own = self.structs.own();
+        let answer = |name: &str, info: &StructInfo, required: &String| {
+            let conditions = self.struct_conformance_conditions(name, info, required)?;
+            Some(mojito_checked::checked::StructConformance {
+                trait_name: required.clone(),
+                conditions,
+            })
+        };
+        let walk_package = !computed.is_empty();
+        let structs: HashMap<String, Vec<_>> = self
             .structs
-            .iter()
+            .iter_selected(|installed| {
+                installed
+                    .keys(Table::Structs)
+                    .filter(move |key| walk_package && !own.contains_key(*key))
+            })
             .map(|(name, info)| {
-                let rows = named
-                    .iter()
-                    .filter_map(|required| {
-                        let conditions =
-                            self.struct_conformance_conditions(name, info, required)?;
-                        Some(mojito_checked::checked::StructConformance {
-                            trait_name: required.clone(),
-                            conditions,
-                        })
-                    })
-                    .collect();
+                let rows = if own.contains_key(name) {
+                    named
+                        .iter()
+                        .filter_map(|required| answer(name, info, required))
+                        .collect()
+                } else {
+                    computed
+                        .iter()
+                        .filter_map(|required| answer(name, info, required))
+                        .collect()
+                };
                 (name.clone(), rows)
             })
             .collect();
-        let associated = self
-            .structs
+        if walk_package {
+            timing::count("package_rows", (structs.len() - own.len()) as u64);
+        }
+        let associated = own
             .iter()
             .map(|(name, info)| {
                 let mut members: Vec<(String, Ty)> = info
@@ -1855,8 +1888,7 @@ impl Checker {
             })
             .filter(|(_, members)| !members.is_empty())
             .collect();
-        let associated_values = self
-            .structs
+        let associated_values = own
             .iter()
             .map(|(name, info)| {
                 let mut members: Vec<(String, ParamExpr)> = info
@@ -1876,9 +1908,31 @@ impl Checker {
         mojito_checked::checked::ConformanceFacts {
             traits,
             structs,
+            foreign_traits,
             associated,
             associated_values,
         }
+    }
+
+    /// The traits of `named` an importer declares afresh, sorted: neither
+    /// builtin, nor an `IsTrivially*` spelling, nor declared by any package
+    /// module, so no package struct declares or refines into one. Empty
+    /// without a package.
+    fn foreign_traits(&self, named: &std::collections::BTreeSet<String>) -> Vec<String> {
+        let Some(package) = &self.package else {
+            return Vec::new();
+        };
+        let own = self.traits.own();
+        named
+            .iter()
+            .filter(|required| {
+                own.contains_key(*required)
+                    && !BUILTIN_TRAITS.contains(&required.as_str())
+                    && mojito_types::types::trivial_predicate_name(required).is_none()
+                    && !package.names.contains(*required)
+            })
+            .cloned()
+            .collect()
     }
 
     /// The conditions under which an instance of the struct `name` conforms
@@ -2020,7 +2074,12 @@ impl Checker {
             .as_ref()
             .map(|package| package.asked_traits.clone())
             .unwrap_or_default();
-        for info in self.structs.values() {
+        // A package struct's clauses name only traits the package asked.
+        let installed = self.package.is_none();
+        let structs = self
+            .structs
+            .iter_selected(|interfaces| interfaces.keys(Table::Structs).filter(move |_| installed));
+        for (_, info) in structs {
             for condition in info.conformance_conditions.values() {
                 if let Ok(condition) = self.compile_condition(&info.decls, condition) {
                     constraint_traits(&condition, &mut named);

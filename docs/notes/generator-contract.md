@@ -206,7 +206,9 @@ What the generator carries:
   them. No condition means no instance conforms. The checker builds the rows
   from the same rules `conforms_to` applies to a struct
   (`Checker::conformance_facts`), so the elaborator ranks nothing and
-  re-derives nothing.
+  re-derives nothing. An importer builds them for its own structs only: a
+  package struct carries the package build's rows, and `mir::link` joins
+  an empty row for each trait the importer declares afresh.
 - **The declared traits, on the program.** `MirDeclarations.traits` lists
   them. A compiler-known type conforms to none of them, and to a built-in
   trait by its shape alone. That shape rule is one function,

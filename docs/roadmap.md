@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R564**.
+Next free ID: **R565**.
 
 ## Ordered Work
 
@@ -49,24 +49,6 @@ belongs to is named in its title.
 Scope: what remains of the plan's stages, and what the pipeline order still
 leaves to close. A defect found on the way is filed by its kind; a
 divergence from the pin goes to a catch-up track, however small.
-
-- [ ] **R556 (P6) An importer's check answers every package struct's
-  conformances again**
-
-  `Checker::conformance_facts` decides each struct's conformance to every
-  trait a condition or a package body asks, the reached package structs
-  included, on every compilation.
-  - That is 1.3 ms of Hello World's 3 ms check, release
-    (`check.conformances`).
-  - The package build answered every package struct against every package
-    trait already.
-  - Upstream reads a package type's conformances from the package and
-    decides only the importer's own.
-  - The lever: a module's declaration interface carries its structs'
-    conformance rows, and the importer computes only the rows its own
-    structs or its own asked traits add.
-  - Depends on nothing.
-  - Model: Opus, Planned.
 
 - [ ] **R562 (P6) An importer digests the bundled library's whole source
   on every compilation**
@@ -135,6 +117,26 @@ divergence from the pin goes to a catch-up track, however small.
   - The lever: a lookup-miss view of `OverloadSets` that `CheckedProgram`
     can carry to MIR, and a lookup miss on the elaborator's module
     constants (`comptime::ImportedScope`).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R564 (P6) An importer answers a package struct's conformance to
+  a trait the package never asked, ahead of any use**
+
+  `Checker::conformance_facts` answers every reached package struct for
+  each builtin or package trait an importer's clause names that the
+  package's `asked_traits` lacks (`Absable` in a `comptime if`), and for a
+  user trait spelled with such a name (R510).
+  - It costs about 1.7 ms release, counted as
+    `check.conformances.package_rows`, and decodes every reached struct's
+    interface.
+  - The package build makes the same eager rows for its own
+    `asked_traits`.
+  - Upstream decides a type's conformance when a clause asks it, from the
+    type's declared conformances and the trait refinement graph.
+  - The lever: the elaborator decides a clause over a package struct from
+    its declaration's declared conformance list on demand, so no compilation
+    makes rows ahead of use.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

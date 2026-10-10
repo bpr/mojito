@@ -11,6 +11,7 @@
 
 use super::text::package::PackageDeclarations;
 use super::{MirDeclarations, MirFunctionDeclaration, MirStructDeclaration, StructConformance};
+use mojito_types::types::is_uninit_storage_name;
 use std::collections::{BTreeSet, HashMap};
 use std::sync::{Arc, OnceLock};
 
@@ -23,6 +24,9 @@ pub struct ImportedDeclarations {
     /// The importer's row for each trait a package struct never asked
     /// about, by struct.
     rows: Arc<HashMap<String, Vec<StructConformance>>>,
+    /// The traits the importer declares that no package module declares,
+    /// which every package struct answers with no conformance.
+    foreign: Arc<[String]>,
     /// Each package struct that gains a row, joined with its rows on first
     /// lookup, by package position.
     joined: Arc<[OnceLock<Option<MirStructDeclaration>>]>,
@@ -48,11 +52,23 @@ impl ImportedDeclarations {
 
     fn structure_at(&self, position: usize) -> Option<&MirStructDeclaration> {
         let declaration = self.package.structure_at(position)?;
-        let Some(rows) = self.rows.get(&declaration.name) else {
-            return Some(declaration);
+        let rows = self.rows.get(&declaration.name);
+        let foreign: &[String] = if is_uninit_storage_name(&declaration.name) {
+            &[]
+        } else {
+            &self.foreign
         };
+        if rows.is_none() && foreign.is_empty() {
+            return Some(declaration);
+        }
         self.joined[position]
-            .get_or_init(|| Some(joined(declaration, rows)))
+            .get_or_init(|| {
+                Some(joined(
+                    declaration,
+                    rows.map_or(&[], Vec::as_slice),
+                    foreign,
+                ))
+            })
             .as_ref()
     }
 
@@ -93,6 +109,7 @@ impl MirDeclarations {
             traits: package.traits().to_vec(),
             imported: Some(ImportedDeclarations {
                 rows: Arc::default(),
+                foreign: Arc::from([]),
                 joined: Arc::from([]),
                 package,
             }),
@@ -104,13 +121,16 @@ impl MirDeclarations {
 /// Attach `package`'s declarations to `declarations`, an importer's own.
 ///
 /// A package struct keeps its own conformance rows and gains the importer's
-/// row for every trait the package never asked about (`rows`, the
+/// row for every trait the package never asked about: `rows`, the
 /// importer's answers, which decide a trait only the importer's clauses
-/// name). The trait list is the union of both, sorted.
+/// name, and an empty row for each of the importer's `foreign` traits,
+/// which no package struct can conform to. The trait list is the union of
+/// both programs', sorted.
 pub fn link_declarations<S: std::hash::BuildHasher>(
     declarations: &mut MirDeclarations,
     package: &Arc<PackageDeclarations>,
     rows: &HashMap<String, Vec<StructConformance>, S>,
+    foreign: &[String],
 ) {
     let own: BTreeSet<&str> = declarations
         .structs
@@ -136,21 +156,30 @@ pub fn link_declarations<S: std::hash::BuildHasher>(
     declarations.imported = Some(ImportedDeclarations {
         joined: package.struct_names().map(|_| OnceLock::new()).collect(),
         rows: Arc::new(rows),
+        foreign: Arc::from(foreign),
         package: Arc::clone(package),
     });
 }
 
-/// `declaration` with a row from `rows` for each trait it does not answer,
-/// its rows sorted by trait.
-fn joined(declaration: &MirStructDeclaration, rows: &[StructConformance]) -> MirStructDeclaration {
+/// `declaration` with a row from `rows`, or an empty row for a `foreign`
+/// trait, for each trait it does not answer, its rows sorted by trait.
+fn joined(
+    declaration: &MirStructDeclaration,
+    rows: &[StructConformance],
+    foreign: &[String],
+) -> MirStructDeclaration {
     let mut declaration = declaration.clone();
-    for row in rows {
+    let foreign = foreign.iter().map(|trait_name| StructConformance {
+        trait_name: trait_name.clone(),
+        conditions: Vec::new(),
+    });
+    for row in rows.iter().cloned().chain(foreign) {
         if !declaration
             .conformances
             .iter()
             .any(|known| known.trait_name == row.trait_name)
         {
-            declaration.conformances.push(row.clone());
+            declaration.conformances.push(row);
         }
     }
     declaration

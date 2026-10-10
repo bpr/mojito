@@ -972,3 +972,24 @@ program decodes 63 or 64 declaration records, almost all of them the
 reached structs: the conformance rows still walk every struct
 (`check.conformances`, R556), which is where their decoding now lands.
 With R556, a compilation would decode only the declarations it names.
+
+### The importer answers only its own structs' conformances (2026-10-10, R556)
+
+Same environment and method as the tables above, on the R558 tree against
+the R556 tree, both importing the package; medians of 5 interleaved runs,
+milliseconds. An importer's check answers conformance rows for its own
+structs only: a package struct's rows for the traits the package asked
+are in its MIR declaration, and `mir::link` joins an empty row for each
+trait the importer declares afresh. The walk over every reached struct,
+and the decoding of every struct's interface it caused, are gone.
+
+| Program | total (R558 → now) | check | check.conformances | interfaces decoded |
+|---|---:|---:|---:|---:|
+| hello | 12.4 → 8.8 (−29%) | 3.57 → 0.27 | 3.32 → 0.01 | 63 → 0 |
+| generic | 20.6 → 16.7 (−19%) | 4.69 → 1.48 | 3.25 → 0.04 | 63 → 3 |
+| keyed | 38.5 → 34.8 (−10%) | 6.00 → 2.80 | 3.20 → 0.03 | 64 → 4 |
+| stdlib_heavy | 72.6 → 69.9 (−4%) | 5.83 → 2.94 | 2.85 → 0.03 | 63 → 6 |
+
+A program whose clause names a builtin or package trait the package never
+asked (`Absable`) still answers it for every reached package struct,
+about 1.7 ms (`check.conformances.package_rows`, R564).

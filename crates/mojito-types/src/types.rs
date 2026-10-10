@@ -725,6 +725,13 @@ pub fn is_nominal_instance(name: &str, nominal: &str) -> bool {
         .is_some_and(|module| module.is_empty() || module.ends_with('$'))
 }
 
+/// Whether `name` names compiler-private inline uninit storage, as linked,
+/// specialization-mangled, or backend-monomorphized.
+pub fn is_uninit_storage_name(name: &str) -> bool {
+    let name = name.split("$mono").next().unwrap_or(name);
+    name == UNINIT_STORAGE_TYPE_NAME || name.ends_with(&format!("${UNINIT_STORAGE_TYPE_NAME}"))
+}
+
 /// The payload type of compiler-private inline uninit storage
 /// (`__UninitStorage[T]`), including specialization-mangled and
 /// backend-monomorphized (`…$mono$…`) instantiations.
@@ -735,9 +742,7 @@ pub fn uninit_storage_element(ty: &Ty) -> Option<&Ty> {
     let Ty::Struct(name, arguments) = ty else {
         return None;
     };
-    let name = name.split("$mono").next().unwrap_or(name);
-    if name != UNINIT_STORAGE_TYPE_NAME && !name.ends_with(&format!("${UNINIT_STORAGE_TYPE_NAME}"))
-    {
+    if !is_uninit_storage_name(name) {
         return None;
     }
     let [TyArg::Ty(element)] = arguments.as_slice() else {

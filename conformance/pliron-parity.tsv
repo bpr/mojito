@@ -126,6 +126,7 @@ assets/ok/comptime_template_body_bindings.mojo	main	exe-differential	sanitized
 assets/ok/comptime_tuple.mojo	main	exe-differential	sanitized
 assets/ok/conditional_member_availability.mojo	main	exe-differential	sanitized
 assets/ok/conditional_member_trivial_value_clauses.mojo	main	exe-differential	sanitized
+assets/ok/conforms_to_user_and_unasked_traits.mojo	main	exe-differential	sanitized
 assets/ok/container_hashable.mojo	main	exe-differential	sanitized
 assets/ok/contextual_member_static.mojo	main	exe-differential	sanitized
 assets/ok/copy_return.mojo	main	exe-differential	sanitized
