@@ -4,11 +4,11 @@
 //! registers each module's declarations from the package, never reading
 //! the library's source. A package records, for every module it compiled,
 //! what linking that module from source would have produced: the modules
-//! its link loaded, in order, its export tables, and its declarations as
-//! the package's build prepared them, whose bodies are in the package
-//! already. An importer's
-//! link replays the record in place of reading, parsing, and resolving the
-//! module.
+//! its link loaded, in order, its export tables, and its trait
+//! declarations as the package's build prepared them, whose bodies are in
+//! the package already. Every other declaration an importer reads from the
+//! package's declaration interfaces. An importer's link replays the record
+//! in place of reading, parsing, and resolving the module.
 //!
 //! A record is encoded as binary bytecode (`postcard` over the AST's serde
 //! form), one per module, and decoded only when a link reaches its module.
@@ -124,17 +124,17 @@ pub struct PackageModule {
     /// The namespaces it exposes, by relative qualified path, and the
     /// declarations visible through each.
     pub(crate) namespaces: BTreeMap<String, BTreeMap<String, String>>,
-    /// Its declarations, as the package build's `prepare` left them, in
-    /// order, bodies emptied ([`mojito_ast::ast::clear_bodies`]). The link
-    /// records them as linked; the build replaces them
-    /// ([`Self::replace_declarations`]).
+    /// Its trait declarations, as the package build's `prepare` left them,
+    /// in order, bodies emptied ([`mojito_ast::ast::clear_bodies`]). The
+    /// link records every declaration as linked; the build replaces them
+    /// with the traits ([`Self::replace_declarations`]).
     pub(crate) declarations: Vec<Stmt>,
 }
 
 impl PackageModule {
-    /// Record `declarations`, the module's declarations as the package
-    /// build prepared them, in place of its linked ones; their bodies are
-    /// emptied.
+    /// Record `declarations`, the module's trait declarations as the
+    /// package build prepared them, in place of its linked declarations;
+    /// their bodies are emptied.
     pub fn replace_declarations(&mut self, mut declarations: Vec<Stmt>) {
         declarations
             .iter_mut()

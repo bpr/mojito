@@ -419,6 +419,7 @@ pub struct ConformanceFailure {
 
 mod body_carry;
 mod conformance;
+pub use conformance::PackageStruct;
 mod declaration_table;
 pub(crate) use declaration_table::DeclarationTable;
 mod interface;

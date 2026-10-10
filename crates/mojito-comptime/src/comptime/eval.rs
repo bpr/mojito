@@ -156,7 +156,7 @@ impl Elab<'_> {
                 // argument parses as indexing (`AHasher[SIMD[DType.uint64,
                 // 4](0)]`) is a compile-time type value.
                 if let ExprKind::Identifier(name) = &object.kind
-                    && self.structs.contains_key(name.as_str())
+                    && self.declares_struct(name)
                 {
                     let args: Vec<ParamArg> = match &index.kind {
                         ExprKind::TupleLit(elements) => {
@@ -216,7 +216,7 @@ impl Elab<'_> {
             } if args.is_empty()
                 && kwargs.is_empty()
                 && !matches!(&object.kind, ExprKind::Identifier(name)
-                    if self.structs.contains_key(name.as_str())) =>
+                    if self.declares_struct(name)) =>
             {
                 match self.eval(object, scope)? {
                     CtValue::Reflected(ty) => self.eval_reflection_method(&ty, method, scope),
@@ -514,7 +514,7 @@ impl Elab<'_> {
             } if name == "Dict"
                 && !param_args.is_empty()
                 && kwargs.is_empty()
-                && self.structs.contains_key(name.as_str())
+                && self.declares_struct(name)
                 && (args.is_empty()
                     || (args.len() == 3 && matches!(args[2].kind, ExprKind::None))) =>
             {
@@ -547,7 +547,7 @@ impl Elab<'_> {
                 kwargs,
             } if name == "Set"
                 && !param_args.is_empty()
-                && self.structs.contains_key(name.as_str())
+                && self.declares_struct(name)
                 && kwargs.iter().all(|argument| {
                     argument.name == "__set_literal__"
                         && matches!(argument.value.kind, ExprKind::None)
@@ -576,8 +576,8 @@ impl Elab<'_> {
             } if kwargs.is_empty()
                 && param_args.is_empty()
                 && args.len() <= 1
-                && !self.fns.contains(name.as_str())
-                && !self.structs.contains_key(name.as_str())
+                && !self.declares_function(name)
+                && !self.declares_struct(name)
                 && matches!(
                     scalar_type_name(name),
                     Some(Ty::Int | Ty::UInt | Ty::Float64 | Ty::Bool)
@@ -616,7 +616,7 @@ impl Elab<'_> {
                 ..
             } if kwargs.is_empty()
                 && matches!(&object.kind, ExprKind::Identifier(name)
-                    if self.structs.contains_key(name.as_str())) =>
+                    if self.declares_struct(name)) =>
             {
                 Err(not_evaluated_here(&format!(
                     "a compile-time call of the static method '{method}'"
@@ -877,35 +877,24 @@ impl Elab<'_> {
                 "reflect[{ty}].{method}() requires a struct type"
             )));
         };
-        let info = self.structs.get(name).ok_or_else(|| {
+        let info = self.ct_struct(name).ok_or_else(|| {
             ComptimeError::NotComptime(format!("cannot reflect unknown struct '{name}'"))
         })?;
         match method {
-            "field_count" => Ok(CtValue::Int(info.fields.len() as i64)),
+            "field_count" => Ok(CtValue::Int(info.field_names().len() as i64)),
             "field_names" => Ok(CtValue::List(
-                info.fields
-                    .iter()
-                    .map(|field| CtValue::Str(field.name.clone()))
+                info.field_names()
+                    .into_iter()
+                    .map(|field| CtValue::Str(field.to_string()))
                     .collect(),
             )),
-            "field_types" => {
-                let mut scope = outer_scope.clone();
-                for (decl, argument) in info.decls.iter().zip(arguments) {
-                    // Origins erase from runtime state; they bind no CTFE value.
-                    let Some(value) = argument.ct_value() else {
-                        continue;
-                    };
-                    scope.insert(decl.name().trim_start_matches('*').to_string(), value);
-                }
-                info.fields
-                    .iter()
-                    .map(|field| {
-                        self.type_from_anno(&field.ty, &scope)
-                            .map(|ty| CtValue::Type(Box::new(ty)))
-                    })
-                    .collect::<Result<Vec<_>, _>>()
-                    .map(CtValue::Tuple)
-            }
+            "field_types" => (0..info.field_names().len())
+                .map(|index| {
+                    self.reflected_field_type(info, ty, arguments, outer_scope, index)
+                        .map(|ty| CtValue::Type(Box::new(ty)))
+                })
+                .collect::<Result<Vec<_>, _>>()
+                .map(CtValue::Tuple),
             _ => Err(ComptimeError::NotComptime(format!(
                 "unsupported reflect[T] method '{method}'"
             ))),
@@ -924,12 +913,12 @@ impl Elab<'_> {
                 "Reflected.field_type was removed; use Reflected.field[name]".to_string(),
             ));
         }
-        let Ty::Struct(name, _arguments) = ty else {
+        let Ty::Struct(name, _) = ty else {
             return Err(ComptimeError::NotComptime(format!(
                 "reflect[{ty}].{method} requires a struct type"
             )));
         };
-        let info = self.structs.get(name).ok_or_else(|| {
+        let info = self.ct_struct(name).ok_or_else(|| {
             ComptimeError::NotComptime(format!("cannot reflect unknown struct '{name}'"))
         })?;
         let field_name = match parameters {
@@ -970,9 +959,9 @@ impl Elab<'_> {
             }
         };
         let index = info
-            .fields
-            .iter()
-            .position(|field| field.name == field_name)
+            .field_names()
+            .into_iter()
+            .position(|field| field == field_name)
             .ok_or_else(|| {
                 ComptimeError::NotComptime(format!(
                     "struct '{name}' has no field named '{field_name}'"
@@ -1002,15 +991,15 @@ impl Elab<'_> {
                 "reflect[{ty}].{selector}[...] requires a struct type"
             )));
         };
-        let info = self.structs.get(name).ok_or_else(|| {
+        let info = self.ct_struct(name).ok_or_else(|| {
             ComptimeError::NotComptime(format!("cannot reflect unknown struct '{name}'"))
         })?;
         let selected = self.eval(argument, scope)?;
         let index = match (selector, &selected) {
             ("field", CtValue::Str(field_name)) => info
-                .fields
-                .iter()
-                .position(|field| field.name == *field_name)
+                .field_names()
+                .into_iter()
+                .position(|field| field == field_name)
                 .ok_or_else(|| {
                     ComptimeError::NotComptime(format!(
                         "struct '{name}' has no field named '{field_name}'"
@@ -1033,10 +1022,10 @@ impl Elab<'_> {
                         "reflection field index {raw_index} is out of range for struct '{name}'"
                     ))
                 })?;
-                if index >= info.fields.len() {
+                let count = info.field_names().len();
+                if index >= count {
                     return Err(ComptimeError::NotComptime(format!(
-                        "reflection field index {index} is out of range for struct '{name}' with {} field(s)",
-                        info.fields.len()
+                        "reflection field index {index} is out of range for struct '{name}' with {count} field(s)"
                     )));
                 }
                 index
@@ -1049,6 +1038,31 @@ impl Elab<'_> {
             _ => unreachable!("reflection selector filtered by the caller"),
         };
 
+        let field_ty = self.reflected_field_type(info, ty, arguments, scope, index)?;
+        Ok(CtValue::Reflected(Box::new(field_ty)))
+    }
+
+    /// The type of field `index` of `ty`, an instance of struct `info`
+    /// with `arguments`: an own struct's annotation typed with its
+    /// parameters bound over `scope`, a package struct's as its check
+    /// resolved it.
+    fn reflected_field_type(
+        &self,
+        info: StructView<'_>,
+        ty: &Ty,
+        arguments: &[TyArg],
+        scope: &HashMap<String, CtValue>,
+        index: usize,
+    ) -> Result<Ty, ComptimeError> {
+        let StructView::Own(info) = info else {
+            return self
+                .conformance
+                .package_field_types(ty)
+                .and_then(|mut fields| (index < fields.len()).then(|| fields.swap_remove(index)))
+                .ok_or_else(|| {
+                    ComptimeError::NotComptime(format!("cannot reflect the fields of '{ty}'"))
+                });
+        };
         let mut type_scope = scope.clone();
         for (decl, argument) in info.decls.iter().zip(arguments) {
             // Origins erase from runtime state; they bind no CTFE value.
@@ -1057,8 +1071,7 @@ impl Elab<'_> {
             };
             type_scope.insert(decl.name().trim_start_matches('*').to_string(), value);
         }
-        let field_ty = self.type_from_anno(&info.fields[index].ty, &type_scope)?;
-        Ok(CtValue::Reflected(Box::new(field_ty)))
+        self.type_from_anno(&info.fields[index].ty, &type_scope)
     }
 
     /// Replace a reflected handle's terminal `.T` with an ordinary source type

@@ -16,7 +16,7 @@
 //! The container is a directory followed by records:
 //!
 //! ```text
-//! mojito-package 8
+//! mojito-package 9
 //! <the directory's length, 8 bytes little-endian>
 //! <the directory, as bytecode>
 //! <the payload: every record, as bytecode>
@@ -48,7 +48,7 @@ use std::ops::{Deref, Range};
 use std::sync::{Arc, Mutex, OnceLock};
 
 /// The container format this compiler writes and reads.
-pub const PACKAGE_FORMAT: &str = "mojito-package 8";
+pub const PACKAGE_FORMAT: &str = "mojito-package 9";
 
 /// A package file's bytes: mapped from the file, or owned when the package
 /// was just built.

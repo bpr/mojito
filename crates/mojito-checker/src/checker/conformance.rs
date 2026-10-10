@@ -3,6 +3,29 @@
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 
+/// A struct of an imported package, as the package's check resolved it,
+/// which the elaborator reads in place of its declaration.
+#[derive(Clone, Copy)]
+pub struct PackageStruct<'a>(&'a StructInfo);
+
+impl<'a> PackageStruct<'a> {
+    /// Its compile-time parameters.
+    pub fn decls(self) -> &'a [ParamDecl] {
+        &self.0.decls
+    }
+
+    /// Its parameter list as declared, origin parameters and defaults
+    /// included.
+    pub fn source_params(self) -> &'a [mojito_ast::ast::TypeParam] {
+        &self.0.source_params
+    }
+
+    /// Its declared field names, in order.
+    pub fn field_names(self) -> &'a [String] {
+        &self.0.declared_field_names
+    }
+}
+
 impl ConformanceOracle {
     /// # Panics
     ///
@@ -300,5 +323,92 @@ impl ConformanceOracle {
     /// Answer an `IsTrivially{Movable,Copyable,Deinitable}[T]` comptime predicate.
     pub fn trivially(&self, kind: mojito_types::types::TrivialLifecycle, ty: &Ty) -> bool {
         self.checker.is_trivially(kind, ty)
+    }
+
+    /// Struct `name` of the imported package, as the package's check
+    /// resolved it; its record decodes on first lookup.
+    pub fn package_struct(&self, name: &str) -> Option<PackageStruct<'_>> {
+        self.names_package_struct(name)
+            .then(|| self.checker.structs.get(name).map(PackageStruct))
+            .flatten()
+    }
+
+    /// Whether the imported package declares struct `name`, decoding
+    /// nothing.
+    pub fn names_package_struct(&self, name: &str) -> bool {
+        self.installed().is_some()
+            && !self.checker.structs.own().contains_key(name)
+            && self.checker.structs.contains_key(name)
+    }
+
+    /// Whether the imported package declares function `name`, decoding
+    /// nothing.
+    pub fn names_package_function(&self, name: &str) -> bool {
+        self.installed().is_some() && self.checker.overload_sets.is_function(name)
+    }
+
+    /// The compile-time parameters of the imported package's function
+    /// `name`, when it is one generic declaration rather than an overload
+    /// family.
+    pub fn package_function_params(&self, name: &str) -> Option<&[ParamDecl]> {
+        match &self.installed()?.binding(name)?.1.ty {
+            Ty::GenericFunc { decls, .. } => Some(decls),
+            _ => None,
+        }
+    }
+
+    /// The compile-time member `member` of `base`, an instance of a
+    /// package struct: a type member as the check projects it, a value
+    /// member at the instance's arguments.
+    ///
+    /// # Errors
+    ///
+    /// `base` is no package struct, or declares no such member.
+    pub fn package_associated_value(&self, base: &Ty, member: &str) -> Result<CtValue, TypeError> {
+        let missing = || TypeError::NoSuchAssociatedType {
+            object_type: base.to_string(),
+            member: member.to_string(),
+        };
+        let Ty::Struct(name, arguments) = base else {
+            return Err(missing());
+        };
+        let info = self
+            .package_struct(name)
+            .ok_or_else(|| TypeError::UnknownType(name.clone()))?
+            .0;
+        if info.parameterized_associated.contains_key(member)
+            || matches!(info.associated.get(member), Some(CtValue::Type(_)))
+        {
+            return self
+                .checker
+                .associated_type_from_base(base, member, &[])
+                .map(|ty| CtValue::Type(Box::new(ty)));
+        }
+        let value = info.associated.get(member).ok_or_else(missing)?;
+        self.checker
+            .struct_member_at(info, arguments, value)
+            .map(ParamExpr::into_value)
+    }
+
+    /// The field types of `base`, an instance of a package struct, in
+    /// declaration order, each at the instance's arguments.
+    pub fn package_field_types(&self, base: &Ty) -> Option<Vec<Ty>> {
+        let Ty::Struct(name, arguments) = base else {
+            return None;
+        };
+        let info = self.package_struct(name)?.0;
+        Some(
+            info.fields
+                .iter()
+                .map(|(_, ty)| substitute_at(ty, info, arguments))
+                .collect(),
+        )
+    }
+
+    fn installed(&self) -> Option<&InstalledInterfaces> {
+        self.checker
+            .installed
+            .as_ref()
+            .map(|(installed, _)| installed)
     }
 }

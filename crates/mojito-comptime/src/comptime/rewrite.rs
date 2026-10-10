@@ -19,8 +19,8 @@ pub(super) type Subs<'a> = &'a dyn Fn(&str) -> Option<CtValue>;
 /// Mark every declared struct name throughout a program, so a
 /// subscript-shaped projection on a runtime local (`v[String]`) can be told
 /// from ordinary indexing ([`projection_to_subscript`]).
-pub(super) fn mark_struct_names(stmts: Vec<Stmt>, type_names: &HashSet<String>) -> Vec<Stmt> {
-    let subs: Subs = &|n| type_names.contains(n).then(type_name_marker);
+pub(super) fn mark_struct_names(stmts: Vec<Stmt>, is_struct: &dyn Fn(&str) -> bool) -> Vec<Stmt> {
+    let subs: Subs = &|n| is_struct(n).then(type_name_marker);
     stmts
         .into_iter()
         .map(|s| rewrite_stmt_cloned(&s, subs, true))

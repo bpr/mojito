@@ -1008,3 +1008,24 @@ prelude probe) where there were 157.
 |---|---:|---:|---:|
 | hello | 9.0 → 7.8 (−13%) | 2.84 → 1.68 | 10.0 → 9.4 |
 | generic | — | — | 18.0 → 16.9 |
+
+### The importer reads a package struct or function resolved (2026-10-10, R559)
+
+Same environment as the tables above, on the R559 tree against the R565
+tree (`a9e27aaf`), both importing the package; `hyperfine` means of 40
+runs and `--timings` medians of 9, milliseconds. An importer's
+elaboration reads a package struct, function, and `def` parameter list
+from the declaration interfaces, and its `prepare` reads the package's
+SIMD aliases from its elaborated constants, so a module record keeps only
+its trait declarations (6 of the 220 Hello World's link replayed). The
+package shrinks from 1.74 to 1.64 MB.
+
+| Program | hyperfine wall | package.module | elaborate | elaborate.indexes |
+|---|---:|---:|---:|---:|
+| hello | 8.2 → 6.1 (−26%) | 1.26 → 0.11 | 0.32 → 0.23 | 0.15 → 0.07 |
+| generic | 16.0 → 15.3 (−4%) | 1.32 → 0.11 | 0.60 → 0.50 | 0.18 → 0.08 |
+| keyed | 34.2 → 32.9 (−4%) | 1.24 → 0.10 | 0.80 → 0.70 | 0.18 → 0.09 |
+| stdlib_heavy | 71.0 → 69.7 (−2%) | 1.27 → 0.10 | 0.65 → 0.55 | 0.20 → 0.10 |
+
+The trait declarations stay in the records until a conformer's wrapper is
+built from the trait's resolved signature (R568).

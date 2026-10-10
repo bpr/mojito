@@ -10,7 +10,7 @@ use crate::error::{OwnershipError, ParseError, TypeError};
 use crate::mir::MirProgram;
 use crate::mir::text::{DisassembleError, disassemble};
 use crate::module::{
-    LinkOptions, ModuleError, inject_prelude, inject_prelude_with_package,
+    LinkOptions, LinkedProgram, ModuleError, inject_prelude, inject_prelude_with_package,
     link_source_with_options, link_source_with_package, link_with_options, link_with_package,
 };
 use crate::native::mono::{MonoError, SpecializedProgram};
@@ -312,7 +312,7 @@ impl Compiler {
     pub fn compile_path(&self, entry: &Path) -> Result<CompiledProgram, CompilerError> {
         self.compile_linking(|package| match package {
             Some(package) => link_with_package(entry, self.link_options.clone(), &package.modules),
-            None => link_with_options(entry, self.link_options.clone()),
+            None => link_with_options(entry, self.link_options.clone()).map(from_source),
         })
     }
     /// Link in-memory source as `entry` and compile it through ownership
@@ -326,7 +326,9 @@ impl Compiler {
             Some(package) => {
                 link_source_with_package(source, entry, self.link_options.clone(), &package.modules)
             }
-            None => link_source_with_options(source, entry, self.link_options.clone()),
+            None => {
+                link_source_with_options(source, entry, self.link_options.clone()).map(from_source)
+            }
         })
     }
     /// Compile source without a module base, as used for standard input.
@@ -338,7 +340,7 @@ impl Compiler {
                 LinkOptions::default(),
                 &package.modules,
             ),
-            None => inject_prelude(parsed.clone()),
+            None => inject_prelude(parsed.clone()).map(from_source),
         })
     }
     /// Elaborate, check, verify, and ownership-verify an already linked
@@ -393,29 +395,29 @@ impl Compiler {
     /// it, linking every module from source.
     fn compile_linking(
         &self,
-        link: impl Fn(Option<&ImportedPackage>) -> Result<Vec<Stmt>, ModuleError>,
+        link: impl Fn(Option<&ImportedPackage>) -> Result<LinkedProgram, ModuleError>,
     ) -> Result<CompiledProgram, CompilerError> {
         if let Some(package) = self.std_package()
             && let Ok(linked) = link(Some(&package))
-            && imports_cleanly(&linked, &package.interface)
-            && let Some(importing) = importing(package, &linked)
+            && imports_cleanly(&linked.statements, &package.interface)
+            && let Some(importing) = importing(package, &linked.packaged)
         {
             return self.compile_importing(
-                &linked,
+                &linked.statements,
                 Some(importing),
                 &mut CheckContext::new(),
                 None,
             );
         }
         let linked = link(None).map_err(CompilerError::Module)?;
-        self.compile_importing(&linked, None, &mut CheckContext::new(), None)
+        self.compile_importing(&linked.statements, None, &mut CheckContext::new(), None)
     }
 
     /// Compile `linked`, importing `package` when there is one: the
-    /// package's declarations, which its link read from their records as
-    /// the package's build prepared them, are read beside the program's own
-    /// statements, and only the program's own are prepared, elaborated, and
-    /// checked. A package build (`exports`) records its prepared program
+    /// package's trait declarations, which its link read from their records
+    /// as the package's build prepared them, and its installed declaration
+    /// interfaces are read beside the program's own statements, and only the
+    /// program's own are prepared, elaborated, and checked. A package build (`exports`) records its prepared program
     /// there, and its check exports its module constants as its
     /// elaboration resolved them.
     fn compile_importing(
@@ -426,12 +428,12 @@ impl Compiler {
         exports: Option<&mut Vec<Stmt>>,
     ) -> Result<CompiledProgram, CompilerError> {
         let _compile = timing::span("compile");
-        let (headers, own): (Vec<&Stmt>, Vec<Stmt>) = match &package {
+        let (traits, own): (Vec<&Stmt>, Vec<Stmt>) = match &package {
             Some((package, _)) => {
-                let (headers, own): (Vec<&Stmt>, Vec<&Stmt>) = linked
+                let (traits, own): (Vec<&Stmt>, Vec<&Stmt>) = linked
                     .iter()
                     .partition(|statement| package.interface.compiles(statement.module.as_deref()));
-                (headers, own.into_iter().cloned().collect())
+                (traits, own.into_iter().cloned().collect())
             }
             None => (Vec::new(), linked.to_vec()),
         };
@@ -441,7 +443,12 @@ impl Compiler {
         }
         let prepared = {
             let _prepare = timing::span("prepare");
-            prepare_importing(own, &headers).map_err(CompilerError::Comptime)?
+            prepare_importing(
+                own,
+                &traits,
+                package.as_ref().map(|(_, installed)| installed),
+            )
+            .map_err(CompilerError::Comptime)?
         };
         context.set_body_fact_reuse(self.body_fact_reuse.unwrap_or_else(|| {
             std::env::var_os("MOJITO_BODY_FACT_REUSE").is_none_or(|value| value != "0")
@@ -463,7 +470,6 @@ impl Compiler {
                 None => elaborate_importing(
                     &prepared,
                     ImportedScope {
-                        headers: &headers,
                         installed: package.as_ref().map(|(_, installed)| installed),
                     },
                 )
@@ -582,25 +588,31 @@ pub(crate) struct PackageExports {
     pub prepared: Vec<Stmt>,
 }
 
-/// `package` with the declaration interfaces of the modules `linked`
-/// reached from it, each declaration's to decode on first lookup; `None`
-/// when a module's own record does not decode, and the program compiles
-/// without the package.
+/// A source link, which read no package record.
+const fn from_source(statements: Vec<Stmt>) -> LinkedProgram {
+    LinkedProgram {
+        statements,
+        packaged: Vec::new(),
+    }
+}
+
+/// `package` with the declaration interfaces of the modules `packaged`, the
+/// link read from its records, each declaration's to decode on first
+/// lookup; `None` when a module's own record does not decode, and the
+/// program compiles without the package.
 fn importing(
     package: Arc<ImportedPackage>,
-    linked: &[Stmt],
+    packaged: &[String],
 ) -> Option<(Arc<ImportedPackage>, InstalledInterfaces)> {
     let _decode = timing::span("package.interfaces");
-    let reached = linked
-        .iter()
-        .filter_map(|statement| statement.module.as_deref())
-        .filter(|module| package.interface.compiles(Some(module)));
-    let installed = InstalledInterfaces::reaching(&package.checked, reached).ok()?;
+    let installed =
+        InstalledInterfaces::reaching(&package.checked, packaged.iter().map(String::as_str))
+            .ok()?;
     Some((package, installed))
 }
 
 /// Whether `linked` can import `package`: a statement from one of the
-/// package's modules is a declaration the package made, and none of the
+/// package's modules is a trait declaration the package made, and none of the
 /// program's own reuses a name the package declares, as a second copy of a
 /// packaged module, or an entry file inside the library, would.
 fn imports_cleanly(linked: &[Stmt], package: &PackageInterface) -> bool {

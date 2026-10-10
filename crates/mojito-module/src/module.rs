@@ -34,6 +34,18 @@ pub enum ModuleError {
     EmptyModulePath,
 }
 
+/// A link that read the modules a compiled package records from their
+/// records.
+#[derive(Debug)]
+pub struct LinkedProgram {
+    /// The linked program: the loaded modules' declarations, dependencies
+    /// first, then the entry's own statements.
+    pub statements: Vec<Stmt>,
+    /// The path of each module linked from its package record, in load
+    /// order, as its declarations' locations name it.
+    pub packaged: Vec<String>,
+}
+
 /// Options for module linking.
 #[derive(Debug, Clone)]
 pub struct LinkOptions {
@@ -98,7 +110,7 @@ pub fn link_with_options(
     entry_path: &Path,
     options: LinkOptions,
 ) -> Result<Vec<Stmt>, ModuleError> {
-    link_path(entry_path, options, None)
+    link_path(entry_path, options, None).map(|linked| linked.statements)
 }
 
 /// [`link_with_options`], linking every module `package` records from its
@@ -107,7 +119,7 @@ pub fn link_with_package(
     entry_path: &Path,
     options: LinkOptions,
     package: &PackageModules,
-) -> Result<Vec<Stmt>, ModuleError> {
+) -> Result<LinkedProgram, ModuleError> {
     link_path(entry_path, options, Some(package))
 }
 
@@ -118,9 +130,13 @@ pub fn link_source_with_package(
     entry_path: &Path,
     options: LinkOptions,
     package: &PackageModules,
-) -> Result<Vec<Stmt>, ModuleError> {
+) -> Result<LinkedProgram, ModuleError> {
     let mut linker = Linker::new(options, Some(package));
-    link_source_in(&mut linker, source, entry_path)
+    let statements = link_source_in(&mut linker, source, entry_path)?;
+    Ok(LinkedProgram {
+        statements,
+        packaged: linker.packaged,
+    })
 }
 
 /// [`inject_prelude_with_options`], linking every module `package` records
@@ -129,12 +145,15 @@ pub fn inject_prelude_with_package(
     program: Vec<Stmt>,
     options: LinkOptions,
     package: &PackageModules,
-) -> Result<Vec<Stmt>, ModuleError> {
+) -> Result<LinkedProgram, ModuleError> {
     let mut linker = Linker::new(options, Some(package));
     let body = linker.resolve_entry(program, Path::new("."), None)?;
-    let mut result = std::mem::take(&mut linker.decls);
-    result.extend(body);
-    Ok(result)
+    let mut statements = std::mem::take(&mut linker.decls);
+    statements.extend(body);
+    Ok(LinkedProgram {
+        statements,
+        packaged: linker.packaged,
+    })
 }
 
 /// Link `source` as [`link_source_with_options`] does, and record what
@@ -155,7 +174,7 @@ fn link_path(
     entry_path: &Path,
     options: LinkOptions,
     package: Option<&PackageModules>,
-) -> Result<Vec<Stmt>, ModuleError> {
+) -> Result<LinkedProgram, ModuleError> {
     let _link = timing::span("link");
     let mut linker = Linker::new(options, package);
     let program = {
@@ -166,10 +185,13 @@ fn link_path(
     let mut body = linker.resolve_entry(program, dir, Some(entry_path))?;
     let entry_module = display(entry_path);
     mojito_ast::ast::stamp_source(&mut body, &entry_module);
-    let mut result = std::mem::take(&mut linker.decls);
-    result.extend(body);
-    timing::count("declarations", result.len() as u64);
-    Ok(result)
+    let mut statements = std::mem::take(&mut linker.decls);
+    statements.extend(body);
+    timing::count("declarations", statements.len() as u64);
+    Ok(LinkedProgram {
+        statements,
+        packaged: linker.packaged,
+    })
 }
 
 /// Link a program that was already read from `source` at `entry_path` (so the CLI
@@ -737,6 +759,8 @@ struct Linker<'p> {
     namespace_exports: HashMap<PathBuf, HashMap<String, HashMap<String, String>>>,
     /// Hoisted declarations from all loaded modules, in dependency order.
     decls: Vec<Stmt>,
+    /// The path of each module loaded from its package record, in order.
+    packaged: Vec<String>,
     /// Stable public bindings exported by the fully loaded implicit prelude.
     /// `None` while the prelude and its own dependency graph are bootstrapping.
     prelude_bindings: Option<HashMap<String, String>>,
@@ -793,6 +817,7 @@ impl<'p> Linker<'p> {
             exports: HashMap::new(),
             namespace_exports: HashMap::new(),
             decls: Vec::new(),
+            packaged: Vec::new(),
             prelude_bindings: None,
         }
     }
@@ -1077,9 +1102,11 @@ impl<'p> Linker<'p> {
                 })?;
             self.load_module(&load)?;
         }
+        let path = display(&module.path);
         let mut declarations = record.declarations;
-        mojito_ast::ast::stamp_source(&mut declarations, &display(&module.path));
+        mojito_ast::ast::stamp_source(&mut declarations, &path);
         self.decls.extend(declarations);
+        self.packaged.push(path);
         self.namespace_exports.insert(
             module.key.clone(),
             record

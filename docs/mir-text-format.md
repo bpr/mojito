@@ -852,10 +852,10 @@ declarations, module records, and declaration interfaces, one file per
 package. The bundled library's is the only producer today
 (`src/package.rs`). No part of a package is MIR text: it is a directory
 followed by bytecode records, as upstream's package is MLIR bytecode
-throughout. The format line is `mojito-package 8`.
+throughout. The format line is `mojito-package 9`.
 
 ```text
-mojito-package 8
+mojito-package 9
 <the directory's length, 8 bytes little-endian>
 <the directory, as bytecode>
 <the payload: every record, as bytecode>

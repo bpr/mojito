@@ -2610,7 +2610,7 @@ impl Checker {
 
     /// A struct's value member at the application's arguments: its binders
     /// replaced, so a closed application folds (`Self.n + 1` at `n = 4`).
-    fn struct_member_at(
+    pub(super) fn struct_member_at(
         &self,
         info: &StructInfo,
         arguments: &[TyArg],

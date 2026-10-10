@@ -185,8 +185,9 @@ fn build(root: &Path, header: &PackageHeader) -> Result<Vec<u8>, CompilerError> 
     let (linked, mut records) = link_source_recording(&source, &entry, LinkOptions::default())
         .map_err(CompilerError::Module)?;
     let (compiled, exports) = Compiler::default().compile_for_package(&linked)?;
-    // A record holds its module's declarations as the build prepared them,
-    // which is what an importer reads beside its own statements.
+    // A record holds its module's trait declarations as the build prepared
+    // them, which an importer's conformers inherit from; every other
+    // declaration an importer reads from the declaration interfaces.
     let entry_module = entry.display().to_string();
     let packaged: Vec<_> = exports
         .prepared
@@ -201,10 +202,10 @@ fn build(root: &Path, header: &PackageHeader) -> Result<Vec<u8>, CompilerError> 
         let canonical = Path::new(module)
             .canonicalize()
             .map_or_else(|_| module.clone(), |path| path.display().to_string());
-        prepared
-            .entry(canonical)
-            .or_default()
-            .push((*statement).clone());
+        let declarations = prepared.entry(canonical).or_default();
+        if matches!(statement.kind, crate::ast::StmtKind::Trait { .. }) {
+            declarations.push((*statement).clone());
+        }
     }
     for (identity, record) in &mut records {
         record.replace_declarations(prepared.remove(&identity.canonical).unwrap_or_default());
@@ -482,7 +483,8 @@ mod tests {
         let prepared = crate::comptime::prepare(from_source.clone()).expect("prepares");
         let from_package =
             link_source_with_package(&source, entry, LinkOptions::default(), &package.modules)
-                .expect("links from the package");
+                .expect("links from the package")
+                .statements;
         let packaged =
             |statement: &&crate::ast::Stmt| package.interface.compiles(statement.module.as_deref());
         // The program's own statements link as their source spells them.
@@ -492,14 +494,15 @@ mod tests {
                 .filter(|statement| !packaged(statement))
                 .eq(from_package.iter().filter(|statement| !packaged(statement)))
         );
-        // A package module's statements are, in order, what preparing the
-        // source link gives that module, bodiless.
+        // A package module's statements are, in order, the traits preparing
+        // the source link gives that module, bodiless.
         for module in &package.interface.modules {
             let in_module =
                 |statement: &&crate::ast::Stmt| statement.module.as_ref() == Some(module);
             let expected: Vec<_> = prepared
                 .iter()
                 .filter(in_module)
+                .filter(|statement| matches!(statement.kind, crate::ast::StmtKind::Trait { .. }))
                 .cloned()
                 .map(|mut statement| {
                     crate::ast::clear_bodies(&mut statement);

@@ -251,9 +251,6 @@ pub fn elaborate(program: Vec<Stmt>) -> Result<Vec<Stmt>, ComptimeError> {
 /// beside its own statements. The default is a program that imports none.
 #[derive(Clone, Copy, Default)]
 pub struct ImportedScope<'a> {
-    /// The package's declarations the program's link reached, each as the
-    /// package's build prepared it, bodiless: read, never rewritten again.
-    pub headers: &'a [&'a Stmt],
     /// The declaration interfaces of the modules the link reached: the
     /// package's resolved declarations, and its module constants as the
     /// build's elaboration folded them.
@@ -271,26 +268,28 @@ pub struct ImportedScope<'a> {
 /// arm or unrolling a loop, so the result still carries every source body
 /// the check must see.
 pub fn prepare(program: Vec<Stmt>) -> Result<Vec<Stmt>, ComptimeError> {
-    prepare_importing(program, &[])
+    prepare_importing(program, &[], None)
 }
 
-/// [`prepare`] a program's own statements, `own`, beside `imported`.
+/// [`prepare`] a program's own statements, `own`, beside the package it
+/// imports.
 ///
-/// `imported` are the declarations of the package it imports, as its build
-/// prepared them: a conformer inherits from an imported trait, and an
-/// imported SIMD alias bounds an own parameter, but no imported declaration
-/// is rewritten again.
+/// `traits` are the package's trait declarations, as its build prepared
+/// them, which a conformer inherits from; `installed` holds the package's
+/// module constants as its build elaborated them, whose SIMD aliases bound
+/// an own parameter. No package declaration is rewritten again.
 pub fn prepare_importing(
     mut own: Vec<Stmt>,
-    imported: &[&Stmt],
+    traits: &[&Stmt],
+    installed: Option<&InstalledInterfaces>,
 ) -> Result<Vec<Stmt>, ComptimeError> {
     pack_qualification::qualify_struct_packs(&mut own)?;
     synthesize_copyable_copy(&mut own);
     synthesize_hashable_hash(&mut own);
-    let mut own = mojito_checker::checker::synthesize_trait_default_wrappers(&own, imported)
+    let mut own = mojito_checker::checker::synthesize_trait_default_wrappers(&own, traits)
         .map_err(ComptimeError::Type)?;
     desugar_simd_wildcard_parameters(&mut own);
-    fold_simd_alias_bounds(&mut own, imported);
+    fold_simd_alias_bounds(&mut own, installed);
     read_materialize_self_operands(&mut own);
     Ok(own)
 }
@@ -307,8 +306,9 @@ pub fn elaborate_prepared(program: &[Stmt]) -> Result<Vec<Stmt>, ComptimeError> 
 /// beside the package `imported` holds.
 ///
 /// The package's module constants are read as its build folded them, and
-/// its declarations as context, so only `own` is elaborated and returned,
-/// as upstream's importer takes a package declaration already resolved.
+/// its structs and functions as its check resolved them, so only `own` is
+/// elaborated and returned, as upstream's importer takes a package
+/// declaration already resolved.
 pub fn elaborate_importing(
     own: &[Stmt],
     imported: ImportedScope<'_>,
@@ -368,18 +368,10 @@ fn elaborate_in<'a>(
                     "could not build the specialization conformance oracle: {error}"
                 ))
             })?;
-    let declarations = || imported.headers.iter().copied().chain(program);
     let elab = Elab {
         program,
-        headers: imported.headers,
-        fns: collect_fns(declarations()),
-        structs: collect_structs(declarations()),
-        struct_names: declarations()
-            .filter_map(|statement| match &statement.kind {
-                StmtKind::Struct { name, .. } => Some(name.clone()),
-                _ => None,
-            })
-            .collect(),
+        fns: collect_fns(program),
+        structs: collect_structs(program),
         conformance,
         template_binders: RefCell::new(Vec::new()),
         crossing_templates: Cell::new(0),
@@ -415,7 +407,7 @@ fn elaborate_in<'a>(
     elab.fold_runtime_crossings(&mut elaborated, &consts)?;
     // A body's read of a module constant stays a name: the check binds it as
     // the parameter value its declaration denotes (decision D3).
-    let mut result = mark_struct_names(elaborated, &elab.struct_names);
+    let mut result = mark_struct_names(elaborated, &|name| elab.declares_struct(name));
     elab.freeze_struct_value_arguments(&mut result, &consts);
     for statement in &mut result {
         if let Some(source) = statement.module.clone() {
@@ -815,8 +807,8 @@ fn source_type_from_ty_with_origins(
     })
 }
 
-/// Compile-time metadata for a top-level struct, enough to read associated
-/// facts such as `T.size`.
+/// Compile-time metadata for one of the program's own top-level structs,
+/// enough to read associated facts such as `T.size`.
 struct CtStruct<'a> {
     decls: Vec<ParamDecl>,
     /// The source parameters `decls` classified from — the fallback for
@@ -827,18 +819,53 @@ struct CtStruct<'a> {
     fields: &'a [mojito_ast::ast::Param],
 }
 
+/// A struct the elaborator reads: one of the program's own, from its
+/// declaration, or one of the imported package's, as the package's check
+/// resolved it.
+#[derive(Clone, Copy)]
+enum StructView<'e> {
+    Own(&'e CtStruct<'e>),
+    Package(mojito_checker::checker::PackageStruct<'e>),
+}
+
+impl<'e> StructView<'e> {
+    fn decls(self) -> &'e [ParamDecl] {
+        match self {
+            Self::Own(info) => &info.decls,
+            Self::Package(info) => info.decls(),
+        }
+    }
+
+    fn source_params(self) -> &'e [TypeParam] {
+        match self {
+            Self::Own(info) => info.source_params,
+            Self::Package(info) => info.source_params(),
+        }
+    }
+
+    fn field_names(self) -> Vec<&'e str> {
+        match self {
+            Self::Own(info) => info
+                .fields
+                .iter()
+                .map(|field| field.name.as_str())
+                .collect(),
+            Self::Package(info) => info.field_names().iter().map(String::as_str).collect(),
+        }
+    }
+}
+
 /// The compile-time elaboration engine: the CTFE-callable functions and a shared
 /// fuel budget. `top_consts` captures module-level constants for materialization.
 struct Elab<'a> {
     program: &'a [Stmt],
-    /// The imported package's prepared declarations, read beside `program`.
-    headers: &'a [&'a Stmt],
+    /// The program's own `def` names; the package's are the oracle's.
     fns: HashSet<String>,
+    /// The program's own structs; the package's are the oracle's.
     structs: HashMap<String, CtStruct<'a>>,
-    /// Every declared struct name, for materialization's projection rewrite.
-    struct_names: HashSet<String>,
     /// Checker-owned declaration facts used to validate inferred pack bounds
-    /// before specialization consumes the source generic call.
+    /// before specialization consumes the source generic call, and the
+    /// imported package's resolved structs and functions.
     conformance: mojito_checker::checker::ConformanceOracle,
     /// The compile-time parameter names of each generic `def` whose body is
     /// being elaborated as a template, innermost last. A `comptime if`
@@ -854,6 +881,29 @@ struct Elab<'a> {
     /// condition must already evaluate here — the branches are pruned before
     /// checking.
     generic_aliases: RefCell<HashMap<String, (Vec<TypeParam>, Expr)>>,
+}
+
+impl Elab<'_> {
+    /// Struct `name`, the program's own or the imported package's.
+    fn ct_struct(&self, name: &str) -> Option<StructView<'_>> {
+        self.structs.get(name).map(StructView::Own).or_else(|| {
+            self.conformance
+                .package_struct(name)
+                .map(StructView::Package)
+        })
+    }
+
+    /// Whether `name` is a struct, the program's own or the imported
+    /// package's, decoding no package declaration.
+    fn declares_struct(&self, name: &str) -> bool {
+        self.structs.contains_key(name) || self.conformance.names_package_struct(name)
+    }
+
+    /// Whether `name` is a `def`, the program's own or the imported
+    /// package's, decoding no package declaration.
+    fn declares_function(&self, name: &str) -> bool {
+        self.fns.contains(name) || self.conformance.names_package_function(name)
+    }
 }
 
 fn classify_ct_params(tps: &[TypeParam], owner: &str) -> Vec<ParamDecl> {
@@ -909,8 +959,9 @@ fn scalar_type_name(name: &str) -> Option<Ty> {
 }
 
 /// The names of the module's `def`s, which an application names.
-fn collect_fns<'a>(program: impl Iterator<Item = &'a Stmt>) -> HashSet<String> {
+fn collect_fns(program: &[Stmt]) -> HashSet<String> {
     program
+        .iter()
         .filter_map(|s| match &s.kind {
             StmtKind::Def { name, .. } => Some(name.clone()),
             _ => None,
@@ -918,7 +969,7 @@ fn collect_fns<'a>(program: impl Iterator<Item = &'a Stmt>) -> HashSet<String> {
         .collect()
 }
 
-fn collect_structs<'a>(program: impl Iterator<Item = &'a Stmt>) -> HashMap<String, CtStruct<'a>> {
+fn collect_structs(program: &[Stmt]) -> HashMap<String, CtStruct<'_>> {
     let mut structs = HashMap::new();
     for s in program {
         if let StmtKind::Struct {

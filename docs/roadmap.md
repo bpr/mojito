@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R568**.
+Next free ID: **R570**.
 
 ## Ordered Work
 
@@ -50,22 +50,28 @@ Scope: what remains of the plan's stages, and what the pipeline order still
 leaves to close. A defect found on the way is filed by its kind; a
 divergence from the pin goes to a catch-up track, however small.
 
-- [ ] **R559 (P6) An importer's front end reads the package's struct,
-  trait, and function declarations as AST**
+- [ ] **R568 (P6) An importer's conformer wrapper is cloned from a package
+  trait default's syntax, so the module record still carries the
+  package's trait declarations**
 
-  `prepare_importing` and `elaborate_importing` index the package's
-  prepared declarations, which the link replays from each module record,
-  though the installed interfaces hold the same declarations resolved.
-  - The readers are the trait-default wrapper synthesis (each trait's
-    methods and defaults), `collect_structs` (parameters, associated
-    members, fields), `collect_fns`, and a `def`'s parameters in
-    `freeze_struct_value_arguments`.
-  - Upstream's emitters read a package declaration resolved, never its
-    syntax.
-  - The lever: read `StructInfo`, `TraitInfo`, and the module bindings from
-    the installed interfaces, so the link record need carry no declaration.
-  - R551 changes the trait half, since a default then becomes a trait
-    member.
+  `prepare_importing` builds a conformer's wrapper for an inherited
+  package default from the trait's prepared AST, which the link replays
+  from each module record.
+  - `synthesize_trait_default_wrappers` reads each trait's `TraitMethod`s:
+    their parameters, defaults, and overload keys.
+  - Every other package declaration the front end reads is resolved, from
+    the declaration interfaces (R559).
+  - Upstream builds the wrapper from the trait function's resolved
+    signature (`StructEmitter::synthesizeDefaultTraitMethodWrapper` takes
+    the `FnOp`).
+  - `TraitInfo` records no defaults and no overload key matching the
+    conformer's, and a method's check, HIR, and MIR read its AST parameter
+    types, so a wrapper with a resolved signature needs a check entry over
+    a `MethodSig`.
+  - The lever: record each default in `TraitInfo`, register the wrapper at
+    the check's struct registration from that signature, and drop the
+    declarations from the module record (`PackageModule::declarations`).
+  - R551 changes only the callee the wrapper names.
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
@@ -3022,6 +3028,24 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     method before the lever is chosen.
   - Depends on nothing.
   - Model: Opus, Planned.
+
+- [ ] **R569 A reflected field type over a pointer field is rejected**
+
+  Problem: `reflect[Box].field_types()` or `reflect[Box].field_at[0]` on a
+  struct holding `var data: UnsafePointer[Int, MutUntrackedOrigin]` runs at
+  the pin, while Mojito reports "not a compile-time value: 'UnsafePointer'
+  is not a compile-time type".
+  - The elaborator types an own struct's field annotations itself
+    (`Elab::reflected_field_type`, through `type_from_anno`), which cannot
+    resolve `UnsafePointer`.
+  - A package struct's field types are read as its check resolved them, so
+    `reflect[List[Int]].field_types()` works when the bundled library is
+    imported and fails from source (`MOJITO_STD_PACKAGE=0`).
+  - The lever: read every reflected field type from the conformance
+    oracle's checked struct table, as the package path does.
+  - Found while landing R559 (2026-10-10); no fixture pins it yet.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
 
 - [ ] **R269 `reflect[Self]` in a non-generic struct's method is rejected**
 

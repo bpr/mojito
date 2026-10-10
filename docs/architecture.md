@@ -85,7 +85,7 @@ compiler build (`src/package.rs`):
 ```text
 build (once per compiler build, then cached):
   every std module -> link (recording each module) -> prepare (each
-    module record keeps its prepared declarations) -> elaborate (exporting
+    module record keeps its prepared traits) -> elaborate (exporting
     the module constants it folded) -> check (exporting each library
     declaration's interface) -> MIR -> ownership
     -> std package: interface + MIR declarations + module records
@@ -94,7 +94,8 @@ build (once per compiler build, then cached):
 import (every compilation that links the bundled library):
   source -> link (each library module from its record)
     -> prepare -> elaborate (the program's own statements, the reached
-       modules' prepared declarations and module constants as context)
+       modules' prepared traits, declaration interfaces, and module
+       constants as context)
     -> check (the reached modules' declaration interfaces attached, each
        declaration's decoded on first lookup; the program's own
        statements checked)
@@ -131,18 +132,19 @@ import (every compilation that links the bundled library):
 - **A module record** (`module::package::PackageModule`) is what linking
   the module from source produced, as upstream's `createBinaryPackageState`
   reads a package's module tree: the modules its link asked to load, in
-  order, its export and namespace tables, and its declarations as the
-  build's `prepare` left them (trait-default functions and wrappers,
-  derived `copy`/`__hash__`, qualified packs, folded SIMD bounds), with
-  their bodies emptied (`ast::clear_bodies`,
-  `PackageModule::replace_declarations`). It is bytecode (`postcard` over
+  order, its export and namespace tables, and its trait declarations as
+  the build's `prepare` left them, with their bodies emptied
+  (`ast::clear_bodies`, `PackageModule::replace_declarations`); every other
+  declaration an importer reads resolved, from the declaration interfaces. It is bytecode (`postcard` over
   the AST's serde form), keyed by the module's dotted name beside its
   canonical and stamped source paths (`PackageModules`), and decoded when
   a link reaches the module. The importer's link
   (`module::link_*_with_package`) replays a record in place of reading,
   parsing, and resolving the module, finding each recorded load by name,
   and stamps its declarations with the recorded path, so each module
-  links exactly what preparing a source link gives it, bodiless. An import
+  links exactly the traits preparing a source link gives it, bodiless. The
+  link reports each module it read from a record (`LinkedProgram::packaged`),
+  whose interfaces the compilation then installs. An import
   resolves against the package's module table at the library root's
   position in the search order (`Linker::find_at_root`), as upstream's
   importer finds a module in a package: no library file is probed,
@@ -196,15 +198,20 @@ import (every compilation that links the bundled library):
   miss and fails the compilation (`InstalledInterfaces::failures`).
 - **Above the waist no package body or declaration is prepared,
   elaborated, or checked again.** The driver partitions the link into the
-  package's declarations, borrowed, and the program's own statements
+  package's traits, borrowed, and the program's own statements
   (`Compiler::compile_importing`). `comptime::prepare_importing` rewrites
-  the own statements alone, reading the package's traits, functions, and
-  SIMD aliases as context. `comptime::elaborate_importing` elaborates them
-  alone (`comptime::ImportedScope`): its module environment, generic
-  aliases, and module type aliases start from the reached modules'
-  constants, its struct and function indexes read the package's prepared
-  declarations, and its conformance oracle attaches the interfaces and
-  registers the own statements over them (`ConformanceOracle::importing`).
+  the own statements alone, reading the package's traits, which a
+  conformer inherits defaults from, and its SIMD aliases as its build
+  elaborated them. `comptime::elaborate_importing` elaborates them alone
+  (`comptime::ImportedScope`): its module environment, generic aliases,
+  and module type aliases start from the reached modules' constants, and
+  its conformance oracle attaches the interfaces and registers the own
+  statements over them (`ConformanceOracle::importing`). Its struct and
+  function indexes hold the own declarations; a package struct or `def`
+  is read from the oracle as the package's check resolved it
+  (`ConformanceOracle::{package_struct, package_associated_value,
+  package_field_types, package_function_params}`), as upstream's emitters
+  read a package declaration resolved, never its syntax.
   The check is given the program's own statements alone: each transfer
   pass attaches the declaration interfaces of the modules the link reached
   to its fresh `Checker` (`Checker::attach_interfaces`), then scans and
@@ -241,10 +248,9 @@ import (every compilation that links the bundled library):
   So does `MOJITO_STD_PACKAGE=0`, or `Compiler::with_std_package(false)`.
 - **Divergences.** Upstream's package holds post-parse IR, and its importer
   resolves a package declaration on first lookup. Mojito's holds lowered
-  MIR, its importer prepares and elaborates the declaration headers its
-  link reads from the package again, and its check installs every reached
-  module's declarations eagerly (`docs/roadmap.md`, `pmir` track: R546,
-  R553, R555).
+  MIR, and its importer's conformer wrapper is cloned from a package
+  trait default's syntax, so the module record still carries trait
+  declarations (`docs/roadmap.md`, `pmir` track: R546, R568).
 
 `native::mono` is the one elaborator below the waist. `concrete_mir()` runs it
 from the program's entry roots and caches the graph, so the VM and the native
@@ -627,7 +633,7 @@ Entry points:
 
 ```rust
 comptime::prepare(program: Vec<Stmt>) -> Result<Vec<Stmt>, ComptimeError>
-comptime::prepare_importing(own: Vec<Stmt>, imported: &[&Stmt]) -> Result<Vec<Stmt>, ComptimeError>
+comptime::prepare_importing(own: Vec<Stmt>, traits: &[&Stmt], installed: Option<&InstalledInterfaces>) -> Result<Vec<Stmt>, ComptimeError>
 comptime::elaborate_prepared(prepared: &[Stmt]) -> Result<Vec<Stmt>, ComptimeError>
 comptime::elaborate_importing(own: &[Stmt], imported: ImportedScope) -> Result<Vec<Stmt>, ComptimeError>
 comptime::elaborate_exporting(prepared: &[Stmt]) -> Result<(Vec<Stmt>, ElaboratedConstants), ComptimeError>

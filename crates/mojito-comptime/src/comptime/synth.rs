@@ -311,13 +311,26 @@ fn is_simd_wildcard_type(ty: &Type) -> bool {
 /// parser gives `[key: SIMD[DType.uint64, 4]]` — a value parameter of the
 /// vector type — before the specialization registry classifies it. Uses in
 /// annotations and constructions fold through the ordinary alias machinery.
-/// An imported package's aliases, `imported`, bound `program`'s parameters
-/// too.
-pub(super) fn fold_simd_alias_bounds(program: &mut [Stmt], imported: &[&Stmt]) {
-    let aliases: HashMap<String, Vec<ParamArg>> = imported
+/// An imported package's aliases, as its build elaborated them, bound
+/// `program`'s parameters too.
+pub(super) fn fold_simd_alias_bounds(
+    program: &mut [Stmt],
+    installed: Option<&InstalledInterfaces>,
+) {
+    let imported = installed
+        .into_iter()
+        .flat_map(InstalledInterfaces::elaborated)
+        .filter_map(|(name, constant)| match constant {
+            ElaboratedConstant::Value(CtValue::Type(ty)) if matches!(**ty, Ty::Simd { .. }) => {
+                match source_type_from_ty(ty)? {
+                    Type::Named(_, args) => Some((name.to_string(), args)),
+                    _ => None,
+                }
+            }
+            _ => None,
+        });
+    let own = program
         .iter()
-        .copied()
-        .chain(program.iter())
         .filter_map(|statement| match &statement.kind {
             StmtKind::Comptime {
                 name,
@@ -334,8 +347,8 @@ pub(super) fn fold_simd_alias_bounds(program: &mut [Stmt], imported: &[&Stmt]) {
                 _ => None,
             },
             _ => None,
-        })
-        .collect();
+        });
+    let aliases: HashMap<String, Vec<ParamArg>> = imported.chain(own).collect();
     if aliases.is_empty() {
         return;
     }

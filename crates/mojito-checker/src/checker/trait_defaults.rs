@@ -31,10 +31,10 @@ use mojito_symbol::symbol::SignatureKey;
 /// declared ahead of the first conformer that calls it, and otherwise at the
 /// end of the program, where its body sees every declaration.
 ///
-/// `imported` are an imported package's prepared declarations: their
-/// traits and functions are read, as the declarations a conformer in
-/// `stmts` may inherit from, and are not rewritten again. Only `stmts`,
-/// and the defaults of its own traits, are returned.
+/// `imported` are an imported package's trait declarations, as its build
+/// prepared them: a conformer in `stmts` may inherit from them, and they
+/// are not rewritten again. Only `stmts`, and the defaults of its own
+/// traits, are returned.
 ///
 /// `comptime::prepare` runs this before elaboration; the checker's own call
 /// finds every function and wrapper in place on prepared source.
@@ -56,10 +56,8 @@ pub fn synthesize_trait_default_wrappers(
             _ => None,
         })
         .collect();
-    let functions: HashSet<&str> = imported
+    let functions: HashSet<&str> = stmts
         .iter()
-        .copied()
-        .chain(stmts)
         .filter_map(|stmt| match &stmt.kind {
             StmtKind::Def { name, .. } => Some(name.as_str()),
             _ => None,

@@ -694,11 +694,12 @@ impl Elab<'_> {
                 ))),
             };
         }
-        let Some(info) = self.structs.get(name) else {
+        let Some(info) = self.ct_struct(name) else {
             return Err(ComptimeError::NotComptime(format!(
                 "'{name}' is not a compile-time type"
             )));
         };
+        let (decls, source_params) = (info.decls(), info.source_params());
         // The compiler-known public Tuple's single `*Ts` declaration absorbs
         // every argument: a nested application (`Tuple[Int, Tuple[Int,
         // Bool]]`, `Optional[Tuple[Int, Bool]]`, a `TypeNames` element) stays
@@ -706,7 +707,7 @@ impl Elab<'_> {
         // onto the minted specialization — rather than tripping the fixed-arity
         // check below.
         if name == mojito_types::types::TUPLE_TYPE_NAME
-            && let [ParamDecl::Type { variadic: true, .. }] = info.decls.as_slice()
+            && let [ParamDecl::Type { variadic: true, .. }] = decls
         {
             let elements = args
                 .iter()
@@ -719,36 +720,32 @@ impl Elab<'_> {
         // def-template default fill in `resolve_spec_args_for`. A default
         // classification could not resolve (a module alias) evaluates from
         // its source expression instead.
-        let source_defaults: Vec<Option<&Expr>> = info
-            .source_params
+        let source_defaults: Vec<Option<&Expr>> = source_params
             .iter()
-            .filter(|tp| !retained_specialization_param(tp, info.source_params))
+            .filter(|tp| !retained_specialization_param(tp, source_params))
             .map(|tp| tp.default.as_ref())
             .collect();
-        let defaults_fill = args.len() < info.decls.len()
-            && info
-                .decls
-                .iter()
-                .zip(&source_defaults)
-                .skip(args.len())
-                .all(|(decl, source_default)| {
-                    matches!(
-                        decl,
-                        ParamDecl::Type {
-                            default: Some(_),
-                            ..
-                        }
-                    ) || (matches!(decl, ParamDecl::Type { .. }) && source_default.is_some())
-                });
-        if args.len() > info.decls.len() || (args.len() < info.decls.len() && !defaults_fill) {
+        let defaults_fill =
+            args.len() < decls.len()
+                && decls.iter().zip(&source_defaults).skip(args.len()).all(
+                    |(decl, source_default)| {
+                        matches!(
+                            decl,
+                            ParamDecl::Type {
+                                default: Some(_),
+                                ..
+                            }
+                        ) || (matches!(decl, ParamDecl::Type { .. }) && source_default.is_some())
+                    },
+                );
+        if args.len() > decls.len() || (args.len() < decls.len() && !defaults_fill) {
             return Err(ComptimeError::Arity(format!(
                 "type '{name}' expects {} compile-time argument(s), got {}",
-                info.decls.len(),
+                decls.len(),
                 args.len()
             )));
         }
-        let tyargs = info
-            .decls
+        let tyargs = decls
             .iter()
             .enumerate()
             .map(|(index, decl)| {
@@ -817,9 +814,20 @@ impl Elab<'_> {
                 "type '{base}' has no compile-time member '{member}'"
             )));
         };
-        let info = self.structs.get(name).ok_or_else(|| {
-            ComptimeError::NotComptime(format!("unknown compile-time struct '{name}'"))
-        })?;
+        let info = match self.ct_struct(name) {
+            Some(StructView::Own(info)) => info,
+            Some(StructView::Package(_)) => {
+                return self
+                    .conformance
+                    .package_associated_value(base, member)
+                    .map_err(|error| ComptimeError::NotComptime(error.to_string()));
+            }
+            None => {
+                return Err(ComptimeError::NotComptime(format!(
+                    "unknown compile-time struct '{name}'"
+                )));
+            }
+        };
         let assoc = info
             .associated
             .iter()
@@ -886,9 +894,9 @@ impl Elab<'_> {
 
 impl mojito_checker::checker::CalleeOracle for Elab<'_> {
     fn callee(&self, name: &str) -> mojito_checker::checker::Callee {
-        if self.fns.contains(name) {
+        if self.declares_function(name) {
             mojito_checker::checker::Callee::Function
-        } else if self.structs.contains_key(name) {
+        } else if self.declares_struct(name) {
             mojito_checker::checker::Callee::Struct
         } else {
             mojito_checker::checker::Callee::Other
@@ -896,7 +904,7 @@ impl mojito_checker::checker::CalleeOracle for Elab<'_> {
     }
 
     fn names_struct(&self, name: &str) -> bool {
-        self.structs.contains_key(name)
+        self.declares_struct(name)
     }
 }
 
@@ -1352,55 +1360,32 @@ impl Elab<'_> {
         if !arguments.iter().any(computed) {
             return;
         }
-        let type_params = if let Some(info) = self.structs.get(name) {
-            info.source_params
-        } else {
-            let mut defs =
-                self.headers
-                    .iter()
-                    .copied()
-                    .chain(self.program)
-                    .filter_map(|statement| match &statement.kind {
-                        StmtKind::Def {
-                            name: declared,
-                            type_params,
-                            ..
-                        } if declared == name => Some(type_params.as_slice()),
-                        _ => None,
-                    });
-            match (defs.next(), defs.next()) {
-                (Some(type_params), None) => type_params,
-                _ => return,
-            }
+        let Some(explicit) = self.explicit_parameters(name) else {
+            return;
         };
-        let struct_valued = |parameter: &TypeParam| matches!(parameter.bounds.as_slice(), [only] if self.structs.contains_key(only));
-        if !type_params.iter().any(struct_valued) {
+        if !explicit.iter().any(|(_, struct_valued)| *struct_valued) {
             return;
         }
-        let explicit: Vec<&TypeParam> = type_params
-            .iter()
-            .filter(|parameter| {
-                !parameter.infer_only
-                    && !matches!(parameter.bounds.as_slice(),
-                        [only] if only == "Origin" || only == "OriginSet")
-            })
-            .collect();
         for (index, argument) in arguments.iter_mut().enumerate() {
-            let (parameter, expression) = match argument {
-                ParamArg::Value(expression) => (explicit.get(index).copied(), expression),
+            let (struct_valued, expression) = match argument {
+                ParamArg::Value(expression) => (
+                    explicit
+                        .get(index)
+                        .is_some_and(|(_, struct_valued)| *struct_valued),
+                    expression,
+                ),
                 ParamArg::Named { name, value } => match &mut **value {
                     ParamArg::Value(expression) => (
                         explicit
                             .iter()
-                            .copied()
-                            .find(|parameter| parameter.name == *name),
+                            .any(|(parameter, struct_valued)| *struct_valued && parameter == name),
                         expression,
                     ),
                     _ => continue,
                 },
                 ParamArg::Type(_) => continue,
             };
-            if !parameter.is_some_and(struct_valued) {
+            if !struct_valued {
                 continue;
             }
             if let Ok(value @ CtValue::Struct { .. }) = self.eval(expression, consts)
@@ -1409,6 +1394,70 @@ impl Elab<'_> {
                 *expression = frozen;
             }
         }
+    }
+
+    /// The explicit compile-time parameters of struct or `def` `name`, each
+    /// beside whether it is struct-valued: a struct's or an own `def`'s from
+    /// its parameter list, a package `def`'s as its check resolved it. `None`
+    /// for an overload family, or a name declaring neither.
+    fn explicit_parameters(&self, name: &str) -> Option<Vec<(String, bool)>> {
+        let from_source = |type_params: &[TypeParam]| {
+            type_params
+                .iter()
+                .filter(|parameter| {
+                    !parameter.infer_only
+                        && !matches!(parameter.bounds.as_slice(),
+                            [only] if only == "Origin" || only == "OriginSet")
+                })
+                .map(|parameter| {
+                    let struct_valued = matches!(parameter.bounds.as_slice(),
+                        [only] if self.declares_struct(only));
+                    (parameter.name.clone(), struct_valued)
+                })
+                .collect()
+        };
+        if let Some(info) = self.ct_struct(name) {
+            return Some(from_source(info.source_params()));
+        }
+        let mut defs = self
+            .program
+            .iter()
+            .filter_map(|statement| match &statement.kind {
+                StmtKind::Def {
+                    name: declared,
+                    type_params,
+                    ..
+                } if declared == name => Some(type_params.as_slice()),
+                _ => None,
+            });
+        match (defs.next(), defs.next()) {
+            (Some(type_params), None) => return Some(from_source(type_params)),
+            (Some(_), Some(_)) => return None,
+            (None, _) => {}
+        }
+        let decls = self.conformance.package_function_params(name)?;
+        Some(
+            decls
+                .iter()
+                .filter(|decl| {
+                    !matches!(
+                        decl,
+                        ParamDecl::Type {
+                            infer_only: true,
+                            ..
+                        } | ParamDecl::Value {
+                            infer_only: true,
+                            ..
+                        }
+                    )
+                })
+                .map(|decl| {
+                    let struct_valued = matches!(decl, ParamDecl::Value { ty, .. }
+                        if matches!(**ty, Ty::Struct(..)));
+                    (decl.name().to_string(), struct_valued)
+                })
+                .collect(),
+        )
     }
 }
 

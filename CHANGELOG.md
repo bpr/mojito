@@ -85,6 +85,16 @@ to evolve under the `0.x` compatibility rules.
   finds a module in a package. Hello World makes 2 `readlink` calls instead
   of 1593 and runs in 8.5 ms release, from 10.2 ms. The package format is
   now `mojito-package 8`.
+- An importer's front end reads a bundled library struct, function, and
+  SIMD alias as the package resolved them (R559): its elaboration asks the
+  conformance oracle for a library struct's parameters, fields, and
+  associated members and a library `def`'s parameters, and its `prepare`
+  reads the library's SIMD aliases from its elaborated constants, as
+  Mojo's emitters read a package declaration resolved. A module record now
+  keeps only its trait declarations, which a conformer's default wrapper
+  still clones (R568). Hello World compiles and runs in 6.1 ms release,
+  from 8.2 ms, and the package shrinks from 1.74 to 1.64 MB. The package
+  format is now `mojito-package 9`.
 - A module under a search root is linked under its path there, whichever
   import reaches it first: `std/io/file.mojo` declares
   `__module$std$io$file$…`, not `__module$file$…`.
