@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R548**.
+Next free ID: **R552**.
 
 ## Ordered Work
 
@@ -68,22 +68,6 @@ divergence from the pin goes to a catch-up track, however small.
   - Default-argument and literal expressions are AST inside those tables.
   - Depends on R544, since a conformer needs the source of every trait
     default it inherits.
-  - Model: Fable, Planned.
-
-- [ ] **R544 A conformer gets a copy of a trait default's body instead of
-  a wrapper that calls the default**
-
-  `expand_trait_defaults` clones a trait's default body into every
-  conforming struct that does not spell the method, and the struct checks
-  the copy as its own method.
-  - Upstream gives the conformer a forwarding wrapper
-    (`synthesizeDefaultTraitMethodWrapper`, `StructEmitter.cpp`) and checks
-    the default once, in its trait.
-  - So a struct conforming to `Writer` needs the library source of
-    `Writer.write`, even though the library is imported from its package.
-  - Sites: `checker/traits_support.rs`, called from `comptime.rs` and
-    `checker.rs`.
-  - Depends on nothing.
   - Model: Fable, Planned.
 
 - [ ] **R547 A function the check lifts from a body is numbered per
@@ -1798,6 +1782,42 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - The lever is to lower such a call positionally, by the requirement's
     binding, which the checked call contract already records.
   - Found while landing R418 with R414 (2026-10-06).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R548 A homogeneous variadic cannot be forwarded with `*xs`**
+
+  Problem: `return g(*xs^)` in `def f(var *xs: Int)`, where `g` takes
+  `var *xs: Int`, runs at the pin, while Mojito reports "call spread
+  outside a specialized type pack".
+  - Only a type pack (`*args: *Ts`) is forwarded today
+    (`lower_pack_spread_argument` in `mir/calls.rs`).
+  - So a trait default with a homogeneous collector (`def f(self, var *xs:
+    Int)`) is rejected at each conformer that inherits it, since its
+    forwarding wrapper spells that spread (`checker/trait_defaults.rs`).
+  - Found while landing R544 (2026-10-09).
+  - Depends on nothing.
+  - Model: Opus, Planned.
+
+- [ ] **R549 A trait method with a named `out` result is never satisfied**
+
+  Problem: a requirement `def named(self, out r: String): ...` and a
+  conformer spelling the same method print the result at the pin, while
+  Mojito reports "struct 'S' method 'named' does not match the signature
+  required by trait 'T'".
+  - `check_trait` (`checker/traits.rs`) keeps the `out` parameter among the
+    requirement's regular parameters, while a struct method's signature
+    returns it.
+  - Found while landing R544 (2026-10-09).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R550 A refining trait cannot restate an inherited requirement**
+
+  Problem: `trait D(A)` declaring `def a(self) -> Int: ...` that `A`
+  already requires is accepted at the pin, while Mojito reports "'a' is
+  already declared in this scope".
+  - Found while landing R544 (2026-10-09).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -4460,6 +4480,23 @@ below is a candidate port toward Mojo's shape, and a port is preferred over any
 new bridge (2026-09-07 direction). The ports are independent of each other, and
 an entry that waits on another names it. Four runtime services are
 deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
+
+- [ ] **R551 A trait default's function is a module function, not a member of its trait**
+
+  Upstream emits a trait default inside its trait, over the trait's `Self`,
+  while Mojito declares it as a module `def` named `Trait$default$method`.
+  - `synthesize_trait_default_wrappers` (`checker/trait_defaults.rs`)
+    declares it at prepare, its first compile-time parameter `_Self` bound
+    by the trait, with the `$trait_default` decorator standing for the
+    trait context (a `deinit` receiver, no receiver obligation).
+  - The check binds a module function where it is declared, so the
+    function is placed ahead of its first conformer rather than beside its
+    trait.
+  - The lever is a trait member the checker checks and MIR lowers as the
+    trait's own (`check_method` over a trait owner, a trait arm in
+    `mir.rs`).
+  - Depends on nothing.
+  - Model: Fable, Planned.
 
 - [ ] **R523 A local implicitly-copyable compile-time binding materializes at its declaration**
 

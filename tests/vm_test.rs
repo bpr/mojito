@@ -763,8 +763,8 @@ fn unpack_and_exception_targets_seed_typed_capture_slots() {
 }
 
 #[test]
-fn cloned_trait_defaults_rekey_nested_self_captures() {
-    let src = "trait Valued:\n    def answer(self) -> Int:\n        def inner() {self} -> Int:\n            return self.value\n        return inner()\n\n@fieldwise_init\nstruct First(Valued):\n    var value: Int\n\n@fieldwise_init\nstruct Second(Valued):\n    var value: Int\n\ndef main():\n    print(First(41).answer())\n    print(Second(42).answer())\n";
+fn trait_default_nested_self_capture_serves_every_conformer() {
+    let src = "trait Valued:\n    def value(self) -> Int:\n        ...\n    def answer(self) -> Int:\n        def inner() {self} -> Int:\n            return self.value()\n        return inner()\n\n@fieldwise_init\nstruct First(Valued):\n    var v: Int\n    def value(self) -> Int:\n        return self.v\n\n@fieldwise_init\nstruct Second(Valued):\n    var v: Int\n    def value(self) -> Int:\n        return self.v\n\ndef main():\n    print(First(41).answer())\n    print(Second(42).answer())\n";
     assert_eq!(vm(src), "41\n42\n");
 }
 

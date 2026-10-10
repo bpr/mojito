@@ -79,6 +79,19 @@ impl ParseError {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TypeError {
     UndefinedVariable(String),
+    /// A trait member named through its trait (`Trait.method(x)`), which
+    /// upstream rejects.
+    DirectTraitMemberAccess,
+    /// Two traits a struct conforms to give requirement `method` different
+    /// defaults, and the struct spells neither.
+    ConflictingTraitDefaults {
+        method: String,
+        original: String,
+        conflicting: String,
+    },
+    /// An inherited default's compile-time parameter is named like one of
+    /// its conformer's own parameters.
+    TraitDefaultParameterConflict(String),
     /// A storage annotation (a struct field or local `var` type) applied a
     /// generic whose explicit origin parameters were left entirely unbound.
     NotConcrete(String),
@@ -509,6 +522,23 @@ impl fmt::Display for TypeError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::UndefinedVariable(name) => write!(f, "Undefined variable '{name}'"),
+            Self::DirectTraitMemberAccess => {
+                write!(f, "Direct access of trait members is not supported.")
+            }
+            Self::ConflictingTraitDefaults {
+                method,
+                original,
+                conflicting,
+            } => write!(
+                f,
+                "trait method requirement '{method}' has conflicting default implementations \
+                 in '{original}' and '{conflicting}'; you must implement it manually"
+            ),
+            Self::TraitDefaultParameterConflict(name) => write!(
+                f,
+                "name conflict between parameter '{name}' in the default trait method and a \
+                 parameter in the struct"
+            ),
             Self::NotConcrete(name) => write!(
                 f,
                 "'{name}[_]' is not concrete; use '[]' to bind missing parameters"

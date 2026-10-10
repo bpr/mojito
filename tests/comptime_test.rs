@@ -1550,3 +1550,61 @@ fn callable_contract_binder_shadows_the_enclosing_binder() {
     let src = "def ident[T: Copyable & Deinitable](x: T) -> T:\n    return x.copy()\n\ndef apply[T: Copyable & Deinitable, F: def[T: Copyable & Deinitable](T) -> T](f: F, x: T) -> T:\n    return f(x)\n\ndef outer[T: Copyable & Deinitable](x: T) -> T:\n    return apply(ident, x)\n\ndef main():\n    print(outer(9))\n    print(outer(String(\"q\")))\n    print(apply(ident, 4))\n";
     assert_eq!(run_compiled(src).unwrap(), "9\nq\n4\n");
 }
+
+#[test]
+fn a_conformer_inherits_a_trait_default_as_a_forwarding_wrapper() {
+    // As upstream's `synthesizeDefaultTraitMethodWrapper`: the default is one
+    // function over the trait's `Self`, and the conformer's method is one
+    // call of it with `Self` bound first, holding none of the default's body.
+    let src = "trait T:\n    def req(self) -> Int:\n        ...\n    def d(self, k: Int = 2) -> Int:\n        var doubled = self.req() * k\n        return doubled\n\n@fieldwise_init\nstruct S(T):\n    var x: Int\n    def req(self) -> Int:\n        return self.x\n";
+    let prepared = mojito::comptime::prepare(parse(src).unwrap()).unwrap();
+    let function = prepared
+        .iter()
+        .find_map(|stmt| match &stmt.kind {
+            mojito::ast::StmtKind::Def { name, body, .. } if name == "T$default$d" => Some(body),
+            _ => None,
+        })
+        .expect("the default's function");
+    assert_eq!(function.len(), 2);
+    let wrapper = prepared
+        .iter()
+        .find_map(|stmt| match &stmt.kind {
+            mojito::ast::StmtKind::Struct { methods, .. } => {
+                methods.iter().find(|method| method.name == "d")
+            }
+            _ => None,
+        })
+        .expect("the conformer's wrapper");
+    assert_eq!(
+        wrapper.provenance,
+        mojito::ast::MethodProvenance::TraitDefaultWrapper
+    );
+    let [statement] = wrapper.body.as_slice() else {
+        panic!("the wrapper is one statement: {:?}", wrapper.body);
+    };
+    let mojito::ast::StmtKind::Return(Some(call)) = &statement.kind else {
+        panic!("the wrapper returns the call: {statement:?}");
+    };
+    let mojito::ast::ExprKind::Call {
+        name,
+        param_args,
+        args,
+        ..
+    } = &call.kind
+    else {
+        panic!("the wrapper calls the default: {call:?}");
+    };
+    assert_eq!(name, "T$default$d");
+    assert_eq!(
+        param_args.as_slice(),
+        [mojito::ast::ParamArg::Type(mojito::ast::Type::SelfType)]
+    );
+    assert_eq!(args.len(), 2);
+    assert_eq!(
+        run(&format!(
+            "{src}\ndef main():\n    print(S(3).d(), S(3).d(5))\n"
+        ))
+        .unwrap(),
+        "6 15\n"
+    );
+}

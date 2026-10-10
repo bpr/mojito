@@ -1265,12 +1265,20 @@ fn check_def(
         type_params,
         params,
         body,
+        decorators,
         ..
     } = &statement.kind
     else {
         return Ok(());
     };
-    let params = params.iter().enumerate().map(|(param, p)| {
+    // A trait default's receiver is a method receiver, which owes nothing
+    // here, as a struct method's does not.
+    let receiver = usize::from(
+        decorators
+            .iter()
+            .any(mojito_ast::ast::Decorator::is_trait_default),
+    );
+    let params = params.iter().enumerate().skip(receiver).map(|(param, p)| {
         let site = AnnotationSite::FunctionParam {
             module: statement.module.clone(),
             declaration: statement.span,

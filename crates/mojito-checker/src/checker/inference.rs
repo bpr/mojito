@@ -1137,6 +1137,7 @@ impl Checker {
                 None => self.infer_call(expr.source_span(), name, param_args, args, kwargs),
             },
             ExprKind::Member { object, field } => {
+                self.reject_direct_trait_member(object)?;
                 // A field read out of a temporary destroys the rest of it.
                 self.record_unconsumed_temporary(object);
                 let projected = self.projected_object.replace(Some(object.source_span()));
@@ -1149,12 +1150,14 @@ impl Checker {
                 method,
                 args,
                 kwargs,
-            } => self.infer_method_call(
-                &expr.source_span(),
-                object,
-                method,
-                MethodCallArguments::ordinary(args, kwargs),
-            ),
+            } => self.reject_direct_trait_member(object).and_then(|()| {
+                self.infer_method_call(
+                    &expr.source_span(),
+                    object,
+                    method,
+                    MethodCallArguments::ordinary(args, kwargs),
+                )
+            }),
             ExprKind::Index { object, index }
                 if let Some(element) = self.comptime_display_subscript(expr, object, index) =>
             {

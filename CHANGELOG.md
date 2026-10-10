@@ -22,6 +22,17 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- A trait default is checked once, in its trait, and a conformer that does
+  not spell it gets a forwarding wrapper that calls it (R544), as upstream's
+  `synthesizeDefaultTraitMethodWrapper`: a default calling a method only the
+  conformer has, or an ill-typed default no struct conforms to, is now
+  rejected as at the pin; overloaded defaults are inherited per overload
+  instead of failing conformance; conflicting defaults, a default parameter
+  named like a struct parameter, and `Trait.method(x)` are rejected with the
+  pin's words; and an importer no longer checks the library's `Writer.write`.
+  A free `def` parameter named `self` is now writable by its own convention,
+  and a keyword collector in a trait method links the library's `StringDict`.
+
 - A local `comptime` display binding, a `Dict[...]`/`Set[...]` constructor
   binding (module or local), and a closed `reflect[P].field_names()` list
   are applications the check binds (R539): `comptime s = total(l)` over a

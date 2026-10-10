@@ -617,8 +617,8 @@ items 1–3 are cheap today).
    from the bodies that actually require another pass.
 
 3. **Checker cost per pass.** A single checker pass makes several complete
-   declaration walks before checking bodies, expands trait defaults and rekeys a
-   cloned AST, builds many occurrence-indexed fact maps, and performs overload,
+   declaration walks before checking bodies, synthesizes trait-default wrappers
+   and rekeys a cloned AST, builds many occurrence-indexed fact maps, and performs overload,
    conformance, substitution, and effect comparisons across a large prelude.
    Some deduplication and stale-effect checks are linear scans of vectors. First
    subdivide declaration registration, body checking, effect validation, and

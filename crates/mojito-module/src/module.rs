@@ -614,6 +614,16 @@ fn program_uses_kwargs(program: &[Stmt]) -> bool {
                 .any(|p| p.kind == mojito_ast::ast::ParamKind::KwVariadic)
                 || program_uses_kwargs(&method.body)
         }),
+        StmtKind::Trait { methods, .. } => methods.iter().any(|method| {
+            method
+                .params
+                .iter()
+                .any(|p| p.kind == mojito_ast::ast::ParamKind::KwVariadic)
+                || method
+                    .default_body
+                    .as_deref()
+                    .is_some_and(program_uses_kwargs)
+        }),
         StmtKind::If { branches, orelse } => {
             branches.iter().any(|(_, body)| program_uses_kwargs(body))
                 || orelse

@@ -1538,12 +1538,22 @@ alternative list beside its active tag as a defensive runtime consistency check.
 
 Trait refinement is flattened during checking: inherited method and associated
 compile-time requirements become part of the refined contract, and a refined
-bound satisfies its ancestors. Before compile-time elaboration
-(`comptime::prepare`, through `checker::expand_trait_defaults`), executable
-trait defaults are materialized as ordinary methods on each conforming struct,
-so a default's `comptime if` is elaborated per conformer like the conformer's
-own methods. An explicit struct method wins; unresolved defaults from multiple paths are rejected. MIR and the
-VM retain static dispatch and need no trait-object representation.
+bound satisfies its ancestors. Trait defaults follow upstream's
+`StructEmitter`: before compile-time elaboration (`comptime::prepare`, through
+`checker::synthesize_trait_default_wrappers`) each default becomes one
+function over its trait's `Self` (`Trait$default$method`, whose first
+compile-time parameter `_Self` is bound by the trait and whose first argument
+is the receiver), checked, lowered, and packaged once like any generic `def`,
+its calls on `self` dispatching through the bound. Each conformer that does
+not spell a defaulted overload gets a forwarding wrapper with the default's
+signature, whose one statement calls that function with `Self` bound first
+and every argument forwarded (`MethodProvenance::TraitDefaultWrapper`).
+Defaults are inherited per overload; an explicit struct method suppresses the
+default of its own shape, and two different defaults reaching one conformer
+are rejected as at the pin. So an importer checks no library default: a
+`Writer` conformer's `write` calls the package's `Writer$default$write`. The
+function is a module `def` rather than a member of its trait (R551). MIR and
+the VM retain static dispatch and need no trait-object representation.
 
 Associated compile-time members may be monomorphic or parameterized.
 `TraitComptime` and `StructComptime` retain a name and requirement/value plus an

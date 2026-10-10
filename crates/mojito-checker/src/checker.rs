@@ -230,8 +230,8 @@ fn check_program_carrying(
     }
 
     let mut expanded = {
-        let _expand = timing::span("trait_defaults_expand");
-        expand_trait_defaults(stmts)?
+        let _expand = timing::span("trait_default_wrappers");
+        synthesize_trait_default_wrappers(stmts)?
     };
     // Source locations survive elaboration clones and therefore cannot identify
     // semantic occurrences. Re-key the final checked tree after the last
@@ -376,8 +376,9 @@ mod conformance;
 mod overload_support;
 pub use body_carry::PassCarry;
 pub use overload_support::is_bundled_module_source;
+mod trait_defaults;
 mod traits_support;
-pub use traits_support::expand_trait_defaults;
+pub use trait_defaults::synthesize_trait_default_wrappers;
 
 /// Type-check a program and return the concrete lowered callee chosen for
 /// every overloaded call site.

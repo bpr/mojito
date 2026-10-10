@@ -104,6 +104,9 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `Checker::comptime_dtype` for a `DType`). `check_def` checks one function declaration — the
   `StmtKind::Def` arm delegates to it, and lambda mode (`lambda = true`)
   applies the lambda-specific capture-default/thinness/diagnostic deltas.
+  A trait default's function (`Decorator::is_trait_default`) may take a
+  `deinit` receiver, and a parameter named `self` is writable by its own
+  convention.
 - `checker/with_stmt.rs` owns the `with` statement: `check_with` classifies
   the manager into a `WithForm` (`context_manager_form`: consuming
   `__enter__`, plain and error-taking `__exit__` overloads, upstream's
@@ -255,6 +258,15 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   layout query shared by call inference and compile-time expression checking;
   `constraints::eval_associated_ct` keeps it as `ParamContext::size_of` in a
   SIMD width, and `types::substitute` replaces type binders inside the slots.
+- `checker/trait_defaults.rs` owns trait defaults as upstream's
+  `StructEmitter` emits them: `synthesize_trait_default_wrappers` declares
+  each default as one function over its trait's `Self` (`Trait$default$m`,
+  first compile-time parameter `_Self`, receiver first, marked by
+  `ast::TRAIT_DEFAULT_DECORATOR`), ahead of its first conformer, and gives
+  each conformer a `MethodProvenance::TraitDefaultWrapper` method per
+  inherited overload, whose one statement calls that function with `Self`
+  bound first and every argument forwarded. It reports the pin's conflicting
+  default and struct-parameter name-conflict rejections.
 - `checker/traits.rs` owns trait/struct declaration checking, conformance
   (nominal and built-in), and type-capability queries (`is_deinitable`,
   `is_movable`, `is_copyable`, …). A type parameter is movable or
@@ -764,7 +776,8 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   standard library.
 - `comptime.rs` owns the staged entry points (`prepare` normalizes
   declarations without selecting or cloning — among them each conformer's
-  inherited trait defaults, through `checker::expand_trait_defaults`, `elaborate_prepared` is the
+  trait-default functions and wrappers, through
+  `checker::synthesize_trait_default_wrappers`, `elaborate_prepared` is the
   route the driver enters once per compilation,
   `elaborate` composes prepare → elaborate for the CLI's
   `check` and the phase tests), the `Elab` elaboration driver

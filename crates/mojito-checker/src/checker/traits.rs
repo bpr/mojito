@@ -30,6 +30,21 @@ impl Checker {
         }
     }
 
+    /// Upstream names a trait's members only through a conforming type or a
+    /// bound, so `Trait.method(x)` is rejected rather than read as a value.
+    pub(super) fn reject_direct_trait_member(&self, object: &Expr) -> Result<(), TypeError> {
+        match &object.kind {
+            ExprKind::Identifier(name)
+                if self.traits.contains_key(name)
+                    && !self.structs.contains_key(name)
+                    && self.lookup(name).is_none() =>
+            {
+                Err(TypeError::DirectTraitMemberAccess)
+            }
+            _ => Ok(()),
+        }
+    }
+
     /// Register and check a `trait`: its method requirements (each typed with
     /// `Self` as the abstract conforming type, `Ty::SelfType`).
     pub(super) fn check_trait(

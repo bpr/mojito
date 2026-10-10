@@ -781,6 +781,20 @@ pub struct Decorator {
     pub kwargs: Vec<KwArg>,
 }
 
+impl Decorator {
+    /// Whether this is the marker [`TRAIT_DEFAULT_DECORATOR`].
+    pub fn is_trait_default(&self) -> bool {
+        matches!(self.path.as_slice(), [only] if only == TRAIT_DEFAULT_DECORATOR)
+    }
+}
+
+/// The decorator marking a `def` as a trait default's function.
+///
+/// That function is the default's body checked once over its trait's `Self`
+/// (spelled `_Self`, the function's first compile-time parameter), with the
+/// receiver its first argument. The `$` keeps source from spelling it.
+pub const TRAIT_DEFAULT_DECORATOR: &str = "$trait_default";
+
 /// A `def` method inside a `struct`. `self` (the implicit, untyped first
 /// parameter) is not stored in `params`.
 #[derive(Debug, Clone, PartialEq)]
@@ -826,6 +840,11 @@ pub enum MethodProvenance {
     /// serves every instance of a generic struct, which mints no clone of
     /// it.
     SynthesizedDefault,
+    /// The forwarding wrapper a conformer gets for a trait default it does
+    /// not spell, as upstream's `synthesizeDefaultTraitMethodWrapper`: its
+    /// body is one call of the default's function with `Self` bound to the
+    /// conformer.
+    TraitDefaultWrapper,
 }
 
 /// A method in a `trait`: either a **requirement** (`def …:` with a `...`
@@ -854,7 +873,8 @@ pub struct TraitMethod {
     pub ret: Option<Type>,
     pub where_clauses: Vec<Expr>,
     /// The method body. `None` for a pure requirement (`...`); `Some(body)` for a
-    /// **default implementation**. The checker currently rejects default bodies.
+    /// **default implementation**, which the check sees as one function over
+    /// the trait's `Self` ([`TRAIT_DEFAULT_DECORATOR`]).
     pub default_body: Option<Vec<Stmt>>,
 }
 
@@ -1081,11 +1101,10 @@ pub enum StmtKind {
     /// `trait Name[(Super, …)]: <members>` — declares method (and `comptime`
     /// member) requirements that a conforming struct must implement. `refines` is
     /// the optional parenthesized list of **super-traits** (trait inheritance);
-    /// `comptime_members` are `comptime NAME: Type` requirements. A trait with
-    /// method requirements and associated comptime requirements is modeled; the
-    /// checker still flags parse-only extensions (`refines` and a default method
-    /// body) as unsupported. (Generic traits
-    /// `trait T[U]:` are not valid current Mojo, so they are not parsed.)
+    /// `comptime_members` are `comptime NAME: Type` requirements. A method with
+    /// a body is a default, which a conformer inherits through a forwarding
+    /// wrapper. (Generic traits `trait T[U]:` are not valid current Mojo, so
+    /// they are not parsed.)
     Trait {
         name: String,
         refines: Vec<String>,

@@ -2347,13 +2347,25 @@ impl Checker {
     /// exactly as a method's do (`enclosing_origin_param`), indexed after any
     /// enclosing struct and method binders.
     pub(super) fn check_def(&mut self, stmt: &Stmt, lambda: bool) -> Result<(), TypeError> {
-        let StmtKind::Def { type_params, .. } = &stmt.kind else {
+        let StmtKind::Def {
+            type_params,
+            params,
+            ..
+        } = &stmt.kind
+        else {
             return self.check_def_inner(stmt, lambda);
         };
         let enclosing = self.enclosing_type_params.len();
         self.enclosing_type_params
             .extend(type_params.iter().cloned());
+        // A parameter named `self` is an ordinary binding, whose own
+        // convention decides whether it is writable.
+        let saved_self_mutable = self.self_mutable;
+        if params.iter().any(|param| param.name == "self") {
+            self.self_mutable = true;
+        }
         let result = self.check_def_inner(stmt, lambda);
+        self.self_mutable = saved_self_mutable;
         self.enclosing_type_params.truncate(enclosing);
         result
     }
@@ -2409,9 +2421,14 @@ impl Checker {
         }
         // Current Mojo restricts the `deinit` convention to struct method
         // arguments; free functions, nested functions, and lambdas take
-        // ownership with `var` instead.
+        // ownership with `var` instead. A trait default's function is a
+        // method of its trait, whose receiver may be `deinit`.
+        let trait_default = decorators
+            .iter()
+            .any(mojito_ast::ast::Decorator::is_trait_default);
         if let Some(param) = params
             .iter()
+            .skip(usize::from(trait_default))
             .find(|p| p.convention == Some(mojito_ast::ast::ArgConvention::Deinit))
         {
             return Err(TypeError::Unsupported(format!(
