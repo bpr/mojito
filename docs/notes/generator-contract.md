@@ -288,7 +288,7 @@ the list in view.
 | Source provenance | File paths on locations; the container's declarations artifact holds the `files` table |
 | Schema compatibility | `mir::text::version_header` on the declarations artifact, and the container's `compiler` line: the build identity (`MOJITO_BUILD_ID`) |
 | Target assumptions | None in parametric MIR. Layout is asked only of concrete types |
-| Cache key: source hash, compiler identity, dependency keys | The build identity and a digest of the library's source and its root path (`src/package.rs`) |
+| Cache key: source hash, compiler identity, dependency keys | The build identity, which digests the library's source with the compiler's (root `build.rs`), and the library's root path (`src/package.rs`) |
 
 P2 added two rows: availability clauses, and the conformance rows the
 elaborator's verdicts need. Both are declaration metadata, and both are in

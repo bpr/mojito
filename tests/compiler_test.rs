@@ -3907,7 +3907,7 @@ fn a_package_reads_back_to_the_bytes_it_was_written_as() {
     let header = PackageHeader {
         package: "probe".to_string(),
         compiler: "test".to_string(),
-        source: "0".to_string(),
+        root: "/probe".to_string(),
     };
     let interface = mojito::interface::PackageInterface::default();
     let modules = vec![("/probe/module.mojo".to_string(), vec![0, 10, 255, 10])];

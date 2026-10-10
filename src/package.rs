@@ -7,7 +7,8 @@
 //! each library module's record (`module::package`), and it inserts a
 //! body's drops when its elaboration first reaches it. The package is
 //! written to a cache the first time a build needs it, keyed by the
-//! build's identity and a digest of the library's source.
+//! build's identity, which covers the library's source, and the library's
+//! root: like upstream's, the importer reads no library source to find it.
 
 use crate::compiler::{Compiler, CompilerError};
 use crate::interface::PackageInterface;
@@ -55,7 +56,7 @@ pub fn bundled_std_package() -> Option<Arc<ImportedPackage>> {
             let header = PackageHeader {
                 package: "std".to_string(),
                 compiler: BUILD_ID.to_string(),
-                source: source_digest(&root)?,
+                root: root.display().to_string(),
             };
             match load_or_build(&root, &header) {
                 Ok(package) => Some(Arc::new(package)),
@@ -77,7 +78,7 @@ pub fn bundled_std_package() -> Option<Arc<ImportedPackage>> {
 fn load_or_build(root: &Path, header: &PackageHeader) -> Result<ImportedPackage, String> {
     const STALE: std::time::Duration = std::time::Duration::from_mins(5);
     let cache = cache_dir();
-    let stem = format!("std-{}-{}", header.compiler, header.source);
+    let stem = format!("std-{}-{}", header.compiler, root_key(&header.root));
     let path = cache.join(format!("{stem}.mojoc"));
     let lock = cache.join(format!(".{stem}.lock"));
     loop {
@@ -138,8 +139,8 @@ fn import(bytes: PackageBytes, header: &PackageHeader) -> Result<ImportedPackage
     let package = read_package(bytes).map_err(|error| error.to_string())?;
     if package.header != *header {
         return Err(format!(
-            "the package was built by compiler `{}` from source `{}`, not this one",
-            package.header.compiler, package.header.source
+            "the package was built by compiler `{}` for library root `{}`, not this one",
+            package.header.compiler, package.header.root
         ));
     }
     Ok(ImportedPackage {
@@ -287,47 +288,6 @@ fn module_paths(directory: &Path, prefix: &str) -> BTreeSet<String> {
     modules
 }
 
-/// A digest of the library under `root`: where it lives, since a package
-/// names its modules by path, and every module's text.
-fn source_digest(root: &Path) -> Option<String> {
-    let mut files = Vec::new();
-    collect_sources(&root.join("std"), &mut files);
-    if files.is_empty() {
-        return None;
-    }
-    files.sort();
-    let mut digest = 0xcbf2_9ce4_8422_2325_u64;
-    let mut write = |bytes: &[u8]| {
-        for byte in bytes.iter().chain(&[0xff]) {
-            digest ^= u64::from(*byte);
-            digest = digest.wrapping_mul(0x0100_0000_01b3);
-        }
-    };
-    write(root.display().to_string().as_bytes());
-    for file in &files {
-        write(file.display().to_string().as_bytes());
-        write(&std::fs::read(file).ok()?);
-    }
-    Some(format!("{digest:016x}"))
-}
-
-fn collect_sources(directory: &Path, files: &mut Vec<PathBuf>) {
-    let Ok(entries) = std::fs::read_dir(directory) else {
-        return;
-    };
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if path.is_dir() {
-            collect_sources(&path, files);
-        } else if path
-            .extension()
-            .is_some_and(|extension| extension == "mojo")
-        {
-            files.push(path);
-        }
-    }
-}
-
 /// Where compiled packages are cached: `MOJITO_CACHE_DIR`, else the
 /// development tree's `target/mojito-cache`, else the user's cache
 /// directory.
@@ -382,20 +342,28 @@ fn declared_name(statement: &crate::ast::Stmt) -> Option<String> {
     }
 }
 
+/// A file-name key for the library `root`, since a package names its
+/// modules by path: a 64-bit FNV-1a of the path.
+fn root_key(root: &str) -> String {
+    let digest = root
+        .bytes()
+        .fold(0xcbf2_9ce4_8422_2325_u64, |digest, byte| {
+            (digest ^ u64::from(byte)).wrapping_mul(0x0100_0000_01b3)
+        });
+    format!("{digest:016x}")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::mir::MirDeclarations;
 
-    #[test]
-    fn a_package_another_build_wrote_is_refused() {
-        let header = PackageHeader {
-            package: "std".to_string(),
-            compiler: BUILD_ID.to_string(),
-            source: "0".to_string(),
-        };
-        let text = write_package(
-            &header,
+    /// An empty package `header` names.
+    fn empty_package(header: &PackageHeader) -> Vec<u8> {
+        // No declaration interfaces: a directory of two empty lists.
+        let checked = [2, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+        write_package(
+            header,
             &PackageInterface::default(),
             &MirProgram {
                 functions: Vec::new(),
@@ -403,12 +371,38 @@ mod tests {
                 invariant_errors: Vec::new(),
             },
             &[],
-            &[],
+            &checked,
         )
-        .expect("write");
+        .expect("write")
+    }
+
+    #[test]
+    fn a_package_another_build_wrote_is_refused() {
+        let header = PackageHeader {
+            package: "std".to_string(),
+            compiler: BUILD_ID.to_string(),
+            root: "/std".to_string(),
+        };
+        let text = empty_package(&header);
         assert!(import(PackageBytes::Owned(text.clone()), &header).is_ok());
         let other = PackageHeader {
             compiler: "another-build".to_string(),
+            ..header
+        };
+        assert!(import(PackageBytes::Owned(text), &other).is_err());
+    }
+
+    #[test]
+    fn a_package_built_for_another_root_is_refused() {
+        let header = PackageHeader {
+            package: "std".to_string(),
+            compiler: BUILD_ID.to_string(),
+            root: "/std".to_string(),
+        };
+        let text = empty_package(&header);
+        assert!(import(PackageBytes::Owned(text.clone()), &header).is_ok());
+        let other = PackageHeader {
+            root: "/elsewhere/std".to_string(),
             ..header
         };
         assert!(import(PackageBytes::Owned(text), &other).is_err());

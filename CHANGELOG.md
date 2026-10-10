@@ -72,6 +72,13 @@ to evolve under the `0.x` compatibility rules.
   the check answers only the program's own structs, as Mojo's importer
   decides only its own types' conformances. Hello World compiles and runs
   in 8.8 ms release, from 12.4 ms.
+- An importer no longer reads and digests the bundled library's source to
+  find its package (R562): the compiler build's identity now covers the
+  library's source, and the package cache is keyed by that identity and
+  the library's root, as Mojo's importer consults no library source.
+  Editing the library takes a compiler rebuild, which every `cargo`
+  command does. Hello World compiles and runs in 7.8 ms release, from
+  9.0 ms. The package format is now `mojito-package 7`.
 - A module under a search root is linked under its path there, whichever
   import reaches it first: `std/io/file.mojo` declares
   `__module$std$io$file$…`, not `__module$file$…`.

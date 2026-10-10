@@ -942,8 +942,8 @@ names and 874 body entries, which replaces the line-framed reader's
 untimed scan and index building (`frontend` self time falls from 3.3 to
 2.9 ms with the directory in it). The rest of the gain is the body decode
 inside mono elaboration, which no longer parses MIR text (about 8× faster
-per body). Of what remains untimed in `frontend`, about 1.2 ms is
-digesting the library's source to key the package cache (R562).
+per body). Of what remains untimed in `frontend`, about 1.2 ms was
+digesting the library's source to key the package cache (R562, below).
 
 ### The importer resolves a declaration interface on first lookup (2026-10-10, R555)
 
@@ -993,3 +993,18 @@ and the decoding of every struct's interface it caused, are gone.
 A program whose clause names a builtin or package trait the package never
 asked (`Absable`) still answers it for every reached package struct,
 about 1.7 ms (`check.conformances.package_rows`, R564).
+
+### The importer reads no library source to find its package (2026-10-10, R562)
+
+Same environment as the tables above, on the R562 tree against the R556
+tree, both importing the package; medians of 9 runs, milliseconds. The
+compiler build's identity now digests the library's source (root
+`build.rs`), so the package cache is keyed by that identity and the
+library's root, and the importer no longer walks and hashes the library's
+61 files to find its package: `strace` shows 2 library-path accesses (the
+prelude probe) where there were 157.
+
+| Program | total (R556 → now) | `frontend` self | hyperfine wall |
+|---|---:|---:|---:|
+| hello | 9.0 → 7.8 (−13%) | 2.84 → 1.68 | 10.0 → 9.4 |
+| generic | — | — | 18.0 → 16.9 |

@@ -16,7 +16,7 @@
 //! The container is a directory followed by records:
 //!
 //! ```text
-//! mojito-package 6
+//! mojito-package 7
 //! <the directory's length, 8 bytes little-endian>
 //! <the directory, as bytecode>
 //! <the payload: every record, as bytecode>
@@ -47,7 +47,7 @@ use std::ops::{Deref, Range};
 use std::sync::{Arc, Mutex, OnceLock};
 
 /// The container format this compiler writes and reads.
-pub const PACKAGE_FORMAT: &str = "mojito-package 6";
+pub const PACKAGE_FORMAT: &str = "mojito-package 7";
 
 /// A package file's bytes: mapped from the file, or owned when the package
 /// was just built.
@@ -87,8 +87,8 @@ pub struct PackageHeader {
     pub package: String,
     /// The identity of the compiler build that wrote it.
     pub compiler: String,
-    /// A digest of the source tree it was built from.
-    pub source: String,
+    /// The library root its modules' stamped paths name.
+    pub root: String,
 }
 
 /// A read package: its header, its checker interface, its module records,

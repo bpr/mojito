@@ -224,8 +224,13 @@ import (every compilation that links the bundled library):
   and runs its lifetime pass in the importer.
 - **Identity.** A package names its modules by stamped path and its
   declarations by linked name. The build id (`MOJITO_BUILD_ID`, a digest of
-  the compiler's sources) and the library's source digest key the cache
-  (`target/mojito-cache` in the development tree). A program that declares
+  the compiler's sources and the bundled library's source, stamped by the
+  root `build.rs`) and the library's root key the cache
+  (`target/mojito-cache` in the development tree), so the importer reads
+  no library source to find its package, as upstream's imports its
+  installed `std.mojoc`. Editing the library takes a compiler rebuild,
+  which every `cargo` command does, as an upstream toolchain keeps its
+  package until the library is rebuilt. A program that declares
   one of the package's names again, as a second copy of a bundled module
   would, is linked again from source and compiles the library from source.
   So does `MOJITO_STD_PACKAGE=0`, or `Compiler::with_std_package(false)`.

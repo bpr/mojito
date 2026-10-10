@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R565**.
+Next free ID: **R567**.
 
 ## Ordered Work
 
@@ -50,17 +50,20 @@ Scope: what remains of the plan's stages, and what the pipeline order still
 leaves to close. A defect found on the way is filed by its kind; a
 divergence from the pin goes to a catch-up track, however small.
 
-- [ ] **R562 (P6) An importer digests the bundled library's whole source
-  on every compilation**
+- [ ] **R565 (P6) An importer's link probes the library's files to resolve
+  a library import**
 
-  `bundled_std_package` reads and hashes every library source file to key
-  the package cache, though no compilation reads that source otherwise.
-  - That is about 1.2 ms of Hello World's 16.5 ms, release, untimed
-    (`source_digest` in `src/package.rs`).
-  - Upstream ships the library as a built package, and its importer
-    consults no library source.
-  - The lever: key the cache on each file's path, size, and modification
-    time, or build the package with the compiler so no key is needed.
+  On the package path, `module_path_under` still checks the filesystem
+  for `std/…/__init__.mojo` and then `std/….mojo` to find a module the
+  package already records.
+  - Seen as two `statx` calls for `hashlib._ahash` under
+    `assets/ok/hashlib_bytes_hash.mojo`; Hello World probes only the
+    prelude.
+  - Upstream resolves an import against the package's module table and
+    consults no library file.
+  - The lever: resolve a `std.*` path through `PackageModules` before the
+    filesystem probe (`crates/mojito-module/src/module.rs`).
+  - Found while landing R562 (2026-10-10).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -207,6 +210,23 @@ divergence from the pin goes to a catch-up track, however small.
     (`docs/pliron-future.md`).
   - Depends on R545, the declaration half of the same package.
   - Model: Fable, Planned.
+
+- [ ] **R566 (P6) An installed compiler builds its library package on
+  first use**
+
+  The package is written into a cache by the first compilation that needs
+  it, so an installed bundle ships the library's source and compiles it
+  once per user.
+  - `scripts/package-pliron` copies `stdlib/` into `share/mojito`, and the
+    bundle's first compile builds the package into the user's cache.
+  - Upstream ships `std.mojoc` built, and writes a package with
+    `mojo package`.
+  - The lever: a `mojito package` subcommand that writes the package, run
+    by the bundle script into `share/mojito`, and `bundled_std_package`
+    opening that file first.
+  - Found while landing R562 (2026-10-10).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
 
 ### Native Backend
 

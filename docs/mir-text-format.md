@@ -852,10 +852,10 @@ declarations, module records, and declaration interfaces, one file per
 package. The bundled library's is the only producer today
 (`src/package.rs`). No part of a package is MIR text: it is a directory
 followed by bytecode records, as upstream's package is MLIR bytecode
-throughout. The format line is `mojito-package 6`.
+throughout. The format line is `mojito-package 7`.
 
 ```text
-mojito-package 6
+mojito-package 7
 <the directory's length, 8 bytes little-endian>
 <the directory, as bytecode>
 <the payload: every record, as bytecode>
@@ -928,8 +928,9 @@ mojito-package 6
   stamps the path it reached the module by). It decodes when the
   importer's link reaches the module; one that does not decode, or names
   another module, links from source.
-- The importer refuses a package whose `compiler` or `source` differs
-  from its own build identity and the library's source digest.
+- The importer refuses a package whose `compiler` or `root` differs
+  from its own build identity, which covers the library's source, and
+  the library root it links against.
 
 ## Serialization Inventory
 
