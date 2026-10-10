@@ -22,6 +22,14 @@ to evolve under the `0.x` compatibility rules.
   lowering. Hello World compiles and runs in 76 ms release, from 140 ms.
   The package format is now `mojito-package 2`, a byte container whose
   module records are bytecode.
+- An importer's check no longer registers the bundled library's
+  declarations from their headers (R552): the package build's check
+  exports each library module's resolved declarations as a bytecode
+  declaration interface, and an importer's check installs those of the
+  modules its link reached and checks only the program's own statements,
+  as Mojo's importer takes a package declaration already resolved. Hello
+  World's check falls from 25 ms to 3 ms release, and the whole run from
+  76 ms to 51 ms. The package format is now `mojito-package 3`.
 - A module under a search root is linked under its path there, whichever
   import reaches it first: `std/io/file.mojo` declares
   `__module$std$io$file$…`, not `__module$file$…`.

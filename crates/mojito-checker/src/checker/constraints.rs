@@ -708,7 +708,7 @@ impl Checker {
     /// compile-time arguments, a layout query, an earlier applied constant,
     /// or arithmetic over those. `None` leaves the constant to the ordinary
     /// rejection, so nothing else changes meaning.
-    pub(super) fn applied_constant_expr(&self, expr: &Expr, module: &[Stmt]) -> Option<ParamExpr> {
+    pub(super) fn applied_constant_expr(&self, expr: &Expr) -> Option<ParamExpr> {
         let context = &self.param_context;
         match &expr.kind {
             ExprKind::Int(n) => context.constant(CtValue::IntLiteral(n.clone())).ok(),
@@ -717,14 +717,14 @@ impl Checker {
                 .get(name)
                 .and_then(|n| context.constant(CtValue::IntLiteral(n.clone())).ok())
                 .or_else(|| self.comptime_applied.get(name).cloned()),
-            ExprKind::Prefix(PrefixOp::Neg, operand) => context
-                .neg(&self.applied_constant_expr(operand, module)?)
-                .ok(),
+            ExprKind::Prefix(PrefixOp::Neg, operand) => {
+                context.neg(&self.applied_constant_expr(operand)?).ok()
+            }
             ExprKind::Infix(op, left, right) => context
                 .infix(
                     *op,
-                    &self.applied_constant_expr(left, module)?,
-                    &self.applied_constant_expr(right, module)?,
+                    &self.applied_constant_expr(left)?,
+                    &self.applied_constant_expr(right)?,
                 )
                 .ok(),
             ExprKind::Call {
@@ -740,19 +740,11 @@ impl Checker {
                 if !param_args.is_empty() {
                     return None;
                 }
-                let result = module.iter().find_map(|statement| match &statement.kind {
-                    StmtKind::Def {
-                        name: def,
-                        type_params,
-                        ret: Some(ret),
-                        ..
-                    } if def == name && type_params.is_empty() => Some(ret),
-                    _ => None,
-                })?;
+                let result = self.module_def_results.get(name)?;
                 let meta = MetaTy::value(self.ty_from_anno(result).ok()?);
                 let args = args
                     .iter()
-                    .map(|argument| self.applied_constant_expr(argument, module))
+                    .map(|argument| self.applied_constant_expr(argument))
                     .collect::<Option<Vec<_>>>()?;
                 Some(context.apply(name, &args, meta))
             }

@@ -26,7 +26,7 @@ use std::fmt;
 /// One lane of a compile-time SIMD value: integer lanes hold the post-wrap
 /// mathematical value (an unsigned lane is non-negative), float lanes their
 /// IEEE bits (so equality is structural).
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum CtLane {
     Int(i128),
     Float(u64),
@@ -91,7 +91,7 @@ pub fn wrap_lane(dtype: mojito_ast::ast::Dtype, value: i128) -> i128 {
 /// compile-time collections; `Type` carries a semantic type for associated
 /// comptime members; `Expr` is a symbolic parameter expression while a generic
 /// body is being checked.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum CtValue {
     /// An already-materialized machine `Int` compile-time value. Compiler
     /// generated indices, lengths, and value parameters use this variant.
@@ -183,7 +183,7 @@ pub enum CtValue {
 }
 
 /// What the elaborator knows about a name that has no compile-time value.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum CtMarker {
     /// A runtime local: a parameter or a declared variable.
     RuntimeLocal,

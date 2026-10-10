@@ -535,6 +535,7 @@ fn carried_result(checker: &Checker) -> DiscoveryResult {
         statements: Vec::new(),
         explicit_destroy_types: HashMap::new(),
         conformances: mojito_checked::checked::ConformanceFacts::default(),
+        overloads: checker.overload_sets.clone(),
         overload_targets: checker.overload_targets.take(),
         contextual_bases: checker.contextual_bases.take(),
         generic_instantiations: checker.generic_instantiations.take(),

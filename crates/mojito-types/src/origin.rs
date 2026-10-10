@@ -10,8 +10,29 @@ use std::cmp::Ordering;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct OwnerId(pub u32);
 
+/// An owner is one check's numbering, so no encoding carries one: writing
+/// a value that holds one fails, naming why.
+impl serde::Serialize for OwnerId {
+    fn serialize<S: serde::Serializer>(&self, _serializer: S) -> Result<S::Ok, S::Error> {
+        Err(serde::ser::Error::custom(format!(
+            "binding owner {} is local to one check",
+            self.0
+        )))
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for OwnerId {
+    fn deserialize<D: serde::Deserializer<'de>>(_deserializer: D) -> Result<Self, D::Error> {
+        Err(serde::de::Error::custom(
+            "a binding owner is local to one check",
+        ))
+    }
+}
+
 /// Stable identity of a declared or inferred origin parameter.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize,
+)]
 pub struct OriginParamId(pub u32);
 
 /// Stable identity of an `OriginSet` parameter appearing in a callable
@@ -20,10 +41,14 @@ pub struct OriginParamId(pub u32);
 /// Like [`OriginParamId`], this is the declaration-order identity selected by
 /// checking rather than a source spelling, so independently named but
 /// otherwise identical callable contracts remain alpha-equivalent.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize,
+)]
 pub struct CaptureSetParamId(pub u32);
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(
+    Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize,
+)]
 /// One projection step within an origin-tracked place.
 pub enum OriginSeg {
     /// A named struct field.
@@ -45,7 +70,9 @@ pub enum OriginSeg {
     Subtree,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(
+    Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize,
+)]
 /// Stable owner plus its statically known projection path.
 pub struct OriginPlace {
     pub root: OwnerId,
@@ -69,7 +96,7 @@ impl OriginPlace {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 /// Canonical checked description of storage a reference may designate.
 pub enum Origin {
     Param(OriginParamId),
@@ -167,14 +194,16 @@ impl std::fmt::Display for Origin {
 /// This is deliberately part of the static environment summary: an `OriginSet`
 /// by itself extends lifetimes but cannot tell persistent-loan analysis whether
 /// an indirect call reads or may mutate captured storage.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize,
+)]
 pub enum CaptureAccess {
     Read,
     Write,
 }
 
 /// One canonical concrete dependency in a capturing callable environment.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub struct CaptureOrigin {
     pub origin: Origin,
     pub access: CaptureAccess,
@@ -203,7 +232,7 @@ impl CaptureOrigin {
 /// reference value can designate. `Infer` is the checked placeholder introduced
 /// by `capturing[_]`; `Param` names a source `OriginSet` binder after resolution;
 /// and `Concrete` is the canonical set attached to a materialized environment.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum CaptureOriginSet {
     Infer,
     Param(CaptureSetParamId),
@@ -259,7 +288,7 @@ impl CaptureOriginSet {
 /// concrete environment for such a constraint, but ordinary value coercion
 /// compares this fact exactly. `Thin` is an explicitly non-capturing function;
 /// `Capturing` retains its `OriginSet` contract.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Default, serde::Serialize, serde::Deserialize)]
 pub enum CallableEnvironment {
     #[default]
     Default,
@@ -267,7 +296,7 @@ pub enum CallableEnvironment {
     Capturing(CaptureOriginSet),
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 /// Permission available through a checked reference.
 pub enum Mutability {
     Immutable,
@@ -285,7 +314,7 @@ pub enum Mutability {
 /// for a caller place ([`PointerOrigin::clone_bindable_place`]): the place's
 /// mutability, then the interior-generation tags and terminal `._subtree`
 /// below the base place the binder binds.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub struct CloneBinderProjection {
     pub mutable: bool,
     pub interior: Vec<String>,
@@ -309,7 +338,7 @@ impl CloneBinderProjection {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum PointerOrigin {
     Place {
         place: OriginPlace,
@@ -606,7 +635,7 @@ impl PointerOrigin {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 /// Checked reference type: referent, storage origin, and access permission.
 pub struct RefTy {
     pub referent: Box<crate::types::Ty>,
@@ -617,7 +646,7 @@ pub struct RefTy {
 /// An origin in a callable contract. Unlike [`Origin`], roots name parameter
 /// slots rather than checker-local bindings, so the contract survives overload
 /// storage and can be substituted with caller places.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum SigOrigin {
     Self_,
     Param(usize),
@@ -646,7 +675,7 @@ pub enum SigOrigin {
     Carried(Box<crate::types::Ty>),
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 /// Mutability component of a callable reference contract.
 pub enum SigMutability {
     Immutable,
@@ -659,7 +688,7 @@ pub enum SigMutability {
     Infer,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 /// Reference result or parameter contract retained in a callable signature.
 pub struct RefSig {
     pub origin: SigOrigin,

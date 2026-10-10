@@ -832,10 +832,15 @@ library module's link (its loads, export tables, and declarations without
 bodies, as bytecode), and an importer's link reads those records, as
 upstream's `createBinaryPackageState` reads a package's module tree, so no
 library source is read and no package body reaches anything above the
-waist. Gaps remain, each a `pmir` entry: the package holds CFG MIR where
-upstream's holds post-parse IR (R546), and an importer still registers
-(R552), prepares and elaborates (R553), and eagerly decodes the MIR of
-(R554) the library's declarations, where upstream installs each resolved.
+waist. An importer's check no longer registers the library's declarations
+either (R552, 2026-10-10): the package build's check exports each module's
+resolved declarations, and the importer's check installs those of the
+modules its link reached and checks the program's own statements alone.
+Gaps remain, each a `pmir` entry: the package holds CFG MIR where
+upstream's holds post-parse IR (R546), and an importer still prepares and
+elaborates (R553), eagerly decodes the MIR of (R554), and eagerly installs
+(R555) the library's declarations, where upstream resolves each on first
+lookup.
 
 ## Decisions for the owner
 

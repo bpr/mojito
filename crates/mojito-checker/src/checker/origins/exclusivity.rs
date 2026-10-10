@@ -27,7 +27,7 @@ use super::*;
 use mojito_types::origin::{Mutability, Origin, OriginPlace, PointerOrigin, places_overlap};
 
 /// How a callee reaches the origins its argument types carry.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub(in crate::checker) enum NestedOrigins {
     /// As each origin allows: a mutable origin is reached mutably.
     AsDeclared,

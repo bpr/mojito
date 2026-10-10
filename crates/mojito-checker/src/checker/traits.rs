@@ -726,19 +726,7 @@ impl Checker {
                 .method_binder_owners
                 .call_qualifier(name, m)
                 .map(str::to_string);
-            // A package's method body is not read: its writes are the
-            // package's summary of it.
-            let package = self
-                .package
-                .as_ref()
-                .filter(|package| package.compiles(declaration.module.as_deref()));
-            if let Some(package) = package {
-                sig.parametric_origin_writes = package
-                    .parametric_origin_writes
-                    .get(&sig.write_summary_key(name, lifecycle_method_name(m)))
-                    .cloned()
-                    .unwrap_or_default();
-            } else if let Some(info) = self.structs.get(name) {
+            if let Some(info) = self.structs.get(name) {
                 sig.parametric_origin_writes =
                     parametric_origin_writes_in_body(&m.body, &info.fields);
             }

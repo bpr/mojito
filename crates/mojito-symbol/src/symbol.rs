@@ -684,25 +684,41 @@ pub fn is_index_normalization_symbol(symbol: &str) -> bool {
 /// Definitions of non-overloaded names keep their plain source name, so
 /// lowering consults this before qualifying anything. The scan also keeps the
 /// parameter names of each synthesized `@fieldwise_init` constructor.
-#[derive(Debug, Default, Clone)]
+///
+/// Its encoding is sorted, so equal sets encode the same bytes.
+#[derive(Debug, Default, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct OverloadSets {
+    #[serde(serialize_with = "sorted_arities")]
     functions: HashMap<String, HashSet<usize>>,
+    #[serde(serialize_with = "sorted_names")]
     all_functions: HashSet<String>,
+    #[serde(serialize_with = "sorted_arities")]
     methods: HashMap<String, HashSet<usize>>,
+    #[serde(serialize_with = "sorted_map")]
     comptimes: HashMap<String, i64>,
+    #[serde(serialize_with = "sorted_map")]
     fieldwise_constructors: HashMap<String, Vec<String>>,
 }
 
 impl OverloadSets {
     pub fn scan(program: &[Stmt]) -> Self {
+        let mut sets = Self::default();
+        sets.scan_more(program);
+        sets
+    }
+
+    /// Add the declarations of `program`, which declares none of the names
+    /// already here and may read the constants already here: an importer's
+    /// own statements over its package's installed sets.
+    pub fn scan_more(&mut self, program: &[Stmt]) {
         let mut functions: HashMap<String, Vec<usize>> = HashMap::new();
         let mut methods: HashMap<String, Vec<usize>> = HashMap::new();
-        let mut comptimes = HashMap::new();
-        let mut fieldwise_constructors = HashMap::new();
+        let comptimes = &mut self.comptimes;
+        let fieldwise_constructors = &mut self.fieldwise_constructors;
         for stmt in program {
             match &stmt.kind {
                 StmtKind::Comptime { name, value, .. } => {
-                    if let Some(value) = eval_comptime_int(value, &comptimes) {
+                    if let Some(value) = eval_comptime_int(value, comptimes) {
                         comptimes.insert(name.clone(), value);
                     }
                 }
@@ -746,13 +762,46 @@ impl OverloadSets {
                 _ => {}
             }
         }
-        Self {
-            all_functions: functions.keys().cloned().collect(),
-            functions: keep_overloaded(functions),
-            methods: keep_overloaded(methods),
-            comptimes,
-            fieldwise_constructors,
+        self.all_functions.extend(functions.keys().cloned());
+        self.functions.extend(keep_overloaded(functions));
+        self.methods.extend(keep_overloaded(methods));
+    }
+
+    /// The sets of the names `keep` keeps: a free function, a constant, or
+    /// a struct by its name, and a method by its `Type.method` name.
+    #[must_use]
+    pub fn restricted(&self, keep: impl Fn(&str) -> bool) -> Self {
+        fn kept<V: Clone>(
+            map: &HashMap<String, V>,
+            keep: &impl Fn(&str) -> bool,
+        ) -> HashMap<String, V> {
+            map.iter()
+                .filter(|(name, _)| keep(name))
+                .map(|(name, value)| (name.clone(), value.clone()))
+                .collect()
         }
+        Self {
+            functions: kept(&self.functions, &keep),
+            all_functions: self
+                .all_functions
+                .iter()
+                .filter(|name| keep(name))
+                .cloned()
+                .collect(),
+            methods: kept(&self.methods, &keep),
+            comptimes: kept(&self.comptimes, &keep),
+            fieldwise_constructors: kept(&self.fieldwise_constructors, &keep),
+        }
+    }
+
+    /// Add `other`'s sets, which name none of these.
+    pub fn extend(&mut self, other: Self) {
+        self.functions.extend(other.functions);
+        self.all_functions.extend(other.all_functions);
+        self.methods.extend(other.methods);
+        self.comptimes.extend(other.comptimes);
+        self.fieldwise_constructors
+            .extend(other.fieldwise_constructors);
     }
 
     /// The parameter names of struct `name`'s synthesized `@fieldwise_init`
@@ -1797,6 +1846,43 @@ fn value_expr_raw(expr: &Expr, comptimes: &HashMap<String, i64>) -> String {
         ExprKind::Identifier(name) => encode_identifier(name),
         _ => "expr".to_string(),
     }
+}
+
+fn sorted_map<V: serde::Serialize, S: serde::Serializer>(
+    map: &HashMap<String, V>,
+    serializer: S,
+) -> Result<S::Ok, S::Error> {
+    serde::Serialize::serialize(
+        &map.iter().collect::<std::collections::BTreeMap<_, _>>(),
+        serializer,
+    )
+}
+
+fn sorted_arities<S: serde::Serializer>(
+    map: &HashMap<String, HashSet<usize>>,
+    serializer: S,
+) -> Result<S::Ok, S::Error> {
+    serde::Serialize::serialize(
+        &map.iter()
+            .map(|(name, arities)| {
+                (
+                    name,
+                    arities.iter().collect::<std::collections::BTreeSet<_>>(),
+                )
+            })
+            .collect::<std::collections::BTreeMap<_, _>>(),
+        serializer,
+    )
+}
+
+fn sorted_names<S: serde::Serializer>(
+    names: &HashSet<String>,
+    serializer: S,
+) -> Result<S::Ok, S::Error> {
+    serde::Serialize::serialize(
+        &names.iter().collect::<std::collections::BTreeSet<_>>(),
+        serializer,
+    )
 }
 
 fn keep_overloaded(counts: HashMap<String, Vec<usize>>) -> HashMap<String, HashSet<usize>> {

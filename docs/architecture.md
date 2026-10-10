@@ -85,13 +85,14 @@ compiler build (`src/package.rs`):
 ```text
 build (once per compiler build, then cached):
   every std module -> link (recording each module) -> elaborate -> check
-    -> MIR -> ownership
+    (exporting each module's declaration interface) -> MIR -> ownership
     -> std package: interface + MIR declarations + module records
-       + pre-drop bodies
+       + declaration interfaces + pre-drop bodies
 
 import (every compilation that links the bundled library):
   source -> link (each library module from its record)
-    -> prepare -> elaborate -> check (package bodies empty, not checked)
+    -> prepare -> elaborate -> check (the reached modules' declaration
+       interfaces installed; the program's own statements checked)
     -> MIR of the program's own declarations, linked with the package's
        MIR declarations -> verify + ownership (own functions)
     -> drop elaboration (own functions)
@@ -102,9 +103,9 @@ import (every compilation that links the bundled library):
 - **The package file** (`mir::text::package`) holds a header (package,
   compiler build identity, source digest), the checker interface
   (`checked::interface::PackageInterface`), the package's MIR declarations,
-  one record per library module, and each function body as MIR text, before
-  drop elaboration. Bodies decode on demand: Hello World decodes three of
-  about 875.
+  one record and one declaration interface per library module, and each
+  function body as MIR text, before drop elaboration. Bodies decode on
+  demand: Hello World decodes three of about 875.
 - **A module record** (`module::package::PackageModule`) is what linking
   the module from source produced, as upstream's `createBinaryPackageState`
   reads a package's module tree: the modules its link asked to load, in
@@ -119,26 +120,39 @@ import (every compilation that links the bundled library):
   read.
 - **The interface** is what an importer's check reads from the package's
   bodies: the modules the package compiled, their top-level names, each
-  module-level callable's transfer and call-through effect summaries, each
-  struct method's parametric origin writes (`Owner.method` and its overload
-  qualifier), and the traits the package's bodies ask a type's conformance
-  to.
-- **Above the waist no package body is read.** The driver empties a
-  package declaration's bodies before `prepare` (a body the link took from
-  source too), so preparation and comptime elaboration walk headers only.
-  The check registers the package's declarations from those headers as for
-  any module, takes the summaries as committed effects, and checks no
-  package body: a module-level `def` or method from a package module is a
-  carried site with nothing to copy (`Checker::in_package`), and the
-  return, definite-initialization, and origin-write checks that read a body
-  skip it. A body `prepare` synthesizes for a package struct (`copy`,
-  `__hash__`) is emptied from the handoff after the check, so the checked
-  arena, explicit destruction, and lowering see the package's declarations
-  alone.
-- **Lowering** (`mir::lower_checked_program_importing`) skips the package's
-  declarations and links its MIR declarations (`mir::link`) before closing
-  and verifying the program's own functions. A package struct gains the
-  importer's conformance row for each trait the package never asked about.
+  module-level callable's transfer and call-through effect summaries, and
+  the traits the package's bodies ask a type's conformance to.
+- **A declaration interface** (`checker::interface::ModuleInterface`) is
+  what the build's check resolved for one library module's declarations,
+  as upstream's importer takes a package declaration `loadedFromBytecode`:
+  its structs' and traits' checked signatures (`StructInfo`, `TraitInfo`,
+  a method's parametric origin writes included), its aliases and module
+  constants, each module-scope binding's type and callable origin facts,
+  its overload sets, and the applicable functions and declared results a
+  compile-time call reads, by linked name. The build's check exports one
+  per module once the whole library is checked
+  (`Checker::export_interfaces`); it holds no binding owner, span-keyed
+  fact, syntax identity, or parameter hole, and encoding a table that holds
+  one fails the build, which then compiles the library from source. It is
+  bytecode (`postcard`), keyed by module path; a default argument or a
+  conformance condition in it stays AST, stamped on decoding with the path
+  the importer reached the module by (`ast::decoding_from`).
+- **Above the waist no package body or declaration is checked.** The
+  driver empties a package declaration's bodies before `prepare` (a body
+  the link took from source too), so preparation and comptime elaboration
+  walk headers only. The check is given the program's own statements
+  alone: each transfer pass installs the declaration interfaces of the
+  modules the link reached into its fresh `Checker`
+  (`Checker::install_interfaces`), then scans and checks the own
+  statements over them, taking the summaries as committed effects. The
+  checked arena, explicit destruction, and lowering therefore see the
+  program's own statements alone.
+- **Lowering** (`mir::lower_checked_program_importing`) lowers the checked
+  statements, reads the checker's overload sets
+  (`CheckedProgram::overloads`, the package's included), and links the
+  package's MIR declarations (`mir::link`) before closing and verifying the
+  program's own functions. A package struct gains the importer's
+  conformance row for each trait the package never asked about.
 - **The elaborator** (`native::mono::specialize_importing`) reads a callee
   the program does not define from the package. The body is drop-elaborated
   and verified as it is decoded, as upstream materializes a package body
@@ -151,10 +165,11 @@ import (every compilation that links the bundled library):
   would, is linked again from source and compiles the library from source.
   So does `MOJITO_STD_PACKAGE=0`, or `Compiler::with_std_package(false)`.
 - **Divergences.** Upstream's package holds post-parse IR, and its importer
-  installs the package's declarations resolved. Mojito's holds lowered MIR,
-  and its importer prepares, elaborates, and registers the declaration
-  headers its link reads from the package again (`docs/roadmap.md`, `pmir`
-  track: R546, R552, R553).
+  resolves a package declaration on first lookup. Mojito's holds lowered
+  MIR, its importer prepares and elaborates the declaration headers its
+  link reads from the package again, and its check installs every reached
+  module's declarations eagerly (`docs/roadmap.md`, `pmir` track: R546,
+  R553, R555).
 
 `native::mono` is the one elaborator below the waist. `concrete_mir()` runs it
 from the program's entry roots and caches the graph, so the VM and the native

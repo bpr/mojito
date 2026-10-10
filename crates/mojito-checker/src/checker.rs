@@ -124,12 +124,20 @@ pub struct CheckContext {
     /// passes, the requirement defaults it binds (`bound_defaults.rs`).
     bound_default_arguments: HashMap<SyntaxId, BoundDefaultArguments>,
     /// The compiled package whose bodies this check takes as checked: its
-    /// declarations are registered from their source, its bodies are not
-    /// checked again, and a call into it reads the package's summaries.
+    /// declarations are installed from their interfaces ([`Self::install`]),
+    /// and a call into it reads the package's summaries.
     package: Option<std::sync::Arc<mojito_checked::interface::PackageInterface>>,
     /// The effect summaries of every module-level callable and method the
     /// last check recorded, the interface of a package built from it.
     summaries: mojito_checked::interface::PackageInterface,
+    /// The declaration interfaces of the package modules the program's link
+    /// reached, installed into every pass in place of their statements.
+    installed: Option<InstalledInterfaces>,
+    /// Whether the check exports each library module's declaration
+    /// interface, as a package build's does.
+    record_interfaces: bool,
+    /// The interfaces the last check exported, by module path.
+    interfaces: Option<Result<std::collections::BTreeMap<String, Vec<u8>>, String>>,
 }
 
 impl CheckContext {
@@ -140,11 +148,40 @@ impl CheckContext {
             bound_default_arguments: HashMap::new(),
             package: None,
             summaries: mojito_checked::interface::PackageInterface::default(),
+            installed: None,
+            record_interfaces: false,
+            interfaces: None,
         }
     }
 
-    /// Check against `package`: a declaration from one of its modules keeps
-    /// its body unchecked.
+    /// Check against the declarations `installed` holds, which the program
+    /// given to the check does not declare again.
+    pub fn install(&mut self, installed: InstalledInterfaces) {
+        self.installed = Some(installed);
+    }
+
+    /// Export each library module's declaration interface when the check
+    /// ends ([`Self::take_interfaces`]).
+    pub const fn record_interfaces(&mut self) {
+        self.record_interfaces = true;
+    }
+
+    /// The interfaces the last check exported, by module path.
+    ///
+    /// # Errors
+    ///
+    /// What the check could not export, or that it exported nothing.
+    pub fn take_interfaces(
+        &mut self,
+    ) -> Result<std::collections::BTreeMap<String, Vec<u8>>, String> {
+        self.interfaces
+            .take()
+            .unwrap_or_else(|| Err("the check exported no interface".to_string()))
+    }
+
+    /// Check against `package`: a call into one of its bodies reads its
+    /// effect summaries, and its bodies may ask any trait it names of the
+    /// program's types.
     pub fn import_package(
         &mut self,
         package: std::sync::Arc<mojito_checked::interface::PackageInterface>,
@@ -261,6 +298,9 @@ fn check_program_carrying(
             call_through_seed.extend(package.call_through_effects.clone());
         }
         let mut checker = Checker::new_seeded(transfer_seed, call_through_seed);
+        if let Some(installed) = &context.installed {
+            checker.install_interfaces(installed)?;
+        }
         checker.package.clone_from(&context.package);
         if let Some(previous) = &previous {
             checker.next_owner.set(previous.next_owner());
@@ -321,33 +361,28 @@ fn check_program_carrying(
             mojito_checked::checked::ConformanceFacts::default(),
         ));
     };
+    if context.record_interfaces {
+        let _export = timing::span("export_interfaces");
+        context.interfaces = Some(checker.export_interfaces(&expanded));
+    }
     // Context managers are desugared by the checker; later phases see only
     // the ordinary statements it checked.
     with_stmt::splice_with_desugars(&mut expanded, &checker.with_desugars.borrow());
-    // A package's bodies were checked and lowered when it was built; the
-    // handoff keeps its declarations alone.
-    if let Some(package) = &context.package {
-        strip_package_bodies(&mut expanded, package);
-    }
-    context.summaries = checker.effect_summaries();
+    context.summaries = {
+        let _summaries = timing::span("summaries");
+        checker.effect_summaries()
+    };
     let explicit_destroy_types = {
         let _finish = timing::span("explicit_destroy");
         let explicit_destroy_types = explicit_destroy_types(&checker);
-        // A package's bodies met their obligations when it was built.
-        match &context.package {
-            Some(package) => {
-                let own: Vec<Stmt> = expanded
-                    .iter()
-                    .filter(|statement| !package.compiles(statement.module.as_deref()))
-                    .cloned()
-                    .collect();
-                run_explicit_destroy(&checker, &own, &explicit_destroy_types)?;
-            }
-            None => run_explicit_destroy(&checker, &expanded, &explicit_destroy_types)?,
-        }
+        run_explicit_destroy(&checker, &expanded, &explicit_destroy_types)?;
         explicit_destroy_types
     };
-    let conformances = checker.conformance_facts();
+    let conformances = {
+        let _conformances = timing::span("conformances");
+        checker.conformance_facts()
+    };
+    let _carry = timing::span("carry");
     Ok(checker.into_carry(expanded, explicit_destroy_types, conformances))
 }
 
@@ -373,6 +408,8 @@ pub struct ConformanceFailure {
 
 mod body_carry;
 mod conformance;
+mod interface;
+pub use interface::InstalledInterfaces;
 mod overload_support;
 pub use body_carry::PassCarry;
 pub use overload_support::is_bundled_module_source;
@@ -593,6 +630,10 @@ pub struct Checker {
     /// declaration is checked, since a field type or a signature may call
     /// one declared below it.
     applicable_functions: HashMap<String, Vec<comptime_validation::ApplicableFunction>>,
+    /// The declared result of each non-generic module `def` that declares
+    /// one, the first declaration's under an overloaded name: what a module
+    /// constant applying it denotes ([`Self::applied_constant_expr`]).
+    module_def_results: HashMap<String, SourceType>,
     /// The expressions lifted so far, each with the application it denotes.
     lifted_applications: RefCell<Vec<comptime_validation::LiftedApplication>>,
     /// The application each lifted expression of the executable check
@@ -984,9 +1025,6 @@ pub struct Checker {
     method_site: Option<(Option<String>, String)>,
     /// The compiled package whose bodies are taken as checked.
     package: Option<std::sync::Arc<mojito_checked::interface::PackageInterface>>,
-    /// Whether the module-level declaration being checked is the package's,
-    /// whose body is not checked again.
-    in_package: std::cell::Cell<bool>,
     /// The identity of every module-level callable and method whose body
     /// this pass checked, whose effect summaries a package keeps.
     top_level_callables: RefCell<HashSet<String>>,
@@ -1026,23 +1064,6 @@ impl Checker {
                 .iter()
                 .filter(|(callable, _)| summarized(callable))
                 .map(|(callable, effects)| (callable.clone(), effects.clone()))
-                .collect(),
-            parametric_origin_writes: self
-                .structs
-                .iter()
-                .flat_map(|(owner, info)| {
-                    info.methods.iter().flat_map(move |(method, signatures)| {
-                        signatures
-                            .iter()
-                            .filter(|signature| !signature.parametric_origin_writes.is_empty())
-                            .map(move |signature| {
-                                (
-                                    signature.write_summary_key(owner, method),
-                                    signature.parametric_origin_writes.clone(),
-                                )
-                            })
-                    })
-                })
                 .collect(),
         }
     }
@@ -1109,6 +1130,7 @@ impl Checker {
             comptime_binding_owners: HashSet::new(),
             lifting_positions: std::rc::Rc::default(),
             applicable_functions: HashMap::new(),
+            module_def_results: HashMap::new(),
             lifted_applications: RefCell::new(Vec::new()),
             lifted_expressions: RefCell::new(FactMap::default()),
             rebind_targets: RebindTargets::default(),
@@ -1211,7 +1233,6 @@ impl Checker {
             syntax_origins: mojito_ast::ast::SyntaxOrigins::default(),
             bound_default_arguments: RefCell::new(HashMap::new()),
             package: None,
-            in_package: std::cell::Cell::new(false),
             top_level_callables: RefCell::new(HashSet::new()),
             rebind_assertions: RefCell::new(FactMap::default()),
             method_site: None,
@@ -2261,7 +2282,7 @@ impl Default for Checker {
     }
 }
 
-#[derive(Clone, PartialEq)]
+#[derive(Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 #[allow(
     clippy::struct_excessive_bools,
     reason = "TODO: group the flags into a state enum"
@@ -2336,12 +2357,6 @@ struct MethodSig {
 }
 
 impl MethodSig {
-    /// The key a package's summary of this signature's parametric origin
-    /// writes goes under: `Owner.method` and its overload qualifier.
-    fn write_summary_key(&self, owner: &str, method: &str) -> String {
-        format!("{owner}.{method}{}", self.overload.as_deref().unwrap_or(""))
-    }
-
     fn intrinsic(params: Vec<Ty>, ret: Ty) -> Self {
         let len = params.len();
         Self {
@@ -2381,6 +2396,7 @@ impl MethodSig {
 }
 
 /// The checked signature of a struct, kept in the checker's registry.
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
 struct StructInfo {
     /// Compile-time parameters (type and value); empty for a non-generic struct.
     decls: Vec<ParamDecl>,
@@ -2397,6 +2413,7 @@ struct StructInfo {
     /// methods with the same arity require the signature-qualified target to
     /// survive into indirect-call MIR.
     callable_target: Option<String>,
+    #[serde(serialize_with = "interface::sorted")]
     conformance_conditions: HashMap<String, Expr>,
     /// Declared fields, in order (drives the fieldwise constructor).
     fields: Vec<(String, Ty)>,
@@ -2411,22 +2428,28 @@ struct StructInfo {
     /// Origin arguments are erased from checked identity, so this is the
     /// surviving record delegated-call origin clauses resolve binder
     /// correspondences through.
+    #[serde(serialize_with = "interface::sorted")]
     field_origin_arguments: HashMap<String, Vec<(u32, u32)>>,
     /// Associated compile-time facts declared by `comptime NAME = ...` in the
     /// struct body. These live on the type, not on runtime instances.
+    #[serde(serialize_with = "interface::sorted")]
     associated: HashMap<String, CtValue>,
     /// Availability constraints for monomorphic associated members, one entry
     /// per trailing `where` clause. They are evaluated against the enclosing
     /// struct arguments at projection time.
+    #[serde(serialize_with = "interface::sorted")]
     associated_constraints: HashMap<String, Vec<GenericConstraint>>,
     /// Parameterized associated types declared by `comptime NAME[params] = body`.
     /// Unlike `associated`, the body cannot be evaluated eagerly (it references
     /// the member's own parameters); it is lowered once to a symbolic template
     /// and substituted per application. See [`ParameterizedMember`].
+    #[serde(serialize_with = "interface::sorted")]
     parameterized_associated: HashMap<String, ParameterizedMember>,
+    #[serde(serialize_with = "interface::sorted")]
     methods: HashMap<String, Vec<MethodSig>>,
     fieldwise_init: bool,
     explicit_destroy_message: Option<String>,
+    #[serde(serialize_with = "interface::sorted")]
     explicit_destructors: HashMap<String, bool>,
 }
 
@@ -2633,7 +2656,7 @@ enum AssumedSubject {
 /// type, and an alias expanding an earlier alias bakes the expansion into its
 /// template. Origin parameters are rejected at declaration, so no origin
 /// bindings exist.
-#[derive(Clone)]
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
 struct ComptimeAlias {
     decls: Vec<ParamDecl>,
     body: AliasBody,
@@ -2658,7 +2681,7 @@ struct SelectedConversion {
 /// `conforms_to`/`IsTrivially*` propositions are — never in type positions),
 /// or a compile-time value expression, which elaboration folds at each runtime
 /// use.
-#[derive(Clone)]
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
 enum AliasBody {
     Type(Box<Ty>),
     Predicate(Box<GenericConstraint>),
@@ -2672,7 +2695,7 @@ enum AliasBody {
 /// resolution substitutes an application's arguments into it. The raw
 /// `TypeParam`s are retained (rather than classified `ParamDecl`s) so the
 /// argument-to-parameter binding can distinguish type, value, and origin kinds.
-#[derive(Clone)]
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
 struct ParameterizedMember {
     /// The declaration that owns the member's own binders
     /// (`annotations::member_binder`): `Struct.member`.
@@ -2702,12 +2725,16 @@ type StructAssociatedMembers = (
 /// The checked signature of a trait: required methods plus associated
 /// compile-time facts. A method requirement's signature may mention
 /// `Ty::SelfType` (the conforming type).
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
 struct TraitInfo {
     refines: Vec<String>,
+    #[serde(serialize_with = "interface::sorted")]
     methods: HashMap<String, Vec<MethodSig>>,
+    #[serde(serialize_with = "interface::sorted")]
     comptime_members: HashMap<String, CtMemberReq>,
     /// Per-member declaration constraints, one entry per trailing `where`
     /// clause on the requirement.
+    #[serde(serialize_with = "interface::sorted")]
     comptime_constraints: HashMap<String, Vec<GenericConstraint>>,
 }
 
@@ -2827,7 +2854,7 @@ impl MethodCallResolution {
 /// place (`mut xs` writes, a read parameter or receiver does not). A call
 /// site substitutes its actual places to learn what the result's pointer
 /// fields designate.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 struct ViewReturnOrigin {
     slot: mojito_types::origin::OriginParamId,
     sig: mojito_types::origin::RefSig,
@@ -2971,7 +2998,7 @@ struct CapturePolicy {
 /// `Ty::Func`'s ordinary compile-time parameter list, so this checker-owned fact
 /// is what lets a value expression such as `borrow[origin_of(value)]` bind that
 /// parameter without reconstructing it from source later in MIR lowering.
-#[derive(Clone)]
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
 struct CallableOriginParam {
     name: String,
     slots: Vec<usize>,
@@ -2981,7 +3008,7 @@ struct CallableOriginParam {
 /// parameters are erased from `Ty::GenericFunc::decls`, so retaining this
 /// ordered layout is necessary to split a mixed specialization such as
 /// `borrow[Int, origin_of(value)]` without shifting the ordinary type argument.
-#[derive(Clone)]
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
 struct CallableSourceParam {
     name: String,
     infer_only: bool,
@@ -2999,7 +3026,7 @@ impl CallableSourceParam {
 
 /// Origin-specialization metadata for one declaration in an overload set.
 /// Entries are registered in the same order as `Ty::Overload` candidates.
-#[derive(Clone)]
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
 struct CallableOriginSignature {
     origins: Vec<CallableOriginParam>,
     source: Vec<CallableSourceParam>,

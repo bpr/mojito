@@ -703,3 +703,33 @@ fn a_nested_instance_argument_spells_as_its_own_symbol() {
     }
     assert_eq!(previous, "W$mono$TW$mono$TW$mono$TW$mono$TInt");
 }
+
+#[test]
+fn overload_sets_restrict_and_extend_to_the_whole() {
+    // An importer installs each package module's restriction of the sets and
+    // scans its own statements over them: together they are the whole
+    // program's, a constant the own statements read included.
+    use mojito::symbol::OverloadSets;
+    let library = parse(
+        "comptime N = 2\n\
+         def pick() -> Int:\n    return 0\n\
+         def pick(x: Int) -> Int:\n    return x\n\
+         def solo() -> Int:\n    return 1\n",
+    )
+    .expect("parse error");
+    let own = parse(
+        "comptime M = N + 1\n\
+         def mine(x: Int) -> Int:\n    return x\n\
+         def mine(x: Int, y: Int) -> Int:\n    return y\n",
+    )
+    .expect("parse error");
+    let whole = OverloadSets::scan(&[library.clone(), own.clone()].concat());
+    let mut installed = OverloadSets::default();
+    installed.extend(OverloadSets::scan(&library).restricted(|name| name != "solo"));
+    installed.extend(OverloadSets::scan(&library).restricted(|name| name == "solo"));
+    installed.scan_more(&own);
+    assert_eq!(installed, whole);
+    assert!(installed.function_is_overloaded("pick", 1));
+    assert!(installed.function_is_overloaded("mine", 2));
+    assert!(installed.is_function("solo"));
+}

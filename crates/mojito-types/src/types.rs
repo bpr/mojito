@@ -22,7 +22,7 @@ use mojito_ast::ast::{ArgConvention, Dtype};
 /// Two-component literals can use the view-oriented contiguous descriptor;
 /// literals with a second colon use the owning strided descriptor. `Slice` is
 /// the general protocol fallback accepted by user-defined collections.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum SliceKind {
     Slice,
     ContiguousSlice,
@@ -45,7 +45,7 @@ impl SliceKind {
 ///
 /// Call sites replay the effect against their actuals, installing the
 /// caller-side loan the callee's store implies.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub struct TransferEffect {
     pub dest: crate::origin::SigOrigin,
     pub src: crate::origin::SigOrigin,
@@ -65,7 +65,7 @@ pub struct TransferEffect {
 /// them — a `def(...)` contract cannot spell effects (Mojo has no such
 /// syntax), so soundness comes from call-site replay off the value's type,
 /// never from acceptance filtering.
-#[derive(Debug, Clone, Default, Eq)]
+#[derive(Debug, Clone, Default, Eq, serde::Serialize, serde::Deserialize)]
 pub struct TransferSet(pub Vec<TransferEffect>);
 
 impl TransferSet {
@@ -95,7 +95,7 @@ impl PartialEq for TransferSet {
 /// The expression stays structural semantic data — no phase encodes or
 /// recovers it from a synthesized name — and folds away to the [`Ty`] it
 /// denotes once substitution closes it ([`DependentType::resolve`]).
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum DependentType {
     /// A type-valued parameter expression: a finite type selection
     /// (`ParamKind::Select`), one element of a parameter list that is still
@@ -157,7 +157,7 @@ impl DependentType {
 ///
 /// `Expr` is never a closed expression: [`simd_ty_from_slots`] folds one to
 /// `Known`, so slot equality is type identity.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum SimdDtype {
     Known(Dtype),
     Expr(ParamExpr),
@@ -212,7 +212,7 @@ impl fmt::Display for SimdDtype {
 /// told apart from every lane count a program can name and from a binder the
 /// instantiation still owes a value. `Expr` is never a closed expression:
 /// [`simd_ty_from_slots`] folds one to `Known`.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum SimdWidth {
     Known(i64),
     Expr(ParamExpr),
@@ -267,7 +267,7 @@ impl fmt::Display for SimdWidth {
 /// own type parameter, keeps that query, which each instantiation closes;
 /// one naming no alternative fails the instance, as upstream's
 /// `Variant._check[T]()` does. Concrete MIR holds only `Known`.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum VariantIndex {
     Known(usize),
     Expr(ParamExpr),
@@ -314,7 +314,7 @@ impl fmt::Display for VariantIndex {
 /// a template's binders keeps its method's form, which the instantiation
 /// closes and checks against the method's constraints, as the pin's
 /// `comptime assert`s do. Concrete MIR holds only `Known`.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum LaneMask {
     Known(Vec<usize>),
     /// `v.shuffle[i, j, …]()`: one `Int` lane index per receiver lane.
@@ -437,7 +437,7 @@ impl fmt::Display for LaneMask {
 
 /// A type in mojito's semantic lattice. Scalars mirror `ast::Type`; `Func` is
 /// synthesized from a `def` signature or lowered from a function-type annotation.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum Ty {
     Int,
     UInt,
@@ -1166,7 +1166,7 @@ pub fn constructible_type_parameter(declaration: &ParamDecl) -> bool {
     )
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum ParamDecl {
     /// A type parameter `T: Trait & ...`.
     Type {
@@ -1209,7 +1209,7 @@ pub enum ParamDecl {
 /// earlier reified callable parameter, and conditional defaults select between
 /// two such plans using ordinary scalar compile-time parameters.  No variant
 /// stores a closure payload.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum CallableDefault {
     Symbol(String),
     /// An earlier callable parameter of the same declaration.
@@ -1242,7 +1242,7 @@ impl CallableDefault {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum ConstraintOperand {
     /// A parameter, named by its declaration's identity.
     Param(ParamRef),
@@ -1261,7 +1261,7 @@ pub enum ConstraintOperand {
 ///
 /// A builtin `IsTrivially*` spelling or a Bool-bodied predicate alias with one
 /// type parameter, applied to each element of the bound pack.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum PackPredicateRef {
     Trivial(TrivialLifecycle),
     Alias(String),
@@ -1273,7 +1273,7 @@ pub enum PackPredicateRef {
 /// The type conforms to `TrivialRegisterPassable`, or the base capability
 /// holds and the corresponding lifecycle operation is compiler-generated with
 /// recursively trivial fields (a bitwise move/copy or a no-op destructor).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum TrivialLifecycle {
     Movable,
     Copyable,
@@ -1307,7 +1307,7 @@ pub const fn trivial_predicate_spelling(kind: TrivialLifecycle) -> &'static str 
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum GenericConstraint {
     /// A top-level `where (condition, "message")` clause. The message affects
     /// only the failed-specialization diagnostic; semantic operations recurse
@@ -1569,7 +1569,7 @@ pub type TySubst = HashMap<ParamId, Ty>;
 /// Origins participate in checked identity but erase from the runtime ABI,
 /// exactly like `Ty::Pointer` origins — a parameterized iterator's `origin`
 /// argument distinguishes checked types without changing lowering.
-#[derive(Debug, Clone, Eq)]
+#[derive(Debug, Clone, Eq, serde::Serialize, serde::Deserialize)]
 pub enum TyArg {
     Ty(Ty),
     Val(CtValue),
@@ -1733,6 +1733,18 @@ impl Deref for TyArgs {
 impl fmt::Debug for TyArgs {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         self.0.arguments.fmt(f)
+    }
+}
+
+impl serde::Serialize for TyArgs {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        self.0.arguments.serialize(serializer)
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for TyArgs {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        Vec::<TyArg>::deserialize(deserializer).map(Self::from)
     }
 }
 
@@ -4395,5 +4407,114 @@ mod collection_representation_tests {
             uninit_storage_element(&Ty::Struct("__UninitStorage".into(), vec![].into())),
             None
         );
+    }
+}
+
+#[cfg(test)]
+mod encoding_tests {
+    use super::*;
+    use crate::origin::{Origin, OriginPlace, OwnerId, RefSig, SigMutability, SigOrigin};
+    use crate::param_expr::{MetaTy, ParamId};
+    use std::hash::{BuildHasher, BuildHasherDefault, DefaultHasher};
+
+    fn round_trip<T>(value: &T) -> T
+    where
+        T: serde::Serialize + serde::de::DeserializeOwned,
+    {
+        postcard::from_bytes(&postcard::to_stdvec(value).expect("encode")).expect("decode")
+    }
+
+    fn hash_of(value: &impl std::hash::Hash) -> u64 {
+        BuildHasherDefault::<DefaultHasher>::default().hash_one(value)
+    }
+
+    #[test]
+    fn checked_vocabulary_round_trips() {
+        let context = ParamContext::new();
+        let n = context.decl_ref(ParamId::new("f", 1), "n", MetaTy::int());
+        let doubled = context
+            .infix(mojito_ast::ast::InfixOp::Mul, &n, &n)
+            .expect("n * n");
+        let decls = vec![
+            ParamDecl::Type {
+                id: ParamId::new("f", 0),
+                name: "T".to_string(),
+                bounds: vec!["Copyable".to_string()],
+                callable_bound: None,
+                default: None,
+                infer_only: false,
+                variadic: false,
+                constraints: vec![GenericConstraint::Conforms {
+                    param: n.as_decl_ref().expect("a binder").clone(),
+                    trait_name: "Writable".to_string(),
+                }],
+            },
+            ParamDecl::Value {
+                id: ParamId::new("f", 1),
+                name: "n".to_string(),
+                ty: Box::new(Ty::Int),
+                default: Some(context.constant(CtValue::Int(4)).expect("4")),
+                callable_default: None,
+                infer_only: false,
+                variadic: false,
+                constraints: Vec::new(),
+            },
+        ];
+        let array = Ty::Struct(
+            "Array".to_string(),
+            vec![TyArg::Ty(Ty::Int), TyArg::Val(CtValue::Expr(doubled))].into(),
+        );
+        let function = Ty::GenericFunc {
+            environment: crate::origin::CallableEnvironment::Default,
+            decls,
+            params: vec![array.clone()],
+            names: vec!["xs".to_string()],
+            ret: Box::new(array),
+            required: vec![true],
+            variadic: None,
+            kw_variadic: None,
+            positional_only: None,
+            keyword_only: None,
+            raises: false,
+            error: None,
+            conventions: vec![None],
+            ref_params: Box::new(vec![Some(RefSig {
+                origin: SigOrigin::Bound(Origin::Param(crate::origin::OriginParamId(0))),
+                mutability: SigMutability::Immutable,
+            })]),
+            ref_return: None,
+            transfers: TransferSet::default(),
+        };
+        let decoded = round_trip(&function);
+        assert_eq!(decoded, function);
+        assert_eq!(hash_of(&decoded), hash_of(&function));
+    }
+
+    #[test]
+    fn every_encoded_kind_round_trips() {
+        let context = ParamContext::new();
+        let n = context.decl_ref(ParamId::new("f", 1), "n", MetaTy::int());
+        let field = context.field(&n, "rows", MetaTy::int()).expect("a field");
+        assert_eq!(round_trip(&field), field);
+        let pack = |owner: &str| {
+            context.decl_ref(
+                ParamId::new(owner, 0),
+                "Ts",
+                MetaTy::ParamList(Box::new(MetaTy::Type)),
+            )
+        };
+        let concat = context
+            .list_concat(&[pack("f"), pack("g")])
+            .expect("a concatenation");
+        assert_eq!(round_trip(&concat), concat);
+    }
+
+    #[test]
+    fn a_binding_owner_is_never_encoded() {
+        let place = Origin::Place(OriginPlace {
+            root: OwnerId(3),
+            path: Vec::new(),
+        });
+        assert!(postcard::to_stdvec(&place).is_err());
     }
 }

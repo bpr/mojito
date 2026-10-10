@@ -15,6 +15,20 @@ impl Checker {
             mojito_symbol::symbol::MethodBinderOwners::scan(stmts, &self.overload_sets);
         self.applicable_functions =
             super::comptime_validation::applicable_functions(stmts, &self.overload_sets);
+        for statement in stmts {
+            if let StmtKind::Def {
+                name,
+                type_params,
+                ret: Some(ret),
+                ..
+            } = &statement.kind
+                && type_params.is_empty()
+            {
+                self.module_def_results
+                    .entry(name.clone())
+                    .or_insert_with(|| ret.clone());
+            }
+        }
         self.declared_structs
             .extend(stmts.iter().filter_map(|statement| match &statement.kind {
                 StmtKind::Struct { name, .. } => Some(name.clone()),
@@ -98,7 +112,7 @@ impl Checker {
             let predeclared = if let Ok(constant) = self.eval_ct(value) {
                 self.comptimes.insert(name.clone(), constant);
                 Some(Ty::IntLiteral)
-            } else if let Some(applied) = self.applied_constant_expr(value, stmts) {
+            } else if let Some(applied) = self.applied_constant_expr(value) {
                 let ty = applied.meta().as_value().cloned();
                 self.comptime_applied.insert(name.clone(), applied);
                 ty
@@ -193,17 +207,10 @@ impl Checker {
                 }
                 pending = waiting;
             }
-            self.in_package.set(
-                self.package
-                    .as_ref()
-                    .is_some_and(|package| package.compiles(stmt.module.as_deref())),
-            );
             // `ret = None` marks "not inside a function", so a top-level
             // `return` is rejected; `in_loop = false` likewise rejects a
             // top-level `break`.
-            let checked = self.check_block(std::slice::from_ref(stmt), None, false);
-            self.in_package.set(false);
-            checked?;
+            self.check_block(std::slice::from_ref(stmt), None, false)?;
         }
         Ok(())
     }
@@ -2845,10 +2852,8 @@ impl Checker {
         // A module-level body is a carry site: its parameter bindings, its
         // frames, and its inference are what the previous pass recorded for
         // it, or what this pass records.
-        // A package's body was checked when the package was built.
-        let packaged = module_level && self.in_package.get();
-        let site = (module_level && !packaged && self.carries_bodies()).then(|| stmt.source_span());
-        let carried = packaged || site.as_ref().is_some_and(|key| self.carry_body(key, name));
+        let site = (module_level && self.carries_bodies()).then(|| stmt.source_span());
+        let carried = site.as_ref().is_some_and(|key| self.carry_body(key, name));
         let site_start = if carried {
             None
         } else {
@@ -3056,7 +3061,6 @@ impl Checker {
         // A function with a non-`None` return type must return on every
         // path (falling off the end would yield `None`).
         if result.is_ok()
-            && !packaged
             && named_result.is_none()
             && ret_ty != Ty::None
             && !definitely_returns(body)
@@ -3064,7 +3068,6 @@ impl Checker {
             result = Err(TypeError::MissingReturn(name.clone()));
         }
         if result.is_ok()
-            && !packaged
             && let Some(named_result) = named_result
             && !definitely_initializes_named_result(body, &named_result.name)
         {

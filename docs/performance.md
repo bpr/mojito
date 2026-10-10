@@ -869,3 +869,27 @@ package (22: the MIR `declarations` section's text decode is 18, R554),
 the check's registration of the library's declaration headers (about 20 of
 its 25: method signatures 7, the module walk 9, the arena 4; R552), and
 preparing and elaborating those headers (11, R553).
+
+### The importer installs the library's declarations (2026-10-10, R552)
+
+Same environment and method as the tables above, on the R545 tree against
+the R552 tree, both importing the package; RSS in MB. The package build's
+check exports each library module's resolved declarations as a
+declaration interface (`checker::interface`), and an importer's check
+installs those of the modules its link reached instead of registering the
+library's declaration headers, then checks the program's own statements
+alone. The package grows by 41 interfaces, 164 KB of bytecode, to 8.6 MB.
+
+| Program | total (R545 → now) | compile | check | check arena | peak RSS MB |
+|---|---:|---:|---:|---:|---:|
+| hello | 76 → 51 (−33%) | 41 → 16 | 25 → 3.0 | 3.6 → 0.0 | 56 → 48 |
+| generic | 89 → 61 (−31%) | 44 → 19 | 28 → 4.1 | 4.9 → 0.2 | 58 → 51 |
+| keyed | 106 → 82 (−23%) | 46 → 21 | 29 → 5.1 | 5.1 → 0.5 | 64 → 56 |
+| stdlib_heavy | 146 → 122 (−16%) | 45 → 20 | 28 → 5.0 | 4.8 → 0.3 | 81 → 74 |
+
+Of Hello World's 3 ms check, installing the 39 reached interfaces into the
+one transfer pass is 1.0 ms (R555) and answering every installed struct's
+conformances again 1.3 ms (`check.conformances`, R556); decoding the
+interfaces is 1.5 ms more, before the check (`package.interfaces`, R555).
+What scales with the library is now reading the package (R554) and
+preparing and elaborating the library's headers (R553).

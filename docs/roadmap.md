@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R555**.
+Next free ID: **R557**.
 
 ## Ordered Work
 
@@ -49,31 +49,6 @@ belongs to is named in its title.
 Scope: what remains of the plan's stages, and what the pipeline order still
 leaves to close. A defect found on the way is filed by its kind; a
 divergence from the pin goes to a catch-up track, however small.
-
-- [ ] **R552 (P6) An importer's check registers the package's
-  declarations again from their headers**
-
-  Every compilation's check runs its declaration phases and module walk
-  over each library declaration the link reached, where upstream installs
-  a package declaration already resolved.
-  - That is most of Hello World's 25 ms check, release
-    (`docs/performance.md` §P6): method signatures 7 ms, the module walk
-    9 ms, the checked arena 4 ms; the program's own body is one of them.
-  - Every transfer round builds a fresh `Checker` and registers them all
-    again.
-  - The lever is a declaration interface in each module record: the tables
-    a user check reads (`StructInfo`, `TraitInfo`, `MethodSig`, aliases,
-    constants, overload sets, generic parameters, each module `def`'s type
-    and origin facts), by linked name, installed per round instead of
-    checked, with no `OwnerId`, span-keyed fact, or `SyntaxId` in them.
-  - Default-argument expressions, conformance conditions, and source
-    parameter lists are AST in those tables; the records' bytecode already
-    carries AST.
-  - Package statements then leave the checked program, so the arena and
-    `explicit_destroy` see the program's own alone; lowering takes the
-    checker's `OverloadSets` and `MethodBinderOwners`.
-  - Depends on nothing.
-  - Model: Fable, Planned.
 
 - [ ] **R554 (P6) An importer decodes every package MIR declaration
   eagerly, through the text grammar**
@@ -108,6 +83,40 @@ divergence from the pin goes to a catch-up track, however small.
     read the headers until R551 makes a default a trait member.
   - Depends on R552, which fixes what the check reads of a header.
   - Model: Fable, Planned.
+
+- [ ] **R555 (P6) An importer installs every reached package module's
+  declarations eagerly, where upstream resolves one on first lookup**
+
+  The check installs the whole declaration interface of each library module
+  the link reached, in every transfer pass, whatever the program names.
+  - That is 2.6 ms of Hello World, release: decoding 39 interfaces 1.5 ms
+    and installing them 1.1 ms.
+  - Each pass clones every installed table into its fresh `Checker`, and
+    each compilation decodes the interfaces again.
+  - Upstream resolves a package declaration from bytecode on first lookup
+    (`resolveDeclFromBytecode`, `lookupAndResolveMangledDecl`).
+  - The lever is a lookup-miss hook on the checker's name-keyed tables that
+    decodes one declaration's entry (`checker/interface.rs`).
+  - Depends on nothing.
+  - Model: Fable, Planned.
+
+- [ ] **R556 (P6) An importer's check answers every package struct's
+  conformances again**
+
+  `Checker::conformance_facts` decides each struct's conformance to every
+  trait a condition or a package body asks, the reached package structs
+  included, on every compilation.
+  - That is 1.3 ms of Hello World's 3 ms check, release
+    (`check.conformances`).
+  - The package build answered every package struct against every package
+    trait already.
+  - Upstream reads a package type's conformances from the package and
+    decides only the importer's own.
+  - The lever: a module's declaration interface carries its structs'
+    conformance rows, and the importer computes only the rows its own
+    structs or its own asked traits add.
+  - Depends on nothing.
+  - Model: Opus, Planned.
 
 - [ ] **R547 A function the check lifts from a body is numbered per
   compilation, so the bundled library cannot contain one**

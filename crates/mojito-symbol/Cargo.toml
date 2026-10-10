@@ -8,6 +8,7 @@ publish = false
 [dependencies]
 mojito-ast = { path = "../mojito-ast" }
 mojito-common = { path = "../mojito-common" }
+serde.workspace = true
 mojito-types = { path = "../mojito-types" }
 sha2 = "0.11.0"
 

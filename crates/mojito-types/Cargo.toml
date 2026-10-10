@@ -8,6 +8,10 @@ publish = false
 [dependencies]
 mojito-ast = { path = "../mojito-ast" }
 mojito-common = { path = "../mojito-common" }
+serde.workspace = true
+
+[dev-dependencies]
+postcard.workspace = true
 
 [lints]
 workspace = true

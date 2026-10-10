@@ -158,17 +158,6 @@ pub(super) fn package_interface(interface: &mojito_checked::interface::PackageIn
                         }),
                 ),
             ),
-            (
-                "parametric_origin_writes",
-                list(
-                    interface
-                        .parametric_origin_writes
-                        .iter()
-                        .map(|(method, origins)| {
-                            summary(method, list(origins.iter().map(|id| id.0.to_string())))
-                        }),
-                ),
-            ),
         ],
     )
 }

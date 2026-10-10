@@ -1413,6 +1413,9 @@ pub struct DiscoveryResult {
     /// Each erased `rebind` the check judged, at its operand.
     pub rebind_assertions: FactMap<SourceSpan, RebindAssertion>,
     pub declaration_effects: FactMap<AnnotationSite, DeclarationEffect>,
+    /// The overload sets of every declaration the check knew, its own and
+    /// an imported package's.
+    pub overloads: mojito_symbol::symbol::OverloadSets,
 }
 
 impl DiscoveryResult {
@@ -1462,6 +1465,7 @@ impl DiscoveryResult {
             &self.truthiness_conditions,
             &self.rebind_assertions,
             self.declaration_effects.into_inner(),
+            self.overloads,
         )
     }
 
@@ -1569,6 +1573,7 @@ pub struct CheckedProgram {
     explicit_destroy_types: HashMap<String, ExplicitDestroyInfo>,
     conformances: ConformanceFacts,
     declaration_effects: HashMap<AnnotationSite, DeclarationEffect>,
+    overloads: mojito_symbol::symbol::OverloadSets,
 }
 
 /// What decides a conformance below the checker: the declared traits, and
@@ -1883,6 +1888,7 @@ impl CheckedProgram {
         truthiness_conditions: &HashSet<SourceSpan>,
         rebind_assertions: &HashMap<SourceSpan, RebindAssertion>,
         declaration_effects: HashMap<AnnotationSite, DeclarationEffect>,
+        overloads: mojito_symbol::symbol::OverloadSets,
     ) -> Self {
         let expressions_span = mojito_common::timing::span("expressions");
         let (expressions, expression_index) = build_checked_expressions(
@@ -1950,12 +1956,19 @@ impl CheckedProgram {
             explicit_destroy_types,
             conformances,
             declaration_effects,
+            overloads,
         }
     }
 
     /// Elaborated statements accepted by semantic checking.
     pub fn statements(&self) -> &[Stmt] {
         &self.statements
+    }
+
+    /// The overload sets of every declaration the check knew: the
+    /// program's own and those of a package it imports.
+    pub const fn overloads(&self) -> &mojito_symbol::symbol::OverloadSets {
+        &self.overloads
     }
 
     /// Checker-selected lowered callable name at each resolved call site.

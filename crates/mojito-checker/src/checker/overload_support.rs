@@ -54,7 +54,7 @@ pub(super) fn block_can_escape_owned_iteration(statements: &[Stmt], nested_loops
 }
 
 /// The required kind/type of a trait `comptime NAME: Annotation` member.
-#[derive(Clone, PartialEq)]
+#[derive(Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub(super) enum CtMemberReq {
     /// A compile-time value whose value type must match this type.
     Value(Box<Ty>),

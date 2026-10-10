@@ -15,17 +15,21 @@ use crate::mir::text::package::{PackageBodies, PackageHeader, read_package, writ
 use crate::mir::{MirDeclarations, MirProgram};
 use crate::module::{LinkOptions, bundled_root, link_source_recording};
 use crate::module_package::PackageModules;
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, OnceLock};
 
-/// An imported package: the module records its importer's link reads, the
-/// interface its importer's check reads, the MIR declarations its
-/// importer's lowering links, and its bodies.
+/// An imported package, read once per process.
+///
+/// It holds the module records its importer's link reads, the interface and
+/// the module declaration interfaces its importer's check reads, the MIR
+/// declarations its importer's lowering links, and its bodies.
 #[derive(Debug)]
 pub struct ImportedPackage {
     pub modules: PackageModules,
     pub interface: Arc<PackageInterface>,
+    /// Each module's encoded declaration interface, by module path.
+    pub checked: HashMap<String, Vec<u8>>,
     pub declarations: MirDeclarations,
     pub bodies: PackageBodies,
 }
@@ -138,6 +142,7 @@ fn import(bytes: Vec<u8>, header: &PackageHeader) -> Result<ImportedPackage, Str
     Ok(ImportedPackage {
         modules: PackageModules::new(package.modules),
         interface: Arc::new(package.interface),
+        checked: package.checked.into_iter().collect(),
         declarations: package.declarations,
         bodies: package
             .bodies
@@ -172,7 +177,8 @@ fn build(root: &Path, header: &PackageHeader) -> Result<Vec<u8>, CompilerError> 
         .iter()
         .filter(|statement| statement.module.as_deref() != Some(entry_module.as_str()))
         .collect();
-    let (compiled, mut interface) = Compiler::default().compile_for_package(&linked)?;
+    let (compiled, exports) = Compiler::default().compile_for_package(&linked)?;
+    let mut interface = exports.summaries;
     interface.modules = packaged
         .iter()
         .filter_map(|statement| statement.module.clone())
@@ -204,7 +210,7 @@ fn build(root: &Path, header: &PackageHeader) -> Result<Vec<u8>, CompilerError> 
         }
         program.functions.push((name.clone(), function.clone()));
     }
-    write_package(header, &interface, &program, &modules)
+    write_package(header, &interface, &program, &modules, &exports.interfaces)
         .map_err(|error| CompilerError::Verify(vec![error.to_string()]))
 }
 
@@ -367,6 +373,7 @@ mod tests {
                 invariant_errors: Vec::new(),
             },
             &[],
+            &[],
         )
         .expect("write");
         assert!(import(text.clone(), &header).is_ok());
@@ -422,7 +429,9 @@ mod tests {
         let root = bundled_root().expect("a bundled root").join("stdlib");
         let mut source = String::new();
         for module in module_paths(&root.join("std"), "std") {
-            source.push_str(&format!("import {module}\n"));
+            source.push_str("import ");
+            source.push_str(&module);
+            source.push('\n');
         }
         source.push_str("def main():\n    print(String(\"probe\"))\n");
         let entry = Path::new("probe.mojo");
@@ -440,5 +449,27 @@ mod tests {
                 (&packaged.module, packaged.span)
             );
         }
+    }
+
+    #[test]
+    fn every_library_module_has_an_interface() {
+        let package = bundled_std_package().expect("the bundled library packages");
+        let list = package
+            .interface
+            .modules
+            .iter()
+            .find(|module| module.ends_with("collections/list.mojo"))
+            .expect("the library has a list module");
+        assert!(package.checked.contains_key(list));
+        for module in package.checked.keys() {
+            assert!(package.interface.modules.contains(module), "{module}");
+        }
+        crate::checker::InstalledInterfaces::decode(
+            package
+                .checked
+                .iter()
+                .map(|(module, bytes)| (module.as_str(), bytes.as_slice())),
+        )
+        .expect("every interface decodes");
     }
 }

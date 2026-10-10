@@ -1315,12 +1315,10 @@ impl Checker {
         // A method body is a carry site (`body_carry`): keyed by its first
         // statement, which the final re-key made unique, and named as the
         // template mechanism names it (`Owner.method`, overloads alike).
-        // A package's method body was checked when the package was built.
-        let packaged = self.in_package.get();
         let site = m
             .body
             .first()
-            .filter(|_| !packaged && self.carries_bodies())
+            .filter(|_| self.carries_bodies())
             .map(|first| {
                 let display = self.method_site.as_ref().map_or_else(
                     || effect_key.clone(),
@@ -1328,10 +1326,9 @@ impl Checker {
                 );
                 (first.source_span(), display)
             });
-        let carried = packaged
-            || site
-                .as_ref()
-                .is_some_and(|(key, display)| self.carry_body(key, display));
+        let carried = site
+            .as_ref()
+            .is_some_and(|(key, display)| self.carry_body(key, display));
         let mut result = if carried {
             Ok(())
         } else {
@@ -1347,7 +1344,6 @@ impl Checker {
         // constructed value has no unset fields. Path-sensitive DI (assign exactly
         // once, before any read, on every path) is left for a later refinement.
         if result.is_ok()
-            && !packaged
             && out_init
             && let Ty::Struct(sname, _) = self_ty
         {

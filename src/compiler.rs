@@ -2,7 +2,7 @@
 
 use crate::backend::BackendKind;
 use crate::checked::CheckedProgram;
-use crate::checker::CheckContext;
+use crate::checker::{CheckContext, InstalledInterfaces};
 use crate::comptime::{ComptimeError, elaborate_prepared, prepare};
 use crate::error::{OwnershipError, ParseError, TypeError};
 use crate::mir::MirProgram;
@@ -325,18 +325,30 @@ impl Compiler {
     pub fn compile_linked(&self, linked: &[Stmt]) -> Result<CompiledProgram, CompilerError> {
         let package = self
             .std_package()
-            .filter(|package| imports_cleanly(linked, &package.interface));
-        self.compile_importing(linked, package)
-            .map(|(program, _)| program)
+            .filter(|package| imports_cleanly(linked, &package.interface))
+            .and_then(|package| importing(package, linked));
+        self.compile_importing(linked, package, &mut CheckContext::new())
     }
 
-    /// Compile `linked` from source, with the effect summaries of its
-    /// module-level callables, the interface of a package built from it.
+    /// Compile `linked` from source, with what a package built from it
+    /// exports.
     pub(crate) fn compile_for_package(
         &self,
         linked: &[Stmt],
-    ) -> Result<(CompiledProgram, PackageInterface), CompilerError> {
-        self.compile_importing(linked, None)
+    ) -> Result<(CompiledProgram, PackageExports), CompilerError> {
+        let mut context = CheckContext::new();
+        context.record_interfaces();
+        let program = self.compile_importing(linked, None, &mut context)?;
+        let interfaces = context
+            .take_interfaces()
+            .map_err(|error| CompilerError::Verify(vec![error]))?;
+        Ok((
+            program,
+            PackageExports {
+                summaries: context.take_summaries(),
+                interfaces: interfaces.into_iter().collect(),
+            },
+        ))
     }
 
     /// The bundled library's compiled package, when this compiler imports
@@ -361,37 +373,35 @@ impl Compiler {
         if let Some(package) = self.std_package()
             && let Ok(linked) = link(Some(&package))
             && imports_cleanly(&linked, &package.interface)
+            && let Some(importing) = importing(package, &linked)
         {
-            return self
-                .compile_importing(&linked, Some(package))
-                .map(|(program, _)| program);
+            return self.compile_importing(&linked, Some(importing), &mut CheckContext::new());
         }
         let linked = link(None).map_err(CompilerError::Module)?;
-        self.compile_importing(&linked, None)
-            .map(|(program, _)| program)
+        self.compile_importing(&linked, None, &mut CheckContext::new())
     }
 
     fn compile_importing(
         &self,
         linked: &[Stmt],
-        package: Option<Arc<ImportedPackage>>,
-    ) -> Result<(CompiledProgram, PackageInterface), CompilerError> {
+        package: Option<(Arc<ImportedPackage>, InstalledInterfaces)>,
+        context: &mut CheckContext,
+    ) -> Result<CompiledProgram, CompilerError> {
         let _compile = timing::span("compile");
         // A package's bodies were checked and lowered when it was built, and
         // its importer elaborates them below MIR: nothing above the waist
         // reads one.
         let mut linked = linked.to_vec();
-        if let Some(package) = &package {
+        let package = package.map(|(package, installed)| {
             crate::checker::strip_package_bodies(&mut linked, &package.interface);
-        }
+            context.import_package(Arc::clone(&package.interface));
+            context.install(installed);
+            package
+        });
         let prepared = {
             let _prepare = timing::span("prepare");
             prepare(linked).map_err(CompilerError::Comptime)?
         };
-        let mut context = CheckContext::new();
-        if let Some(package) = &package {
-            context.import_package(Arc::clone(&package.interface));
-        }
         context.set_body_fact_reuse(self.body_fact_reuse.unwrap_or_else(|| {
             std::env::var_os("MOJITO_BODY_FACT_REUSE").is_none_or(|value| value != "0")
         }));
@@ -406,10 +416,18 @@ impl Compiler {
         if !self.allow_executable_module_scope {
             validate_module_scope(&elaborated).map_err(CompilerError::Type)?;
         }
+        // The check installs the package's declarations from their
+        // interfaces and checks the program's own statements alone.
+        let own: Vec<Stmt> = match &package {
+            Some(package) => elaborated
+                .into_iter()
+                .filter(|statement| !package.interface.compiles(statement.module.as_deref()))
+                .collect(),
+            None => elaborated,
+        };
         let checked = {
             let _check = timing::span("check");
-            crate::checker::check_program_in(&elaborated, &mut context)
-                .map_err(CompilerError::Type)?
+            crate::checker::check_program_in(&own, context).map_err(CompilerError::Type)?
         };
         let mir = {
             let _lower = timing::span("mir.lower");
@@ -451,19 +469,15 @@ impl Compiler {
             )
             .map_err(CompilerError::Ownership)?;
         }
-        let summaries = context.take_summaries();
-        Ok((
-            CompiledProgram {
-                checked,
-                mir,
-                elaborated: OnceLock::new(),
-                complete: OnceLock::new(),
-                concrete: OnceLock::new(),
-                target: self.target,
-                package,
-            },
-            summaries,
-        ))
+        Ok(CompiledProgram {
+            checked,
+            mir,
+            elaborated: OnceLock::new(),
+            complete: OnceLock::new(),
+            concrete: OnceLock::new(),
+            target: self.target,
+            package,
+        })
     }
     /// Execute an ownership-verified program using the configured backend.
     pub fn execute(&self, program: &CompiledProgram) -> Result<Execution, CompilerError> {
@@ -498,6 +512,42 @@ impl Compiler {
         let program = self.compile_path(entry)?;
         self.execute(&program)
     }
+}
+
+/// What the check of a package's program exports: the effect summaries of
+/// its module-level callables, and each module's encoded declaration
+/// interface, by module path.
+pub(crate) struct PackageExports {
+    pub summaries: PackageInterface,
+    pub interfaces: Vec<(String, Vec<u8>)>,
+}
+
+/// `package` with the declaration interfaces of the modules `linked`
+/// reached from it, decoded; `None` when one does not decode, and the
+/// program compiles without the package.
+fn importing(
+    package: Arc<ImportedPackage>,
+    linked: &[Stmt],
+) -> Option<(Arc<ImportedPackage>, InstalledInterfaces)> {
+    let _decode = timing::span("package.interfaces");
+    let mut reached: Vec<&str> = Vec::new();
+    for module in linked
+        .iter()
+        .filter_map(|statement| statement.module.as_deref())
+        .filter(|module| package.interface.compiles(Some(module)))
+    {
+        if !reached.contains(&module) {
+            reached.push(module);
+        }
+    }
+    let installed = InstalledInterfaces::decode(reached.into_iter().filter_map(|module| {
+        package
+            .checked
+            .get(module)
+            .map(|bytes| (module, bytes.as_slice()))
+    }))
+    .ok()?;
+    Some((package, installed))
 }
 
 /// Whether `linked` can import `package`: a statement from one of the

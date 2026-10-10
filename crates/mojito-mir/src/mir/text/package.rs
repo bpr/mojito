@@ -1,18 +1,20 @@
 //! The compiled package container, one file per package.
 //!
 //! It holds the package's checker interface, its MIR declarations, the
-//! record its importer's link reads for each of its source modules, and
-//! each of its verified, ownership-checked function bodies as MIR text,
-//! before drop elaboration. An importer reads the interface and the
-//! declarations eagerly, a module's record when its link reaches the
-//! module, and a body only when the elaborator first reaches it, inserting
-//! that body's drops then, as upstream materializes a package's bodies on
-//! demand and runs its lifetime pass on each in the importer.
+//! record its importer's link reads for each of its source modules, the
+//! declaration interface its importer's check installs for each module,
+//! and each of its verified, ownership-checked function bodies as MIR
+//! text, before drop elaboration. An importer reads the interface and the
+//! declarations eagerly, a module's record and declaration interface when
+//! its link reaches the module, and a body only when the elaborator first
+//! reaches it, inserting that body's drops then, as upstream materializes a
+//! package's bodies on demand and runs its lifetime pass on each in the
+//! importer.
 //!
 //! The container is line-framed:
 //!
 //! ```text
-//! mojito-package 2
+//! mojito-package 3
 //! package <name>
 //! compiler <identity>
 //! source <hash>
@@ -23,6 +25,9 @@
 //! module <bytes> <canonical source path>
 //! <the module's record, as bytecode>
 //! …
+//! checked <bytes> <module path>
+//! <the module's declaration interface, as bytecode>
+//! …
 //! function <bytes> <params> <ref-parameter mask> <name>
 //! <the function's MIR record>
 //! …
@@ -30,8 +35,9 @@
 //! ```
 //!
 //! Each section is exactly its byte count, followed by a newline. Every
-//! section but a module record is UTF-8 text; a module record is opaque
-//! here, since the linker that reads it sits above MIR.
+//! section but a module record or a declaration interface is UTF-8 text;
+//! those two are opaque here, since the linker and the checker that read
+//! them sit above MIR.
 
 use super::parse::package::{self as decode, PackageFiles};
 use super::{ArtifactDiagnostic, DisassembleError, write};
@@ -42,7 +48,7 @@ use std::fmt;
 use std::sync::{Mutex, OnceLock};
 
 /// The container format this compiler writes and reads.
-pub const PACKAGE_FORMAT: &str = "mojito-package 2";
+pub const PACKAGE_FORMAT: &str = "mojito-package 3";
 
 /// Who built a package from what: an importer refuses a package another
 /// compiler built, or one built from other sources.
@@ -65,6 +71,8 @@ pub struct Package {
     pub declarations: MirDeclarations,
     /// Each module's encoded record, beside its canonical source path.
     pub modules: Vec<(String, Vec<u8>)>,
+    /// Each module's encoded declaration interface, beside its module path.
+    pub checked: Vec<(String, Vec<u8>)>,
     pub bodies: PackageBodies,
 }
 
@@ -221,7 +229,8 @@ impl From<DisassembleError> for PackageError {
 }
 
 /// Write a package: `program`, its verified, ownership-checked MIR before
-/// drop elaboration, its interface, and its `modules`' encoded records.
+/// drop elaboration, its interface, its `modules`' encoded records, and
+/// their `checked` declaration interfaces.
 ///
 /// Verification runs first, so an error never leaves a partial package.
 pub fn write_package(
@@ -229,6 +238,7 @@ pub fn write_package(
     interface: &PackageInterface,
     program: &MirProgram,
     modules: &[(String, Vec<u8>)],
+    checked: &[(String, Vec<u8>)],
 ) -> Result<Vec<u8>, PackageError> {
     let mut findings = program.invariant_errors.clone();
     findings.extend(crate::mir::verify::verify(program));
@@ -269,6 +279,12 @@ pub fn write_package(
             return Err(PackageError(format!("module path `{path}` spans lines")));
         }
         section(format!("module {} {path}", record.len()), record);
+    }
+    for (path, interface) in checked {
+        if path.contains('\n') {
+            return Err(PackageError(format!("module path `{path}` spans lines")));
+        }
+        section(format!("checked {} {path}", interface.len()), interface);
     }
     for ((name, function), text) in program.functions.iter().zip(&functions) {
         if name.contains('\n') {
@@ -319,20 +335,24 @@ pub fn read_package(bytes: Vec<u8>) -> Result<Package, PackageError> {
         .map_err(|diagnostics| PackageError(describe(&diagnostics)))?;
     drop(decoding);
     let mut modules = Vec::new();
+    let mut checked = Vec::new();
     let mut entries = Vec::new();
     loop {
         let line = reader.line()?;
         if line == "end" {
             break;
         }
-        if let Some(rest) = line.strip_prefix("module ") {
+        let opaque = [("module ", &mut modules), ("checked ", &mut checked)]
+            .into_iter()
+            .find_map(|(label, sections)| Some((line.strip_prefix(label)?, sections)));
+        if let Some((rest, sections)) = opaque {
             let Some((length, path)) = rest.split_once(' ') else {
-                return Err(PackageError(format!("malformed module line `{line}`")));
+                return Err(PackageError(format!("malformed section line `{line}`")));
             };
             let length = number(length)?;
             let start = reader.pos;
             reader.skip(length)?;
-            modules.push((path.to_string(), bytes[start..start + length].to_vec()));
+            sections.push((path.to_string(), bytes[start..start + length].to_vec()));
             continue;
         }
         let mut fields = line.splitn(5, ' ');
@@ -380,6 +400,7 @@ pub fn read_package(bytes: Vec<u8>) -> Result<Package, PackageError> {
         interface,
         declarations,
         modules,
+        checked,
         bodies: PackageBodies {
             bytes,
             files,

@@ -113,7 +113,7 @@ pub(super) struct ForwardedPack {
 /// ([`Checker::called_application`]): a module `def` or a static method of a
 /// struct, whose own compile-time parameters and runtime parameters are each
 /// an `Int` or a `Bool`, and which returns one.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub(in crate::checker) struct ApplicableFunction {
     /// The MIR declaration the elaborator runs.
     symbol: String,
@@ -3052,7 +3052,7 @@ pub(super) fn positional_pack_binding(
         })
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 struct ApplicableParameter {
     name: String,
     ty: Ty,

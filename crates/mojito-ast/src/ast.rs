@@ -1256,8 +1256,10 @@ pub enum CaptureKind {
 pub struct Expr {
     pub kind: ExprKind,
     pub span: Span,
-    /// Stamped as [`Stmt::module`] is, and likewise left out of an encoding.
-    #[serde(skip)]
+    /// Stamped as [`Stmt::module`] is, and likewise left out of an encoding:
+    /// a decoded expression is stamped with the module [`decoding_from`]
+    /// names, if any.
+    #[serde(skip, default = "decoded_source")]
     pub source: Option<String>,
     /// Concrete occurrence identity; ignored by structural AST equality. A
     /// decoded expression draws a fresh one.
@@ -2466,6 +2468,16 @@ pub fn clear_bodies(statement: &mut Stmt) {
     }
 }
 
+/// Decode with `decode`, stamping every expression it decodes with
+/// `source`, the module the encoding was made from: a record whose
+/// expressions sit inside other values, where no walk reaches them.
+pub fn decoding_from<T>(source: &str, decode: impl FnOnce() -> T) -> T {
+    let previous = DECODING_SOURCE.replace(Some(source.to_string()));
+    let decoded = decode();
+    DECODING_SOURCE.set(previous);
+    decoded
+}
+
 /// Attach one linked source path to an entire AST subtree. Spans remain local
 /// byte ranges; `source_span()` combines them with this provenance.
 pub fn stamp_source(statements: &mut [Stmt], source: &str) {
@@ -2482,6 +2494,15 @@ pub fn stamp_source(statements: &mut [Stmt], source: &str) {
     }
 
     crate::visit::walk_block_mut(&mut Stamp(source), statements);
+}
+
+thread_local! {
+    /// The module [`decoding_from`] is decoding.
+    static DECODING_SOURCE: std::cell::RefCell<Option<String>> = const { std::cell::RefCell::new(None) };
+}
+
+fn decoded_source() -> Option<String> {
+    DECODING_SOURCE.with_borrow(Clone::clone)
 }
 
 #[cfg(test)]

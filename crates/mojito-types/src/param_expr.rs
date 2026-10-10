@@ -1070,15 +1070,7 @@ impl ParamContext {
     }
 
     fn make(&self, meta: MetaTy, kind: ParamKind) -> ParamExpr {
-        let mut hasher = std::collections::hash_map::DefaultHasher::new();
-        meta.hash(&mut hasher);
-        kind.hash(&mut hasher);
-        let expr = ParamExpr(Arc::new(Node {
-            fingerprint: hasher.finish(),
-            meta,
-            kind,
-        }));
-        self.intern(&expr)
+        self.intern(&ParamExpr(Arc::new(Node::new(meta, kind))))
     }
 
     fn integer(&self, domain: IntDomain, value: i64) -> ParamExpr {
@@ -1937,6 +1929,22 @@ impl Hash for ParamExpr {
     }
 }
 
+/// A node is written as its meta-type and payload; a read one is built
+/// afresh, with the fingerprint its structure hashes to, so it equals and
+/// hashes like the node it was written from in any context.
+impl serde::Serialize for ParamExpr {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        (self.meta(), self.kind()).serialize(serializer)
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for ParamExpr {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let (meta, kind) = <(MetaTy, ParamKind)>::deserialize(deserializer)?;
+        Ok(Self(Arc::new(Node::new(meta, kind))))
+    }
+}
+
 impl PartialOrd for ParamExpr {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         Some(self.cmp(other))
@@ -2013,7 +2021,7 @@ impl From<ParamExpr> for ParamEval {
 /// The payload of one node. Construction goes through [`ParamContext`]; the
 /// variants are public so printers, verifiers, and the later dialect
 /// re-homing can read them.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum ParamKind {
     /// A closed value: no free parameter occurs in it, its type, or below it.
     Constant(CtValue),
@@ -2072,8 +2080,6 @@ pub enum ParamKind {
         function: String,
         args: Vec<ParamExpr>,
     },
-    /// Reserved typed unknown/unbound state; see [`ParamContext::hole`].
-    Hole { kind: HoleKind, token: u64 },
     /// `param_list.tabulate`: the list of `count` elements whose element `i`
     /// is `element` at `i`. `element` sits under one binder of one slot, its
     /// index, which it names as slot `0` of depth `0`; it names no signature
@@ -2085,11 +2091,18 @@ pub enum ParamKind {
     /// `param_list.concat`: the lists' elements in order. It holds at least
     /// two lists, none of them a concatenation or an empty constant.
     ListConcat { lists: Vec<ParamExpr> },
+    /// Reserved typed unknown/unbound state; see [`ParamContext::hole`].
+    /// Its token is one process's, so no encoding carries one. It stays the
+    /// last variant: a decoder numbers the variants an encoding skips out.
+    #[serde(skip)]
+    Hole { kind: HoleKind, token: u64 },
 }
 
 /// The primitive operators. An enum case does not make a source operation
 /// supported: arity and operand domains are checked per opcode.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, serde::Serialize, serde::Deserialize,
+)]
 pub enum ParamOp {
     Add,
     Mul,
@@ -2277,6 +2290,19 @@ pub struct ParamId {
     pub slot: usize,
 }
 
+impl serde::Serialize for ParamId {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        (&*self.owner, self.slot).serialize(serializer)
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for ParamId {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let (owner, slot) = <(String, usize)>::deserialize(deserializer)?;
+        Ok(Self::new(&owner, slot))
+    }
+}
+
 impl ParamId {
     pub fn new(owner: &str, slot: usize) -> Self {
         Self {
@@ -2322,6 +2348,22 @@ impl ParamRef {
     }
 }
 
+impl serde::Serialize for ParamRef {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        (&self.id, &*self.name).serialize(serializer)
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for ParamRef {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let (id, name) = <(ParamId, String)>::deserialize(deserializer)?;
+        Ok(Self {
+            id,
+            name: Arc::from(name),
+        })
+    }
+}
+
 impl PartialEq for ParamRef {
     fn eq(&self, other: &Self) -> bool {
         self.id == other.id
@@ -2345,7 +2387,7 @@ impl Hash for ParamRef {
 /// The meta-type of an expression: a runtime value domain, a type, a
 /// reflection handle, or a compile-time aggregate. `Type` is not a runtime
 /// [`Ty`], so it has no place in that lattice.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum MetaTy {
     Value(Box<Ty>),
     Type,
@@ -2543,7 +2585,7 @@ impl fmt::Display for MetaTy {
 }
 
 /// The bound-pack leaves of today's `GenericConstraint`, as a transport.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum PackQuery {
     /// `TypeList[Ts.values]().length`.
     Length,
@@ -2567,7 +2609,7 @@ pub enum PackQuery {
 /// `field_count()` and `field_index[name]()` an `Int`; `field_types()` a type
 /// list, whose element under an index is a dependent type; `field_names()` a
 /// list of string literals; `field[name].T` a type.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum ReflectQuery {
     IsStruct,
     FieldCount,
@@ -2711,7 +2753,7 @@ impl fmt::Display for ReflectError {
 
 /// The two reserved hole states: an explicitly unknown contextual value, and
 /// one particular inference hole.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum HoleKind {
     Unknown,
     Unbound,
@@ -3059,6 +3101,20 @@ struct Node {
     fingerprint: u64,
     meta: MetaTy,
     kind: ParamKind,
+}
+
+impl Node {
+    /// The node of `meta` and `kind`, with its structural fingerprint.
+    fn new(meta: MetaTy, kind: ParamKind) -> Self {
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        meta.hash(&mut hasher);
+        kind.hash(&mut hasher);
+        Self {
+            fingerprint: hasher.finish(),
+            meta,
+            kind,
+        }
+    }
 }
 
 /// The integer domains the canonical polynomial ranges over.

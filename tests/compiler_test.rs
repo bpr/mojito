@@ -3876,9 +3876,11 @@ fn a_package_reads_back_to_the_bytes_it_was_written_as() {
     };
     let interface = mojito::interface::PackageInterface::default();
     let modules = vec![("/probe/module.mojo".to_string(), vec![0, 10, 255, 10])];
-    let bytes = write_package(&header, &interface, program, &modules).expect("write");
+    let checked = vec![("/probe/module.mojo".to_string(), vec![10, 1, 2])];
+    let bytes = write_package(&header, &interface, program, &modules, &checked).expect("write");
     let package = read_package(bytes.clone()).expect("read");
     assert_eq!(package.modules, modules);
+    assert_eq!(package.checked, checked);
     assert_eq!(package.header, header);
     assert_eq!(package.bodies.materialized(), 0, "bodies decode on demand");
     let again = mojito::mir::MirProgram {
@@ -3888,7 +3890,14 @@ fn a_package_reads_back_to_the_bytes_it_was_written_as() {
     };
     assert!(package.bodies.failures().is_empty());
     assert_eq!(
-        write_package(&header, &package.interface, &again, &package.modules).expect("rewrite"),
+        write_package(
+            &header,
+            &package.interface,
+            &again,
+            &package.modules,
+            &package.checked
+        )
+        .expect("rewrite"),
         bytes
     );
     let truncated = bytes[..bytes.len() - 4].to_vec();

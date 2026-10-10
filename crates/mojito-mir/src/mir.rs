@@ -370,15 +370,9 @@ pub fn lower_checked_program_importing(
     let mut invariant_errors = Vec::new();
     let mut toplevel: Vec<Stmt> = Vec::new();
     let mut constants: Vec<Stmt> = Vec::new();
-    let overloads = {
-        let _scan = timing::span("overloads.scan");
-        mojito_symbol::symbol::OverloadSets::scan(program)
-    };
+    let overloads = checked.overloads();
 
-    for s in program
-        .iter()
-        .filter(|s| package.is_none_or(|(interface, _)| !interface.compiles(s.module.as_deref())))
-    {
+    for s in program {
         let _stmt = timing::span(match &s.kind {
             StmtKind::Def { .. } => "def",
             StmtKind::Struct { .. } => "struct",
@@ -455,7 +449,7 @@ pub fn lower_checked_program_importing(
                     .map(|p| is_ref(&p.convention))
                     .collect();
                 let lowered_name =
-                    mojito_symbol::symbol::lowered_def_name(name, type_params, params, &overloads);
+                    mojito_symbol::symbol::lowered_def_name(name, type_params, params, overloads);
                 let variadic_idx = params.iter().position(|p| p.kind == ParamKind::Variadic);
                 let kw_variadic_idx = params.iter().position(|p| p.kind == ParamKind::KwVariadic);
                 let regular: Vec<_> = params
@@ -505,7 +499,7 @@ pub fn lower_checked_program_importing(
                         lower_default(
                             DefaultLowering {
                                 checked,
-                                overloads: &overloads,
+                                overloads,
                                 owner: &lowered_name,
                                 parameter: p,
                                 binders: &enclosing_binders,
@@ -606,7 +600,7 @@ pub fn lower_checked_program_importing(
                         error_ty: effect.error,
                         named_result: named_result.map(|p| p.name.as_str()),
                         body,
-                        overloads: &overloads,
+                        overloads,
                     },
                     &mut functions,
                     &mut declarations,
@@ -635,7 +629,7 @@ pub fn lower_checked_program_importing(
                             &source,
                             type_params,
                             mojito_symbol::symbol::MethodShape::of(m),
-                            &overloads,
+                            overloads,
                         );
                         if lowered == source {
                             method_name.to_string()
@@ -709,7 +703,7 @@ pub fn lower_checked_program_importing(
                         &source_mangled,
                         type_params,
                         mojito_symbol::symbol::MethodShape::of(m),
-                        &overloads,
+                        overloads,
                     );
                     let variadic_idx = m
                         .params
@@ -839,7 +833,7 @@ pub fn lower_checked_program_importing(
                             lower_default(
                                 DefaultLowering {
                                     checked,
-                                    overloads: &overloads,
+                                    overloads,
                                     owner: &mangled,
                                     parameter: param,
                                     binders: &enclosing_binders,
@@ -1006,7 +1000,7 @@ pub fn lower_checked_program_importing(
                             error_ty: effect.error,
                             named_result: named_result.map(|result| result.name.as_str()),
                             body: &m.body,
-                            overloads: &overloads,
+                            overloads,
                         },
                         &mut functions,
                         &mut declarations,
@@ -1030,7 +1024,7 @@ pub fn lower_checked_program_importing(
         let function = lower_cfg_nested(
             &Cfg::build_checked_fn(checked, &[], &toplevel),
             &HashMap::new(),
-            &overloads,
+            overloads,
             false,
             &[],
             &[],
@@ -1043,7 +1037,7 @@ pub fn lower_checked_program_importing(
         );
         thunks.request_applications(checked, &toplevel);
         thunks.request_applications(checked, &constants);
-        thunks.lower(checked, &overloads, &mut functions, &mut declarations);
+        thunks.lower(checked, overloads, &mut functions, &mut declarations);
         function
     };
     // The synthetic module initializer returns nothing and never raises.

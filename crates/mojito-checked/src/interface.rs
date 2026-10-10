@@ -1,12 +1,11 @@
 //! What a compiled package lends the check of a program that imports it.
 //!
-//! A package's bodies were checked when it was built. Its importer still
-//! registers the package's declarations from their source, but it checks no
+//! A package's bodies were checked when it was built. Its importer installs
+//! the package's declarations from their checked interfaces and checks no
 //! package body again: what a call site reads from a callee's body, its
 //! transfer and call-through effect summaries, comes from here instead.
 
 use crate::checked::{CallThroughEffect, TransferEffect};
-use mojito_types::origin::OriginParamId;
 use std::collections::{BTreeMap, BTreeSet};
 
 /// The checked facts of a package's bodies its importer reads.
@@ -29,11 +28,6 @@ pub struct PackageInterface {
     /// conformance to: an importer's struct answers each, since a package
     /// body may ask it of the importer's types.
     pub asked_traits: BTreeSet<String>,
-    /// The origin parameters each struct method's body writes through a
-    /// parametric-mut reference field (`Owner.method` and its overload
-    /// qualifier): a signature fact read from the body, which an importer
-    /// does not read.
-    pub parametric_origin_writes: BTreeMap<String, Vec<OriginParamId>>,
 }
 
 impl PackageInterface {
