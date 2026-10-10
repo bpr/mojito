@@ -847,49 +847,60 @@ artifact {
 
 ## Package Container
 
-A compiled package (`mir::text::package`) wraps MIR bodies, MIR
-declarations, module records, and declaration interfaces in a
-line-framed container, one file per package. The bundled library's is the
-only producer today (`src/package.rs`). The format line is
-`mojito-package 4`.
+A compiled package (`mir::text::package`) holds MIR bodies, MIR
+declarations, module records, and declaration interfaces, one file per
+package. The bundled library's is the only producer today
+(`src/package.rs`). No part of a package is MIR text: it is a directory
+followed by bytecode records, as upstream's package is MLIR bytecode
+throughout. The format line is `mojito-package 5`.
 
 ```text
-mojito-package 4
-package std
-compiler <build identity>
-source <source digest>
-interface <bytes>
-<interface record>
-files <bytes>
-<the source-file table, as bytecode>
-traits <bytes>
-<the sorted trait list, as bytecode>
-struct <bytes> <name>
-<one struct declaration, as bytecode>
-declaration <bytes> <lowered name>
-<one function declaration, as bytecode>
-module <bytes> <canonical source path>
-<one module record, as bytecode>
-checked <bytes> <module path>
-<one declaration interface, as bytecode>
-function <bytes> <params> <ref mask> <name>
-<one function record>
-end
+mojito-package 5
+<the directory's length, 8 bytes little-endian>
+<the directory, as bytecode>
+<the payload: every record, as bytecode>
 ```
 
-- Each section is exactly its byte count, then a newline. A body is
-  located by its range and decoded on first use, against the `files`
-  table (`postcard` of each file id's optional path), which every body's
-  locations name.
-- The interface record and the bodies are UTF-8 text. The MIR
-  declarations are not a text artifact: each struct and function
-  declaration is its own `postcard` record of `MirStructDeclaration` or
-  `MirFunctionDeclaration`, its sets and maps written sorted so equal
-  declarations encode equal bytes, in name order. The importer indexes
-  them by the name on the section line and decodes one the first time a
-  lookup names it (`PackageDeclarations`), as upstream's importer resolves
-  a declaration from the package's bytecode on first lookup. A record
-  that does not decode is reported and refuses the elaboration.
+- The directory (`PackageDirectory`) holds the header (`package`,
+  `compiler`, `source`), the payload's length, and the payload range of
+  every record: the interface, the `files` table, the sorted trait list,
+  each struct and function declaration (sorted by name), each module
+  record and declaration interface (by path), and each body. A body's
+  entry carries its name, its runtime parameter count, and its
+  `ref_params` mask, so overload resolution and the loan analysis read a
+  body's signature without decoding it; the bodies keep package order,
+  which `emit-mir` and the elaborator's candidate order observe, beside a
+  by-name permutation. Lookups by name binary-search the sorted tables. A
+  reader refuses a directory whose ranges leave the payload, whose payload
+  length differs, or whose names are not strictly sorted.
+- The importer maps the file (`PackageBytes`, `memmap2`) and reads only
+  the directory and the interface eagerly; a declaration and a body
+  decode from their own byte ranges on first use. A cached package is
+  written to a private partial file and renamed over its path, and removed
+  only by unlinking, so a mapping's bytes never change under it. Module
+  records and declaration interfaces are copied out of the mapping, since
+  the linker and checker that read them sit above MIR.
+- The interface is `postcard` of `PackageInterface`: the modules the
+  package compiled, their declarations' names, the traits its bodies ask,
+  and each callable's transfer and call-through effect summaries, by
+  callable identity. A struct method's parametric origin writes travel in
+  its module's declaration interface, on its signature.
+- Each struct and function declaration is its own `postcard` record of
+  `MirStructDeclaration` or `MirFunctionDeclaration`, its sets and maps
+  written sorted so equal declarations encode equal bytes. The importer
+  decodes one the first time a lookup names it (`PackageDeclarations`), as
+  upstream's importer resolves a declaration from the package's bytecode
+  on first lookup. A record that does not decode is reported and refuses
+  the elaboration.
+- A body is `postcard` of its `MirFunction` (variable and register types
+  written sorted) and its locations, one `(register, file id, start, end,
+  origin slot)` row per located register, naming the `files` table
+  (`postcard` of each file id's optional path). A body is
+  ownership-checked MIR before drop elaboration; the importer inserts its
+  drops and verifies it as it is decoded (`PackageBodies`). The package
+  build's check-local binding owners some bodies' types still name are
+  carried as bare numbers, under `origin::encoding_packaged_owners`, as
+  the MIR text spells them `$v<n>` (R561).
 - A declaration interface is opaque to the container: it is the
   checker's (`checker::interface::ModuleInterface`), `postcard` bytecode of
   the tables the package build's check resolved for one module's
@@ -898,7 +909,8 @@ end
   hole; its expressions decode stamped with the path the importer reached
   the module by. The importer decodes the interfaces of the modules its
   link reached; when one does not decode, the program links and compiles
-  the library from source. A module record is opaque to the container: it is the linker's
+  the library from source.
+- A module record is opaque to the container: it is the linker's
   (`module::package::PackageModule`), `postcard` bytecode of the module's
   dotted name, the loads its link asked for, its export and namespace
   tables, and its linked declarations with their bodies emptied, as the
@@ -907,21 +919,7 @@ end
   stamps the path it reached the module by). It decodes when the
   importer's link reaches the module; one that does not decode, or names
   another module, links from source.
-- The interface record is
-  `interface { modules, names, asked_traits, transfer_effects,
-  call_through_effects }`. A summary is `summary { callable, effects }`; a
-  transfer effect is the `transfer` record of a function type, and a
-  call-through effect is `call_through { callee: runtime_param(n) |
-  value_param(name), args: [arg { place: option<sig origin>, carried: [sig
-  origin...], local: bool }] }`. A struct method's parametric origin writes
-  travel in its module's declaration interface, on its signature.
-- A body is ownership-checked MIR before drop elaboration. The importer
-  inserts its drops and verifies it as it is decoded.
-- `<params>` is the runtime parameter count and `<ref mask>` the
-  `ref_params` mask as `0`/`1` digits (`-` when empty), so overload
-  resolution and the loan analysis read a body's signature without
-  decoding it.
-- The importer refuses a package whose `compiler` or `source` line differs
+- The importer refuses a package whose `compiler` or `source` differs
   from its own build identity and the library's source digest.
 
 ## Serialization Inventory

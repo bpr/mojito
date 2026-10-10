@@ -46,7 +46,7 @@ pub struct EffectFacts {
 /// Keeping the source slot and effective convention together lets HIR/MIR
 /// retain caller storage without rebuilding keyword/default binding or
 /// origin-dependent `ref` mutability.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct CheckedCallArgument {
     pub source: CheckedCallArgumentSource,
     pub parameter_ty: Ty,
@@ -57,7 +57,7 @@ pub struct CheckedCallArgument {
     pub convention: Option<mojito_ast::ast::ArgConvention>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum CheckedCallArgumentSource {
     Positional(usize),
     Keyword(usize),
@@ -121,7 +121,7 @@ pub struct CheckedCallBoundary {
 /// method may itself produce a reference-valued element.  Execution consults
 /// the retargeted declaration's ABI and performs this adapter only when that
 /// declaration returns through the reference ABI.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum CheckedResultAdapter {
     /// Mojo permits `Iterator.__next__ -> Element` to be implemented as
     /// `__next__ -> ref[o] Element` when `Element: Copyable`.  An abstract call
@@ -214,7 +214,7 @@ pub struct CheckedElementInvocation {
 /// This is a semantic distinction, not a runtime guess: owned iteration must
 /// dispatch to an `__iter__(var self)` implementation, while ordinary
 /// iteration uses a borrowed receiver.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum IterationMode {
     Borrowed,
     Owned,
@@ -264,7 +264,7 @@ pub struct CheckedIterationBinding {
 /// collapsing to the referent.  The parallel reference fact carries the
 /// executable origin/capability contract needed by lowering, while `raises`
 /// records the selected exhaustion effect.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct CheckedIteratorCall {
     pub target: String,
     pub result_ty: Ty,
@@ -497,7 +497,7 @@ impl ComptimeSource {
 
 /// What a `comptime for` iterates, as upstream's `kgen.param.for` iterates
 /// a compile-time sequence.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum ComptimeSequence {
     /// `range(start, stop, step)`: the integers the bounds span.
     Range {
@@ -1692,14 +1692,14 @@ pub use mojito_types::types::{TransferEffect, TransferSet};
 /// Each call site — which knows the concrete callable — translates that
 /// callable's effects through the recorded argument mapping into effects of
 /// THIS callable and replays them against its own actuals.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct CallThroughEffect {
     pub callee: CallThroughCallee,
     /// Signature abstraction of each inner-call argument slot.
     pub args: Vec<CallThroughArg>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum CallThroughCallee {
     /// An ordinary runtime parameter with a function type (its slot index).
     RuntimeParam(usize),
@@ -1708,7 +1708,7 @@ pub enum CallThroughCallee {
 }
 
 /// How one inner-call actual maps to the enclosing signature.
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
 pub struct CallThroughArg {
     /// The actual's own place, when rooted at the enclosing signature.
     pub place: Option<mojito_types::origin::SigOrigin>,

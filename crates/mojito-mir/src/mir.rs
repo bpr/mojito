@@ -4845,8 +4845,8 @@ fn sorted_names<S: serde::Serializer>(
     )
 }
 
-fn sorted_map<V: serde::Serialize, S: serde::Serializer>(
-    map: &HashMap<String, V>,
+fn sorted_map<K: Ord + serde::Serialize, V: serde::Serialize, S: serde::Serializer>(
+    map: &HashMap<K, V>,
     serializer: S,
 ) -> Result<S::Ok, S::Error> {
     serde::Serialize::serialize(

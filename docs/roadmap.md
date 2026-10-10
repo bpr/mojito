@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R561**.
+Next free ID: **R563**.
 
 ## Ordered Work
 
@@ -49,21 +49,6 @@ belongs to is named in its title.
 Scope: what remains of the plan's stages, and what the pipeline order still
 leaves to close. A defect found on the way is filed by its kind; a
 divergence from the pin goes to a catch-up track, however small.
-
-- [ ] **R557 (P6) An importer reads the whole package file, and its
-  bodies and interface are MIR text**
-
-  `package.read` reads all 8 MB of the bundled package on every
-  compilation, though Hello World decodes 3 of its 875 bodies.
-  - That is about 3.5 ms of Hello World's 33 ms, release; 7.4 MB of the
-    file is body text.
-  - A body decodes through the MIR text grammar, at about 50 MB/s, and the
-    interface record (0.3 ms) is text too.
-  - Upstream's package is bytecode throughout, read on demand.
-  - The levers: bodies and the interface as bytecode, as the declarations
-    are since R554, and a mapped read of the file (`memmap2`).
-  - Depends on nothing.
-  - Model: Fable, Planned.
 
 - [ ] **R555 (P6) An importer installs every reached package module's
   declarations eagerly, where upstream resolves one on first lookup**
@@ -113,6 +98,20 @@ divergence from the pin goes to a catch-up track, however small.
     structs or its own asked traits add.
   - Depends on nothing.
   - Model: Opus, Planned.
+
+- [ ] **R562 (P6) An importer digests the bundled library's whole source
+  on every compilation**
+
+  `bundled_std_package` reads and hashes every library source file to key
+  the package cache, though no compilation reads that source otherwise.
+  - That is about 1.2 ms of Hello World's 16.5 ms, release, untimed
+    (`source_digest` in `src/package.rs`).
+  - Upstream ships the library as a built package, and its importer
+    consults no library source.
+  - The lever: key the cache on each file's path, size, and modification
+    time, or build the package with the compiler so no key is needed.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
 
 - [ ] **R559 (P6) An importer's front end reads the package's struct,
   trait, and function declarations as AST**
@@ -4573,6 +4572,26 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     `mir.rs`).
   - Depends on nothing.
   - Model: Fable, Planned.
+
+- [ ] **R561 A package body's types name the package check's binding
+  owners**
+
+  149 of the bundled library's 874 bodies carry 1,259 `origin_place`
+  roots that are the package build's check-local binding owners, each at
+  or past the body's variable count.
+  - Mostly in register types and a subscript call's reference result
+    type.
+  - The MIR text spells them `$v<n>` as though they were variables, and
+    the package's bytecode carries them as bare numbers under
+    `origin::encoding_packaged_owners`, the one place an `OwnerId`
+    encodes.
+  - Upstream's types name SSA values or origin parameters, never a
+    check-local binding.
+  - The lever: lowering closes a type's owner roots to the variable
+    `owner_vars` maps each to, or to an unbound origin; then the permit is
+    deleted.
+  - Depends on nothing.
+  - Model: Fable, Not Planned.
 
 - [ ] **R523 A local implicitly-copyable compile-time binding materializes at its declaration**
 

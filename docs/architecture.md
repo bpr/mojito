@@ -105,13 +105,16 @@ import (every compilation that links the bundled library):
        it and inserts its drops then -> VM
 ```
 
-- **The package file** (`mir::text::package`) holds a header (package,
-  compiler build identity, source digest), the checker interface
+- **The package file** (`mir::text::package`) is a directory followed by
+  bytecode records, as upstream's package is bytecode throughout. The
+  directory holds the header (package, compiler build identity, source
+  digest) and every record's byte range: the checker interface
   (`checked::interface::PackageInterface`), the package's MIR declarations
-  as one bytecode record each, one record and one declaration interface
-  per library module, and each function body as MIR text, before drop
-  elaboration. Declarations and bodies both decode on demand: Hello World
-  decodes three of about 940 declarations and three of about 875 bodies.
+  one record each, one record and one declaration interface per library
+  module, and each function body, before drop elaboration. The importer
+  maps the file (`PackageBytes`) and reads its directory and interface;
+  declarations and bodies decode from their own ranges on demand: Hello
+  World decodes three of about 940 declarations and three of 874 bodies.
 - **The MIR declarations** are attached, never copied
   (`mir::link::link_declarations`): the importer's `MirDeclarations` holds
   its own declarations and an `ImportedDeclarations`, the shared

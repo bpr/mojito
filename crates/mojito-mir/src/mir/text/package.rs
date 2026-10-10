@@ -3,70 +3,84 @@
 //! It holds the package's checker interface, its MIR declarations, the
 //! record its importer's link reads for each of its source modules, the
 //! declaration interface its importer's check installs for each module,
-//! and each of its verified, ownership-checked function bodies as MIR
-//! text, before drop elaboration. An importer reads the interface eagerly,
-//! a MIR declaration the first time one of its phases looks the name up
-//! (as upstream's importer resolves a declaration from bytecode on first
-//! lookup), a module's record and declaration interface when its link
-//! reaches the module, and a body only when the elaborator first reaches
-//! it, inserting that body's drops then, as upstream materializes a
-//! package's bodies on demand and runs its lifetime pass on each in the
-//! importer.
+//! and each of its verified, ownership-checked function bodies, before
+//! drop elaboration. An importer maps the file and reads its directory and
+//! interface eagerly, a MIR declaration the first time one of its phases
+//! looks the name up (as upstream's importer resolves a declaration from
+//! bytecode on first lookup), a module's record and declaration interface
+//! when its link reaches the module, and a body only when the elaborator
+//! first reaches it, inserting that body's drops then, as upstream
+//! materializes a package's bodies on demand and runs its lifetime pass on
+//! each in the importer.
 //!
-//! The container is line-framed:
+//! The container is a directory followed by records:
 //!
 //! ```text
-//! mojito-package 4
-//! package <name>
-//! compiler <identity>
-//! source <hash>
-//! interface <bytes>
-//! <the interface record>
-//! files <bytes>
-//! <the source-file table every body's locations name, as bytecode>
-//! traits <bytes>
-//! <the sorted trait list, as bytecode>
-//! struct <bytes> <name>
-//! <the struct's MIR declaration, as bytecode>
-//! …
-//! declaration <bytes> <lowered name>
-//! <the function's MIR declaration, as bytecode>
-//! …
-//! module <bytes> <canonical source path>
-//! <the module's record, as bytecode>
-//! …
-//! checked <bytes> <module path>
-//! <the module's declaration interface, as bytecode>
-//! …
-//! function <bytes> <params> <ref-parameter mask> <name>
-//! <the function's MIR record>
-//! …
-//! end
+//! mojito-package 5
+//! <the directory's length, 8 bytes little-endian>
+//! <the directory, as bytecode>
+//! <the payload: every record, as bytecode>
 //! ```
 //!
-//! Each section is exactly its byte count, followed by a newline. The
-//! interface and the bodies are UTF-8 text; the file table, the traits, and
-//! the declarations are postcard bytecode; a module record and a
-//! declaration interface are opaque here, since the linker and the checker
-//! that read them sit above MIR.
+//! The directory holds the header and the payload range of every record:
+//! the interface, the source-file table every body's locations name, the
+//! sorted trait list, each struct and function declaration (sorted by
+//! name), each module record and declaration interface (by path), and each
+//! body (in package order, with its runtime parameter count, its reference
+//! parameter mask, and a by-name permutation). Every record is postcard
+//! bytecode; a module record and a declaration interface are opaque here,
+//! since the linker and the checker that read them sit above MIR. No part
+//! of a package is MIR text.
 
-use super::parse::package::{self as decode, PackageFiles};
-use super::{ArtifactDiagnostic, DisassembleError, write};
 use crate::mir::{
     MirDeclarations, MirFunction, MirFunctionDeclaration, MirProgram, MirStructDeclaration,
+    SpanTable,
 };
 use mojito_checked::interface::PackageInterface;
-use std::collections::HashMap;
+use mojito_common::token::SourceSpan;
+use mojito_hir::hir::VarId;
+use mojito_types::origin::encoding_packaged_owners;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
-use std::ops::Range;
+use std::ops::{Deref, Range};
 use std::sync::{Arc, Mutex, OnceLock};
 
 /// The container format this compiler writes and reads.
-pub const PACKAGE_FORMAT: &str = "mojito-package 4";
+pub const PACKAGE_FORMAT: &str = "mojito-package 5";
+
+/// A package file's bytes: mapped from the file, or owned when the package
+/// was just built.
+#[derive(Debug)]
+pub enum PackageBytes {
+    Mapped(memmap2::Mmap),
+    Owned(Vec<u8>),
+}
+
+impl PackageBytes {
+    /// Map `file` read-only.
+    pub fn map(file: &std::fs::File) -> std::io::Result<Self> {
+        // SAFETY: a cached package is written to a private partial file and
+        // renamed over its path, and removed only by unlinking, so no
+        // process writes or truncates a package file in place: the mapped
+        // bytes stay fixed for the mapping's life.
+        unsafe { memmap2::Mmap::map(file) }.map(Self::Mapped)
+    }
+}
+
+impl Deref for PackageBytes {
+    type Target = [u8];
+
+    fn deref(&self) -> &[u8] {
+        match self {
+            Self::Mapped(map) => map,
+            Self::Owned(bytes) => bytes,
+        }
+    }
+}
 
 /// Who built a package from what: an importer refuses a package another
 /// compiler built, or one built from other sources.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct PackageHeader {
     /// The package's name (`std`).
     pub package: String,
@@ -83,9 +97,12 @@ pub struct Package {
     pub header: PackageHeader,
     pub interface: PackageInterface,
     pub declarations: Arc<PackageDeclarations>,
-    /// Each module's encoded record, beside its canonical source path.
+    /// Each module's encoded record, beside its canonical source path:
+    /// copied out of the file, since the linker that reads them sits above
+    /// MIR and holds no [`PackageBytes`].
     pub modules: Vec<(String, Vec<u8>)>,
-    /// Each module's encoded declaration interface, beside its module path.
+    /// Each module's encoded declaration interface, beside its module path,
+    /// copied out for the checker as the module records are.
     pub checked: Vec<(String, Vec<u8>)>,
     pub bodies: PackageBodies,
 }
@@ -98,7 +115,7 @@ pub struct Package {
 /// [`crate::mir::link::ImportedDeclarations`]).
 #[derive(Debug)]
 pub struct PackageDeclarations {
-    bytes: Vec<u8>,
+    payload: Payload,
     structs: Records<MirStructDeclaration>,
     functions: Records<MirFunctionDeclaration>,
     traits: Vec<String>,
@@ -131,12 +148,12 @@ impl PackageDeclarations {
 
     /// The struct declaration at `position` in package order.
     pub fn structure_at(&self, position: usize) -> Option<&MirStructDeclaration> {
-        self.structs.get(position, &self.bytes, &self.failures)
+        self.structs.get(position, &self.payload, &self.failures)
     }
 
     /// The function declaration at `position` in package order.
     pub fn function_at(&self, position: usize) -> Option<&MirFunctionDeclaration> {
-        self.functions.get(position, &self.bytes, &self.failures)
+        self.functions.get(position, &self.payload, &self.failures)
     }
 
     /// Every struct name, in package order, decoding nothing.
@@ -172,13 +189,15 @@ impl PackageDeclarations {
 /// for, then finished as its importer finishes a body it lowers itself.
 #[derive(Debug)]
 pub struct PackageBodies {
-    bytes: Vec<u8>,
-    files: PackageFiles,
+    payload: Payload,
+    /// The source file each body location names, by file id.
+    files: Vec<Option<String>>,
     /// The package's own declarations, which its bodies were lowered
     /// against, resolved through the same lookups an importer's are.
     declarations: MirDeclarations,
     entries: Vec<BodyEntry>,
-    index: HashMap<String, usize>,
+    /// Each entry's position, sorted by the entry's name.
+    by_name: Vec<u32>,
     decoded: Vec<OnceLock<Option<MirFunction>>>,
     finish: Option<BodyFinish>,
     failures: Mutex<Vec<String>>,
@@ -191,53 +210,36 @@ pub type BodyFinish = fn(&str, MirFunction, &MirDeclarations) -> MirFunction;
 
 impl PackageBodies {
     /// The body of `name`, decoded on first use; `None` when the package
-    /// has no such function or its text does not decode (a failure
+    /// has no such function or its record does not decode (a failure
     /// [`Self::failures`] reports).
     pub fn get(&self, name: &str) -> Option<&MirFunction> {
-        let position = *self.index.get(name)?;
+        let position = self.position(name)?;
         self.decoded[position]
             .get_or_init(|| {
                 let entry = &self.entries[position];
-                let text =
-                    std::str::from_utf8(&self.bytes[entry.start..entry.end]).map_err(|error| {
-                        vec![ArtifactDiagnostic {
-                            span: (0, 0),
-                            message: error.to_string(),
-                            context: Vec::new(),
-                        }]
-                    });
-                match text.and_then(|text| decode::function(text, &self.files)) {
-                    Ok((decoded, function)) if decoded == entry.name => {
-                        let Some(finish) = self.finish else {
-                            return Some(function);
-                        };
-                        let function = finish(&entry.name, function, &self.declarations);
-                        let findings = crate::mir::verify::verify_function_in(
-                            &entry.name,
-                            &function,
-                            &self.declarations,
-                        );
-                        if !findings.is_empty() {
-                            self.fail(findings.join("; "));
-                        }
-                        Some(function)
-                    }
-                    Ok((decoded, _)) => {
+                let function = match self.decode(entry) {
+                    Ok(function) => function,
+                    Err(error) => {
                         self.fail(format!(
-                            "package body `{}` decodes as `{decoded}`",
+                            "package body `{}` does not decode: {error}",
                             entry.name
                         ));
-                        None
+                        return None;
                     }
-                    Err(diagnostics) => {
-                        self.fail(format!(
-                            "package body `{}` does not decode: {}",
-                            entry.name,
-                            describe(&diagnostics)
-                        ));
-                        None
-                    }
+                };
+                let Some(finish) = self.finish else {
+                    return Some(function);
+                };
+                let function = finish(&entry.name, function, &self.declarations);
+                let findings = crate::mir::verify::verify_function_in(
+                    &entry.name,
+                    &function,
+                    &self.declarations,
+                );
+                if !findings.is_empty() {
+                    self.fail(findings.join("; "));
                 }
+                Some(function)
             })
             .as_ref()
     }
@@ -251,7 +253,7 @@ impl PackageBodies {
 
     /// Whether the package has a function `name`.
     pub fn contains(&self, name: &str) -> bool {
-        self.index.contains_key(name)
+        self.position(name).is_some()
     }
 
     /// Every function's name and runtime parameter count, in package order.
@@ -296,6 +298,43 @@ impl PackageBodies {
             .clone()
     }
 
+    fn position(&self, name: &str) -> Option<usize> {
+        let found = self
+            .by_name
+            .binary_search_by(|position| {
+                self.entries[*position as usize]
+                    .name
+                    .as_bytes()
+                    .cmp(name.as_bytes())
+            })
+            .ok()?;
+        Some(self.by_name[found] as usize)
+    }
+
+    /// The body `entry` locates, its locations rebuilt against the
+    /// package's file table.
+    fn decode(&self, entry: &BodyEntry) -> Result<MirFunction, String> {
+        let (mut function, locations): (MirFunction, Vec<Location>) =
+            encoding_packaged_owners(|| postcard::from_bytes(self.payload.get(&entry.range)))
+                .map_err(|error| error.to_string())?;
+        let mut spans = SpanTable::default();
+        for location in locations {
+            let source = self
+                .files
+                .get(location.file as usize)
+                .ok_or_else(|| format!("location names no file {}", location.file))?;
+            spans.0.insert(
+                location.reg,
+                (
+                    SourceSpan::new(source.clone(), (location.start, location.end)),
+                    location.origin,
+                ),
+            );
+        }
+        function.spans = spans;
+        Ok(function)
+    }
+
     fn fail(&self, message: String) {
         self.failures
             .lock()
@@ -316,12 +355,6 @@ impl fmt::Display for PackageError {
 
 impl std::error::Error for PackageError {}
 
-impl From<DisassembleError> for PackageError {
-    fn from(error: DisassembleError) -> Self {
-        Self(error.to_string())
-    }
-}
-
 /// Write a package: `program`, its verified, ownership-checked MIR before
 /// drop elaboration, its interface, its `modules`' encoded records, and
 /// their `checked` declaration interfaces.
@@ -336,252 +369,290 @@ pub fn write_package(
 ) -> Result<Vec<u8>, PackageError> {
     let mut findings = program.invariant_errors.clone();
     findings.extend(crate::mir::verify::verify(program));
-    findings.extend(write::schema_findings(program));
+    findings.extend(super::write::schema_findings(program));
     if !findings.is_empty() {
         return Err(PackageError(findings.join("; ")));
     }
-    for line in [&header.package, &header.compiler, &header.source] {
-        if line.contains('\n') || line.is_empty() {
-            return Err(PackageError(format!(
-                "header field `{line}` is not one line"
-            )));
-        }
-    }
-    let mut output = format!(
-        "{PACKAGE_FORMAT}\npackage {}\ncompiler {}\nsource {}\n",
-        header.package, header.compiler, header.source
-    )
-    .into_bytes();
-    let mut section = |label: String, bytes: &[u8]| {
-        output.extend_from_slice(label.as_bytes());
-        output.push(b'\n');
-        output.extend_from_slice(bytes);
-        output.push(b'\n');
+    let mut payload = Vec::new();
+    let mut record = |bytes: &[u8]| {
+        let start = payload.len();
+        payload.extend_from_slice(bytes);
+        start..payload.len()
     };
-    let interface_text = write::package_interface(interface);
-    section(
-        format!("interface {}", interface_text.len()),
-        interface_text.as_bytes(),
-    );
-    let (files, functions) = write::package_parts(program);
-    let files = bytecode(&files)?;
-    section(format!("files {}", files.len()), &files);
-    let traits = bytecode(&program.declarations.traits)?;
-    section(format!("traits {}", traits.len()), &traits);
+    let interface = record(&bytecode(interface)?);
+    let files = files(program);
+    let files_range = record(&bytecode(&files.keys().collect::<Vec<_>>())?);
+    let traits = record(&bytecode(&program.declarations.traits)?);
     let mut structs = program.declarations.structs.iter().collect::<Vec<_>>();
     structs.sort_by(|left, right| left.name.as_bytes().cmp(right.name.as_bytes()));
-    for declaration in structs {
-        let record = bytecode(declaration)?;
-        section(
-            format!("struct {} {}", record.len(), one_line(&declaration.name)?),
-            &record,
-        );
-    }
-    let mut declarations = program.declarations.functions.iter().collect::<Vec<_>>();
-    declarations.sort_by(|left, right| {
+    let structs = structs
+        .into_iter()
+        .map(|declaration| Ok((declaration.name.clone(), record(&bytecode(declaration)?))))
+        .collect::<Result<Vec<_>, PackageError>>()?;
+    let mut functions = program.declarations.functions.iter().collect::<Vec<_>>();
+    functions.sort_by(|left, right| {
         left.lowered_name
             .as_bytes()
             .cmp(right.lowered_name.as_bytes())
     });
-    for declaration in declarations {
-        let record = bytecode(declaration)?;
-        section(
-            format!(
-                "declaration {} {}",
-                record.len(),
-                one_line(&declaration.lowered_name)?
-            ),
-            &record,
-        );
-    }
-    for (path, record) in modules {
-        if path.contains('\n') {
-            return Err(PackageError(format!("module path `{path}` spans lines")));
-        }
-        section(format!("module {} {path}", record.len()), record);
-    }
-    for (path, interface) in checked {
-        if path.contains('\n') {
-            return Err(PackageError(format!("module path `{path}` spans lines")));
-        }
-        section(format!("checked {} {path}", interface.len()), interface);
-    }
-    for ((name, function), text) in program.functions.iter().zip(&functions) {
-        if name.contains('\n') {
-            return Err(PackageError(format!("function name `{name}` spans lines")));
-        }
-        let mask: String = function
-            .ref_params
-            .iter()
-            .map(|reference| if *reference { '1' } else { '0' })
-            .collect();
-        section(
-            format!(
-                "function {} {} {} {name}",
-                text.len(),
-                function.n_params,
-                if mask.is_empty() { "-" } else { &mask }
-            ),
-            text.as_bytes(),
-        );
-    }
-    output.extend_from_slice(b"end\n");
+    let functions = functions
+        .into_iter()
+        .map(|declaration| {
+            Ok((
+                declaration.lowered_name.clone(),
+                record(&bytecode(declaration)?),
+            ))
+        })
+        .collect::<Result<Vec<_>, PackageError>>()?;
+    let modules = modules
+        .iter()
+        .map(|(path, bytes)| (path.clone(), record(bytes)))
+        .collect();
+    let checked = checked
+        .iter()
+        .map(|(path, bytes)| (path.clone(), record(bytes)))
+        .collect();
+    let bodies = program
+        .functions
+        .iter()
+        .map(|(name, function)| {
+            let locations = (0..function.n_regs)
+                .filter_map(|reg| {
+                    let (span, origin) = function.spans.0.get(&reg)?;
+                    Some(Location {
+                        reg,
+                        file: files[&span.source],
+                        start: span.span.0,
+                        end: span.span.1,
+                        origin: *origin,
+                    })
+                })
+                .collect::<Vec<_>>();
+            let bytes = encoding_packaged_owners(|| bytecode(&(function, locations))).map_err(
+                |PackageError(error)| {
+                    PackageError(format!("body `{name}` does not encode: {error}"))
+                },
+            )?;
+            Ok(BodyEntry {
+                name: name.clone(),
+                n_params: function.n_params,
+                ref_params: function.ref_params.clone(),
+                range: record(&bytes),
+            })
+        })
+        .collect::<Result<Vec<_>, PackageError>>()?;
+    let mut by_name = (0..bodies.len() as u32).collect::<Vec<_>>();
+    by_name.sort_by(|left, right| {
+        bodies[*left as usize]
+            .name
+            .as_bytes()
+            .cmp(bodies[*right as usize].name.as_bytes())
+    });
+    let directory = bytecode(&PackageDirectory {
+        header: header.clone(),
+        interface,
+        files: files_range,
+        traits,
+        structs,
+        functions,
+        modules,
+        checked,
+        bodies,
+        by_name,
+        payload: payload.len(),
+    })?;
+    let mut output = format!("{PACKAGE_FORMAT}\n").into_bytes();
+    output.extend_from_slice(&(directory.len() as u64).to_le_bytes());
+    output.extend_from_slice(&directory);
+    output.extend_from_slice(&payload);
     Ok(output)
 }
 
-/// Read a package: its header, interface, and module records now, and an
-/// index of its declarations and bodies, which decode on demand.
-pub fn read_package(bytes: Vec<u8>) -> Result<Package, PackageError> {
-    let mut reader = Reader {
-        bytes: &bytes,
-        pos: 0,
-    };
-    if reader.line()? != PACKAGE_FORMAT {
-        return Err(PackageError(format!("expected `{PACKAGE_FORMAT}`")));
+/// Read a package: its header, interface, and module records now, and its
+/// directory of declarations and bodies, which decode on demand.
+pub fn read_package(bytes: PackageBytes) -> Result<Package, PackageError> {
+    let rest = bytes
+        .strip_prefix(format!("{PACKAGE_FORMAT}\n").as_bytes())
+        .ok_or_else(|| PackageError(format!("expected `{PACKAGE_FORMAT}`")))?;
+    let (length, rest) = rest
+        .split_first_chunk::<8>()
+        .ok_or_else(|| PackageError("truncated package".to_string()))?;
+    let length = usize::try_from(u64::from_le_bytes(*length))
+        .ok()
+        .filter(|length| *length <= rest.len())
+        .ok_or_else(|| PackageError("truncated package".to_string()))?;
+    let reading = mojito_common::timing::span("package.directory");
+    let directory: PackageDirectory = from_bytecode(&rest[..length], "directory")?;
+    let start = bytes.len() - rest.len() + length;
+    if bytes.len() - start != directory.payload {
+        return Err(PackageError(format!(
+            "the payload is {} bytes, not {}",
+            bytes.len() - start,
+            directory.payload
+        )));
     }
-    let header = PackageHeader {
-        package: reader.labelled("package")?.to_string(),
-        compiler: reader.labelled("compiler")?.to_string(),
-        source: reader.labelled("source")?.to_string(),
+    directory.validate()?;
+    drop(reading);
+    let payload = Payload {
+        bytes: Arc::new(bytes),
+        start,
     };
-    let interface_text = reader.text_section("interface")?;
     let decoding = mojito_common::timing::span("package.interface");
-    let interface = decode::interface(interface_text)
-        .map_err(|diagnostics| PackageError(describe(&diagnostics)))?;
+    let interface = from_bytecode(payload.get(&directory.interface), "interface")?;
     drop(decoding);
-    let files = PackageFiles(from_bytecode(reader.section("files")?, "files")?);
-    let traits: Vec<String> = from_bytecode(reader.section("traits")?, "traits")?;
-    let mut declaration_bytes = Vec::new();
-    let mut structs = Vec::new();
-    let mut functions = Vec::new();
-    let mut modules = Vec::new();
-    let mut checked = Vec::new();
-    let mut entries = Vec::new();
-    loop {
-        let line = reader.line()?;
-        if line == "end" {
-            break;
-        }
-        let named = [("struct ", &mut structs), ("declaration ", &mut functions)]
+    let files = from_bytecode(payload.get(&directory.files), "files")?;
+    let traits = from_bytecode(payload.get(&directory.traits), "traits")?;
+    let copied = |records: Vec<(String, Range<usize>)>| {
+        records
             .into_iter()
-            .find_map(|(label, records)| Some((line.strip_prefix(label)?, records)));
-        if let Some((rest, records)) = named {
-            let (length, name) = sized(rest, line)?;
-            let start = declaration_bytes.len();
-            declaration_bytes.extend_from_slice(reader.bytes_of(length)?);
-            records.push((name.to_string(), start..declaration_bytes.len()));
-            continue;
-        }
-        let opaque = [("module ", &mut modules), ("checked ", &mut checked)]
-            .into_iter()
-            .find_map(|(label, sections)| Some((line.strip_prefix(label)?, sections)));
-        if let Some((rest, sections)) = opaque {
-            let (length, path) = sized(rest, line)?;
-            sections.push((path.to_string(), reader.bytes_of(length)?.to_vec()));
-            continue;
-        }
-        let mut fields = line.splitn(5, ' ');
-        let (Some("function"), Some(length), Some(params), Some(mask), Some(name)) = (
-            fields.next(),
-            fields.next(),
-            fields.next(),
-            fields.next(),
-            fields.next(),
-        ) else {
-            return Err(PackageError(format!("malformed function line `{line}`")));
-        };
-        let length = number(length)?;
-        let n_params = number(params)?;
-        let ref_params = if mask == "-" {
-            Vec::new()
-        } else {
-            mask.chars().map(|bit| bit == '1').collect()
-        };
-        let start = reader.pos;
-        reader.skip(length)?;
-        entries.push(BodyEntry {
-            name: name.to_string(),
-            n_params,
-            ref_params,
-            start,
-            end: start + length,
-        });
-    }
-    if reader.pos != bytes.len() {
-        return Err(PackageError("trailing text after `end`".to_string()));
-    }
-    let index = entries
-        .iter()
-        .enumerate()
-        .map(|(position, entry)| (entry.name.clone(), position))
-        .collect::<HashMap<_, _>>();
-    if index.len() != entries.len() {
-        return Err(PackageError("a function name repeats".to_string()));
-    }
-    let decoded = entries.iter().map(|_| OnceLock::new()).collect();
+            .map(|(path, range)| (path, payload.get(&range).to_vec()))
+            .collect()
+    };
+    let modules = copied(directory.modules);
+    let checked = copied(directory.checked);
     let declarations = Arc::new(PackageDeclarations {
-        bytes: declaration_bytes,
-        structs: Records::new(structs, "struct")?,
-        functions: Records::new(functions, "function declaration")?,
+        payload: payload.clone(),
+        structs: Records::new(directory.structs),
+        functions: Records::new(directory.functions),
         traits,
         failures: Mutex::new(Vec::new()),
     });
     Ok(Package {
-        header,
+        header: directory.header,
         interface,
         declarations: Arc::clone(&declarations),
         modules,
         checked,
         bodies: PackageBodies {
-            bytes,
+            payload,
             files,
             declarations: MirDeclarations::of_package(declarations),
-            entries,
-            index,
-            decoded,
+            decoded: directory.bodies.iter().map(|_| OnceLock::new()).collect(),
+            entries: directory.bodies,
+            by_name: directory.by_name,
             finish: None,
             failures: Mutex::new(Vec::new()),
         },
     })
 }
 
-/// One kind of declaration record: each entry's name and byte range, an
-/// index by name, and each entry's value once decoded.
+/// Where every record of a package lies in its payload.
+#[derive(serde::Serialize, serde::Deserialize)]
+struct PackageDirectory {
+    header: PackageHeader,
+    interface: Range<usize>,
+    files: Range<usize>,
+    traits: Range<usize>,
+    /// Each struct declaration's name and record, sorted by name.
+    structs: Vec<(String, Range<usize>)>,
+    /// Each function declaration's lowered name and record, sorted by name.
+    functions: Vec<(String, Range<usize>)>,
+    modules: Vec<(String, Range<usize>)>,
+    checked: Vec<(String, Range<usize>)>,
+    /// Each body, in package order.
+    bodies: Vec<BodyEntry>,
+    /// Each body's position, sorted by the body's name.
+    by_name: Vec<u32>,
+    /// The payload's length.
+    payload: usize,
+}
+
+impl PackageDirectory {
+    /// Refuse a directory whose ranges leave the payload or whose names are
+    /// not strictly sorted, which the lookups by name rely on.
+    fn validate(&self) -> Result<(), PackageError> {
+        let ranges = [&self.interface, &self.files, &self.traits]
+            .into_iter()
+            .chain(
+                [&self.structs, &self.functions, &self.modules, &self.checked]
+                    .into_iter()
+                    .flatten()
+                    .map(|(_, range)| range),
+            )
+            .chain(self.bodies.iter().map(|entry| &entry.range));
+        for range in ranges {
+            if range.start > range.end || !(..=self.payload).contains(&range.end) {
+                return Err(PackageError("a record overruns the payload".to_string()));
+            }
+        }
+        for (records, kind) in [(&self.structs, "struct"), (&self.functions, "function")] {
+            if !records
+                .windows(2)
+                .all(|pair| pair[0].0.as_bytes() < pair[1].0.as_bytes())
+            {
+                return Err(PackageError(format!(
+                    "the {kind} declarations are not strictly sorted"
+                )));
+            }
+        }
+        let sorted = self.by_name.len() == self.bodies.len()
+            && self
+                .by_name
+                .iter()
+                .all(|position| (*position as usize) < self.bodies.len())
+            && self.by_name.windows(2).all(|pair| {
+                self.bodies[pair[0] as usize].name.as_bytes()
+                    < self.bodies[pair[1] as usize].name.as_bytes()
+            });
+        if sorted {
+            Ok(())
+        } else {
+            Err(PackageError(
+                "the bodies' name order is not a strict sort".to_string(),
+            ))
+        }
+    }
+}
+
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+struct BodyEntry {
+    name: String,
+    n_params: usize,
+    ref_params: Vec<bool>,
+    range: Range<usize>,
+}
+
+/// A package's payload, shared by its declarations and its bodies.
+#[derive(Debug, Clone)]
+struct Payload {
+    bytes: Arc<PackageBytes>,
+    start: usize,
+}
+
+impl Payload {
+    /// The record at `range`, which the directory's validation keeps in
+    /// bounds.
+    fn get(&self, range: &Range<usize>) -> &[u8] {
+        &self.bytes[self.start + range.start..self.start + range.end]
+    }
+}
+
+/// One kind of declaration record: each entry's name and payload range,
+/// sorted by name, and each entry's value once decoded.
 #[derive(Debug)]
 struct Records<T> {
     entries: Vec<(String, Range<usize>)>,
-    index: HashMap<String, usize>,
     decoded: Vec<OnceLock<Option<T>>>,
 }
 
 impl<T: serde::de::DeserializeOwned> Records<T> {
-    fn new(entries: Vec<(String, Range<usize>)>, kind: &str) -> Result<Self, PackageError> {
-        let index = entries
-            .iter()
-            .enumerate()
-            .map(|(position, (name, _))| (name.clone(), position))
-            .collect::<HashMap<_, _>>();
-        if index.len() != entries.len() {
-            return Err(PackageError(format!("a {kind} name repeats")));
-        }
+    fn new(entries: Vec<(String, Range<usize>)>) -> Self {
         let decoded = entries.iter().map(|_| OnceLock::new()).collect();
-        Ok(Self {
-            entries,
-            index,
-            decoded,
-        })
+        Self { entries, decoded }
     }
 
     fn position(&self, name: &str) -> Option<usize> {
-        self.index.get(name).copied()
+        self.entries
+            .binary_search_by(|(entry, _)| entry.as_bytes().cmp(name.as_bytes()))
+            .ok()
     }
 
-    fn get(&self, position: usize, bytes: &[u8], failures: &Mutex<Vec<String>>) -> Option<&T> {
+    fn get(&self, position: usize, payload: &Payload, failures: &Mutex<Vec<String>>) -> Option<&T> {
         self.decoded
             .get(position)?
             .get_or_init(|| {
                 let (name, range) = &self.entries[position];
-                postcard::from_bytes(&bytes[range.clone()])
+                postcard::from_bytes(payload.get(range))
                     .map_err(|error| {
                         failures
                             .lock()
@@ -607,75 +678,14 @@ impl<T: serde::de::DeserializeOwned> Records<T> {
     }
 }
 
-#[derive(Debug)]
-struct BodyEntry {
-    name: String,
-    n_params: usize,
-    ref_params: Vec<bool>,
+/// A body register's source location, its file named by id.
+#[derive(serde::Serialize, serde::Deserialize)]
+struct Location {
+    reg: u32,
+    file: u32,
     start: usize,
     end: usize,
-}
-
-struct Reader<'a> {
-    bytes: &'a [u8],
-    pos: usize,
-}
-
-impl<'a> Reader<'a> {
-    fn line(&mut self) -> Result<&'a str, PackageError> {
-        let rest = &self.bytes[self.pos..];
-        let end = rest
-            .iter()
-            .position(|byte| *byte == b'\n')
-            .ok_or_else(|| PackageError("truncated package".to_string()))?;
-        self.pos += end + 1;
-        std::str::from_utf8(&rest[..end])
-            .map_err(|_| PackageError("a section label is not UTF-8".to_string()))
-    }
-
-    fn labelled(&mut self, label: &str) -> Result<&'a str, PackageError> {
-        self.line()?
-            .strip_prefix(label)
-            .and_then(|rest| rest.strip_prefix(' '))
-            .ok_or_else(|| PackageError(format!("expected `{label}`")))
-    }
-
-    fn text_section(&mut self, label: &str) -> Result<&'a str, PackageError> {
-        std::str::from_utf8(self.section(label)?)
-            .map_err(|_| PackageError(format!("the `{label}` section is not UTF-8")))
-    }
-
-    /// The section `label` names, as raw bytes.
-    fn section(&mut self, label: &str) -> Result<&'a [u8], PackageError> {
-        let length = number(self.labelled(label)?)?;
-        self.bytes_of(length)
-    }
-
-    /// The next `length` bytes of section text, stepping over them and
-    /// their closing newline.
-    fn bytes_of(&mut self, length: usize) -> Result<&'a [u8], PackageError> {
-        let start = self.pos;
-        self.skip(length)?;
-        Ok(&self.bytes[start..start + length])
-    }
-
-    /// Step over `length` bytes of section text and its closing newline.
-    fn skip(&mut self, length: usize) -> Result<(), PackageError> {
-        let end = self.pos + length;
-        if self.bytes.get(end) != Some(&b'\n') {
-            return Err(PackageError("a section overruns its length".to_string()));
-        }
-        self.pos = end + 1;
-        Ok(())
-    }
-}
-
-/// A section line's byte count and the name after it.
-fn sized<'a>(rest: &'a str, line: &str) -> Result<(usize, &'a str), PackageError> {
-    let (length, name) = rest
-        .split_once(' ')
-        .ok_or_else(|| PackageError(format!("malformed section line `{line}`")))?;
-    Ok((number(length)?, name))
+    origin: Option<VarId>,
 }
 
 fn bytecode<T: serde::Serialize + ?Sized>(value: &T) -> Result<Vec<u8>, PackageError> {
@@ -687,27 +697,24 @@ fn from_bytecode<T: serde::de::DeserializeOwned>(
     label: &str,
 ) -> Result<T, PackageError> {
     postcard::from_bytes(bytes)
-        .map_err(|error| PackageError(format!("the `{label}` section does not decode: {error}")))
+        .map_err(|error| PackageError(format!("the {label} record does not decode: {error}")))
 }
 
-/// `name`, refused when it would break a section line.
-fn one_line(name: &str) -> Result<&str, PackageError> {
-    if name.contains('\n') {
-        Err(PackageError(format!("name `{name}` spans lines")))
-    } else {
-        Ok(name)
-    }
-}
-
-fn number(text: &str) -> Result<usize, PackageError> {
-    text.parse()
-        .map_err(|_| PackageError(format!("expected a count, found `{text}`")))
-}
-
-fn describe(diagnostics: &[ArtifactDiagnostic]) -> String {
-    diagnostics
+/// Every source file a body location names, by its file id.
+fn files(program: &MirProgram) -> BTreeMap<&Option<String>, u32> {
+    program
+        .functions
         .iter()
-        .map(|diagnostic| diagnostic.message.clone())
-        .collect::<Vec<_>>()
-        .join("; ")
+        .flat_map(|(_, function)| {
+            function
+                .spans
+                .0
+                .iter()
+                .filter(|(reg, _)| **reg < function.n_regs)
+                .map(|(_, (span, _))| &span.source)
+        })
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .zip(0..)
+        .collect()
 }

@@ -13,6 +13,7 @@ mojito-hir = { path = "../mojito-hir" }
 mojito-native-core = { path = "../mojito-native-core" }
 mojito-symbol = { path = "../mojito-symbol" }
 mojito-types = { path = "../mojito-types" }
+memmap2.workspace = true
 postcard.workspace = true
 serde.workspace = true
 

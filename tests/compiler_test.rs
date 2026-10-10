@@ -3863,7 +3863,7 @@ fn the_bundled_library_is_imported_from_its_compiled_package() {
 
 #[test]
 fn a_package_reads_back_to_the_bytes_it_was_written_as() {
-    use mojito::mir::text::package::{PackageHeader, read_package, write_package};
+    use mojito::mir::text::package::{PackageBytes, PackageHeader, read_package, write_package};
     let compiled = Compiler::default()
         .with_std_package(false)
         .compile_unlinked("def main():\n    var xs: List[Int] = [1]\n    print(len(xs))\n")
@@ -3878,7 +3878,7 @@ fn a_package_reads_back_to_the_bytes_it_was_written_as() {
     let modules = vec![("/probe/module.mojo".to_string(), vec![0, 10, 255, 10])];
     let checked = vec![("/probe/module.mojo".to_string(), vec![10, 1, 2])];
     let bytes = write_package(&header, &interface, program, &modules, &checked).expect("write");
-    let package = read_package(bytes.clone()).expect("read");
+    let package = read_package(PackageBytes::Owned(bytes.clone())).expect("read");
     assert_eq!(package.modules, modules);
     assert_eq!(package.checked, checked);
     assert_eq!(package.header, header);
@@ -3910,5 +3910,5 @@ fn a_package_reads_back_to_the_bytes_it_was_written_as() {
         bytes
     );
     let truncated = bytes[..bytes.len() - 4].to_vec();
-    assert!(read_package(truncated).is_err());
+    assert!(read_package(PackageBytes::Owned(truncated)).is_err());
 }

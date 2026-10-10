@@ -13,7 +13,7 @@ use crate::compiler::{Compiler, CompilerError};
 use crate::interface::PackageInterface;
 use crate::mir::MirProgram;
 use crate::mir::text::package::{
-    PackageBodies, PackageDeclarations, PackageHeader, read_package, write_package,
+    PackageBodies, PackageBytes, PackageDeclarations, PackageHeader, read_package, write_package,
 };
 use crate::module::{LinkOptions, bundled_root, link_source_recording};
 use crate::module_package::PackageModules;
@@ -70,7 +70,7 @@ pub fn bundled_std_package() -> Option<Arc<ImportedPackage>> {
         .clone()
 }
 
-/// Read the cached package `header` names, or build and cache it. One
+/// Map the cached package `header` names, or build and cache it. One
 /// process builds while any other that needs the same package waits for
 /// it, under a lock file a crashed builder leaves stale after a while.
 fn load_or_build(root: &Path, header: &PackageHeader) -> Result<ImportedPackage, String> {
@@ -80,9 +80,9 @@ fn load_or_build(root: &Path, header: &PackageHeader) -> Result<ImportedPackage,
     let path = cache.join(format!("{stem}.mojoc"));
     let lock = cache.join(format!(".{stem}.lock"));
     loop {
-        let read = crate::timing::span("package.read");
-        let bytes = std::fs::read(&path);
-        drop(read);
+        let map = crate::timing::span("package.map");
+        let bytes = std::fs::File::open(&path).and_then(|file| PackageBytes::map(&file));
+        drop(map);
         if let Ok(bytes) = bytes
             && let Ok(package) = import(bytes, header)
         {
@@ -108,7 +108,7 @@ fn load_or_build(root: &Path, header: &PackageHeader) -> Result<ImportedPackage,
                     prune(&cache, &path);
                 }
                 let _ = std::fs::remove_file(&lock);
-                return import(built?, header);
+                return import(PackageBytes::Owned(built?), header);
             }
             Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
                 let stale = std::fs::metadata(&lock)
@@ -127,13 +127,13 @@ fn load_or_build(root: &Path, header: &PackageHeader) -> Result<ImportedPackage,
     }
     // No usable cache: build for this process alone.
     import(
-        build(root, header).map_err(|error| error.to_string())?,
+        PackageBytes::Owned(build(root, header).map_err(|error| error.to_string())?),
         header,
     )
 }
 
 /// Read `bytes` as the package `header` names.
-fn import(bytes: Vec<u8>, header: &PackageHeader) -> Result<ImportedPackage, String> {
+fn import(bytes: PackageBytes, header: &PackageHeader) -> Result<ImportedPackage, String> {
     let package = read_package(bytes).map_err(|error| error.to_string())?;
     if package.header != *header {
         return Err(format!(
@@ -403,12 +403,12 @@ mod tests {
             &[],
         )
         .expect("write");
-        assert!(import(text.clone(), &header).is_ok());
+        assert!(import(PackageBytes::Owned(text.clone()), &header).is_ok());
         let other = PackageHeader {
             compiler: "another-build".to_string(),
             ..header
         };
-        assert!(import(text, &other).is_err());
+        assert!(import(PackageBytes::Owned(text), &other).is_err());
     }
 
     #[test]

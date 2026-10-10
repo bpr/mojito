@@ -913,7 +913,34 @@ Hello World decodes 3 of the 942 declarations. The package shrinks from
 | keyed | 81.1 → 60.9 (−25%) | 17.9 → 0.0 | 3.0 → 1.7 | 1.7 → 1.2 | 22.2 → 21.8 | 55.2 → 45.8 |
 | stdlib_heavy | 122.7 → 101.1 (−18%) | 17.9 → 0.0 | 2.6 → 1.4 | 1.5 → 0.9 | 55.6 → 55.4 | 72.4 → 61.6 |
 
-Reading the package is now the whole-file read (about 3.5 ms for 8 MB, of
-which 7.4 MB is body text that mostly never decodes) and its text
-interface record (0.3 ms); both are R557. What scales with the library is
-otherwise preparing and elaborating the library's headers (R553).
+Reading the package was then the whole-file read (about 3.5 ms for 8 MB,
+of which 7.4 MB was body text that mostly never decodes) and its text
+interface record (0.3 ms); R557 below closed both. What scaled with the
+library was otherwise preparing and elaborating the library's headers
+(R553, since landed).
+
+### The importer maps a bytecode package (2026-10-10, R557)
+
+Same environment and method as the tables above, on the R553 tree against
+the R557 tree, both importing the package; medians of 5 interleaved runs,
+milliseconds, RSS in MB. The package is now a directory followed by
+bytecode records: each body is `postcard` of its `MirFunction` and its
+file-id locations instead of MIR text, and the interface is `postcard`
+too. The importer maps the file (`memmap2`) and decodes the directory, the
+interface, and nothing else until a lookup asks. The package shrinks from
+8.0 MB to 1.7 MB.
+
+| Program | total (R553 → now) | package read → map | interface | mono elaborate | peak RSS MB |
+|---|---:|---:|---:|---:|---:|
+| hello | 19.5 → 16.5 (−15%) | 3.29 → 0.01 | 0.28 → 0.12 | 1.9 → 1.5 | 38.1 → 30.7 |
+| generic | 31.1 → 24.1 (−23%) | 3.46 → 0.01 | 0.30 → 0.12 | 8.4 → 5.7 | 40.7 → 33.5 |
+| keyed | 49.2 → 40.7 (−17%) | 3.29 → 0.02 | 0.29 → 0.12 | 21.8 → 17.1 | 45.9 → 38.7 |
+| stdlib_heavy | 91.2 → 75.4 (−17%) | 3.15 → 0.01 | 0.28 → 0.12 | 55.8 → 44.0 | 63.5 → 55.7 |
+
+Decoding the directory (`package.directory`) is 0.23 ms: its 1,900 record
+names and 874 body entries, which replaces the line-framed reader's
+untimed scan and index building (`frontend` self time falls from 3.3 to
+2.9 ms with the directory in it). The rest of the gain is the body decode
+inside mono elaboration, which no longer parses MIR text (about 8× faster
+per body). Of what remains untimed in `frontend`, about 1.2 ms is
+digesting the library's source to key the package cache (R562).

@@ -10,10 +10,14 @@ use std::cmp::Ordering;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct OwnerId(pub u32);
 
-/// An owner is one check's numbering, so no encoding carries one: writing
-/// a value that holds one fails, naming why.
+/// An owner is one check's numbering, so no encoding carries one outside
+/// [`encoding_packaged_owners`]: writing a value that holds one fails,
+/// naming why.
 impl serde::Serialize for OwnerId {
-    fn serialize<S: serde::Serializer>(&self, _serializer: S) -> Result<S::Ok, S::Error> {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        if OWNERS_ENCODE.get() {
+            return serializer.serialize_u32(self.0);
+        }
         Err(serde::ser::Error::custom(format!(
             "binding owner {} is local to one check",
             self.0
@@ -22,11 +26,31 @@ impl serde::Serialize for OwnerId {
 }
 
 impl<'de> serde::Deserialize<'de> for OwnerId {
-    fn deserialize<D: serde::Deserializer<'de>>(_deserializer: D) -> Result<Self, D::Error> {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        if OWNERS_ENCODE.get() {
+            return u32::deserialize(deserializer).map(Self);
+        }
         Err(serde::de::Error::custom(
             "a binding owner is local to one check",
         ))
     }
+}
+
+/// Run `f` with [`OwnerId`]'s encoding permitted: inside it an owner
+/// encodes and decodes as its bare number.
+///
+/// A package's bodies carry the package build's binding owners in their
+/// types verbatim, as their MIR text spelled them (`$v<n>`); only the
+/// package's body records are written and read under this permit.
+pub fn encoding_packaged_owners<R>(f: impl FnOnce() -> R) -> R {
+    struct Restore(bool);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            OWNERS_ENCODE.set(self.0);
+        }
+    }
+    let _restore = Restore(OWNERS_ENCODE.replace(true));
+    f()
 }
 
 /// Stable identity of a declared or inferred origin parameter.
@@ -853,6 +877,10 @@ fn cmp_sig_origin(left: &SigOrigin, right: &SigOrigin) -> Ordering {
             (SigOrigin::Carried(a), SigOrigin::Carried(b)) => a.to_string().cmp(&b.to_string()),
             _ => Ordering::Equal,
         })
+}
+
+thread_local! {
+    static OWNERS_ENCODE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
 #[cfg(test)]

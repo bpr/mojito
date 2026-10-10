@@ -9,7 +9,7 @@ use crate::checked::{CallThroughEffect, TransferEffect};
 use std::collections::{BTreeMap, BTreeSet};
 
 /// The checked facts of a package's bodies its importer reads.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct PackageInterface {
     /// The source module (its stamped provenance) of every declaration the
     /// package compiled: a declaration from one of them has its body in the

@@ -645,7 +645,7 @@ use mojito_hir::hir::VarId;
 use std::collections::HashMap;
 
 /// A virtual ("infinite") register — a fresh one per intermediate value (SSA-ish).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct Reg(pub u32);
 
 /// One source `[...]` argument after lowering.
@@ -658,7 +658,7 @@ pub struct Reg(pub u32);
 /// the VM normalize arguments to declaration order before applying defaults.
 /// A bare `None` register cannot express the difference between an omitted
 /// parameter and a supplied type argument.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct MirParamArg {
     pub name: Option<String>,
     /// The argument's run-time register; absent for an erased origin
@@ -682,7 +682,7 @@ pub type MirBlockId = usize;
 pub use mojito_common::token::Span;
 
 /// How a variable is used at a given site (set from `^` and param conventions).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum UseMode {
     Copy,
     Move,
@@ -691,7 +691,7 @@ pub enum UseMode {
 }
 
 /// One already-evaluated argument to a multi-dimensional subscript.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub enum MirSubscriptArg {
     Index(Reg),
     Slice {
@@ -707,7 +707,7 @@ pub enum MirSubscriptArg {
 /// A missing [`MirSubscriptCall`] is never an invitation for the VM to inspect
 /// the runtime value and guess semantics: lowering records the exact
 /// compiler/runtime storage family selected by the checked base type.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum MirIntrinsicSubscript {
     /// Compiler-private heterogeneous Tuple/RuntimePack storage, including a
     /// nominal Tuple result whose intrinsic producer uses `Value::Tuple` as its
@@ -721,7 +721,7 @@ pub enum MirIntrinsicSubscript {
 }
 
 /// A compile-time-known literal.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub enum Const {
     Int(i64),
     Float(f64),
@@ -748,7 +748,7 @@ pub enum Const {
 
 /// The callee of a `MirInstr::Call` — a function/struct-constructor/builtin name.
 /// (Resolution to a concrete target happens in the backend's assembler.)
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct FuncRef(pub String);
 impl FuncRef {
     pub fn named(name: &str) -> Self {
@@ -762,7 +762,7 @@ impl FuncRef {
 /// — as opposed to an rvalue (a computed register). This mirrors `rustc` MIR's
 /// `Place`/`Projection` split, and is what a write / read-modify-write
 /// targets.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub enum Proj {
     Field(String),
     Index(Reg), // the subscript index, flattened to a register (evaluated once)
@@ -787,7 +787,7 @@ pub enum Proj {
 
 /// A writable location: a root variable plus a chain of projections
 /// (`p.items[i].x` = root `p`, proj `[Field("items"), Index(i), Field("x")]`).
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct MirPlace {
     pub root: VarId,
     /// Checked type of the root slot before projections. `None` is permitted only
@@ -864,7 +864,9 @@ impl MirPlace {
 ///
 /// `Interior` path segments are invalidation domains; ordinary field/index
 /// segments retain field sensitivity.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(
+    Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize,
+)]
 pub struct MirInteriorOrigin {
     pub root: VarId,
     pub path: Vec<mojito_types::origin::OriginSeg>,
@@ -877,7 +879,7 @@ pub struct MirInteriorOrigin {
 /// `shared` loan (a `Pointer(to=place)` alias) never conflicts with another
 /// shared loan of overlapping storage; against owner accesses and exclusive
 /// loans it is an ordinary borrow.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct MirLoan {
     pub place: MirPlace,
     pub mutable: bool,
@@ -887,7 +889,7 @@ pub struct MirLoan {
 
 /// Complete checker-selected contract for a nominal subscript invocation.
 /// Intrinsic pointer/SIMD/private-storage operations carry no such payload.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct MirSubscriptCall {
     pub target: String,
     pub raises: Option<Ty>,
@@ -905,7 +907,7 @@ pub struct MirSubscriptCall {
 
 /// A single three-address instruction. Each value-producing instruction writes a
 /// fresh `dest` register; control flow lives in the block's [`MirTerm`].
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[allow(clippy::large_enum_variant)]
 pub enum MirInstr {
     /// Establish one fresh generation containing every owner loan carried by a
@@ -1593,14 +1595,14 @@ pub enum MirInstr {
     },
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum MirCaptureMode {
     Reference,
     Copy,
     Move,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct MirClosureCapture {
     pub place: MirPlace,
     pub mode: MirCaptureMode,
@@ -1609,7 +1611,7 @@ pub struct MirClosureCapture {
 /// A static access to owner storage performed by a callable environment while
 /// executing a call. Origin paths deliberately retain abstract indices; the VM
 /// never interprets this metadata.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct MirCaptureAccess {
     pub root: VarId,
     pub path: Vec<mojito_types::origin::OriginSeg>,
@@ -1618,7 +1620,7 @@ pub struct MirCaptureAccess {
 
 /// How a basic block hands off control. Block targets are indices into
 /// `MirFunction::blocks`; values are registers.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub enum MirTerm {
     Jump(MirBlockId),
     Branch {
@@ -1673,13 +1675,13 @@ pub enum MirTerm {
     },
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct MirBlock {
     pub instrs: Vec<MirInstr>,
     pub term: MirTerm,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct MirFunction {
     pub blocks: Vec<MirBlock>,
     pub n_regs: u32,
@@ -1714,6 +1716,7 @@ pub struct MirFunction {
     /// Checked type of each variable slot, as far as lowering recorded one.
     /// Parameters, bindings, and synthetic locals are covered on the checked
     /// path; instruction typing and verification read slot types from here.
+    #[serde(serialize_with = "super::sorted_map")]
     pub var_tys: HashMap<VarId, Ty>,
     /// Checked return type. `None` only on unchecked compatibility paths;
     /// production lowering always records it (`Ty::None` for no return).
@@ -1722,9 +1725,13 @@ pub struct MirFunction {
     pub raises: bool,
     /// Declared error type when `raises` is true and the contract is typed.
     pub error_ty: Option<Ty>,
+    /// Not encoded: a package writes its bodies' locations against its own
+    /// file table.
+    #[serde(skip)]
     pub spans: SpanTable,
     /// Resolved type of registers originating in checked expressions. Synthetic
     /// control-flow registers are filled by instruction typing before verification.
+    #[serde(serialize_with = "super::sorted_map")]
     pub reg_types: HashMap<u32, Ty>,
 }
 

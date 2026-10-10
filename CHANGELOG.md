@@ -47,6 +47,14 @@ to evolve under the `0.x` compatibility rules.
   already resolved. Hello World compiles and runs in 20 ms release, from
   33 ms. `Compiler::compile_linked`, given a source link, now compiles the
   library from source.
+- An importer no longer reads the whole bundled package, and no package
+  part is MIR text any more (R557): the package is a directory followed by
+  bytecode records, its bodies and interface included, and the importer
+  maps the file and decodes a body from its own bytes when it first
+  reaches it, as Mojo's importer reads a bytecode package on demand. The
+  package shrinks from 8.0 MB to 1.7 MB; Hello World compiles and runs in
+  16.5 ms release, from 19.5 ms, and a program reaching 70 library bodies
+  in 75 ms, from 91 ms. The package format is now `mojito-package 5`.
 - A module under a search root is linked under its path there, whichever
   import reaches it first: `std/io/file.mojo` declares
   `__module$std$io$file$…`, not `__module$file$…`.
