@@ -1507,6 +1507,31 @@ fn parameter_closure_capture_list_reports_the_missing_colon_verbatim() {
     );
 }
 
+/// An origin-bearing reference is never a type argument: upstream reads
+/// `ref[o]` as an expression and the referent as a stray token.
+#[test]
+fn reference_type_argument_reports_the_unclosed_argument_list() {
+    for source in [
+        "struct S[o: Origin[mut=True]]:\n    var values: Tuple[ref[o] Int, ref[o] Int]\n",
+        "struct S[o: Origin[mut=True]]:\n    var values: List[ref[o] Int]\n",
+    ] {
+        let error = mojito::parse(source).expect_err("a `ref` type argument must reject");
+        let rendered = error.to_string();
+        assert!(
+            rendered.starts_with("expected ']' in call argument list"),
+            "{rendered}"
+        );
+    }
+}
+
+#[test]
+fn reference_types_outside_type_arguments_still_parse() {
+    parse("struct S[o: Origin[mut=True]]:\n    var value: ref[o] Int\n");
+    parse(
+        "def apply[o: Origin, f: def(ref[o] Int) -> ref[o] Int](ref[o] x: Int) -> ref[o] Int:\n    return f(x)\n",
+    );
+}
+
 #[test]
 fn parses_current_and_legacy_closure_capture_lists() {
     let program = parse(

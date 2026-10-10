@@ -390,6 +390,19 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
         if self.peek_starts_type()? {
             let start = self.peek_start();
             let ty = self.parse_type()?;
+            // Upstream reads `ref[o]` here as an expression followed by a stray
+            // type: an origin-bearing reference is never a type argument.
+            if matches!(
+                ty,
+                Type::Ref {
+                    origin: Some(_),
+                    ..
+                }
+            ) {
+                return Err(ParseError::Message(
+                    "expected ']' in call argument list".to_string(),
+                ));
+            }
             if matches!(self.peek_token()?, Some(Token::LParen)) {
                 let name = match &ty {
                     Type::Int => Some("Int"),

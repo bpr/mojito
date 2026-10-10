@@ -115,18 +115,6 @@ fn rebinding_reference_aggregate_replaces_its_owner_generation() {
 }
 
 #[test]
-fn nested_reference_aggregate_preserves_every_element_loan() {
-    // Executable `ref` fields are a Mojito extension used to prove the checked
-    // aggregate/loan representation; current Mojo spells stored provenance with
-    // origin-bearing pointer types instead.
-    let src = "@fieldwise_init\nstruct RefTuple[o1: Origin[mut=True], o2: Origin[mut=True]]:\n    var values: Tuple[ref[o1] Int, ref[o2] Int]\n\ndef main():\n    var x = 10\n    var y = 20\n    ref rx = x\n    ref ry = y\n    var pair = RefTuple((rx, ry))\n    y += 1\n    print(pair.values[1])\n";
-    assert!(matches!(own(src), Err(OwnershipError::LoanConflict { .. })));
-
-    let src = "@fieldwise_init\nstruct RefList[origin: Origin[mut=True]]:\n    var values: List[ref[origin] Int]\n\ndef main():\n    var x = 10\n    ref rx = x\n    ref ry = x\n    var pair = RefList([rx, ry])\n    x += 1\n    print(pair.values[1])\n";
-    assert!(matches!(own(src), Err(OwnershipError::LoanConflict { .. })));
-}
-
-#[test]
 fn ref_field_reborrow_read_is_not_a_self_conflict() {
     // A parametric-origin receiver is not provably mutable, so reads through a
     // `ref s = self.src` reborrow classify as immutable accesses and do not

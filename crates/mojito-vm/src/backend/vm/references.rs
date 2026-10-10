@@ -196,14 +196,17 @@ impl VmBackend {
                 combined,
             );
         }
-        // Otherwise walk the projection and re-root at the first handle reached.
+        // Otherwise walk the projection and re-root at the first handle that
+        // segments still address through. A handle reached at the final
+        // segment is itself the designated value (a stored `Pointer` or `ref`
+        // element) and stays where it is.
         for (position, segment) in projection.iter().enumerate() {
             match navigate_reference_step(value, segment) {
                 Some(Value::Ref {
                     frame: handle_frame,
                     slot: handle_slot,
                     projection: handle_projection,
-                }) => {
+                }) if position + 1 < projection.len() => {
                     let mut combined = handle_projection.clone();
                     combined.extend_from_slice(&projection[position + 1..]);
                     return self.canonical_reference_parts(

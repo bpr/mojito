@@ -57,7 +57,11 @@ Not to be removed: upstream rejects `var f: ref[o] T` fields (`'ref' patterns
 are only valid on the left side of an assignment`) and spells reference
 storage through `Pointer[T, origin]`, but upstream has signalled that `ref`
 fields may arrive, so Mojito keeps the capability (2026-09-09 decision; the
-stdlib's six `ref`-field structs stay as they are).
+stdlib's six `ref`-field structs stay as they are). The extension is the
+field declaration alone: a `ref` type argument (`Tuple[ref[o] Int]`,
+`List[ref[o] Int]`) is rejected at parse with the pin's own "expected ']' in
+call argument list", and reference-valued elements are spelled
+`Pointer[T, origin]`, as upstream spells them.
 
 ### `Origin._subtree` casts stay under `assets/extensions/`
 
@@ -79,8 +83,8 @@ These are the two admitted extensions under the match-or-subset rule
 - Where a `ref`-field fixture has a Mojo-valid twin, the twin spells the
   storage through `Pointer[T, origin]` under the same name with "ref_field"
   replaced by "pointer_field" in the ordinary folder.
-- `conformance/fixtures/reference_valued_aggregate.mojo` stays a
-  `mojito-only` row until upstream decides.
+- `conformance/fixtures/reference_valued_aggregate.mojo`, a direct `ref`
+  field written through, stays a `mojito-only` row until upstream decides.
 - If upstream lands `ref` fields, re-probe the extension fixtures against the
   new spelling and promote them back — that is a roadmap task, not this one.
 

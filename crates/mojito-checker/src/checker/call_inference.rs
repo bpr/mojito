@@ -1737,11 +1737,12 @@ impl Checker {
                 matches!(pty, Ty::Param { .. }) && mojito_types::types::simd_shape(aty).is_some(),
             );
             let expected = resolve(pty)?;
-            // A dependent generic parameter can resolve to a reference-valued
+            // A dependent generic parameter can resolve to a reference-bearing
             // type only after explicit value arguments have been substituted
-            // (for example `Ts[index]` in Tuple.consume_elements). Re-infer in
-            // that resolved context so the actual is the stored handle rather
-            // than the ordinary read-through referent.
+            // (for example `Ts[index]` in Tuple.consume_elements over a struct
+            // with a `ref` field). Re-infer in that resolved context so the
+            // actual is the stored handle rather than the ordinary read-through
+            // referent.
             let contextual;
             let actual = if self.type_contains_reference(&expected) {
                 contextual = self.infer_with_expected(expression, &expected, true)?;

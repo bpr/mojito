@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R535**.
+Next free ID: **R539**.
 
 ## Ordered Work
 
@@ -300,14 +300,6 @@ Track: `ownership`.
 
 Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the track, an entry Mojito runs to a wrong result, or accepts where the pin rejects, comes first; then one it rejects where the pin runs it; then a verdict that is right with the wrong words.
 
-- [ ] **R529 A `ref` element of a `Tuple` field loses its reference handle**
-
-  Problem: `struct RefTuple[o]: var values: Tuple[ref[o] Int, ref[o] Int]` constructed from two refs prints wrong or fails with "expected reference handle" on read, since `Tuple` became a library struct generator.
-  - Mojito-only: the pin has no `ref` element types; `vm_test::nested_reference_aggregate_preserves_handles` pins it.
-  - Either carry handles through `Tuple`'s pack storage or withdraw the form as an extension.
-  - Depends on nothing.
-  - Model: Opus, Planned.
-
 - [ ] **R473 A discard `_ = x` copies its source instead of taking it**
 
   Problem: `var x = Q(1, "y")` then `_ = x` as `x`'s last use prints
@@ -361,6 +353,16 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
   - The general fix is a reference handle that designates heap storage
     whenever its projection crosses a pointer.
   - Found while landing R325 (2026-10-08).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R535 A `ref` field of a list element prints its handle inside `print`**
+
+  Problem: over `l = [RefOne(a)]`, where `RefOne` holds `var value: ref[o] Int`, `print(l[0].value)` prints `<ref 1:0>` instead of `4`.
+  - The same happens for a `ref` field of a `Tuple` field's element.
+  - `var z = l[0].value` binds, but `print(z)` then prints `None`.
+  - Inside the kept direct-`ref`-field extension, so its fixture goes under `assets/extensions/ok/`.
+  - Found while planning R529 (2026-10-09).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -434,6 +436,15 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
   - The pin wants a `Deinitable where False` conformance beside the
     decorator, which every bundled explicit-destroy struct already spells.
   - Probe: `conformance/probes/explicit_destroy_without_deinitable_opt_out.mojo`.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R536 Copying out of a `ref` binding keeps the binding's loan**
+
+  Problem: `ref a = left; var t: Int = a; left = 9; print(t, left)` is rejected with "access to 'left' conflicts with live reference 't'"; the pin prints `4 9`.
+  - The same holds for `var t = a`, `(a, 5)`, `[a, 5]`, and an `Int`-returning call `keep(a, 5)`.
+  - The copy is an owned `Int`, so it carries no loan on `left`.
+  - Found while planning R529 (2026-10-09).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -1239,6 +1250,15 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Found while deriving another struct's overloaded method; not root-caused.
   - Depends on R52, which lets a binder be solved through a conversion; the
     literal's element type reaches `T` the same way.
+  - Model: Opus, Not Planned.
+
+- [ ] **R537 A list display of `Pointer` elements does not reach a constructor over the struct's origin parameter**
+
+  Problem: `PtrList([Pointer(to=left)])`, whose `__init__` takes `var values: List[Pointer[Int, Self.o]]`, is rejected with "no constructor overload matches the supplied arguments"; the pin prints `6 6` after `pl.values[0][] += 2`.
+  - The `Tuple` form, `PtrTuple((Pointer(to=left), Pointer(to=right)))`, runs.
+  - The display's element is likely checked against the field type before the origin parameter is solved.
+  - Found while planning R529 (2026-10-09).
+  - Depends on nothing.
   - Model: Opus, Not Planned.
 
 - [ ] **R55 A call through a `ref` to a callable value is rejected**
@@ -4817,6 +4837,15 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Found while landing R526 (2026-10-09).
   - Depends on nothing.
   - Model: Opus, Not Planned.
+
+- [ ] **R538 Storage paths for reference-valued elements outlive the last spelling of one**
+
+  Problem: the checker, MIR, VM, and native backend keep paths for an element whose type is itself `ref[o] T`, though `List[ref[o] T]` and `Tuple[ref[o] T]` are now rejected at parse, as at the pin.
+  - Sites: `infer_list_construction` and the `Tuple` arm of `infer_storage_value` in the checker, the element-slot comments in `crates/mojito-mir/src/mir/lower_stmt.rs` and `mir/verify/instr.rs`, `MirInstr`'s element-handle note in `mir.rs`, and `lower_make_ref` in `crates/mojito-pliron/src/lower/ctors.rs`.
+  - Most of these also serve a struct with a direct `ref` field as an element, so delete only a branch whose sole trigger is a top-level reference element.
+  - A bare `List[ref Int]` still parses and is rejected by the checker, so a `Ty::Ref` element type can still be formed until it is rejected.
+  - Depends on nothing.
+  - Model: Opus, Planned.
 
 ### Grow The CPU Standard Library *(demand-first)*
 

@@ -154,14 +154,6 @@ impl FnLowering<'_> {
             operands.push(value);
         }
         self.emit_bound_call(ctx, anchor, &resolved, operands)?;
-        // A reference result is the callee's returned place pointer — the
-        // caller-side handle convention; a handle to pointer-typed storage
-        // joins `pointer_slot_refs` like `MakeRef`.
-        if let Some(reference) = &call.reference_result
-            && matches!(*reference.referent, Ty::Pointer { .. })
-        {
-            self.pointer_slot_refs.insert(anchor.0);
-        }
         // `mut self` receivers without an aliased place write the modified
         // receiver back — the `lower_method_call` contract.
         let write_back = !receiver_alias

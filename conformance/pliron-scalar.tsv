@@ -570,6 +570,7 @@ assets/ok/pointer_to_ref_binding_twice.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pointer_to_ref_union_origin.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pointer_to_ref_write_through.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pointer_to_tuple_element.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/pointer_tuple_field_write.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pointer_type_argument_clone_binder.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pointer_type_argument_interior_clone_binder.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pointer_unsafe_vocabulary.mojo	-	ineligible	no-scalar-entry-shape
@@ -883,6 +884,7 @@ assets/ok/tuple_hashable_dict_key.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/tuple_nested_type_arguments.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/tuple_of_scalars_comparison.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/tuple_one_element.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/tuple_pointer_element_write.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/tuple_reverse_concat.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/tuple_struct_element_equality.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/tuple_template_served.mojo	-	ineligible	no-scalar-entry-shape
@@ -997,7 +999,6 @@ assets/extensions/ok/ref_field_wrapper_iterator_protocol.mojo	-	ineligible	no-sc
 assets/extensions/ok/ref_result_field_value_copy.mojo	-	ineligible	no-scalar-entry-shape
 assets/extensions/ok/reference_carrier_collection.mojo	-	ineligible	no-scalar-entry-shape
 assets/extensions/ok/reference_element_chained_read.mojo	-	ineligible	no-scalar-entry-shape
-assets/extensions/ok/reference_list_write_through_method.mojo	-	ineligible	no-scalar-entry-shape
 assets/extensions/ok/reference_yielding_iteration.mojo	-	ineligible	no-scalar-entry-shape
 assets/extensions/ok/reference_yielding_iteration_named_source.mojo	-	ineligible	no-scalar-entry-shape
 assets/extensions/ok/reference_yielding_iteration_parametric_mut.mojo	-	ineligible	no-scalar-entry-shape

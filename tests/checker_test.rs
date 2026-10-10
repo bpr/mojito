@@ -4294,22 +4294,6 @@ fn checks_reference_aggregate_permissions_initialization_and_escape() {
         check_source("struct Hidden:\n    var value: ref[MutUnsafeAnyOrigin] Int\n"),
         Err(TypeError::Unsupported(message)) if message.contains("UnsafeAnyOrigin")
     ));
-    // Both tuple elements bind the one `origin` slot, so they must borrow
-    // the same place; two places bind conflicting origins.
-    let ref_tuple = check_source(
-        "@fieldwise_init\nstruct RefTuple[origin: Origin[mut=False]]:\n    var values: Tuple[ref[origin] Int, ref[origin] Int]\n\ndef main():\n    var left = 1\n    ref a = left\n    ref b = left\n    var pair = RefTuple((a, b))\n    print(pair.values[0], pair.values[1])\n",
-    );
-    assert!(ref_tuple.is_ok(), "{ref_tuple:?}");
-    assert!(matches!(
-        check_source(
-            "@fieldwise_init\nstruct RefTuple[origin: Origin[mut=False]]:\n    var values: Tuple[ref[origin] Int, ref[origin] Int]\n\ndef main():\n    var left = 1\n    var right = 2\n    ref a = left\n    ref b = right\n    var pair = RefTuple((a, b))\n    print(pair.values[0], pair.values[1])\n",
-        ),
-        Err(TypeError::BadCall { reason, .. }) if reason.contains("conflicting origins")
-    ));
-    assert!(check_source(
-        "@fieldwise_init\nstruct RefList[origin: Origin[mut=True]]:\n    var values: List[ref[origin] Int]\n\ndef main():\n    var left = 1\n    var right = 2\n    ref a = left\n    ref b = right\n    var pair = RefList([a, b])\n    pair.values[1] += 1\n    print(right)\n"
-    )
-    .is_ok());
 }
 
 #[test]

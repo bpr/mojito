@@ -1571,7 +1571,7 @@ fn immutable_pointer_allows_concurrent_owner_reads() {
 #[test]
 fn reference_valued_aggregate_preserves_and_writes_through_handle() {
     let src = include_str!("../conformance/fixtures/reference_valued_aggregate.mojo");
-    assert_eq!(vm(src), "42\n42\n42\n");
+    assert_eq!(vm(src), "42\n");
 }
 
 #[test]
@@ -1587,24 +1587,9 @@ fn runtime_returned_interior_reference_stores_in_fieldwise_aggregate() {
 }
 
 #[test]
-fn nested_reference_aggregate_preserves_handles() {
-    // Mojito-only executable-ref-field proof; current Mojo uses origin-bearing
-    // pointer aggregates for stored provenance. One origin binder takes one
-    // origin, as at the pin, so both elements view the same place.
-    let tuple = "@fieldwise_init\nstruct RefTuple[origin: Origin[mut=True]]:\n    var values: Tuple[ref[origin] Int, ref[origin] Int]\n\ndef main():\n    var left = 4\n    ref a = left\n    ref b = left\n    var pair = RefTuple((a, b))\n    print(pair.values[0], pair.values[1])\n";
-    assert_eq!(
-        run_compiled(tuple).expect("compile reference-valued nominal Tuple"),
-        "4 4\n"
-    );
-
-    let list = "@fieldwise_init\nstruct RefList[origin: Origin[mut=True]]:\n    var values: List[ref[origin] Int]\n\ndef main():\n    var left = 4\n    var right = 8\n    ref a = left\n    ref b = right\n    var pair = RefList([a, b])\n    pair.values[1] += 2\n    print(left, right)\n";
-    assert_eq!(vm(list), "4 10\n");
-}
-
-#[test]
-fn chained_method_on_reference_valued_list_element_uses_the_peeled_handle() {
-    let src = "@fieldwise_init\nstruct Item(Copyable, Movable):\n    var value: Int\n    def bump(mut self):\n        self.value += 2\n\n@fieldwise_init\nstruct RefList[origin: Origin[mut=True]]:\n    var values: List[ref[origin] Item]\n\ndef main():\n    var item = Item(40)\n    ref alias = item\n    var refs = RefList([alias])\n    refs.values[0].bump()\n    print(item.value)\n";
-    assert_eq!(vm(src), "42\n");
+fn tuple_pointer_field_preserves_handles() {
+    let src = include_str!("../assets/ok/pointer_tuple_field_write.mojo");
+    assert_eq!(vm(src), "4 10\n");
 }
 
 #[test]

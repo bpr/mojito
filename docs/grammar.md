@@ -448,6 +448,13 @@ calls a static method of the enclosing struct, and a member of an applied
 type (`Grid[n].cells()`) continues as the postfix chain it starts, where the
 applied type alone (`Grid[n]`) stays a type argument.
 
+A `param_arg`'s `type` is never an origin-bearing reference type: upstream
+reads `ref[o] T` there as the expression `ref[o]` followed by a stray type,
+so `Tuple[ref[o] Int]` and `List[ref[o] Int]` are rejected with "expected
+']' in call argument list" at the referent. A reference inside a bracketed
+function type (`f: def(ref[o] Int) -> ref[o] Int`) is part of that function
+type and stays accepted.
+
 A type parameter receives a `type`; a value parameter receives a **comptime value
 expression** — an `Int` expression over literals, `comptime` constants, and the
 arithmetic operators `+ - * // % **` (and unary `-`) — evaluated at compile time
@@ -907,7 +914,7 @@ type:
     | 'Self' '.' NAME              # a struct's own type parameter, inside its body
     | 'Self'                       # the enclosing struct/trait type
     | function_type               # a checked function/closure contract or value type
-    | 'ref' [origin_spec] type    # an origin-checked reference type `ref[origin] T`
+    | 'ref' [origin_spec] type    # an origin-checked reference type `ref[origin] T` (a direct field, a result; never a type argument)
     | NAME [param_args]            # struct type, optionally with type/value arguments
     | '__mlir_type' '.' 'index'    # the Indexer requirement's return spelling (the only `__mlir_type` form accepted)
 function_type: 'def' [params_decl] '(' [','.function_type_param+] ')' fn_effect* '->' type

@@ -2555,50 +2555,6 @@ fn chained_reference_subscript_materializes_a_retained_handle() {
 }
 
 #[test]
-fn reference_valued_subscript_receiver_materializes_the_peeled_handle_type() {
-    let src = "@fieldwise_init\nstruct Item(Copyable, Movable):\n    var value: Int\n    def bump(mut self):\n        self.value += 2\n\n@fieldwise_init\nstruct RefList[origin: Origin[mut=True]]:\n    var values: List[ref[origin] Item]\n\ndef main():\n    var item = Item(40)\n    ref alias = item\n    var refs = RefList([alias])\n    refs.values[0].bump()\n";
-    let compiler = Compiler::default().with_snippet_module_scope();
-    let compiled = compiler
-        .compile_source(src, Path::new("mir_test.mojo"))
-        .expect("compile");
-    let mir = mojito::mir::lower_checked_program(compiled.checked());
-    let (_, main) = mir
-        .functions
-        .iter()
-        .find(|(name, _)| name == "main")
-        .expect("main lowered");
-    let receiver_place = main
-        .blocks
-        .iter()
-        .flat_map(|block| &block.instrs)
-        .find_map(|instruction| match instruction {
-            MirInstr::MethodCall {
-                method,
-                recv_place: Some(place),
-                ..
-            } if method == "bump" => Some(place),
-            _ => None,
-        })
-        .expect("chained bump retains the accessor handle");
-    assert_eq!(
-        receiver_place.through,
-        Some(receiver_place.root),
-        "{:#?}",
-        main.blocks
-    );
-    assert!(matches!(
-        main.var_tys.get(&receiver_place.root),
-        Some(Ty::Ref(reference))
-            if matches!(reference.referent.as_ref(), Ty::Struct(name, _) if name == "Item")
-    ));
-    assert!(
-        mir.invariant_errors.is_empty(),
-        "{:?}",
-        mir.invariant_errors
-    );
-}
-
-#[test]
 fn dynamic_reference_returning_call_actual_retains_one_hidden_place() {
     let src = "@fieldwise_init\nstruct Box:\n    var value: Int\n    def __getitem__(ref self, index: Int) -> ref[origin_of(self.value)] Int:\n        return self.value\n\ndef index() -> Int:\n    return 0\n\ndef bump(mut value: Int):\n    value += 2\n\ndef main():\n    var box = Box(40)\n    bump(box[index()])\n";
     let checked = mojito::check_program(&parse(src).expect("parse")).expect("check");

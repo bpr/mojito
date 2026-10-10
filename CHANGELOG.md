@@ -8,6 +8,13 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- A `Pointer` element of a `Tuple` or `List` keeps its handle (R529):
+  `t[1][] += 2` over `(Pointer(to=left), Pointer(to=right))`, and the same
+  through a `Tuple[Pointer[Int, o1], Pointer[Int, o2]]` struct field, print
+  what the pin prints instead of failing with "expected reference handle" on
+  the VM or crashing natively. A reference returned by a call that ends at a
+  stored pointer now designates that pointer on both backends.
+
 - A generic closure that captures, bound to a callable parameter
   (`invoke[captured_add]()` with `callback: def[n: Int](Int)
   capturing[origins] -> Int`), now elaborates and prints what the pin prints
@@ -1962,6 +1969,12 @@ to evolve under the `0.x` compatibility rules.
   roadmap 2.1.
 
 ### Changed
+
+- A `ref` type argument (`Tuple[ref[o] Int]`, `List[ref[o] Int]`) is
+  rejected at parse with the pin's own "expected ']' in call argument
+  list" (R529). The reference-field extension is the direct field
+  declaration alone; reference-valued elements are spelled
+  `Pointer[T, origin]`, as upstream spells them.
 
 - The support left for structs specialized whole, which nothing mints since
   every struct became a generator, is deleted: a per-call clone trace's
