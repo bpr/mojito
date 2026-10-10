@@ -8,6 +8,12 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A trait default is now its trait's member `Trait.method`, one function
+  over the trait's `Self` checked once after every module declaration and
+  lowered in its trait (R551), as Mojo emits a default inside its trait,
+  instead of a module function `Trait$default$method` placed ahead of its
+  first conformer. A default's body may now call a function declared after
+  it; the package format is now `mojito-package 18`.
 - The bundled standard library is imported from a compiled package instead
   of being checked and lowered again in every compilation (R11), as Mojo
   imports its precompiled `std.mojoc`. The package is built once per

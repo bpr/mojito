@@ -429,237 +429,14 @@ pub fn lower_checked_program_importing(
             _ => "other",
         });
         match &s.kind {
-            StmtKind::Def {
-                name,
-                type_params,
-                params,
-                positional_only,
-                keyword_only,
-                body,
-                ..
-            } => {
-                let named_result = params
-                    .iter()
-                    .find(|p| matches!(p.convention, Some(ArgConvention::Out)));
-                // ABI parameters lead the variable table; the named result is a
-                // callee-local uninitialized slot and is never passed by callers.
-                let caller_params: Vec<_> = params
-                    .iter()
-                    .filter(|p| !matches!(p.convention, Some(ArgConvention::Out)))
-                    .collect();
-                let mut names: Vec<String> = caller_params.iter().map(|p| p.name.clone()).collect();
-                if let Some(result) = named_result {
-                    names.push(result.name.clone());
-                }
-                let generic_site = GenericSite::Function {
-                    module: s.module.clone(),
-                    declaration: s.span,
-                    syntax: s.syntax_id,
-                };
-                let param_decls = checked
-                    .generic_parameters_at(&generic_site)
-                    .unwrap_or(&[])
-                    .to_vec();
-                let value_parameter_locals = value_parameter_locals(&param_decls);
-                let enclosing_binders = EnclosingBinders::of(&param_decls);
-                names.extend(value_parameter_locals.iter().map(|(name, _)| name.clone()));
-                let ptys = caller_params
-                    .iter()
-                    .map(|p| {
-                        let param = params
-                            .iter()
-                            .position(|candidate| std::ptr::eq(candidate, *p))
-                            .expect("caller parameter belongs to declaration");
-                        body_parameter_ty(
-                            p,
-                            checked_type_or_record(
-                                checked,
-                                &AnnotationSite::FunctionParam {
-                                    module: s.module.clone(),
-                                    declaration: s.span,
-                                    syntax: s.syntax_id,
-                                    param,
-                                },
-                                &format!("parameter '{}' of function '{name}'", p.name),
-                                &mut invariant_errors,
-                            ),
-                        )
-                    })
-                    .collect();
-                let owned = caller_params
-                    .iter()
-                    .map(|p| is_owned(&p.convention))
-                    .collect();
-                let deinit = caller_params
-                    .iter()
-                    .map(|p| is_deinit(&p.convention))
-                    .collect();
-                let refp = caller_params
-                    .iter()
-                    .map(|p| is_ref(&p.convention))
-                    .collect();
-                let lowered_name = mojito_symbol::symbol::lowered_def_name(
-                    name,
-                    type_params,
-                    params,
-                    &**overloads,
-                );
-                let variadic_idx = params.iter().position(|p| p.kind == ParamKind::Variadic);
-                let kw_variadic_idx = params.iter().position(|p| p.kind == ParamKind::KwVariadic);
-                let regular: Vec<_> = params
-                    .iter()
-                    .filter(|p| {
-                        p.kind == ParamKind::Regular
-                            && !matches!(p.convention, Some(ArgConvention::Out))
-                    })
-                    .collect();
-                let return_site = AnnotationSite::FunctionReturn {
-                    module: s.module.clone(),
-                    declaration: s.span,
-                    syntax: s.syntax_id,
-                };
-                let ret_ty = checked_type_or_record(
-                    checked,
-                    &return_site.clone(),
-                    &format!("return type of function '{name}'"),
-                    &mut invariant_errors,
-                );
-                let effect = checked
-                    .declaration_effect_at(&return_site)
-                    .cloned()
-                    .unwrap_or_else(|| {
-                        invariant_errors
-                            .push(format!("missing checked effect for function '{name}'"));
-                        mojito_checked::checked::DeclarationEffect {
-                            raises: false,
-                            error: None,
-                            returns_reference: false,
-                            param_writes: Vec::new(),
-                            availability: Vec::new(),
-                        }
-                    });
-                let defaults = regular
-                    .iter()
-                    .map(|p| {
-                        let ty = checked.checked_type_at(&AnnotationSite::FunctionParam {
-                            module: s.module.clone(),
-                            declaration: s.span,
-                            syntax: s.syntax_id,
-                            param: params
-                                .iter()
-                                .position(|candidate| std::ptr::eq(candidate, *p))
-                                .unwrap_or(params.len()),
-                        });
-                        lower_default(
-                            DefaultLowering {
-                                checked,
-                                overloads,
-                                owner: &lowered_name,
-                                parameter: p,
-                                binders: &enclosing_binders,
-                                ty,
-                            },
-                            &mut functions,
-                            &mut declarations,
-                        )
-                    })
-                    .collect();
-                declarations.functions.push(MirFunctionDeclaration {
-                    lowered_name: lowered_name.clone(),
-                    param_names: regular.iter().map(|p| p.name.clone()).collect(),
-                    param_types: regular
-                        .iter()
-                        .map(|p| {
-                            checked_type_or_record(
-                                checked,
-                                &AnnotationSite::FunctionParam {
-                                    module: s.module.clone(),
-                                    declaration: s.span,
-                                    syntax: s.syntax_id,
-                                    param: params
-                                        .iter()
-                                        .position(|candidate| std::ptr::eq(candidate, *p))
-                                        .unwrap_or(params.len()),
-                                },
-                                &format!("parameter '{}' of function '{name}'", p.name),
-                                &mut invariant_errors,
-                            )
-                        })
-                        .collect(),
-                    defaults,
-                    required: regular.iter().map(|p| p.default.is_none()).collect(),
-                    variadic: variadic_idx.map(|i| {
-                        checked_type_or_record(
-                            checked,
-                            &AnnotationSite::FunctionParam {
-                                module: s.module.clone(),
-                                declaration: s.span,
-                                syntax: s.syntax_id,
-                                param: i,
-                            },
-                            &format!("variadic parameter of function '{name}'"),
-                            &mut invariant_errors,
-                        )
-                    }),
-                    variadic_convention: variadic_idx.and_then(|i| params[i].convention),
-                    variadic_index: runtime_variadic_index(params, variadic_idx),
-                    kw_variadic: kw_variadic_idx.map(|i| {
-                        checked_type_or_record(
-                            checked,
-                            &AnnotationSite::FunctionParam {
-                                module: s.module.clone(),
-                                declaration: s.span,
-                                syntax: s.syntax_id,
-                                param: i,
-                            },
-                            &format!("keyword variadic parameter of function '{name}'"),
-                            &mut invariant_errors,
-                        )
-                    }),
-                    kw_variadic_convention: kw_variadic_idx.and_then(|i| params[i].convention),
-                    kw_variadic_index: runtime_parameter_index(params, kw_variadic_idx),
-                    positional_only: regular_marker_index(params, *positional_only),
-                    keyword_only: effective_keyword_only_index(params, *keyword_only, variadic_idx),
-                    param_decls,
-                    has_receiver: false,
-                    receiver_convention: None,
-                    param_conventions: regular.iter().map(|p| p.convention).collect(),
-                    ret_ty: ret_ty.clone(),
-                    returns_reference: effect.returns_reference,
-                    raises: effect.raises,
-                    error_ty: effect.error.clone(),
-                    ref_params: regular.iter().map(|p| is_ref(&p.convention)).collect(),
-                    param_writes: effect.param_writes.clone(),
-                    availability: Vec::new(),
-                    enclosing: None,
-                    region_binders: Vec::new(),
-                });
-                lower_fn_nested(
-                    FunctionLowering {
-                        checked,
-                        name: &lowered_name,
-                        parameter_names: &names,
-                        parameter_types: ptys,
-                        value_parameter_locals,
-                        receiver_value_parameters: Vec::new(),
-                        static_receiver: None,
-                        enclosing_origin_parameters: origin_binder_names(type_params),
-                        enclosing_binders,
-                        owned_parameters: owned,
-                        deinit_parameters: deinit,
-                        reference_parameters: refp,
-                        returns_reference: effect.returns_reference,
-                        ret_ty,
-                        raises: effect.raises,
-                        error_ty: effect.error,
-                        named_result: named_result.map(|p| p.name.as_str()),
-                        body,
-                        overloads,
-                    },
-                    &mut functions,
-                    &mut declarations,
-                );
-            }
+            StmtKind::Def { .. } => lower_function(
+                s,
+                checked,
+                overloads,
+                &mut functions,
+                &mut declarations,
+                &mut invariant_errors,
+            ),
             StmtKind::Struct {
                 name,
                 type_params,
@@ -834,8 +611,24 @@ pub fn lower_checked_program_importing(
                     );
                 }
             }
-            // A `trait`'s requirements have no body (`...`); nothing to lower yet.
-            StmtKind::Trait { .. } => {}
+            // A trait's requirements have no body (`...`); each default is
+            // the trait's member, lowered as the check checked it.
+            StmtKind::Trait { name, .. } => {
+                for member in checked
+                    .trait_members()
+                    .iter()
+                    .filter(|member| member.trait_name == *name && member.module == s.module)
+                {
+                    lower_function(
+                        &member.declaration,
+                        checked,
+                        overloads,
+                        &mut functions,
+                        &mut declarations,
+                        &mut invariant_errors,
+                    );
+                }
+            }
             // A module `comptime` declaration has no runtime form, as
             // upstream's `lit.alias.decl` has none: a body's read of it is
             // the parameter value the check recorded, and an application it
@@ -918,6 +711,245 @@ fn mir_default(checked: &CheckedProgram, default: Option<&Expr>) -> Option<Check
         }),
         None => Some(base),
     }
+}
+
+/// Lower the function declaration `s`: its declaration, its parameter
+/// defaults, and its body.
+fn lower_function(
+    s: &Stmt,
+    checked: &CheckedProgram,
+    overloads: &std::sync::Arc<mojito_checked::package::ProgramOverloads>,
+    functions: &mut Vec<(String, MirFunction)>,
+    declarations: &mut MirDeclarations,
+    invariant_errors: &mut Vec<String>,
+) {
+    let StmtKind::Def {
+        name,
+        type_params,
+        params,
+        positional_only,
+        keyword_only,
+        body,
+        ..
+    } = &s.kind
+    else {
+        return;
+    };
+    let named_result = params
+        .iter()
+        .find(|p| matches!(p.convention, Some(ArgConvention::Out)));
+    // ABI parameters lead the variable table; the named result is a
+    // callee-local uninitialized slot and is never passed by callers.
+    let caller_params: Vec<_> = params
+        .iter()
+        .filter(|p| !matches!(p.convention, Some(ArgConvention::Out)))
+        .collect();
+    let mut names: Vec<String> = caller_params.iter().map(|p| p.name.clone()).collect();
+    if let Some(result) = named_result {
+        names.push(result.name.clone());
+    }
+    let generic_site = GenericSite::Function {
+        module: s.module.clone(),
+        declaration: s.span,
+        syntax: s.syntax_id,
+    };
+    let param_decls = checked
+        .generic_parameters_at(&generic_site)
+        .unwrap_or(&[])
+        .to_vec();
+    let value_parameter_locals = value_parameter_locals(&param_decls);
+    let enclosing_binders = EnclosingBinders::of(&param_decls);
+    names.extend(value_parameter_locals.iter().map(|(name, _)| name.clone()));
+    let ptys = caller_params
+        .iter()
+        .map(|p| {
+            let param = params
+                .iter()
+                .position(|candidate| std::ptr::eq(candidate, *p))
+                .expect("caller parameter belongs to declaration");
+            body_parameter_ty(
+                p,
+                checked_type_or_record(
+                    checked,
+                    &AnnotationSite::FunctionParam {
+                        module: s.module.clone(),
+                        declaration: s.span,
+                        syntax: s.syntax_id,
+                        param,
+                    },
+                    &format!("parameter '{}' of function '{name}'", p.name),
+                    invariant_errors,
+                ),
+            )
+        })
+        .collect();
+    let owned = caller_params
+        .iter()
+        .map(|p| is_owned(&p.convention))
+        .collect();
+    let deinit = caller_params
+        .iter()
+        .map(|p| is_deinit(&p.convention))
+        .collect();
+    let refp = caller_params
+        .iter()
+        .map(|p| is_ref(&p.convention))
+        .collect();
+    let lowered_name =
+        mojito_symbol::symbol::lowered_def_name(name, type_params, params, &**overloads);
+    let variadic_idx = params.iter().position(|p| p.kind == ParamKind::Variadic);
+    let kw_variadic_idx = params.iter().position(|p| p.kind == ParamKind::KwVariadic);
+    let regular: Vec<_> = params
+        .iter()
+        .filter(|p| {
+            p.kind == ParamKind::Regular && !matches!(p.convention, Some(ArgConvention::Out))
+        })
+        .collect();
+    let return_site = AnnotationSite::FunctionReturn {
+        module: s.module.clone(),
+        declaration: s.span,
+        syntax: s.syntax_id,
+    };
+    let ret_ty = checked_type_or_record(
+        checked,
+        &return_site,
+        &format!("return type of function '{name}'"),
+        invariant_errors,
+    );
+    let effect = checked
+        .declaration_effect_at(&return_site)
+        .cloned()
+        .unwrap_or_else(|| {
+            invariant_errors.push(format!("missing checked effect for function '{name}'"));
+            mojito_checked::checked::DeclarationEffect {
+                raises: false,
+                error: None,
+                returns_reference: false,
+                param_writes: Vec::new(),
+                availability: Vec::new(),
+            }
+        });
+    let defaults = regular
+        .iter()
+        .map(|p| {
+            let ty = checked.checked_type_at(&AnnotationSite::FunctionParam {
+                module: s.module.clone(),
+                declaration: s.span,
+                syntax: s.syntax_id,
+                param: params
+                    .iter()
+                    .position(|candidate| std::ptr::eq(candidate, *p))
+                    .unwrap_or(params.len()),
+            });
+            lower_default(
+                DefaultLowering {
+                    checked,
+                    overloads,
+                    owner: &lowered_name,
+                    parameter: p,
+                    binders: &enclosing_binders,
+                    ty,
+                },
+                functions,
+                declarations,
+            )
+        })
+        .collect();
+    declarations.functions.push(MirFunctionDeclaration {
+        lowered_name: lowered_name.clone(),
+        param_names: regular.iter().map(|p| p.name.clone()).collect(),
+        param_types: regular
+            .iter()
+            .map(|p| {
+                checked_type_or_record(
+                    checked,
+                    &AnnotationSite::FunctionParam {
+                        module: s.module.clone(),
+                        declaration: s.span,
+                        syntax: s.syntax_id,
+                        param: params
+                            .iter()
+                            .position(|candidate| std::ptr::eq(candidate, *p))
+                            .unwrap_or(params.len()),
+                    },
+                    &format!("parameter '{}' of function '{name}'", p.name),
+                    invariant_errors,
+                )
+            })
+            .collect(),
+        defaults,
+        required: regular.iter().map(|p| p.default.is_none()).collect(),
+        variadic: variadic_idx.map(|i| {
+            checked_type_or_record(
+                checked,
+                &AnnotationSite::FunctionParam {
+                    module: s.module.clone(),
+                    declaration: s.span,
+                    syntax: s.syntax_id,
+                    param: i,
+                },
+                &format!("variadic parameter of function '{name}'"),
+                invariant_errors,
+            )
+        }),
+        variadic_convention: variadic_idx.and_then(|i| params[i].convention),
+        variadic_index: runtime_variadic_index(params, variadic_idx),
+        kw_variadic: kw_variadic_idx.map(|i| {
+            checked_type_or_record(
+                checked,
+                &AnnotationSite::FunctionParam {
+                    module: s.module.clone(),
+                    declaration: s.span,
+                    syntax: s.syntax_id,
+                    param: i,
+                },
+                &format!("keyword variadic parameter of function '{name}'"),
+                invariant_errors,
+            )
+        }),
+        kw_variadic_convention: kw_variadic_idx.and_then(|i| params[i].convention),
+        kw_variadic_index: runtime_parameter_index(params, kw_variadic_idx),
+        positional_only: regular_marker_index(params, *positional_only),
+        keyword_only: effective_keyword_only_index(params, *keyword_only, variadic_idx),
+        param_decls,
+        has_receiver: false,
+        receiver_convention: None,
+        param_conventions: regular.iter().map(|p| p.convention).collect(),
+        ret_ty: ret_ty.clone(),
+        returns_reference: effect.returns_reference,
+        raises: effect.raises,
+        error_ty: effect.error.clone(),
+        ref_params: regular.iter().map(|p| is_ref(&p.convention)).collect(),
+        param_writes: effect.param_writes.clone(),
+        availability: Vec::new(),
+        enclosing: None,
+        region_binders: Vec::new(),
+    });
+    lower_fn_nested(
+        FunctionLowering {
+            checked,
+            name: &lowered_name,
+            parameter_names: &names,
+            parameter_types: ptys,
+            value_parameter_locals,
+            receiver_value_parameters: Vec::new(),
+            static_receiver: None,
+            enclosing_origin_parameters: origin_binder_names(type_params),
+            enclosing_binders,
+            owned_parameters: owned,
+            deinit_parameters: deinit,
+            reference_parameters: refp,
+            returns_reference: effect.returns_reference,
+            ret_ty,
+            raises: effect.raises,
+            error_ty: effect.error,
+            named_result: named_result.map(|p| p.name.as_str()),
+            body,
+            overloads,
+        },
+        functions,
+        declarations,
+    );
 }
 
 /// Lower struct `structure`'s member `m`: its declaration, its parameter

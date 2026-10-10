@@ -102,8 +102,7 @@ impl Elab<'_> {
             | StmtKind::Break
             | StmtKind::Continue
             | StmtKind::Import { .. }
-            | StmtKind::FromImport { .. }
-            | StmtKind::Trait { .. } => Ok(()),
+            | StmtKind::FromImport { .. } => Ok(()),
             StmtKind::If { branches, orelse } => {
                 for (cond, body) in branches {
                     self.cross_expr(cond, env, shadowed)?;
@@ -160,6 +159,14 @@ impl Elab<'_> {
             StmtKind::Struct { methods, .. } => {
                 for method in methods {
                     self.cross_declaration_body(&method.params, &mut method.body, env, shadowed)?;
+                }
+                Ok(())
+            }
+            StmtKind::Trait { methods, .. } => {
+                for method in methods {
+                    if let Some(body) = &mut method.default_body {
+                        self.cross_declaration_body(&method.params, body, env, shadowed)?;
+                    }
                 }
                 Ok(())
             }

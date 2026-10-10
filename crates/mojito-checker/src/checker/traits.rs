@@ -291,7 +291,7 @@ impl Checker {
         self.trait_self_comptime.pop();
         self.self_ty = saved_self_ty;
         self.self_decls = saved_self_decls;
-        let shapes = super::trait_defaults::default_shapes(name, methods);
+        let shapes = super::trait_defaults::default_shapes(name, methods, &*self.overload_sets);
         let (methods, default_signatures) = result?;
         let defaults = shapes
             .into_iter()
@@ -419,7 +419,7 @@ impl Checker {
     /// value parameters as symbolic `CtValue::Expr`) and bare `Self` is the
     /// struct type. Returns the `Self` type and the saved outer scope for
     /// `exit_struct_scope`.
-    fn enter_struct_scope(
+    pub(super) fn enter_struct_scope(
         &mut self,
         declaration: &StructDeclaration<'_>,
     ) -> Result<(Ty, SavedStructScope), TypeError> {
@@ -449,7 +449,7 @@ impl Checker {
         Ok((self_ty, saved))
     }
 
-    fn exit_struct_scope(&mut self, saved: SavedStructScope) {
+    pub(super) fn exit_struct_scope(&mut self, saved: SavedStructScope) {
         self.self_decls = saved.self_decls;
         self.enclosing_type_params = saved.type_params;
         self.self_ty = saved.self_ty;
@@ -902,7 +902,7 @@ impl Checker {
                 overload_index,
             )?;
         }
-        self.check_default_wrappers(declaration, self_ty, &mut overload_indices)
+        Ok(())
     }
 
     /// With every module struct shell registered before field resolution, a
@@ -3149,7 +3149,7 @@ fn parametric_origin_writes_in_body(
 
 /// The outer checker scope saved while a struct's members resolve at the
 /// struct's own type parameters; restored by `Checker::exit_struct_scope`.
-struct SavedStructScope {
+pub(super) struct SavedStructScope {
     type_params: Vec<mojito_ast::ast::TypeParam>,
     self_decls: Vec<ParamDecl>,
     self_ty: Option<Ty>,

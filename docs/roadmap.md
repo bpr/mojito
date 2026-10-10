@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R591**.
+Next free ID: **R596**.
 
 ## Ordered Work
 
@@ -207,6 +207,21 @@ change that needs a new `MJRT_ABI_VERSION`.
     `_FormatCurlyEntry._format`, so native `format` of such a struct is
     wrong too.
   - Found while landing R421 (2026-10-06).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R591 Natively, forwarding a keyword collector fails to verify**
+
+  Problem: a call forwarding `**opts` into a callee's own `var **opts`
+  collector stops natively with "Function call has incorrect type:
+  argument 2 type mismatch: expected builtin.integer i64, got llvm.ptr",
+  where the VM and the pin run it.
+  - `assets/ok/trait_default_wrapper_conventions.mojo` hits it through a
+    trait default's wrapper, so its `exe-differential` parity row is
+    stale; HEAD before R551 fails the same way.
+  - The native call lowering builds a fresh collector from the keyword
+    overflow, so the forwarded `**` collector lands as one element.
+  - Found while landing R551 (2026-10-10).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -1117,6 +1132,21 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
+- [ ] **R592 A module function is visible only after its statement**
+
+  Problem: a struct method calling a module `def` declared after the
+  struct stops with "Undefined variable 'later'", where the pin prints `2`.
+  - Probe: `struct S` whose `go` returns `later(self.x)`, with
+    `def later(x: Int) -> Int` declared after it.
+  - The check binds a module `def` at its statement in the source-order
+    walk, and nothing predeclares one, as structs' and traits' signatures
+    are.
+  - A trait default reads every module function (R551), since the check
+    checks it after the walk.
+  - Found while landing R551 (2026-10-10).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
 - [ ] **R25 A user `Hasher` cannot spell `update` the way the pin requires**
 
   Problem: the `26cfe94f40` pin's `Hasher` requires
@@ -1962,6 +1992,18 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     one of them.
   - Workaround: spell `Optional[String](String(3))`.
   - Found while landing R421 (2026-10-06).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R593 A trait member applied to a conformer is rejected with the
+  wrong words**
+
+  Problem: `T.d[S](S(3))` stops with "Undefined variable 'T'", where the
+  pin says "Direct access of trait members is not supported.".
+  - `T.d(self)` already reports the pin's words
+    (`assets/type_error/trait_member_direct_access.mojo`); the bracketed
+    application takes another path.
+  - Found while landing R551 (2026-10-10).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -4671,22 +4713,42 @@ new bridge (2026-09-07 direction). The ports are independent of each other, and
 an entry that waits on another names it. Four runtime services are
 deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
 
-- [ ] **R551 A trait default's function is a module function, not a member of its trait**
+- [ ] **R594 A trait member's `Self` is respelled `_Self` in its syntax**
 
-  Upstream emits a trait default inside its trait, over the trait's `Self`,
-  while Mojito declares it as a module `def` named `Trait$default$method`.
-  - `synthesize_trait_default_wrappers` (`checker/trait_defaults.rs`)
-    declares it at prepare, its first compile-time parameter `_Self` bound
-    by the trait, with the `$trait_default` decorator standing for the
-    trait context (a `deinit` receiver, no receiver obligation).
-  - The check binds a module function where it is declared, so the
-    function is placed ahead of its first conformer rather than beside its
-    trait.
-  - The lever is a trait member the checker checks and MIR lowers as the
-    trait's own (`check_method` over a trait owner, a trait arm in
-    `mir.rs`).
+  The elaborator and the check see a trait default through a declaration
+  whose `Self` an AST rewrite respells `_Self`, while upstream binds the
+  trait's `Self` to the member's `_Self` parameter where it resolves.
+  - `trait_member_declaration` (`checker/trait_defaults.rs`) runs
+    `SpellSelfParam` over the default's signature and body, and respells a
+    `Self.X` bound `_Self.X`.
+  - The elaborator writes the respelled body back into the trait, so MIR
+    and the checked tree hold `_Self` where the source says `Self`.
+  - The lever: the check binds `Self` to the `_Self` parameter
+    (`self_ty`, `associated_type_for_self` over a `Ty::Param`), and the
+    elaborator names the member's binders `Self` and `Self.<member>`.
+  - Found while landing R551 (2026-10-10).
   - Depends on nothing.
-  - Model: Fable, Planned.
+  - Model: Fable, Not Planned.
+
+- [ ] **R595 A trait member is checked as a function the check builds,
+  and its wrapper reaches it through a module binding**
+
+  The check checks a trait default as a `def` it builds from the trait
+  method, receiver first, and binds it at module scope under its member
+  symbol, while upstream checks the default over its trait's declaration
+  and its wrapper names the trait's function directly.
+  - `check_trait_members` runs `check_def` over `trait_member_declaration`,
+    whose sites are `FunctionParam`/`FunctionReturn` keyed by a syntax id
+    derived from the trait statement's.
+  - The member's MIR declaration takes its receiver as an ordinary first
+    parameter (`has_receiver: false`), which a direct call passes.
+  - A conformer's wrapper calls it by name through `Checker::lookup`; an
+    importer's resolves the package's module binding `Writer.write`.
+  - The lever: check the member over the `TraitMethod` under its trait's
+    sites (`check_method_body`), and resolve the wrapper's call through
+    the trait's record.
+  - Depends on R594.
+  - Model: Fable, Not Planned.
 
 - [ ] **R561 A package body's types name the package check's binding
   owners**

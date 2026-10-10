@@ -1717,24 +1717,30 @@ alternative list beside its active tag as a defensive runtime consistency check.
 Trait refinement is flattened during checking: inherited method and associated
 compile-time requirements become part of the refined contract, and a refined
 bound satisfies its ancestors. Trait defaults follow upstream's
-`StructEmitter`: before compile-time elaboration (`comptime::prepare`, through
-`checker::lift_trait_default_functions`) each default becomes one
-function over its trait's `Self` (`Trait$default$method`, whose first
-compile-time parameter `_Self` is bound by the trait and whose first argument
-is the receiver), checked, lowered, and packaged once like any generic `def`,
-its calls on `self` dispatching through the bound. A trait's check records
-each of its defaults in its `TraitInfo` (`trait_defaults::TraitDefault`: the
-requirement's resolved signature beside its shape), which a package exports
-in the trait's declaration interface. Each conformer that does not spell a
+`StructEmitter`: each default is its trait's member `Trait.method` (the
+requirement's binder owner, signature-qualified when overloaded), one
+function over the trait's `Self` whose first compile-time parameter `_Self`
+is bound by the trait and whose first argument is the receiver
+(`checker::trait_member_declaration`). It stays in its trait statement:
+the elaborator elaborates its body in place, the check checks it once after
+the source-order walk, so its body calls any module function wherever
+declared (as at the pin), and `CheckedProgram::trait_members` carries it to
+MIR, whose trait arm lowers it, its calls on `self` dispatching through the
+bound. A package places it in its trait's declaration record. A trait's
+check records each of its defaults in its `TraitInfo`
+(`trait_defaults::TraitDefault`: the requirement's resolved signature beside
+its shape), which a package exports in the trait's declaration interface.
+Each conformer that does not spell a
 defaulted overload gets a wrapper the check builds, as
 `synthesizeDefaultTraitMethodWrapper` builds one from the trait function's
 resolved signature: the check plans every wrapper before its overload
 prescan (`plan_default_wrappers`), so a spelled method sharing its name is
 qualified as an overload, registers its signature after the struct's
 spelled ones from the default's, with `Self` the conformer and its binders
-owned by the wrapper (`reown_generic_signature`), and checks its body, one
-statement calling that function with `Self` bound first and every argument
-forwarded (`populateDefaultedTraitFunction`). The wrapper is never syntax of
+owned by the wrapper (`reown_generic_signature`), and, after every trait
+member, checks its body, one statement calling the trait's member with
+`Self` bound first and every argument forwarded
+(`populateDefaultedTraitFunction`). The wrapper is never syntax of
 its struct: its sites follow the spelled methods' indexes, and
 `CheckedProgram::default_wrappers` carries it to MIR, which lowers it
 through the same `lower_struct_member` as a spelled method. Defaults are
@@ -1742,8 +1748,10 @@ inherited per overload; an explicit struct method suppresses the default of
 its own parameter shape (upstream suppresses only by satisfaction, R570), and
 two different defaults reaching one conformer are rejected as at the pin. So
 an importer checks no library default and reads no library trait's syntax: a
-`Writer` conformer's `write` calls the package's `Writer$default$write`. The
-function is a module `def` rather than a member of its trait (R551). MIR and
+`Writer` conformer's `write` calls the package's `Writer.write`. The member
+is still checked through a `def` the check builds, with `Self` respelled
+`_Self` and its receiver an ordinary first argument, and a wrapper reaches it
+through a module binding under its symbol (R594, R595). MIR and
 the VM retain static dispatch and need no trait-object representation.
 
 Associated compile-time members may be monomorphic or parameterized.

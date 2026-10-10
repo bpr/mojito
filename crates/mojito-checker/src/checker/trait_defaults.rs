@@ -1,19 +1,20 @@
-//! Trait defaults as upstream emits them: each default is one function over
-//! its trait's `Self`, checked and lowered once, and a conformer that does
-//! not spell a defaulted method gets a member over the default's resolved
-//! signature whose body is one call of that function
-//! (`StructEmitter::synthesizeDefaultTraitMethodWrapper` and
-//! `populateDefaultedTraitFunction`). The function is lifted before
-//! elaboration, since its body is elaborated; the check builds the wrapper.
+//! Trait defaults as upstream emits them: each default is its trait's member
+//! `Trait.method`, one function over the trait's `Self`, checked and lowered
+//! once, and a conformer that does not spell a defaulted method gets a member
+//! over the default's resolved signature whose body is one call of the
+//! trait's member (`StructEmitter::synthesizeDefaultTraitMethodWrapper` and
+//! `populateDefaultedTraitFunction`). The elaborator elaborates a default
+//! inside its trait; the check checks the member after every module
+//! declaration is bound, and builds the wrapper.
 
 use std::collections::{HashMap, HashSet};
 
 use mojito_ast::ast::{
-    ArgConvention, DeclaredParam, Decorator, Expr, ExprKind, FnParam, KwArg, ParamArg, ParamKind,
-    Stmt, StmtKind, TRAIT_DEFAULT_DECORATOR, TraitMethod, Type, TypeParam,
+    ArgConvention, DeclaredParam, Expr, ExprKind, FnParam, KwArg, ParamArg, ParamKind, Stmt,
+    StmtKind, TraitMethod, Type, TypeParam,
 };
 use mojito_ast::visit::{MutVisitor, walk_block_mut, walk_expr_mut, walk_stmt_mut};
-use mojito_checked::checked::{CheckedDefaultWrapper, SignatureParam};
+use mojito_checked::checked::{CheckedDefaultWrapper, CheckedTraitMember, SignatureParam};
 use mojito_common::error::TypeError;
 use mojito_common::token::{Span, SyntaxId};
 use mojito_symbol::symbol::OverloadLookup;
@@ -26,75 +27,86 @@ use super::traits_support::same_method_shape;
 use super::{Checker, MethodSig, SignatureDefault, StructDeclaration, Ty};
 use mojito_symbol::symbol::lifecycle_method_name;
 
-/// Give every trait default its function.
+/// The declaration trait default `index` of `trait_stmt` is checked and
+/// lowered as: its trait's member, named `name`.
 ///
-/// The function is named by [`default_function_name`]: its first
-/// compile-time parameter is the trait's `Self` (spelled `_Self`, as
-/// upstream's diagnostics name it), its first argument the receiver, and its
-/// body the default's.
+/// Its first compile-time parameter is the trait's `Self` (spelled `_Self`,
+/// as upstream's diagnostics name it), its first argument the receiver, and
+/// its body the default's. `None` when the method declares no default.
 ///
-/// The check binds a module function where it is declared, and a
-/// conformer's wrapper calls it, so a function is declared ahead of the
-/// first conformer that inherits it, and otherwise at the end of the
-/// program, where its body sees every declaration.
-///
-/// `comptime::prepare` runs this before elaboration; the checker's own call
-/// finds every function in place on prepared source.
-pub fn lift_trait_default_functions(stmts: &[Stmt]) -> Vec<Stmt> {
-    let traits: HashMap<&str, TraitDefaults> = stmts
-        .iter()
-        .filter_map(|stmt| match &stmt.kind {
-            StmtKind::Trait {
-                name,
-                refines,
-                methods,
-                ..
-            } => Some((
-                name.as_str(),
-                (refines.clone(), default_shapes(name, methods)),
-            )),
-            _ => None,
-        })
-        .collect();
-    let functions: HashSet<&str> = stmts
-        .iter()
-        .filter_map(|stmt| match &stmt.kind {
-            StmtKind::Def { name, .. } => Some(name.as_str()),
-            _ => None,
-        })
-        .collect();
-    let mut pending: Vec<(String, Stmt)> = Vec::new();
-    for stmt in stmts {
-        if let StmtKind::Trait { name, methods, .. } = &stmt.kind {
-            for (index, method) in methods.iter().enumerate() {
-                let function = default_function_name(name, methods, index);
-                if method.default_body.is_some() && !functions.contains(function.as_str()) {
-                    let declaration = default_function(stmt, name, method, function.clone());
-                    pending.push((function, declaration));
+/// Its syntax is derived from the trait statement's, so the check, the
+/// elaborator, and MIR each build the same declaration.
+pub fn trait_member_declaration(trait_stmt: &Stmt, index: usize, name: String) -> Option<Stmt> {
+    let StmtKind::Trait {
+        name: trait_name,
+        methods,
+        ..
+    } = &trait_stmt.kind
+    else {
+        return None;
+    };
+    let method = methods.get(index)?;
+    let body = method.default_body.clone()?;
+    let self_param = TypeParam {
+        name: SELF_PARAM.to_string(),
+        bounds: vec![trait_name.clone()],
+        value_type: None,
+        callable_bound: None,
+        origin_mutability: None,
+        // The receiver's type infers it, so it joins an infer-only section
+        // the default's own parameters open.
+        infer_only: method
+            .type_params
+            .first()
+            .is_some_and(|param| param.infer_only),
+        default: None,
+        constraints: Vec::new(),
+    };
+    let receiver = FnParam {
+        name: "self".to_string(),
+        ty: Type::Named(SELF_PARAM.to_string(), Vec::new()),
+        default: None,
+        kind: ParamKind::Regular,
+        convention: method.self_convention,
+        origin: method.self_origin.clone(),
+    };
+    let mut function = Stmt {
+        kind: StmtKind::Def {
+            name,
+            decorators: Vec::new(),
+            type_params: std::iter::once(self_param)
+                .chain(method.type_params.iter().cloned())
+                .collect(),
+            params: std::iter::once(receiver)
+                .chain(method.params.iter().cloned())
+                .collect(),
+            positional_only: method.positional_only.map(|index| index + 1),
+            keyword_only: method.keyword_only.map(|index| index + 1),
+            captures: None,
+            raises: method.raises,
+            raises_type: method.raises_type.clone(),
+            ret: method.ret.clone(),
+            where_clauses: method.where_clauses.clone(),
+            body,
+        },
+        span: trait_stmt.span,
+        module: trait_stmt.module.clone(),
+        syntax_id: SyntaxId::derived(
+            trait_stmt.syntax_id,
+            u32::try_from(index).unwrap_or(u32::MAX),
+        ),
+    };
+    walk_stmt_mut(&mut SpellSelfParam, &mut function);
+    if let StmtKind::Def { type_params, .. } = &mut function.kind {
+        for param in type_params {
+            for bound in &mut param.bounds {
+                if let Some(rest) = bound.strip_prefix("Self.") {
+                    *bound = format!("{SELF_PARAM}.{rest}");
                 }
             }
         }
     }
-    let lookup = |name: &str| traits.get(name).cloned();
-    let mut out = Vec::with_capacity(stmts.len() + pending.len());
-    for stmt in stmts {
-        if !pending.is_empty() && matches!(stmt.kind, StmtKind::Struct { .. }) {
-            // A conformer the check will reject calls nothing.
-            let called: Vec<String> = inherited_defaults(stmt, &lookup)
-                .unwrap_or_default()
-                .into_iter()
-                .map(|(_, shape)| shape.function)
-                .collect();
-            let (now, later): (Vec<_>, Vec<_>) = pending
-                .into_iter()
-                .partition(|(function, _)| called.contains(function));
-            out.extend(now.into_iter().map(|(_, declaration)| declaration));
-            pending = later;
-        }
-        out.push(stmt.clone());
-    }
-    out.extend(pending.into_iter().map(|(_, declaration)| declaration));
-    out
+    Some(function)
 }
 
 /// A trait's own default, as its declaration gives it: what a conformer
@@ -103,8 +115,9 @@ pub fn lift_trait_default_functions(stmts: &[Stmt]) -> Vec<Stmt> {
 #[derive(Clone, serde::Serialize, serde::Deserialize)]
 pub(super) struct DefaultShape {
     pub(super) method: String,
-    /// The function the default lowers to ([`default_function_name`]).
-    pub(super) function: String,
+    /// Its trait's member symbol, `Trait.method`, signature-qualified as the
+    /// requirement's binder owner is when the name is overloaded.
+    pub(super) member: String,
     key: OverloadKey,
     /// Its declared parameter count, as the overload prescan counts it.
     pub(super) arity: usize,
@@ -137,6 +150,16 @@ pub(super) struct TraitDefault {
     pub(super) signature: MethodSig,
 }
 
+/// A trait default the check checked as its trait's member.
+pub(super) struct TraitMember {
+    module: Option<String>,
+    trait_name: String,
+    /// Its position among its trait's methods.
+    method_index: usize,
+    /// Its member symbol ([`member_symbol`]).
+    lowered_name: String,
+}
+
 /// The wrapper of one default a struct inherits, before the check
 /// registers its signature.
 #[derive(Clone)]
@@ -165,14 +188,17 @@ impl DefaultWrapper {
 }
 
 /// The defaults `methods` of trait `trait_name` declare, in order.
-pub(super) fn default_shapes(trait_name: &str, methods: &[TraitMethod]) -> Vec<DefaultShape> {
+pub(super) fn default_shapes(
+    trait_name: &str,
+    methods: &[TraitMethod],
+    sets: &impl OverloadLookup,
+) -> Vec<DefaultShape> {
     methods
         .iter()
-        .enumerate()
-        .filter(|(_, method)| method.default_body.is_some())
-        .map(|(index, method)| DefaultShape {
+        .filter(|method| method.default_body.is_some())
+        .map(|method| DefaultShape {
             method: method.name.clone(),
-            function: default_function_name(trait_name, methods, index),
+            member: member_symbol(trait_name, method, sets),
             key: overload_key(&method.name, &method.params, method.keyword_only, None),
             arity: method.params.len(),
             binders: method
@@ -271,7 +297,7 @@ pub(super) fn inherited_defaults(
 
 /// The wrapper of every default struct `stmt` inherits, as
 /// [`inherited_defaults`] reaches them, each body one statement calling the
-/// default's function with `Self` bound first and every argument forwarded,
+/// default's trait member with `Self` bound first and every argument forwarded,
 /// as `populateDefaultedTraitFunction` forwards it.
 ///
 /// Each wrapper's syntax is derived from the struct statement's identity,
@@ -336,7 +362,10 @@ impl Checker {
                     ..
                 } => Some((
                     name.as_str(),
-                    (refines.clone(), default_shapes(name, methods)),
+                    (
+                        refines.clone(),
+                        default_shapes(name, methods, &*self.overload_sets),
+                    ),
                 )),
                 _ => None,
             })
@@ -425,29 +454,97 @@ impl Checker {
             .collect()
     }
 
-    /// Check the body of every wrapper struct `declaration` inherits, after
-    /// its spelled methods', each the next of its name's overloads.
-    pub(super) fn check_default_wrappers(
-        &mut self,
-        declaration: &StructDeclaration<'_>,
-        self_ty: &Ty,
-        overload_indices: &mut HashMap<String, usize>,
-    ) -> Result<(), TypeError> {
-        let wrappers: Vec<DefaultWrapper> = self
-            .default_wrappers
-            .iter()
-            .filter(|wrapper| wrapper.inherited_by(declaration))
-            .cloned()
-            .collect();
-        for wrapper in &wrappers {
-            let overload_index = overload_indices
-                .entry(wrapper.shape.method.clone())
-                .or_default();
-            let index = *overload_index;
-            *overload_index += 1;
-            self.check_default_wrapper(self_ty, wrapper, index)?;
+    /// Check every default a top-level trait of `stmts` declares as its
+    /// trait's member, once every module declaration is bound, as upstream
+    /// emits a default inside its trait: its body names any function of the
+    /// module, wherever declared. The member's callable binds under its
+    /// symbol, which only a conformer's wrapper calls.
+    pub(super) fn check_trait_members(&mut self, stmts: &[Stmt]) -> Result<(), TypeError> {
+        for stmt in stmts {
+            let StmtKind::Trait { name, methods, .. } = &stmt.kind else {
+                continue;
+            };
+            for (index, method) in methods.iter().enumerate() {
+                let symbol = member_symbol(name, method, &*self.overload_sets);
+                let Some(declaration) = trait_member_declaration(stmt, index, symbol.clone())
+                else {
+                    continue;
+                };
+                self.checking_trait_member = true;
+                let checked = self.check_def(&declaration, false);
+                self.checking_trait_member = false;
+                checked?;
+                self.trait_members.push(TraitMember {
+                    module: stmt.module.clone(),
+                    trait_name: name.clone(),
+                    method_index: index,
+                    lowered_name: symbol,
+                });
+            }
         }
         Ok(())
+    }
+
+    /// Check the body of every wrapper a top-level struct of `stmts`
+    /// inherits, after every trait member its wrappers call is bound, each
+    /// the next of its name's overloads after the struct's spelled methods.
+    pub(super) fn check_default_wrappers(&mut self, stmts: &[Stmt]) -> Result<(), TypeError> {
+        for stmt in stmts {
+            let Some(declaration) = super::overload_support::struct_declaration(stmt) else {
+                continue;
+            };
+            let wrappers: Vec<DefaultWrapper> = self
+                .default_wrappers
+                .iter()
+                .filter(|wrapper| wrapper.inherited_by(&declaration))
+                .cloned()
+                .collect();
+            if wrappers.is_empty() {
+                continue;
+            }
+            let mut overload_indices = HashMap::<String, usize>::new();
+            for method in declaration.methods {
+                *overload_indices
+                    .entry(lifecycle_method_name(method).to_string())
+                    .or_default() += 1;
+            }
+            let (self_ty, saved) = self.enter_struct_scope(&declaration)?;
+            let checked = wrappers.iter().try_for_each(|wrapper| {
+                let overload_index = overload_indices
+                    .entry(wrapper.shape.method.clone())
+                    .or_default();
+                let index = *overload_index;
+                *overload_index += 1;
+                self.check_default_wrapper(&self_ty, wrapper, index)
+            });
+            self.exit_struct_scope(saved);
+            checked?;
+        }
+        Ok(())
+    }
+
+    /// The checked handoff of every trait member, each declaration built
+    /// from its trait statement in `statements`, the checked tree.
+    pub(super) fn checked_trait_members(&self, statements: &[Stmt]) -> Vec<CheckedTraitMember> {
+        self.trait_members
+            .iter()
+            .filter_map(|member| {
+                let trait_stmt = statements.iter().find(|stmt| {
+                    stmt.module == member.module
+                        && matches!(&stmt.kind, StmtKind::Trait { name, .. } if *name == member.trait_name)
+                })?;
+                Some(CheckedTraitMember {
+                    module: member.module.clone(),
+                    trait_name: member.trait_name.clone(),
+                    method_index: member.method_index,
+                    declaration: trait_member_declaration(
+                        trait_stmt,
+                        member.method_index,
+                        member.lowered_name.clone(),
+                    )?,
+                })
+            })
+            .collect()
     }
 
     /// The checked handoff of every wrapper.
@@ -483,7 +580,7 @@ impl Checker {
             .and_then(|info| {
                 info.defaults
                     .iter()
-                    .find(|default| default.shape.function == wrapper.shape.function)
+                    .find(|default| default.shape.member == wrapper.shape.member)
                     .cloned()
             })
             .ok_or_else(|| {
@@ -747,21 +844,28 @@ impl Checker {
     }
 }
 
-/// The name of the function the default `methods[index]` of trait `trait_name`
-/// lowers to: `Trait$default$method`, with the default's position among its
-/// trait's same-name defaults appended when that name is overloaded. Named by
-/// declaration, so it is stable across packages; the `$` keeps it apart from
-/// every source name.
-fn default_function_name(trait_name: &str, methods: &[TraitMethod], index: usize) -> String {
-    let name = &methods[index].name;
-    let same_name = |method: &&TraitMethod| method.default_body.is_some() && method.name == *name;
-    let base = format!("{trait_name}$default${name}");
-    if methods.iter().filter(same_name).count() > 1 {
-        let ordinal = methods[..index].iter().filter(same_name).count();
-        format!("{base}${ordinal}")
-    } else {
-        base
-    }
+/// The member symbol default `method` of trait `trait_name` lowers to: the
+/// requirement's binder owner, `Trait.method`, signature-qualified when the
+/// trait overloads the name. Named by declaration, so it is stable across
+/// packages; source cannot spell a dotted callee, so no source name reaches
+/// it.
+fn member_symbol(trait_name: &str, method: &TraitMethod, sets: &impl OverloadLookup) -> String {
+    mojito_symbol::symbol::lowered_method_name(
+        &format!(
+            "{}.{}",
+            super::annotations::binder_owner(trait_name),
+            super::annotations::binder_owner(&method.name)
+        ),
+        &[],
+        mojito_symbol::symbol::MethodShape {
+            type_params: &method.type_params,
+            params: &method.params,
+            keyword_only: method.keyword_only,
+            has_self: true,
+            self_convention: method.self_convention,
+        },
+        sets,
+    )
 }
 
 /// A compile-time parameter's name without a pack's leading `*`.
@@ -837,7 +941,7 @@ fn defaults_for(
     for default in defaults {
         if !reached
             .iter()
-            .any(|(_, seen)| seen.function == default.function)
+            .any(|(_, seen)| seen.member == default.member)
         {
             reached.push((name.to_string(), default));
         }
@@ -887,7 +991,7 @@ fn unforwardable(method: &TraitMethod) -> Option<String> {
     })
 }
 
-/// The one statement of a wrapper for `shape`: a call of its function, with
+/// The one statement of a wrapper for `shape`: a call of its trait's member, with
 /// `Self` bound first and every argument forwarded with the convention it
 /// declares.
 fn forwarding_statement(shape: &DefaultShape, span: Span) -> Stmt {
@@ -935,7 +1039,7 @@ fn forwarding_statement(shape: &DefaultShape, span: Span) -> Stmt {
         }
     }
     let call = expr(ExprKind::Call {
-        name: shape.function.clone(),
+        name: shape.member.clone(),
         param_args,
         args,
         kwargs,
@@ -972,81 +1076,10 @@ impl MutVisitor for DeriveSyntax {
     }
 }
 
-/// The function default `method` of trait `trait_name` lowers to, declared
-/// beside the trait statement `trait_stmt`.
-fn default_function(
-    trait_stmt: &Stmt,
-    trait_name: &str,
-    method: &TraitMethod,
-    name: String,
-) -> Stmt {
-    let self_param = TypeParam {
-        name: SELF_PARAM.to_string(),
-        bounds: vec![trait_name.to_string()],
-        value_type: None,
-        callable_bound: None,
-        origin_mutability: None,
-        // The receiver's type infers it, so it joins an infer-only section
-        // the default's own parameters open.
-        infer_only: method
-            .type_params
-            .first()
-            .is_some_and(|param| param.infer_only),
-        default: None,
-        constraints: Vec::new(),
-    };
-    let receiver = FnParam {
-        name: "self".to_string(),
-        ty: Type::Named(SELF_PARAM.to_string(), Vec::new()),
-        default: None,
-        kind: ParamKind::Regular,
-        convention: method.self_convention,
-        origin: method.self_origin.clone(),
-    };
-    let mut function = Stmt {
-        kind: StmtKind::Def {
-            name,
-            decorators: vec![Decorator {
-                path: vec![TRAIT_DEFAULT_DECORATOR.to_string()],
-                args: Vec::new(),
-                kwargs: Vec::new(),
-            }],
-            type_params: std::iter::once(self_param)
-                .chain(method.type_params.iter().cloned())
-                .collect(),
-            params: std::iter::once(receiver)
-                .chain(method.params.iter().cloned())
-                .collect(),
-            positional_only: method.positional_only.map(|index| index + 1),
-            keyword_only: method.keyword_only.map(|index| index + 1),
-            captures: None,
-            raises: method.raises,
-            raises_type: method.raises_type.clone(),
-            ret: method.ret.clone(),
-            where_clauses: method.where_clauses.clone(),
-            body: method.default_body.clone().unwrap_or_default(),
-        },
-        span: trait_stmt.span,
-        module: trait_stmt.module.clone(),
-        syntax_id: SyntaxId::fresh(),
-    };
-    walk_stmt_mut(&mut SpellSelfParam, &mut function);
-    if let StmtKind::Def { type_params, .. } = &mut function.kind {
-        for param in type_params {
-            for bound in &mut param.bounds {
-                if let Some(rest) = bound.strip_prefix("Self.") {
-                    *bound = format!("{SELF_PARAM}.{rest}");
-                }
-            }
-        }
-    }
-    function
-}
-
-/// The trait's `Self` as its default's function names it.
+/// The trait's `Self` as its member names it.
 const SELF_PARAM: &str = "_Self";
 
-/// Respell the trait's `Self` as the function's [`SELF_PARAM`].
+/// Respell the trait's `Self` as its member's [`SELF_PARAM`].
 struct SpellSelfParam;
 
 impl MutVisitor for SpellSelfParam {

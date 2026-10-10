@@ -22,7 +22,7 @@ map and dependency DAG live in `docs/architecture.md` §Workspace Layout.
 | Comptime | `comptime::elaborate`, `ct::CtValue` | Ordinary AST with compile-time control resolved. |
 | Check | `checker::{check_program, Checker}`, `checked::CheckedProgram` | Authoritative semantic handoff and side tables. A package callable's effect summaries are read from its declaration record on the first call naming it and kept in the pass's effect maps (`Checker::{callee_transfer_effects, callee_call_through_effects}`, `InstalledInterfaces::{transfer_effects, call_through_effects}`); `CheckContext::install` takes the reached modules' `InstalledInterfaces`, which every pass attaches (`Checker::attach_interfaces`) in place of the package's declarations: the declaration-keyed tables (`checker::declaration_table::{DeclarationTable, DeclarationSet}`) answer a key their own entries miss from its declaration's record, whose residue decodes on first lookup and joins its lowered part (`InstalledInterfaces::{declaration, has_key, keys, structs_declaring}`, `DeclarationInterface::join`), and a package module binding resolves below the module scope with a reserved owner (`Checker::installed_binding`, `InstalledInterfaces::binding`); a record that does not decode is reported by `InstalledInterfaces::failures`. `CheckContext::{take_package_interface, record_interfaces, record_elaborated, take_interfaces}` give a package build its interface and its library export (`Checker::export_interfaces`, `checker::InterfaceExport`): one `checker::interface::DeclarationInterface` per library declaration, which `InterfaceExport::records` encodes as its record's residue less what the record's lowered part says (`DeclarationInterface::project`: struct facts, method signatures beside a `MethodResidue`, and a `def`'s type beside a `ProjectedBinding`, each compared byte for byte first), the check's effect summaries, and each declaration's overload facts (`OverloadSets::partitioned`, placed in its lowered part by `DeclarationRecords::place_overloads`); a residue also carries its module constant as the build's elaboration resolved it (`checker::{ElaboratedConstant, ElaboratedConstants}`, read back by `InstalledInterfaces::elaborated(name)`) and its module-scope compile-time facts, which a scope lookup the checker's own scopes miss reads (`Checker::{installed_comptime_dtype, installed_comptime_parameter, installed_comptime_value, installed_type_alias, is_simd_length_binder}`). The checker's overload sets are a shared `checked::package::ProgramOverloads`, which an importer attaches over its `PackageScope` (`InstalledInterfaces::package_scope`) and `CheckedProgram::overloads` carries to MIR. |
 | HIR | `hir::Cfg::build_checked_fn` (unchecked `build`/`build_fn` are phase-test compatibility) | Statement CFG with nested expressions. |
-| MIR | `mir::{lower_checked_program, lower_checked_program_importing}`, `mir::link::{link_declarations, ImportedDeclarations}`, `mir::MirDeclarations::{function, structure, declares_trait, trait_declaration, trait_refines, materialized}`, `mir::MirProgram` | Fully register-typed A-normal IR, places, declaration metadata, source table. Lowering reads the checker's overload sets (`CheckedProgram::overloads`, one `Arc<ProgramOverloads>` every lowered function shares, through `symbol::OverloadLookup`). A struct's spelled methods and its trait-default wrappers (`CheckedProgram::default_wrappers`) lower through one `lower_struct_member` over a `StructMember` view, whose parameters are any `ast::DeclaredParam`. An importer lowers its own declarations and attaches a package's MIR declarations, adding nothing to them, before closing and verifying them; every phase looks a declaration up by name through `MirDeclarations::{function, structure}`, own first, then the package's, decoded on first lookup. |
+| MIR | `mir::{lower_checked_program, lower_checked_program_importing}`, `mir::link::{link_declarations, ImportedDeclarations}`, `mir::MirDeclarations::{function, structure, declares_trait, trait_declaration, trait_refines, materialized}`, `mir::MirProgram` | Fully register-typed A-normal IR, places, declaration metadata, source table. Lowering reads the checker's overload sets (`CheckedProgram::overloads`, one `Arc<ProgramOverloads>` every lowered function shares, through `symbol::OverloadLookup`). A struct's spelled methods and its trait-default wrappers (`CheckedProgram::default_wrappers`) lower through one `lower_struct_member` over a `StructMember` view, whose parameters are any `ast::DeclaredParam`; a module `def` and a trait's member (`CheckedProgram::trait_members`, in the trait's arm) lower through one `lower_function`. An importer lowers its own declarations and attaches a package's MIR declarations, adding nothing to them, before closing and verifying them; every phase looks a declaration up by name through `MirDeclarations::{function, structure}`, own first, then the package's, decoded on first lookup. |
 | MIR text | `mir::text::{disassemble, parse_artifact, verify_artifact, load_artifact, ParsedArtifact, ArtifactSourceMap, ArtifactReport}` | Canonical serialization, source-located Mojo-independent artifact parsing, and the parse-then-verify loading gate that maps canonical `mir::verify` findings to artifact spans. |
 | Verify | `mir::verify::{verify, verify_concrete, concrete_function_findings, instruction_named_types}` | `verify_concrete` is the mode for elaborated MIR: `verify` plus the rules of `verify/concrete.rs`, which reject symbolic types, compile-time parameters, layout queries, and compile-time argument slots that forward a binder or compute an expression over one; `verify/scope.rs` is the parametric mode's binder-scope and kind rule for every type a body names (`docs/notes/param-expr-attributes.md` §Register types), and `instruction_named_types` the types an instruction names beside its places; `concrete_function_findings` is the same rules for one body, which `native::mono` asks while materializing an instance. `verify` is semantic verification of typed MIR: register/place types, concrete and inline abstract call contracts, variadic ABI conventions, CFG edges, effects, reference capabilities, loans, and interior origins. `verify/instr.rs` owns `verify_instruction`: the place and register checks every instruction gets, then a dispatch on the instruction's family over one `InstrCx`. Each family's checks sit with the rules they use: loans and interior invalidation in `loans.rs`, the iterator protocol in `iteration.rs`, subscripts in `subscripts.rs`, calls in `calls.rs`, and references, value construction, private storage, SIMD, and raise/`try` effects in `instr.rs`. |
 | Ownership | `analysis::check_ownership_program` (checked wrapper `check_ownership_checked`) | Move/init and loan validation over lowered MIR; a call into an imported package reads the callee's `ref_params` mask from the package's function table on lookup (`PackageDeclarations::ref_param`); `analysis/moves.rs` walks `try` regions per channel (`walk_region`/`walk_try`). |
@@ -104,9 +104,8 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `Checker::comptime_dtype` for a `DType`). `check_def` checks one function declaration — the
   `StmtKind::Def` arm delegates to it, and lambda mode (`lambda = true`)
   applies the lambda-specific capture-default/thinness/diagnostic deltas.
-  A trait default's function (`Decorator::is_trait_default`) may take a
-  `deinit` receiver, and a parameter named `self` is writable by its own
-  convention.
+  A trait member (`checking_trait_member`) may take a `deinit` receiver,
+  and a parameter named `self` is writable by its own convention.
 - `checker/with_stmt.rs` owns the `with` statement: `check_with` classifies
   the manager into a `WithForm` (`context_manager_form`: consuming
   `__enter__`, plain and error-taking `__exit__` overloads, upstream's
@@ -259,10 +258,13 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `constraints::eval_associated_ct` keeps it as `ParamContext::size_of` in a
   SIMD width, and `types::substitute` replaces type binders inside the slots.
 - `checker/trait_defaults.rs` owns trait defaults as upstream's
-  `StructEmitter` emits them: `lift_trait_default_functions` declares
-  each default as one function over its trait's `Self` (`Trait$default$m`,
-  first compile-time parameter `_Self`, receiver first, marked by
-  `ast::TRAIT_DEFAULT_DECORATOR`), ahead of its first conformer. A trait's
+  `StructEmitter` emits them: each default is its trait's member
+  `Trait.m` (`member_symbol`), whose declaration
+  `trait_member_declaration` builds from the trait statement (first
+  compile-time parameter `_Self`, receiver first) for the elaborator, the
+  check, and the handoff alike. `Checker::check_trait_members` checks every
+  member after the module walk and `checked_trait_members` hands it over
+  as `checked::CheckedTraitMember` (`CheckedProgram::trait_members`). A trait's
   check records its defaults in its `TraitInfo` (`TraitDefault`: a
   `DefaultShape` from `default_shapes`, and the requirement's resolved
   signature), which a package exports. The check builds each conformer's
@@ -271,8 +273,8 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   overload prescan, `register_default_wrappers` registers its signature
   from the default's, its binders reowned
   (`types::reown_generic_signature`), after the struct's spelled methods,
-  `check_default_wrappers` checks its one statement, which calls that
-  function with `Self` bound first and every argument forwarded, and
+  `check_default_wrappers` checks its one statement after every trait
+  member, which calls the trait's member with `Self` bound first and every argument forwarded, and
   `checked_default_wrappers` hands it over as
   `checked::CheckedDefaultWrapper` (`CheckedProgram::default_wrappers`).
   `inherited_destructors` names the inherited `deinit`-receiver wrappers
@@ -789,8 +791,9 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   overlay) and the per-callee marshaling between VM values and Rust's
   standard library.
 - `comptime.rs` owns the staged entry points (`prepare` normalizes
-  declarations without selecting or cloning — among them each trait
-  default's function, through `checker::lift_trait_default_functions`;
+  declarations without selecting or cloning, leaving each trait default in
+  its trait, whose body the elaborator's trait arm elaborates as its
+  member's (`checker::trait_member_declaration`);
   `prepare_importing` prepares an importer's own statements beside the
   package's elaborated SIMD aliases, reading no package declaration; `elaborate_prepared` and
   `elaborate_importing` (an importer's own statements, `ImportedScope`

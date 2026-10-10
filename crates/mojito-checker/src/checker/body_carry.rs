@@ -340,8 +340,10 @@ macro_rules! define_carry_ops {
                 conformances: mojito_checked::checked::ConformanceFacts,
             ) -> PassCarry {
                 self.record_lifted_applications();
+                let trait_members = self.checked_trait_members(&statements);
                 let result = DiscoveryResult {
                     statements,
+                    trait_members,
                     explicit_destroy_types,
                     conformances,
                     ..carried_result(&self)
@@ -583,6 +585,7 @@ fn carried_result(checker: &Checker) -> DiscoveryResult {
         rebind_assertions: checker.rebind_assertions.take(),
         declaration_effects: checker.declaration_effects.take(),
         default_wrappers: checker.checked_default_wrappers(),
+        trait_members: Vec::new(),
     }
 }
 

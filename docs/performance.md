@@ -707,7 +707,6 @@ total
       tuple | tstring | generic | scalar_range
     discovery.round[N].elaborate
     discovery.round[N].check
-      trait_defaults_expand
       syntax_rekey
       transfer.round[M].declarations
       transfer.round[M].bodies

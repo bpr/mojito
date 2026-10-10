@@ -447,6 +447,44 @@ impl Elab<'_> {
                     },
                 ));
             }
+            // A default is its trait's member, a function over the trait's
+            // `Self` (`_Self`): its body is elaborated in place as that
+            // function's, so a `comptime if` or `comptime for` over `_Self`
+            // or the member's own binders stays in its template.
+            StmtKind::Trait { methods, .. } => {
+                let elaborated = methods
+                    .iter()
+                    .enumerate()
+                    .map(|(index, method)| {
+                        let member = mojito_checker::checker::trait_member_declaration(
+                            stmt,
+                            index,
+                            method.name.clone(),
+                        );
+                        match member.as_ref().map(|member| &member.kind) {
+                            Some(StmtKind::Def {
+                                type_params,
+                                params,
+                                body,
+                                ..
+                            }) => self.def_body(&[], type_params, params, body, env).map(Some),
+                            _ => Ok(None),
+                        }
+                    })
+                    .collect::<Result<Vec<_>, ComptimeError>>()?;
+                let mut stmt = stmt.clone();
+                if let StmtKind::Trait { methods, .. } = &mut stmt.kind {
+                    for (method, body) in methods.iter_mut().zip(elaborated) {
+                        if let Some(body) = body {
+                            method.params = fold_default_bindings(&method.params, env, &|name| {
+                                self.module_constant(name)
+                            });
+                            method.default_body = Some(body);
+                        }
+                    }
+                }
+                out.push(stmt);
+            }
             _ => out.push(stmt.clone()),
         }
         Ok(())

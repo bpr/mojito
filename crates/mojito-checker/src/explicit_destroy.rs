@@ -46,8 +46,11 @@ pub struct SpanFacts {
 /// non-`Deinitable` type parameter (`ExplicitDestroyInfo` key).
 pub const LINEAR_TYPE_PARAMETER: &str = "$linear";
 
+/// Check `statements`, and each trait member of `members` (a `def` whose
+/// first argument is its trait's receiver).
 pub(crate) fn check(
     statements: &[Stmt],
+    members: &[Stmt],
     binding_types: &HashMap<SourceSpan, Ty>,
     comprehension_bindings: &HashMap<
         SourceSpan,
@@ -68,6 +71,7 @@ pub(crate) fn check(
         match &statement.kind {
             StmtKind::Def { .. } => check_def(
                 statement,
+                0,
                 binding_types,
                 comprehension_bindings,
                 deletability,
@@ -119,6 +123,19 @@ pub(crate) fn check(
             }
             _ => {}
         }
+    }
+    // A trait member's receiver is a method receiver, which owes nothing
+    // here, as a struct method's does not.
+    for member in members {
+        check_def(
+            member,
+            1,
+            binding_types,
+            comprehension_bindings,
+            deletability,
+            types,
+            &root,
+        )?;
     }
     Ok(())
 }
@@ -1238,6 +1255,7 @@ fn check_stmt(
         // obligations; its captures never move the enclosing values.
         StmtKind::Def { .. } => check_def(
             stmt,
+            0,
             binding_types,
             comprehension_bindings,
             deletability,
@@ -1249,9 +1267,11 @@ fn check_stmt(
     Ok(Some(env))
 }
 
-/// Check one free (top-level or nested) function definition statement.
+/// Check one free (top-level or nested) function definition statement,
+/// whose first `receiver` arguments are a method receiver that owes nothing.
 fn check_def(
     statement: &Stmt,
+    receiver: usize,
     binding_types: &HashMap<SourceSpan, Ty>,
     comprehension_bindings: &HashMap<
         SourceSpan,
@@ -1265,19 +1285,11 @@ fn check_def(
         type_params,
         params,
         body,
-        decorators,
         ..
     } = &statement.kind
     else {
         return Ok(());
     };
-    // A trait default's receiver is a method receiver, which owes nothing
-    // here, as a struct method's does not.
-    let receiver = usize::from(
-        decorators
-            .iter()
-            .any(mojito_ast::ast::Decorator::is_trait_default),
-    );
     let params = params.iter().enumerate().skip(receiver).map(|(param, p)| {
         let site = AnnotationSite::FunctionParam {
             module: statement.module.clone(),

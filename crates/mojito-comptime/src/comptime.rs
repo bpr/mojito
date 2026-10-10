@@ -260,10 +260,9 @@ pub struct ImportedScope<'a> {
 /// Prepare a linked program for source validation and elaboration.
 ///
 /// Qualify struct packs, synthesize the derived `copy`/`__hash__` methods,
-/// give each trait default its function, desugar `SIMD[_, _]`
-/// parameters, and fold SIMD alias bounds. A conformer's wrapper for a
-/// default it inherits is the check's to build, over the default's resolved
-/// signature.
+/// desugar `SIMD[_, _]` parameters, and fold SIMD alias bounds. A trait
+/// default stays in its trait; a conformer's wrapper for a default it
+/// inherits is the check's to build, over the default's resolved signature.
 ///
 /// These rewrites normalize declarations without selecting a `comptime if`
 /// arm or unrolling a loop, so the result still carries every source body
@@ -285,7 +284,6 @@ pub fn prepare_importing(
     pack_qualification::qualify_struct_packs(&mut own)?;
     synthesize_copyable_copy(&mut own);
     synthesize_hashable_hash(&mut own);
-    let mut own = mojito_checker::checker::lift_trait_default_functions(&own);
     desugar_simd_wildcard_parameters(&mut own);
     fold_simd_alias_bounds(&mut own, installed);
     read_materialize_self_operands(&mut own);

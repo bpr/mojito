@@ -1385,6 +1385,26 @@ pub struct CheckedDefaultWrapper {
     pub body: Vec<Stmt>,
 }
 
+/// A trait default as the check checked it: its trait's member.
+///
+/// As upstream emits a default inside its trait, it is one function over the
+/// trait's `Self`, its first compile-time parameter `_Self`, named by its
+/// member symbol (`Trait.method`, signature-qualified when overloaded) and
+/// taking the receiver as its first argument. Its declaration is the one the
+/// check checked, built from its trait's method, whose checked sites are the
+/// declaration's `AnnotationSite::FunctionParam`/`FunctionReturn` and
+/// `GenericSite::Function`; a conformer's wrapper calls it.
+#[derive(Debug, Clone)]
+pub struct CheckedTraitMember {
+    pub module: Option<String>,
+    pub trait_name: String,
+    /// Its position among its trait's methods.
+    pub method_index: usize,
+    /// A `def` named by the member symbol, over `[_Self, ...]` and
+    /// `(self: _Self, ...)`, whose body is the default's.
+    pub declaration: Stmt,
+}
+
 /// A parameter of a resolved signature as a call binds and a body declares
 /// it: everything but its type, which the signature holds.
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -1478,6 +1498,8 @@ pub struct DiscoveryResult {
     pub overloads: Arc<crate::package::ProgramOverloads>,
     /// Every inherited trait default's wrapper the check built.
     pub default_wrappers: Vec<CheckedDefaultWrapper>,
+    /// Every trait default the check checked as its trait's member.
+    pub trait_members: Vec<CheckedTraitMember>,
 }
 
 impl DiscoveryResult {
@@ -1530,6 +1552,7 @@ impl DiscoveryResult {
             self.declaration_effects.into_inner(),
             self.overloads,
             self.default_wrappers,
+            self.trait_members,
         )
     }
 
@@ -1605,6 +1628,7 @@ impl DiscoveryResult {
     pub fn declaration_types(&self) -> Vec<Ty> {
         build_checked_declarations(
             &self.statements,
+            &self.trait_members,
             &self.checked_types,
             &self.statement_bindings,
             &self.declaration_captures,
@@ -1641,6 +1665,7 @@ pub struct CheckedProgram {
     declaration_effects: HashMap<AnnotationSite, DeclarationEffect>,
     overloads: Arc<crate::package::ProgramOverloads>,
     default_wrappers: Vec<CheckedDefaultWrapper>,
+    trait_members: Vec<CheckedTraitMember>,
 }
 
 /// What decides a conformance below the checker.
@@ -1994,6 +2019,7 @@ impl CheckedProgram {
         declaration_effects: HashMap<AnnotationSite, DeclarationEffect>,
         overloads: Arc<crate::package::ProgramOverloads>,
         default_wrappers: Vec<CheckedDefaultWrapper>,
+        trait_members: Vec<CheckedTraitMember>,
     ) -> Self {
         let expressions_span = mojito_common::timing::span("expressions");
         let (expressions, expression_index) = build_checked_expressions(
@@ -2037,6 +2063,7 @@ impl CheckedProgram {
         let _declarations = mojito_common::timing::span("declarations");
         let declarations = build_checked_declarations(
             &statements,
+            &trait_members,
             &checked_types,
             statement_bindings,
             declaration_captures,
@@ -2065,6 +2092,7 @@ impl CheckedProgram {
             declaration_effects,
             overloads,
             default_wrappers,
+            trait_members,
         }
     }
 
@@ -2077,6 +2105,12 @@ impl CheckedProgram {
     /// and does not spell, as the check built it.
     pub fn default_wrappers(&self) -> &[CheckedDefaultWrapper] {
         &self.default_wrappers
+    }
+
+    /// Every trait default of the program, as the check checked it as its
+    /// trait's member.
+    pub fn trait_members(&self) -> &[CheckedTraitMember] {
+        &self.trait_members
     }
 
     /// The overload sets of every declaration the check knew: the
@@ -2977,8 +3011,10 @@ fn build_checked_expressions(
     (builder.nodes, builder.index)
 }
 
+/// The declarations of `statements`, then of each trait member's.
 fn build_checked_declarations(
     statements: &[Stmt],
+    trait_members: &[CheckedTraitMember],
     annotation_types: &HashMap<AnnotationSite, Ty>,
     statement_bindings: &HashMap<SourceSpan, mojito_types::origin::OwnerId>,
     declaration_captures: &HashMap<SourceSpan, Vec<CheckedCapture>>,
@@ -3206,6 +3242,18 @@ fn build_checked_declarations(
     let mut declarations = Vec::new();
     let _ = block(
         statements,
+        &mut declarations,
+        annotation_types,
+        statement_bindings,
+        declaration_captures,
+        binding_types,
+    );
+    let members: Vec<Stmt> = trait_members
+        .iter()
+        .map(|member| member.declaration.clone())
+        .collect();
+    let _ = block(
+        &members,
         &mut declarations,
         annotation_types,
         statement_bindings,

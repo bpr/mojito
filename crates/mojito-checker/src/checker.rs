@@ -254,10 +254,7 @@ fn check_program_carrying(
             .map(|(name, _)| name.clone())
     }
 
-    let mut expanded = {
-        let _expand = timing::span("trait_default_functions");
-        lift_trait_default_functions(stmts)
-    };
+    let mut expanded = stmts.to_vec();
     // Source locations survive elaboration clones and therefore cannot identify
     // semantic occurrences. Re-key the final checked tree after the last
     // checker-side cloning transform, before any fact table is populated.
@@ -401,7 +398,7 @@ pub use body_carry::PassCarry;
 pub use overload_support::is_bundled_module_source;
 mod trait_defaults;
 mod traits_support;
-pub use trait_defaults::lift_trait_default_functions;
+pub use trait_defaults::trait_member_declaration;
 
 /// Type-check a program and return the concrete lowered callee chosen for
 /// every overloaded call site.
@@ -517,6 +514,12 @@ pub struct Checker {
     /// The wrapper of every trait default a top-level struct inherits, in
     /// program order.
     default_wrappers: Vec<trait_defaults::DefaultWrapper>,
+    /// Every trait default the check checked as its trait's member, in
+    /// program order.
+    trait_members: Vec<trait_defaults::TraitMember>,
+    /// Whether the declaration `check_def` checks next is a trait member,
+    /// whose receiver is a method receiver.
+    checking_trait_member: bool,
     /// Top-level structs whose shell, member types, and method signatures were
     /// registered by `check_program`'s order-independent pre-passes. The
     /// source-order walk removes each entry and runs only the completion phase
@@ -1065,6 +1068,8 @@ impl Checker {
             overload_sets: std::sync::Arc::default(),
             method_binder_owners: mojito_symbol::symbol::MethodBinderOwners::default(),
             default_wrappers: Vec::new(),
+            trait_members: Vec::new(),
+            checking_trait_member: false,
             predeclared_structs: HashSet::new(),
             predeclared_constants: HashSet::new(),
             applied_module_constants: declaration_table::DeclarationSet::default(),
@@ -2534,8 +2539,14 @@ fn run_explicit_destroy(
             },
         );
     }
+    let members: Vec<Stmt> = checker
+        .checked_trait_members(program)
+        .into_iter()
+        .map(|member| member.declaration)
+        .collect();
     crate::explicit_destroy::check(
         program,
+        &members,
         &binding_types,
         &comprehension_bindings,
         &deletability,

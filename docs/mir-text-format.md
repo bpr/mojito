@@ -873,10 +873,10 @@ library declaration, and one module table holding each module's link
 record, one file per package. The bundled library's is the
 only producer today (`src/package.rs`). No part of a package is MIR text:
 it is a header followed by bytecode records, as upstream's package is
-MLIR bytecode throughout. The format line is `mojito-package 17`.
+MLIR bytecode throughout. The format line is `mojito-package 18`.
 
 ```text
-mojito-package 17
+mojito-package 18
 <the header's length, 8 bytes little-endian>
 <the header, as bytecode>
 <the payload: every record, as bytecode>

@@ -1553,21 +1553,29 @@ fn callable_contract_binder_shadows_the_enclosing_binder() {
 
 #[test]
 fn a_conformer_inherits_a_trait_default_as_a_forwarding_wrapper() {
-    // As upstream's `synthesizeDefaultTraitMethodWrapper`: the default is one
-    // function over the trait's `Self`, and the conformer's method is a
-    // member the check builds over the default's resolved signature, one
-    // call of the function with `Self` bound first, holding none of the
-    // default's body.
+    // As upstream's `synthesizeDefaultTraitMethodWrapper`: the default is its
+    // trait's member `T.d`, one function over the trait's `Self`, and the
+    // conformer's method is a member the check builds over the default's
+    // resolved signature, one call of the trait's member with `Self` bound
+    // first, holding none of the default's body.
     let src = "trait T:\n    def req(self) -> Int:\n        ...\n    def d(self, k: Int = 2) -> Int:\n        var doubled = self.req() * k\n        return doubled\n\n@fieldwise_init\nstruct S(T):\n    var x: Int\n    def req(self) -> Int:\n        return self.x\n";
     let prepared = mojito::comptime::prepare(parse(src).unwrap()).unwrap();
-    let function = prepared
+    assert!(
+        prepared
+            .iter()
+            .all(|stmt| !matches!(stmt.kind, mojito::ast::StmtKind::Def { .. })),
+        "preparing lifts no function"
+    );
+    let default = prepared
         .iter()
         .find_map(|stmt| match &stmt.kind {
-            mojito::ast::StmtKind::Def { name, body, .. } if name == "T$default$d" => Some(body),
+            mojito::ast::StmtKind::Trait { methods, .. } => methods
+                .iter()
+                .find_map(|method| method.default_body.as_ref()),
             _ => None,
         })
-        .expect("the default's function");
-    assert_eq!(function.len(), 2);
+        .expect("the default stays in its trait");
+    assert_eq!(default.len(), 2);
     let spelled = prepared
         .iter()
         .find_map(|stmt| match &stmt.kind {
@@ -1609,11 +1617,27 @@ fn a_conformer_inherits_a_trait_default_as_a_forwarding_wrapper() {
     else {
         panic!("the wrapper calls the default: {call:?}");
     };
-    assert_eq!(name, "T$default$d");
+    assert_eq!(name, "T.d");
     assert_eq!(
         param_args.as_slice(),
         [mojito::ast::ParamArg::Type(mojito::ast::Type::SelfType)]
     );
     assert_eq!(args.len(), 2);
+    let [member] = compiled.checked().trait_members() else {
+        panic!("one trait member: {:?}", compiled.checked().trait_members());
+    };
+    assert_eq!((member.trait_name.as_str(), member.method_index), ("T", 1));
+    let mir = mojito::mir::lower_checked_program(compiled.checked());
+    let declaration = mir
+        .declarations
+        .functions
+        .iter()
+        .find(|declaration| declaration.lowered_name == "T.d")
+        .expect("MIR declares the trait member");
+    assert_eq!(declaration.param_names, ["self", "k"]);
+    assert_eq!(
+        declaration.param_decls.first().map(mojito::ParamDecl::name),
+        Some("_Self")
+    );
     assert_eq!(compiler.execute(&compiled).unwrap().output, "6 15\n");
 }

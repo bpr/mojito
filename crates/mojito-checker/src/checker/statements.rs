@@ -190,7 +190,9 @@ impl Checker {
     /// Check the module's statements in source order. A constant whose
     /// initializer the check lifts (`comptime D = {"a": f(1)}`) is declared
     /// ahead of the first declaration after which its initializer types, so
-    /// a body declared before the constant reads it, as at the pin.
+    /// a body declared before the constant reads it, as at the pin. Every
+    /// trait member is checked after the walk, and then every conformer's
+    /// wrapper that calls one.
     fn check_module_block(&mut self, stmts: &[Stmt]) -> Result<(), TypeError> {
         let mut pending: Vec<usize> = (0..stmts.len())
             .filter(|&index| {
@@ -216,7 +218,8 @@ impl Checker {
             // top-level `break`.
             self.check_block(std::slice::from_ref(stmt), None, false)?;
         }
-        Ok(())
+        self.check_trait_members(stmts)?;
+        self.check_default_wrappers(stmts)
     }
 
     /// Bind the module constant `statement` declares ahead of it when the
@@ -2437,14 +2440,12 @@ impl Checker {
         }
         // Current Mojo restricts the `deinit` convention to struct method
         // arguments; free functions, nested functions, and lambdas take
-        // ownership with `var` instead. A trait default's function is a
-        // method of its trait, whose receiver may be `deinit`.
-        let trait_default = decorators
-            .iter()
-            .any(mojito_ast::ast::Decorator::is_trait_default);
+        // ownership with `var` instead. A trait member is a method of its
+        // trait, whose receiver may be `deinit`.
+        let trait_member = std::mem::take(&mut self.checking_trait_member);
         if let Some(param) = params
             .iter()
-            .skip(usize::from(trait_default))
+            .skip(usize::from(trait_member))
             .find(|p| p.convention == Some(mojito_ast::ast::ArgConvention::Deinit))
         {
             return Err(TypeError::Unsupported(format!(
