@@ -1,17 +1,20 @@
 //! Whether a conditional member belongs to an instance.
 //!
 //! A member's `where` clauses reach MIR on its declaration, and each struct
-//! carries its conformance rows. The elaborator decides a clause under an
-//! instance's bindings from those alone: it selects nothing and ranks
-//! nothing.
+//! carries its declared conformances and its synthesized lifecycle rows.
+//! The elaborator decides a clause under an instance's bindings from those
+//! and the trait declarations' parents when the clause asks it, as upstream
+//! decides a conformance from a type's declared conformances and the trait
+//! refinement graph: it selects nothing and ranks nothing.
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 use mojito_checked::checked::StructConformance;
+use mojito_types::conformance::{StructTraitRule, struct_trait_rule};
 use mojito_types::param_expr::fold::integer_value;
 use mojito_types::types::{
     ConstraintOperand, GenericConstraint, PackPredicateRef, TrivialLifecycle,
-    trivial_predicate_spelling, uninit_storage_element,
+    is_uninit_storage_name, trivial_predicate_spelling, uninit_storage_element,
 };
 
 /// The verdict of a member's availability clauses under an instance's
@@ -21,8 +24,8 @@ pub(super) enum Availability {
     /// A clause does not hold, with the message it declares.
     Disproven(Option<String>),
     /// A clause these bindings do not close: an operand left symbolic, a
-    /// pack predicate through an alias, or a struct with no row for the
-    /// trait.
+    /// pack predicate through an alias, or a struct with no lifecycle row
+    /// for the trait.
     Undecided,
 }
 
@@ -43,16 +46,15 @@ impl Specializer<'_> {
         verdict
     }
 
-    /// The rows of the instance of `template` that `bindings` describe, each
-    /// decided. A row these bindings do not decide is left out.
+    /// `rows`, a template's conformance rows or declared conformances, for
+    /// the instance `bindings` describe, each decided. A row these bindings
+    /// do not decide is left out.
     pub(super) fn instance_conformances(
         &self,
-        template: &MirStructDeclaration,
+        rows: &[StructConformance],
         bindings: &Bindings,
     ) -> Vec<StructConformance> {
-        template
-            .conformances
-            .iter()
+        rows.iter()
             .filter_map(|row| {
                 let holds = self.any_holds(&row.conditions, bindings, &mut HashSet::new())?;
                 Some(StructConformance {
@@ -203,22 +205,23 @@ impl Specializer<'_> {
     }
 
     /// Whether any of a conformance row's conditions holds.
-    fn any_holds(
+    fn any_holds<'c>(
         &self,
-        conditions: &[GenericConstraint],
+        conditions: impl IntoIterator<Item = &'c GenericConstraint>,
         bindings: &Bindings,
         visiting: &mut HashSet<(String, String)>,
     ) -> Option<bool> {
         some(
             conditions
-                .iter()
+                .into_iter()
                 .map(|condition| self.constraint_holds(condition, bindings, visiting)),
         )
     }
 
     /// Whether the concrete type `ty` conforms to `trait_name`: a struct by
-    /// its template's row under the instance's arguments, any other type by
-    /// its shape.
+    /// its template's declaration under the instance's arguments, by
+    /// `mojito_types::conformance::struct_trait_rule`, any other type by its
+    /// shape.
     pub(super) fn type_conforms(
         &self,
         ty: &Ty,
@@ -247,14 +250,9 @@ impl Specializer<'_> {
         trait_name: &str,
         visiting: &mut HashSet<(String, String)>,
     ) -> Option<bool> {
+        let declarations = &self.source.declarations;
         let Ty::Struct(name, arguments) = ty else {
-            if self
-                .source
-                .declarations
-                .traits
-                .iter()
-                .any(|declared| declared == trait_name)
-            {
+            if declarations.declares_trait(trait_name) {
                 // No compiler-known type conforms to a declared trait.
                 return mojito_types::conformance::leaf_conforms(ty, trait_name, &mut |_, _| true)
                     .map(|_| false);
@@ -275,11 +273,33 @@ impl Specializer<'_> {
             // conforming aggregate is in doubt.
             return (!conforms || !undecided).then_some(conforms);
         };
+        // The inline uninit storage answers by its elements, which its
+        // declaration does not say.
+        if is_uninit_storage_name(name) {
+            return None;
+        }
         let template = self.structs.get(nominal_template(name))?;
-        let row = template
-            .conformances
-            .iter()
-            .find(|row| row.trait_name == trait_name)?;
+        let conditions: Vec<&GenericConstraint> =
+            match struct_trait_rule(trait_name, declarations.declares_trait(trait_name)) {
+                StructTraitRule::Lifecycle => template
+                    .conformances
+                    .iter()
+                    .find(|row| row.trait_name == trait_name)?
+                    .conditions
+                    .iter()
+                    .collect(),
+                StructTraitRule::Declared => template
+                    .declared
+                    .iter()
+                    .filter(|declared| {
+                        declared.trait_name == trait_name
+                            || declarations.trait_refines(&declared.trait_name, trait_name)
+                    })
+                    .flat_map(|declared| &declared.conditions)
+                    .collect(),
+                StructTraitRule::Never => return Some(false),
+                StructTraitRule::Shallow => return Some(true),
+            };
         let mut bindings = self.base_bindings();
         bind_struct_arguments(&template.param_decls, arguments, &mut bindings)?;
         // A conformance that depends on itself proves nothing.
@@ -287,7 +307,7 @@ impl Specializer<'_> {
         if !visiting.insert(key.clone()) {
             return Some(false);
         }
-        let holds = self.any_holds(&row.conditions, &bindings, visiting);
+        let holds = self.any_holds(conditions, &bindings, visiting);
         visiting.remove(&key);
         holds
     }

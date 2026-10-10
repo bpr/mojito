@@ -1,5 +1,5 @@
-//! What a compiled package lends the check of a program that imports it,
-//! beside its declarations.
+//! What a compiled package says of itself as a whole, beside its
+//! declarations: what its importer reads to decide it can import it.
 //!
 //! A package's bodies were checked when it was built. Its importer installs
 //! the package's declarations from their records and checks no package body
@@ -20,10 +20,6 @@ pub struct PackageInterface {
     /// The linked name of every module-level declaration those modules
     /// make: an importer declaring one again cannot import the package.
     pub names: BTreeSet<String>,
-    /// Every trait the package's declarations and bodies ask a type's
-    /// conformance to: an importer's struct answers each, since a package
-    /// body may ask it of the importer's types.
-    pub asked_traits: BTreeSet<String>,
 }
 
 impl PackageInterface {

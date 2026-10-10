@@ -3878,9 +3878,10 @@ fn a_package_function_is_a_value_in_an_importer() {
 
 #[test]
 fn an_importer_answers_no_package_struct_conformance_again() {
-    // A package struct's rows for the traits its package asked are the
-    // package's, and a trait the importer declares afresh gets an empty row
-    // from the link: the importer's check answers only its own struct.
+    // The importer's check answers only its own struct, and only its
+    // declared conformances and lifecycle rows: a package struct's
+    // conformance to the importer's trait is decided from the struct's
+    // declared conformances when the clause asks it.
     let source = "trait Greeter:\n    def greet(self) -> String:\n        ...\n\n\n@fieldwise_init\nstruct Hi(Copyable, Greeter, Movable):\n    var n: Int\n\n    def greet(self) -> String:\n        return \"hi\"\n\n\ndef pick[T: AnyType]() -> String:\n    comptime if conforms_to(T, Greeter):\n        return \"greeter\"\n    else:\n        return \"plain\"\n\n\ndef main():\n    print(pick[Hi]())\n    print(pick[List[Int]]())\n";
     let entry = std::path::Path::new("importer_conformances.mojo");
     let importing = Compiler::default().with_std_package(true);
@@ -3889,7 +3890,16 @@ fn an_importer_answers_no_package_struct_conformance_again() {
     let conformances = imported.checked().conformances();
     let answered: Vec<&str> = conformances.structs.keys().map(String::as_str).collect();
     assert_eq!(answered, ["Hi"]);
-    assert_eq!(conformances.foreign_traits, ["Greeter"]);
+    let declared: Vec<&str> = conformances.declared["Hi"]
+        .iter()
+        .map(|row| row.trait_name.as_str())
+        .collect();
+    assert_eq!(declared, ["Copyable", "Greeter", "Movable"]);
+    assert!(
+        conformances.structs["Hi"]
+            .iter()
+            .all(|row| mojito::conformance::LIFECYCLE_TRAITS.contains(&row.trait_name.as_str()))
+    );
     assert_eq!(
         importing.execute(&imported).expect("execute").output,
         "greeter\nplain\n"
@@ -3919,7 +3929,12 @@ fn a_package_reads_back_to_the_bytes_it_was_written_as() {
             modules: declaring.modules().cloned().collect(),
             ..DeclarationRecords::default()
         };
-        for name in &program.declarations.traits {
+        for name in program
+            .declarations
+            .traits
+            .iter()
+            .map(|declared| &declared.name)
+        {
             let declaration = declaring.declaration_of(name).expect("a declared trait");
             records
                 .declarations
@@ -3937,6 +3952,9 @@ fn a_package_reads_back_to_the_bytes_it_was_written_as() {
         }
         for declaration in &program.declarations.functions {
             records.place_function(declaration.clone()).expect("placed");
+        }
+        for declaration in &program.declarations.traits {
+            records.place_trait(declaration.clone()).expect("placed");
         }
         records
     };

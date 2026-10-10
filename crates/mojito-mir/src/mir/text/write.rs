@@ -99,7 +99,18 @@ fn write_artifact_head(
     writeln!(
         output,
         "  traits: {},",
-        list(program.declarations.traits.iter().map(|name| symbol(name)))
+        list(program.declarations.traits.iter().map(|declaration| {
+            record(
+                "trait",
+                &[
+                    ("name", symbol(&declaration.name)),
+                    (
+                        "refines",
+                        list(declaration.refines.iter().map(|parent| symbol(parent))),
+                    ),
+                ],
+            )
+        }))
     )
     .unwrap();
     write_structs(output, &program.declarations.structs);
@@ -199,18 +210,8 @@ fn write_structs(output: &mut String, declarations: &[MirStructDeclaration]) {
                         .to_string(),
                 ),
                 ("explicit_destroy_fields", obligated_fields),
-                (
-                    "conformances",
-                    list(declaration.conformances.iter().map(|row| {
-                        record(
-                            "conformance",
-                            &[
-                                ("trait", symbol(&row.trait_name)),
-                                ("conditions", list(row.conditions.iter().map(constraint))),
-                            ],
-                        )
-                    })),
-                ),
+                ("conformances", conformance_rows(&declaration.conformances)),
+                ("declared", conformance_rows(&declaration.declared)),
                 (
                     "associated_types",
                     list(declaration.associated_types.iter().map(|(name, ty)| {
@@ -244,6 +245,19 @@ fn write_structs(output: &mut String, declarations: &[MirStructDeclaration]) {
         .unwrap();
     }
     writeln!(output, "  ],").unwrap();
+}
+
+/// A struct's conformance rows, each a `conformance` record.
+fn conformance_rows(rows: &[mojito_checked::checked::StructConformance]) -> String {
+    list(rows.iter().map(|row| {
+        record(
+            "conformance",
+            &[
+                ("trait", symbol(&row.trait_name)),
+                ("conditions", list(row.conditions.iter().map(constraint))),
+            ],
+        )
+    }))
 }
 
 fn write_declarations(output: &mut String, declarations: &[MirFunctionDeclaration]) {

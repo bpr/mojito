@@ -987,6 +987,63 @@ fn trivial_value_and_pack_clauses_are_decided() {
 }
 
 #[test]
+fn a_struct_conformance_is_decided_from_its_declaration_when_asked() {
+    let source = "trait Named:\n\
+         \x20   def name(self) -> String:\n\
+         \x20       ...\n\
+         \n\
+         trait Titled(Named):\n\
+         \x20   def title(self) -> String:\n\
+         \x20       ...\n\
+         \n\
+         @fieldwise_init\n\
+         struct Book(Copyable, Movable, Titled):\n\
+         \x20   var n: Int\n\
+         \n\
+         \x20   def name(self) -> String:\n\
+         \x20       return \"book\"\n\
+         \n\
+         \x20   def title(self) -> String:\n\
+         \x20       return \"Book\"\n\
+         \n\
+         def main():\n\
+         \x20   var xs: List[Int] = [1]\n\
+         \x20   print(len(xs), Book(1).title())\n";
+    let compiled = mojito::Compiler::default()
+        .with_std_package(true)
+        .compile_source(source, std::path::Path::new("mono_test.mojo"))
+        .expect("compile conformance program");
+    assert!(compiled.imported_package().is_some());
+    let specializer = Specializer::new(compiled.drop_elaborated_mir(), None);
+    let list = Ty::Struct("List".into(), vec![TyArg::Ty(Ty::Int)].into());
+    let book = Ty::Struct("Book".into(), Vec::new().into());
+    let conforms =
+        |ty: &Ty, trait_name: &str| specializer.type_conforms(ty, trait_name, &mut HashSet::new());
+    // The package answered no clause ahead of use: `List` decides
+    // `Iterable` from its declared conformances.
+    assert!(
+        specializer.structs["List"]
+            .conformances
+            .iter()
+            .all(|row| row.trait_name != "Iterable")
+    );
+    assert_eq!(conforms(&list, "Iterable"), Some(true));
+    assert_eq!(
+        conforms(&list, "Absable"),
+        Some(false),
+        "an operation trait"
+    );
+    assert_eq!(
+        conforms(&list, "Named"),
+        Some(false),
+        "the importer's trait"
+    );
+    assert_eq!(conforms(&book, "Named"), Some(true), "through `Titled`");
+    assert_eq!(conforms(&book, "Hashable"), Some(false));
+    assert_eq!(conforms(&book, "Copyable"), Some(true), "a lifecycle row");
+}
+
+#[test]
 fn comptime_for_unrolls_one_copy_per_iteration() {
     // The template carries the loop as a `comptime_for` header; each instance
     // replaces it with one copy of the body per index value, the reads of the

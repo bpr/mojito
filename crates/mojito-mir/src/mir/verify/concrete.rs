@@ -80,6 +80,7 @@ pub(super) fn verify_concrete_program(program: &MirProgram, errors: &mut Vec<Str
             declaration
                 .conformances
                 .iter()
+                .chain(&declaration.declared)
                 .filter(|row| {
                     row.conditions.iter().any(|condition| {
                         !matches!(condition, mojito_types::types::GenericConstraint::Bool(_))

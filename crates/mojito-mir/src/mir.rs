@@ -26,9 +26,10 @@ use mojito_ast::ast::{
 };
 use mojito_ast::call::{effective_keyword_only_index, regular_marker_index};
 use mojito_checked::checked::{AnnotationSite, GenericSite};
-use mojito_checked::checked::{CheckedConst, CheckedProgram, StructConformance};
+use mojito_checked::checked::{CheckedConst, CheckedProgram};
 pub use mojito_checked::declaration::{
     FunctionDeclaration as MirFunctionDeclaration, StructDeclaration as MirStructDeclaration,
+    TraitDeclaration,
 };
 use mojito_checked::interface::PackageInterface;
 use mojito_common::timing;
@@ -137,11 +138,12 @@ impl std::ops::Deref for ConcreteMir {
 pub struct MirDeclarations {
     pub structs: Vec<MirStructDeclaration>,
     pub functions: Vec<MirFunctionDeclaration>,
-    /// Every trait the program and its package declare, sorted. A
-    /// compiler-known type conforms to a trait outside this list by its
-    /// shape (`mojito_types::conformance::leaf_conforms`) and to none
-    /// inside it.
-    pub traits: Vec<String>,
+    /// Every trait the program itself declares, sorted by name; an
+    /// imported package's resolve through [`Self::trait_declaration`]. A
+    /// compiler-known type conforms to a trait [`Self::declares_trait`]
+    /// names to none, and to any other by its shape
+    /// (`mojito_types::conformance::leaf_conforms`).
+    pub traits: Vec<TraitDeclaration>,
     /// The imported package's declarations, attached by
     /// [`link::link_declarations`].
     pub imported: Option<link::ImportedDeclarations>,
@@ -164,6 +166,39 @@ impl MirDeclarations {
             .or_else(|| self.imported.as_ref()?.structure(name))
     }
 
+    /// Whether the program or its package declares the trait `name`,
+    /// decoding nothing.
+    pub fn declares_trait(&self, name: &str) -> bool {
+        self.own_trait(name).is_some()
+            || self.imported.as_ref().is_some_and(|imported| {
+                imported
+                    .package()
+                    .traits()
+                    .binary_search_by(|known| known.as_str().cmp(name))
+                    .is_ok()
+            })
+    }
+
+    /// The trait declaration `name`: the program's own, else its package's,
+    /// decoded on first use.
+    pub fn trait_declaration(&self, name: &str) -> Option<&TraitDeclaration> {
+        self.own_trait(name)
+            .or_else(|| self.imported.as_ref()?.package().trait_declaration(name))
+    }
+
+    /// Whether the declared trait `candidate` refines `required`, directly
+    /// or through its parents.
+    pub fn trait_refines(&self, candidate: &str, required: &str) -> bool {
+        mojito_types::conformance::refines(
+            &|name| {
+                self.trait_declaration(name)
+                    .map(|declaration| declaration.refines.as_slice())
+            },
+            candidate,
+            required,
+        )
+    }
+
     /// Every declaration, the imported package's decoded and joined to the
     /// program's own: own structs, then the package's in package order;
     /// own functions, then the package's the program does not lower. For a
@@ -180,6 +215,13 @@ impl MirDeclarations {
             imported.materialize_into(&mut declarations);
         }
         declarations
+    }
+
+    fn own_trait(&self, name: &str) -> Option<&TraitDeclaration> {
+        self.traits
+            .binary_search_by(|declaration| declaration.name.as_str().cmp(name))
+            .ok()
+            .map(|position| &self.traits[position])
     }
 }
 
@@ -718,6 +760,12 @@ pub fn lower_checked_program_importing(
                         .get(name)
                         .cloned()
                         .unwrap_or_default(),
+                    declared: checked
+                        .conformances()
+                        .declared
+                        .get(name)
+                        .cloned()
+                        .unwrap_or_default(),
                     associated_types: checked
                         .conformances()
                         .associated
@@ -826,13 +874,7 @@ pub fn lower_checked_program_importing(
     toplevel_fn.ret_ty = Some(Ty::None);
     functions.push(("__toplevel__".to_string(), toplevel_fn));
     if let Some((_, compiled)) = package {
-        let conformances = checked.conformances();
-        link::link_declarations(
-            &mut declarations,
-            compiled,
-            &conformances.structs,
-            &conformances.foreign_traits,
-        );
+        link::link_declarations(&mut declarations, compiled);
     }
     {
         let _close = timing::span("close_register_types");

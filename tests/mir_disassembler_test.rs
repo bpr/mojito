@@ -146,6 +146,7 @@ fn metadata_program() -> MirProgram {
                 fields: HashMap::new(),
             }),
             conformances: Vec::new(),
+            declared: Vec::new(),
             associated_types: Vec::new(),
             associated_values: Vec::new(),
         }],

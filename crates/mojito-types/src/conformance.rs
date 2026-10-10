@@ -5,7 +5,135 @@
 //! values, tuples, callables — conforms by its shape alone, so the checker
 //! and the elaborator ask the same predicate here.
 
-use crate::types::{Ty, default_literal, is_scalar_simd, simd_shape};
+use crate::types::{Ty, default_literal, is_scalar_simd, simd_shape, trivial_predicate_name};
+
+/// Mojo's built-in traits the compiler knows by name. A program may also
+/// declare a trait of one of these names; its declaration then decides.
+pub const COMPILER_TRAITS: &[&str] = &[
+    "AnyType",
+    "Deinitable",
+    "Movable",
+    "Copyable",
+    "ImplicitlyCopyable",
+    "RegisterPassable",
+    "TrivialRegisterPassable",
+    "Defaultable",
+    "Representable",
+    "Writable",
+    "Writer",
+    "Boolable",
+    "Intable",
+    "Floatable",
+    "Indexer",
+    "Equatable",
+    "Comparable",
+    "Hashable",
+    "Hasher",
+    "Identifiable",
+    "Sized",
+    "SizedRaising",
+    "Iterable",
+    "IterableOwned",
+    "Iterator",
+    "Absable",
+    "Powable",
+    "Roundable",
+    "Ceilable",
+    "Floorable",
+    "Truncable",
+    "CeilDivable",
+    "CeilDivableRaising",
+    "DivModable",
+    "Addable",
+    "Subtractable",
+    "Multipliable",
+    "Divisible",
+    "FloorDivisible",
+    "Modable",
+    "ShiftLeftable",
+    "ShiftRightable",
+    "Andable",
+    "Orable",
+    "Xorable",
+    "Negatable",
+];
+
+/// The traits a struct's declaration answers beside its declared list.
+///
+/// The lifecycle traits, which its methods and fields decide as well, and
+/// the `IsTrivially*` spelling of each trivial facet.
+pub const LIFECYCLE_TRAITS: [&str; 7] = [
+    "Copyable",
+    "ImplicitlyCopyable",
+    "Movable",
+    "Deinitable",
+    "IsTriviallyCopyable",
+    "IsTriviallyMovable",
+    "IsTriviallyDeinitable",
+];
+
+/// How a struct's conformance to a trait is decided.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StructTraitRule {
+    /// By the struct's synthesized lifecycle answer.
+    Lifecycle,
+    /// By its declared conformances: a declared trait that is the trait or
+    /// refines it, under that declaration's condition.
+    Declared,
+    /// Never: an operation trait no struct conforms to.
+    Never,
+    /// Always: a compiler-known trait that stays shallow.
+    Shallow,
+}
+
+/// The rule deciding whether a struct conforms to `trait_name`, which the
+/// program declares when `declared_by_program`.
+pub fn struct_trait_rule(trait_name: &str, declared_by_program: bool) -> StructTraitRule {
+    if trivial_predicate_name(trait_name).is_some() {
+        return StructTraitRule::Lifecycle;
+    }
+    if declared_by_program || !COMPILER_TRAITS.contains(&trait_name) {
+        return StructTraitRule::Declared;
+    }
+    match trait_name {
+        "Copyable" | "ImplicitlyCopyable" | "Movable" | "Deinitable" => StructTraitRule::Lifecycle,
+        "Writable" | "Hasher" | "Hashable" | "Defaultable" | "Indexer" | "Equatable"
+        | "Comparable" | "Intable" | "Floatable" => StructTraitRule::Declared,
+        "Absable" | "Roundable" | "Powable" | "Addable" | "Subtractable" | "Multipliable"
+        | "Divisible" | "FloorDivisible" | "Modable" | "ShiftLeftable" | "ShiftRightable"
+        | "Andable" | "Orable" | "Xorable" | "Negatable" => StructTraitRule::Never,
+        _ => StructTraitRule::Shallow,
+    }
+}
+
+/// Whether the trait `candidate` refines `required`, directly or through
+/// its parents, where `parents` answers a declared trait's parents. A
+/// refinement cycle proves nothing.
+pub fn refines<'a>(
+    parents: &dyn Fn(&str) -> Option<&'a [String]>,
+    candidate: &str,
+    required: &str,
+) -> bool {
+    fn walk<'a>(
+        parents: &dyn Fn(&str) -> Option<&'a [String]>,
+        candidate: &str,
+        required: &str,
+        visiting: &mut std::collections::HashSet<String>,
+    ) -> bool {
+        visiting.insert(candidate.to_string())
+            && parents(candidate).is_some_and(|parents_of| {
+                parents_of
+                    .iter()
+                    .any(|parent| parent == required || walk(parents, parent, required, visiting))
+            })
+    }
+    walk(
+        parents,
+        candidate,
+        required,
+        &mut std::collections::HashSet::new(),
+    )
+}
 
 /// Whether the shape of `ty` alone decides its conformance to the built-in
 /// trait `trait_name`, and how.

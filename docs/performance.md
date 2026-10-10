@@ -992,7 +992,7 @@ and the decoding of every struct's interface it caused, are gone.
 
 A program whose clause names a builtin or package trait the package never
 asked (`Absable`) still answers it for every reached package struct,
-about 1.7 ms (`check.conformances.package_rows`, R564).
+about 1.7 ms (`check.conformances.package_rows`); R564 removed it.
 
 ### The importer reads no library source to find its package (2026-10-10, R562)
 
@@ -1097,3 +1097,23 @@ each declaration's record carries its own overload facts.
 | package_constant_in_own_signature | 19.5 → 19.1 | 0.19 → 0.02 | 0.46 → 0.25 | 0.10 → 0.07 |
 | hashlib_keyed_ahasher | 28.1 → 27.9 | 0.18 → 0.02 | 0.29 → 0.18 | 0.07 → 0.04 |
 | path_operations | 185.3 → 185.5 | 0.19 → 0.02 | 0.39 → 0.27 | 0.07 → 0.05 |
+
+### A struct's conformance is decided when a clause asks it (2026-10-10, R564)
+
+Same environment as the tables above, on the R564 tree against the R563
+tree (`5bcfc9ed`), both importing the package from their own cache;
+`--timings` medians of 15 interleaved runs, milliseconds. A struct's
+declaration carries its declared conformances and its lifecycle rows, and
+a trait's its parents; the elaborator decides any other conformance from
+them when a clause asks it. No compilation answers a struct for a trait
+ahead of use, so the importer's walk over every reached package struct for
+a trait the package never asked (`check.conformances.package_rows`), and
+the decoding of every reached struct's interface it caused (60 interfaces
+for the fixture below, now 3), are gone. The package grows from 1.566 to
+1.568 MB: every library struct carries its declared list and seven
+lifecycle rows instead of a row per trait the library asked.
+
+| Program | total | check | check.conformances |
+|---|---:|---:|---:|
+| hello | 3.97 → 3.79 | 0.15 → 0.13 | 0.01 → 0.00 |
+| conforms_to_user_and_unasked_traits | 24.4 → 20.8 | 5.43 → 1.20 | 4.21 → 0.02 |

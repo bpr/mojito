@@ -279,7 +279,7 @@ impl Checker {
                     && let Some(trait_name) = existential_trait
                 {
                     let trait_name = mojito_ast::ast::canonical_trait_name(trait_name);
-                    if BUILTIN_TRAITS.contains(&trait_name) || self.traits.contains_key(trait_name)
+                    if COMPILER_TRAITS.contains(&trait_name) || self.traits.contains_key(trait_name)
                     {
                         return Ok(Ty::Param {
                             binder: synthetic_binder(&format!("Some[{trait_name}]")),

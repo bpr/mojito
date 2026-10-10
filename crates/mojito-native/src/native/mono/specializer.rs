@@ -2750,6 +2750,7 @@ impl<'a> Specializer<'a> {
                         explicit_destructors: HashMap::new(),
                         explicit_destroy: None,
                         conformances: Vec::new(),
+                        declared: Vec::new(),
                         associated_types: Vec::new(),
                         associated_values: Vec::new(),
                     });
@@ -2862,7 +2863,9 @@ impl<'a> Specializer<'a> {
                 continue;
             }
             types.extend(declaration.fields.iter().map(|(_, ty)| ty.clone()));
-            declaration.conformances = self.instance_conformances(template, &bindings);
+            declaration.conformances =
+                self.instance_conformances(&template.conformances, &bindings);
+            declaration.declared = self.instance_conformances(&template.declared, &bindings);
             self.declare_output_struct(declaration);
             // The nominal String's `__copyinit__` stays too: native lowering
             // bridges it and never reaches the body, but the VM runs it. A

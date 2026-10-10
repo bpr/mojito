@@ -142,8 +142,8 @@ impl std::fmt::Debug for InterfaceExport {
 }
 
 impl InterfaceExport {
-    /// The package's declaration records: `structs` and `functions`, the
-    /// library's lowered declarations, and the check's overload facts and
+    /// The package's declaration records: `structs`, `functions`, and
+    /// `traits`, the library's lowered declarations, and the check's overload facts and
     /// effect summaries, each in the record of the declaration it belongs to, beside that
     /// declaration's residue, which leaves out what its lowered
     /// declarations say.
@@ -158,6 +158,7 @@ impl InterfaceExport {
         self,
         structs: Vec<StructDeclaration>,
         functions: Vec<FunctionDeclaration>,
+        traits: Vec<mojito_checked::declaration::TraitDeclaration>,
     ) -> Result<DeclarationRecords, String> {
         let mut records = DeclarationRecords {
             modules: self.modules,
@@ -172,6 +173,11 @@ impl InterfaceExport {
             functions
                 .into_iter()
                 .filter_map(|declaration| records.place_function(declaration).err()),
+        );
+        unplaced.extend(
+            traits
+                .into_iter()
+                .filter_map(|declaration| records.place_trait(declaration).err()),
         );
         unplaced.extend(
             self.transfer_effects

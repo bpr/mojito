@@ -3,9 +3,9 @@
 //! trait-method/associated-member lookup. Extracted from `checker.rs`;
 //! see `docs/symbol-map.md`.
 
-use super::interface::Table;
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
+use mojito_types::conformance::{LIFECYCLE_TRAITS, StructTraitRule, struct_trait_rule};
 
 /// How a consuming position takes its value: an ownership **move** into new
 /// storage (gated on `Movable`), or a **deinit** binding — consumption by a
@@ -21,7 +21,7 @@ impl Checker {
     /// A trait name is valid if it is a built-in, a user trait defined so
     /// far, or a same-module trait predeclared ahead of the struct shells.
     pub(super) fn check_trait_name(&self, name: &str) -> Result<(), TypeError> {
-        if BUILTIN_TRAITS.contains(&name)
+        if COMPILER_TRAITS.contains(&name)
             || self.traits.contains_key(name)
             || self.predeclared_traits.contains(name)
         {
@@ -60,7 +60,7 @@ impl Checker {
         }
         for parent in refines {
             self.check_trait_name(parent)?;
-            if BUILTIN_TRAITS.contains(&parent.as_str()) && !self.traits.contains_key(parent) {
+            if COMPILER_TRAITS.contains(&parent.as_str()) && !self.traits.contains_key(parent) {
                 return Err(TypeError::Unsupported(format!(
                     "user trait '{name}' cannot refine builtin trait '{parent}' yet"
                 )));
@@ -982,7 +982,7 @@ impl Checker {
         // implicit prelude, but a registered nominal trait is authoritative.
         // In production `Iterator`/`Iterable` are ordinary stdlib traits; the
         // builtin compatibility spelling must not bypass their requirements.
-        if BUILTIN_TRAITS.contains(&tr) && !self.traits.contains_key(tr) {
+        if COMPILER_TRAITS.contains(&tr) && !self.traits.contains_key(tr) {
             return self.verify_builtin_conformance(name, tr, self_ty, declared_condition.as_ref());
         }
         let Some(trait_info) = self.traits.get(tr) else {
@@ -1699,7 +1699,7 @@ impl Checker {
         {
             return true;
         }
-        if BUILTIN_TRAITS.contains(&tr) && !self.traits.contains_key(tr) {
+        if COMPILER_TRAITS.contains(&tr) && !self.traits.contains_key(tr) {
             // A hashed leaf is recorded as it is proved, so `is_hashable`
             // answers for its own.
             if tr != "Hashable"
@@ -1825,65 +1825,47 @@ impl Checker {
         })
     }
 
-    /// The conformance facts the elaborator decides a `where` clause from:
-    /// the declared traits, and each registered struct's answer for every
-    /// trait a member's availability clause or a conformance condition
-    /// names. Each answer is the one [`Self::conforms_to`] gives that struct.
-    ///
-    /// An importer answers its own structs only, as upstream's importer
-    /// decides only its own types' conformances: a package struct's MIR
-    /// declaration carries its answer for every trait the package asked,
-    /// and `mir::link` joins an empty row for each foreign trait. A package
-    /// struct is answered here only for a trait the package never asked
-    /// that the importer names and does not declare afresh.
+    /// The conformance facts the elaborator decides a `where` clause or a
+    /// `comptime if` from, as upstream decides a conformance when a clause
+    /// asks it: the program's own traits with their parents, and each own
+    /// struct's declared conformances and synthesized lifecycle rows. No
+    /// struct is answered here for any other trait; a package struct's
+    /// declaration carries the same facts.
     pub(super) fn conformance_facts(&self) -> mojito_checked::checked::ConformanceFacts {
-        let mut traits: Vec<String> = self.traits.keys().cloned().collect();
-        traits.sort();
-        let named = self.constrained_traits();
-        let foreign_traits = self.foreign_traits(&named);
-        let computed: Vec<&String> = self.package.as_ref().map_or_else(Vec::new, |package| {
-            named
-                .iter()
-                .filter(|required| {
-                    !package.asked_traits.contains(*required)
-                        && foreign_traits.binary_search(required).is_err()
-                })
-                .collect()
-        });
+        let mut traits: Vec<_> = self
+            .traits
+            .own()
+            .iter()
+            .map(
+                |(name, info)| mojito_checked::declaration::TraitDeclaration {
+                    name: name.clone(),
+                    refines: info.refines.clone(),
+                },
+            )
+            .collect();
+        traits.sort_by(|left, right| left.name.cmp(&right.name));
         let own = self.structs.own();
-        let answer = |name: &str, info: &StructInfo, required: &String| {
-            let conditions = self.struct_conformance_conditions(name, info, required)?;
-            Some(mojito_checked::checked::StructConformance {
-                trait_name: required.clone(),
-                conditions,
-            })
-        };
-        let walk_package = !computed.is_empty();
-        let structs: HashMap<String, Vec<_>> = self
-            .structs
-            .iter_selected(|installed| {
-                installed
-                    .keys(Table::Structs)
-                    .filter(move |key| walk_package && !own.contains_key(*key))
-            })
+        let structs = own
+            .iter()
             .map(|(name, info)| {
-                let rows = if own.contains_key(name) {
-                    named
-                        .iter()
-                        .filter_map(|required| answer(name, info, required))
-                        .collect()
-                } else {
-                    computed
-                        .iter()
-                        .filter_map(|required| answer(name, info, required))
-                        .collect()
-                };
+                let rows = LIFECYCLE_TRAITS
+                    .iter()
+                    .filter_map(|required| {
+                        let conditions =
+                            self.struct_conformance_conditions(name, info, required)?;
+                        Some(mojito_checked::checked::StructConformance {
+                            trait_name: (*required).to_string(),
+                            conditions,
+                        })
+                    })
+                    .collect::<Vec<_>>();
                 (name.clone(), rows)
             })
             .collect();
-        if walk_package {
-            timing::count("package_rows", (structs.len() - own.len()) as u64);
-        }
+        let declared = own
+            .iter()
+            .map(|(name, info)| (name.clone(), self.declared_conformances(info)))
+            .collect();
         let associated = own
             .iter()
             .map(|(name, info)| {
@@ -1920,30 +1902,31 @@ impl Checker {
         mojito_checked::checked::ConformanceFacts {
             traits,
             structs,
-            foreign_traits,
+            declared,
             associated,
             associated_values,
         }
     }
 
-    /// The traits of `named` an importer declares afresh, sorted: neither
-    /// builtin, nor an `IsTrivially*` spelling, nor declared by any package
-    /// module, so no package struct declares or refines into one. Empty
-    /// without a package.
-    fn foreign_traits(&self, named: &std::collections::BTreeSet<String>) -> Vec<String> {
-        let Some(package) = &self.package else {
-            return Vec::new();
-        };
-        let own = self.traits.own();
-        named
+    /// The struct's declared conformances, in declaration order, each with
+    /// its compiled condition (`Bool(true)` when it states none). One whose
+    /// condition does not compile proves nothing, so it is left out.
+    fn declared_conformances(
+        &self,
+        info: &StructInfo,
+    ) -> Vec<mojito_checked::checked::StructConformance> {
+        info.conforms
             .iter()
-            .filter(|required| {
-                own.contains_key(*required)
-                    && !BUILTIN_TRAITS.contains(&required.as_str())
-                    && mojito_types::types::trivial_predicate_name(required).is_none()
-                    && !package.names.contains(*required)
+            .filter_map(|declared| {
+                let condition = match info.conformance_conditions.get(declared) {
+                    Some(condition) => self.compile_condition(&info.decls, condition).ok()?,
+                    None => GenericConstraint::Bool(true),
+                };
+                Some(mojito_checked::checked::StructConformance {
+                    trait_name: declared.clone(),
+                    conditions: vec![condition],
+                })
             })
-            .cloned()
             .collect()
     }
 
@@ -1994,10 +1977,13 @@ impl Checker {
             });
             return self.trivial_lifecycle_conditions(name, info, kind, register_passable);
         }
-        if !BUILTIN_TRAITS.contains(&required) || self.traits.contains_key(required) {
-            return Some(declared(&refining));
-        }
-        Some(match required {
+        let lifecycle = match struct_trait_rule(required, self.traits.contains_key(required)) {
+            StructTraitRule::Lifecycle => required,
+            StructTraitRule::Declared => return Some(declared(&refining)),
+            StructTraitRule::Never => return Some(Vec::new()),
+            StructTraitRule::Shallow => return Some(always()),
+        };
+        Some(match lifecycle {
             "Copyable" => {
                 let family = |declared: &str| {
                     matches!(
@@ -2019,19 +2005,13 @@ impl Checker {
                 })
             }
             "ImplicitlyCopyable" => Vec::new(),
-            "Movable" | "Deinitable" => {
+            _ => {
                 if info.conforms.iter().any(|declared| declared == required) {
                     declared(&refining)
                 } else {
                     always()
                 }
             }
-            "Writable" | "Hasher" | "Hashable" | "Defaultable" | "Indexer" | "Equatable"
-            | "Comparable" | "Intable" | "Floatable" => declared(&refining),
-            "Absable" | "Roundable" | "Powable" | "Addable" | "Subtractable" | "Multipliable"
-            | "Divisible" | "FloorDivisible" | "Modable" | "ShiftLeftable" | "ShiftRightable"
-            | "Andable" | "Orable" | "Xorable" | "Negatable" => Vec::new(),
-            _ => always(),
         })
     }
 
@@ -2075,47 +2055,6 @@ impl Checker {
             );
         }
         Some(register_passable)
-    }
-
-    /// Every trait a member's availability clause, a struct's conformance
-    /// condition, or a recorded `comptime if` condition names, and every
-    /// trait an imported package's bodies ask, sorted.
-    pub(super) fn constrained_traits(&self) -> std::collections::BTreeSet<String> {
-        let mut named = self
-            .package
-            .as_ref()
-            .map(|package| package.asked_traits.clone())
-            .unwrap_or_default();
-        // A package struct's clauses name only traits the package asked.
-        let installed = self.package.is_none();
-        let structs = self
-            .structs
-            .iter_selected(|interfaces| interfaces.keys(Table::Structs).filter(move |_| installed));
-        for (_, info) in structs {
-            for condition in info.conformance_conditions.values() {
-                if let Ok(condition) = self.compile_condition(&info.decls, condition) {
-                    constraint_traits(&condition, &mut named);
-                }
-            }
-            for clause in info
-                .methods
-                .values()
-                .flatten()
-                .flat_map(|method| &method.availability)
-            {
-                constraint_traits(clause, &mut named);
-            }
-        }
-        // A recorded `comptime if` condition is decided by the elaborator
-        // below MIR from the same rows.
-        for adjustment in self.operation_adjustments.borrow().values() {
-            if let mojito_checked::checked::SemanticAdjustment::ComptimeCondition(condition) =
-                adjustment
-            {
-                constraint_traits(condition, &mut named);
-            }
-        }
-        named
     }
 
     pub(super) fn struct_conformance_applies(
@@ -3111,20 +3050,11 @@ pub(super) fn refines_trait(
     candidate: &str,
     required: &str,
 ) -> bool {
-    fn walk(
-        traits: &declaration_table::DeclarationTable<TraitInfo>,
-        candidate: &str,
-        required: &str,
-        visiting: &mut HashSet<String>,
-    ) -> bool {
-        visiting.insert(candidate.to_string())
-            && traits.get(candidate).is_some_and(|info| {
-                info.refines
-                    .iter()
-                    .any(|parent| parent == required || walk(traits, parent, required, visiting))
-            })
-    }
-    walk(traits, candidate, required, &mut HashSet::new())
+    mojito_types::conformance::refines(
+        &|name| traits.get(name).map(|info| info.refines.as_slice()),
+        candidate,
+        required,
+    )
 }
 
 /// Origin parameters a method body writes through via a parametric-mut ref
@@ -3291,34 +3221,5 @@ fn user_lifecycle_defeats(info: &StructInfo, kind: mojito_types::types::TrivialL
         // method beside the compiler-generated `__del__`, which stays
         // trivial, as the pin reads `MaybeUninit`'s.
         TrivialLifecycle::Deinitable => info.methods.contains_key("__deinit__"),
-    }
-}
-
-/// The traits `constraint`'s conformance atoms name.
-fn constraint_traits(
-    constraint: &GenericConstraint,
-    named: &mut std::collections::BTreeSet<String>,
-) {
-    use GenericConstraint::{
-        And, Conforms, ConformsPack, Not, Or, PackPredicate, Trivial, WithMessage,
-    };
-    use mojito_types::types::{PackPredicateRef, trivial_predicate_spelling};
-    match constraint {
-        Conforms { trait_name, .. } | ConformsPack { trait_name, .. } => {
-            named.insert(trait_name.clone());
-        }
-        Trivial(kind, _)
-        | PackPredicate {
-            predicate: PackPredicateRef::Trivial(kind),
-            ..
-        } => {
-            named.insert(trivial_predicate_spelling(*kind).to_string());
-        }
-        WithMessage(inner, _) | Not(inner) => constraint_traits(inner, named),
-        And(left, right) | Or(left, right) => {
-            constraint_traits(left, named);
-            constraint_traits(right, named);
-        }
-        _ => {}
     }
 }

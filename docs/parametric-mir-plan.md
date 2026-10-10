@@ -153,7 +153,7 @@ substituted type. P2 includes lifecycle members, so none of this waits for
 P3.
 
 **Availability.** A conditional member's `where` clause is on the generator,
-with the conformance rows that decide it, and `native::mono` evaluates it
+with the conformance facts that decide it, and `native::mono` evaluates it
 under each instance's bindings. A demanded member its instance disproves is
 an error, and a discovered one is skipped. The contract note's §Availability
 has the rules.

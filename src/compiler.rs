@@ -371,7 +371,6 @@ impl Compiler {
         Ok((
             program,
             PackageExports {
-                interface: context.take_package_interface(),
                 interfaces,
                 prepared,
             },
@@ -426,8 +425,7 @@ impl Compiler {
         exports: Option<&mut Vec<Stmt>>,
     ) -> Result<CompiledProgram, CompilerError> {
         let _compile = timing::span("compile");
-        if let Some((package, installed)) = &package {
-            context.import_package(Arc::clone(&package.interface));
+        if let Some((_, installed)) = &package {
             context.install(installed.clone());
         }
         let prepared = {
@@ -571,7 +569,6 @@ impl Compiler {
 /// recorded of it as a whole, its check's library interface, and the
 /// program as its `prepare` left it.
 pub(crate) struct PackageExports {
-    pub interface: PackageInterface,
     pub interfaces: crate::checker::InterfaceExport,
     pub prepared: Vec<Stmt>,
 }

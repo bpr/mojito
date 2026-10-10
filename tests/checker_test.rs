@@ -7679,41 +7679,6 @@ fn later_lifted_module_constant_still_reports_its_own_rejection() {
 }
 
 #[test]
-fn a_compiled_package_body_is_taken_as_checked() {
-    // A package's bodies were checked when it was built: an importer checks
-    // the package's declarations from their source, never its bodies.
-    let mut package = parse("def f() -> Int:\n    return \"text\"\n").expect("parse");
-    mojito::ast::stamp_source(&mut package, "pkg.mojo");
-    let mut own = parse("def main():\n    print(f() + 1)\n").expect("parse");
-    mojito::ast::stamp_source(&mut own, "main.mojo");
-    let program: Vec<_> = package.into_iter().chain(own).collect();
-    assert!(
-        check_program(&program).is_err(),
-        "checked from source, the body is ill-typed"
-    );
-    let mut context = mojito::checker::CheckContext::new();
-    context.import_package(std::sync::Arc::new(mojito::interface::PackageInterface {
-        modules: ["pkg.mojo".to_string()].into(),
-        ..Default::default()
-    }));
-    let checked = mojito::checker::check_program_in(&program, &mut context)
-        .expect("the package's body is taken as checked");
-    let bodies: Vec<usize> = checked
-        .statements()
-        .iter()
-        .filter_map(|statement| match &statement.kind {
-            mojito::ast::StmtKind::Def { body, .. } => Some(body.len()),
-            _ => None,
-        })
-        .collect();
-    assert_eq!(
-        bodies,
-        [0, 1],
-        "the handoff keeps the package's declaration alone"
-    );
-}
-
-#[test]
 fn an_installed_declaration_that_does_not_decode_is_reported_where_named() {
     // An importer decodes a declaration's record when a lookup first names
     // it, so a record that does not decode is a failure the lookup reports,
@@ -7734,7 +7699,7 @@ fn an_installed_declaration_that_does_not_decode_is_reported_where_named() {
     let mut records = building
         .take_interfaces()
         .expect("the library exports")
-        .records(Vec::new(), Vec::new())
+        .records(Vec::new(), Vec::new(), Vec::new())
         .expect("the library records");
     records
         .declarations
@@ -7789,7 +7754,7 @@ fn an_installed_module_interface_checks_like_its_statements() {
     let records = building
         .take_interfaces()
         .expect("the library exports")
-        .records(Vec::new(), Vec::new())
+        .records(Vec::new(), Vec::new(), Vec::new())
         .expect("the library records");
     let declarations = mojito::checked_package::PackageDeclarations::of_records(records)
         .expect("the records encode");

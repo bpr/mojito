@@ -227,15 +227,16 @@ fn build(root: &Path, header: &PackageHeader) -> Result<Vec<u8>, CompilerError> 
         })
         .collect::<Result<Vec<_>, String>>()
         .map_err(|error| CompilerError::Verify(vec![error]))?;
-    let mut interface = exports.interface;
-    interface.modules = packaged
-        .iter()
-        .filter_map(|statement| statement.module.clone())
-        .collect();
-    interface.names = packaged
-        .iter()
-        .filter_map(|statement| declared_name(statement))
-        .collect();
+    let interface = PackageInterface {
+        modules: packaged
+            .iter()
+            .filter_map(|statement| statement.module.clone())
+            .collect(),
+        names: packaged
+            .iter()
+            .filter_map(|statement| declared_name(statement))
+            .collect(),
+    };
     let lowered = compiled.mir();
     let mut program = MirProgram {
         functions: Vec::new(),
@@ -264,6 +265,7 @@ fn build(root: &Path, header: &PackageHeader) -> Result<Vec<u8>, CompilerError> 
         .records(
             program.declarations.structs.clone(),
             program.declarations.functions.clone(),
+            program.declarations.traits.clone(),
         )
         .map_err(|error| CompilerError::Verify(vec![error]))?;
     write_package(header, &interface, &program, &modules, records)

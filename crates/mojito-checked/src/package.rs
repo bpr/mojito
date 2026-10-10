@@ -24,7 +24,7 @@
 //! declaration's.
 
 use crate::checked::{CallThroughEffect, TransferEffect};
-use crate::declaration::{FunctionDeclaration, StructDeclaration};
+use crate::declaration::{FunctionDeclaration, StructDeclaration, TraitDeclaration};
 use mojito_ast::ast::{Stmt, StmtKind};
 use mojito_symbol::symbol::{LiftedOwner, OV_SEP, OverloadLookup, OverloadSets, lifted_owner};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
@@ -145,6 +145,8 @@ pub struct LoweredDeclaration {
     pub structs: Vec<StructDeclaration>,
     /// Sorted by lowered name.
     pub functions: Vec<FunctionDeclaration>,
+    /// Its trait, with the traits it refines; sorted by name.
+    pub traits: Vec<TraitDeclaration>,
     /// The transfer effects the package's bodies record for each callable
     /// it declares, by callable identity, sorted.
     pub transfer_effects: Vec<(String, Vec<TransferEffect>)>,
@@ -375,6 +377,18 @@ impl PackageDeclarations {
     /// Every trait the package declares, sorted.
     pub fn traits(&self) -> &[String] {
         &self.traits
+    }
+
+    /// The trait declaration `name`, decoded on first use; `None` when the
+    /// package declares no such trait.
+    pub fn trait_declaration(&self, name: &str) -> Option<&TraitDeclaration> {
+        self.traits
+            .binary_search_by(|known| known.as_str().cmp(name))
+            .ok()?;
+        self.lowered_owning(name)?
+            .traits
+            .iter()
+            .find(|declaration| declaration.name == name)
     }
 
     /// The directory, which names every module and declaration record.
@@ -630,6 +644,21 @@ impl DeclarationRecords {
             .err()
             .ok_or_else(|| format!("function `{}` is placed twice", declaration.lowered_name))?;
         functions.insert(position, declaration);
+        Ok(())
+    }
+
+    /// Put `declaration` in the record of the trait it declares.
+    ///
+    /// # Errors
+    ///
+    /// No library declaration owns its name.
+    pub fn place_trait(&mut self, declaration: TraitDeclaration) -> Result<(), String> {
+        let traits = &mut self.record_of(&declaration.name)?.lowered.traits;
+        let position = traits
+            .binary_search_by(|placed| placed.name.as_bytes().cmp(declaration.name.as_bytes()))
+            .err()
+            .ok_or_else(|| format!("trait `{}` is placed twice", declaration.name))?;
+        traits.insert(position, declaration);
         Ok(())
     }
 

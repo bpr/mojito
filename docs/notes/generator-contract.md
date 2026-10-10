@@ -199,18 +199,21 @@ What the generator carries:
   `Vec<GenericConstraint>`, one entry per clause, serialized as binder
   constraints are. The operands name the owner's and the member's binders by
   `ParamRef`. No new type was needed.
-- **The conformance rows, on the struct.** `MirStructDeclaration.conformances`
-  holds one row per trait that an availability clause or a conformance
-  condition of the program names. A row lists conditions over the struct's
-  own binders, and an instance conforms when its arguments satisfy any of
-  them. No condition means no instance conforms. The checker builds the rows
-  from the same rules `conforms_to` applies to a struct
-  (`Checker::conformance_facts`), so the elaborator ranks nothing and
-  re-derives nothing. An importer builds them for its own structs only: a
-  package struct carries the package build's rows, and `mir::link` joins
-  an empty row for each trait the importer declares afresh.
-- **The declared traits, on the program.** `MirDeclarations.traits` lists
-  them. A compiler-known type conforms to none of them, and to a built-in
+- **The conformances, on the struct.** `MirStructDeclaration.declared`
+  holds the struct's declared conformances, each with its condition over
+  the struct's own binders. `MirStructDeclaration.conformances` holds its
+  synthesized answer for each lifecycle trait and `IsTrivially*` spelling,
+  which its methods and fields decide as well: a row lists conditions, and
+  an instance conforms when its arguments satisfy any of them. No condition
+  means no instance conforms. No struct is answered for any other trait
+  ahead of use: the elaborator decides one when a clause asks it, from the
+  declared conformances and the trait refinement graph, by the rule the
+  checker's `conforms_to` shares
+  (`mojito_types::conformance::struct_trait_rule`), so it ranks nothing and
+  re-derives nothing. A package struct carries the package build's facts,
+  and an importer adds nothing to it.
+- **The declared traits, on the program.** `MirDeclarations.traits` holds
+  each with its parents; a package's resolve on first lookup. A compiler-known type conforms to none of them, and to a built-in
   trait by its shape alone. That shape rule is one function,
   `mojito_types::conformance::leaf_conforms`, which the checker's
   `conforms_to` and the elaborator both call.
@@ -279,8 +282,8 @@ the list in view.
 | Member availability clauses | `MirFunctionDeclaration.availability`, serialized |
 | Bodies, ownership-checked, before drop elaboration | MIR text, one record per body in the package container (`mir::text::package`); the importer inserts drops as it decodes one |
 | Struct layout inputs: fields over binders | `MirStructDeclaration.fields` |
-| A struct's conformances, with their conditions | `MirStructDeclaration.conformances`, for the traits a clause or a condition names; the package's `asked_traits` makes an importer answer the ones its bodies ask, and an importer adds its own rows to a package struct |
-| Trait declarations: requirements and defaults | Names only (`MirDeclarations.traits`). An importer reads requirements and defaults from the library's source |
+| A struct's conformances, with their conditions | `MirStructDeclaration.declared`, and its lifecycle rows in `MirStructDeclaration.conformances`; any other conformance is decided from them when a clause asks it |
+| Trait declarations: requirements and defaults | Names and parents (`MirDeclarations.traits`, a package's in its trait's record). An importer reads requirements and defaults from the library's source |
 | Transfer and call-through summaries | The package interface (`checked::interface::PackageInterface`), per module-level callable |
 | Instantiation-time predicates of a body (`rebind`, lane constraints) | In the MIR body, which is all the elaborator reads of it (`value.rebind`, discharged per instance by `mono/rebind.rs`) |
 | Export set: every template, reached or not | Every function of every module the package compiled, with the modules' stamped paths and top-level names |
@@ -290,7 +293,7 @@ the list in view.
 | Target assumptions | None in parametric MIR. Layout is asked only of concrete types |
 | Cache key: source hash, compiler identity, dependency keys | The build identity, which digests the library's source with the compiler's (root `build.rs`), and the library's root path (`src/package.rs`) |
 
-P2 added two rows: availability clauses, and the conformance rows the
+P2 added two rows: availability clauses, and the conformance facts the
 elaborator's verdicts need. Both are declaration metadata, and both are in
 the package list, so neither is reshaped later.
 

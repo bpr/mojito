@@ -130,6 +130,17 @@ to evolve under the `0.x` compatibility rules.
   (`package.interfaces` 0.19 → 0.02 ms, `elaborate` 0.27 → 0.11 ms). The
   package grows from 1.55 to 1.57 MB, and its format is now
   `mojito-package 12`.
+- A struct's conformance to a trait is decided when a clause asks it
+  (R564), as Mojo decides it from the type's declared conformances and the
+  trait refinement graph: a struct declaration carries its declared
+  conformances and its lifecycle rows, and a trait declaration its
+  parents, and no compilation answers a struct for a trait ahead of use.
+  An importer no longer answers every reached library struct for a trait
+  the library never asks (`Absable`), and the package no longer records
+  the traits its bodies ask: a program asking one compiles 15% faster
+  (`check.conformances` 4.2 → 0.02 ms). MIR text schema 1.42 adds a
+  struct's `declared` list and each trait's parents; the package format
+  is now `mojito-package 13`.
 - A module under a search root is linked under its path there, whichever
   import reaches it first: `std/io/file.mojo` declares
   `__module$std$io$file$…`, not `__module$file$…`.

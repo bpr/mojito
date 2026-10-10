@@ -1412,6 +1412,22 @@ fn declaration_metadata_reprints_byte_identically() {
                 conditions: Vec::new(),
             },
         ],
+        declared: vec![
+            mojito_checked::checked::StructConformance {
+                trait_name: "Shape".into(),
+                conditions: vec![GenericConstraint::Bool(true)],
+            },
+            mojito_checked::checked::StructConformance {
+                trait_name: "Copyable".into(),
+                conditions: vec![GenericConstraint::Conforms {
+                    param: ParamRef {
+                        id: test_id("T"),
+                        name: "T".into(),
+                    },
+                    trait_name: "Copyable".into(),
+                }],
+            },
+        ],
         associated_types: vec![(
             "Element".into(),
             Ty::Param {
@@ -1448,6 +1464,7 @@ fn declaration_metadata_reprints_byte_identically() {
         explicit_destructors: HashMap::new(),
         explicit_destroy: None,
         conformances: Vec::new(),
+        declared: Vec::new(),
         associated_types: Vec::new(),
         associated_values: Vec::new(),
     };
@@ -1558,7 +1575,16 @@ fn declaration_metadata_reprints_byte_identically() {
     program.declarations = MirDeclarations {
         structs: vec![zebra, boxed],
         functions: vec![add, other],
-        traits: vec!["Shape".into(), "needs quoting!".into()],
+        traits: vec![
+            TraitDeclaration {
+                name: "Shape".into(),
+                refines: vec!["Copyable".into(), "needs quoting!".into()],
+            },
+            TraitDeclaration {
+                name: "needs quoting!".into(),
+                refines: Vec::new(),
+            },
+        ],
         imported: None,
     };
     assert_reprints(&program);

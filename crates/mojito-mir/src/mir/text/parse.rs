@@ -3,7 +3,7 @@ use crate::mir::{
     Const, FuncRef, MirBlock, MirCaptureAccess, MirCaptureMode, MirClosureCapture, MirDeclarations,
     MirFunction, MirFunctionDeclaration, MirInstr, MirInteriorOrigin, MirIntrinsicSubscript,
     MirLoan, MirParamArg, MirPlace, MirProgram, MirStructDeclaration, MirSubscriptArg,
-    MirSubscriptCall, MirTerm, Proj, Reg, SpanTable, UseMode,
+    MirSubscriptCall, MirTerm, Proj, Reg, SpanTable, TraitDeclaration, UseMode,
 };
 use mojito_ast::ast::{ArgConvention, Dtype, InfixOp, PrefixOp};
 use mojito_checked::checked::{

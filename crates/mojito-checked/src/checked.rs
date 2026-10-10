@@ -1643,23 +1643,24 @@ pub struct CheckedProgram {
     default_wrappers: Vec<CheckedDefaultWrapper>,
 }
 
-/// What decides a conformance below the checker: the declared traits, and
-/// each struct's answer for every trait a `where` clause or a conformance
-/// condition of the program names.
+/// What decides a conformance below the checker.
 ///
-/// An importer answers for its own structs only, and for a package struct
-/// only a trait the package never asked: the package's MIR declarations
-/// carry the rest.
+/// The program's own traits with their parents, and each of its own
+/// structs' declared conformances and synthesized lifecycle rows. The
+/// elaborator decides a struct's conformance from them when a clause asks
+/// it; a package's structs and traits carry the same facts in its
+/// declarations.
 #[derive(Debug, Clone, Default)]
 pub struct ConformanceFacts {
-    /// Every trait the program declares, sorted. A compiler-known type
-    /// conforms to none of them by its shape.
-    pub traits: Vec<String>,
+    /// Every trait the program declares, sorted by name. A compiler-known
+    /// type conforms to none of them by its shape.
+    pub traits: Vec<crate::declaration::TraitDeclaration>,
+    /// Each struct's synthesized lifecycle rows; see
+    /// [`crate::declaration::StructDeclaration::conformances`].
     pub structs: HashMap<String, Vec<StructConformance>>,
-    /// The traits an importer declares that no package module declares,
-    /// sorted: every package struct answers each with no conformance, a row
-    /// `mir::link` joins on first lookup.
-    pub foreign_traits: Vec<String>,
+    /// Each struct's declared conformances; see
+    /// [`crate::declaration::StructDeclaration::declared`].
+    pub declared: HashMap<String, Vec<StructConformance>>,
     /// Each struct's unparameterized associated types (`Element` of `List`),
     /// sorted by member, each over the struct's own binders. The elaborator
     /// solves `C.Element` from them once `C` is bound to an instance.

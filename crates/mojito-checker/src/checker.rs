@@ -49,6 +49,7 @@ use std::path::Path;
 use traits_support::*;
 
 use mojito_common::timing;
+use mojito_types::conformance::COMPILER_TRAITS;
 
 use bound_defaults::BoundDefaultArguments;
 use mojito_ast::ast::{
@@ -124,13 +125,6 @@ pub struct CheckContext {
     /// Per call through a bound, by the syntax identity the call keeps across
     /// passes, the requirement defaults it binds (`bound_defaults.rs`).
     bound_default_arguments: HashMap<SyntaxId, BoundDefaultArguments>,
-    /// The compiled package whose bodies this check takes as checked: its
-    /// declarations resolve from their interfaces ([`Self::install`]),
-    /// and its bodies may ask any trait it names of the program's types.
-    package: Option<std::sync::Arc<mojito_checked::interface::PackageInterface>>,
-    /// What the last check recorded of its program as a whole, the
-    /// interface of a package built from it.
-    package_interface: mojito_checked::interface::PackageInterface,
     /// The declaration interfaces of the package modules the program's link
     /// reached, attached to every pass in place of their statements.
     installed: Option<InstalledInterfaces>,
@@ -151,8 +145,6 @@ impl CheckContext {
             param_context: ParamContext::new(),
             body_fact_reuse: true,
             bound_default_arguments: HashMap::new(),
-            package: None,
-            package_interface: mojito_checked::interface::PackageInterface::default(),
             installed: None,
             record_interfaces: false,
             interfaces: None,
@@ -189,22 +181,6 @@ impl CheckContext {
         self.interfaces
             .take()
             .unwrap_or_else(|| Err("the check exported no interface".to_string()))
-    }
-
-    /// Check against `package`, whose bodies may ask any trait it names of
-    /// the program's types.
-    pub fn import_package(
-        &mut self,
-        package: std::sync::Arc<mojito_checked::interface::PackageInterface>,
-    ) {
-        self.package = Some(package);
-    }
-
-    /// What the last check recorded of its program as a whole, when it
-    /// exported its interfaces ([`Self::record_interfaces`]): the traits its
-    /// declarations and bodies ask; its `modules` and `names` are empty.
-    pub fn take_package_interface(&mut self) -> mojito_checked::interface::PackageInterface {
-        std::mem::take(&mut self.package_interface)
     }
 
     pub const fn param_context(&self) -> &ParamContext {
@@ -308,7 +284,6 @@ fn check_program_carrying(
         if let Some(installed) = &context.installed {
             checker.attach_interfaces(installed)?;
         }
-        checker.package.clone_from(&context.package);
         if let Some(previous) = &previous {
             checker.next_owner.set(previous.next_owner());
             checker.fresh_owner_cursor.set(previous.next_owner());
@@ -373,7 +348,6 @@ fn check_program_carrying(
     if context.record_interfaces {
         let _export = timing::span("export_interfaces");
         context.interfaces = Some(checker.export_interfaces(&expanded, &context.elaborated));
-        context.package_interface = checker.package_interface();
     }
     // Context managers are desugared by the checker; later phases see only
     // the ordinary statements it checked.
@@ -1032,8 +1006,6 @@ pub struct Checker {
     /// The module and name of the struct whose method is being checked, for
     /// the method's display name.
     method_site: Option<(Option<String>, String)>,
-    /// The compiled package whose bodies are taken as checked.
-    package: Option<std::sync::Arc<mojito_checked::interface::PackageInterface>>,
     /// The identity of every module-level callable and method whose body
     /// this pass checked, whose effect summaries a package keeps.
     top_level_callables: RefCell<HashSet<String>>,
@@ -1049,15 +1021,6 @@ pub struct Checker {
 impl Checker {
     pub fn new() -> Self {
         Self::new_seeded(HashMap::new(), HashMap::new())
-    }
-
-    /// What this pass recorded of its program as a whole.
-    fn package_interface(&self) -> mojito_checked::interface::PackageInterface {
-        mojito_checked::interface::PackageInterface {
-            modules: std::collections::BTreeSet::new(),
-            names: std::collections::BTreeSet::new(),
-            asked_traits: self.constrained_traits(),
-        }
     }
 
     fn new_seeded(
@@ -1226,7 +1189,6 @@ impl Checker {
             context: RefCell::new(CheckContext::default()),
             syntax_origins: mojito_ast::ast::SyntaxOrigins::default(),
             bound_default_arguments: RefCell::new(HashMap::new()),
-            package: None,
             top_level_callables: RefCell::new(HashSet::new()),
             rebind_assertions: RefCell::new(FactMap::default()),
             method_site: None,

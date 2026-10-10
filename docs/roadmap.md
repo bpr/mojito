@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R577**.
+Next free ID: **R580**.
 
 ## Ordered Work
 
@@ -49,26 +49,6 @@ belongs to is named in its title.
 Scope: what remains of the plan's stages, and what the pipeline order still
 leaves to close. A defect found on the way is filed by its kind; a
 divergence from the pin goes to a catch-up track, however small.
-
-- [ ] **R564 (P6) An importer answers a package struct's conformance to
-  a trait the package never asked, ahead of any use**
-
-  `Checker::conformance_facts` answers every reached package struct for
-  each builtin or package trait an importer's clause names that the
-  package's `asked_traits` lacks (`Absable` in a `comptime if`), and for a
-  user trait spelled with such a name (R510).
-  - It costs about 1.7 ms release, counted as
-    `check.conformances.package_rows`, and decodes every reached struct's
-    interface.
-  - The package build makes the same eager rows for its own
-    `asked_traits`.
-  - Upstream decides a type's conformance when a clause asks it, from the
-    type's declared conformances and the trait refinement graph.
-  - The lever: the elaborator decides a clause over a package struct from
-    its declaration's declared conformance list on demand, so no compilation
-    makes rows ahead of use.
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
 
 - [ ] **R572 (P6) A library module has two records, under two module
   tables**
@@ -3795,6 +3775,43 @@ for it, and an entry that waits on another names it. Five divergences are
 retained on purpose and re-probed rather than fixed; they are listed in
 [`docs/non-goals.md`](non-goals.md).
 
+- [ ] **R577 A struct conforms to a compiler-known trait it never
+  declares, such as `Boolable` or `Sized`**
+
+  Problem: `comptime if conforms_to(T, Sized)` holds for a plain
+  `@fieldwise_init` struct, `Optional[Int]`, and `String` in Mojito, where
+  the pin answers no for all three.
+  - Cause: the shared rule answers every compiler-known trait outside its
+    declared, lifecycle, and operation classes as always held
+    (`StructTraitRule::Shallow` in `mojito_types::conformance`, and the
+    checker's `conforms_to` `_ => true` arm).
+  - Upstream decides these from the type's declared conformances, as any
+    trait.
+  - The lever: turn `Shallow` into `Declared` once the bundled library
+    declares what upstream's does (R578).
+  - Pinned by `conformance/probes/conforms_to_undeclared_compiler_trait.mojo`.
+  - Found while landing R564 (2026-10-10).
+  - Depends on R578.
+  - Model: Opus, Not Planned.
+
+- [ ] **R578 Bundled library types declare other conformances than
+  upstream's**
+
+  Problem: `List[Int]` is neither `Equatable` nor `Defaultable` in Mojito,
+  where the pin says it is both, and `String` is `Iterable` in Mojito but
+  not at the pin.
+  - Cause: the bundled `List` declares neither conformance, and the bundled
+    `String` declares `Iterable` where upstream's does not.
+  - A conformance is now decided from the declared list alone, so the
+    declarations are the whole answer.
+  - The fix is to declare each bundled type's conformances as the pin's
+    library does, conditions included (`Equatable where T: Equatable`).
+  - Pinned by
+    `conformance/probes/conforms_to_library_declared_conformances.mojo`.
+  - Found while landing R564 (2026-10-10).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
 - [ ] **R525 Materialization errors omit Mojo's contextual notes**
 
   The crossing diagnostic has one message where Mojo distinguishes a bare read from a call argument.
@@ -3846,6 +3863,22 @@ retained on purpose and re-probed rather than fixed; they are listed in
   - No t-string needs the name: the checker calls `__make_tstring` by
     module path, so the prelude export only serves user spellings.
   - Found while landing R316 (2026-10-06).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R579 `Representable` and `Ceilable` resolve with no import, where
+  the pin needs one**
+
+  Problem: `conforms_to(T, Representable)` and `conforms_to(T, Ceilable)`
+  compile in Mojito with no import. The pin rejects the first as an unknown
+  declaration and asks for `from std.math import Ceilable` for the second.
+  - Cause: the checker resolves any name on its compiler-known trait list
+    (`mojito_types::conformance::COMPILER_TRAITS`) whether or not the
+    program imports it.
+  - The fix is to resolve a compiler-known trait only where upstream's
+    prelude or an import puts its name in scope.
+  - Pinned by `conformance/probes/compiler_trait_name_without_import.mojo`.
+  - Found while landing R564 (2026-10-10).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

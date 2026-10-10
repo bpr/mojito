@@ -1,5 +1,5 @@
 //! Trait support: method-requirement satisfaction, associated-requirement
-//! merging, and the built-in trait table.
+//! merging.
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
@@ -192,58 +192,6 @@ pub(super) fn method_callable_ty(method: &MethodSig) -> Ty {
         transfers: TransferSet::default(),
     }
 }
-
-/// Mojo's built-in traits that mojito recognizes in a type-parameter bound.
-/// User-defined traits (and conformance checking) are a later phase, so a bound
-/// must name one of these. `AnyType` is the least restrictive.
-pub(super) const BUILTIN_TRAITS: &[&str] = &[
-    "AnyType",
-    "Deinitable",
-    "Movable",
-    "Copyable",
-    "ImplicitlyCopyable",
-    "RegisterPassable",
-    "TrivialRegisterPassable",
-    "Defaultable",
-    "Representable",
-    "Writable",
-    "Writer",
-    "Boolable",
-    "Intable",
-    "Floatable",
-    "Indexer",
-    "Equatable",
-    "Comparable",
-    "Hashable",
-    "Hasher",
-    "Identifiable",
-    "Sized",
-    "SizedRaising",
-    "Iterable",
-    "IterableOwned",
-    "Iterator",
-    "Absable",
-    "Powable",
-    "Roundable",
-    "Ceilable",
-    "Floorable",
-    "Truncable",
-    "CeilDivable",
-    "CeilDivableRaising",
-    "DivModable",
-    "Addable",
-    "Subtractable",
-    "Multipliable",
-    "Divisible",
-    "FloorDivisible",
-    "Modable",
-    "ShiftLeftable",
-    "ShiftRightable",
-    "Andable",
-    "Orable",
-    "Xorable",
-    "Negatable",
-];
 
 /// A method's contract with its own binders canonicalized to signature slots
 /// (`canonical_generic_signature`): a witness spelled `def push[X: Hasher]`

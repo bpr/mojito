@@ -27,11 +27,18 @@ pub struct StructDeclaration {
     /// The struct's explicit-destruction obligation, when it is not
     /// `Deinitable`.
     pub explicit_destroy: Option<ExplicitDestroyObligation>,
-    /// The struct's answer for each trait a `where` clause or a conformance
-    /// condition of the program names, sorted by trait: an instance conforms
-    /// when its arguments satisfy any of the row's conditions. A concrete
-    /// instance's rows are decided, so each holds `Bool(true)` or nothing.
+    /// The struct's synthesized answer for each lifecycle trait and
+    /// `IsTrivially*` spelling (`mojito_types::conformance::LIFECYCLE_TRAITS`),
+    /// sorted by trait: an instance conforms when its arguments satisfy any
+    /// of the row's conditions. A concrete instance's rows are decided, so
+    /// each holds `Bool(true)` or nothing.
     pub conformances: Vec<StructConformance>,
+    /// The struct's declared conformances, in declaration order, each with
+    /// its condition (`Bool(true)` when it states none). A conformance to
+    /// any other trait is decided from them when a clause asks it, by
+    /// `mojito_types::conformance::struct_trait_rule`. A concrete
+    /// instance's are decided, likewise.
+    pub declared: Vec<StructConformance>,
     /// The struct's unparameterized associated types (`Element` of `List`),
     /// sorted by member, each over the struct's own binders: the elaborator
     /// solves `C.Element` from them once `C` is bound to an instance, so
@@ -57,6 +64,15 @@ impl StructDeclaration {
                 fields: obligation.fields.clone(),
             })
     }
+}
+
+/// A trait declaration as a conformance decision reads it: its name and
+/// the traits it refines.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct TraitDeclaration {
+    pub name: String,
+    /// Its parents, in declaration order.
+    pub refines: Vec<String>,
 }
 
 /// A struct's explicit-destruction obligation, apart from its destructors,

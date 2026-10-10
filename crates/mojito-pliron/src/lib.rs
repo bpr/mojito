@@ -1510,6 +1510,7 @@ mod tests {
                     explicit_destructors: HashMap::new(),
                     explicit_destroy: None,
                     conformances: Vec::new(),
+                    declared: Vec::new(),
                     associated_types: Vec::new(),
                     associated_values: Vec::new(),
                 }],

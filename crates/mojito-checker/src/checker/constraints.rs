@@ -88,7 +88,7 @@ impl Checker {
             && args.is_empty()
         {
             let name = mojito_ast::ast::canonical_trait_name(name);
-            if BUILTIN_TRAITS.contains(&name) || self.traits.contains_key(name) {
+            if COMPILER_TRAITS.contains(&name) || self.traits.contains_key(name) {
                 self.check_trait_name(name)?;
                 return Ok(CtMemberReq::Type {
                     bounds: vec![name.to_string()],

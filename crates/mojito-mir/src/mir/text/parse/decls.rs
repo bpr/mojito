@@ -61,10 +61,18 @@ impl Decoder {
                 functions.push(function);
             }
         }
-        // Schema 1.9 lists the declared traits; an older artifact names none.
+        // Schema 1.9 lists the declared traits, which schema 1.42 records
+        // with their parents; an older artifact names none.
         let traits = self
             .field(fields, "traits")
-            .map(|value| self.strings(value))
+            .ok()
+            .and_then(|value| self.list(value).ok())
+            .map(|values| {
+                values
+                    .iter()
+                    .filter_map(|value| self.trait_declaration(value))
+                    .collect()
+            })
             .unwrap_or_default();
         self.unknown(
             fields,
@@ -202,27 +210,10 @@ impl Decoder {
                 fields: obligated_fields,
             }
         });
-        // Schema 1.9 carries the conformance rows; an older artifact has none.
-        let conformances = self
-            .field(fields, "conformances")
-            .ok()
-            .and_then(|rows| self.list(rows).ok())
-            .map(|rows| {
-                rows.iter()
-                    .filter_map(|row| {
-                        let row_fields = self.record(row, "conformance").ok()?;
-                        let trait_name = self.req(row, row_fields, "trait", Self::symbol);
-                        let conditions =
-                            self.req(row, row_fields, "conditions", |d, v| Some(d.constraints(v)));
-                        self.unknown(row_fields, &["trait", "conditions"]);
-                        Some(mojito_checked::checked::StructConformance {
-                            trait_name: trait_name?,
-                            conditions: conditions?,
-                        })
-                    })
-                    .collect()
-            })
-            .unwrap_or_default();
+        // Schema 1.9 carries the conformance rows, and schema 1.42 the
+        // declared conformances; an older artifact has none.
+        let conformances = self.conformance_rows(fields, "conformances");
+        let declared = self.conformance_rows(fields, "declared");
         // Schema 1.12 carries the associated types; an older artifact has none.
         let associated_types = self
             .field(fields, "associated_types")
@@ -272,6 +263,7 @@ impl Decoder {
                 "explicit_destroy_declared",
                 "explicit_destroy_fields",
                 "conformances",
+                "declared",
                 "associated_types",
                 "associated_values",
             ],
@@ -285,6 +277,7 @@ impl Decoder {
             explicit_destructors,
             explicit_destroy,
             conformances,
+            declared,
             associated_types,
             associated_values,
         })
@@ -508,5 +501,52 @@ impl Decoder {
             }
             self.unknown(fields, &["id", "path", "module"]);
         }
+    }
+
+    /// A trait of the artifact's list: a schema 1.42 `trait` record, or an
+    /// older artifact's bare name, which records no parents.
+    fn trait_declaration(&mut self, value: &Value) -> Option<TraitDeclaration> {
+        if !matches!(value.kind, ValueKind::Record(..)) {
+            return Some(TraitDeclaration {
+                name: self.symbol(value)?,
+                refines: Vec::new(),
+            });
+        }
+        let fields = self.record(value, "trait").ok()?;
+        let name = self.req(value, fields, "name", Self::symbol);
+        let refines = self.req(value, fields, "refines", |d, v| Some(d.strings(v)));
+        self.unknown(fields, &["name", "refines"]);
+        Some(TraitDeclaration {
+            name: name?,
+            refines: refines?,
+        })
+    }
+
+    /// A struct's `conformance` records under `field`, none when it is
+    /// absent.
+    fn conformance_rows(
+        &mut self,
+        fields: &[Field],
+        field: &str,
+    ) -> Vec<mojito_checked::checked::StructConformance> {
+        self.field(fields, field)
+            .ok()
+            .and_then(|rows| self.list(rows).ok())
+            .map(|rows| {
+                rows.iter()
+                    .filter_map(|row| {
+                        let row_fields = self.record(row, "conformance").ok()?;
+                        let trait_name = self.req(row, row_fields, "trait", Self::symbol);
+                        let conditions =
+                            self.req(row, row_fields, "conditions", |d, v| Some(d.constraints(v)));
+                        self.unknown(row_fields, &["trait", "conditions"]);
+                        Some(mojito_checked::checked::StructConformance {
+                            trait_name: trait_name?,
+                            conditions: conditions?,
+                        })
+                    })
+                    .collect()
+            })
+            .unwrap_or_default()
     }
 }

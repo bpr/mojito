@@ -1,4 +1,4 @@
-# Mojito Textual MIR Format, Version 1.41
+# Mojito Textual MIR Format, Version 1.42
 
 This document is the normative specification of Mojito's textual verified-MIR
 artifact. The Rust data model in `src/mir.rs` and `src/mir/ir.rs` remains the
@@ -6,7 +6,7 @@ in-memory authority; this format is its stable inspection and interchange
 boundary. `docs/vm-instruction-set.md` explains execution semantics, while this
 document defines syntax and serialized data.
 
-Version 1.41 is implemented end to end for inspection and loading: canonical
+Version 1.42 is implemented end to end for inspection and loading: canonical
 in-memory disassembly, full-grammar assembly parsing, and artifact-loading
 verification (`mir::text::load_artifact`, which reports canonical-verifier
 findings at artifact source spans). Lossless print → parse → print round trips
@@ -22,10 +22,10 @@ which may be generic; it is always elaborated before it runs.
 Every artifact begins with exactly:
 
 ```text
-mojito-mir 1.41
+mojito-mir 1.42
 ```
 
-The writer emits 1.41. The reader accepts 1.0 through 1.41; *Schema 1.0*
+The writer emits 1.42. The reader accepts 1.0 through 1.42; *Schema 1.0*
 below says how a 1.0 artifact is read, and *Binder identity* under *Types*
 how a binder without an identity is.
 
@@ -104,6 +104,13 @@ Minor version 9 carries a struct member's `where` clauses
 (`availability` on a declaration), each struct's conformance rows
 (`conformances`), and the declared traits (`traits`). An older artifact reads
 as carrying none.
+
+Minor version 42 adds each struct's declared conformances (`declared`, the
+same `conformance` records, in declaration order) and records each declared
+trait as `trait { name: symbol, refines: [symbol...] }`, its parents in
+declaration order, where `traits` held bare names; a struct's
+`conformances` hold only its lifecycle rows. An older artifact's struct
+reads as declaring nothing, and its trait as refining nothing.
 
 Minor version 10 adds the signature origin `sig_carried(type)`: the source of
 a transfer effect whose body stores a value of a type over its binders. It
@@ -384,6 +391,7 @@ struct {
   explicit_destroy_declared: false,
   explicit_destroy_fields: [],
   conformances: [],
+  declared: [],
   associated_types: [],
   associated_values: []
 }
@@ -824,7 +832,7 @@ Unknown terminators and instructions are fatal for schema major version 1.
 ## Complete Artifact Example
 
 ```text
-mojito-mir 1.41
+mojito-mir 1.42
 artifact {
   features: [],
   files: [file { id: file0, path: present("main.mojo"), module: absent }],
@@ -865,10 +873,10 @@ library declaration, each library module's checker record, and each
 module's link record, one file per package. The bundled library's is the
 only producer today (`src/package.rs`). No part of a package is MIR text:
 it is a directory followed by bytecode records, as upstream's package is
-MLIR bytecode throughout. The format line is `mojito-package 12`.
+MLIR bytecode throughout. The format line is `mojito-package 13`.
 
 ```text
-mojito-package 12
+mojito-package 13
 <the directory's length, 8 bytes little-endian>
 <the directory, as bytecode>
 <the payload: every record, as bytecode>
@@ -898,7 +906,7 @@ mojito-package 12
   lowered part is `postcard` of `LoweredDeclaration`: every
   `MirStructDeclaration` and `MirFunctionDeclaration` the declaration
   lowers to (its own, its methods, and the functions nested in or lifted
-  from it), and the transfer and call-through effect summaries of its
+  from it), its trait with the traits it refines, and the transfer and call-through effect summaries of its
   callables, by callable identity, and the overload facts of the names the
   declaration owns (`mojito_symbol::symbol::OverloadSets`: its functions'
   arities, its methods' and its trait's requirements', its struct's
@@ -936,8 +944,7 @@ mojito-package 12
   records are copied out of the mapping, once per process, since the
   linker that reads them sits above MIR.
 - The interface is `postcard` of `PackageInterface`: the modules the
-  package compiled, their declarations' names, and the traits its bodies
-  ask.
+  package compiled and their declarations' names.
 - A body is `postcard` of its `MirFunction` (variable and register types
   written sorted) and its locations, one `(register, file id, start, end,
   origin slot)` row per located register, naming the `files` table

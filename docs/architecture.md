@@ -148,10 +148,9 @@ import (every compilation that links the bundled library):
 - **The MIR declarations** are attached, never copied
   (`mir::link::link_declarations`): the importer's `MirDeclarations` holds
   its own declarations and an `ImportedDeclarations`, the shared
-  `PackageDeclarations` (the declaration records' lowered parts) beside the conformance rows the importer adds to
-  package structs: its answers for a trait the package never asked, and an
-  empty row for each foreign trait (one the importer declares afresh),
-  joined on a struct's first lookup. `MirDeclarations::{function, structure}` answer from the
+  `PackageDeclarations` (the declaration records' lowered parts), to
+  which the importer adds nothing. `MirDeclarations::{function, structure,
+  trait_declaration}` answer from the
   program's own declarations first, then the package's, so every phase
   looks a declaration up by name; only a consumer of the whole program
   (the disassembler, through `MirDeclarations::materialized`) decodes them
@@ -175,9 +174,11 @@ import (every compilation that links the bundled library):
   position in the search order (`Linker::find_at_root`), as upstream's
   importer finds a module in a package: no library file is probed,
   canonicalized, or read.
-- **The interface** is what an importer's check reads of the package as a
-  whole: the modules the package compiled, their top-level names, and the
-  traits the package's bodies ask a type's conformance to. A callable's
+- **The interface** is what an importer reads of the package as a whole:
+  the modules the package compiled and their top-level names, from which
+  the driver decides that a program can import the package (no statement
+  of the program comes from one of those modules or redeclares one of
+  those names). The check reads none of it. A callable's
   transfer and call-through effect summaries ride in its declaration's
   record; the check reads one the first time a call names the callable and
   keeps it in the pass's effect map (`Checker::callee_transfer_effects`),
@@ -267,13 +268,13 @@ import (every compilation that links the bundled library):
   asks the program's own sets and then the reached package declaration
   owning the name, `package::PackageScope`), and links the
   package's MIR declarations (`mir::link`) before closing and verifying the
-  program's own functions. The check answers conformance rows for the
-  program's own structs alone (`Checker::conformance_facts`), as upstream's
-  importer decides only its own types' conformances: a package struct's
-  rows for the traits the package asked are in its MIR declaration, it
-  gains an empty row for each foreign trait at the link, and the check
-  answers it only for a builtin or package trait the package never asked
-  (R564).
+  program's own functions. The check states conformance facts for the
+  program's own structs and traits alone (`Checker::conformance_facts`),
+  and answers no struct for a trait ahead of use: a package struct's
+  conformance to any trait an importer's clause asks is decided by the
+  elaborator from the struct's declared conformances and the trait
+  declarations' parents, as upstream decides a conformance when a clause
+  asks it.
 - **The elaborator** (`native::mono::specialize_importing`) reads a callee
   the program does not define from the package. The body is drop-elaborated
   and verified as it is decoded, as upstream materializes a package body
@@ -2682,19 +2683,28 @@ still carries an availability clause or a conformance condition.
 
 A struct member's `where` clause is declaration metadata:
 `MirFunctionDeclaration.availability`. What decides it rides with it.
-`MirStructDeclaration.conformances` holds, per trait a clause or a
-conformance condition names, the conditions under which an instance conforms,
-and `MirDeclarations.traits` lists the declared traits. The checker builds
-the rows (`Checker::conformance_facts`); an importer's check builds them
-for its own structs, a package struct carrying the package build's, and
-`mir::link` joins an empty row for each trait the importer declares
-afresh. The elaborator evaluates a clause
-under an instance's bindings (`mono/availability.rs`) without ranking or
-re-deriving anything. A member its instance disproves is skipped when struct
+`MirStructDeclaration.declared` holds the struct's declared conformances,
+each with its condition over the struct's binders;
+`MirStructDeclaration.conformances` holds the struct's synthesized answer
+for each lifecycle trait and `IsTrivially*` spelling
+(`mojito_types::conformance::LIFECYCLE_TRAITS`), which depends on its
+methods and fields as well; and `MirDeclarations.traits` holds each declared
+trait with its parents (a package's, through `trait_declaration`, decoded on
+first lookup). The checker states these facts once per declaration
+(`Checker::conformance_facts`), the package build for every library struct
+and an importer's check for its own, and answers no struct for a trait
+ahead of use. The elaborator decides `conforms_to(S, X)` when a clause asks
+it, under an instance's bindings (`mono/availability.rs`), by the rule the
+checker shares (`mojito_types::conformance::struct_trait_rule`): a declared
+trait from the declared conformances that are `X` or refine it, a lifecycle
+trait from its row, an operation trait never, and any other compiler-known
+trait always. It ranks and re-derives nothing. A member its instance disproves is skipped when struct
 discovery reaches it and is an error when a call demands it. An instance that
 fails to materialize fails the compilation. The text schema carries the three
 fields from 1.9, and an older artifact reads as carrying none. Schema 1.10
-adds the `sig_carried(type)` signature origin.
+adds the `sig_carried(type)` signature origin; schema 1.42 adds a struct's
+`declared` list and each trait's parents, an older artifact's trait reading
+as parentless.
 
 A struct's unparameterized associated types ride the same way:
 `MirStructDeclaration.associated_types` holds each member's type over the
