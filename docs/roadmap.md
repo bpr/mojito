@@ -50,20 +50,6 @@ Scope: what remains of the plan's stages, and what the pipeline order still
 leaves to close. A defect found on the way is filed by its kind; a
 divergence from the pin goes to a catch-up track, however small.
 
-- [ ] **R572 (P6) A library module has two records, under two module
-  tables**
-
-  A package holds a module's link record (`module::package::PackageModule`:
-  its loads, exports, and namespaces) keyed by dotted name, and apart its
-  checker record (`ModuleRecord`: its overload sets, elaborated constants,
-  and module-scope facts) keyed by path in the declaration directory.
-  - Upstream's package holds one module record, which its importer's link
-    and front end both read.
-  - R563 changes how the checker record decodes, so the merge should
-    follow it.
-  - Depends on R563.
-  - Model: Opus, Not Planned.
-
 - [ ] **R573 (P6) A package's directory names each library function twice,
   and an importer decodes all of it eagerly**
 

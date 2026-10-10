@@ -10,16 +10,16 @@
 //! build's identity, which covers the library's source, and the library's
 //! root: like upstream's, the importer reads no library source to find it.
 
+use crate::checked_package::PackagedModule;
 use crate::compiler::{Compiler, CompilerError};
 use crate::interface::PackageInterface;
 use crate::mir::MirProgram;
 use crate::mir::text::package::{
-    PackageBodies, PackageBytes, PackageDeclarations, PackageHeader, PackagedModuleKey,
-    read_package, write_package,
+    PackageBodies, PackageBytes, PackageDeclarations, PackageHeader, read_package, write_package,
 };
 use crate::module::{LinkOptions, bundled_root, link_source_recording};
 use crate::module_package::{ModuleIdentity, PackageModules};
-use std::collections::{BTreeSet, HashSet};
+use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, OnceLock};
 
@@ -144,18 +144,24 @@ fn import(bytes: PackageBytes, header: &PackageHeader) -> Result<ImportedPackage
             package.header.compiler, package.header.root
         ));
     }
+    // The link records are copied out of the mapping, since the linker that
+    // reads them sits below the package's declarations.
+    let declarations = &package.declarations;
+    let modules = declarations
+        .modules()
+        .iter()
+        .enumerate()
+        .map(|(position, module)| {
+            let identity = ModuleIdentity {
+                name: module.name.clone(),
+                canonical: module.canonical.clone(),
+                path: module.path.clone(),
+            };
+            let bytes = declarations.link_record(position).unwrap_or_default();
+            (identity, bytes.to_vec())
+        });
     Ok(ImportedPackage {
-        modules: PackageModules::new(
-            &package.header.root,
-            package.modules.into_iter().map(|(key, bytes)| {
-                let identity = ModuleIdentity {
-                    name: key.name,
-                    canonical: key.canonical,
-                    path: key.path,
-                };
-                (identity, bytes)
-            }),
-        ),
+        modules: PackageModules::new(&package.header.root, modules),
         interface: Arc::new(package.interface),
         checked: Arc::new(crate::checker::DeclarationInterfaces::read(Arc::clone(
             &package.declarations,
@@ -194,44 +200,24 @@ fn build(root: &Path, header: &PackageHeader) -> Result<Vec<u8>, CompilerError> 
         .iter()
         .filter(|statement| statement.module.as_deref() != Some(entry_module.as_str()))
         .collect();
-    let recorded: HashSet<&str> = records
-        .iter()
-        .map(|(identity, _)| identity.canonical.as_str())
-        .collect();
-    let declaring: BTreeSet<&String> = packaged
-        .iter()
-        .filter_map(|statement| statement.module.as_ref())
-        .collect();
-    if let Some(path) = declaring
-        .into_iter()
-        .map(|module| {
-            Path::new(module)
-                .canonicalize()
-                .map_or_else(|_| module.clone(), |path| path.display().to_string())
-        })
-        .find(|canonical| !recorded.contains(canonical.as_str()))
-    {
-        return Err(CompilerError::Verify(vec![format!(
-            "the prepared library declares in `{path}`, which its link recorded no module for"
-        )]));
-    }
+    // A declaration of a module the link recorded no row for is refused
+    // when the records encode.
     let modules = records
-        .iter()
+        .into_iter()
         .map(|(identity, record)| {
-            let key = PackagedModuleKey {
-                name: identity.name.clone(),
-                canonical: identity.canonical.clone(),
-                path: identity.path.clone(),
-            };
-            Ok((key, record.encode()?))
+            let link = record
+                .encode()
+                .map_err(|error| format!("module `{}`: {error}", identity.name))?;
+            Ok(PackagedModule {
+                name: identity.name,
+                canonical: identity.canonical,
+                path: identity.path,
+                link,
+            })
         })
         .collect::<Result<Vec<_>, String>>()
         .map_err(|error| CompilerError::Verify(vec![error]))?;
     let interface = PackageInterface {
-        modules: packaged
-            .iter()
-            .filter_map(|statement| statement.module.clone())
-            .collect(),
         names: packaged
             .iter()
             .filter_map(|statement| declared_name(statement))
@@ -263,12 +249,13 @@ fn build(root: &Path, header: &PackageHeader) -> Result<Vec<u8>, CompilerError> 
     let records = exports
         .interfaces
         .records(
+            modules,
             program.declarations.structs.clone(),
             program.declarations.functions.clone(),
             program.declarations.traits.clone(),
         )
         .map_err(|error| CompilerError::Verify(vec![error]))?;
-    write_package(header, &interface, &program, &modules, records)
+    write_package(header, &interface, &program, records)
         .map_err(|error| CompilerError::Verify(vec![error.to_string()]))
 }
 
@@ -398,7 +385,6 @@ mod tests {
                 declarations: MirDeclarations::default(),
                 invariant_errors: Vec::new(),
             },
-            &[],
             crate::mir::text::package::DeclarationRecords::default(),
         )
         .expect("write")
@@ -552,8 +538,9 @@ mod tests {
             link_source_with_package(&source, entry, LinkOptions::default(), &package.modules)
                 .expect("links from the package")
                 .statements;
-        let packaged =
-            |statement: &&crate::ast::Stmt| package.interface.compiles(statement.module.as_deref());
+        let packaged = |statement: &&crate::ast::Stmt| {
+            package.declarations.compiles(statement.module.as_deref())
+        };
         // The program's own statements link as their source spells them.
         assert!(
             from_source
@@ -569,16 +556,22 @@ mod tests {
     #[test]
     fn every_library_module_has_an_interface() {
         let package = bundled_std_package().expect("the bundled library packages");
-        let list = package
-            .interface
-            .modules
+        let modules = package.declarations.modules();
+        let list = modules
             .iter()
-            .find(|module| module.ends_with("collections/list.mojo"))
+            .position(|module| module.name == "std.collections.list")
             .expect("the library has a list module");
-        assert!(package.checked.declares(list));
+        assert!(
+            package
+                .declarations
+                .directory()
+                .declarations
+                .iter()
+                .any(|entry| entry.module as usize == list)
+        );
         let installed = crate::checker::InstalledInterfaces::reaching(
             &package.checked,
-            package.interface.modules.iter().map(String::as_str),
+            0..modules.len() as u32,
         );
         assert_eq!(installed.decoded(), 0);
     }

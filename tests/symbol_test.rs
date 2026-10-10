@@ -748,7 +748,8 @@ fn program_overloads_ask_the_own_sets_then_the_owning_package_declaration() {
     // name from the record of the reached declaration owning it, decoding
     // each record only when a query names it.
     use mojito::checked_package::{
-        DeclarationRecords, DeclaringModules, PackageDeclarations, PackageScope, ProgramOverloads,
+        DeclarationRecords, DeclaringModules, PackageDeclarations, PackageScope, PackagedModule,
+        ProgramOverloads,
     };
     use mojito::symbol::{OverloadLookup, OverloadSets};
     use std::sync::Arc;
@@ -767,8 +768,13 @@ fn program_overloads_ask_the_own_sets_then_the_owning_package_declaration() {
         .partitioned(|name| declaring.declaration_of(name).map(str::to_string))
         .expect("every name has a declaration");
     let mut records = DeclarationRecords {
-        modules: ["/library/a.mojo", "/library/b.mojo"]
-            .map(String::from)
+        modules: ["a", "b"]
+            .map(|name| PackagedModule {
+                name: name.to_string(),
+                canonical: format!("/library/{name}.mojo"),
+                path: format!("/library/{name}.mojo"),
+                link: Vec::new(),
+            })
             .into(),
         declaring,
         ..DeclarationRecords::default()

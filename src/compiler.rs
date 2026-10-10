@@ -20,7 +20,6 @@ use crate::timing;
 use crate::{Stmt, ast::StmtKind, parse};
 use std::fmt;
 
-use crate::interface::PackageInterface;
 use crate::package::ImportedPackage;
 use std::path::Path;
 use std::sync::{Arc, OnceLock};
@@ -398,7 +397,7 @@ impl Compiler {
     ) -> Result<CompiledProgram, CompilerError> {
         if let Some(package) = self.std_package()
             && let Ok(linked) = link(Some(&package))
-            && imports_cleanly(&linked.statements, &package.interface)
+            && imports_cleanly(&linked.statements, &package)
         {
             return self.compile_importing(
                 &linked.statements,
@@ -586,11 +585,10 @@ const fn from_source(statements: Vec<Stmt>) -> LinkedProgram {
 /// lookup.
 fn importing(
     package: Arc<ImportedPackage>,
-    packaged: &[String],
+    packaged: &[u32],
 ) -> (Arc<ImportedPackage>, InstalledInterfaces) {
     let _decode = timing::span("package.interfaces");
-    let installed =
-        InstalledInterfaces::reaching(&package.checked, packaged.iter().map(String::as_str));
+    let installed = InstalledInterfaces::reaching(&package.checked, packaged.iter().copied());
     (package, installed)
 }
 
@@ -598,16 +596,16 @@ fn importing(
 /// of the package's modules, so no statement comes from one, and none of
 /// the program's own reuses a name the package declares, as a second copy
 /// of a packaged module, or an entry file inside the library, would.
-fn imports_cleanly(linked: &[Stmt], package: &PackageInterface) -> bool {
+fn imports_cleanly(linked: &[Stmt], package: &ImportedPackage) -> bool {
     linked.iter().all(|statement| {
         let declared = match &statement.kind {
             StmtKind::Def { name, .. }
             | StmtKind::Struct { name, .. }
             | StmtKind::Trait { name, .. }
-            | StmtKind::Comptime { name, .. } => package.names.contains(name),
+            | StmtKind::Comptime { name, .. } => package.interface.names.contains(name),
             _ => false,
         };
-        !declared && !package.compiles(statement.module.as_deref())
+        !declared && !package.declarations.compiles(statement.module.as_deref())
     })
 }
 

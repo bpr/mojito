@@ -19,15 +19,17 @@
 //! first and the package's owning declaration on a miss
 //! ([`ProgramOverloads`]).
 //!
-//! The directory lists each library module by path, which no record of its
-//! own describes: a module's compile-time facts and constants are each its
-//! declaration's.
+//! The directory also holds the package's one module table: each library
+//! module, by dotted name, beside its source file's identity and the record
+//! its importer's link reads (its loads, exports, and namespaces), which
+//! every declaration names by position. A module's compile-time facts and
+//! constants are each its declaration's.
 
 use crate::checked::{CallThroughEffect, TransferEffect};
 use crate::declaration::{FunctionDeclaration, StructDeclaration, TraitDeclaration};
 use mojito_ast::ast::{Stmt, StmtKind};
 use mojito_symbol::symbol::{LiftedOwner, OV_SEP, OverloadLookup, OverloadSets, lifted_owner};
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::collections::{BTreeMap, HashMap};
 use std::ops::{Deref, Range};
 use std::sync::{Arc, Mutex, OnceLock};
 
@@ -173,7 +175,8 @@ impl LoweredDeclaration {
 /// Where every declaration record of a package lies in its payload.
 #[derive(Debug, Default, serde::Serialize, serde::Deserialize)]
 pub struct DeclarationDirectory {
-    /// Each library module, sorted by path.
+    /// Each library module, sorted by dotted name: the package's module
+    /// table.
     pub modules: Vec<ModuleEntry>,
     /// Each library declaration's record, sorted by name.
     pub declarations: Vec<DeclarationEntry>,
@@ -189,10 +192,22 @@ impl DeclarationDirectory {
     /// whose names are not strictly sorted, which the lookups by name rely
     /// on, or whose positions name nothing.
     fn validate(&self, length: usize) -> Result<(), String> {
-        for range in self.declarations.iter().map(|entry| &entry.record) {
+        let ranges = self
+            .declarations
+            .iter()
+            .map(|entry| &entry.record)
+            .chain(self.modules.iter().map(|module| &module.link));
+        for range in ranges {
             if range.start > range.end || range.end > length {
-                return Err("a declaration record overruns the payload".to_string());
+                return Err("a declaration or module record overruns the payload".to_string());
             }
+        }
+        if !self
+            .modules
+            .windows(2)
+            .all(|pair| pair[0].name < pair[1].name)
+        {
+            return Err("the modules are not strictly sorted".to_string());
         }
         for entry in &self.declarations {
             if entry.residue > entry.record.len() || entry.module as usize >= self.modules.len() {
@@ -236,9 +251,27 @@ impl DeclarationDirectory {
     }
 }
 
+/// One library module: its identity, and where its link record lies.
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
 pub struct ModuleEntry {
+    /// Its dotted name (`std.io.file`).
+    pub name: String,
+    /// The canonical path of its source file, its identity in a link.
+    pub canonical: String,
+    /// The path its declarations' locations name.
     pub path: String,
+    /// Its link record.
+    pub link: Range<usize>,
+}
+
+/// One library module as a package build writes it: its identity and its
+/// encoded link record.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PackagedModule {
+    pub name: String,
+    pub canonical: String,
+    pub path: String,
+    pub link: Vec<u8>,
 }
 
 /// One library declaration: what its record answers, and where it lies.
@@ -394,6 +427,29 @@ impl PackageDeclarations {
     /// The directory, which names every module and declaration record.
     pub const fn directory(&self) -> &DeclarationDirectory {
         &self.directory
+    }
+
+    /// The package's module table, sorted by dotted name.
+    pub fn modules(&self) -> &[ModuleEntry] {
+        &self.directory.modules
+    }
+
+    /// The encoded link record of the module at `position` in the module
+    /// table.
+    pub fn link_record(&self, position: usize) -> Option<&[u8]> {
+        let module = self.directory.modules.get(position)?;
+        Some(self.payload.get(&module.link))
+    }
+
+    /// Whether a declaration stamped with `module` comes from one of the
+    /// package's modules, so its body is in the package.
+    pub fn compiles(&self, module: Option<&str>) -> bool {
+        module.is_some_and(|module| {
+            self.directory
+                .modules
+                .iter()
+                .any(|entry| entry.path == module)
+        })
     }
 
     /// The lowered part of the declaration at `entry`, decoded on first
@@ -586,13 +642,13 @@ impl OverloadLookup for ProgramOverloads {
 
 /// The declarations a package build writes.
 ///
-/// Each library module, and each library declaration's record: its lowered
+/// The module table, and each library declaration's record: its lowered
 /// part, which the build places name by name ([`Self::place_struct`] and
 /// its siblings), and its checker residue.
 #[derive(Debug, Default)]
 pub struct DeclarationRecords {
-    /// Each library module's path.
-    pub modules: BTreeSet<String>,
+    /// Each library module, as the build's link recorded it.
+    pub modules: Vec<PackagedModule>,
     /// Each declaration's record, by name.
     pub declarations: BTreeMap<String, DeclarationRecord>,
     /// The module declaring each library declaration.
@@ -714,17 +770,26 @@ impl DeclarationRecords {
     ///
     /// # Errors
     ///
-    /// A record that does not encode, or a declaration of no recorded
-    /// module.
+    /// A record that does not encode, a module recorded twice, or a
+    /// declaration of no recorded module.
     pub fn encode(
-        self,
+        mut self,
         append: &mut impl FnMut(&[u8]) -> Range<usize>,
     ) -> Result<DeclarationDirectory, String> {
+        self.modules
+            .sort_by(|left, right| left.name.cmp(&right.name));
+        if let Some(pair) = self
+            .modules
+            .windows(2)
+            .find(|pair| pair[0].name == pair[1].name)
+        {
+            return Err(format!("module `{}` is recorded twice", pair[0].name));
+        }
         let positions: HashMap<&str, u32> = self
             .modules
             .iter()
             .enumerate()
-            .map(|(position, module)| (module.as_str(), position as u32))
+            .map(|(position, module)| (module.path.as_str(), position as u32))
             .collect();
         let mut directory = DeclarationDirectory::default();
         let mut structs = Vec::new();
@@ -781,7 +846,12 @@ impl DeclarationRecords {
         directory.modules = self
             .modules
             .into_iter()
-            .map(|path| ModuleEntry { path })
+            .map(|module| ModuleEntry {
+                link: append(&module.link),
+                name: module.name,
+                canonical: module.canonical,
+                path: module.path,
+            })
             .collect();
         Ok(directory)
     }

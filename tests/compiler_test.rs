@@ -3908,10 +3908,10 @@ fn an_importer_answers_no_package_struct_conformance_again() {
 
 #[test]
 fn a_package_reads_back_to_the_bytes_it_was_written_as() {
-    use mojito::checked_package::{DeclarationRecords, DeclaringModules, InterfaceTable};
-    use mojito::mir::text::package::{
-        PackageBytes, PackageHeader, PackagedModuleKey, read_package, write_package,
+    use mojito::checked_package::{
+        DeclarationRecords, DeclaringModules, InterfaceTable, PackagedModule,
     };
+    use mojito::mir::text::package::{PackageBytes, PackageHeader, read_package, write_package};
     let compiled = Compiler::default()
         .with_std_package(false)
         .compile_source(
@@ -3921,12 +3921,22 @@ fn a_package_reads_back_to_the_bytes_it_was_written_as() {
         .expect("compile");
     let program = compiled.drop_elaborated_mir();
     // Every declaration's record, opened as a package build's check opens
-    // it: under its declaring module, holding the traits it declares.
+    // it: under its declaring module, holding the traits it declares. Each
+    // module's row holds a link record the container does not read.
     let records = || {
         let declaring =
             DeclaringModules::of(compiled.checked().statements()).expect("one module per name");
+        let paths: std::collections::BTreeSet<&String> = declaring.modules().collect();
         let mut records = DeclarationRecords {
-            modules: declaring.modules().cloned().collect(),
+            modules: paths
+                .into_iter()
+                .map(|path| PackagedModule {
+                    name: path.clone(),
+                    canonical: path.clone(),
+                    path: path.clone(),
+                    link: vec![0, 10, 255, 10],
+                })
+                .collect(),
             ..DeclarationRecords::default()
         };
         for name in program
@@ -3964,17 +3974,24 @@ fn a_package_reads_back_to_the_bytes_it_was_written_as() {
         root: "/probe".to_string(),
     };
     let interface = mojito::interface::PackageInterface::default();
-    let modules = vec![(
-        PackagedModuleKey {
-            name: "module".to_string(),
-            canonical: "/probe/module.mojo".to_string(),
-            path: "/probe/module.mojo".to_string(),
-        },
-        vec![0, 10, 255, 10],
-    )];
-    let bytes = write_package(&header, &interface, program, &modules, records()).expect("write");
+    let modules = records().modules;
+    let bytes = write_package(&header, &interface, program, records()).expect("write");
     let package = read_package(PackageBytes::Owned(bytes.clone())).expect("read");
-    assert_eq!(package.modules, modules);
+    assert!(!modules.is_empty());
+    assert_eq!(package.declarations.modules().len(), modules.len());
+    for (position, (read, written)) in package
+        .declarations
+        .modules()
+        .iter()
+        .zip(&modules)
+        .enumerate()
+    {
+        assert_eq!((&read.name, &read.path), (&written.name, &written.path));
+        assert_eq!(
+            package.declarations.link_record(position),
+            Some(written.link.as_slice())
+        );
+    }
     assert_eq!(package.header, header);
     assert_eq!(package.bodies.materialized(), 0, "bodies decode on demand");
     assert_eq!(
@@ -3993,14 +4010,7 @@ fn a_package_reads_back_to_the_bytes_it_was_written_as() {
     assert!(package.bodies.failures().is_empty());
     assert!(package.declarations.failures().is_empty());
     assert_eq!(
-        write_package(
-            &header,
-            &package.interface,
-            &again,
-            &package.modules,
-            records()
-        )
-        .expect("rewrite"),
+        write_package(&header, &package.interface, &again, records()).expect("rewrite"),
         bytes
     );
     let truncated = bytes[..bytes.len() - 4].to_vec();

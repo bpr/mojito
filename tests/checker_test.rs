@@ -7699,7 +7699,12 @@ fn an_installed_declaration_that_does_not_decode_is_reported_where_named() {
     let mut records = building
         .take_interfaces()
         .expect("the library exports")
-        .records(Vec::new(), Vec::new(), Vec::new())
+        .records(
+            vec![library_module(library_path)],
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+        )
         .expect("the library records");
     records
         .declarations
@@ -7711,7 +7716,7 @@ fn an_installed_declaration_that_does_not_decode_is_reported_where_named() {
     let package = std::sync::Arc::new(
         DeclarationInterfaces::read(std::sync::Arc::new(declarations)).expect("reads"),
     );
-    let installed = InstalledInterfaces::reaching(&package, [library_path]);
+    let installed = InstalledInterfaces::reaching(&package, [0]);
     let mut context = CheckContext::new();
     context.install(installed.clone());
     let own = parse("def main():\n    var n: Int = double(2)\n").expect("parse error");
@@ -7754,20 +7759,24 @@ fn an_installed_module_interface_checks_like_its_statements() {
     let records = building
         .take_interfaces()
         .expect("the library exports")
-        .records(Vec::new(), Vec::new(), Vec::new())
+        .records(
+            vec![library_module(library_path)],
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+        )
         .expect("the library records");
     let declarations = mojito::checked_package::PackageDeclarations::of_records(records)
         .expect("the records encode");
     let package = std::sync::Arc::new(
         DeclarationInterfaces::read(std::sync::Arc::new(declarations)).expect("reads"),
     );
-    assert!(package.declares(library_path));
     let install = |installed: &InstalledInterfaces| {
         let mut context = CheckContext::new();
         context.install(installed.clone());
         context
     };
-    let reaching = || InstalledInterfaces::reaching(&package, [library_path]);
+    let reaching = || InstalledInterfaces::reaching(&package, [0]);
     assert_eq!(
         reaching().decoded(),
         0,
@@ -7791,4 +7800,15 @@ fn an_installed_module_interface_checks_like_its_statements() {
     let installed =
         check_program_in(&wrong, &mut install(&reaching())).expect_err("rejected installed");
     assert_eq!(installed.to_string(), whole.to_string());
+}
+
+/// The module-table row of the library module `path`, as a package build's
+/// link records it.
+fn library_module(path: &str) -> mojito::checked_package::PackagedModule {
+    mojito::checked_package::PackagedModule {
+        name: "library".to_string(),
+        canonical: path.to_string(),
+        path: path.to_string(),
+        link: Vec::new(),
+    }
 }

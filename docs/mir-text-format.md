@@ -869,14 +869,14 @@ artifact {
 ## Package Container
 
 A compiled package (`mir::text::package`) holds MIR bodies, one record per
-library declaration, each library module's checker record, and each
-module's link record, one file per package. The bundled library's is the
+library declaration, and one module table holding each module's link
+record, one file per package. The bundled library's is the
 only producer today (`src/package.rs`). No part of a package is MIR text:
 it is a directory followed by bytecode records, as upstream's package is
-MLIR bytecode throughout. The format line is `mojito-package 13`.
+MLIR bytecode throughout. The format line is `mojito-package 14`.
 
 ```text
-mojito-package 13
+mojito-package 14
 <the directory's length, 8 bytes little-endian>
 <the directory, as bytecode>
 <the payload: every record, as bytecode>
@@ -884,9 +884,8 @@ mojito-package 13
 
 - The directory (`PackageDirectory`) holds the header (`package`,
   `compiler`, `root`), the payload's length, the payload range of the
-  interface and of the `files` table, the declaration directory, each link
-  module record (by dotted module name, beside its source file's canonical
-  path and the path its declarations are stamped with), and each body. A
+  interface and of the `files` table, the declaration directory, and each
+  body. A
   body's entry carries its name, its runtime parameter count, and its
   `ref_params` mask, so overload resolution and the loan analysis read a
   body's signature without decoding it; the bodies keep package order,
@@ -895,13 +894,20 @@ mojito-package 13
   payload, whose payload length differs, or whose names are not strictly
   sorted.
 - The declaration directory (`mojito_checked::package::DeclarationDirectory`)
-  lists each library module by path, and each library
-  declaration, sorted by linked name, with its module, every checker table
+  holds the package's one module table: each library module the build's
+  link recorded, sorted by dotted name, with its source file's canonical
+  path, the path its declarations are stamped with, and its link record's
+  range, as upstream's package holds one module tree its importer's link
+  and front end both read. It lists each library declaration, sorted by
+  linked name, with its module's position in that table, every checker table
   key its record answers, every method its struct declares, the name of
   every struct and function declaration its record holds, and its record's
   range. Two position lists order every struct and every function
   declaration by name (the package order), so a lookup by name
-  binary-searches them without decoding a record.
+  binary-searches them without decoding a record. A reader refuses a
+  module table whose names are not strictly sorted or whose link records
+  leave the payload, and a build refuses a declaration whose module the
+  link recorded no row for.
 - A declaration's record is the declaration once, read by every phase. Its
   lowered part is `postcard` of `LoweredDeclaration`: every
   `MirStructDeclaration` and `MirFunctionDeclaration` the declaration
@@ -940,11 +946,13 @@ mojito-package 13
 - The importer maps the file (`PackageBytes`, `memmap2`) and reads only
   the directory and the interface eagerly. A cached package is written to
   a private partial file and renamed over its path, and removed only by
-  unlinking, so a mapping's bytes never change under it. Link module
-  records are copied out of the mapping, once per process, since the
-  linker that reads them sits above MIR.
-- The interface is `postcard` of `PackageInterface`: the modules the
-  package compiled and their declarations' names.
+  unlinking, so a mapping's bytes never change under it. Link records are
+  copied out of the mapping, once per process, since the linker that
+  reads them sits below the package's declarations. Whether a statement
+  comes from a module the package compiled is the module table's answer
+  (`PackageDeclarations::compiles`).
+- The interface is `postcard` of `PackageInterface`: the names of the
+  declarations the package's modules make.
 - A body is `postcard` of its `MirFunction` (variable and register types
   written sorted) and its locations, one `(register, file id, start, end,
   origin slot)` row per located register, naming the `files` table
@@ -955,11 +963,12 @@ mojito-package 13
   carried as bare numbers, under `origin::encoding_packaged_owners`, as
   the MIR text spells them `$v<n>` (R561).
 - A link module record is opaque to the container: it is the linker's
-  (`module::package::PackageModule`), `postcard` bytecode of the module's
-  dotted name, the dotted names of the loads its link asked for, and its
-  export and namespace tables; it holds no declaration. It decodes when
-  the importer's link reaches the module; one that does not decode, or
-  names another module, links from source.
+  (`module::package::PackageModule`), `postcard` bytecode of the dotted
+  names of the loads its link asked for and its export and namespace
+  tables; its row in the module table names the module, and it holds no
+  declaration. It decodes when the importer's link reaches the module; one
+  that does not decode, or whose row names another source file, links from
+  source.
 - The importer refuses a package whose `compiler` or `root` differs
   from its own build identity, which covers the library's source, and
   the library root it links against.

@@ -20,7 +20,7 @@ use mojito_checked::declaration::{FunctionDeclaration, StructDeclaration};
 pub(super) use mojito_checked::package::InterfaceTable as Table;
 use mojito_checked::package::{
     DeclarationRecord, DeclarationRecords, DeclaringModules, LoweredDeclaration,
-    PackageDeclarations,
+    PackageDeclarations, PackagedModule,
 };
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex, OnceLock};
@@ -36,8 +36,6 @@ pub struct DeclarationInterfaces {
     bindings: HashMap<String, (u32, u32)>,
     /// Each module's bindings, sorted by name.
     module_bindings: Vec<Vec<String>>,
-    /// Each module's position, by path.
-    modules: HashMap<String, u32>,
     /// Per method name, each declaration whose struct declares it.
     methods: HashMap<String, Vec<u32>>,
 }
@@ -89,36 +87,23 @@ impl DeclarationInterfaces {
                 bindings.insert(name.clone(), (module as u32, position as u32));
             }
         }
-        let modules = directory
-            .modules
-            .iter()
-            .enumerate()
-            .map(|(position, module)| (module.path.clone(), position as u32))
-            .collect();
         Ok(Self {
             package,
             keys,
             bindings,
             module_bindings,
-            modules,
             methods,
         })
-    }
-
-    /// Whether `module` has an interface here.
-    pub fn declares(&self, module: &str) -> bool {
-        self.modules.contains_key(module)
     }
 }
 
 /// What a package build's check exports of its library.
 ///
-/// Each library module's path, each declaration's rows, which
+/// Each declaration's rows, which
 /// [`Self::records`] encodes as the residue of the declaration's record
 /// once its lowering is known, and the overload facts and effect summaries
 /// its lowered part holds.
 pub struct InterfaceExport {
-    modules: std::collections::BTreeSet<String>,
     declarations: BTreeMap<String, (DeclarationInterface, Vec<(Table, String)>)>,
     /// Each declaration's overload facts, by declaration.
     overloads: BTreeMap<String, mojito_symbol::symbol::OverloadSets>,
@@ -134,15 +119,15 @@ impl std::fmt::Debug for InterfaceExport {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             formatter,
-            "InterfaceExport({} modules, {} declarations)",
-            self.modules.len(),
+            "InterfaceExport({} declarations)",
             self.declarations.len()
         )
     }
 }
 
 impl InterfaceExport {
-    /// The package's declaration records: `structs`, `functions`, and
+    /// The package's declaration records, under the module table `modules`
+    /// the build's link recorded: `structs`, `functions`, and
     /// `traits`, the library's lowered declarations, and the check's overload facts and
     /// effect summaries, each in the record of the declaration it belongs to, beside that
     /// declaration's residue, which leaves out what its lowered
@@ -156,12 +141,13 @@ impl InterfaceExport {
     /// that does not encode.
     pub fn records(
         self,
+        modules: Vec<PackagedModule>,
         structs: Vec<StructDeclaration>,
         functions: Vec<FunctionDeclaration>,
         traits: Vec<mojito_checked::declaration::TraitDeclaration>,
     ) -> Result<DeclarationRecords, String> {
         let mut records = DeclarationRecords {
-            modules: self.modules,
+            modules,
             declaring: self.declaring,
             ..DeclarationRecords::default()
         };
@@ -259,23 +245,21 @@ impl std::fmt::Debug for InstalledInterfaces {
 }
 
 impl InstalledInterfaces {
-    /// The interfaces of `modules`, in the order the link reached them,
-    /// from `package`. Nothing decodes here: a declaration's record decodes
-    /// the first time a lookup names one of its keys.
-    pub fn reaching<'a>(
+    /// The interfaces of `modules`, positions in the package's module table
+    /// in the order the link reached them, from `package`. Nothing decodes
+    /// here: a declaration's record decodes the first time a lookup names
+    /// one of its keys.
+    pub fn reaching(
         package: &Arc<DeclarationInterfaces>,
-        modules: impl IntoIterator<Item = &'a str>,
+        modules: impl IntoIterator<Item = u32>,
     ) -> Self {
         let count = package.package.directory().modules.len();
         let mut reached = vec![false; count];
         let mut reached_order = Vec::new();
         let mut binding_bases = vec![None; count];
         let mut binding_count = 0u32;
-        for path in modules {
-            let Some(&module) = package.modules.get(path) else {
-                continue;
-            };
-            if reached[module as usize] {
+        for module in modules {
+            if reached.get(module as usize).is_none_or(|reached| *reached) {
                 continue;
             }
             reached[module as usize] = true;
@@ -813,7 +797,6 @@ impl Checker {
         let transfer_effects = summarized(&self.transfer_effects.borrow(), &callables);
         let call_through_effects = summarized(&self.call_through_effects.borrow(), &callables);
         Ok(InterfaceExport {
-            modules: modules.modules().cloned().collect(),
             declarations,
             overloads,
             declaring: modules,

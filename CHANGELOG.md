@@ -141,6 +141,14 @@ to evolve under the `0.x` compatibility rules.
   (`check.conformances` 4.2 → 0.02 ms). MIR text schema 1.42 adds a
   struct's `declared` list and each trait's parents; the package format
   is now `mojito-package 13`.
+- A package lists each library module once (R572): the declaration
+  directory's module table holds every module the build's link recorded,
+  by dotted name, with its source paths and link record, as Mojo's
+  package holds one module tree its importer's link and front end both
+  read. The link reports the modules it reached by their table positions,
+  every declaration names its module by position, and the interface keeps
+  only the package's declared names. The package shrinks from 1.57 to
+  1.56 MB, and its format is now `mojito-package 14`.
 - A module under a search root is linked under its path there, whichever
   import reaches it first: `std/io/file.mojo` declares
   `__module$std$io$file$…`, not `__module$file$…`.

@@ -41,9 +41,9 @@ pub struct LinkedProgram {
     /// The linked program: the loaded modules' declarations, dependencies
     /// first, then the entry's own statements.
     pub statements: Vec<Stmt>,
-    /// The path of each module linked from its package record, in load
-    /// order, as its declarations' locations name it.
-    pub packaged: Vec<String>,
+    /// The position in the package's module table of each module linked
+    /// from its package record, in load order.
+    pub packaged: Vec<u32>,
 }
 
 /// Options for module linking.
@@ -759,8 +759,9 @@ struct Linker<'p> {
     namespace_exports: HashMap<PathBuf, HashMap<String, HashMap<String, String>>>,
     /// Hoisted declarations from all loaded modules, in dependency order.
     decls: Vec<Stmt>,
-    /// The path of each module loaded from its package record, in order.
-    packaged: Vec<String>,
+    /// The table position of each module loaded from its package record,
+    /// in order.
+    packaged: Vec<u32>,
     /// Stable public bindings exported by the fully loaded implicit prelude.
     /// `None` while the prelude and its own dependency graph are bootstrapping.
     prelude_bindings: Option<HashMap<String, String>>,
@@ -931,11 +932,11 @@ impl<'p> Linker<'p> {
             return Ok(());
         }
         let (path, canon, module_name) = (&module.path, &module.key, module.name.as_str());
-        if let Some(record) = self
+        if let Some((position, record)) = self
             .package
             .and_then(|package| package.module(module_name, canon))
         {
-            return self.load_packaged(module, record);
+            return self.load_packaged(module, position, record);
         }
         if self.records.is_some() {
             self.loads.push(Vec::new());
@@ -1043,7 +1044,6 @@ impl<'p> Linker<'p> {
             && let Some(loads) = self.loads.pop()
         {
             let record = PackageModule {
-                name: module_name.to_string(),
                 loads,
                 exports: exports.clone().into_iter().collect(),
                 namespaces: visible_namespaces
@@ -1066,12 +1066,14 @@ impl<'p> Linker<'p> {
         Ok(())
     }
 
-    /// Load `module` from its package `record`: what linking it from source
-    /// would produce, with no source read. Each load the record replays is
-    /// found in the package's module table by its dotted name.
+    /// Load `module` from its package `record`, at `position` in the
+    /// package's module table: what linking it from source would produce,
+    /// with no source read. Each load the record replays is found in the
+    /// table by its dotted name.
     fn load_packaged(
         &mut self,
         module: &ResolvedModule,
+        position: u32,
         record: PackageModule,
     ) -> Result<(), ModuleError> {
         // The module's final exports are published before its loads, as
@@ -1093,7 +1095,7 @@ impl<'p> Linker<'p> {
                 })?;
             self.load_module(&load)?;
         }
-        self.packaged.push(display(&module.path));
+        self.packaged.push(position);
         self.namespace_exports.insert(
             module.key.clone(),
             record

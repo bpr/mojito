@@ -1,14 +1,15 @@
 //! The compiled package container, one file per package.
 //!
-//! It holds the package's checker interface, the record its importer's link
-//! reads for each of its source modules, one record per library
-//! declaration (`mojito_checked::package`), each library module's checker
-//! record, and each of its verified, ownership-checked function bodies,
-//! before drop elaboration. An importer maps the file and reads its
-//! directory and interface eagerly, a declaration's record the first time
-//! one of its phases looks one of its names up (as upstream's importer
-//! resolves a declaration from bytecode on first lookup), a module's record
-//! when its link reaches the module, and a body only when the elaborator
+//! It holds the package's checker interface, its one module table, which
+//! holds the record its importer's link reads for each of its source
+//! modules, one record per library declaration (both
+//! `mojito_checked::package`), and each of its verified, ownership-checked
+//! function bodies, before drop elaboration. An importer maps the file and
+//! reads its directory and interface eagerly, a declaration's record the
+//! first time one of its phases looks one of its names up (as upstream's
+//! importer resolves a declaration from bytecode on first lookup), a
+//! module's link record when its link reaches the module, and a body only
+//! when the elaborator
 //! first reaches it, inserting that body's drops then, as upstream
 //! materializes a package's bodies on demand and runs its lifetime pass on
 //! each in the importer.
@@ -16,7 +17,7 @@
 //! The container is a directory followed by records:
 //!
 //! ```text
-//! mojito-package 11
+//! mojito-package 14
 //! <the directory's length, 8 bytes little-endian>
 //! <the directory, as bytecode>
 //! <the payload: every record, as bytecode>
@@ -24,11 +25,11 @@
 //!
 //! The directory holds the header and the payload range of every record:
 //! the interface, the source-file table every body's locations name, the
-//! declaration directory (each declaration's record and every name it
-//! answers, each module's checker record, and the package order of every
-//! struct and function declaration), each link module record (by dotted
-//! module name, beside its source file's canonical and stamped paths), and
-//! each body (in package order, with its runtime parameter count, its
+//! declaration directory (the module table — each module's dotted name,
+//! its source file's canonical and stamped paths, and its link record —
+//! each declaration's record, its module's position, and every name it
+//! answers, and the package order of every struct and function
+//! declaration), and each body (in package order, with its runtime parameter count, its
 //! reference parameter mask, and a by-name permutation). Every record is
 //! postcard bytecode; a link module record and a declaration's checker
 //! residue are opaque here, since the linker and the checker that read
@@ -47,7 +48,7 @@ use std::ops::Range;
 use std::sync::{Arc, Mutex, OnceLock};
 
 /// The container format this compiler writes and reads.
-pub const PACKAGE_FORMAT: &str = "mojito-package 13";
+pub const PACKAGE_FORMAT: &str = "mojito-package 14";
 
 /// Who built a package from what: an importer refuses a package another
 /// compiler built, or one built from other sources.
@@ -61,28 +62,15 @@ pub struct PackageHeader {
     pub root: String,
 }
 
-/// A read package: its header, its checker interface, its link module
-/// records, and its declarations and bodies, each decoded on demand.
+/// A read package: its header, its checker interface, and its modules,
+/// declarations, and bodies, each decoded on demand.
 #[derive(Debug)]
 pub struct Package {
     pub header: PackageHeader,
     pub interface: PackageInterface,
+    /// Its module table and declaration records.
     pub declarations: Arc<PackageDeclarations>,
-    /// Each module's encoded record, beside the module's identity: copied
-    /// out of the file, since the linker that reads them sits above MIR and
-    /// holds no [`PackageBytes`].
-    pub modules: Vec<(PackagedModuleKey, Vec<u8>)>,
     pub bodies: PackageBodies,
-}
-
-/// Which module a package's module record is: its dotted name, the
-/// canonical path of its source file, and the path its declarations'
-/// locations name.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub struct PackagedModuleKey {
-    pub name: String,
-    pub canonical: String,
-    pub path: String,
 }
 
 /// A package's function bodies, each decoded the first time it is asked
@@ -257,16 +245,15 @@ impl std::error::Error for PackageError {}
 
 /// Write a package of `program`, its verified, ownership-checked MIR.
 ///
-/// The package holds `program` before drop elaboration, its interface, its
-/// `modules`' encoded link records, and its declaration `records`, which
-/// hold every struct and function declaration of `program`.
+/// The package holds `program` before drop elaboration, its interface, and
+/// its declaration `records`, which hold its module table and every struct
+/// and function declaration of `program`.
 ///
 /// Verification runs first, so an error never leaves a partial package.
 pub fn write_package(
     header: &PackageHeader,
     interface: &PackageInterface,
     program: &MirProgram,
-    modules: &[(PackagedModuleKey, Vec<u8>)],
     records: DeclarationRecords,
 ) -> Result<Vec<u8>, PackageError> {
     let mut findings = program.invariant_errors.clone();
@@ -345,10 +332,6 @@ pub fn write_package(
     let files = files(program);
     let files_range = record(&bytecode(&files.keys().collect::<Vec<_>>())?);
     let declarations = records.encode(&mut record).map_err(PackageError)?;
-    let modules = modules
-        .iter()
-        .map(|(key, bytes)| (key.clone(), record(bytes)))
-        .collect();
     let bodies = program
         .functions
         .iter()
@@ -390,7 +373,6 @@ pub fn write_package(
         interface,
         files: files_range,
         declarations,
-        modules,
         bodies,
         by_name,
         payload: payload.len(),
@@ -402,8 +384,8 @@ pub fn write_package(
     Ok(output)
 }
 
-/// Read a package: its header, interface, and module records now, and its
-/// directory of declarations and bodies, which decode on demand.
+/// Read a package: its header and interface now, and its directory of
+/// modules, declarations, and bodies, which decode on demand.
 pub fn read_package(bytes: PackageBytes) -> Result<Package, PackageError> {
     let rest = bytes
         .strip_prefix(format!("{PACKAGE_FORMAT}\n").as_bytes())
@@ -432,11 +414,6 @@ pub fn read_package(bytes: PackageBytes) -> Result<Package, PackageError> {
     let interface = from_bytecode(payload.get(&directory.interface), "interface")?;
     drop(decoding);
     let files = from_bytecode(payload.get(&directory.files), "files")?;
-    let modules = directory
-        .modules
-        .into_iter()
-        .map(|(key, range)| (key, payload.get(&range).to_vec()))
-        .collect();
     let declarations = Arc::new(
         PackageDeclarations::read(payload.clone(), directory.declarations).map_err(PackageError)?,
     );
@@ -444,7 +421,6 @@ pub fn read_package(bytes: PackageBytes) -> Result<Package, PackageError> {
         header: directory.header,
         interface,
         declarations: Arc::clone(&declarations),
-        modules,
         bodies: PackageBodies {
             payload,
             files,
@@ -465,8 +441,6 @@ struct PackageDirectory {
     interface: Range<usize>,
     files: Range<usize>,
     declarations: DeclarationDirectory,
-    /// Each link module record, beside the module's identity.
-    modules: Vec<(PackagedModuleKey, Range<usize>)>,
     /// Each body, in package order.
     bodies: Vec<BodyEntry>,
     /// Each body's position, sorted by the body's name.
@@ -482,7 +456,6 @@ impl PackageDirectory {
     fn validate(&self) -> Result<(), PackageError> {
         let ranges = [&self.interface, &self.files]
             .into_iter()
-            .chain(self.modules.iter().map(|(_, range)| range))
             .chain(self.bodies.iter().map(|entry| &entry.range));
         for range in ranges {
             if range.start > range.end || !(..=self.payload).contains(&range.end) {

@@ -95,7 +95,8 @@ build (once per compiler build, then cached):
     declaration's rows) -> MIR -> ownership
     -> std package: interface + one record per library declaration
        (its MIR declarations and effect summaries, then the checker
-       rows they do not say) + module records + pre-drop bodies
+       rows they do not say) + module table (each module's link
+       record) + pre-drop bodies
 
 import (every compilation that links the bundled library):
   source -> link (each library module from its record)
@@ -118,9 +119,9 @@ import (every compilation that links the bundled library):
   root) and every record's byte range: the checker interface
   (`checked::interface::PackageInterface`), one record per library
   declaration under one declaration directory
-  (`checked::package::DeclarationDirectory`, which also lists each library
-  module by path), each library module's link record, and each function
-  body, before drop elaboration.
+  (`checked::package::DeclarationDirectory`, which also holds the one
+  module table: each library module once, by dotted name, with its link
+  record), and each function body, before drop elaboration.
   The importer maps the file (`PackageBytes`) and reads its directory and
   interface; declarations and bodies decode from their own ranges on
   demand: Hello World decodes three of 223 declaration records and three
@@ -162,23 +163,25 @@ import (every compilation that links the bundled library):
   order, and its export and namespace tables. It holds no declaration:
   an importer reads every library declaration resolved, from its
   declaration record. It is bytecode (`postcard` over
-  its serde form), keyed by the module's dotted name beside its
-  canonical and stamped source paths (`PackageModules`), and decoded when
-  a link reaches the module. The importer's link
+  its serde form), under the module's row in the declaration directory's
+  module table, which holds its dotted name and its canonical and stamped
+  source paths (`PackageModules` is built from the table), and decoded
+  when a link reaches the module. The importer's link
   (`module::link_*_with_package`) replays a record in place of reading,
   parsing, and resolving the module, finding each recorded load by name,
   and adds none of the module's declarations to the program. The
-  link reports each module it read from a record (`LinkedProgram::packaged`),
-  whose interfaces the compilation then installs. An import
+  link reports the table position of each module it read from a record
+  (`LinkedProgram::packaged`), whose interfaces the compilation then
+  installs by position. An import
   resolves against the package's module table at the library root's
   position in the search order (`Linker::find_at_root`), as upstream's
   importer finds a module in a package: no library file is probed,
   canonicalized, or read.
 - **The interface** is what an importer reads of the package as a whole:
-  the modules the package compiled and their top-level names, from which
-  the driver decides that a program can import the package (no statement
-  of the program comes from one of those modules or redeclares one of
-  those names). The check reads none of it. A callable's
+  the top-level names of the package's modules, from which, with the
+  module table (`PackageDeclarations::compiles`), the driver decides that a
+  program can import the package (no statement of the program comes from
+  one of the package's modules or redeclares one of those names). The check reads none of it. A callable's
   transfer and call-through effect summaries ride in its declaration's
   record; the check reads one the first time a call names the callable and
   keeps it in the pass's effect map (`Checker::callee_transfer_effects`),
@@ -295,11 +298,8 @@ import (every compilation that links the bundled library):
   resolves a package declaration on first lookup. Mojito's holds lowered
   MIR (`docs/roadmap.md`, `pmir` track: R546). A module record holds no
   declaration: an importer reads every library declaration, trait
-  defaults included, from its declaration record. A module is still listed
-  in two tables, the link's module records by dotted name and the
-  declaration directory's modules by path (`docs/roadmap.md`, `pmir`
-  track: R572), and a declaration's overload facts restate what its
-  lowered functions imply (`pmir` track).
+  defaults included, from its declaration record. A declaration's overload
+  facts restate what its lowered functions imply (`pmir` track).
 
 `native::mono` is the one elaborator below the waist. `concrete_mir()` runs it
 from the program's entry roots and caches the graph, so the VM and the native
