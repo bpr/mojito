@@ -436,7 +436,7 @@ impl Checker {
                         && matches.next().is_none()
                         && let Some(alias) = self.comptime_aliases.get(candidate)
                     {
-                        let candidate = candidate.clone();
+                        let candidate = candidate.to_string();
                         let alias = alias.clone();
                         return self.resolve_comptime_alias(&candidate, &alias, args);
                     }

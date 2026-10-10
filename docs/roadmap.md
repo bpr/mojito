@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R580**.
+Next free ID: **R582**.
 
 ## Ordered Work
 
@@ -50,18 +50,23 @@ Scope: what remains of the plan's stages, and what the pipeline order still
 leaves to close. A defect found on the way is filed by its kind; a
 divergence from the pin goes to a catch-up track, however small.
 
-- [ ] **R573 (P6) A package's directory names each library function twice,
-  and an importer decodes all of it eagerly**
+- [ ] **R580 (P6) The elaborator scans every package function's name to
+  resolve one call**
 
-  A function's name sits in its body's directory entry and again in its
-  declaration's entry, and the 127 KB directory decodes whole when the
-  package is read.
-  - That is 0.55 ms of Hello World's 6.5 ms, release
-    (`package.directory`), its sortedness checks included.
-  - Upstream's bytecode holds one symbol table and resolves an entry on
-    lookup.
-  - The lever: a body entry named by its declaration's function position,
-    and a directory read lazily by name.
+  `native::mono` walks all 874 rows of the package's function table each
+  time it resolves a callee, collects a candidate list, or looks for a
+  pack constructor.
+  - The sites are `mono/bodies.rs::{keys, candidates}`, fed to
+    `resolve_callable_symbol` and the specializer's `function_order`,
+    `negates_equality`, and `runtime_pack_constructor` scans.
+  - Since R573 the directory is read in place, so each scan reads every
+    name from the mapping: `backend.prepare.elaborate` rose from about
+    1.55 to 1.62 ms on Hello World, release, the largest phase of its
+    3.2 ms.
+  - Upstream finds an overload set by looking its name up.
+  - The lever: a range lookup over the by-name function permutation, for
+    the `name`, `name$ov$…`, and `Type.method` prefixes a call can resolve
+    to.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -97,6 +102,22 @@ divergence from the pin goes to a catch-up track, however small.
   - The lever: R560's pattern, projecting the facts the functions say out
     of the record with a byte-for-byte guard at build time, and joining
     them back on decode.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R581 (P6) A package declaration's record restates the names and
+  masks its directory rows hold**
+
+  A function's name and `ref_params` mask sit in its directory row and
+  again in its record (`FunctionDeclaration::{lowered_name, ref_params}`),
+  as a struct's name does (`StructDeclaration::name`).
+  - The residue's table keys restate the directory's key index the same
+    way.
+  - Upstream's ops name every symbol through the one string section, so a
+    name is held once.
+  - The lever: R560's pattern, projecting the restated fields out of the
+    record with a byte-for-byte guard at build time, and joining them back
+    from the directory row on decode.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

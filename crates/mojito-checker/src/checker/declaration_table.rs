@@ -70,8 +70,8 @@ impl<V: 'static> DeclarationTable<V> {
 
     /// Every key, the installed ones read from the package's directory
     /// without resolving a record.
-    pub(super) fn keys(&self) -> impl Iterator<Item = &String> {
-        self.own.keys().chain(
+    pub(super) fn keys(&self) -> impl Iterator<Item = &str> {
+        self.own.keys().map(String::as_str).chain(
             self.installed
                 .iter()
                 .flat_map(|installed| installed.interfaces.keys(installed.table)),
@@ -97,7 +97,7 @@ impl<V: 'static> DeclarationTable<V> {
         select: impl FnOnce(&'a InstalledInterfaces) -> I,
     ) -> impl Iterator<Item = (&'a String, &'a V)>
     where
-        I: Iterator<Item = &'a String> + 'a,
+        I: Iterator<Item = &'a str> + 'a,
     {
         let installed = self.installed.as_ref().map(|installed| {
             select(&installed.interfaces).filter_map(move |key| installed.get(key))
@@ -167,8 +167,8 @@ impl DeclarationSet {
         self.own.insert(name)
     }
 
-    pub(super) fn iter(&self) -> impl Iterator<Item = &String> {
-        self.own.iter().chain(
+    pub(super) fn iter(&self) -> impl Iterator<Item = &str> {
+        self.own.iter().map(String::as_str).chain(
             self.installed
                 .iter()
                 .flat_map(|(interfaces, table)| interfaces.keys(*table)),

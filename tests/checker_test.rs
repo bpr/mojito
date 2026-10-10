@@ -7713,9 +7713,9 @@ fn an_installed_declaration_that_does_not_decode_is_reported_where_named() {
         .residue = vec![0xff; 4];
     let declarations = mojito::checked_package::PackageDeclarations::of_records(records)
         .expect("the records encode");
-    let package = std::sync::Arc::new(
-        DeclarationInterfaces::read(std::sync::Arc::new(declarations)).expect("reads"),
-    );
+    let package = std::sync::Arc::new(DeclarationInterfaces::new(std::sync::Arc::new(
+        declarations,
+    )));
     let installed = InstalledInterfaces::reaching(&package, [0]);
     let mut context = CheckContext::new();
     context.install(installed.clone());
@@ -7768,9 +7768,9 @@ fn an_installed_module_interface_checks_like_its_statements() {
         .expect("the library records");
     let declarations = mojito::checked_package::PackageDeclarations::of_records(records)
         .expect("the records encode");
-    let package = std::sync::Arc::new(
-        DeclarationInterfaces::read(std::sync::Arc::new(declarations)).expect("reads"),
-    );
+    let package = std::sync::Arc::new(DeclarationInterfaces::new(std::sync::Arc::new(
+        declarations,
+    )));
     let install = |installed: &InstalledInterfaces| {
         let mut context = CheckContext::new();
         context.install(installed.clone());

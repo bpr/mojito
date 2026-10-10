@@ -25,75 +25,29 @@ use mojito_checked::package::{
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex, OnceLock};
 
-/// A package's declaration records as the check finds them, indexed once
-/// per process; no residue decodes here.
+/// A package's declaration records as the check finds them, read through
+/// the package's directory, which indexes them by the checker keys they
+/// answer; no residue decodes here.
 pub struct DeclarationInterfaces {
     package: Arc<PackageDeclarations>,
-    /// Per table, each key's declaration.
-    keys: Vec<HashMap<String, u32>>,
-    /// Each module binding's module and its position among the module's
-    /// bindings, which are sorted by name.
-    bindings: HashMap<String, (u32, u32)>,
-    /// Each module's bindings, sorted by name.
-    module_bindings: Vec<Vec<String>>,
-    /// Per method name, each declaration whose struct declares it.
-    methods: HashMap<String, Vec<u32>>,
 }
 
 impl std::fmt::Debug for DeclarationInterfaces {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let directory = self.package.directory();
         write!(
             formatter,
             "DeclarationInterfaces({} modules, {} declarations)",
-            self.package.directory().modules.len(),
-            self.package.directory().declarations.len()
+            directory.module_count(),
+            directory.declaration_count()
         )
     }
 }
 
 impl DeclarationInterfaces {
-    /// Index the declarations of `package` by the checker keys they
-    /// answer.
-    ///
-    /// # Errors
-    ///
-    /// A declaration naming no module.
-    pub fn read(package: Arc<PackageDeclarations>) -> Result<Self, String> {
-        let directory = package.directory();
-        let mut keys = vec![HashMap::new(); Table::COUNT];
-        let mut module_bindings = vec![Vec::new(); directory.modules.len()];
-        let mut methods: HashMap<String, Vec<u32>> = HashMap::new();
-        for (position, entry) in directory.declarations.iter().enumerate() {
-            let module = module_bindings
-                .get_mut(entry.module as usize)
-                .ok_or_else(|| format!("`{}` names no module", entry.name))?;
-            for (table, key) in &entry.keys {
-                keys[*table as usize].insert(key.clone(), position as u32);
-                if *table == Table::Bindings {
-                    module.push(key.clone());
-                }
-            }
-            for method in &entry.methods {
-                methods
-                    .entry(method.clone())
-                    .or_default()
-                    .push(position as u32);
-            }
-        }
-        let mut bindings = HashMap::new();
-        for (module, names) in module_bindings.iter_mut().enumerate() {
-            names.sort();
-            for (position, name) in names.iter().enumerate() {
-                bindings.insert(name.clone(), (module as u32, position as u32));
-            }
-        }
-        Ok(Self {
-            package,
-            keys,
-            bindings,
-            module_bindings,
-            methods,
-        })
+    /// The declarations of `package`, as the check looks them up.
+    pub const fn new(package: Arc<PackageDeclarations>) -> Self {
+        Self { package }
     }
 }
 
@@ -253,7 +207,8 @@ impl InstalledInterfaces {
         package: &Arc<DeclarationInterfaces>,
         modules: impl IntoIterator<Item = u32>,
     ) -> Self {
-        let count = package.package.directory().modules.len();
+        let directory = package.package.directory();
+        let count = directory.module_count();
         let mut reached = vec![false; count];
         let mut reached_order = Vec::new();
         let mut binding_bases = vec![None; count];
@@ -265,13 +220,9 @@ impl InstalledInterfaces {
             reached[module as usize] = true;
             reached_order.push(module);
             binding_bases[module as usize] = Some(binding_count);
-            binding_count += package.module_bindings[module as usize].len() as u32;
+            binding_count += directory.binding_count(module as usize) as u32;
         }
-        let decoded = package
-            .package
-            .directory()
-            .declarations
-            .iter()
+        let decoded = (0..directory.declaration_count())
             .map(|_| OnceLock::new())
             .collect();
         Self(Arc::new(Installed {
@@ -332,8 +283,9 @@ impl InstalledInterfaces {
         self.0.decoded[position]
             .get_or_init(|| {
                 let package = &self.0.package.package;
-                let entry = &package.directory().declarations[position];
-                let path = &package.directory().modules[entry.module as usize].path;
+                let directory = package.directory();
+                let entry = directory.declaration(position)?;
+                let path = directory.module(entry.module as usize)?.path;
                 mojito_ast::ast::decoding_from(path, || {
                     postcard::from_bytes::<DeclarationInterface>(package.residue(position))
                 })
@@ -394,24 +346,27 @@ impl InstalledInterfaces {
 
     /// Every key of `table` a reached module's declaration holds, decoding
     /// nothing.
-    pub(super) fn keys(&self, table: Table) -> impl Iterator<Item = &String> {
-        self.0.package.keys[table as usize]
-            .iter()
-            .filter(|(_, position)| self.reached_declaration(**position))
+    pub(super) fn keys(&self, table: Table) -> impl Iterator<Item = &str> {
+        self.0
+            .package
+            .package
+            .directory()
+            .table_keys(table)
+            .filter(|(_, position)| self.reached_declaration(*position))
             .map(|(key, _)| key)
     }
 
     /// The struct keys of every reached declaration whose struct declares
     /// `method`, decoding nothing.
-    pub(super) fn structs_declaring(&self, method: &str) -> impl Iterator<Item = &String> {
-        let package = &self.0.package;
-        package
-            .methods
-            .get(method)
-            .into_iter()
-            .flatten()
-            .filter(|position| self.reached_declaration(**position))
-            .flat_map(|position| &package.package.directory().declarations[*position as usize].keys)
+    pub(super) fn structs_declaring<'a>(
+        &'a self,
+        method: &'a str,
+    ) -> impl Iterator<Item = &'a str> + 'a {
+        let directory = self.0.package.package.directory();
+        directory
+            .methods_declaring(method)
+            .filter(|position| self.reached_declaration(*position))
+            .flat_map(|position| directory.declaration_keys(position as usize))
             .filter(|(table, _)| *table == Table::Structs)
             .map(|(_, key)| key)
     }
@@ -420,8 +375,11 @@ impl InstalledInterfaces {
     /// modules' bindings: by module in the order the link reached them,
     /// then by name.
     pub(super) fn binding(&self, name: &str) -> Option<(u32, &ModuleBinding)> {
-        let (module, position) = *self.0.package.bindings.get(name)?;
-        let base = self.0.binding_bases[module as usize]?;
+        let directory = self.0.package.package.directory();
+        let declaration = directory.key_declaration(Table::Bindings, name)?;
+        let module = directory.declaration(declaration as usize)?.module as usize;
+        let position = directory.binding_position(module, name)? as u32;
+        let base = self.0.binding_bases.get(module).copied().flatten()?;
         let bindings = &self.declaration(Table::Bindings, name)?.bindings;
         let found = bindings
             .binary_search_by(|binding| binding.name.as_str().cmp(name))
@@ -433,10 +391,11 @@ impl InstalledInterfaces {
     pub(super) fn binding_name(&self, ordinal: u32) -> Option<&str> {
         self.0.reached_order.iter().find_map(|module| {
             let base = self.0.binding_bases[*module as usize]?;
-            let names = &self.0.package.module_bindings[*module as usize];
-            names
-                .get(ordinal.checked_sub(base)? as usize)
-                .map(String::as_str)
+            self.0
+                .package
+                .package
+                .directory()
+                .binding(*module as usize, ordinal.checked_sub(base)? as usize)
         })
     }
 
@@ -446,14 +405,24 @@ impl InstalledInterfaces {
     }
 
     fn position(&self, table: Table, key: &str) -> Option<usize> {
-        let position = *self.0.package.keys[table as usize].get(key)?;
+        let position = self
+            .0
+            .package
+            .package
+            .directory()
+            .key_declaration(table, key)?;
         self.reached_declaration(position)
             .then_some(position as usize)
     }
 
     fn reached_declaration(&self, position: u32) -> bool {
-        let module = self.0.package.package.directory().declarations[position as usize].module;
-        self.0.reached[module as usize]
+        self.0
+            .package
+            .package
+            .directory()
+            .declaration(position as usize)
+            .and_then(|entry| self.0.reached.get(entry.module as usize).copied())
+            .unwrap_or(false)
     }
 }
 
@@ -628,7 +597,7 @@ impl Checker {
                             .entry(declaration)
                             .or_default()
                             .1
-                            .push(($table, name.clone()));
+                            .push(($table, name.to_string()));
                     }
                 }
             };

@@ -511,13 +511,7 @@ impl Compiler {
         }
         {
             let _ownership = timing::span("ownership");
-            crate::analysis::check_ownership_importing(
-                &mir,
-                package
-                    .iter()
-                    .flat_map(|package| package.bodies.ref_params()),
-            )
-            .map_err(CompilerError::Ownership)?;
+            crate::analysis::check_ownership_program(&mir).map_err(CompilerError::Ownership)?;
         }
         Ok(CompiledProgram {
             checked,

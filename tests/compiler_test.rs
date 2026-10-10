@@ -3919,7 +3919,11 @@ fn a_package_reads_back_to_the_bytes_it_was_written_as() {
             std::path::Path::new("/probe/main.mojo"),
         )
         .expect("compile");
-    let program = compiled.drop_elaborated_mir();
+    // A package holds no module initializer, as the library build drops
+    // it: every body is a declared function's.
+    let mut program = compiled.drop_elaborated_mir().clone();
+    program.functions.retain(|(name, _)| name != "__toplevel__");
+    let program = &program;
     // Every declaration's record, opened as a package build's check opens
     // it: under its declaring module, holding the traits it declares. Each
     // module's row holds a link record the container does not read.
@@ -3979,14 +3983,11 @@ fn a_package_reads_back_to_the_bytes_it_was_written_as() {
     let package = read_package(PackageBytes::Owned(bytes.clone())).expect("read");
     assert!(!modules.is_empty());
     assert_eq!(package.declarations.modules().len(), modules.len());
-    for (position, (read, written)) in package
-        .declarations
-        .modules()
-        .iter()
-        .zip(&modules)
-        .enumerate()
-    {
-        assert_eq!((&read.name, &read.path), (&written.name, &written.path));
+    for (position, (read, written)) in package.declarations.modules().zip(&modules).enumerate() {
+        assert_eq!(
+            (read.name, read.path),
+            (written.name.as_str(), written.path.as_str())
+        );
         assert_eq!(
             package.declarations.link_record(position),
             Some(written.link.as_slice())

@@ -23,12 +23,16 @@
 //! module, by dotted name, beside its source file's identity and the record
 //! its importer's link reads (its loads, exports, and namespaces), which
 //! every declaration names by position. A module's compile-time facts and
-//! constants are each its declaration's.
+//! constants are each its declaration's. It holds one row per library
+//! function, which names the function once and places its body, and the
+//! indexes every phase looks a name up in; an importer reads it in place
+//! ([`DeclarationDirectory`]).
 
 use crate::checked::{CallThroughEffect, TransferEffect};
 use crate::declaration::{FunctionDeclaration, StructDeclaration, TraitDeclaration};
 use mojito_ast::ast::{Stmt, StmtKind};
 use mojito_symbol::symbol::{LiftedOwner, OV_SEP, OverloadLookup, OverloadSets, lifted_owner};
+use std::cmp::Ordering;
 use std::collections::{BTreeMap, HashMap};
 use std::ops::{Deref, Range};
 use std::sync::{Arc, Mutex, OnceLock};
@@ -89,10 +93,16 @@ impl Payload {
         self.len() == 0
     }
 
-    /// The record at `range`, which the directory's validation keeps in
-    /// bounds.
+    /// The record at `range`; empty when `range` leaves the payload.
     pub fn get(&self, range: &Range<usize>) -> &[u8] {
-        &self.bytes[self.start + range.start..self.start + range.end]
+        self.bytes
+            .get(self.start + range.start..self.start + range.end)
+            .unwrap_or_default()
+    }
+
+    /// The little-endian word at `at`; `u32::MAX` past the payload's end.
+    fn word(&self, at: usize) -> u32 {
+        word_at(&self.bytes[self.start..], at)
     }
 }
 
@@ -133,6 +143,35 @@ pub enum InterfaceTable {
 
 impl InterfaceTable {
     pub const COUNT: usize = Self::SimdLengthBinders as usize + 1;
+    const ALL: [Self; Self::COUNT] = [
+        Self::Structs,
+        Self::Traits,
+        Self::Aliases,
+        Self::Comptimes,
+        Self::ComptimeLiterals,
+        Self::ModuleValues,
+        Self::ComptimeApplied,
+        Self::ApplicableFunctions,
+        Self::DefResults,
+        Self::OwnedCollectors,
+        Self::CollectorNames,
+        Self::DeclaredStructs,
+        Self::AppliedModuleConstants,
+        Self::NestedOriginsReadOnlyFunctions,
+        Self::ExplicitDestroy,
+        Self::Bindings,
+        Self::Elaborated,
+        Self::ComptimeDtypes,
+        Self::ComptimeParameters,
+        Self::ComptimeValues,
+        Self::TypeAliases,
+        Self::SimdLengthBinders,
+    ];
+
+    /// The table numbered `index`.
+    fn from_index(index: u32) -> Option<Self> {
+        Self::ALL.get(index as usize).copied()
+    }
 }
 
 /// The lowered part of a declaration's record.
@@ -172,94 +211,292 @@ impl LoweredDeclaration {
     }
 }
 
-/// Where every declaration record of a package lies in its payload.
-#[derive(Debug, Default, serde::Serialize, serde::Deserialize)]
+/// A package's declaration directory, read in place from its payload.
+///
+/// It holds the module table, where each declaration's record lies, the
+/// struct and function tables, and the indexes the check and the elaborator
+/// look a name up in.
+///
+/// Every name it holds is written once, in one string section — a LEB128
+/// count, each string's LEB128 length in reverse order, then the strings'
+/// bytes — as an MLIR bytecode string section is. Its tables follow: each
+/// table's row count, then each table's rows, every row a fixed number of
+/// little-endian `u32` words, a name being its string's index.
+/// [`DeclarationRecords::encode`] writes every table sorted as its lookups
+/// need. Reading the directory builds only its strings' offsets, and a
+/// lookup reads only the rows its binary search touches; a malformed row
+/// makes a lookup miss, never read outside the payload.
+#[derive(Debug)]
 pub struct DeclarationDirectory {
-    /// Each library module, sorted by dotted name: the package's module
-    /// table.
-    pub modules: Vec<ModuleEntry>,
-    /// Each library declaration's record, sorted by name.
-    pub declarations: Vec<DeclarationEntry>,
-    /// Every struct declaration, as its declaration's position and its
-    /// position in that record, sorted by struct name: the package order.
-    pub structs: Vec<(u32, u32)>,
-    /// Every function declaration, likewise, sorted by lowered name.
-    pub functions: Vec<(u32, u32)>,
+    payload: Payload,
+    /// Each string's start in the payload, then the last one's end.
+    strings: Vec<usize>,
+    /// Each table's first row's offset in the payload and its row count.
+    tables: [(usize, usize); Section::COUNT],
 }
 
 impl DeclarationDirectory {
-    /// Refuse a directory whose records leave a payload of `length` bytes,
-    /// whose names are not strictly sorted, which the lookups by name rely
-    /// on, or whose positions name nothing.
-    fn validate(&self, length: usize) -> Result<(), String> {
-        let ranges = self
-            .declarations
-            .iter()
-            .map(|entry| &entry.record)
-            .chain(self.modules.iter().map(|module| &module.link));
-        for range in ranges {
-            if range.start > range.end || range.end > length {
-                return Err("a declaration or module record overruns the payload".to_string());
+    /// How many modules the module table holds.
+    pub const fn module_count(&self) -> usize {
+        self.rows(Section::Modules)
+    }
+
+    /// The module at `position` in the module table, which is sorted by
+    /// dotted name.
+    pub fn module(&self, position: usize) -> Option<ModuleEntry<'_>> {
+        (position < self.module_count()).then(|| self.module_row(position))
+    }
+
+    /// The module table, sorted by dotted name.
+    pub fn modules(&self) -> impl ExactSizeIterator<Item = ModuleEntry<'_>> + '_ {
+        (0..self.module_count()).map(|position| self.module_row(position))
+    }
+
+    /// How many declaration records the directory places.
+    pub const fn declaration_count(&self) -> usize {
+        self.rows(Section::Declarations)
+    }
+
+    /// The declaration at `position`, the declarations being sorted by
+    /// name.
+    pub fn declaration(&self, position: usize) -> Option<DeclarationEntry<'_>> {
+        (position < self.declaration_count()).then(|| {
+            let word = |column| self.word(Section::Declarations, position, column);
+            DeclarationEntry {
+                name: self.string(word(0)),
+                module: word(1),
+                record: word(2) as usize..word(3) as usize,
+                residue: word(4) as usize,
             }
-        }
-        if !self
-            .modules
-            .windows(2)
-            .all(|pair| pair[0].name < pair[1].name)
-        {
-            return Err("the modules are not strictly sorted".to_string());
-        }
-        for entry in &self.declarations {
-            if entry.residue > entry.record.len() || entry.module as usize >= self.modules.len() {
-                return Err(format!("the record of `{}` is malformed", entry.name));
-            }
-        }
-        if !self
-            .declarations
-            .windows(2)
-            .all(|pair| pair[0].name < pair[1].name)
-        {
-            return Err("the declarations are not strictly sorted".to_string());
-        }
-        for (order, names, kind) in [
+        })
+    }
+
+    /// Every checker table key the residue of the declaration at
+    /// `position` holds, sorted.
+    pub fn declaration_keys(
+        &self,
+        position: usize,
+    ) -> impl Iterator<Item = (InterfaceTable, &str)> + '_ {
+        let word = |column| self.word(Section::Declarations, position, column);
+        self.span(Section::DeclarationKeys, word(5), word(6))
+            .filter_map(|row| {
+                let table =
+                    InterfaceTable::from_index(self.word(Section::DeclarationKeys, row, 0))?;
+                Some((
+                    table,
+                    self.string(self.word(Section::DeclarationKeys, row, 1)),
+                ))
+            })
+    }
+
+    /// The position of the declaration whose residue holds `table`'s
+    /// `key`.
+    pub fn key_declaration(&self, table: InterfaceTable, key: &str) -> Option<u32> {
+        let row = self.find(Section::Keys, |row| {
+            self.word(Section::Keys, row, 0)
+                .cmp(&(table as u32))
+                .then_with(|| {
+                    self.text(self.word(Section::Keys, row, 1))
+                        .cmp(key.as_bytes())
+                })
+        })?;
+        Some(self.word(Section::Keys, row, 2))
+    }
+
+    /// Every key of `table`, sorted, beside the position of the declaration
+    /// holding it.
+    pub fn table_keys(&self, table: InterfaceTable) -> impl Iterator<Item = (&str, u32)> + '_ {
+        let rows = 0..self.rows(Section::Keys);
+        let start = partition_point(rows.clone(), |row| {
+            self.word(Section::Keys, row, 0) < table as u32
+        });
+        let end = partition_point(rows, |row| self.word(Section::Keys, row, 0) <= table as u32);
+        (start..end).map(|row| {
             (
-                &self.structs,
-                (|entry: &DeclarationEntry| &entry.structs)
-                    as fn(&DeclarationEntry) -> &Vec<String>,
-                "struct",
-            ),
-            (&self.functions, |entry| &entry.functions, "function"),
-        ] {
-            let name = |(entry, index): &(u32, u32)| {
-                self.declarations
-                    .get(*entry as usize)
-                    .and_then(|entry| names(entry).get(*index as usize))
-            };
-            let total: usize = self
-                .declarations
-                .iter()
-                .map(|entry| names(entry).len())
-                .sum();
-            let sorted = order.len() == total
-                && order.iter().all(|pair| name(pair).is_some())
-                && order.windows(2).all(|pair| name(&pair[0]) < name(&pair[1]));
-            if !sorted {
-                return Err(format!("the {kind} declarations are not a strict sort"));
-            }
+                self.string(self.word(Section::Keys, row, 1)),
+                self.word(Section::Keys, row, 2),
+            )
+        })
+    }
+
+    /// The position of each declaration whose struct declares `method`.
+    pub fn methods_declaring(&self, method: &str) -> impl Iterator<Item = u32> + '_ {
+        let rows = 0..self.rows(Section::Methods);
+        let name = |row| self.text(self.word(Section::Methods, row, 0));
+        let start = partition_point(rows.clone(), |row| name(row) < method.as_bytes());
+        let end = partition_point(rows, |row| name(row) <= method.as_bytes());
+        (start..end).map(|row| self.word(Section::Methods, row, 1))
+    }
+
+    /// How many module bindings the module at `module` makes.
+    pub fn binding_count(&self, module: usize) -> usize {
+        self.module_bindings(module).len()
+    }
+
+    /// The module binding at `position` among the module `module`'s, which
+    /// are sorted by name.
+    pub fn binding(&self, module: usize, position: usize) -> Option<&str> {
+        let row = self.module_bindings(module).nth(position)?;
+        Some(self.string(self.word(Section::Bindings, row, 0)))
+    }
+
+    /// The position of the binding `name` among the module `module`'s.
+    pub fn binding_position(&self, module: usize, name: &str) -> Option<usize> {
+        let rows = self.module_bindings(module);
+        let start = rows.start;
+        let text = |row| self.text(self.word(Section::Bindings, row, 0));
+        let found = partition_point(rows.clone(), |row| text(row) < name.as_bytes());
+        (rows.contains(&found) && text(found) == name.as_bytes()).then(|| found - start)
+    }
+
+    /// The directory `range` of `payload` holds, of which only the string
+    /// section's lengths are read.
+    fn read(payload: Payload, range: &Range<usize>) -> Result<Self, String> {
+        let bytes = payload.get(range);
+        if bytes.len() != range.len() {
+            return Err("the declaration directory overruns the payload".to_string());
         }
-        Ok(())
+        let mut cursor = 0;
+        let count = leb128(bytes, &mut cursor)? as usize;
+        let mut lengths = Vec::with_capacity(count.min(bytes.len()));
+        for _ in 0..count {
+            lengths.push(leb128(bytes, &mut cursor)? as usize);
+        }
+        let mut strings = Vec::with_capacity(lengths.len() + 1);
+        let mut offset = cursor;
+        strings.push(range.start + offset);
+        for length in lengths.into_iter().rev() {
+            offset = offset.saturating_add(length);
+            strings.push(range.start + offset);
+        }
+        let counts = offset
+            .checked_add(Section::COUNT * 4)
+            .filter(|end| *end <= bytes.len())
+            .ok_or_else(|| "the declaration directory's strings overrun it".to_string())?;
+        let mut tables = [(0, 0); Section::COUNT];
+        let mut start = counts;
+        for (index, section) in Section::ALL.into_iter().enumerate() {
+            let rows = word_at(bytes, offset + index * 4) as usize;
+            tables[index] = (range.start + start, rows);
+            start = rows
+                .checked_mul(section.width() * 4)
+                .and_then(|length| start.checked_add(length))
+                .ok_or_else(|| "a declaration directory table overruns it".to_string())?;
+        }
+        if start != bytes.len() {
+            return Err("the declaration directory's tables do not fill it".to_string());
+        }
+        Ok(Self {
+            payload,
+            strings,
+            tables,
+        })
+    }
+
+    fn word(&self, section: Section, row: usize, column: usize) -> u32 {
+        let (start, rows) = self.tables[section as usize];
+        if row >= rows {
+            return u32::MAX;
+        }
+        self.payload
+            .word(start + (row * section.width() + column) * 4)
+    }
+
+    /// The string at `index`, empty when the section holds no such string
+    /// or it is not UTF-8.
+    fn string(&self, index: u32) -> &str {
+        std::str::from_utf8(self.text(index)).unwrap_or_default()
+    }
+
+    /// The bytes of the string at `index`.
+    fn text(&self, index: u32) -> &[u8] {
+        let index = index as usize;
+        match (self.strings.get(index), self.strings.get(index + 1)) {
+            (Some(start), Some(end)) => self.payload.get(&(*start..*end)),
+            _ => &[],
+        }
+    }
+
+    const fn rows(&self, section: Section) -> usize {
+        self.tables[section as usize].1
+    }
+
+    /// The row `compare` answers `Equal` for, `section` being sorted by
+    /// it.
+    fn find(&self, section: Section, compare: impl Fn(usize) -> Ordering) -> Option<usize> {
+        let rows = 0..self.rows(section);
+        let found = partition_point(rows.clone(), |row| compare(row) == Ordering::Less);
+        (rows.contains(&found) && compare(found) == Ordering::Equal).then_some(found)
+    }
+
+    /// The `count` rows of `section` from `start`, clamped to the table.
+    fn span(&self, section: Section, start: u32, count: u32) -> Range<usize> {
+        let rows = self.rows(section);
+        let start = (start as usize).min(rows);
+        start..start.saturating_add(count as usize).min(rows)
+    }
+
+    fn module_row(&self, position: usize) -> ModuleEntry<'_> {
+        let word = |column| self.word(Section::Modules, position, column);
+        ModuleEntry {
+            name: self.string(word(0)),
+            canonical: self.string(word(1)),
+            path: self.string(word(2)),
+            link: word(3) as usize..word(4) as usize,
+        }
+    }
+
+    /// The rows of the module `module`'s bindings.
+    fn module_bindings(&self, module: usize) -> Range<usize> {
+        if module >= self.module_count() {
+            return 0..0;
+        }
+        let word = |column| self.word(Section::Modules, module, column);
+        self.span(Section::Bindings, word(5), word(6))
+    }
+
+    /// The row in lowering order of the function `name`.
+    fn function_row(&self, name: &str) -> Option<usize> {
+        let position = self.function_position(name)?;
+        Some(self.word(Section::FunctionsByName, position, 0) as usize)
+    }
+
+    /// The position of the function `name` in name order.
+    fn function_position(&self, name: &str) -> Option<usize> {
+        self.find(Section::FunctionsByName, |position| {
+            let row = self.word(Section::FunctionsByName, position, 0) as usize;
+            self.text(self.word(Section::Functions, row, 0))
+                .cmp(name.as_bytes())
+        })
+    }
+
+    /// The position of the struct `name` in name order.
+    fn struct_position(&self, name: &str) -> Option<usize> {
+        self.find(Section::Structs, |row| {
+            self.text(self.word(Section::Structs, row, 0))
+                .cmp(name.as_bytes())
+        })
+    }
+
+    /// The position of the declaration named `name`.
+    fn declaration_position(&self, name: &str) -> Option<usize> {
+        self.find(Section::Declarations, |row| {
+            self.text(self.word(Section::Declarations, row, 0))
+                .cmp(name.as_bytes())
+        })
     }
 }
 
-/// One library module: its identity, and where its link record lies.
-#[derive(Debug, serde::Serialize, serde::Deserialize)]
-pub struct ModuleEntry {
+/// One library module, read from the module table: its identity, and where
+/// its link record lies.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ModuleEntry<'a> {
     /// Its dotted name (`std.io.file`).
-    pub name: String,
+    pub name: &'a str,
     /// The canonical path of its source file, its identity in a link.
-    pub canonical: String,
+    pub canonical: &'a str,
     /// The path its declarations' locations name.
-    pub path: String,
+    pub path: &'a str,
     /// Its link record.
     pub link: Range<usize>,
 }
@@ -274,25 +511,27 @@ pub struct PackagedModule {
     pub link: Vec<u8>,
 }
 
-/// One library declaration: what its record answers, and where it lies.
-#[derive(Debug, serde::Serialize, serde::Deserialize)]
-pub struct DeclarationEntry {
-    pub name: String,
-    /// Its module's position in the directory.
+/// One library declaration, read from the directory: its name, its module,
+/// and where its record lies.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DeclarationEntry<'a> {
+    pub name: &'a str,
+    /// Its module's position in the module table.
     pub module: u32,
-    /// Every checker table key its residue holds, sorted.
-    pub keys: Vec<(InterfaceTable, String)>,
-    /// Every method its struct declares, sorted.
-    pub methods: Vec<String>,
-    /// The name of each struct declaration its record holds, in record
-    /// order.
-    pub structs: Vec<String>,
-    /// The lowered name of each function declaration its record holds, in
-    /// record order.
-    pub functions: Vec<String>,
     pub record: Range<usize>,
     /// Where the residue starts, from the record's start.
     pub residue: usize,
+}
+
+/// One library function's body as a package build writes it: its name, its
+/// runtime parameter count, its `mut`/`ref` parameter mask (receiver
+/// included), and where its encoded body lies.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PackagedBody {
+    pub name: String,
+    pub n_params: usize,
+    pub ref_params: Vec<bool>,
+    pub range: Range<usize>,
 }
 
 /// A package's declarations: each record's lowered part decoded the first
@@ -302,46 +541,30 @@ pub struct DeclarationEntry {
 /// importer adds to a declaration lives here.
 #[derive(Debug)]
 pub struct PackageDeclarations {
-    payload: Payload,
     directory: DeclarationDirectory,
-    /// Every trait the package declares, sorted.
-    traits: Vec<String>,
     decoded: Vec<OnceLock<Option<LoweredDeclaration>>>,
     failures: Mutex<Vec<String>>,
 }
 
 impl PackageDeclarations {
-    /// The declarations `directory` places in `payload`.
+    /// The declarations the directory at `range` of `payload` places.
     ///
     /// # Errors
     ///
-    /// A record outside the payload, a name list that is not strictly
-    /// sorted, or a position naming no declaration.
-    pub fn read(payload: Payload, directory: DeclarationDirectory) -> Result<Self, String> {
-        directory.validate(payload.len())?;
-        let mut traits: Vec<String> = directory
-            .declarations
-            .iter()
-            .flat_map(|entry| &entry.keys)
-            .filter(|(table, _)| *table == InterfaceTable::Traits)
-            .map(|(_, key)| key.clone())
-            .collect();
-        traits.sort();
-        let decoded = directory
-            .declarations
-            .iter()
+    /// A directory whose string section or tables overrun it.
+    pub fn read(payload: Payload, range: &Range<usize>) -> Result<Self, String> {
+        let directory = DeclarationDirectory::read(payload, range)?;
+        let decoded = (0..directory.declaration_count())
             .map(|_| OnceLock::new())
             .collect();
         Ok(Self {
-            payload,
             directory,
-            traits,
             decoded,
             failures: Mutex::new(Vec::new()),
         })
     }
 
-    /// `records` encoded on their own, as a package holding nothing else
+    /// `records` encoded on their own, as a package holding no bodies
     /// would hold them.
     ///
     /// # Errors
@@ -349,12 +572,12 @@ impl PackageDeclarations {
     /// A record that does not encode.
     pub fn of_records(records: DeclarationRecords) -> Result<Self, String> {
         let mut payload = Vec::new();
-        let directory = records.encode(&mut |bytes| {
+        let range = records.encode(None, &mut |bytes| {
             let start = payload.len();
             payload.extend_from_slice(bytes);
             start..payload.len()
         })?;
-        Self::read(Payload::new(PackageBytes::Owned(payload), 0), directory)
+        Self::read(Payload::new(PackageBytes::Owned(payload), 0), &range)
     }
 
     /// The struct declaration `name`, decoded on first use; `None` when the
@@ -366,59 +589,126 @@ impl PackageDeclarations {
 
     /// The function declaration `name`, decoded on first use.
     pub fn function(&self, name: &str) -> Option<&FunctionDeclaration> {
-        self.function_at(self.function_position(name)?)
+        self.function_at(self.directory.function_position(name)?)
     }
 
     /// Whether the package declares a function `name`, decoding nothing.
     pub fn contains_function(&self, name: &str) -> bool {
-        self.function_position(name).is_some()
+        self.directory.function_position(name).is_some()
     }
 
     /// The position of the struct `name` in package order, decoding
     /// nothing.
     pub fn struct_position(&self, name: &str) -> Option<usize> {
-        let directory = &self.directory;
-        position(&directory.structs, name, |entry| &entry.structs, directory)
+        self.directory.struct_position(name)
     }
 
     /// The struct declaration at `position` in package order.
     pub fn structure_at(&self, position: usize) -> Option<&StructDeclaration> {
-        let (entry, index) = *self.directory.structs.get(position)?;
-        self.lowered(entry as usize)?.structs.get(index as usize)
+        let word = |column| self.directory.word(Section::Structs, position, column);
+        self.lowered(word(1) as usize)?
+            .structs
+            .get(word(2) as usize)
     }
 
     /// The function declaration at `position` in package order.
     pub fn function_at(&self, position: usize) -> Option<&FunctionDeclaration> {
-        let (entry, index) = *self.directory.functions.get(position)?;
-        self.lowered(entry as usize)?.functions.get(index as usize)
+        let directory = &self.directory;
+        let row = directory.word(Section::FunctionsByName, position, 0) as usize;
+        let word = |column| directory.word(Section::Functions, row, column);
+        self.lowered(word(1) as usize)?
+            .functions
+            .get(word(2) as usize)
     }
 
     /// Every struct name, in package order, decoding nothing.
     pub fn struct_names(&self) -> impl Iterator<Item = &str> {
-        self.directory.structs.iter().map(|(entry, index)| {
-            self.directory.declarations[*entry as usize].structs[*index as usize].as_str()
-        })
+        let directory = &self.directory;
+        (0..directory.rows(Section::Structs))
+            .map(|row| directory.string(directory.word(Section::Structs, row, 0)))
     }
 
     /// Every function name, in package order, decoding nothing.
     pub fn function_names(&self) -> impl Iterator<Item = &str> {
-        self.directory.functions.iter().map(|(entry, index)| {
-            self.directory.declarations[*entry as usize].functions[*index as usize].as_str()
+        let directory = &self.directory;
+        (0..directory.rows(Section::FunctionsByName)).map(|position| {
+            let row = directory.word(Section::FunctionsByName, position, 0) as usize;
+            directory.string(directory.word(Section::Functions, row, 0))
         })
     }
 
+    /// Every function's name and runtime parameter count, in the order the
+    /// package's bodies were lowered in, decoding nothing.
+    pub fn bodies(&self) -> impl Iterator<Item = (&str, usize)> + Clone {
+        let directory = &self.directory;
+        (0..directory.rows(Section::Functions)).map(|row| {
+            (
+                directory.string(directory.word(Section::Functions, row, 0)),
+                directory.word(Section::Functions, row, 3) as usize,
+            )
+        })
+    }
+
+    /// How many functions the package declares.
+    pub const fn body_count(&self) -> usize {
+        self.directory.rows(Section::Functions)
+    }
+
+    /// The row of the function `name` among [`Self::bodies`].
+    pub fn body_row(&self, name: &str) -> Option<usize> {
+        self.directory.function_row(name)
+    }
+
+    /// The name of the function at `row` among [`Self::bodies`].
+    pub fn body_name(&self, row: usize) -> &str {
+        let directory = &self.directory;
+        directory.string(directory.word(Section::Functions, row, 0))
+    }
+
+    /// Where the body of the function at `row` among [`Self::bodies`]
+    /// lies in the payload; `None` when the package holds no body for it.
+    pub fn body_range(&self, row: usize) -> Option<Range<usize>> {
+        let word = |column| self.directory.word(Section::Functions, row, column);
+        let range = word(6) as usize..word(7) as usize;
+        (row < self.body_count() && !range.is_empty()).then_some(range)
+    }
+
+    /// Whether the function `name` takes its parameter at `slot` (receiver
+    /// at slot zero) by `mut` or `ref`; `None` when the package declares
+    /// no such function or it has no such parameter.
+    pub fn ref_param(&self, name: &str, slot: usize) -> Option<bool> {
+        let directory = &self.directory;
+        let row = directory.function_row(name)?;
+        let word = |column| directory.word(Section::Functions, row, column);
+        if slot >= word(5) as usize {
+            return None;
+        }
+        let index = (word(4) as usize).saturating_add(slot / 32);
+        (index < directory.rows(Section::Masks))
+            .then(|| (directory.word(Section::Masks, index, 0) >> (slot % 32)) & 1 == 1)
+    }
+
     /// Every trait the package declares, sorted.
-    pub fn traits(&self) -> &[String] {
-        &self.traits
+    pub fn traits(&self) -> impl Iterator<Item = &str> {
+        self.directory
+            .table_keys(InterfaceTable::Traits)
+            .map(|(name, _)| name)
+    }
+
+    /// Whether the package declares the trait `name`, decoding nothing.
+    pub fn declares_trait(&self, name: &str) -> bool {
+        self.directory
+            .key_declaration(InterfaceTable::Traits, name)
+            .is_some()
     }
 
     /// The trait declaration `name`, decoded on first use; `None` when the
     /// package declares no such trait.
     pub fn trait_declaration(&self, name: &str) -> Option<&TraitDeclaration> {
-        self.traits
-            .binary_search_by(|known| known.as_str().cmp(name))
-            .ok()?;
-        self.lowered_owning(name)?
+        let entry = self
+            .directory
+            .key_declaration(InterfaceTable::Traits, name)?;
+        self.lowered(entry as usize)?
             .traits
             .iter()
             .find(|declaration| declaration.name == name)
@@ -430,26 +720,21 @@ impl PackageDeclarations {
     }
 
     /// The package's module table, sorted by dotted name.
-    pub fn modules(&self) -> &[ModuleEntry] {
-        &self.directory.modules
+    pub fn modules(&self) -> impl ExactSizeIterator<Item = ModuleEntry<'_>> + '_ {
+        self.directory.modules()
     }
 
     /// The encoded link record of the module at `position` in the module
     /// table.
     pub fn link_record(&self, position: usize) -> Option<&[u8]> {
-        let module = self.directory.modules.get(position)?;
-        Some(self.payload.get(&module.link))
+        let module = self.directory.module(position)?;
+        Some(self.directory.payload.get(&module.link))
     }
 
     /// Whether a declaration stamped with `module` comes from one of the
     /// package's modules, so its body is in the package.
     pub fn compiles(&self, module: Option<&str>) -> bool {
-        module.is_some_and(|module| {
-            self.directory
-                .modules
-                .iter()
-                .any(|entry| entry.path == module)
-        })
+        module.is_some_and(|module| self.modules().any(|entry| entry.path == module))
     }
 
     /// The lowered part of the declaration at `entry`, decoded on first
@@ -458,9 +743,14 @@ impl PackageDeclarations {
         self.decoded
             .get(entry)?
             .get_or_init(|| {
-                let declaration = &self.directory.declarations[entry];
-                let record = self.payload.get(&declaration.record);
-                postcard::from_bytes(&record[..declaration.residue])
+                let declaration = self.directory.declaration(entry)?;
+                let record = self.directory.payload.get(&declaration.record);
+                record
+                    .get(..declaration.residue)
+                    .ok_or_else(|| "its record is truncated".to_string())
+                    .and_then(|lowered| {
+                        postcard::from_bytes(lowered).map_err(|error| error.to_string())
+                    })
                     .map_err(|error| {
                         self.fail(format!(
                             "package declaration `{}` does not decode: {error}",
@@ -480,8 +770,15 @@ impl PackageDeclarations {
 
     /// The checker residue of the declaration at `entry`, undecoded.
     pub fn residue(&self, entry: usize) -> &[u8] {
-        let declaration = &self.directory.declarations[entry];
-        &self.payload.get(&declaration.record)[declaration.residue..]
+        self.directory
+            .declaration(entry)
+            .and_then(|declaration| {
+                self.directory
+                    .payload
+                    .get(&declaration.record)
+                    .get(declaration.residue..)
+            })
+            .unwrap_or_default()
     }
 
     /// How many declaration records' lowered parts have been decoded so
@@ -504,22 +801,8 @@ impl PackageDeclarations {
     /// The position of the declaration the name `name` belongs to,
     /// decoding nothing.
     fn owning(&self, name: &str) -> Option<usize> {
-        let declarations = &self.directory.declarations;
-        declaration_candidates(name).find_map(|candidate| {
-            declarations
-                .binary_search_by(|entry| entry.name.as_str().cmp(candidate))
-                .ok()
-        })
-    }
-
-    fn function_position(&self, name: &str) -> Option<usize> {
-        let directory = &self.directory;
-        position(
-            &directory.functions,
-            name,
-            |entry| &entry.functions,
-            directory,
-        )
+        declaration_candidates(name)
+            .find_map(|candidate| self.directory.declaration_position(candidate))
     }
 
     fn fail(&self, message: String) {
@@ -549,7 +832,7 @@ impl PackageScope {
     /// decoded on first use; `None` when no reached module declares it.
     pub fn overloads_of(&self, name: &str) -> Option<&OverloadSets> {
         let entry = self.package.owning(name)?;
-        let module = self.package.directory.declarations[entry].module;
+        let module = self.package.directory.declaration(entry)?.module;
         if !self.reached.get(module as usize).copied().unwrap_or(false) {
             return None;
         }
@@ -766,16 +1049,23 @@ impl DeclarationRecords {
     }
 
     /// Encode every record with `append`, which stores its bytes and
-    /// answers their range, and answer the directory placing them.
+    /// answers their range, then the directory placing them and `bodies`,
+    /// and answer the directory's range.
+    ///
+    /// `bodies` are the package's function bodies in lowering order, each
+    /// joined to its function's declaration; `None` encodes a package of
+    /// declarations alone.
     ///
     /// # Errors
     ///
-    /// A record that does not encode, a module recorded twice, or a
-    /// declaration of no recorded module.
+    /// A record that does not encode, a module recorded twice, a
+    /// declaration of no recorded module, a name two declarations hold, a
+    /// body no declaration declares, or a declared function with no body.
     pub fn encode(
         mut self,
+        bodies: Option<Vec<PackagedBody>>,
         append: &mut impl FnMut(&[u8]) -> Range<usize>,
-    ) -> Result<DeclarationDirectory, String> {
+    ) -> Result<Range<usize>, String> {
         self.modules
             .sort_by(|left, right| left.name.cmp(&right.name));
         if let Some(pair) = self
@@ -791,10 +1081,14 @@ impl DeclarationRecords {
             .enumerate()
             .map(|(position, module)| (module.path.as_str(), position as u32))
             .collect();
-        let mut directory = DeclarationDirectory::default();
+        let mut writer = DirectoryWriter::default();
         let mut structs = Vec::new();
-        let mut functions = Vec::new();
+        let mut functions: HashMap<String, (u32, u32)> = HashMap::new();
+        let mut keys = Vec::new();
+        let mut methods = Vec::new();
+        let mut bindings = vec![Vec::new(); self.modules.len()];
         for (position, (name, record)) in self.declarations.into_iter().enumerate() {
+            let position = position as u32;
             let module = positions
                 .get(record.module.as_str())
                 .copied()
@@ -803,57 +1097,149 @@ impl DeclarationRecords {
                 .map_err(|error| format!("the declarations of `{name}` do not encode: {error}"))?;
             let residue = bytes.len();
             bytes.extend_from_slice(&record.residue);
-            let entry = DeclarationEntry {
-                structs: record
-                    .lowered
-                    .structs
-                    .iter()
-                    .map(|declaration| declaration.name.clone())
-                    .collect(),
-                functions: record
-                    .lowered
-                    .functions
-                    .iter()
-                    .map(|declaration| declaration.lowered_name.clone())
-                    .collect(),
-                name,
+            let range = append(&bytes);
+            let mut declared = record.keys;
+            declared.sort();
+            declared.dedup();
+            let first_key = writer.rows(Section::DeclarationKeys);
+            for (table, key) in &declared {
+                let key = writer.string(key);
+                writer.row(Section::DeclarationKeys, &[*table as u32, key]);
+            }
+            let row = [
+                writer.string(&name),
                 module,
-                keys: record.keys,
-                methods: record.methods,
-                record: append(&bytes),
-                residue,
-            };
-            structs.extend((0..entry.structs.len()).map(|index| (position as u32, index as u32)));
-            functions
-                .extend((0..entry.functions.len()).map(|index| (position as u32, index as u32)));
-            directory.declarations.push(entry);
+                offset(range.start)?,
+                offset(range.end)?,
+                offset(residue)?,
+                offset(first_key)?,
+                offset(declared.len())?,
+            ];
+            writer.row(Section::Declarations, &row);
+            for (index, declaration) in record.lowered.structs.iter().enumerate() {
+                structs.push((declaration.name.clone(), position, index as u32));
+            }
+            for (index, declaration) in record.lowered.functions.iter().enumerate() {
+                if functions
+                    .insert(declaration.lowered_name.clone(), (position, index as u32))
+                    .is_some()
+                {
+                    return Err(format!(
+                        "function `{}` is declared twice",
+                        declaration.lowered_name
+                    ));
+                }
+            }
+            for (table, key) in declared {
+                if table == InterfaceTable::Bindings {
+                    bindings[module as usize].push(key.clone());
+                }
+                keys.push((table, key, position));
+            }
+            methods.extend(record.methods.into_iter().map(|method| (method, position)));
         }
-        let declarations = &directory.declarations;
-        structs.sort_by(|left, right| {
-            let name = |(entry, index): &(u32, u32)| {
-                declarations[*entry as usize].structs[*index as usize].as_bytes()
-            };
-            name(left).cmp(name(right))
-        });
-        functions.sort_by(|left, right| {
-            let name = |(entry, index): &(u32, u32)| {
-                declarations[*entry as usize].functions[*index as usize].as_bytes()
-            };
-            name(left).cmp(name(right))
-        });
-        directory.structs = structs;
-        directory.functions = functions;
-        directory.modules = self
-            .modules
-            .into_iter()
-            .map(|module| ModuleEntry {
-                link: append(&module.link),
-                name: module.name,
-                canonical: module.canonical,
-                path: module.path,
-            })
-            .collect();
-        Ok(directory)
+        let bodies = if let Some(bodies) = bodies {
+            let mut joined = Vec::with_capacity(bodies.len());
+            for body in bodies {
+                let (declaration, index) = functions
+                    .remove(&body.name)
+                    .ok_or_else(|| format!("body `{}` has no declaration", body.name))?;
+                joined.push((body, declaration, index));
+            }
+            if let Some(name) = functions.keys().min() {
+                return Err(format!("function `{name}` has no body"));
+            }
+            joined
+        } else {
+            let mut declared: Vec<_> = functions
+                .into_iter()
+                .map(|(name, (declaration, index))| {
+                    let body = PackagedBody {
+                        name,
+                        n_params: 0,
+                        ref_params: Vec::new(),
+                        range: 0..0,
+                    };
+                    (body, declaration, index)
+                })
+                .collect();
+            declared.sort_by(|left, right| left.0.name.cmp(&right.0.name));
+            declared
+        };
+        for (body, declaration, index) in &bodies {
+            let name = writer.string(&body.name);
+            let mask = writer.rows(Section::Masks);
+            for chunk in body.ref_params.chunks(32) {
+                let word = chunk
+                    .iter()
+                    .enumerate()
+                    .fold(0, |word, (bit, set)| word | (u32::from(*set) << bit));
+                writer.row(Section::Masks, &[word]);
+            }
+            let row = [
+                name,
+                *declaration,
+                *index,
+                offset(body.n_params)?,
+                offset(mask)?,
+                offset(body.ref_params.len())?,
+                offset(body.range.start)?,
+                offset(body.range.end)?,
+            ];
+            writer.row(Section::Functions, &row);
+        }
+        let mut by_name: Vec<usize> = (0..bodies.len()).collect();
+        by_name.sort_by(|left, right| bodies[*left].0.name.cmp(&bodies[*right].0.name));
+        for position in by_name {
+            writer.row(Section::FunctionsByName, &[offset(position)?]);
+        }
+        structs.sort();
+        if let Some(pair) = structs.windows(2).find(|pair| pair[0].0 == pair[1].0) {
+            return Err(format!("struct `{}` is declared twice", pair[0].0));
+        }
+        for (name, declaration, index) in structs {
+            let name = writer.string(&name);
+            writer.row(Section::Structs, &[name, declaration, index]);
+        }
+        keys.sort();
+        if let Some(pair) = keys
+            .windows(2)
+            .find(|pair| (pair[0].0, &pair[0].1) == (pair[1].0, &pair[1].1))
+        {
+            return Err(format!(
+                "two declarations hold the {:?} key `{}`",
+                pair[0].0, pair[0].1
+            ));
+        }
+        for (table, key, declaration) in keys {
+            let key = writer.string(&key);
+            writer.row(Section::Keys, &[table as u32, key, declaration]);
+        }
+        methods.sort();
+        for (method, declaration) in methods {
+            let method = writer.string(&method);
+            writer.row(Section::Methods, &[method, declaration]);
+        }
+        for (module, mut names) in self.modules.into_iter().zip(bindings) {
+            let link = append(&module.link);
+            names.sort();
+            let first_binding = writer.rows(Section::Bindings);
+            for name in &names {
+                let name = writer.string(name);
+                writer.row(Section::Bindings, &[name]);
+            }
+            let row = [
+                writer.string(&module.name),
+                writer.string(&module.canonical),
+                writer.string(&module.path),
+                offset(link.start)?,
+                offset(link.end)?,
+                offset(first_binding)?,
+                offset(names.len())?,
+            ];
+            writer.row(Section::Modules, &row);
+        }
+        Ok(append(&writer.finish()))
     }
 
     /// The record of the declaration `name` belongs to, opened empty when
@@ -1001,20 +1387,168 @@ fn sorted_insert<V>(entries: &mut Vec<(String, V)>, name: String, value: V) {
         Err(position) => entries.insert(position, (name, value)),
     }
 }
+/// A table of a package's declaration directory.
+#[derive(Debug, Clone, Copy)]
+enum Section {
+    /// `[name, canonical path, stamped path, link start, link end, first
+    /// binding, binding count]`, sorted by name.
+    Modules,
+    /// `[name, module, record start, record end, residue start, first key,
+    /// key count]`, sorted by name.
+    Declarations,
+    /// `[name, declaration, index in its record]`, sorted by name: the
+    /// package order of structs.
+    Structs,
+    /// `[name, declaration, index in its record, runtime parameter count,
+    /// first mask word, mask length, body start, body end]`, in the order
+    /// the bodies were lowered in.
+    Functions,
+    /// `[function row]`, sorted by the function's name: the package order
+    /// of function declarations.
+    FunctionsByName,
+    /// `[table, key]`, each declaration's keys together and sorted.
+    DeclarationKeys,
+    /// `[table, key, declaration]`, sorted by table, then key.
+    Keys,
+    /// `[method, declaration]`, sorted by method, then declaration.
+    Methods,
+    /// `[name]`, each module's bindings together and sorted.
+    Bindings,
+    /// `[mask word]`, a function's `mut`/`ref` parameter mask, 32 slots a
+    /// word, lowest bit first.
+    Masks,
+}
 
-/// The position in `order` of the declaration `name`, whose names an entry
-/// lists at `names`.
-fn position(
-    order: &[(u32, u32)],
-    name: &str,
-    names: impl Fn(&DeclarationEntry) -> &Vec<String>,
-    directory: &DeclarationDirectory,
-) -> Option<usize> {
-    order
-        .binary_search_by(|(entry, index)| {
-            names(&directory.declarations[*entry as usize])[*index as usize]
-                .as_bytes()
-                .cmp(name.as_bytes())
-        })
-        .ok()
+impl Section {
+    const COUNT: usize = Self::Masks as usize + 1;
+    const ALL: [Self; Self::COUNT] = [
+        Self::Modules,
+        Self::Declarations,
+        Self::Structs,
+        Self::Functions,
+        Self::FunctionsByName,
+        Self::DeclarationKeys,
+        Self::Keys,
+        Self::Methods,
+        Self::Bindings,
+        Self::Masks,
+    ];
+
+    /// How many words each of its rows holds.
+    const fn width(self) -> usize {
+        match self {
+            Self::Modules | Self::Declarations => 7,
+            Self::Structs | Self::Keys => 3,
+            Self::Functions => 8,
+            Self::DeclarationKeys | Self::Methods => 2,
+            Self::FunctionsByName | Self::Bindings | Self::Masks => 1,
+        }
+    }
+}
+
+/// A declaration directory as a package build writes it: its string
+/// section, each string interned once, and its tables' words.
+#[derive(Default)]
+struct DirectoryWriter {
+    strings: Vec<String>,
+    interned: HashMap<String, u32>,
+    tables: [Vec<u32>; Section::COUNT],
+}
+
+impl DirectoryWriter {
+    /// The index of the string `text`, interned on first use.
+    fn string(&mut self, text: &str) -> u32 {
+        if let Some(index) = self.interned.get(text) {
+            return *index;
+        }
+        let index = self.strings.len() as u32;
+        self.strings.push(text.to_string());
+        self.interned.insert(text.to_string(), index);
+        index
+    }
+
+    fn row(&mut self, section: Section, words: &[u32]) {
+        self.tables[section as usize].extend_from_slice(words);
+    }
+
+    const fn rows(&self, section: Section) -> usize {
+        self.tables[section as usize].len() / section.width()
+    }
+
+    /// The directory's bytes: the string section, each table's row count,
+    /// then the tables.
+    fn finish(self) -> Vec<u8> {
+        let mut bytes = Vec::new();
+        push_leb128(&mut bytes, self.strings.len() as u64);
+        for text in self.strings.iter().rev() {
+            push_leb128(&mut bytes, text.len() as u64);
+        }
+        for text in &self.strings {
+            bytes.extend_from_slice(text.as_bytes());
+        }
+        for section in Section::ALL {
+            let rows = self.tables[section as usize].len() / section.width();
+            bytes.extend_from_slice(&(rows as u32).to_le_bytes());
+        }
+        for word in self.tables.iter().flatten() {
+            bytes.extend_from_slice(&word.to_le_bytes());
+        }
+        bytes
+    }
+}
+
+/// The first row of `rows` `before` is false of, `before` being true of a
+/// prefix of them.
+fn partition_point(rows: Range<usize>, before: impl Fn(usize) -> bool) -> usize {
+    let (mut low, mut high) = (rows.start, rows.end);
+    while low < high {
+        let middle = low + (high - low) / 2;
+        if before(middle) {
+            low = middle + 1;
+        } else {
+            high = middle;
+        }
+    }
+    low
+}
+
+/// `value` as a directory word.
+fn offset(value: usize) -> Result<u32, String> {
+    u32::try_from(value).map_err(|_| format!("{value} does not fit a package directory word"))
+}
+
+/// The little-endian word at `at` in `bytes`; `u32::MAX` past their end.
+fn word_at(bytes: &[u8], at: usize) -> u32 {
+    at.checked_add(4)
+        .and_then(|end| bytes.get(at..end))
+        .and_then(|word| word.try_into().ok())
+        .map_or(u32::MAX, u32::from_le_bytes)
+}
+
+/// The LEB128 number at `cursor` in `bytes`, advancing past it.
+fn leb128(bytes: &[u8], cursor: &mut usize) -> Result<u64, String> {
+    let mut value = 0u64;
+    for shift in (0..64).step_by(7) {
+        let byte = *bytes
+            .get(*cursor)
+            .ok_or_else(|| "the declaration directory's strings are truncated".to_string())?;
+        *cursor += 1;
+        value |= u64::from(byte & 0x7f) << shift;
+        if byte & 0x80 == 0 {
+            return Ok(value);
+        }
+    }
+    Err("the declaration directory holds a malformed length".to_string())
+}
+
+fn push_leb128(bytes: &mut Vec<u8>, mut value: u64) {
+    loop {
+        let byte = (value & 0x7f) as u8;
+        value >>= 7;
+        if value == 0 {
+            bytes.push(byte);
+            return;
+        }
+        bytes.push(byte | 0x80);
+    }
 }

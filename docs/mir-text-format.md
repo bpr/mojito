@@ -872,42 +872,58 @@ A compiled package (`mir::text::package`) holds MIR bodies, one record per
 library declaration, and one module table holding each module's link
 record, one file per package. The bundled library's is the
 only producer today (`src/package.rs`). No part of a package is MIR text:
-it is a directory followed by bytecode records, as upstream's package is
-MLIR bytecode throughout. The format line is `mojito-package 14`.
+it is a header followed by bytecode records, as upstream's package is
+MLIR bytecode throughout. The format line is `mojito-package 15`.
 
 ```text
-mojito-package 14
-<the directory's length, 8 bytes little-endian>
-<the directory, as bytecode>
+mojito-package 15
+<the header's length, 8 bytes little-endian>
+<the header, as bytecode>
 <the payload: every record, as bytecode>
 ```
 
-- The directory (`PackageDirectory`) holds the header (`package`,
-  `compiler`, `root`), the payload's length, the payload range of the
-  interface and of the `files` table, the declaration directory, and each
-  body. A
-  body's entry carries its name, its runtime parameter count, and its
-  `ref_params` mask, so overload resolution and the loan analysis read a
-  body's signature without decoding it; the bodies keep package order,
-  which `emit-mir` and the elaborator's candidate order observe, beside a
-  by-name permutation. A reader refuses a directory whose ranges leave the
-  payload, whose payload length differs, or whose names are not strictly
-  sorted.
+- The header (`PackageDirectory`, `postcard`) holds the package's identity
+  (`package`, `compiler`, `root`), the payload's length, and the payload
+  range of the interface, of the `files` table, and of the declaration
+  directory. A reader refuses a header whose ranges leave the payload or
+  whose payload length differs.
 - The declaration directory (`mojito_checked::package::DeclarationDirectory`)
-  holds the package's one module table: each library module the build's
-  link recorded, sorted by dotted name, with its source file's canonical
-  path, the path its declarations are stamped with, and its link record's
-  range, as upstream's package holds one module tree its importer's link
-  and front end both read. It lists each library declaration, sorted by
-  linked name, with its module's position in that table, every checker table
-  key its record answers, every method its struct declares, the name of
-  every struct and function declaration its record holds, and its record's
-  range. Two position lists order every struct and every function
-  declaration by name (the package order), so a lookup by name
-  binary-searches them without decoding a record. A reader refuses a
-  module table whose names are not strictly sorted or whose link records
-  leave the payload, and a build refuses a declaration whose module the
-  link recorded no row for.
+  is read in place. Every name it holds is written once, in one string
+  section, as an MLIR bytecode string section is: a LEB128 count, each
+  string's LEB128 length in reverse order, then the strings' bytes. Ten
+  tables follow, each table's row count first, then each table's rows of
+  little-endian `u32` words, a name being its string's index:
+  - the module table: each library module the build's link recorded,
+    sorted by dotted name, with its source file's canonical path, the path
+    its declarations are stamped with, its link record's range, and the
+    span of its module bindings, as upstream's package holds one module
+    tree its importer's link and front end both read;
+  - each library declaration, sorted by linked name, with its module's
+    position, its record's range and residue offset, and the span of its
+    checker table keys;
+  - every struct declaration, sorted by name (the package order), as its
+    declaration's position and its index in that record;
+  - one row per function, in the order the bodies were lowered in, which
+    `emit-mir` and the elaborator's candidate order observe: its name, its
+    declaration's position and its index in that record, its runtime
+    parameter count, its `ref_params` mask's span, and its body's range, as
+    an MLIR function op names its symbol once and holds its region, so
+    overload resolution and the loan analysis read a function's signature
+    without decoding anything; and a by-name permutation of those rows
+    (the package order of function declarations);
+  - each declaration's keys, every checker table key sorted by table then
+    key beside its declaration (the `Traits` range is the package's sorted
+    trait list), every method by name beside each declaration whose
+    struct declares it, each module's bindings sorted by name, and the
+    mask words, 32 parameter slots a word.
+
+  The build writes every table sorted as its lookups need, refusing a
+  name two declarations hold, a body no declaration declares, and a
+  declared function with no body. A reader builds only the strings'
+  offsets, refusing a directory whose strings or tables overrun it; a
+  lookup binary-searches the mapped rows, and a malformed row makes a
+  lookup miss, never read outside the payload. A build also refuses a
+  declaration whose module the link recorded no row for.
 - A declaration's record is the declaration once, read by every phase. Its
   lowered part is `postcard` of `LoweredDeclaration`: every
   `MirStructDeclaration` and `MirFunctionDeclaration` the declaration
@@ -943,8 +959,8 @@ mojito-package 14
   names bind (tables `Elaborated`, `ComptimeDtypes`, `ComptimeParameters`,
   `ComptimeValues`, `TypeAliases`, and `SimdLengthBinders`, the last keyed
   by the binders' owner); no module has a checker record of its own.
-- The importer maps the file (`PackageBytes`, `memmap2`) and reads only
-  the directory and the interface eagerly. A cached package is written to
+- The importer maps the file (`PackageBytes`, `memmap2`) and decodes only
+  the header and the interface eagerly. A cached package is written to
   a private partial file and renamed over its path, and removed only by
   unlinking, so a mapping's bytes never change under it. Link records are
   copied out of the mapping, once per process, since the linker that

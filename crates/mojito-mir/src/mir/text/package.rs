@@ -5,40 +5,41 @@
 //! modules, one record per library declaration (both
 //! `mojito_checked::package`), and each of its verified, ownership-checked
 //! function bodies, before drop elaboration. An importer maps the file and
-//! reads its directory and interface eagerly, a declaration's record the
-//! first time one of its phases looks one of its names up (as upstream's
-//! importer resolves a declaration from bytecode on first lookup), a
-//! module's link record when its link reaches the module, and a body only
-//! when the elaborator
-//! first reaches it, inserting that body's drops then, as upstream
-//! materializes a package's bodies on demand and runs its lifetime pass on
-//! each in the importer.
+//! decodes its header and interface eagerly; it reads the declaration
+//! directory in place, a declaration's record the first time one of its
+//! phases looks one of its names up (as upstream's importer resolves a
+//! declaration from bytecode on first lookup), a module's link record when
+//! its link reaches the module, and a body only when the elaborator first
+//! reaches it, inserting that body's drops then, as upstream materializes a
+//! package's bodies on demand and runs its lifetime pass on each in the
+//! importer.
 //!
-//! The container is a directory followed by records:
+//! The container is a header followed by records:
 //!
 //! ```text
-//! mojito-package 14
-//! <the directory's length, 8 bytes little-endian>
-//! <the directory, as bytecode>
+//! mojito-package 15
+//! <the header's length, 8 bytes little-endian>
+//! <the header, as bytecode>
 //! <the payload: every record, as bytecode>
 //! ```
 //!
-//! The directory holds the header and the payload range of every record:
-//! the interface, the source-file table every body's locations name, the
-//! declaration directory (the module table — each module's dotted name,
-//! its source file's canonical and stamped paths, and its link record —
-//! each declaration's record, its module's position, and every name it
-//! answers, and the package order of every struct and function
-//! declaration), and each body (in package order, with its runtime parameter count, its
-//! reference parameter mask, and a by-name permutation). Every record is
-//! postcard bytecode; a link module record and a declaration's checker
-//! residue are opaque here, since the linker and the checker that read
-//! them sit above MIR. No part of a package is MIR text.
+//! The header names the package and the compiler that built it, and holds
+//! the payload range of the interface, of the source-file table every
+//! body's locations name, and of the declaration directory
+//! (`mojito_checked::package::DeclarationDirectory`). That directory holds
+//! every name once, in one string section, and places every module's link
+//! record, every declaration's record, and every function's body: one row
+//! per function names it once and holds its declaration, its runtime
+//! parameter count, its reference parameter mask, and its body's range, as
+//! an MLIR function op names its symbol once and holds its region. Every
+//! record is postcard bytecode; a link module record and a declaration's
+//! checker residue are opaque here, since the linker and the checker that
+//! read them sit above MIR. No part of a package is MIR text.
 
 use crate::mir::{MirDeclarations, MirFunction, MirProgram, SpanTable};
 use mojito_checked::interface::PackageInterface;
-use mojito_checked::package::{DeclarationDirectory, LoweredDeclaration, Payload};
 pub use mojito_checked::package::{DeclarationRecords, PackageBytes, PackageDeclarations};
+use mojito_checked::package::{LoweredDeclaration, PackagedBody, Payload};
 use mojito_common::token::SourceSpan;
 use mojito_hir::hir::VarId;
 use mojito_types::origin::encoding_packaged_owners;
@@ -48,7 +49,7 @@ use std::ops::Range;
 use std::sync::{Arc, Mutex, OnceLock};
 
 /// The container format this compiler writes and reads.
-pub const PACKAGE_FORMAT: &str = "mojito-package 14";
+pub const PACKAGE_FORMAT: &str = "mojito-package 15";
 
 /// Who built a package from what: an importer refuses a package another
 /// compiler built, or one built from other sources.
@@ -80,12 +81,12 @@ pub struct PackageBodies {
     payload: Payload,
     /// The source file each body location names, by file id.
     files: Vec<Option<String>>,
+    /// The package's declarations, whose function table places each body.
+    package: Arc<PackageDeclarations>,
     /// The package's own declarations, which its bodies were lowered
     /// against, resolved through the same lookups an importer's are.
     declarations: MirDeclarations,
-    entries: Vec<BodyEntry>,
-    /// Each entry's position, sorted by the entry's name.
-    by_name: Vec<u32>,
+    /// Each function table row's body, once decoded.
     decoded: Vec<OnceLock<Option<MirFunction>>>,
     finish: Option<BodyFinish>,
     failures: Mutex<Vec<String>>,
@@ -101,29 +102,23 @@ impl PackageBodies {
     /// has no such function or its record does not decode (a failure
     /// [`Self::failures`] reports).
     pub fn get(&self, name: &str) -> Option<&MirFunction> {
-        let position = self.position(name)?;
-        self.decoded[position]
+        let row = self.package.body_row(name)?;
+        self.decoded
+            .get(row)?
             .get_or_init(|| {
-                let entry = &self.entries[position];
-                let function = match self.decode(entry) {
+                let function = match self.decode(row) {
                     Ok(function) => function,
                     Err(error) => {
-                        self.fail(format!(
-                            "package body `{}` does not decode: {error}",
-                            entry.name
-                        ));
+                        self.fail(format!("package body `{name}` does not decode: {error}"));
                         return None;
                     }
                 };
                 let Some(finish) = self.finish else {
                     return Some(function);
                 };
-                let function = finish(&entry.name, function, &self.declarations);
-                let findings = crate::mir::verify::verify_function_in(
-                    &entry.name,
-                    &function,
-                    &self.declarations,
-                );
+                let function = finish(name, function, &self.declarations);
+                let findings =
+                    crate::mir::verify::verify_function_in(name, &function, &self.declarations);
                 if !findings.is_empty() {
                     self.fail(findings.join("; "));
                 }
@@ -141,22 +136,12 @@ impl PackageBodies {
 
     /// Whether the package has a function `name`.
     pub fn contains(&self, name: &str) -> bool {
-        self.position(name).is_some()
+        self.package.body_row(name).is_some()
     }
 
     /// Every function's name and runtime parameter count, in package order.
     pub fn signatures(&self) -> impl Iterator<Item = (&str, usize)> + Clone {
-        self.entries
-            .iter()
-            .map(|entry| (entry.name.as_str(), entry.n_params))
-    }
-
-    /// Each function's `mut`/`ref` parameter mask, receiver included, by
-    /// name.
-    pub fn ref_params(&self) -> impl Iterator<Item = (&str, &[bool])> {
-        self.entries
-            .iter()
-            .map(|entry| (entry.name.as_str(), entry.ref_params.as_slice()))
+        self.package.bodies()
     }
 
     /// How many bodies have been decoded so far.
@@ -169,11 +154,11 @@ impl PackageBodies {
 
     /// Every body, decoded, in package order.
     pub fn all(&self) -> Vec<(String, MirFunction)> {
-        self.entries
-            .iter()
-            .filter_map(|entry| {
-                self.get(&entry.name)
-                    .map(|function| (entry.name.clone(), function.clone()))
+        self.package
+            .bodies()
+            .filter_map(|(name, _)| {
+                self.get(name)
+                    .map(|function| (name.to_string(), function.clone()))
             })
             .collect()
     }
@@ -186,24 +171,15 @@ impl PackageBodies {
             .clone()
     }
 
-    fn position(&self, name: &str) -> Option<usize> {
-        let found = self
-            .by_name
-            .binary_search_by(|position| {
-                self.entries[*position as usize]
-                    .name
-                    .as_bytes()
-                    .cmp(name.as_bytes())
-            })
-            .ok()?;
-        Some(self.by_name[found] as usize)
-    }
-
-    /// The body `entry` locates, its locations rebuilt against the
-    /// package's file table.
-    fn decode(&self, entry: &BodyEntry) -> Result<MirFunction, String> {
+    /// The body of the function at `row` of the function table, its
+    /// locations rebuilt against the package's file table.
+    fn decode(&self, row: usize) -> Result<MirFunction, String> {
+        let range = self
+            .package
+            .body_range(row)
+            .ok_or_else(|| "the package holds no body for it".to_string())?;
         let (mut function, locations): (MirFunction, Vec<Location>) =
-            encoding_packaged_owners(|| postcard::from_bytes(self.payload.get(&entry.range)))
+            encoding_packaged_owners(|| postcard::from_bytes(self.payload.get(&range)))
                 .map_err(|error| error.to_string())?;
         let mut spans = SpanTable::default();
         for location in locations {
@@ -331,7 +307,6 @@ pub fn write_package(
     let interface = record(&bytecode(interface)?);
     let files = files(program);
     let files_range = record(&bytecode(&files.keys().collect::<Vec<_>>())?);
-    let declarations = records.encode(&mut record).map_err(PackageError)?;
     let bodies = program
         .functions
         .iter()
@@ -353,7 +328,7 @@ pub fn write_package(
                     PackageError(format!("body `{name}` does not encode: {error}"))
                 },
             )?;
-            Ok(BodyEntry {
+            Ok(PackagedBody {
                 name: name.clone(),
                 n_params: function.n_params,
                 ref_params: function.ref_params.clone(),
@@ -361,20 +336,14 @@ pub fn write_package(
             })
         })
         .collect::<Result<Vec<_>, PackageError>>()?;
-    let mut by_name = (0..bodies.len() as u32).collect::<Vec<_>>();
-    by_name.sort_by(|left, right| {
-        bodies[*left as usize]
-            .name
-            .as_bytes()
-            .cmp(bodies[*right as usize].name.as_bytes())
-    });
+    let declarations = records
+        .encode(Some(bodies), &mut record)
+        .map_err(PackageError)?;
     let directory = bytecode(&PackageDirectory {
         header: header.clone(),
         interface,
         files: files_range,
         declarations,
-        bodies,
-        by_name,
         payload: payload.len(),
     })?;
     let mut output = format!("{PACKAGE_FORMAT}\n").into_bytes();
@@ -415,7 +384,8 @@ pub fn read_package(bytes: PackageBytes) -> Result<Package, PackageError> {
     drop(decoding);
     let files = from_bytecode(payload.get(&directory.files), "files")?;
     let declarations = Arc::new(
-        PackageDeclarations::read(payload.clone(), directory.declarations).map_err(PackageError)?,
+        PackageDeclarations::read(payload.clone(), &directory.declarations)
+            .map_err(PackageError)?,
     );
     Ok(Package {
         header: directory.header,
@@ -424,10 +394,11 @@ pub fn read_package(bytes: PackageBytes) -> Result<Package, PackageError> {
         bodies: PackageBodies {
             payload,
             files,
-            declarations: MirDeclarations::of_package(declarations),
-            decoded: directory.bodies.iter().map(|_| OnceLock::new()).collect(),
-            entries: directory.bodies,
-            by_name: directory.by_name,
+            decoded: (0..declarations.body_count())
+                .map(|_| OnceLock::new())
+                .collect(),
+            declarations: MirDeclarations::of_package(Arc::clone(&declarations)),
+            package: declarations,
             finish: None,
             failures: Mutex::new(Vec::new()),
         },
@@ -440,53 +411,24 @@ struct PackageDirectory {
     header: PackageHeader,
     interface: Range<usize>,
     files: Range<usize>,
-    declarations: DeclarationDirectory,
-    /// Each body, in package order.
-    bodies: Vec<BodyEntry>,
-    /// Each body's position, sorted by the body's name.
-    by_name: Vec<u32>,
+    /// The declaration directory, which places every declaration record and
+    /// every body.
+    declarations: Range<usize>,
     /// The payload's length.
     payload: usize,
 }
 
 impl PackageDirectory {
-    /// Refuse a directory whose ranges leave the payload or whose bodies'
-    /// names are not strictly sorted, which the lookups by name rely on
-    /// (the declaration directory validates its own).
+    /// Refuse a directory whose ranges leave the payload (the declaration
+    /// directory's rows are checked as they are read).
     fn validate(&self) -> Result<(), PackageError> {
-        let ranges = [&self.interface, &self.files]
-            .into_iter()
-            .chain(self.bodies.iter().map(|entry| &entry.range));
-        for range in ranges {
+        for range in [&self.interface, &self.files, &self.declarations] {
             if range.start > range.end || !(..=self.payload).contains(&range.end) {
                 return Err(PackageError("a record overruns the payload".to_string()));
             }
         }
-        let sorted = self.by_name.len() == self.bodies.len()
-            && self
-                .by_name
-                .iter()
-                .all(|position| (*position as usize) < self.bodies.len())
-            && self.by_name.windows(2).all(|pair| {
-                self.bodies[pair[0] as usize].name.as_bytes()
-                    < self.bodies[pair[1] as usize].name.as_bytes()
-            });
-        if sorted {
-            Ok(())
-        } else {
-            Err(PackageError(
-                "the bodies' name order is not a strict sort".to_string(),
-            ))
-        }
+        Ok(())
     }
-}
-
-#[derive(Debug, serde::Serialize, serde::Deserialize)]
-struct BodyEntry {
-    name: String,
-    n_params: usize,
-    ref_params: Vec<bool>,
-    range: Range<usize>,
 }
 
 /// A body register's source location, its file named by id.

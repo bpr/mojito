@@ -50,26 +50,16 @@ pub fn check_ownership_checked(
 /// Run the ownership analysis over an already-lowered program — the
 /// standalone-MIR core the pipeline composes with `mir::verify` so production
 /// MIR is fully verified before execution.
-pub fn check_ownership_program(prog: &MirProgram) -> Result<(), OwnershipError> {
-    check_ownership_importing(prog, std::iter::empty())
-}
-
-/// [`check_ownership_program`] for a program that imports a package.
 ///
-/// The package's bodies were analyzed when it was built; `imported` gives
-/// each one's reference-parameter mask, which a call into it reads.
-pub fn check_ownership_importing<'a>(
-    prog: &'a MirProgram,
-    imported: impl IntoIterator<Item = (&'a str, &'a [bool])>,
-) -> Result<(), OwnershipError> {
+/// An imported package's bodies were analyzed when it was built; a call
+/// into one reads its reference-parameter mask from the package's function
+/// table.
+pub fn check_ownership_program(prog: &MirProgram) -> Result<(), OwnershipError> {
     let callees = CalleeRefParams {
-        ref_params: imported
-            .into_iter()
-            .chain(
-                prog.functions
-                    .iter()
-                    .map(|(name, function)| (name.as_str(), function.ref_params.as_slice())),
-            )
+        ref_params: prog
+            .functions
+            .iter()
+            .map(|(name, function)| (name.as_str(), function.ref_params.as_slice()))
             .collect(),
         param_writes: prog
             .declarations
@@ -117,8 +107,9 @@ pub fn check_ownership_importing<'a>(
 /// falls back to its function's `ref_params` mask (receiver at slot zero), and
 /// an unknown callee stays exclusive. `structs` resolves a single-`__init__`
 /// construction, which calls the bare struct name, to its `<name>.__init__`
-/// declaration. `param_writes` and `structs` cover the program's own
-/// declarations; a name they miss is looked up in the package it imports.
+/// declaration. `ref_params`, `param_writes`, and `structs` cover the
+/// program's own functions and declarations; a name they miss is looked up
+/// in the package it imports.
 #[derive(Default)]
 pub struct CalleeRefParams<'a> {
     pub ref_params: HashMap<&'a str, &'a [bool]>,
@@ -158,7 +149,11 @@ impl CalleeRefParams<'_> {
             };
         }
         let slot = if receiver { argument + 1 } else { argument };
-        match self.ref_params.get(callee).and_then(|mask| mask.get(slot)) {
+        let reference = self.ref_params.get(callee).map_or_else(
+            || imported?.package().ref_param(callee, slot),
+            |mask| mask.get(slot).copied(),
+        );
+        match reference {
             Some(false) => LoanAccess::Read,
             _ => LoanAccess::Write,
         }

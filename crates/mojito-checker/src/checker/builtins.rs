@@ -957,7 +957,7 @@ impl Checker {
             .keys()
             .filter(|name| *name == family || name.ends_with(&format!("${family}")))
             .min()
-            .cloned()
+            .map(str::to_string)
             .ok_or_else(|| {
                 TypeError::InvariantViolation(format!(
                     "scalar range family '{family}' is not linked"

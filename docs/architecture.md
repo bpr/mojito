@@ -113,19 +113,22 @@ import (every compilation that links the bundled library):
        it and inserts its drops then -> VM
 ```
 
-- **The package file** (`mir::text::package`) is a directory followed by
+- **The package file** (`mir::text::package`) is a header followed by
   bytecode records, as upstream's package is bytecode throughout. The
-  directory holds the header (package, compiler build identity, library
-  root) and every record's byte range: the checker interface
-  (`checked::interface::PackageInterface`), one record per library
-  declaration under one declaration directory
-  (`checked::package::DeclarationDirectory`, which also holds the one
-  module table: each library module once, by dotted name, with its link
-  record), and each function body, before drop elaboration.
-  The importer maps the file (`PackageBytes`) and reads its directory and
-  interface; declarations and bodies decode from their own ranges on
-  demand: Hello World decodes three of 223 declaration records and three
-  of 874 bodies.
+  header holds the package's identity (package, compiler build identity,
+  library root) and the byte range of the checker interface
+  (`checked::interface::PackageInterface`), the source-file table, and the
+  declaration directory (`checked::package::DeclarationDirectory`). That
+  directory holds every name once, in one string section, and places each
+  library module once, by dotted name, with its link record, one record
+  per library declaration, and one row per function, which names it once
+  and holds its signature masks and its body's range, as an MLIR function
+  op names its symbol once and holds its region. The importer maps the
+  file (`PackageBytes`), decodes its header and interface, and reads the
+  directory in place, looking a name up by binary search over the mapped
+  rows; declarations and bodies decode from their own ranges on demand:
+  Hello World decodes three of 251 declaration records and three of 874
+  bodies.
 - **A declaration's record** (`checked::package`) holds the declaration
   once, as upstream's package holds it in one op every phase of its
   importer reads. Its lowered part (`LoweredDeclaration`) is every MIR

@@ -149,6 +149,15 @@ to evolve under the `0.x` compatibility rules.
   every declaration names its module by position, and the interface keeps
   only the package's declared names. The package shrinks from 1.57 to
   1.56 MB, and its format is now `mojito-package 14`.
+- A package names each library function once, and an importer reads its
+  declaration directory in place (R573): one string section holds every
+  name once, as an MLIR bytecode string section does, and one row per
+  function holds its name, its declaration, its signature masks, and its
+  body's range, as an MLIR function op names its symbol once and holds its
+  region. A lookup binary-searches the mapped rows, the check and the loan
+  analysis ask a package callee's facts on lookup instead of indexing all
+  of them, and Hello World runs in 3.2 ms release, from 4.1 ms. The package
+  shrinks from 1.56 to 1.54 MB, and its format is now `mojito-package 15`.
 - A module under a search root is linked under its path there, whichever
   import reaches it first: `std/io/file.mojo` declares
   `__module$std$io$file$…`, not `__module$file$…`.

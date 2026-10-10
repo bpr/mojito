@@ -149,13 +149,12 @@ fn import(bytes: PackageBytes, header: &PackageHeader) -> Result<ImportedPackage
     let declarations = &package.declarations;
     let modules = declarations
         .modules()
-        .iter()
         .enumerate()
         .map(|(position, module)| {
             let identity = ModuleIdentity {
-                name: module.name.clone(),
-                canonical: module.canonical.clone(),
-                path: module.path.clone(),
+                name: module.name.to_string(),
+                canonical: module.canonical.to_string(),
+                path: module.path.to_string(),
             };
             let bytes = declarations.link_record(position).unwrap_or_default();
             (identity, bytes.to_vec())
@@ -163,9 +162,9 @@ fn import(bytes: PackageBytes, header: &PackageHeader) -> Result<ImportedPackage
     Ok(ImportedPackage {
         modules: PackageModules::new(&package.header.root, modules),
         interface: Arc::new(package.interface),
-        checked: Arc::new(crate::checker::DeclarationInterfaces::read(Arc::clone(
+        checked: Arc::new(crate::checker::DeclarationInterfaces::new(Arc::clone(
             &package.declarations,
-        ))?),
+        ))),
         declarations: package.declarations,
         bodies: package
             .bodies
@@ -556,22 +555,19 @@ mod tests {
     #[test]
     fn every_library_module_has_an_interface() {
         let package = bundled_std_package().expect("the bundled library packages");
-        let modules = package.declarations.modules();
-        let list = modules
-            .iter()
+        let directory = package.declarations.directory();
+        let list = directory
+            .modules()
             .position(|module| module.name == "std.collections.list")
             .expect("the library has a list module");
         assert!(
-            package
-                .declarations
-                .directory()
-                .declarations
-                .iter()
+            (0..directory.declaration_count())
+                .filter_map(|position| directory.declaration(position))
                 .any(|entry| entry.module as usize == list)
         );
         let installed = crate::checker::InstalledInterfaces::reaching(
             &package.checked,
-            0..modules.len() as u32,
+            0..directory.module_count() as u32,
         );
         assert_eq!(installed.decoded(), 0);
     }

@@ -170,13 +170,10 @@ impl MirDeclarations {
     /// decoding nothing.
     pub fn declares_trait(&self, name: &str) -> bool {
         self.own_trait(name).is_some()
-            || self.imported.as_ref().is_some_and(|imported| {
-                imported
-                    .package()
-                    .traits()
-                    .binary_search_by(|known| known.as_str().cmp(name))
-                    .is_ok()
-            })
+            || self
+                .imported
+                .as_ref()
+                .is_some_and(|imported| imported.package().declares_trait(name))
     }
 
     /// The trait declaration `name`: the program's own, else its package's,
