@@ -34,7 +34,8 @@ such a constant (`CtMarker::Applied`) and keeps its declaration as written,
 and the check classifies it in its declaration pass — a folded `Int`
 (`Checker.comptimes`), an application (`Checker::applied_constant_expr`,
 `comptime_applied`, now with the callee's declared result type), a literal
-(`comptime_literals`) — or lifts its initializer as the function
+(`comptime_literals`), a closed attribute (`Checker.module_values`: a
+`DType`, a vector, a closed tuple or struct) — or lifts its initializer as the function
 `$comptime$<name>$module`, the same name in every pass
 (`Checker::module_lifted_application`; a list or tuple display's
 application is typed as a parameter list, so `XS[0]` is a `ListGet` over
@@ -253,7 +254,13 @@ The boundary:
   folder closes its initializer: literals, other folded constants,
   operators, `DType` members, type names and applications, predicates.
   That is upstream's attribute folding, and it is what the checker's
-  `eval_ct` and `register_module_alias` do today.
+  `eval_ct`, `register_module_alias`, and `Checker.module_values` (a
+  `DType`, a vector, a closed tuple or struct) do today.
+- A **collection display** (`[1, 2, 3]`, `{"a": 1}`) is never an
+  attribute, closed or not: the pin constructs it by running its
+  initializer and names `[1, 2, 3]` an `Array[Int, Int(3)]`, a
+  heap-owning struct. It is an application like any other
+  (`lifts_module_constant`), typed by its annotation when it has one.
 - A module constant whose initializer **applies anything** stays a typed
   request: the check types the initializer and declares the constant at
   that type; its value is `Apply(thunk)`, symbolic, equal by structure, so

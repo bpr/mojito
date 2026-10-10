@@ -873,9 +873,15 @@ MIR lowers as `Const::Param` and `native::mono` folds or demands
 initializer the check lifts (a display, a method call) is the application
 `$comptime$<name>$module`, evaluated once, and is declared ahead of the
 first body after which its initializer types (`Checker::check_module_block`);
-no read spells its initializer. The toplevel lowers no `comptime`
-declaration; a non-scalar closed constant is still spelled into bodies by
-`materialize_block` (R517).
+no read spells its initializer. A collection display (`[1, 2]`, `{"a": 1}`)
+is such an application, closed or not
+(`mojito_checker::checker::lifts_module_constant`), since the pin constructs
+one by running its initializer. Any other closed constant — a scalar, a
+`DType`, a vector, a closed tuple or struct — is a folded attribute
+(`Checker.module_values`), its read a `ParamKind::Constant` at the declared
+type. The toplevel lowers no `comptime` declaration, and the elaborator
+spells no module constant into a body (`mark_struct_names` only marks
+struct names).
 
 Compile-time values are represented by:
 

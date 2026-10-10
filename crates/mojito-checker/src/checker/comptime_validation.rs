@@ -84,6 +84,17 @@ pub(in crate::checker) struct LiftedApplication {
     application: ParamExpr,
 }
 
+/// Where a binder-free `comptime` binding is declared, which decides
+/// whether a collection display initializer is lifted
+/// ([`super::lifts_module_constant`]): a module constant's is, typed by its
+/// annotation (`comptime E: Dict[String, Int] = {}`), while a local display
+/// binding keeps its display route.
+#[derive(Clone, Copy, Debug)]
+pub(super) enum ConstantScope<'a> {
+    Module(Option<&'a SourceType>),
+    Local,
+}
+
 /// A call argument that forwards a variadic pack whole (`*args`, `*args^`)
 /// while the pack is still a parameter.
 pub(super) struct ForwardedPack {
@@ -785,13 +796,18 @@ impl Checker {
         if called.is_none() && !self.reads_compile_time_alone(expr) {
             return None;
         }
-        // The expression's own arguments are typed where they stand.
+        // The expression's own arguments are typed where they stand. One
+        // that raises (`M["a"]` over a dictionary) lifts nothing: its
+        // binding reports the pin's rejection ([`Self::requested_binding`]).
         let lifting = self.lifting_positions.replace(0);
-        let ty = {
+        let (ty, raised) = self.observing_raises(|| {
             let _position = self.comptime_position();
             self.infer(expr)
-        };
+        });
         self.lifting_positions.set(lifting);
+        if raised {
+            return None;
+        }
         let ty = match ty.ok()? {
             Ty::Int | Ty::IntLiteral => Ty::Int,
             Ty::Bool => Ty::Bool,
@@ -1293,12 +1309,13 @@ impl Checker {
         &self,
         name: &str,
         value: &Expr,
+        scope: ConstantScope<'_>,
     ) -> Result<Option<ParamExpr>, TypeError> {
         if let Some(expression) = self.comptime_value_expression(value) {
             return Ok(Some(expression));
         }
         Ok(self
-            .requested_binding(value)?
+            .requested_binding(value, scope)?
             .map(|application| self.module_lifted_application(name, value, application)))
     }
 
@@ -1326,7 +1343,12 @@ impl Checker {
             // callable (`comptime x = f(1)`): its reads in a compile-time
             // position are the application, and the rest of the statement
             // is typed as any binding is.
-            if let Some(expression) = self.binderless_comptime_expression(name, value)?
+            let scope = if self.function_bases.is_empty() {
+                ConstantScope::Module(annotation)
+            } else {
+                ConstantScope::Local
+            };
+            if let Some(expression) = self.binderless_comptime_expression(name, value, scope)?
                 && let Some(scope) = self.local_comptime_parameters.last_mut()
             {
                 scope.insert(name.to_string(), (0, expression));
@@ -1399,7 +1421,7 @@ impl Checker {
             return Ok(true);
         }
         if denoted.is_none()
-            && let Some(expression) = self.requested_binding(value)?
+            && let Some(expression) = self.requested_binding(value, ConstantScope::Local)?
             && let Some(scope) = self.local_comptime_parameters.last_mut()
         {
             scope.insert(name.to_string(), (level, expression));
@@ -1437,12 +1459,31 @@ impl Checker {
     /// its initializer applies a callable at a type no parameter expression
     /// spells (`comptime s = label(3)`, a `String`): the function MIR lifts
     /// for it, at the initializer's own type, which the elaborator below MIR
-    /// demands and runs once per instance. `None` for any other
-    /// initializer.
-    fn requested_binding(&self, value: &Expr) -> Result<Option<ParamExpr>, TypeError> {
-        if !self.applies_callable(value) {
+    /// demands and runs once per instance. A module constant's collection
+    /// display is one too ([`super::lifts_module_constant`]). `None` for any
+    /// other initializer.
+    fn requested_binding(
+        &self,
+        value: &Expr,
+        scope: ConstantScope<'_>,
+    ) -> Result<Option<ParamExpr>, TypeError> {
+        let (lifted, annotation) = match scope {
+            ConstantScope::Module(annotation) => {
+                (super::lifts_module_constant(value, self), annotation)
+            }
+            ConstantScope::Local => (false, None),
+        };
+        if !(lifted || self.applies_callable(value)) {
             return Ok(None);
         }
+        // A display takes its annotation as its contextual type, as a `var`
+        // initializer does.
+        let expected = annotation
+            .filter(|_| matches!(value.kind, ExprKind::ListLit(_) | ExprKind::BraceLit(_)))
+            .map(|annotation| {
+                self.resolve_storage_annotation(annotation, super::StorageStrictness::AllowBare)
+            })
+            .transpose()?;
         if let ExprKind::Call { name, .. } = &value.kind
             && matches!(
                 self.lookup(name),
@@ -1460,18 +1501,13 @@ impl Checker {
         }
         // A raising operation anywhere in it (`{"a": 1}["a"]`) is the
         // pin's rejection too.
-        self.raise_observation_frames
-            .borrow_mut()
-            .push((self.handled_raise_depth, false));
-        let ty = {
+        let (ty, raised) = self.observing_raises(|| {
             let _position = self.comptime_position();
-            self.infer(value)
-        };
-        let raised = self
-            .raise_observation_frames
-            .borrow_mut()
-            .pop()
-            .is_some_and(|(_, raised)| raised);
+            match &expected {
+                Some(expected) => self.infer_with_expected(value, expected, true),
+                None => self.infer(value),
+            }
+        });
         if raised {
             return Err(TypeError::Unsupported(
                 "cannot call raising function in comptime initializer".to_string(),
@@ -1486,6 +1522,21 @@ impl Checker {
             .borrow_mut()
             .insert(value.source_span(), application.clone());
         Ok(Some(application))
+    }
+
+    /// Run `check`, reporting whether it typed a raising operation that no
+    /// `try` inside it handles.
+    fn observing_raises<T>(&self, check: impl FnOnce() -> T) -> (T, bool) {
+        self.raise_observation_frames
+            .borrow_mut()
+            .push((self.handled_raise_depth, false));
+        let checked = check();
+        let raised = self
+            .raise_observation_frames
+            .borrow_mut()
+            .pop()
+            .is_some_and(|(_, raised)| raised);
+        (checked, raised)
     }
 
     /// Whether `value` applies a callable ([`super::applies_callable`]), as
@@ -1515,9 +1566,13 @@ impl Checker {
             return application;
         };
         // A display constant is a parameter list, which a subscript or a
-        // loop header reads element by element.
+        // loop header reads element by element; one its annotation types as
+        // another collection (`comptime L: List[Int] = [1, 2]`) is that
+        // collection's value.
+        let annotated = matches!(application.meta().as_value(),
+            Some(Ty::Struct(collection, _)) if collection != mojito_types::types::ARRAY_TYPE_NAME);
         let meta = match &value.kind {
-            ExprKind::ListLit(_) | ExprKind::TupleLit(_) => {
+            ExprKind::ListLit(_) | ExprKind::TupleLit(_) if !annotated => {
                 match self.comptime_iteration_element(value) {
                     Ok(element) => mojito_types::param_expr::MetaTy::ParamList(Box::new(
                         mojito_types::param_expr::MetaTy::value(string_element_binder(element)),
@@ -1973,7 +2028,7 @@ impl Checker {
         // An operand that applies a callable is the application MIR lifts,
         // which the elaborator below MIR evaluates.
         if self.applies_callable(operand) && self.lifted_application(operand).is_none() {
-            self.requested_binding(operand)?;
+            self.requested_binding(operand, ConstantScope::Local)?;
         }
         let ty = {
             let _position = self.comptime_position();

@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R539**.
+Next free ID: **R543**.
 
 ## Ordered Work
 
@@ -50,21 +50,22 @@ Scope: what remains of the plan's stages, and what the pipeline order still
 leaves to close. A defect found on the way is filed by its kind; a
 divergence from the pin goes to a catch-up track, however small.
 
-- [ ] **R517 A closed module constant that is not a scalar is still spelled
-  into bodies as a literal**
+- [ ] **R539 A local closed display binding is still spelled into
+  requests as a literal**
 
-  Problem: a module struct value, tuple, vector, `DType`, or closed display
-  constant is substituted into every body by the elaborator
-  (`materialize_block`), while a scalar or applied constant is a checked
-  `ParamValue` fact lowered as `Const::Param`.
-  - The checker's declaration pass classifies only folded `Int`s, literals,
-    and applications (`Checker::module_constant_value`); the rest keep the
-    elaborator's substitution, so their reads carry no parameter-value fact.
-  - A list-valued application read whole in a lifted thunk has no
-    register construction either (`mono::substitute::value_parameter_constant`
-    returns none for a `CtValue::List`), which is why a module list display
-    is read element by element (`ParamKind::ListGet`) or spelled.
-  - Depends on R516.
+  Problem: a local `comptime l = [1, 2]` or `{"a": 1}` in a body, and a
+  module constant spelled by its literal constructor
+  (`Dict[K, V, H](keys, values, None)`, `Set[T, H](...)`), are folded by the
+  elaborator and spelled at each compile-time read, where every other module
+  display is one application `$comptime$<name>$module`.
+  - The spelling lives in `comptime/crossing.rs` (`NamedCollections`,
+    `SubscriptedCollections`, `collection_literal`) and
+    `comptime/elab.rs:spelled_value_reads`.
+  - A lifted thunk that reads such a module constant whole fails with
+    "Undefined variable", since its declaration is dropped.
+  - The spelled constructors wait for R540: lifting them today rejects
+    `Dict[String, Int, H](["a", "b"], [1, 2], None)`.
+  - Depends on R540.
   - Model: Fable, Not Planned.
 
 - [ ] **R11 (P6) The standard library is checked again in every
@@ -155,6 +156,19 @@ change that needs a new `MJRT_ABI_VERSION`.
     (R424) and has no native body.
   - Found while landing R421 (2026-10-06).
   - Depends on R424.
+  - Model: Opus, Not Planned.
+
+- [ ] **R541 Natively, an applied constant of a sized scalar type fails IR
+  verification**
+
+  Problem: `comptime W = lane(SIMD[DType.int32, 4](1, 2, 3, 4))` over
+  `def lane(v: SIMD[DType.int32, 4]) -> Int32`, then `print(W)`, prints `4`
+  on the VM and at the pin, and stops natively with "llvm.ptr is not
+  builtin.integer or a vector of it".
+  - An applied constant of type `Tuple` or `Int` runs natively; the frozen
+    one-lane vector does not.
+  - Found while landing R517 (2026-10-09).
+  - Depends on nothing.
   - Model: Opus, Not Planned.
 
 - [ ] **R277 Native `Tuple.concat` double-frees a `String` element of its
@@ -1019,6 +1033,21 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     module alone.
   - Probe: `conformance/probes/user_trait_named_like_prelude.mojo`.
   - Found while planning R488 (2026-10-08).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R540 A display argument to an explicitly parameterized generic
+  constructor is not typed by its parameter**
+
+  Problem: `Dict[String, Int](["a"], [1], None)` stops with "no
+  constructor overload matches the supplied arguments", and
+  `W[String](["a", "b"], None)` over `var keys: List[Self.K]` with "expected
+  List[String], found Array[String, 2]", where the pin runs both.
+  - The generic constructor paths in `checker/declarations.rs` infer each
+    argument bare before solving the struct's parameters, so a list display
+    is an `Array` there; a plain function's display argument is typed by
+    its parameter.
+  - Found while landing R517 (2026-10-09).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

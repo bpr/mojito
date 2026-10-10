@@ -6,32 +6,21 @@ use mojito_ast::ast::FnParam;
 
 // --- Substitution / materialization -----------------------------------------
 //
-// One generic rewrite over the AST parameterized by a name→value lookup, used for
-// two things: substituting a `comptime for` loop variable with its literal (in the
-// unrolled body — does NOT descend into nested `def`/`struct`), and materializing
-// module-level `comptime` constants into runtime literals (does descend, minus a
-// function's own parameter names, which shadow).
+// One generic rewrite over the AST parameterized by a name→value lookup, used
+// to substitute a `comptime for` loop variable with its literal in the unrolled
+// body (it does NOT descend into nested `def`/`struct`), and to mark declared
+// struct names throughout a program (it descends, minus a function's own
+// parameter names, which shadow). A module constant is never substituted:
+// the check reads it as a parameter value.
 
 /// A name→compile-time-value lookup for a rewrite.
 pub(super) type Subs<'a> = &'a dyn Fn(&str) -> Option<CtValue>;
 
-/// Materialize module-level comptime constants throughout a program.
-pub(super) fn materialize_block(
-    stmts: Vec<Stmt>,
-    consts: &HashMap<String, CtValue>,
-    type_names: &HashSet<String>,
-) -> Vec<Stmt> {
-    // Declared struct names are marked so a subscript-shaped projection on a
-    // runtime local (`v[String]`) can be told from ordinary indexing.
-    // A collection constant never inlines: its runtime uses were folded
-    // through `materialize[...]()` or rejected before this pass.
-    let subs: Subs = &|n| {
-        consts
-            .get(n)
-            .filter(|value| !value.is_runtime_collection())
-            .cloned()
-            .or_else(|| type_names.contains(n).then(type_name_marker))
-    };
+/// Mark every declared struct name throughout a program, so a
+/// subscript-shaped projection on a runtime local (`v[String]`) can be told
+/// from ordinary indexing ([`projection_to_subscript`]).
+pub(super) fn mark_struct_names(stmts: Vec<Stmt>, type_names: &HashSet<String>) -> Vec<Stmt> {
+    let subs: Subs = &|n| type_names.contains(n).then(type_name_marker);
     stmts
         .into_iter()
         .map(|s| rewrite_stmt_cloned(&s, subs, true))
@@ -46,7 +35,7 @@ pub(super) fn rewrite_stmt_cloned(s: &Stmt, subs: Subs, into_defs: bool) -> Stmt
 
 // --- Type-binding substitution ----------------------------------------------
 //
-// `materialize_block` above substitutes *value* occurrences of the bindings;
+// The rewrite above substitutes *value* occurrences of the bindings;
 // this second rewrite substitutes the *type* occurrences it leaves behind:
 // annotations, compile-time argument lists, and constructor-call heads. Unlike
 // the value rewrite it always descends into nested `def`/`struct` bodies —
@@ -552,7 +541,7 @@ pub(super) const fn runtime_local_marker() -> CtValue {
     CtValue::Marker(CtMarker::RuntimeLocal)
 }
 
-/// The `Subs` marker for a declared struct name (see `materialize_block`).
+/// The `Subs` marker for a declared struct name (see [`mark_struct_names`]).
 const fn type_name_marker() -> CtValue {
     CtValue::Marker(CtMarker::TypeName)
 }

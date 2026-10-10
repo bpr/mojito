@@ -776,8 +776,9 @@ R517 names the residue (non-scalar closed constants).
   only one.
 - Module-scope `comptime` values follow decision D3: a constant the
   `ParamExpr` folder closes is folded before the check; one whose
-  initializer applies anything is a typed request. The early folding of
-  applied constants goes here.
+  initializer applies anything, or is a collection display, is a typed
+  request. Landed (R9, R516, R517): the elaborator spells no module
+  constant into a body.
 
 ### P5 — Delete
 

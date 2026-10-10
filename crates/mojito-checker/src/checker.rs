@@ -587,6 +587,10 @@ pub struct Checker {
     /// Module constants declared by `comptime NAME = <literal>`, which a
     /// trait requirement's default folds to (`Float`, `Bool`, string).
     comptime_literals: HashMap<String, Expr>,
+    /// Module constants whose initializer folds to a closed attribute
+    /// (`comptime D = DType.int16`, `comptime T = (1, 2)`, a vector of
+    /// literal lanes): the value a body's read denotes (decision D3).
+    module_values: HashMap<String, CtValue>,
     /// Module constants whose initializer applies a function (`comptime B =
     /// f(A)`, `comptime S = size_of[T]()`), as the symbolic application the
     /// pin keeps through the check (decision D3,
@@ -1007,6 +1011,7 @@ impl Checker {
             trait_self_comptime: Vec::new(),
             comptimes: HashMap::new(),
             comptime_literals: HashMap::new(),
+            module_values: HashMap::new(),
             comptime_applied: HashMap::new(),
             comptime_dtypes: vec![HashMap::new()],
             comptime_aliases: HashMap::new(),
@@ -2944,7 +2949,9 @@ mod places;
 mod comptime_validation;
 
 mod comptime_requests;
-pub use comptime_requests::{Callee, CalleeOracle, applies_callable, computes_value};
+pub use comptime_requests::{
+    Callee, CalleeOracle, applies_callable, computes_value, lifts_module_constant,
+};
 
 mod reflection;
 

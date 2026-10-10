@@ -264,6 +264,9 @@ impl Checker {
                     if let Some(n) = self.comptimes.get(name) {
                         return Ok(CtValue::IntLiteral(n.clone()));
                     }
+                    if let Some(value) = self.module_value(name) {
+                        return Ok(value.clone());
+                    }
                 }
                 // A local `comptime` `DType` binding (`comptime c = pick(True)`)
                 // is its dtype, known or the expression a template names.
@@ -654,10 +657,25 @@ impl Checker {
         {
             return Some(lifted.clone());
         }
-        let context = &self.param_context;
+        // A folded constant is a value of its declared type
+        // (`comptime TWO: Float64 = 2`).
+        let declared = |value: CtValue| {
+            let context = &self.param_context;
+            match self.lookup(name) {
+                Some(ty) if !matches!(ty, Ty::IntLiteral) => context
+                    .constant_as(value.clone(), ty)
+                    .or_else(|_| context.constant(value)),
+                _ => context.constant(value),
+            }
+            .ok()
+        };
         if let Some(n) = self.comptimes.get(name) {
-            return context.constant(CtValue::IntLiteral(n.clone())).ok();
+            return declared(CtValue::IntLiteral(n.clone()));
         }
+        if let Some(value) = self.module_values.get(name) {
+            return declared(value.clone());
+        }
+        let context = &self.param_context;
         let literal = self.comptime_literals.get(name)?;
         let value = self.eval_associated_ct(literal, &HashMap::new()).ok()?;
         context.constant(value).ok()
@@ -674,6 +692,14 @@ impl Checker {
     pub(super) fn module_comptime(&self, name: &str) -> Option<mojito_common::literal::IntLiteral> {
         (!self.module_constant_shadowed(name))
             .then(|| self.comptimes.get(name).cloned())
+            .flatten()
+    }
+
+    /// The closed attribute module constant `name` folds to
+    /// (`comptime D = DType.int16`), unless a nearer binding shadows it.
+    pub(super) fn module_value(&self, name: &str) -> Option<&CtValue> {
+        (!self.module_constant_shadowed(name))
+            .then(|| self.module_values.get(name))
             .flatten()
     }
 
@@ -914,6 +940,7 @@ impl Checker {
                 Some(reference) => Ok(reference),
                 None => match self.module_comptime(name) {
                     Some(value) => constant(CtValue::IntLiteral(value)),
+                    None if let Some(value) = self.module_value(name) => constant(value.clone()),
                     None if self.is_enclosing_struct_param(name) => {
                         Err(TypeError::UnqualifiedStructParam(name.clone()))
                     }

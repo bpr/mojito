@@ -8,6 +8,18 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- A closed module constant is a checked parameter value at every read
+  (R517): a list, dictionary, or set display is one compile-time
+  application, so `comptime S = total(L)` over `comptime L = [1, 2, 3]` and
+  `comptime N = size(M)` over a dictionary display run as at the pin instead
+  of failing with "Undefined variable", and a `DType`, vector, tuple, or
+  struct constant is a folded parameter value, so the elaborator no longer
+  spells any module constant into a body. An annotated list constant
+  (`comptime L: List[Int] = [1, 2]`) read by a lifted initializer, a module
+  alias over a `DType` constant (`SIMD[D, 4]`), and a `DType` constant as a
+  parameter default now work, and a raising dictionary subscript in a
+  `comptime` binding of a raising body reports the pin's error instead of
+  failing MIR verification.
 - A `Pointer` element of a `Tuple` or `List` keeps its handle (R529):
   `t[1][] += 2` over `(Pointer(to=left), Pointer(to=right))`, and the same
   through a `Tuple[Pointer[Int, o1], Pointer[Int, o2]]` struct field, print

@@ -302,16 +302,9 @@ pub fn elaborate_prepared(program: &[Stmt]) -> Result<Vec<Stmt>, ComptimeError> 
     // A module constant declared after its use crosses here.
     let consts = elab.top_consts.borrow().clone();
     elab.fold_runtime_crossings(&mut elaborated, &consts)?;
-    // Materialize module-level comptime constants into runtime literals. A
-    // scalar or an applied constant stays a name: the check binds a body's
-    // read of it as the parameter value its declaration denotes (decision
-    // D3).
-    let materialized_consts: HashMap<String, CtValue> = consts
-        .iter()
-        .filter(|(_, value)| !is_scalar_constant(value))
-        .map(|(name, value)| (name.clone(), value.clone()))
-        .collect();
-    let mut result = materialize_block(elaborated, &materialized_consts, &elab.struct_names);
+    // A body's read of a module constant stays a name: the check binds it as
+    // the parameter value its declaration denotes (decision D3).
+    let mut result = mark_struct_names(elaborated, &elab.struct_names);
     elab.freeze_struct_value_arguments(&mut result, &consts);
     for statement in &mut result {
         if let Some(source) = statement.module.clone() {
@@ -371,23 +364,6 @@ fn pack_values_projection(expression: &Expr) -> Option<&str> {
         ExprKind::Member { object, field } if field == "values" => pack_name(object),
         _ => None,
     }
-}
-
-/// Whether a module constant's value is a scalar, or an applied constant,
-/// the check reads as a parameter value where a body names it, rather than
-/// a literal the elaborator spells there.
-const fn is_scalar_constant(value: &CtValue) -> bool {
-    matches!(
-        value,
-        CtValue::Int(_)
-            | CtValue::IntLiteral(_)
-            | CtValue::UInt(_)
-            | CtValue::Float(_)
-            | CtValue::FloatLiteral(_)
-            | CtValue::Bool(_)
-            | CtValue::Str(_)
-            | CtValue::Marker(CtMarker::Applied)
-    )
 }
 
 /// The alias a `comptime NAME = Ts[index]` statement declares of an element

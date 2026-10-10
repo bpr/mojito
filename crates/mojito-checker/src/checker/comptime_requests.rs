@@ -79,6 +79,21 @@ pub fn applies_callable(expression: &Expr, oracle: &impl CalleeOracle) -> bool {
     finder.found
 }
 
+/// Whether a module constant's initializer is one compile-time application
+/// the check lifts (`$comptime$NAME$module`).
+///
+/// It is when it applies a callable ([`applies_callable`]), or when it is a
+/// collection display (`[1, 2]`, `{"a": 1}`), which the pin constructs by
+/// running its initializer (it names `[1, 2]` an `Array[Int, Int(2)]`),
+/// never folds as an attribute.
+pub fn lifts_module_constant(expression: &Expr, oracle: &impl CalleeOracle) -> bool {
+    applies_callable(expression, oracle)
+        || matches!(
+            expression.kind,
+            ExprKind::ListLit(_) | ExprKind::BraceLit(_)
+        )
+}
+
 /// Whether `expression` is rooted where it computes one value.
 ///
 /// A call, an operator, a member, a display, or a subscript does (`f(1)`,

@@ -786,10 +786,13 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
 - `checker/comptime_requests.rs` owns the line every compile-time request
   is drawn by: `applies_callable`, over a phase's `CalleeOracle` (the
   elaborator's `Elab`, `comptime/elab.rs`, and the `Checker`), so the two
-  phases agree on which bindings are requests by construction.
-  `elab.rs:spelled_value_reads` spells a closed dictionary or set binding a
-  method reads by its display first (R517); a module constant over one
-  (`comptime C = M.copy()`) is then an applied initializer. `comptime/eval.rs` folds closed values only
+  phases agree on which bindings are requests by construction, and
+  `lifts_module_constant`, which adds a module constant's collection
+  display. The checker folds every other closed module constant into
+  `Checker.module_values` (`Checker::module_value`,
+  `Checker::module_constant_value`). `elab.rs:spelled_value_reads` still
+  spells a closed local dictionary or set binding, or a module one spelled
+  by its literal constructor, that a method reads by its display first. `comptime/eval.rs` folds closed values only
   and refuses every call (`not_evaluated_here`): no call is evaluated
   above the check.
 - `comptime/crossing.rs` owns the compile-time → runtime crossing fold
@@ -816,7 +819,7 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   receiver's arguments and the call's own bindings, `call_closed`).
 - `comptime/rewrite.rs` owns alias substitution over the AST
   (`rewrite_stmt_cloned`, `rewrite_expr`), type-binding substitution
-  (`substitute_type_bindings_in_{block,type}`), `materialize_block`, and
+  (`substitute_type_bindings_in_{block,type}`), `mark_struct_names`, and
   `pack_element_construction`.
 - `comptime/synth.rs` also owns the `SIMD[_, _]` parameter desugar
   (`desugar_simd_wildcard_parameters`: an infer-only `DType` and

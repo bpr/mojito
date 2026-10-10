@@ -535,6 +535,17 @@ impl CtValue {
             }
             (Self::IntLiteral(value), Ty::Int) => value.wrapping_signed(64).map(CtValue::Int),
             (Self::IntLiteral(value), Ty::UInt) => value.wrapping_unsigned(64).map(CtValue::UInt),
+            // `Float64` is `SIMD[DType.float64, 1]`.
+            (
+                Self::Simd {
+                    dtype: mojito_ast::ast::Dtype::Float64,
+                    lanes,
+                },
+                Ty::Float64,
+            ) if lanes.len() == 1 => match lanes[0] {
+                CtLane::Float(bits) => Some(Self::Float(bits)),
+                _ => None,
+            },
             (Self::IntLiteral(value), Ty::Float64) => {
                 value.to_f64().map(|value| Self::Float(value.to_bits()))
             }

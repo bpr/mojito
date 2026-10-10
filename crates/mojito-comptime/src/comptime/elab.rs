@@ -141,10 +141,14 @@ impl Elab<'_> {
                 // here, and the elaborator below MIR evaluates it on first
                 // demand. So is one calling a method of, or subscripting, a
                 // closed collection constant (`comptime C = M.copy()`), which
-                // reads that constant by its literal form.
+                // reads that constant by its literal form. A collection
+                // display is one application too
+                // ([`mojito_checker::checker::lifts_module_constant`]).
                 let applied = if in_fn {
                     None
-                } else if self.applied_initializer(value, env) {
+                } else if mojito_checker::checker::lifts_module_constant(value, self)
+                    || self.applied_initializer(value, env)
+                {
                     Some(value.clone())
                 } else {
                     spelled_value_reads(value, env).filter(|spelled| self.applies_callable(spelled))
@@ -352,7 +356,7 @@ impl Elab<'_> {
                 body,
             } => {
                 let body = self.def_body(&[], type_params, params, body, env)?;
-                let params = fold_default_bindings(params, env);
+                let params = fold_default_bindings(params, env, &self.top_consts.borrow());
                 out.push(rebuilt(
                     stmt,
                     StmtKind::Def {
@@ -663,9 +667,11 @@ impl Elab<'_> {
                 return Ok(ty);
             }
         }
-        // `SIMD[DType.d, w]` is a compile-time type (a vector alias's value).
+        // `SIMD[DType.d, w]` is a compile-time type (a vector alias's value),
+        // its arguments spelled or read from constants (`SIMD[D, 4]`).
         if name == "SIMD"
-            && let Some((dtype, width)) = simd_source_dims(args)
+            && let Some((dtype, width)) =
+                simd_source_dims(args).or_else(|| self.evaluated_simd_dims(args, scope))
         {
             return Ok(Ty::Simd {
                 dtype: mojito_types::types::SimdDtype::Known(dtype),
@@ -840,6 +846,23 @@ impl Elab<'_> {
         self.eval(&assoc.value, &env)
     }
 
+    /// The `(dtype, width)` of `SIMD[d, w]` arguments that evaluate to a
+    /// `DType` and a power-of-two width in `scope`.
+    fn evaluated_simd_dims(
+        &self,
+        args: &[ParamArg],
+        scope: &HashMap<String, CtValue>,
+    ) -> Option<(mojito_ast::ast::Dtype, i64)> {
+        let [ParamArg::Value(dtype), ParamArg::Value(width)] = args else {
+            return None;
+        };
+        let CtValue::Dtype(dtype) = self.eval(dtype, scope).ok()? else {
+            return None;
+        };
+        let width = self.eval(width, scope).ok()?.as_int("SIMD width").ok()?;
+        (width >= 1 && (width & (width - 1)) == 0).then_some((dtype, width))
+    }
+
     /// Whether `expression` applies a callable this elaborator does not
     /// fold itself ([`mojito_checker::checker::applies_callable`]).
     pub(super) fn applies_callable(&self, expression: &Expr) -> bool {
@@ -912,16 +935,18 @@ impl Elab<'_> {
     }
 }
 
-/// `params` with each default reading an enclosing compile-time binding
-/// (`x: Int = k * 2` under `comptime k = 3`) spelled at its value: a default
-/// is evaluated at compile time.
+/// `params` with each default reading an enclosing body's compile-time
+/// binding (`x: Int = k * 2` under a local `comptime k = 3`) spelled at its
+/// value: a default is evaluated at compile time. A module constant
+/// (`module`) stays a name, which the check reads as its parameter value.
 fn fold_default_bindings(
     params: &[mojito_ast::ast::FnParam],
     env: &HashMap<String, CtValue>,
+    module: &HashMap<String, CtValue>,
 ) -> Vec<mojito_ast::ast::FnParam> {
     let subs: rewrite::Subs = &|name| {
         env.get(name)
-            .filter(|value| !value.is_runtime_collection())
+            .filter(|value| !value.is_runtime_collection() && module.get(name) != Some(*value))
             .cloned()
     };
     params

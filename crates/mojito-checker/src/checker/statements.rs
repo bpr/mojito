@@ -35,7 +35,7 @@ impl Checker {
                 ..
             } = &statement.kind
                 && type_params.is_empty()
-                && (super::applies_callable(value, self)
+                && (super::lifts_module_constant(value, self)
                     || names_read(value)
                         .iter()
                         .any(|read| self.applied_module_constants.contains(read)))
@@ -104,6 +104,13 @@ impl Checker {
                 ty
             } else if super::traits::literal_default(value) {
                 self.comptime_literals.insert(name.clone(), value.clone());
+                self.infer(value).ok()
+            } else if let Some(folded) = self
+                .eval_associated_ct(value, &HashMap::new())
+                .ok()
+                .filter(CtValue::is_folded_parameter_argument)
+            {
+                self.module_values.insert(name.clone(), folded);
                 self.infer(value).ok()
             } else {
                 None
@@ -211,7 +218,11 @@ impl Checker {
             return Ok(true);
         }
         let _position = self.comptime_position();
-        let expression = match self.binderless_comptime_expression(name, value) {
+        let expression = match self.binderless_comptime_expression(
+            name,
+            value,
+            super::comptime_validation::ConstantScope::Module(ty.as_ref()),
+        ) {
             Ok(Some(expression)) => expression,
             Ok(None) | Err(TypeError::UndefinedVariable(_)) => return Ok(false),
             Err(error) => return Err(error),
