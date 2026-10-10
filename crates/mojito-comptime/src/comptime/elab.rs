@@ -135,65 +135,44 @@ impl Elab<'_> {
                 if self.keep_template_comptime_binding(stmt, value, env, in_fn, out) {
                     return Ok(());
                 }
+                // A closed field-name list (`reflect[P].field_names()`) is a
+                // static method's result the check binds, module or local.
+                let field_names = super::crossing::lists_field_names(value, env);
+                if field_names && in_fn {
+                    if let Some(binders) = self.template_binders.borrow_mut().last_mut() {
+                        binders.insert(name.clone());
+                    }
+                    out.push(stmt.clone());
+                    return Ok(());
+                }
                 // A module constant whose initializer applies a callable,
                 // asks a layout, or reads such a constant is the parameter
                 // expression the check binds (decision D3): it has no value
                 // here, and the elaborator below MIR evaluates it on first
-                // demand. So is one calling a method of, or subscripting, a
-                // closed collection constant (`comptime C = M.copy()`), which
-                // reads that constant by its literal form. A collection
-                // display is one application too
-                // ([`mojito_checker::checker::lifts_module_constant`]).
-                let applied = if in_fn {
-                    None
-                } else if mojito_checker::checker::lifts_module_constant(value, self)
-                    || self.applied_initializer(value, env)
+                // demand. So is a collection display or constructor
+                // ([`mojito_checker::checker::lifts_comptime_value`]) and a
+                // field-name list.
+                if !in_fn
+                    && (field_names
+                        || mojito_checker::checker::lifts_comptime_value(value, self)
+                        || self.applied_initializer(value, env))
                 {
-                    Some(value.clone())
-                } else {
-                    spelled_value_reads(value, env).filter(|spelled| self.applies_callable(spelled))
-                };
-                if let Some(value) = applied {
                     let marker = CtValue::Marker(CtMarker::Applied);
                     self.top_consts
                         .borrow_mut()
                         .insert(name.clone(), marker.clone());
                     env.insert(name.clone(), marker);
-                    out.push(rebuilt(
-                        stmt,
-                        StmtKind::Comptime {
-                            name: name.clone(),
-                            type_params: type_params.clone(),
-                            ty: ty.clone(),
-                            where_clauses: where_clauses.clone(),
-                            value,
-                        },
-                    ));
+                    out.push(stmt.clone());
                     return Ok(());
                 }
                 let mut v = self.eval(value, env)?;
-                // A collection display takes the binding's annotation as its
-                // spelled type; an empty `{}` has no other typing.
-                if matches!(v, CtValue::Dict { .. } | CtValue::Set { .. }) {
-                    match ty {
-                        Some(annotation) => {
-                            let target =
-                                self.param_arg_type(&ParamArg::Type(annotation.clone()), env)?;
-                            v = v.clone().materialize_as(&target).ok_or_else(|| {
-                                ComptimeError::NotComptime(format!(
-                                    "comptime '{name}' is a {v} display, not a '{target}'"
-                                ))
-                            })?;
-                        }
-                        None if matches!(&value.kind, ExprKind::BraceLit(entries) if entries.is_empty()) =>
-                        {
-                            return Err(ComptimeError::NotComptime(
-                                "an empty '{}' display needs a Dict[K, V] type annotation"
-                                    .to_string(),
-                            ));
-                        }
-                        None => {}
-                    }
+                // Every collection-valued binding is the check's to bind: a
+                // display or constructor is an application, a field-name
+                // list a static method's result. None folds here.
+                if v.is_runtime_collection() {
+                    return Err(ComptimeError::NotComptime(format!(
+                        "comptime '{name}' folds to the collection {v}, which only the check binds"
+                    )));
                 }
                 if let Some(annotation) = ty {
                     v = self.typed_by_annotation(v, annotation, env);
@@ -218,14 +197,10 @@ impl Elab<'_> {
                     out.push(stmt.clone());
                     return Ok(());
                 }
-                // Type and reflection handles have no runtime representation,
-                // and a collection is not implicitly copyable (it crosses only
-                // through `materialize[...]()`). Keep those only in the
-                // elaboration environment; subsequent comptime expressions
-                // consume them before checking/lowering.
-                if !env[name].is_runtime_collection()
-                    && let Some(value) = env[name].materialize(span)
-                {
+                // Type and reflection handles have no runtime representation.
+                // Keep those only in the elaboration environment; subsequent
+                // comptime expressions consume them before checking/lowering.
+                if let Some(value) = env[name].materialize(span) {
                     out.push(rebuilt(
                         stmt,
                         StmtKind::Comptime {
@@ -871,7 +846,8 @@ impl Elab<'_> {
 
     /// Whether a module constant's initializer is an application the check
     /// binds ([`CtMarker::Applied`]): it applies a callable, asks a layout
-    /// (`size_of[T]()`), or reads an applied constant.
+    /// (`size_of[T]()`), reads an applied constant, or calls a method of a
+    /// value binding (`s.byte_length()`), which the pin's interpreter runs.
     fn applied_initializer(&self, expression: &Expr, env: &HashMap<String, CtValue>) -> bool {
         let applied: HashSet<String> = env
             .iter()
@@ -881,6 +857,7 @@ impl Elab<'_> {
         self.applies_callable(expression)
             || asks_layout(expression)
             || (!applied.is_empty() && expression_names_any(expression, &applied))
+            || calls_value_method(expression, env)
     }
 }
 
@@ -946,7 +923,7 @@ fn fold_default_bindings(
 ) -> Vec<mojito_ast::ast::FnParam> {
     let subs: rewrite::Subs = &|name| {
         env.get(name)
-            .filter(|value| !value.is_runtime_collection() && module.get(name) != Some(*value))
+            .filter(|value| module.get(name) != Some(*value))
             .cloned()
     };
     params
@@ -1008,9 +985,9 @@ impl Elab<'_> {
 
     /// Keep a local `comptime` binding whose value names a binder of the
     /// generic `def` being elaborated as a template (`comptime m = N + 1`),
-    /// or applies a callable in any body (`comptime x = f(1)`), once the
-    /// value bindings a method reads are spelled
-    /// ([`spelled_value_reads`]): the check
+    /// or applies a callable or constructs a collection in any body
+    /// (`comptime x = f(1)`, `comptime l = [1, 2]`,
+    /// [`mojito_checker::checker::lifts_comptime_value`]): the check
     /// binds it with the binders symbolic, the elaborator below MIR
     /// evaluates an application on demand, and the binding is a binder of
     /// the rest of its block, so a `comptime if` over it stays too.
@@ -1023,14 +1000,7 @@ impl Elab<'_> {
         in_fn: bool,
         out: &mut Vec<Stmt>,
     ) -> bool {
-        let StmtKind::Comptime {
-            name,
-            type_params,
-            ty,
-            where_clauses,
-            ..
-        } = &stmt.kind
-        else {
+        let StmtKind::Comptime { name, .. } = &stmt.kind else {
             return false;
         };
         if !in_fn {
@@ -1040,23 +1010,10 @@ impl Elab<'_> {
         let Some(binders) = binders.last_mut() else {
             return false;
         };
-        // A value binding read by a method is spelled by its literal form
-        // in a request.
-        if let Some(spelled) =
-            spelled_value_reads(value, env).filter(|spelled| self.applies_callable(spelled))
+        if !(expression_names_any(value, binders)
+            || self.applied_initializer(value, env)
+            || mojito_checker::checker::lifts_comptime_value(value, self))
         {
-            binders.insert(name.clone());
-            let kind = StmtKind::Comptime {
-                name: name.clone(),
-                type_params: type_params.clone(),
-                ty: ty.clone(),
-                where_clauses: where_clauses.clone(),
-                value: spelled,
-            };
-            out.push(rebuilt(stmt, kind));
-            return true;
-        }
-        if !(expression_names_any(value, binders) || self.applied_initializer(value, env)) {
             return false;
         }
         binders.insert(name.clone());
@@ -1157,50 +1114,36 @@ fn asks_layout(expression: &Expr) -> bool {
     finder.0
 }
 
-/// `expression` with each value binding of `env` that a method call
-/// reads (`S.byte_length()`, `M.get("a")`), or a dictionary or set
-/// binding a subscript reads (`M["a"]`), spelled by its literal form, so
-/// that the request the elaborator below MIR serves constructs the value
-/// itself, as the pin's parameter expression does. `None` when it reads
-/// none.
-pub(super) fn spelled_value_reads(
-    expression: &Expr,
-    env: &HashMap<String, CtValue>,
-) -> Option<Expr> {
-    struct Spell<'e> {
+/// Whether `expression` calls a method of a binding of `env` that holds a
+/// value (`S.byte_length()`, `w.twice()`), not a type or a handle.
+fn calls_value_method(expression: &Expr, env: &HashMap<String, CtValue>) -> bool {
+    struct Finder<'e> {
         env: &'e HashMap<String, CtValue>,
-        spelled: bool,
+        found: bool,
     }
 
-    impl mojito_ast::visit::MutVisitor for Spell<'_> {
-        fn visit_expr_mut(&mut self, expr: &mut Expr) {
-            let subscripted = matches!(expr.kind, ExprKind::Index { .. });
-            let (ExprKind::MethodCall { object, .. } | ExprKind::Index { object, .. }) =
-                &mut expr.kind
-            else {
-                return;
-            };
-            let ExprKind::Identifier(name) = &object.kind else {
-                return;
-            };
-            if let Some(value) = self.env.get(name)
-                && spelled_receiver(value, subscripted)
-                && let Some(mut display) = value.materialize(object.span)
+    impl mojito_ast::visit::Visitor for Finder<'_> {
+        fn visit_expr(&mut self, expr: &Expr) {
+            if let ExprKind::MethodCall { object, .. } = &expr.kind
+                && let ExprKind::Identifier(name) = &object.kind
+                && let Some(value) = self.env.get(name)
             {
-                display.source.clone_from(&object.source);
-                **object = display;
-                self.spelled = true;
+                self.found |= !matches!(
+                    value,
+                    CtValue::Type(_)
+                        | CtValue::Reflected(_)
+                        | CtValue::Expr(_)
+                        | CtValue::Deferred(_)
+                        | CtValue::Marker(_)
+                        | CtValue::Dtype(_)
+                ) && value.materialize(object.span).is_some();
             }
         }
     }
 
-    let mut spelled = expression.clone();
-    let mut spell = Spell {
-        env,
-        spelled: false,
-    };
-    mojito_ast::visit::walk_expr_mut(&mut spell, &mut spelled);
-    spell.spelled.then_some(spelled)
+    let mut finder = Finder { env, found: false };
+    mojito_ast::visit::walk_expr(&mut finder, expression);
+    finder.found
 }
 
 /// Whether `expression` spells one of `names` as an identifier, a call, a
@@ -1329,25 +1272,6 @@ fn struct_pack_collectors<'a>(
                             && struct_params.iter().any(|binder| binder.name == *spread))
         })
         .map(|parameter| parameter.name.clone())
-}
-
-/// Whether a method call (or, `subscripted`, a subscript) of a binding of
-/// `value` is spelled with the value's literal form in a request: any value
-/// with one, but a subscript only of a dictionary or a set, whose
-/// `__getitem__` raises; a list's is folded here.
-const fn spelled_receiver(value: &CtValue, subscripted: bool) -> bool {
-    if subscripted {
-        return matches!(value, CtValue::Dict { .. } | CtValue::Set { .. });
-    }
-    !matches!(
-        value,
-        CtValue::Type(_)
-            | CtValue::Reflected(_)
-            | CtValue::Expr(_)
-            | CtValue::Deferred(_)
-            | CtValue::Marker(_)
-            | CtValue::Dtype(_)
-    )
 }
 
 impl Elab<'_> {

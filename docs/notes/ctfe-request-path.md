@@ -260,7 +260,10 @@ The boundary:
   attribute, closed or not: the pin constructs it by running its
   initializer and names `[1, 2, 3]` an `Array[Int, Int(3)]`, a
   heap-owning struct. It is an application like any other
-  (`lifts_module_constant`), typed by its annotation when it has one.
+  (`lifts_comptime_value`), typed by its annotation when it has one. So is
+  a local display binding, a `Dict[...]`/`Set[...]` constructor call in
+  either scope, and a closed field-name list: the elaborator spells none
+  of them at a read (R539).
 - A module constant whose initializer **applies anything** stays a typed
   request: the check types the initializer and declares the constant at
   that type; its value is `Apply(thunk)`, symbolic, equal by structure, so

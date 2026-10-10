@@ -8,6 +8,15 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- A local `comptime` display binding, a `Dict[...]`/`Set[...]` constructor
+  binding (module or local), and a closed `reflect[P].field_names()` list
+  are applications the check binds (R539): `comptime s = total(l)` over a
+  local `comptime l = [1, 2, 3]`, `size(d)` over a local `{"a": 1}`,
+  `comptime(total(l))`, and `comptime N = size(D)` over a module
+  `Dict[String, Int, H](["a", "b"], [1, 2], None)` or `Set[Int, H](1, 2, 3)`
+  run as at the pin instead of failing with "Undefined variable", an
+  unannotated `comptime e = {}` reports the pin's own error, and the
+  elaborator no longer spells any collection into a read.
 - A display argument to a generic call is typed by its parameter (R540):
   `Dict[String, Int](["a"], [1], None)`, `W[String](["a", "b"], None)` over
   `var keys: List[Self.K]`, a fieldwise `List[Self.K]` field, and

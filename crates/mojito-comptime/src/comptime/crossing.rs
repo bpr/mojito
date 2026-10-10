@@ -1,7 +1,8 @@
 //! The compile-time → runtime crossing of elaborated bindings: `materialize[X]()`
-//! and `comptime(e)` fold to the literal form of their value, and a bare runtime
-//! use of a compile-time collection (`Array`, `Dict`, `Set` are not implicitly
-//! copyable) is rejected with upstream's diagnostic.
+//! and `comptime(e)` fold to the literal form of their value, and a `comptime(e)`
+//! that evaluates to a collection (`Array`, `Dict`, `Set` are not implicitly
+//! copyable) is rejected with upstream's diagnostic. No collection binding
+//! reaches this pass: the check binds every one as an application.
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
@@ -93,21 +94,8 @@ impl Elab<'_> {
                 }
                 self.cross_expr(value, env, shadowed)
             }
-            // A binding a template body keeps is a compile-time position: a
-            // named collection its value subscripts is its literal display
-            // there (`comptime q = xs[i]`), as in a loop header.
-            StmtKind::Comptime { value, .. } if self.in_template_body() => {
-                let mut subscripts = SubscriptedCollections {
-                    env,
-                    shadowed,
-                    folded: Ok(()),
-                };
-                mojito_ast::visit::MutVisitor::visit_expr_mut(&mut subscripts, value);
-                mojito_ast::visit::walk_expr_mut(&mut subscripts, value);
-                subscripts.folded
-            }
-            // Elsewhere, a compile-time binding's initializer was consumed by
-            // elaboration.
+            // A compile-time binding's initializer was consumed by
+            // elaboration, or is the check's to bind.
             StmtKind::Comptime { .. }
             | StmtKind::Return(None)
             | StmtKind::Pass
@@ -123,19 +111,8 @@ impl Elab<'_> {
                 }
                 self.cross_opt_block(orelse, env, shadowed)
             }
-            // A condition is a compile-time position: a named collection it
-            // reads (`XS[0] == 1`, `3 in L`) is its literal display there,
-            // which the check closes.
             StmtKind::ComptimeIf { branches, orelse } => {
                 for (cond, body) in branches {
-                    let mut collections = NamedCollections {
-                        env,
-                        shadowed,
-                        folded: Ok(()),
-                    };
-                    mojito_ast::visit::MutVisitor::visit_expr_mut(&mut collections, cond);
-                    mojito_ast::visit::walk_expr_mut(&mut collections, cond);
-                    collections.folded?;
                     self.cross_expr(cond, env, shadowed)?;
                     self.cross_block(body, env, shadowed)?;
                 }
@@ -153,24 +130,8 @@ impl Elab<'_> {
                 self.cross_block(body, env, shadowed)?;
                 self.cross_opt_block(orelse, env, shadowed)
             }
-            // The iterable is a compile-time position: a named collection
-            // is its literal display there, which the check closes into the
-            // loop header's sequence, as is one a display's element
-            // subscripts (`[L[n], n]`).
             StmtKind::ComptimeFor { iter, body, .. } => {
-                if matches!(iter.kind, ExprKind::ListLit(_) | ExprKind::BraceLit(_)) {
-                    let mut subscripts = SubscriptedCollections {
-                        env,
-                        shadowed,
-                        folded: Ok(()),
-                    };
-                    mojito_ast::visit::walk_expr_mut(&mut subscripts, iter);
-                    subscripts.folded?;
-                }
-                match named_collection(iter, env, shadowed) {
-                    Some(value) => *iter = collection_literal(value, iter)?,
-                    None => self.cross_expr(iter, env, shadowed)?,
-                }
+                self.cross_expr(iter, env, shadowed)?;
                 self.cross_block(body, env, shadowed)
             }
             StmtKind::Try {
@@ -336,15 +297,8 @@ impl Elab<'_> {
                 && kwargs.is_empty() =>
             {
                 // An operand that applies a callable is a request the
-                // elaborator below MIR serves, a value binding it calls a
-                // method of spelled by its literal form.
+                // elaborator below MIR serves.
                 if self.applies_callable(&args[0]) {
-                    return Ok(());
-                }
-                if let Some(spelled) = super::elab::spelled_value_reads(&args[0], env)
-                    .filter(|spelled| self.applies_callable(spelled))
-                {
-                    args[0] = spelled;
                     return Ok(());
                 }
                 let value = match self.eval(&args[0], env) {
@@ -361,11 +315,8 @@ impl Elab<'_> {
                 *expr = lit_result(&value, expr.span)?;
                 Ok(())
             }
-            ExprKind::Identifier(name) => match binding(name) {
-                Some(value) if value.is_runtime_collection() => Err(not_implicitly_copyable(value)),
-                _ => Ok(()),
-            },
-            ExprKind::Int(_)
+            ExprKind::Identifier(_)
+            | ExprKind::Int(_)
             | ExprKind::Float(_)
             | ExprKind::Bool(_)
             | ExprKind::Str(_)
@@ -534,69 +485,6 @@ impl Elab<'_> {
 
 /// Upstream's rejection of an implicit runtime use of a compile-time
 /// collection.
-/// The closed collection `expr` names, unless a runtime local shadows it.
-fn named_collection<'a>(
-    expr: &Expr,
-    env: &'a HashMap<String, CtValue>,
-    shadowed: &HashSet<String>,
-) -> Option<&'a CtValue> {
-    match &expr.kind {
-        ExprKind::Identifier(name) if !shadowed.contains(name) => {
-            env.get(name).filter(|value| value.is_runtime_collection())
-        }
-        _ => None,
-    }
-}
-
-/// The literal display of a collection `value`, standing where `named` did.
-fn collection_literal(value: &CtValue, named: &Expr) -> Result<Expr, ComptimeError> {
-    let mut literal = lit_result(value, named.span)?;
-    literal.source.clone_from(&named.source);
-    literal.syntax_id = named.syntax_id;
-    Ok(literal)
-}
-
-/// Folds each closed collection a compile-time display subscripts to its
-/// literal display.
-struct SubscriptedCollections<'a> {
-    env: &'a HashMap<String, CtValue>,
-    shadowed: &'a HashSet<String>,
-    folded: Result<(), ComptimeError>,
-}
-
-impl mojito_ast::visit::MutVisitor for SubscriptedCollections<'_> {
-    fn visit_expr_mut(&mut self, expr: &mut Expr) {
-        let ExprKind::Index { object, .. } = &mut expr.kind else {
-            return;
-        };
-        if let Some(value) = named_collection(object, self.env, self.shadowed) {
-            match collection_literal(value, object) {
-                Ok(literal) => **object = literal,
-                Err(error) => self.folded = Err(error),
-            }
-        }
-    }
-}
-
-/// Folds each closed collection a compile-time condition names to its
-/// literal display.
-struct NamedCollections<'a> {
-    env: &'a HashMap<String, CtValue>,
-    shadowed: &'a HashSet<String>,
-    folded: Result<(), ComptimeError>,
-}
-
-impl mojito_ast::visit::MutVisitor for NamedCollections<'_> {
-    fn visit_expr_mut(&mut self, expr: &mut Expr) {
-        if let Some(value) = named_collection(expr, self.env, self.shadowed) {
-            match collection_literal(value, expr) {
-                Ok(literal) => *expr = literal,
-                Err(error) => self.folded = Err(error),
-            }
-        }
-    }
-}
-
 fn not_implicitly_copyable(value: &CtValue) -> ComptimeError {
     ComptimeError::Crossing(format!(
         "cannot materialize comptime value of type '{}' to runtime because it is not \
@@ -633,6 +521,21 @@ pub(super) fn reflection_query<'e, 'a>(
         _ => return None,
     };
     reflection_handle(object, binding).then_some(&**object)
+}
+
+/// Whether `expr` asks a closed reflection handle for its field names
+/// (`reflect[P].field_names()`), a list the check binds.
+pub(super) fn lists_field_names(expr: &Expr, env: &HashMap<String, CtValue>) -> bool {
+    let binding = |name: &str| env.get(name);
+    let method = match &expr.kind {
+        ExprKind::MethodCall { method, .. } => method,
+        ExprKind::Invoke { callee, .. } => match &callee.kind {
+            ExprKind::Member { field, .. } => field,
+            _ => return false,
+        },
+        _ => return false,
+    };
+    method == "field_names" && reflection_query(expr, &binding).is_some()
 }
 
 /// Whether `expr` spells a reflection handle: `reflect[T]`, a name bound to

@@ -116,6 +116,7 @@ assets/ok/comptime_if_template_served.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comptime_lambda_initializer.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comptime_layout_constant.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comptime_local_binder_alias.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/comptime_local_display_applications.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comptime_local_over_binder.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comptime_module_constant_parameter_values.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comptime_shadowed_locals.mojo	-	ineligible	no-scalar-entry-shape

@@ -648,9 +648,8 @@ impl CtValue {
                         return None;
                     };
                     // The key and value lists are explicit `List[K](...)`
-                    // constructions rather than displays: a display argument
-                    // takes no context from a parameterized constructor's
-                    // `List[Self.K]` parameter.
+                    // constructions, which name their element type even
+                    // when a list is empty.
                     let args = if entries.is_empty() {
                         Vec::new()
                     } else {

@@ -79,19 +79,22 @@ pub fn applies_callable(expression: &Expr, oracle: &impl CalleeOracle) -> bool {
     finder.found
 }
 
-/// Whether a module constant's initializer is one compile-time application
-/// the check lifts (`$comptime$NAME$module`).
+/// Whether a `comptime` binding's initializer, module or local, is one
+/// compile-time application the check lifts (`$comptime$NAME$<owner>`).
 ///
-/// It is when it applies a callable ([`applies_callable`]), or when it is a
-/// collection display (`[1, 2]`, `{"a": 1}`), which the pin constructs by
-/// running its initializer (it names `[1, 2]` an `Array[Int, Int(2)]`),
-/// never folds as an attribute.
-pub fn lifts_module_constant(expression: &Expr, oracle: &impl CalleeOracle) -> bool {
+/// It is when it applies a callable ([`applies_callable`]), when it is a
+/// collection display (`[1, 2]`, `{"a": 1}`), or when it calls a dictionary
+/// or set's literal constructor (`Dict[K, V, H](keys, values, None)`): the
+/// pin constructs each by running its initializer (it names `[1, 2]` an
+/// `Array[Int, Int(2)]`), never folds one as an attribute.
+pub fn lifts_comptime_value(expression: &Expr, oracle: &impl CalleeOracle) -> bool {
     applies_callable(expression, oracle)
         || matches!(
             expression.kind,
             ExprKind::ListLit(_) | ExprKind::BraceLit(_)
         )
+        || (matches!(expression.kind, ExprKind::Call { .. })
+            && is_keyed_display(expression, oracle))
 }
 
 /// Whether `expression` is rooted where it computes one value.

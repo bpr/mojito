@@ -86,9 +86,10 @@ pub(in crate::checker) struct LiftedApplication {
 
 /// Where a binder-free `comptime` binding is declared, which decides
 /// whether a collection display initializer is lifted
-/// ([`super::lifts_module_constant`]): a module constant's is, typed by its
+/// ([`super::lifts_comptime_value`]): a module constant's is, typed by its
 /// annotation (`comptime E: Dict[String, Int] = {}`), while a local display
-/// binding keeps its display route.
+/// binding keeps its display route and only a local constructor call is
+/// lifted.
 #[derive(Clone, Copy, Debug)]
 pub(super) enum ConstantScope<'a> {
     Module(Option<&'a SourceType>),
@@ -1460,8 +1461,9 @@ impl Checker {
     /// spells (`comptime s = label(3)`, a `String`): the function MIR lifts
     /// for it, at the initializer's own type, which the elaborator below MIR
     /// demands and runs once per instance. A module constant's collection
-    /// display is one too ([`super::lifts_module_constant`]). `None` for any
-    /// other initializer.
+    /// display, and a dictionary or set constructor call in either scope, is
+    /// one too ([`super::lifts_comptime_value`]). `None` for any other
+    /// initializer.
     fn requested_binding(
         &self,
         value: &Expr,
@@ -1469,9 +1471,15 @@ impl Checker {
     ) -> Result<Option<ParamExpr>, TypeError> {
         let (lifted, annotation) = match scope {
             ConstantScope::Module(annotation) => {
-                (super::lifts_module_constant(value, self), annotation)
+                (super::lifts_comptime_value(value, self), annotation)
             }
-            ConstantScope::Local => (false, None),
+            // A local display keeps its display route
+            // (`evaluated_display_binding`); a constructor call is lifted.
+            ConstantScope::Local => (
+                matches!(value.kind, ExprKind::Call { .. })
+                    && super::lifts_comptime_value(value, self),
+                None,
+            ),
         };
         if !(lifted || self.applies_callable(value)) {
             return Ok(None);
@@ -1541,11 +1549,12 @@ impl Checker {
 
     /// Whether `value` applies a callable ([`super::applies_callable`]), as
     /// the elaborator keeps a binding of one for the check, or reads a
-    /// module constant that does.
+    /// module constant or a local display binding that does.
     fn applies_callable(&self, value: &Expr) -> bool {
         super::applies_callable(value, self)
             || names_read(value).iter().any(|name| {
-                self.binding_scope(name) == Some(0) && self.module_constant_value(name).is_some()
+                (self.binding_scope(name) == Some(0) && self.module_constant_value(name).is_some())
+                    || self.display_named(name).is_some()
             })
     }
 

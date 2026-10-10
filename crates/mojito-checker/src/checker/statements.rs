@@ -35,7 +35,7 @@ impl Checker {
                 ..
             } = &statement.kind
                 && type_params.is_empty()
-                && (super::lifts_module_constant(value, self)
+                && (super::lifts_comptime_value(value, self)
                     || names_read(value)
                         .iter()
                         .any(|read| self.applied_module_constants.contains(read)))

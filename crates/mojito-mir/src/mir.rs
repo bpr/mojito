@@ -1488,14 +1488,21 @@ impl ComptimeThunks {
     /// express. The function's parameters are the binders the application
     /// names, in its argument order, out of the narrowest scope that
     /// declares them all; it reads every local `comptime` binding of the
-    /// body. An application over binders no scope of the owner declares is
-    /// a nested declaration's.
+    /// body. An application inside a nested `def` or closure is that
+    /// declaration's, which reads the bindings of its own body.
     fn request_applications(&mut self, checked: &CheckedProgram, body: &[Stmt]) {
         struct Applied<'a> {
             checked: &'a CheckedProgram,
             found: Vec<(Expr, ParamExpr)>,
+            nested: Vec<Stmt>,
         }
         impl mojito_ast::visit::Visitor for Applied<'_> {
+            fn visit_stmt(&mut self, statement: &Stmt) {
+                if matches!(statement.kind, StmtKind::Def { .. }) {
+                    self.nested.push(statement.clone());
+                }
+            }
+
             fn visit_expr(&mut self, expression: &Expr) {
                 let application = self
                     .checked
@@ -1511,9 +1518,29 @@ impl ComptimeThunks {
         let mut applied = Applied {
             checked,
             found: Vec::new(),
+            nested: Vec::new(),
         };
         mojito_ast::visit::walk_block(&mut applied, body);
-        for (expression, application) in applied.found {
+        let mut nested = Applied {
+            checked,
+            found: Vec::new(),
+            nested: Vec::new(),
+        };
+        for declaration in &applied.nested {
+            if let StmtKind::Def { body, .. } = &declaration.kind {
+                mojito_ast::visit::walk_block(&mut nested, body);
+            }
+        }
+        let nested: HashSet<SourceSpan> = nested
+            .found
+            .iter()
+            .map(|(expression, _)| expression.source_span())
+            .collect();
+        for (expression, application) in applied
+            .found
+            .into_iter()
+            .filter(|(expression, _)| !nested.contains(&expression.source_span()))
+        {
             let mojito_types::param_expr::ParamKind::Apply { function, args, .. } =
                 application.kind()
             else {

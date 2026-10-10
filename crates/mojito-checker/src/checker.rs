@@ -2950,7 +2950,7 @@ mod comptime_validation;
 
 mod comptime_requests;
 pub use comptime_requests::{
-    Callee, CalleeOracle, applies_callable, computes_value, lifts_module_constant,
+    Callee, CalleeOracle, applies_callable, computes_value, lifts_comptime_value,
 };
 
 mod reflection;

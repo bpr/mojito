@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R543**.
+Next free ID: **R544**.
 
 ## Ordered Work
 
@@ -49,24 +49,6 @@ belongs to is named in its title.
 Scope: what remains of the plan's stages, and what the pipeline order still
 leaves to close. A defect found on the way is filed by its kind; a
 divergence from the pin goes to a catch-up track, however small.
-
-- [ ] **R539 A local closed display binding is still spelled into
-  requests as a literal**
-
-  Problem: a local `comptime l = [1, 2]` or `{"a": 1}` in a body, and a
-  module constant spelled by its literal constructor
-  (`Dict[K, V, H](keys, values, None)`, `Set[T, H](...)`), are folded by the
-  elaborator and spelled at each compile-time read, where every other module
-  display is one application `$comptime$<name>$module`.
-  - The spelling lives in `comptime/crossing.rs` (`NamedCollections`,
-    `SubscriptedCollections`, `collection_literal`) and
-    `comptime/elab.rs:spelled_value_reads`.
-  - A lifted thunk that reads such a module constant whole fails with
-    "Undefined variable", since its declaration is dropped.
-  - The spelled constructors wait for R540: lifting them today rejects
-    `Dict[String, Int, H](["a", "b"], [1, 2], None)`.
-  - Depends on R540.
-  - Model: Fable, Not Planned.
 
 - [ ] **R11 (P6) The standard library is checked again in every
   compilation**
@@ -3240,6 +3222,21 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Probe: `conformance/probes/nested_def_reads_local_comptime.mojo`.
   - Found while a local `comptime` float was made to read as `Float64`
     (2026-09-30).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R543 A local `comptime` application that returns a
+  reference-holding value fails CTFE even when nothing reads it**
+
+  Problem: `comptime ks = d.keys()` over a local `comptime d = {"a": 1}` in
+  `main` fails with "VM CTFE returned unsupported runtime value <ref 0:1>",
+  where the pin accepts the program.
+  - The result is a `_DictKeyIter`, which holds a reference into the
+    dictionary, and a CTFE result cannot carry a reference.
+  - The local binding is demanded although no read names it. The module
+    form (`comptime KS = D.keys()`) is demanded lazily and passes.
+  - `comptime for k in d.keys()` is R321's iterator gap, not this one.
+  - Found while R539 kept local displays for the check (2026-10-09).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

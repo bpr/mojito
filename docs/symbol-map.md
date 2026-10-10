@@ -793,20 +793,25 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   is drawn by: `applies_callable`, over a phase's `CalleeOracle` (the
   elaborator's `Elab`, `comptime/elab.rs`, and the `Checker`), so the two
   phases agree on which bindings are requests by construction, and
-  `lifts_module_constant`, which adds a module constant's collection
-  display. The checker folds every other closed module constant into
-  `Checker.module_values` (`Checker::module_value`,
-  `Checker::module_constant_value`). `elab.rs:spelled_value_reads` still
-  spells a closed local dictionary or set binding, or a module one spelled
-  by its literal constructor, that a method reads by its display first. `comptime/eval.rs` folds closed values only
+  `lifts_comptime_value`, which adds a collection display and a
+  `Dict[...]`/`Set[...]` constructor call, module or local. The checker
+  folds every other closed module constant into `Checker.module_values`
+  (`Checker::module_value`, `Checker::module_constant_value`). The
+  elaborator keeps every collection-valued `comptime` binding for the
+  check — a display or constructor (`Elab::keep_template_comptime_binding`),
+  a closed field-name list (`crossing::lists_field_names`), a method call of
+  a value binding (`calls_value_method`) — and spells none of them into a
+  read; a binding that still folds to a collection is an error
+  (`Elab::stmt`). `comptime/eval.rs` folds closed values only
   and refuses every call (`not_evaluated_here`): no call is evaluated
   above the check.
 - `comptime/crossing.rs` owns the compile-time → runtime crossing fold
   (`fold_runtime_crossings`: `materialize[X]()` and `comptime(e)` become
   literals, and so does a reflection query over a closed handle
   (`reflection_query`: `r.field_count()`, `reflect[T].field_index["x"]()`);
-  a bare runtime use of a compile-time collection is rejected with
-  upstream's `ImplicitlyCopyable` text; runtime locals shadow).
+  a `comptime(e)` operand that evaluates to a collection is rejected with
+  upstream's `ImplicitlyCopyable` text; runtime locals shadow). The check
+  owns every other crossing rejection (`Checker::reject_display_crossing`).
 - No method or `def` is cloned, per call or per instance: a `comptime
   if`/`comptime for` over a method's own binders or its struct's stays in
   its template (`Elab::def_body`), and a body that still fails over them
@@ -1127,10 +1132,10 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
 - Every `comptime for` of every function body is kept to MIR
   (`Elab::keep_template_comptime_for`, `comptime/elab.rs`); no top-level
   `def` is keyed on one and nothing is unrolled above the check. The
-  crossing pass spells a named collection as its display in a kept header
-  or condition (`cross_stmt`, `NamedCollections`, `comptime/crossing.rs`),
-  and leaves a `comptime(e)` it cannot evaluate for the check
-  (`in_template_body`, true in every function body).
+  crossing pass leaves a named collection in a kept header or condition
+  for the check, which reads it as its application, and leaves a
+  `comptime(e)` it cannot evaluate for the check (`in_template_body`, true
+  in every function body).
 - Every type pack is template-served: a whole-pack spread is
   `MirInstr::Call::spread` or `MirInstr::MethodCall::spread`
   (`lower_pack_spread_argument`, `mir/calls.rs`; `verify_pack_spread`,
