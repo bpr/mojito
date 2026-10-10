@@ -38,6 +38,11 @@ owns its compile-time executor (`VmBackend::call_concrete`), as upstream's
 elaborator owns its interpreter, and `mojito-comptime` sits above the
 checker because it elaborates the program the check consumes. `crates/mojito-runtime` remains the
 independently versioned native C-ABI runtime, depending on nothing above.
+`mojito-checked` also owns the checked declaration metadata MIR carries
+(`declaration`: `StructDeclaration` and `FunctionDeclaration`, which `mir`
+re-exports as `MirStructDeclaration` and `MirFunctionDeclaration`) and a
+compiled package's declaration records (`package`), so the checker and MIR
+read one encoding of a library declaration with no edge between them.
 
 ## Big Picture
 
@@ -87,19 +92,20 @@ build (once per compiler build, then cached):
   every std module -> link (recording each module) -> prepare
     -> elaborate (exporting
     the module constants it folded) -> check (exporting each library
-    declaration's interface) -> MIR -> ownership
-    -> std package: interface + MIR declarations + module records
-       + declaration interfaces + pre-drop bodies
+    declaration's rows) -> MIR -> ownership
+    -> std package: interface + one record per library declaration
+       (its MIR declarations and effect summaries, then the checker
+       rows they do not say) + module records + pre-drop bodies
 
 import (every compilation that links the bundled library):
   source -> link (each library module from its record)
     -> prepare -> elaborate (the program's own statements, the reached
-       modules' declaration interfaces and module constants as context)
-    -> check (the reached modules' declaration interfaces attached, each
-       declaration's decoded on first lookup; the program's own
-       statements checked)
-    -> MIR of the program's own declarations, with the package's MIR
-       declarations attached (each decoded on first lookup)
+       modules' declaration records and module constants as context)
+    -> check (the reached modules' declaration records attached, each
+       declaration's residue decoded on first lookup and joined with its
+       MIR declarations; the program's own statements checked)
+    -> MIR of the program's own declarations, with the package's
+       declaration records attached (each decoded on first lookup)
     -> verify + ownership (own functions)
     -> drop elaboration (own functions)
     -> native::mono, which decodes a package body when it first reaches
@@ -108,18 +114,40 @@ import (every compilation that links the bundled library):
 
 - **The package file** (`mir::text::package`) is a directory followed by
   bytecode records, as upstream's package is bytecode throughout. The
-  directory holds the header (package, compiler build identity, source
-  digest) and every record's byte range: the checker interface
-  (`checked::interface::PackageInterface`), the package's MIR declarations
-  one record each, one record per library module, the declaration
-  interfaces, and each function body, before drop elaboration. The importer
-  maps the file (`PackageBytes`) and reads its directory and interface;
-  declarations and bodies decode from their own ranges on demand: Hello
-  World decodes three of about 940 declarations and three of 874 bodies.
+  directory holds the header (package, compiler build identity, library
+  root) and every record's byte range: the checker interface
+  (`checked::interface::PackageInterface`), one record per library
+  declaration under one declaration directory
+  (`checked::package::DeclarationDirectory`), each library module's checker
+  record and link record, and each function body, before drop elaboration.
+  The importer maps the file (`PackageBytes`) and reads its directory and
+  interface; declarations and bodies decode from their own ranges on
+  demand: Hello World decodes three of 223 declaration records and three
+  of 874 bodies.
+- **A declaration's record** (`checked::package`) holds the declaration
+  once, as upstream's package holds it in one op every phase of its
+  importer reads. Its lowered part (`LoweredDeclaration`) is every MIR
+  struct and function declaration it lowers to (its own, its methods, the
+  functions nested in or lifted from it) and its callables' effect
+  summaries; it holds no path-stamped syntax and decodes once per process,
+  for MIR, the elaborator, and the check alike. The checker residue
+  follows: the declaration's rows of the checker's tables, less what the
+  lowered part says. The package build's check exports the rows
+  (`checker::InterfaceExport`); once the library is lowered,
+  `InterfaceExport::records` places every MIR declaration and summary in
+  the record of the declaration its name belongs to
+  (`DeclaringModules::declaration_of`, lifted names through
+  `symbol::lifted_owner`), and strips from each struct row its parameters,
+  fields, fieldwise initializer, destructors, and explicit-destruction
+  obligation, from each method its signature apart from what MIR does not
+  carry, and from a `def`'s type the same, after comparing each, byte for
+  byte, with its MIR declaration: a difference refuses the package, so no
+  two copies diverge. A compilation's check decodes a residue and joins
+  it with the lowered part (`DeclarationInterface::join`).
 - **The MIR declarations** are attached, never copied
   (`mir::link::link_declarations`): the importer's `MirDeclarations` holds
   its own declarations and an `ImportedDeclarations`, the shared
-  `PackageDeclarations` beside the conformance rows the importer adds to
+  `PackageDeclarations` (the declaration records' lowered parts) beside the conformance rows the importer adds to
   package structs: its answers for a trait the package never asked, and an
   empty row for each foreign trait (one the importer declares afresh),
   joined on a struct's first lookup. `MirDeclarations::{function, structure}` answer from the
@@ -132,8 +160,8 @@ import (every compilation that links the bundled library):
   the module from source produced, as upstream's `createBinaryPackageState`
   reads a package's module tree: the modules its link asked to load, in
   order, and its export and namespace tables. It holds no declaration:
-  an importer reads every library declaration resolved, from the
-  declaration interfaces. It is bytecode (`postcard` over
+  an importer reads every library declaration resolved, from its
+  declaration record. It is bytecode (`postcard` over
   its serde form), keyed by the module's dotted name beside its
   canonical and stamped source paths (`PackageModules`), and decoded when
   a link reaches the module. The importer's link
@@ -146,12 +174,15 @@ import (every compilation that links the bundled library):
   position in the search order (`Linker::find_at_root`), as upstream's
   importer finds a module in a package: no library file is probed,
   canonicalized, or read.
-- **The interface** is what an importer's check reads from the package's
-  bodies: the modules the package compiled, their top-level names, each
-  module-level callable's transfer and call-through effect summaries, and
-  the traits the package's bodies ask a type's conformance to.
-- **A declaration interface** (`checker::interface::DeclarationInterface`)
-  is what the build's check resolved for one library declaration, as
+- **The interface** is what an importer's check reads of the package as a
+  whole: the modules the package compiled, their top-level names, and the
+  traits the package's bodies ask a type's conformance to. A callable's
+  transfer and call-through effect summaries ride in its declaration's
+  record; the check reads one the first time a call names the callable and
+  keeps it in the pass's effect map (`Checker::callee_transfer_effects`),
+  so the transfer fixpoint compares every read against it.
+- **A declaration's checker rows** (`checker::interface::DeclarationInterface`)
+  are what the build's check resolved for one library declaration, as
   upstream's importer takes a package declaration `loadedFromBytecode`:
   its rows of the checker's tables, by linked name — a struct's or trait's
   checked signature (`StructInfo`, `TraitInfo`, a method's parametric
@@ -166,10 +197,10 @@ import (every compilation that links the bundled library):
   (`checker::ElaboratedConstant`: a folded value or `Applied` marker, or a
   generic alias's parameters and body; `comptime::elaborate_exporting`,
   `CheckContext::record_elaborated`). The build's check exports them once
-  the whole library is checked (`Checker::export_interfaces`), as one
-  opaque record holding its own directory: each module record, and each
-  declaration's record with every table key it holds and, for a struct,
-  every method it declares. A record holds no binding owner, span-keyed
+  the whole library is checked (`Checker::export_interfaces`); the
+  declaration directory lists each module record, and each declaration's
+  record with every table key it holds and, for a struct, every method it
+  declares. A residue holds no binding owner, span-keyed
   fact, syntax identity, or parameter hole, and encoding a table that
   holds one fails the build, which then compiles the library from source.
   It is bytecode (`postcard`); a default argument or a conformance
@@ -178,13 +209,13 @@ import (every compilation that links the bundled library):
 - **A declaration resolves on first lookup**, as upstream's importer
   resolves a package declaration from bytecode
   (`lookupAndResolveMangledDecl`, `resolveDeclFromBytecode`). The process
-  reads the directory once (`checker::DeclarationInterfaces`); each
+  indexes the declaration directory once (`checker::DeclarationInterfaces`); each
   compilation decodes the module records of the modules its link reached
   and no declaration's (`checker::InstalledInterfaces::reaching`). The
   checker's declaration-keyed tables (`checker::DeclarationTable`,
   `DeclarationSet`) hold the program's own entries over that handle: a
   lookup the own entries miss finds its key's declaration in the
-  directory and decodes that record the first time, once per compilation,
+  directory and decodes that residue the first time, once per compilation,
   for every checker pass and the conformance oracle alike; a key list or a
   name-set membership answers from the directory alone. A package module
   binding resolves below the module scope, with an owner from a block each
@@ -210,10 +241,10 @@ import (every compilation that links the bundled library):
   package_field_types, package_function_params}`), as upstream's emitters
   read a package declaration resolved, never its syntax.
   The check is given the program's own statements alone: each transfer
-  pass attaches the declaration interfaces of the modules the link reached
+  pass attaches the declaration records of the modules the link reached
   to its fresh `Checker` (`Checker::attach_interfaces`), then scans and
-  checks the own statements over them, taking the summaries as committed
-  effects. The
+  checks the own statements over them, taking a package callable's
+  summaries as committed effects. The
   checked arena, explicit destruction, and lowering therefore see the
   program's own statements alone.
 - **Lowering** (`mir::lower_checked_program_importing`) lowers the checked
@@ -247,7 +278,9 @@ import (every compilation that links the bundled library):
   resolves a package declaration on first lookup. Mojito's holds lowered
   MIR (`docs/roadmap.md`, `pmir` track: R546). A module record holds no
   declaration: an importer reads every library declaration, trait
-  defaults included, from the declaration interfaces.
+  defaults included, from its declaration record. A module still has two
+  records, its link record and its checker record, under two module
+  tables (`docs/roadmap.md`, `pmir` track).
 
 `native::mono` is the one elaborator below the waist. `concrete_mir()` runs it
 from the program's entry roots and caches the graph, so the VM and the native

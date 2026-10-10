@@ -1049,3 +1049,26 @@ package grows from 1.632 to 1.640 MB, the defaults' recorded signatures.
 | generic | 15.8 → 14.7 | — |
 | keyed | 33.2 → 33.6 | — |
 | stdlib_heavy | 69.6 → 70.6 | — |
+
+### A package records each library declaration once (2026-10-10, R560)
+
+Same environment as the tables above, on the R560 tree against the R568
+tree (`2428929e`), both importing the package from their own cache;
+`hyperfine` means of 3 × 60 interleaved runs, and `--timings` medians of
+9, milliseconds. Each library declaration is one record — its MIR
+declarations and effect summaries, then the checker rows they do not say —
+under one directory, where the package held a MIR declaration record per
+struct and function and, apart, a checker interface blob with its own
+directory. The checker rows shrink from 157 to 79 KB (a struct's
+parameters, fields, destructors, and obligation, every method signature,
+and every `def` type now come from the MIR declaration), and the package
+from 1.640 to 1.560 MB. `package.interface` no longer decodes the effect
+summaries; `package.directory` now also decodes the declaration
+directory the check used to decode on its own, outside any span.
+
+| Program | hyperfine wall | package.directory | package.interface |
+|---|---:|---:|---:|
+| hello | 6.7 / 7.3 / 7.1 → 6.5 / 6.3 / 6.9 | 0.37 → 0.55 | 0.17 → 0.09 |
+| generic | 15.8 → 15.3 | — | — |
+| keyed | 34.2 → 33.2 | — | — |
+| stdlib_heavy | 70.2 → 69.7 | — | — |

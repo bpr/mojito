@@ -1390,8 +1390,12 @@ fn declaration_metadata_reprints_byte_identically() {
             variadic: false,
             constraints: Vec::new(),
         }],
-        explicit_destroy_message: Some("explicit destroy required".into()),
         explicit_destructors: HashMap::from([("_finish".into(), true), ("__del__".into(), false)]),
+        explicit_destroy: Some(mojito_checked::declaration::ExplicitDestroyObligation {
+            message: "explicit destroy required".into(),
+            declared: true,
+            fields: HashMap::from([("inner".into(), "Linear".into())]),
+        }),
         conformances: vec![
             mojito_checked::checked::StructConformance {
                 trait_name: "Copyable".into(),
@@ -1441,8 +1445,8 @@ fn declaration_metadata_reprints_byte_identically() {
         mut_self_methods: HashSet::new(),
         fieldwise_init: false,
         param_decls: Vec::new(),
-        explicit_destroy_message: None,
         explicit_destructors: HashMap::new(),
+        explicit_destroy: None,
         conformances: Vec::new(),
         associated_types: Vec::new(),
         associated_values: Vec::new(),

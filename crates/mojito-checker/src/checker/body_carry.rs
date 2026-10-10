@@ -534,6 +534,13 @@ fn carried_result(checker: &Checker) -> DiscoveryResult {
     DiscoveryResult {
         statements: Vec::new(),
         explicit_destroy_types: HashMap::new(),
+        struct_destructors: checker
+            .structs
+            .own()
+            .iter()
+            .filter(|(_, info)| !info.explicit_destructors.is_empty())
+            .map(|(name, info)| (name.clone(), info.explicit_destructors.clone()))
+            .collect(),
         conformances: mojito_checked::checked::ConformanceFacts::default(),
         overloads: checker.overload_sets.clone(),
         overload_targets: checker.overload_targets.take(),

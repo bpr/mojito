@@ -25,15 +25,15 @@ use std::sync::{Arc, OnceLock};
 
 /// An imported package, read once per process.
 ///
-/// It holds the module records its importer's link reads, the interface and
-/// the module declaration interfaces its importer's check reads, the MIR
-/// declarations its importer's lowering attaches, and its bodies.
+/// It holds the module records its importer's link reads, the interface its
+/// importer's check reads, the declarations every phase of its importer
+/// reads (the check through its index of them), and its bodies.
 #[derive(Debug)]
 pub struct ImportedPackage {
     pub modules: PackageModules,
     pub interface: Arc<PackageInterface>,
-    /// Its declaration interfaces, each declaration's decoded on first
-    /// lookup by each compilation.
+    /// The check's index of its declarations, each declaration's residue
+    /// decoded on first lookup by each compilation.
     pub checked: Arc<crate::checker::DeclarationInterfaces>,
     pub declarations: Arc<PackageDeclarations>,
     pub bodies: PackageBodies,
@@ -157,9 +157,9 @@ fn import(bytes: PackageBytes, header: &PackageHeader) -> Result<ImportedPackage
             }),
         ),
         interface: Arc::new(package.interface),
-        checked: Arc::new(crate::checker::DeclarationInterfaces::read(
-            package.checked,
-        )?),
+        checked: Arc::new(crate::checker::DeclarationInterfaces::read(Arc::clone(
+            &package.declarations,
+        ))?),
         declarations: package.declarations,
         bodies: package
             .bodies
@@ -227,7 +227,7 @@ fn build(root: &Path, header: &PackageHeader) -> Result<Vec<u8>, CompilerError> 
         })
         .collect::<Result<Vec<_>, String>>()
         .map_err(|error| CompilerError::Verify(vec![error]))?;
-    let mut interface = exports.summaries;
+    let mut interface = exports.interface;
     interface.modules = packaged
         .iter()
         .filter_map(|statement| statement.module.clone())
@@ -259,31 +259,40 @@ fn build(root: &Path, header: &PackageHeader) -> Result<Vec<u8>, CompilerError> 
         }
         program.functions.push((name.clone(), function.clone()));
     }
-    write_package(header, &interface, &program, &modules, &exports.interfaces)
+    let records = exports
+        .interfaces
+        .records(
+            program.declarations.structs.clone(),
+            program.declarations.functions.clone(),
+        )
+        .map_err(|error| CompilerError::Verify(vec![error]))?;
+    write_package(header, &interface, &program, &modules, records)
         .map_err(|error| CompilerError::Verify(vec![error.to_string()]))
 }
 
 /// Whether `name` stays the package's own in every importer.
 ///
-/// A lifted function's name says whose it is when it is a module
-/// constant's (`$comptime$<constant>$module`), or one MIR lifts from a body,
-/// named by that function (`$comptime$<function>$<k>`). Any other is
+/// A lifted function's name ([`crate::symbol::lifted_owner`]) says whose it
+/// is when it is a module constant's (`$comptime$<constant>$module`), a
+/// parameter default's (`$default$<owner>$<parameter>`), or one MIR lifts
+/// from a body, named by that function (`$comptime$<function>$<k>`). Any
+/// other is
 /// numbered by a count each compilation restarts (`$comptime$$7`, a display
 /// binding's `$comptime$<binding>$<identity>`), or belongs to the module
 /// initializer, and an importer's own lifted function would reuse it.
 fn lifted_name_is_stable(name: &str, program: &MirProgram) -> bool {
-    let Some(lifted) = name.strip_prefix("$comptime$") else {
-        return true;
-    };
-    let Some((owner, tail)) = lifted.rsplit_once('$') else {
-        return false;
-    };
-    tail == "module"
-        || (owner != "__toplevel__"
-            && program
-                .functions
-                .iter()
-                .any(|(function, _)| function == owner))
+    use crate::symbol::LiftedOwner;
+    match crate::symbol::lifted_owner(name) {
+        None | Some(LiftedOwner::Constant(_) | LiftedOwner::Default { .. }) => true,
+        Some(LiftedOwner::Numbered(owner)) => {
+            owner != "__toplevel__"
+                && program
+                    .functions
+                    .iter()
+                    .any(|(function, _)| function == owner)
+        }
+        Some(LiftedOwner::Anonymous) => false,
+    }
 }
 
 /// The dotted path of every module under `directory`, which is the module
@@ -379,8 +388,6 @@ mod tests {
 
     /// An empty package `header` names.
     fn empty_package(header: &PackageHeader) -> Vec<u8> {
-        // No declaration interfaces: a directory of two empty lists.
-        let checked = [2, 0, 0, 0, 0, 0, 0, 0, 0, 0];
         write_package(
             header,
             &PackageInterface::default(),
@@ -390,7 +397,7 @@ mod tests {
                 invariant_errors: Vec::new(),
             },
             &[],
-            &checked,
+            crate::mir::text::package::DeclarationRecords::default(),
         )
         .expect("write")
     }

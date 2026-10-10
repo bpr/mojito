@@ -5,6 +5,44 @@
 use super::*;
 
 impl Checker {
+    /// The transfer effects of `callee`: this pass's, else the imported
+    /// package's, which the first read records in this pass's map, so the
+    /// transfer fixpoint compares what every read saw against them.
+    pub(in crate::checker) fn callee_transfer_effects(
+        &self,
+        callee: &str,
+    ) -> Option<Vec<mojito_checked::checked::TransferEffect>> {
+        if let Some(effects) = self.transfer_effects.borrow().get(callee) {
+            return Some(effects.clone());
+        }
+        let effects = self.installed.as_ref()?.0.transfer_effects(callee)?.clone();
+        self.transfer_effects
+            .borrow_mut()
+            .insert(callee.to_string(), effects.clone());
+        Some(effects)
+    }
+
+    /// The call-through effects of `callee`, as
+    /// [`Self::callee_transfer_effects`] reads its transfer effects.
+    pub(in crate::checker) fn callee_call_through_effects(
+        &self,
+        callee: &str,
+    ) -> Option<Vec<mojito_checked::checked::CallThroughEffect>> {
+        if let Some(effects) = self.call_through_effects.borrow().get(callee) {
+            return Some(effects.clone());
+        }
+        let effects = self
+            .installed
+            .as_ref()?
+            .0
+            .call_through_effects(callee)?
+            .clone();
+        self.call_through_effects
+            .borrow_mut()
+            .insert(callee.to_string(), effects.clone());
+        Some(effects)
+    }
+
     /// Replay a callee's transfer effects against a call's actuals: enforce
     /// the store-outward rule across the boundary, merge the transferred
     /// origins into the destination binding's bookkeeping, derive the
@@ -18,7 +56,7 @@ impl Checker {
         span: &SourceSpan,
         bindings: &TySubst,
     ) -> Result<(), TypeError> {
-        let effects = self.transfer_effects.borrow().get(callee).cloned();
+        let effects = self.callee_transfer_effects(callee);
         // First-seen observation (including "none"): the two-phase pass
         // reruns the check when this callee's final effects differ from what
         // the stalest query here saw.
@@ -57,7 +95,7 @@ impl Checker {
         if !bakeable {
             return ty;
         }
-        let effects = self.transfer_effects.borrow().get(name).cloned();
+        let effects = self.callee_transfer_effects(name);
         self.note_body_effect_read(
             name,
             super::super::body_carry::ObservedEffects::Transfers(
@@ -191,7 +229,7 @@ impl Checker {
         span: &SourceSpan,
     ) -> Result<(), TypeError> {
         use mojito_checked::checked::CallThroughCallee;
-        let throughs = self.call_through_effects.borrow().get(callee).cloned();
+        let throughs = self.callee_call_through_effects(callee);
         self.note_body_effect_read(
             callee,
             super::super::body_carry::ObservedEffects::CallThroughs(
@@ -291,7 +329,7 @@ impl Checker {
             Some(Ty::Struct(struct_name, _)) => format!("{struct_name}.__call__"),
             _ => name.to_string(),
         };
-        let effects = self.transfer_effects.borrow().get(&key).cloned();
+        let effects = self.callee_transfer_effects(&key);
         self.note_body_effect_read(
             &key,
             super::super::body_carry::ObservedEffects::Transfers(

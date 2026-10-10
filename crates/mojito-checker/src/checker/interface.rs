@@ -1,31 +1,34 @@
 //! A package's declaration interfaces: the checker's resolved table rows
 //! for each declaration a library module makes, by linked name.
 //!
-//! The package build's check exports one record per library declaration
-//! after it has checked the whole library, beside a directory naming every
-//! table key each record holds. An importer's check attaches the records of
-//! the modules its link reached instead of registering their declarations
-//! from source, and resolves a record from its bytecode the first time a
-//! lookup its own tables miss asks for one of its keys, as upstream's
-//! importer resolves a package declaration on first lookup. A record holds
-//! no binding owner, span-keyed fact, syntax identity, or parameter hole:
-//! each is one check's or one process's, and encoding a table that holds
-//! one fails.
+//! The package build's check opens one record per library declaration
+//! after it has checked the whole library (`mojito_checked::package`): its
+//! residue holds the declaration's rows, and the package's one directory
+//! names every table key each holds. An importer's check attaches the
+//! records of the modules its link reached instead of registering their
+//! declarations from source, and resolves a residue from its bytecode the
+//! first time a lookup its own tables miss asks for one of its keys, as
+//! upstream's importer resolves a package declaration on first lookup. A
+//! residue holds no binding owner, span-keyed fact, syntax identity, or
+//! parameter hole: each is one check's or one process's, and encoding a
+//! table that holds one fails.
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
-use mojito_ast::ast::{StmtKind, TypeParam};
+use mojito_ast::ast::TypeParam;
+use mojito_checked::declaration::{FunctionDeclaration, StructDeclaration};
+pub(super) use mojito_checked::package::InterfaceTable as Table;
+use mojito_checked::package::{
+    DeclarationRecord, DeclarationRecords, DeclaringModules, LoweredDeclaration,
+    PackageDeclarations,
+};
 use std::collections::BTreeMap;
-use std::ops::Range;
 use std::sync::{Arc, Mutex, OnceLock};
 
-/// A package's encoded declaration interfaces and their directory, read
-/// once per process; no record decodes here.
+/// A package's declaration records as the check finds them, indexed once
+/// per process; no residue decodes here.
 pub struct DeclarationInterfaces {
-    bytes: Vec<u8>,
-    /// Where the records start in `bytes`.
-    records: usize,
-    directory: InterfaceDirectory,
+    package: Arc<PackageDeclarations>,
     /// Per table, each key's declaration.
     keys: Vec<HashMap<String, u32>>,
     /// Each module binding's module and its position among the module's
@@ -44,40 +47,21 @@ impl std::fmt::Debug for DeclarationInterfaces {
         write!(
             formatter,
             "DeclarationInterfaces({} modules, {} declarations)",
-            self.directory.modules.len(),
-            self.directory.declarations.len()
+            self.package.directory().modules.len(),
+            self.package.directory().declarations.len()
         )
     }
 }
 
 impl DeclarationInterfaces {
-    /// Read the directory of the interfaces a package build's check
-    /// exported ([`CheckContext::take_interfaces`]).
+    /// Index the declarations of `package` by the checker keys they
+    /// answer.
     ///
     /// # Errors
     ///
-    /// A directory that does not decode or names a record outside `bytes`.
-    pub fn read(bytes: Vec<u8>) -> Result<Self, String> {
-        let truncated = || "the declaration interfaces are truncated".to_string();
-        let (length, rest) = bytes.split_first_chunk::<8>().ok_or_else(truncated)?;
-        let length = usize::try_from(u64::from_le_bytes(*length))
-            .ok()
-            .filter(|length| *length <= rest.len())
-            .ok_or_else(truncated)?;
-        let directory: InterfaceDirectory = postcard::from_bytes(&rest[..length])
-            .map_err(|error| format!("the interface directory does not decode: {error}"))?;
-        let records = 8 + length;
-        let payload = bytes.len() - records;
-        let ranges = directory
-            .modules
-            .iter()
-            .map(|module| &module.record)
-            .chain(directory.declarations.iter().map(|entry| &entry.record));
-        for range in ranges {
-            if range.start > range.end || range.end > payload {
-                return Err("an interface record overruns the payload".to_string());
-            }
-        }
+    /// A declaration naming no module.
+    pub fn read(package: Arc<PackageDeclarations>) -> Result<Self, String> {
+        let directory = package.directory();
         let mut keys = vec![HashMap::new(); Table::COUNT];
         let mut module_bindings = vec![Vec::new(); directory.modules.len()];
         let mut methods: HashMap<String, Vec<u32>> = HashMap::new();
@@ -112,9 +96,7 @@ impl DeclarationInterfaces {
             .map(|(position, module)| (module.path.clone(), position as u32))
             .collect();
         Ok(Self {
-            bytes,
-            records,
-            directory,
+            package,
             keys,
             bindings,
             module_bindings,
@@ -127,9 +109,115 @@ impl DeclarationInterfaces {
     pub fn declares(&self, module: &str) -> bool {
         self.modules.contains_key(module)
     }
+}
 
-    fn record(&self, range: &Range<usize>) -> &[u8] {
-        &self.bytes[self.records + range.start..self.records + range.end]
+/// What a package build's check exports of its library.
+///
+/// Each module's checker record, encoded, each declaration's rows, which
+/// [`Self::records`] encodes as the residue of the declaration's record
+/// once its lowering is known, and the effect summaries of its callables.
+pub struct InterfaceExport {
+    modules: BTreeMap<String, Vec<u8>>,
+    declarations: BTreeMap<String, (DeclarationInterface, Vec<(Table, String)>)>,
+    declaring: DeclaringModules,
+    /// The transfer effects of each module-level callable and method whose
+    /// body the check summarized, by callable identity.
+    transfer_effects: Vec<(String, Vec<mojito_checked::checked::TransferEffect>)>,
+    /// Their call-through effects, likewise.
+    call_through_effects: Vec<(String, Vec<mojito_checked::checked::CallThroughEffect>)>,
+}
+
+impl std::fmt::Debug for InterfaceExport {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            formatter,
+            "InterfaceExport({} modules, {} declarations)",
+            self.modules.len(),
+            self.declarations.len()
+        )
+    }
+}
+
+impl InterfaceExport {
+    /// The package's declaration records: `structs` and `functions`, the
+    /// library's lowered declarations, and the check's effect summaries,
+    /// each in the record of the declaration it belongs to, beside that
+    /// declaration's residue, which leaves out what its lowered
+    /// declarations say.
+    ///
+    /// # Errors
+    ///
+    /// A lowered declaration or summary no library declaration owns, a
+    /// struct, method, or function whose
+    /// lowered declaration says other than the check's rows, or a residue
+    /// that does not encode.
+    pub fn records(
+        self,
+        structs: Vec<StructDeclaration>,
+        functions: Vec<FunctionDeclaration>,
+    ) -> Result<DeclarationRecords, String> {
+        let mut records = DeclarationRecords {
+            modules: self.modules,
+            declaring: self.declaring,
+            ..DeclarationRecords::default()
+        };
+        let mut unplaced: Vec<String> = structs
+            .into_iter()
+            .filter_map(|declaration| records.place_struct(declaration).err())
+            .collect();
+        unplaced.extend(
+            functions
+                .into_iter()
+                .filter_map(|declaration| records.place_function(declaration).err()),
+        );
+        unplaced.extend(
+            self.transfer_effects
+                .into_iter()
+                .filter_map(|(callable, effects)| {
+                    records.place_transfer_effects(callable, effects).err()
+                }),
+        );
+        unplaced.extend(
+            self.call_through_effects
+                .into_iter()
+                .filter_map(|(callable, effects)| {
+                    records.place_call_through_effects(callable, effects).err()
+                }),
+        );
+        if !unplaced.is_empty() {
+            return Err(unplaced.join("; "));
+        }
+        for (name, (mut interface, mut keys)) in self.declarations {
+            interface.sort();
+            keys.sort();
+            let mut methods: Vec<String> = interface
+                .structs
+                .iter()
+                .flat_map(|(_, info)| info.methods.keys().cloned())
+                .collect();
+            methods.sort();
+            methods.dedup();
+            let module = records
+                .declaring
+                .module(&name)
+                .ok_or_else(|| format!("`{name}` has no module record"))?
+                .to_string();
+            let record =
+                records
+                    .declarations
+                    .entry(name.clone())
+                    .or_insert_with(|| DeclarationRecord {
+                        module,
+                        ..DeclarationRecord::default()
+                    });
+            interface.project(&record.lowered)?;
+            record.residue = postcard::to_stdvec(&interface).map_err(|error| {
+                format!("the interface of `{name}` cannot be exported: {error}")
+            })?;
+            record.keys = keys;
+            record.methods = methods;
+        }
+        Ok(records)
     }
 }
 
@@ -166,7 +254,7 @@ impl InstalledInterfaces {
         package: &Arc<DeclarationInterfaces>,
         modules: impl IntoIterator<Item = &'a str>,
     ) -> Result<Self, String> {
-        let count = package.directory.modules.len();
+        let count = package.package.directory().modules.len();
         let mut reached = vec![false; count];
         let mut reached_order = Vec::new();
         let mut binding_bases = vec![None; count];
@@ -184,16 +272,16 @@ impl InstalledInterfaces {
             reached_order.push(module);
             binding_bases[module as usize] = Some(binding_count);
             binding_count += package.module_bindings[module as usize].len() as u32;
-            let entry = &package.directory.modules[module as usize];
             let record: ModuleRecord = mojito_ast::ast::decoding_from(path, || {
-                postcard::from_bytes(package.record(&entry.record))
+                postcard::from_bytes(package.package.module_record(module as usize))
             })
             .map_err(|error| format!("the interface of `{path}` does not decode: {error}"))?;
             overloads.extend(record.overloads.clone());
             records.push(record);
         }
         let decoded = package
-            .directory
+            .package
+            .directory()
             .declarations
             .iter()
             .map(|_| OnceLock::new())
@@ -248,11 +336,19 @@ impl InstalledInterfaces {
         let position = self.position(table, key)?;
         self.0.decoded[position]
             .get_or_init(|| {
-                let package = &self.0.package;
-                let entry = &package.directory.declarations[position];
-                let path = &package.directory.modules[entry.module as usize].path;
+                let package = &self.0.package.package;
+                let entry = &package.directory().declarations[position];
+                let path = &package.directory().modules[entry.module as usize].path;
                 mojito_ast::ast::decoding_from(path, || {
-                    postcard::from_bytes(package.record(&entry.record))
+                    postcard::from_bytes::<DeclarationInterface>(package.residue(position))
+                })
+                .map_err(|error| error.to_string())
+                .and_then(|mut record| {
+                    let lowered = package
+                        .lowered(position)
+                        .ok_or_else(|| "its lowered declarations do not decode".to_string())?;
+                    record.join(lowered)?;
+                    Ok(record)
                 })
                 .map_err(|error| {
                     self.0
@@ -267,6 +363,32 @@ impl InstalledInterfaces {
                 .ok()
             })
             .as_ref()
+    }
+
+    /// The transfer effects the package recorded for its callable `name`,
+    /// decoding the lowered part of the declaration owning it.
+    pub(super) fn transfer_effects(
+        &self,
+        name: &str,
+    ) -> Option<&Vec<mojito_checked::checked::TransferEffect>> {
+        self.0
+            .package
+            .package
+            .lowered_owning(name)?
+            .transfer_effects(name)
+    }
+
+    /// The call-through effects the package recorded for its callable
+    /// `name`.
+    pub(super) fn call_through_effects(
+        &self,
+        name: &str,
+    ) -> Option<&Vec<mojito_checked::checked::CallThroughEffect>> {
+        self.0
+            .package
+            .package
+            .lowered_owning(name)?
+            .call_through_effects(name)
     }
 
     /// Whether a reached module's declaration holds `table`'s `key`,
@@ -294,7 +416,7 @@ impl InstalledInterfaces {
             .into_iter()
             .flatten()
             .filter(|position| self.reached_declaration(**position))
-            .flat_map(|position| &package.directory.declarations[*position as usize].keys)
+            .flat_map(|position| &package.package.directory().declarations[*position as usize].keys)
             .filter(|(table, _)| *table == Table::Structs)
             .map(|(_, key)| key)
     }
@@ -335,7 +457,7 @@ impl InstalledInterfaces {
     }
 
     fn reached_declaration(&self, position: u32) -> bool {
-        let module = self.0.package.directory.declarations[position as usize].module;
+        let module = self.0.package.package.directory().declarations[position as usize].module;
         self.0.reached[module as usize]
     }
 }
@@ -356,35 +478,14 @@ pub enum ElaboratedConstant {
 /// name and the module declaring it.
 pub type ElaboratedConstants = Vec<(String, String, ElaboratedConstant)>;
 
-/// A checker table a declaration record holds rows of, whose every key the
-/// directory lists.
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize)]
-pub(super) enum Table {
-    Structs,
-    Traits,
-    Aliases,
-    Comptimes,
-    ComptimeLiterals,
-    ModuleValues,
-    ComptimeApplied,
-    ApplicableFunctions,
-    DefResults,
-    OwnedCollectors,
-    CollectorNames,
-    DeclaredStructs,
-    AppliedModuleConstants,
-    NestedOriginsReadOnlyFunctions,
-    ExplicitDestroy,
-    Bindings,
-}
-
-impl Table {
-    const COUNT: usize = Self::Bindings as usize + 1;
-}
-
 /// One library declaration's rows of the checker's tables, as the build's
-/// check resolved them. Every table is sorted by key; a name-set table
-/// (`declared_structs` and the like) is only keys in the directory.
+/// check resolved them.
+///
+/// Every table is sorted by key; a name-set table (`declared_structs` and
+/// the like) is only keys in the directory. Encoded, it is its record's
+/// residue: a fact the record's lowered part says is left out
+/// ([`Self::project`]) and restored when the residue decodes
+/// ([`Self::join`]).
 #[derive(Default, serde::Serialize, serde::Deserialize)]
 pub(super) struct DeclarationInterface {
     structs: Vec<(String, StructInfo)>,
@@ -399,11 +500,64 @@ pub(super) struct DeclarationInterface {
     owned_collectors: Vec<(String, bool)>,
     collector_names: Vec<(String, String)>,
     /// The explicit-destruction obligation of a struct whose self-type is
-    /// not `Deinitable`.
+    /// not `Deinitable`; a projected struct's is its lowered declaration's.
     explicit_destroy: Vec<(String, mojito_checked::checked::ExplicitDestroyInfo)>,
     /// The declaration's module-scope bindings: a `def`, its overloads
     /// merged, or a module constant.
     bindings: Vec<ModuleBinding>,
+    /// The structs whose declared parameters, fields, fieldwise
+    /// initializer, and explicit-destruction facts the record leaves to
+    /// their lowered declarations, sorted by name.
+    projected_structs: Vec<ProjectedStruct>,
+    /// The module-scope `def`s whose type the record leaves to their
+    /// lowered declarations, sorted by name.
+    projected_bindings: Vec<ProjectedBinding>,
+}
+
+/// What a module `def`'s type says that its lowered declaration does not.
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
+struct ProjectedBinding {
+    name: String,
+    /// Whether the type is a `GenericFunc`, not a `Func`.
+    generic: bool,
+    environment: mojito_types::origin::CallableEnvironment,
+    ref_params: Vec<Option<mojito_types::origin::RefSig>>,
+    ref_return: Option<Box<mojito_types::origin::RefSig>>,
+    /// Its transfers, unless they are the transfer effects its record
+    /// summarizes for it.
+    transfers: Option<mojito_types::types::TransferSet>,
+}
+
+/// A struct whose row leaves its declared facts to its lowered declaration.
+#[derive(serde::Serialize, serde::Deserialize)]
+struct ProjectedStruct {
+    name: String,
+    /// When a function lowers each of its methods, every method's residue
+    /// by name, sorted, one per overload in the row's order; its row then
+    /// holds no method, each signature being its function's declaration
+    /// and the residue.
+    methods: Option<MethodResidues>,
+}
+
+/// Each method's residue by name, sorted, one per overload.
+type MethodResidues = Vec<(String, Vec<MethodResidue>)>;
+
+/// What a method's signature says that its lowered declaration does not.
+#[derive(serde::Serialize, serde::Deserialize)]
+struct MethodResidue {
+    defaults: Vec<Option<mojito_ast::ast::Expr>>,
+    variadic_name: Option<String>,
+    ret_mlir_index: bool,
+    ref_params: Vec<Option<mojito_types::origin::RefSig>>,
+    ref_return: Option<mojito_types::origin::RefSig>,
+    view_return_interior: Vec<String>,
+    view_return: Vec<ViewReturnOrigin>,
+    implicit: bool,
+    parametric_origin_writes: Vec<mojito_types::origin::OriginParamId>,
+    origin_binders: Vec<Option<mojito_types::origin::PointerOrigin>>,
+    synthesized_default: bool,
+    nested_origins: NestedOrigins,
+    overload: Option<String>,
 }
 
 /// One name bound at module scope.
@@ -422,10 +576,9 @@ pub(super) struct ModuleBinding {
 }
 
 impl Checker {
-    /// The declaration interfaces of every library module `program`
-    /// declares something in, encoded with their directory, from this
-    /// checker's tables after it checked `program` whole, with the module
-    /// constants `elaborated` places in each module.
+    /// The interface of every library module `program` declares something
+    /// in, from this checker's tables after it checked `program` whole, with
+    /// the module constants `elaborated` places in each module.
     ///
     /// # Errors
     ///
@@ -435,12 +588,11 @@ impl Checker {
         &self,
         program: &[Stmt],
         elaborated: &[(String, String, ElaboratedConstant)],
-    ) -> Result<Vec<u8>, String> {
+    ) -> Result<InterfaceExport, String> {
         let modules = DeclaringModules::of(program)?;
         let builtin = Self::new();
         let mut records: BTreeMap<String, ModuleRecord> = modules
-            .names
-            .values()
+            .modules()
             .map(|module| (module.clone(), ModuleRecord::default()))
             .collect();
         let mut declarations: BTreeMap<String, (DeclarationInterface, Vec<(Table, String)>)> =
@@ -646,7 +798,27 @@ impl Checker {
                 unplaced.join(", ")
             ));
         }
-        encode_interfaces(&modules, records, declarations)
+        let modules_encoded = records
+            .into_iter()
+            .map(|(module, mut record)| {
+                record.sort();
+                postcard::to_stdvec(&record)
+                    .map(|bytes| (module.clone(), bytes))
+                    .map_err(|error| {
+                        format!("the interface of `{module}` cannot be exported: {error}")
+                    })
+            })
+            .collect::<Result<_, _>>()?;
+        let callables = self.top_level_callables.borrow();
+        let transfer_effects = summarized(&self.transfer_effects.borrow(), &callables);
+        let call_through_effects = summarized(&self.call_through_effects.borrow(), &callables);
+        Ok(InterfaceExport {
+            modules: modules_encoded,
+            declarations,
+            declaring: modules,
+            transfer_effects,
+            call_through_effects,
+        })
     }
 
     /// Resolve every table lookup the program's own declarations miss from
@@ -828,33 +1000,6 @@ struct Installed {
     failures: Mutex<Vec<String>>,
 }
 
-/// Where each record of a package's declaration interfaces lies.
-#[derive(Default, serde::Serialize, serde::Deserialize)]
-struct InterfaceDirectory {
-    /// Each library module's own record, by path.
-    modules: Vec<ModuleEntry>,
-    /// Each library declaration's record, sorted by name.
-    declarations: Vec<DeclarationEntry>,
-}
-
-#[derive(serde::Serialize, serde::Deserialize)]
-struct ModuleEntry {
-    path: String,
-    record: Range<usize>,
-}
-
-#[derive(serde::Serialize, serde::Deserialize)]
-struct DeclarationEntry {
-    name: String,
-    /// Its module's position in the directory.
-    module: u32,
-    record: Range<usize>,
-    /// Every table key its record holds, sorted.
-    keys: Vec<(Table, String)>,
-    /// Every method its struct declares, sorted.
-    methods: Vec<String>,
-}
-
 /// One library module's facts an importer reads whole: the overload sets
 /// MIR lowering asks about by name, the constants the importer's
 /// elaboration reads, and the module scope's compile-time facts.
@@ -883,6 +1028,129 @@ impl ModuleRecord {
 }
 
 impl DeclarationInterface {
+    /// Leave out of each struct's row, and each of its methods' signature,
+    /// what its declaration in `lowered` says, once the guard finds it says
+    /// exactly that: a method's declaration is the function named by its
+    /// struct, its name, and its overload qualifier.
+    fn project(&mut self, lowered: &LoweredDeclaration) -> Result<(), String> {
+        for (name, info) in &mut self.structs {
+            let Some(declaration) = lowered_struct(lowered, name) else {
+                continue;
+            };
+            let row = self
+                .explicit_destroy
+                .iter()
+                .find(|(owner, _)| owner == name)
+                .map(|(_, row)| row);
+            if let Some(fact) = struct_projection_differs(info, row, declaration) {
+                return Err(format!(
+                    "the lowered declaration of struct `{name}` says other than its check of \
+                     its {fact}"
+                ));
+            }
+            let methods = project_methods(name, info, lowered)?;
+            if methods.is_some() {
+                info.methods = HashMap::new();
+            }
+            info.decls = Vec::new();
+            info.fields = Vec::new();
+            info.fieldwise_init = false;
+            info.explicit_destroy_message = None;
+            info.explicit_destructors = HashMap::new();
+            self.projected_structs.push(ProjectedStruct {
+                name: name.clone(),
+                methods,
+            });
+        }
+        self.explicit_destroy.retain(|(owner, _)| {
+            !self
+                .projected_structs
+                .iter()
+                .any(|projected| projected.name == *owner)
+        });
+        for binding in &mut self.bindings {
+            let (Some(projected), Some(declaration)) = (
+                ProjectedBinding::of(&binding.name, &binding.ty),
+                lowered_function(lowered, &binding.name),
+            ) else {
+                continue;
+            };
+            let summarized = ProjectedBinding {
+                transfers: None,
+                ..projected.clone()
+            };
+            let projected = [summarized, projected]
+                .into_iter()
+                .find(|projected| {
+                    same_bytes(&projected.clone().ty(declaration, lowered), &binding.ty)
+                })
+                .ok_or_else(|| {
+                    format!(
+                        "the lowered declaration of `{}` says other than its check of its type",
+                        binding.name
+                    )
+                })?;
+            binding.ty = Ty::None;
+            self.projected_bindings.push(projected);
+        }
+        Ok(())
+    }
+
+    /// Restore what [`Self::project`] left out from `lowered`.
+    fn join(&mut self, lowered: &LoweredDeclaration) -> Result<(), String> {
+        for projected in std::mem::take(&mut self.projected_structs) {
+            let name = projected.name;
+            let declaration = lowered_struct(lowered, &name)
+                .ok_or_else(|| format!("struct `{name}` has no lowered declaration"))?;
+            let (_, info) = self
+                .structs
+                .iter_mut()
+                .find(|(owner, _)| *owner == name)
+                .ok_or_else(|| format!("struct `{name}` has no row"))?;
+            info.decls.clone_from(&declaration.param_decls);
+            info.fields.clone_from(&declaration.fields);
+            info.fieldwise_init = declaration.fieldwise_init;
+            info.explicit_destructors
+                .clone_from(&declaration.explicit_destructors);
+            if let Some(obligation) = declaration.explicit_destroy_info() {
+                info.explicit_destroy_message =
+                    obligation.declared.then(|| obligation.message.clone());
+                self.explicit_destroy.push((name.clone(), obligation));
+            }
+            for (method, residues) in projected.methods.into_iter().flatten() {
+                let overloads = residues
+                    .into_iter()
+                    .map(|residue| {
+                        let lowered_name = mojito_symbol::symbol::qualified_method_symbol(
+                            &name,
+                            &method,
+                            residue.overload.as_deref(),
+                        );
+                        lowered_function(lowered, &lowered_name)
+                            .map(|function| residue.sig(&method, info.decls.len(), function))
+                            .ok_or_else(|| {
+                                format!("method `{lowered_name}` has no lowered declaration")
+                            })
+                    })
+                    .collect::<Result<_, _>>()?;
+                info.methods.insert(method, overloads);
+            }
+        }
+        by_name(&mut self.explicit_destroy);
+        for projected in std::mem::take(&mut self.projected_bindings) {
+            let declaration = lowered_function(lowered, &projected.name).ok_or_else(|| {
+                format!("function `{}` has no lowered declaration", projected.name)
+            })?;
+            let binding = self
+                .bindings
+                .binary_search_by(|binding| binding.name.cmp(&projected.name))
+                .map(|position| &mut self.bindings[position])
+                .map_err(|_| format!("function `{}` has no binding", projected.name))?;
+            binding.ty = projected.ty(declaration, lowered);
+        }
+        Ok(())
+    }
+
     fn sort(&mut self) {
         by_name(&mut self.structs);
         by_name(&mut self.traits);
@@ -898,131 +1166,368 @@ impl DeclarationInterface {
         by_name(&mut self.explicit_destroy);
         self.bindings
             .sort_by(|left, right| left.name.cmp(&right.name));
+        self.projected_structs
+            .sort_by(|left, right| left.name.cmp(&right.name));
+        self.projected_bindings
+            .sort_by(|left, right| left.name.cmp(&right.name));
     }
 }
 
-/// The module each module-level name of a program is declared in.
-struct DeclaringModules {
-    names: HashMap<String, String>,
+/// The first fact of a struct's row (`info`, and its explicit-destruction
+/// `row`) its lowered `declaration` does not say byte for byte, or `None`.
+fn struct_projection_differs(
+    info: &StructInfo,
+    row: Option<&mojito_checked::checked::ExplicitDestroyInfo>,
+    declaration: &StructDeclaration,
+) -> Option<&'static str> {
+    fn sorted(map: &HashMap<String, bool>) -> BTreeMap<&String, &bool> {
+        map.iter().collect()
+    }
+    let obligation = declaration.explicit_destroy.as_ref();
+    [
+        (
+            "parameters",
+            same_bytes(&info.decls, &declaration.param_decls),
+        ),
+        ("fields", same_bytes(&info.fields, &declaration.fields)),
+        (
+            "fieldwise initializer",
+            info.fieldwise_init == declaration.fieldwise_init,
+        ),
+        (
+            "explicit-destroy message",
+            info.explicit_destroy_message.as_ref()
+                == obligation
+                    .filter(|obligation| obligation.declared)
+                    .map(|obligation| &obligation.message),
+        ),
+        (
+            "destructors",
+            sorted(&info.explicit_destructors) == sorted(&declaration.explicit_destructors),
+        ),
+        (
+            "explicit-destruction obligation",
+            row == declaration.explicit_destroy_info().as_ref(),
+        ),
+    ]
+    .into_iter()
+    .find_map(|(fact, same)| (!same).then_some(fact))
 }
 
-impl DeclaringModules {
-    /// The declaring module of every name `program` declares at module
-    /// level. A name two modules declare (overloads split across modules)
-    /// has no one module to install it from, and is refused.
-    fn of(program: &[Stmt]) -> Result<Self, String> {
-        let mut names: HashMap<String, String> = HashMap::new();
-        for statement in program {
-            let (StmtKind::Def { name, .. }
-            | StmtKind::Struct { name, .. }
-            | StmtKind::Trait { name, .. }
-            | StmtKind::Comptime { name, .. }) = &statement.kind
-            else {
-                continue;
+/// The first fact of a method's signature its lowered `declaration` does
+/// not say byte for byte, or `None`.
+fn method_projection_differs(
+    method: &str,
+    owner_decls: &[ParamDecl],
+    sig: &MethodSig,
+    declaration: &FunctionDeclaration,
+) -> Option<&'static str> {
+    [
+        (
+            "parameters",
+            own_decls(method, owner_decls.len(), declaration)
+                .is_some_and(|own| same_bytes(&sig.decls, &own))
+                && (method != "__init__"
+                    || declaration
+                        .param_decls
+                        .get(..owner_decls.len())
+                        .is_some_and(|prefix| same_bytes(&owner_decls, &prefix))),
+        ),
+        (
+            "availability",
+            same_bytes(&sig.availability, &declaration.availability),
+        ),
+        ("receiver", sig.has_self == declaration.has_receiver),
+        (
+            "parameter types",
+            same_bytes(&sig.params, &declaration.param_types),
+        ),
+        ("parameter names", sig.names == declaration.param_names),
+        ("required", sig.required == declaration.required),
+        ("variadic", same_bytes(&sig.variadic, &declaration.variadic)),
+        (
+            "variadic index",
+            sig.variadic_index == declaration.variadic_index,
+        ),
+        (
+            "variadic convention",
+            sig.variadic_convention == declaration.variadic_convention,
+        ),
+        (
+            "keyword variadic",
+            same_bytes(&sig.kw_variadic, &declaration.kw_variadic),
+        ),
+        (
+            "keyword variadic index",
+            sig.kw_variadic_index == declaration.kw_variadic_index,
+        ),
+        (
+            "positional-only",
+            sig.positional_only == declaration.positional_only,
+        ),
+        ("keyword-only", sig.keyword_only == declaration.keyword_only),
+        (
+            "conventions",
+            sig.conventions == declaration.param_conventions,
+        ),
+        ("return", same_bytes(&sig.ret, &declaration.ret_ty)),
+        ("raises", sig.raises == declaration.raises),
+        ("error", same_bytes(&sig.error, &declaration.error_ty)),
+        (
+            "receiver convention",
+            sig.self_convention == declaration.receiver_convention,
+        ),
+    ]
+    .into_iter()
+    .find_map(|(fact, same)| (!same).then_some(fact))
+}
+
+/// The residue of every method of the struct `owner` (`info`), when a
+/// function in `lowered` lowers each, or `None`.
+///
+/// # Errors
+///
+/// A method whose lowered declaration says other than its signature.
+fn project_methods(
+    owner: &str,
+    info: &StructInfo,
+    lowered: &LoweredDeclaration,
+) -> Result<Option<MethodResidues>, String> {
+    let mut methods: MethodResidues = Vec::new();
+    for (method, overloads) in &info.methods {
+        let mut residues = Vec::new();
+        for sig in overloads {
+            let lowered_name = mojito_symbol::symbol::qualified_method_symbol(
+                owner,
+                method,
+                sig.overload.as_deref(),
+            );
+            let Some(declaration) = lowered_function(lowered, &lowered_name) else {
+                return Ok(None);
             };
-            let Some(module) = &statement.module else {
-                continue;
-            };
-            match names.get(name) {
-                Some(declared) if declared != module => {
-                    return Err(format!(
-                        "`{name}` is declared in both `{declared}` and `{module}`"
-                    ));
-                }
-                Some(_) => {}
-                None => {
-                    names.insert(name.clone(), module.clone());
-                }
+            if let Some(fact) = method_projection_differs(method, &info.decls, sig, declaration) {
+                return Err(format!(
+                    "the lowered declaration of method `{lowered_name}` says other than its \
+                     check of its {fact}"
+                ));
+            }
+            residues.push(MethodResidue::of(sig));
+        }
+        methods.push((method.clone(), residues));
+    }
+    by_name(&mut methods);
+    Ok(Some(methods))
+}
+
+impl MethodResidue {
+    fn of(sig: &MethodSig) -> Self {
+        Self {
+            defaults: sig.defaults.clone(),
+            variadic_name: sig.variadic_name.clone(),
+            ret_mlir_index: sig.ret_mlir_index,
+            ref_params: sig.ref_params.clone(),
+            ref_return: sig.ref_return.clone(),
+            view_return_interior: sig.view_return_interior.clone(),
+            view_return: sig.view_return.clone(),
+            implicit: sig.implicit,
+            parametric_origin_writes: sig.parametric_origin_writes.clone(),
+            origin_binders: sig.origin_binders.clone(),
+            synthesized_default: sig.synthesized_default,
+            nested_origins: sig.nested_origins,
+            overload: sig.overload.clone(),
+        }
+    }
+
+    /// The signature of `method`, on a struct of `owner_decls` parameters,
+    /// whose lowered declaration is `declaration`.
+    fn sig(self, method: &str, owner_decls: usize, declaration: &FunctionDeclaration) -> MethodSig {
+        MethodSig {
+            decls: own_decls(method, owner_decls, declaration)
+                .unwrap_or_default()
+                .to_vec(),
+            availability: declaration.availability.clone(),
+            has_self: declaration.has_receiver,
+            params: declaration.param_types.clone(),
+            names: declaration.param_names.clone(),
+            required: declaration.required.clone(),
+            defaults: self.defaults,
+            variadic: declaration.variadic.clone().map(Box::new),
+            variadic_index: declaration.variadic_index,
+            variadic_convention: declaration.variadic_convention,
+            variadic_name: self.variadic_name,
+            kw_variadic: declaration.kw_variadic.clone().map(Box::new),
+            kw_variadic_index: declaration.kw_variadic_index,
+            positional_only: declaration.positional_only,
+            keyword_only: declaration.keyword_only,
+            conventions: declaration.param_conventions.clone(),
+            ret: declaration.ret_ty.clone(),
+            ret_mlir_index: self.ret_mlir_index,
+            raises: declaration.raises,
+            error: declaration.error_ty.clone().map(Box::new),
+            self_convention: declaration.receiver_convention,
+            ref_params: self.ref_params,
+            ref_return: self.ref_return,
+            view_return_interior: self.view_return_interior,
+            view_return: self.view_return,
+            implicit: self.implicit,
+            parametric_origin_writes: self.parametric_origin_writes,
+            origin_binders: self.origin_binders,
+            synthesized_default: self.synthesized_default,
+            nested_origins: self.nested_origins,
+            overload: self.overload,
+        }
+    }
+}
+
+impl ProjectedBinding {
+    /// What the `def` type `ty` of the binding `name` says beyond its
+    /// lowered declaration; `None` for any other type.
+    fn of(name: &str, ty: &Ty) -> Option<Self> {
+        let (generic, environment, ref_params, ref_return, transfers) = match ty {
+            Ty::Func {
+                environment,
+                ref_params,
+                ref_return,
+                transfers,
+                ..
+            } => (false, environment, ref_params, ref_return, transfers),
+            Ty::GenericFunc {
+                environment,
+                ref_params,
+                ref_return,
+                transfers,
+                ..
+            } => (true, environment, ref_params, ref_return, transfers),
+            _ => return None,
+        };
+        Some(Self {
+            name: name.to_string(),
+            generic,
+            environment: environment.clone(),
+            ref_params: ref_params.as_ref().clone(),
+            ref_return: ref_return.clone(),
+            transfers: Some(transfers.clone()),
+        })
+    }
+
+    /// The binding's type, whose lowered declaration is `declaration` in
+    /// `lowered`.
+    fn ty(self, declaration: &FunctionDeclaration, lowered: &LoweredDeclaration) -> Ty {
+        let transfers = self.transfers.unwrap_or_else(|| {
+            mojito_types::types::TransferSet(
+                lowered
+                    .transfer_effects(&self.name)
+                    .cloned()
+                    .unwrap_or_default(),
+            )
+        });
+        let params = declaration.param_types.clone();
+        let names = declaration.param_names.clone();
+        let ret = Box::new(declaration.ret_ty.clone());
+        let required = declaration.required.clone();
+        let variadic = declaration.variadic.clone().map(Box::new);
+        let kw_variadic = declaration.kw_variadic.clone().map(Box::new);
+        let error = declaration.error_ty.clone().map(Box::new);
+        let conventions = declaration.param_conventions.clone();
+        if self.generic {
+            Ty::GenericFunc {
+                environment: self.environment,
+                decls: declaration.param_decls.clone(),
+                params,
+                names,
+                ret,
+                required,
+                variadic,
+                kw_variadic,
+                positional_only: declaration.positional_only,
+                keyword_only: declaration.keyword_only,
+                raises: declaration.raises,
+                error,
+                conventions,
+                ref_params: Box::new(self.ref_params),
+                ref_return: self.ref_return,
+                transfers,
+            }
+        } else {
+            Ty::Func {
+                environment: self.environment,
+                params,
+                names,
+                ret,
+                required,
+                variadic,
+                kw_variadic,
+                positional_only: declaration.positional_only,
+                keyword_only: declaration.keyword_only,
+                raises: declaration.raises,
+                error,
+                conventions,
+                ref_params: Box::new(self.ref_params),
+                ref_return: self.ref_return,
+                transfers,
             }
         }
-        Ok(Self { names })
-    }
-
-    /// The module declaring the table key `name` ([`Self::declaration_of`]).
-    fn module_of(&self, name: &str) -> Option<&str> {
-        self.declaration_of(name)
-            .and_then(|declaration| self.names.get(declaration))
-            .map(String::as_str)
-    }
-
-    /// The declaration the table key `name` belongs to: a declaration's own
-    /// name, an overload's signature-qualified one, or a member's
-    /// `Owner.member`.
-    fn declaration_of(&self, name: &str) -> Option<&str> {
-        [
-            Some(name),
-            name.split_once(mojito_symbol::symbol::OV_SEP)
-                .map(|(declaration, _)| declaration),
-            name.split_once('.').map(|(owner, _)| owner),
-        ]
-        .into_iter()
-        .flatten()
-        .find_map(|declaration| self.names.get_key_value(declaration))
-        .map(|(declaration, _)| declaration.as_str())
     }
 }
 
-/// Encode the module `records` and the declaration records with their
-/// directory: its length, eight bytes little-endian, then the directory,
-/// then every record.
-fn encode_interfaces(
-    modules: &DeclaringModules,
-    records: BTreeMap<String, ModuleRecord>,
-    declarations: BTreeMap<String, (DeclarationInterface, Vec<(Table, String)>)>,
-) -> Result<Vec<u8>, String> {
-    let mut payload = Vec::new();
-    let mut append = |bytes: Vec<u8>| {
-        let start = payload.len();
-        payload.extend(bytes);
-        start..payload.len()
-    };
-    let positions: HashMap<String, u32> = records
-        .keys()
-        .enumerate()
-        .map(|(position, module)| (module.clone(), position as u32))
-        .collect();
-    let mut directory = InterfaceDirectory::default();
-    for (module, mut record) in records {
-        record.sort();
-        let bytes = postcard::to_stdvec(&record)
-            .map_err(|error| format!("the interface of `{module}` cannot be exported: {error}"))?;
-        directory.modules.push(ModuleEntry {
-            path: module,
-            record: append(bytes),
-        });
+/// The struct declaration `name` among `lowered`'s, which are sorted.
+fn lowered_struct<'a>(
+    lowered: &'a LoweredDeclaration,
+    name: &str,
+) -> Option<&'a StructDeclaration> {
+    lowered
+        .structs
+        .binary_search_by(|declaration| declaration.name.as_bytes().cmp(name.as_bytes()))
+        .ok()
+        .map(|position| &lowered.structs[position])
+}
+
+/// The parameters `method`'s lowered `declaration` declares itself: a
+/// constructor's declaration declares its struct's `owner_decls` first, as
+/// MIR lowers one.
+fn own_decls<'a>(
+    method: &str,
+    owner_decls: usize,
+    declaration: &'a FunctionDeclaration,
+) -> Option<&'a [ParamDecl]> {
+    if method == "__init__" {
+        declaration.param_decls.get(owner_decls..)
+    } else {
+        Some(&declaration.param_decls)
     }
-    for (name, (mut record, mut keys)) in declarations {
-        record.sort();
-        keys.sort();
-        let mut methods: Vec<String> = record
-            .structs
-            .iter()
-            .flat_map(|(_, info)| info.methods.keys().cloned())
-            .collect();
-        methods.sort();
-        methods.dedup();
-        let bytes = postcard::to_stdvec(&record)
-            .map_err(|error| format!("the interface of `{name}` cannot be exported: {error}"))?;
-        let module = modules
-            .names
-            .get(&name)
-            .and_then(|module| positions.get(module))
-            .copied()
-            .ok_or_else(|| format!("`{name}` has no module record"))?;
-        directory.declarations.push(DeclarationEntry {
-            name,
-            module,
-            record: append(bytes),
-            keys,
-            methods,
-        });
-    }
-    let directory = postcard::to_stdvec(&directory)
-        .map_err(|error| format!("the interface directory cannot be exported: {error}"))?;
-    let mut bytes = (directory.len() as u64).to_le_bytes().to_vec();
-    bytes.extend(directory);
-    bytes.extend(payload);
-    Ok(bytes)
+}
+
+/// The function declaration `name` among `lowered`'s, which are sorted.
+fn lowered_function<'a>(
+    lowered: &'a LoweredDeclaration,
+    name: &str,
+) -> Option<&'a FunctionDeclaration> {
+    lowered
+        .functions
+        .binary_search_by(|declaration| declaration.lowered_name.as_bytes().cmp(name.as_bytes()))
+        .ok()
+        .map(|position| &lowered.functions[position])
+}
+
+/// The entries of `effects` whose callable is one of `callables`, whose
+/// bodies the check summarized.
+fn summarized<V: Clone>(
+    effects: &HashMap<String, V>,
+    callables: &HashSet<String>,
+) -> Vec<(String, V)> {
+    effects
+        .iter()
+        .filter(|(callable, _)| callables.contains(*callable))
+        .map(|(callable, effects)| (callable.clone(), effects.clone()))
+        .collect()
+}
+
+/// Whether `left` and `right` encode the same bytes.
+fn same_bytes<L: serde::Serialize, R: serde::Serialize>(left: &L, right: &R) -> bool {
+    matches!(
+        (postcard::to_stdvec(left), postcard::to_stdvec(right)),
+        (Ok(left), Ok(right)) if left == right
+    )
 }
 
 /// Sort `entries` by name.

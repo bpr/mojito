@@ -55,10 +55,10 @@ impl FnLowering<'_> {
                             self.end_flag_guard(ctx, guard);
                         }
                     } else {
-                        let owned_pack = self
-                            .declarations
-                            .get(self.name)
-                            .is_some_and(|declaration| declaration.owned_pack_slot() == Some(var));
+                        let owned_pack =
+                            self.declarations.get(self.name).is_some_and(|declaration| {
+                                mojito_mir::mir::owned_pack_slot(declaration) == Some(var)
+                            });
                         self.emit_surviving_leaf_drops(ctx, ptr, &ty, &leaves, owned_pack)?;
                     }
                     self.set_drop_flag(ctx, var, false);

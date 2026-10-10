@@ -7736,8 +7736,16 @@ fn an_installed_module_interface_checks_like_its_statements() {
     let mut building = CheckContext::new();
     building.record_interfaces();
     check_program_in(&library, &mut building).expect("the library checks");
-    let bytes = building.take_interfaces().expect("the library exports");
-    let package = std::sync::Arc::new(DeclarationInterfaces::read(bytes.clone()).expect("reads"));
+    let records = building
+        .take_interfaces()
+        .expect("the library exports")
+        .records(Vec::new(), Vec::new())
+        .expect("the library records");
+    let declarations = mojito::checked_package::PackageDeclarations::of_records(records)
+        .expect("the records encode");
+    let package = std::sync::Arc::new(
+        DeclarationInterfaces::read(std::sync::Arc::new(declarations)).expect("reads"),
+    );
     assert!(package.declares(library_path));
     let install = |installed: &InstalledInterfaces| {
         let mut context = CheckContext::new();
@@ -7763,5 +7771,4 @@ fn an_installed_module_interface_checks_like_its_statements() {
     let installed =
         check_program_in(&wrong, &mut install(&reaching())).expect_err("rejected installed");
     assert_eq!(installed.to_string(), whole.to_string());
-    assert!(DeclarationInterfaces::read(bytes[..bytes.len() / 2].to_vec()).is_err());
 }

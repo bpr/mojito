@@ -149,6 +149,7 @@ fn write_structs(output: &mut String, declarations: &[MirStructDeclaration]) {
             }));
         let mut methods = declaration.mut_self_methods.iter().collect::<Vec<_>>();
         methods.sort();
+        let explicit_destroy = declaration.explicit_destroy.as_ref();
         let destructors = {
             let mut entries = declaration.explicit_destructors.iter().collect::<Vec<_>>();
             entries.sort_by(|left, right| left.0.cmp(right.0));
@@ -156,6 +157,19 @@ fn write_structs(output: &mut String, declarations: &[MirStructDeclaration]) {
                 record(
                     "destructor",
                     &[("name", symbol(name)), ("raises", raises.to_string())],
+                )
+            }))
+        };
+        let obligated_fields = {
+            let mut entries = explicit_destroy
+                .into_iter()
+                .flat_map(|info| &info.fields)
+                .collect::<Vec<_>>();
+            entries.sort_by(|left, right| left.0.cmp(right.0));
+            list(entries.into_iter().map(|(name, owner)| {
+                record(
+                    "field",
+                    &[("name", symbol(name)), ("struct", symbol(owner))],
                 )
             }))
         };
@@ -175,14 +189,16 @@ fn write_structs(output: &mut String, declarations: &[MirStructDeclaration]) {
                 ),
                 (
                     "explicit_destroy_message",
-                    option(
-                        declaration
-                            .explicit_destroy_message
-                            .as_ref()
-                            .map(|v| quote(v)),
-                    ),
+                    option(explicit_destroy.map(|info| quote(&info.message))),
                 ),
                 ("explicit_destructors", destructors),
+                (
+                    "explicit_destroy_declared",
+                    explicit_destroy
+                        .is_some_and(|info| info.declared)
+                        .to_string(),
+                ),
+                ("explicit_destroy_fields", obligated_fields),
                 (
                     "conformances",
                     list(declaration.conformances.iter().map(|row| {

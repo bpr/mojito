@@ -171,6 +171,37 @@ impl Decoder {
             }
             destructors
         };
+        // Schema 1.41 says whether the message was declared and which fields
+        // carry their own obligation; an older artifact says neither.
+        let declared = self
+            .field(fields, "explicit_destroy_declared")
+            .ok()
+            .and_then(|field| self.boolean(field))
+            .unwrap_or(false);
+        let obligated_fields = self
+            .field(fields, "explicit_destroy_fields")
+            .ok()
+            .and_then(|entries| self.list(entries).ok())
+            .map(|entries| {
+                entries
+                    .iter()
+                    .filter_map(|entry| {
+                        let entry_fields = self.record(entry, "field").ok()?;
+                        let name = self.req(entry, entry_fields, "name", Self::symbol);
+                        let owner = self.req(entry, entry_fields, "struct", Self::symbol);
+                        self.unknown(entry_fields, &["name", "struct"]);
+                        Some((name?, owner?))
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        let explicit_destroy = explicit_destroy_message.map(|message| {
+            mojito_checked::declaration::ExplicitDestroyObligation {
+                message,
+                declared,
+                fields: obligated_fields,
+            }
+        });
         // Schema 1.9 carries the conformance rows; an older artifact has none.
         let conformances = self
             .field(fields, "conformances")
@@ -238,6 +269,8 @@ impl Decoder {
                 "param_decls",
                 "explicit_destroy_message",
                 "explicit_destructors",
+                "explicit_destroy_declared",
+                "explicit_destroy_fields",
                 "conformances",
                 "associated_types",
                 "associated_values",
@@ -249,8 +282,8 @@ impl Decoder {
             mut_self_methods,
             fieldwise_init,
             param_decls,
-            explicit_destroy_message,
             explicit_destructors,
+            explicit_destroy,
             conformances,
             associated_types,
             associated_values,

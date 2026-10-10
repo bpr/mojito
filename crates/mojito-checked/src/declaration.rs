@@ -1,0 +1,170 @@
+//! The checked declaration metadata of a lowered program.
+//!
+//! Each struct and callable's resolved signature, which MIR carries beside
+//! its bodies, a backend consumes, and a package records once per
+//! declaration.
+
+use crate::checked::{CheckedConst, ExplicitDestroyInfo, StructConformance};
+use mojito_ast::ast::ArgConvention;
+use mojito_types::param_expr::ParamExpr;
+use mojito_types::types::{GenericConstraint, ParamDecl, Ty};
+use std::collections::{HashMap, HashSet};
+
+/// A package stores each one as a bytecode record, its sets and maps
+/// written sorted, so equal declarations encode equal bytes.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct StructDeclaration {
+    pub name: String,
+    pub fields: Vec<(String, Ty)>,
+    #[serde(serialize_with = "sorted_names")]
+    pub mut_self_methods: HashSet<String>,
+    pub fieldwise_init: bool,
+    pub param_decls: Vec<ParamDecl>,
+    /// The struct's named destructors (`deinit self` methods), beside
+    /// whether each raises.
+    #[serde(serialize_with = "sorted_map")]
+    pub explicit_destructors: HashMap<String, bool>,
+    /// The struct's explicit-destruction obligation, when it is not
+    /// `Deinitable`.
+    pub explicit_destroy: Option<ExplicitDestroyObligation>,
+    /// The struct's answer for each trait a `where` clause or a conformance
+    /// condition of the program names, sorted by trait: an instance conforms
+    /// when its arguments satisfy any of the row's conditions. A concrete
+    /// instance's rows are decided, so each holds `Bool(true)` or nothing.
+    pub conformances: Vec<StructConformance>,
+    /// The struct's unparameterized associated types (`Element` of `List`),
+    /// sorted by member, each over the struct's own binders: the elaborator
+    /// solves `C.Element` from them once `C` is bound to an instance, so
+    /// elaborated MIR carries none.
+    pub associated_types: Vec<(String, Ty)>,
+    /// The struct's compile-time value members (`K` of `comptime K = 7`),
+    /// sorted by member, each a parameter expression over the struct's own
+    /// binders: the elaborator answers `T.K` from them once `T` is bound to
+    /// an instance, so elaborated MIR carries none.
+    pub associated_values: Vec<(String, ParamExpr)>,
+}
+
+impl StructDeclaration {
+    /// The struct's explicit-destruction obligation, its destructors
+    /// joined, as the check analyzes one.
+    pub fn explicit_destroy_info(&self) -> Option<ExplicitDestroyInfo> {
+        self.explicit_destroy
+            .as_ref()
+            .map(|obligation| ExplicitDestroyInfo {
+                message: obligation.message.clone(),
+                declared: obligation.declared,
+                destructors: self.explicit_destructors.clone(),
+                fields: obligation.fields.clone(),
+            })
+    }
+}
+
+/// A struct's explicit-destruction obligation, apart from its destructors,
+/// which every struct may declare.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct ExplicitDestroyObligation {
+    /// The `@explicit_destroy` message, or
+    /// [`ExplicitDestroyInfo::default_message`].
+    pub message: String,
+    /// Whether `@explicit_destroy` declared `message`.
+    pub declared: bool,
+    /// Each direct field whose type carries its own obligation, beside that
+    /// type's struct.
+    #[serde(serialize_with = "sorted_map")]
+    pub fields: HashMap<String, String>,
+}
+
+impl ExplicitDestroyObligation {
+    /// `info` without its destructors.
+    pub fn of(info: &ExplicitDestroyInfo) -> Self {
+        Self {
+            message: info.message.clone(),
+            declared: info.declared,
+            fields: info.fields.clone(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct FunctionDeclaration {
+    pub lowered_name: String,
+    pub param_names: Vec<String>,
+    pub param_types: Vec<Ty>,
+    pub defaults: Vec<Option<CheckedConst>>,
+    pub required: Vec<bool>,
+    pub variadic: Option<Ty>,
+    /// Declared convention of the positional variadic collector. Kept
+    /// independently because it is not represented in `param_conventions`.
+    pub variadic_convention: Option<ArgConvention>,
+    pub variadic_index: Option<usize>,
+    pub kw_variadic: Option<Ty>,
+    /// Declared convention of the keyword variadic collector. Kept
+    /// independently because it is not represented in `param_conventions`.
+    pub kw_variadic_convention: Option<ArgConvention>,
+    pub kw_variadic_index: Option<usize>,
+    pub positional_only: Option<usize>,
+    pub keyword_only: Option<usize>,
+    pub param_decls: Vec<ParamDecl>,
+    /// Whether this declaration has an implicit method receiver. This keeps a
+    /// plain `self` (whose convention is `None`) distinct from a static/free
+    /// callable with no receiver.
+    pub has_receiver: bool,
+    /// Declared convention of that implicit method receiver.
+    pub receiver_convention: Option<ArgConvention>,
+    /// Declared conventions of the explicit runtime parameters, aligned with
+    /// `param_types`. Effective per-call `ref` access may narrow to `Read`.
+    pub param_conventions: Vec<Option<ArgConvention>>,
+    /// Checked return type of the callable.
+    pub ret_ty: Ty,
+    /// Whether the callable returns a reference handle to `ret_ty` rather than
+    /// an owned value. The selected call carries the instantiated origin and
+    /// mutability; this declaration fact verifies the ABI family.
+    pub returns_reference: bool,
+    /// Checked raising contract and its declared error type.
+    pub raises: bool,
+    pub error_ty: Option<Ty>,
+    /// Whether each runtime parameter is a `mut`/`ref` reference whose final
+    /// value writes back through a caller place. Same order as `param_types`.
+    pub ref_params: Vec<bool>,
+    /// Whether each runtime parameter writes through that retained caller
+    /// place (`mut`/`var`/`deinit`, or a `ref` under a statically mutable
+    /// origin contract); `ref_params` says only that it needs one. The loan
+    /// analysis classifies a retained argument place by this mask. Same
+    /// order as `param_types`.
+    pub param_writes: Vec<bool>,
+    /// A struct member's `where` clauses, one entry per clause, over the
+    /// owner's and the member's binders. An instance whose arguments
+    /// disprove one does not have the member. Empty on a concrete instance,
+    /// whose clauses the elaborator decided.
+    pub availability: Vec<GenericConstraint>,
+    /// The lowered name of the function or method a nested function is
+    /// declared in, whose binders (and its own enclosing declaration's) the
+    /// nested body may name. `None` at top level and on a concrete instance.
+    pub enclosing: Option<String>,
+    /// The binders of the compile-time regions of the enclosing body that a
+    /// nested function is declared in — the indices of its enclosing
+    /// `comptime for` loops, outermost first — which its body and signature
+    /// may name. The elaborator instantiates such a body once per unrolled
+    /// copy of the region. Empty at top level and on a concrete instance.
+    pub region_binders: Vec<ParamDecl>,
+}
+
+fn sorted_names<S: serde::Serializer>(
+    names: &HashSet<String>,
+    serializer: S,
+) -> Result<S::Ok, S::Error> {
+    serde::Serialize::serialize(
+        &names.iter().collect::<std::collections::BTreeSet<_>>(),
+        serializer,
+    )
+}
+
+fn sorted_map<K: Ord + serde::Serialize, V: serde::Serialize, S: serde::Serializer>(
+    map: &HashMap<K, V>,
+    serializer: S,
+) -> Result<S::Ok, S::Error> {
+    serde::Serialize::serialize(
+        &map.iter().collect::<std::collections::BTreeMap<_, _>>(),
+        serializer,
+    )
+}

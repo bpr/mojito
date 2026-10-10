@@ -1070,6 +1070,65 @@ pub fn nested_lifted_declaration_name(
     format!("{outer}${inner}$decl{}", declaration.0)
 }
 
+/// Whose a lifted compile-time function is, as its name says
+/// ([`lifted_owner`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LiftedOwner<'a> {
+    /// A module constant's initializer: `$comptime$<constant>$module`.
+    Constant(&'a str),
+    /// An evaluated parameter default: `$default$<owner>$<parameter>`.
+    Default { owner: &'a str, parameter: &'a str },
+    /// An application numbered under `owner`: one MIR lifts from the body of
+    /// the function `owner` (`$comptime$<function>$<k>`), or the display
+    /// sequence of the binding `owner` (`$comptime$<binding>$<identity>`).
+    /// Only the first is the same in every compilation; which one it is
+    /// depends on whether `owner` names a function.
+    Numbered(&'a str),
+    /// An application the check numbers by a count each compilation
+    /// restarts: `$comptime$$<n>`.
+    Anonymous,
+}
+
+/// The lifted function of the module constant `constant`'s initializer.
+pub fn lifted_constant_name(constant: &str) -> String {
+    format!("$comptime${constant}$module")
+}
+
+/// The `index`th application MIR lifts from the body of `function`.
+pub fn lifted_body_name(function: &str, index: usize) -> String {
+    format!("$comptime${function}${index}")
+}
+
+/// The display sequence the check lifts for the binding `binding`.
+pub fn lifted_binding_name(binding: &str, identity: impl std::fmt::Display) -> String {
+    format!("$comptime${binding}${identity}")
+}
+
+/// The application the check lifts under the fresh identity `identity`.
+pub fn lifted_anonymous_name(identity: impl std::fmt::Display) -> String {
+    format!("$comptime$${identity}")
+}
+
+/// The function an evaluated default of `owner`'s `parameter` lowers to.
+pub fn lifted_default_name(owner: &str, parameter: &str) -> String {
+    format!("$default${owner}${parameter}")
+}
+
+/// Whose the lifted function `name` is, or `None` when `name` names no
+/// lifted function.
+pub fn lifted_owner(name: &str) -> Option<LiftedOwner<'_>> {
+    if let Some(rest) = name.strip_prefix("$default$") {
+        let (owner, parameter) = rest.rsplit_once('$')?;
+        return Some(LiftedOwner::Default { owner, parameter });
+    }
+    let (owner, tail) = name.strip_prefix("$comptime$")?.rsplit_once('$')?;
+    Some(match (owner, tail) {
+        ("", _) => LiftedOwner::Anonymous,
+        (constant, "module") => LiftedOwner::Constant(constant),
+        (owner, _) => LiftedOwner::Numbered(owner),
+    })
+}
+
 /// A deliberate **poison name** for an overloaded call the checker recorded no
 /// target for (only reachable off the checked path).
 ///
@@ -1095,6 +1154,13 @@ pub fn is_overload_of(symbol: &str, base: &str) -> bool {
 /// template it selects compare on it.
 pub fn overload_qualifier(symbol: &str) -> Option<&str> {
     symbol.find(OV_SEP).map(|start| &symbol[start..])
+}
+
+/// The lowered symbol of `type_name`'s `method` whose overload qualifier is
+/// `qualifier` ([`overload_qualifier`]), or of its only declaration when
+/// `qualifier` is `None`.
+pub fn qualified_method_symbol(type_name: &str, method: &str, qualifier: Option<&str>) -> String {
+    format!("{type_name}.{method}{}", qualifier.unwrap_or_default())
 }
 
 /// Whether an overload symbol's signature qualifier is exactly the `NoneType`

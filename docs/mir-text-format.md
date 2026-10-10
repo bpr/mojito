@@ -1,4 +1,4 @@
-# Mojito Textual MIR Format, Version 1.40
+# Mojito Textual MIR Format, Version 1.41
 
 This document is the normative specification of Mojito's textual verified-MIR
 artifact. The Rust data model in `src/mir.rs` and `src/mir/ir.rs` remains the
@@ -6,7 +6,7 @@ in-memory authority; this format is its stable inspection and interchange
 boundary. `docs/vm-instruction-set.md` explains execution semantics, while this
 document defines syntax and serialized data.
 
-Version 1.40 is implemented end to end for inspection and loading: canonical
+Version 1.41 is implemented end to end for inspection and loading: canonical
 in-memory disassembly, full-grammar assembly parsing, and artifact-loading
 verification (`mir::text::load_artifact`, which reports canonical-verifier
 findings at artifact source spans). Lossless print → parse → print round trips
@@ -22,10 +22,10 @@ which may be generic; it is always elaborated before it runs.
 Every artifact begins with exactly:
 
 ```text
-mojito-mir 1.40
+mojito-mir 1.41
 ```
 
-The writer emits 1.40. The reader accepts 1.0 through 1.40; *Schema 1.0*
+The writer emits 1.41. The reader accepts 1.0 through 1.41; *Schema 1.0*
 below says how a 1.0 artifact is read, and *Binder identity* under *Types*
 how a binder without an identity is.
 
@@ -381,6 +381,8 @@ struct {
   param_decls: [],
   explicit_destroy_message: absent,
   explicit_destructors: [],
+  explicit_destroy_declared: false,
+  explicit_destroy_fields: [],
   conformances: [],
   associated_types: [],
   associated_values: []
@@ -388,7 +390,18 @@ struct {
 ```
 
 `explicit_destructors` contains `destructor { name: symbol, raises: bool }`
-records sorted by name. `associated_types` contains
+records sorted by name: every named `deinit self` method the struct
+declares, whether or not the struct is `Deinitable`. A struct that is not
+`Deinitable` carries an explicit-destruction obligation:
+`explicit_destroy_message` is `present` with its message (the
+`@explicit_destroy` text when `explicit_destroy_declared` is `true`, else
+the default message), and `explicit_destroy_fields` lists each direct field
+whose type carries its own obligation as `field { name: symbol, struct:
+symbol }`, sorted by name. A `Deinitable` struct's message is `absent`, its
+`explicit_destroy_declared` `false`, and its `explicit_destroy_fields`
+empty. Schema 1.41 added the last two fields and widened
+`explicit_destructors` to every struct; a 1.40 or older artifact reads as
+undeclared with no obligated field. `associated_types` contains
 `associated_type { name: symbol, type: type }` records sorted by name, and
 `associated_values` contains `associated_value { name: symbol, value:
 param-expr }` records sorted by name.
@@ -811,7 +824,7 @@ Unknown terminators and instructions are fatal for schema major version 1.
 ## Complete Artifact Example
 
 ```text
-mojito-mir 1.40
+mojito-mir 1.41
 artifact {
   features: [],
   files: [file { id: file0, path: present("main.mojo"), module: absent }],
@@ -847,54 +860,79 @@ artifact {
 
 ## Package Container
 
-A compiled package (`mir::text::package`) holds MIR bodies, MIR
-declarations, module records, and declaration interfaces, one file per
-package. The bundled library's is the only producer today
-(`src/package.rs`). No part of a package is MIR text: it is a directory
-followed by bytecode records, as upstream's package is MLIR bytecode
-throughout. The format line is `mojito-package 9`.
+A compiled package (`mir::text::package`) holds MIR bodies, one record per
+library declaration, each library module's checker record, and each
+module's link record, one file per package. The bundled library's is the
+only producer today (`src/package.rs`). No part of a package is MIR text:
+it is a directory followed by bytecode records, as upstream's package is
+MLIR bytecode throughout. The format line is `mojito-package 11`.
 
 ```text
-mojito-package 9
+mojito-package 11
 <the directory's length, 8 bytes little-endian>
 <the directory, as bytecode>
 <the payload: every record, as bytecode>
 ```
 
 - The directory (`PackageDirectory`) holds the header (`package`,
-  `compiler`, `source`), the payload's length, and the payload range of
-  every record: the interface, the `files` table, the sorted trait list,
-  each struct and function declaration (sorted by name), each module
-  record (by dotted module name, beside its source file's canonical path
-  and the path its declarations are stamped with), the declaration
-  interfaces, and each body. A body's
-  entry carries its name, its runtime parameter count, and its
+  `compiler`, `root`), the payload's length, the payload range of the
+  interface and of the `files` table, the declaration directory, each link
+  module record (by dotted module name, beside its source file's canonical
+  path and the path its declarations are stamped with), and each body. A
+  body's entry carries its name, its runtime parameter count, and its
   `ref_params` mask, so overload resolution and the loan analysis read a
   body's signature without decoding it; the bodies keep package order,
   which `emit-mir` and the elaborator's candidate order observe, beside a
-  by-name permutation. Lookups by name binary-search the sorted tables. A
-  reader refuses a directory whose ranges leave the payload, whose payload
-  length differs, or whose names are not strictly sorted.
+  by-name permutation. A reader refuses a directory whose ranges leave the
+  payload, whose payload length differs, or whose names are not strictly
+  sorted.
+- The declaration directory (`mojito_checked::package::DeclarationDirectory`)
+  lists each library module's checker record by path, and each library
+  declaration, sorted by linked name, with its module, every checker table
+  key its record answers, every method its struct declares, the name of
+  every struct and function declaration its record holds, and its record's
+  range. Two position lists order every struct and every function
+  declaration by name (the package order), so a lookup by name
+  binary-searches them without decoding a record.
+- A declaration's record is the declaration once, read by every phase. Its
+  lowered part is `postcard` of `LoweredDeclaration`: every
+  `MirStructDeclaration` and `MirFunctionDeclaration` the declaration
+  lowers to (its own, its methods, and the functions nested in or lifted
+  from it), and the transfer and call-through effect summaries of its
+  callables, by callable identity, every list sorted by name and every set
+  and map written sorted, so equal declarations encode equal bytes. The
+  importer decodes it once per process, the first time any phase looks one
+  of its names up (`PackageDeclarations`), as upstream's importer resolves a
+  declaration from the package's bytecode on first lookup; one that does
+  not decode is reported and refuses the elaboration. Its checker residue
+  follows, opaque to the container: the checker's rows for the declaration
+  (`checker::interface::DeclarationInterface`), each table sorted by key,
+  less what the lowered part says. A struct's declared parameters, fields,
+  fieldwise initializer, destructors, and explicit-destruction obligation,
+  each method's signature apart from what MIR does not carry (its default
+  expressions, reference signatures, view-return and origin facts, and
+  overload qualifier), and a `def`'s type apart from its callable
+  environment, reference signatures, and transfers (when they are not its
+  summary's) are the lowered part's; the package build refuses the
+  package when one says other than the check, byte for byte. A residue
+  holds no binding owner, span-keyed fact, syntax identity, or parameter
+  hole; its expressions decode stamped with the path the importer reached
+  the module by, so a compilation decodes it, and joins it with the
+  lowered part, the first time a lookup names one of its keys. One that
+  does not decode fails the compilation.
+- A module's checker record (`ModuleRecord`: its overload sets,
+  module-scope compile-time facts, and elaborated constants) decodes when
+  a compilation's link reached the module; when one does not decode, the
+  program links and compiles the library from source.
 - The importer maps the file (`PackageBytes`, `memmap2`) and reads only
-  the directory and the interface eagerly; a declaration and a body
-  decode from their own byte ranges on first use. A cached package is
-  written to a private partial file and renamed over its path, and removed
-  only by unlinking, so a mapping's bytes never change under it. Module
-  records and the declaration interfaces are copied out of the mapping,
-  once per process, since the linker and checker that read them sit
-  above MIR.
+  the directory and the interface eagerly. A cached package is written to
+  a private partial file and renamed over its path, and removed only by
+  unlinking, so a mapping's bytes never change under it. Link module
+  records are copied out of the mapping, once per process, since the
+  linker that reads them sits above MIR.
 - The interface is `postcard` of `PackageInterface`: the modules the
-  package compiled, their declarations' names, the traits its bodies ask,
-  and each callable's transfer and call-through effect summaries, by
-  callable identity. A struct method's parametric origin writes travel in
-  its module's declaration interface, on its signature.
-- Each struct and function declaration is its own `postcard` record of
-  `MirStructDeclaration` or `MirFunctionDeclaration`, its sets and maps
-  written sorted so equal declarations encode equal bytes. The importer
-  decodes one the first time a lookup names it (`PackageDeclarations`), as
-  upstream's importer resolves a declaration from the package's bytecode
-  on first lookup. A record that does not decode is reported and refuses
-  the elaboration.
+  package compiled, their declarations' names, and the traits its bodies
+  ask.
 - A body is `postcard` of its `MirFunction` (variable and register types
   written sorted) and its locations, one `(register, file id, start, end,
   origin slot)` row per located register, naming the `files` table
@@ -904,33 +942,12 @@ mojito-package 9
   build's check-local binding owners some bodies' types still name are
   carried as bare numbers, under `origin::encoding_packaged_owners`, as
   the MIR text spells them `$v<n>` (R561).
-- The declaration interfaces are one record, opaque to the container:
-  the checker's (`checker::interface`), its own directory's length (8
-  bytes little-endian), the directory, and its records. The directory
-  (`InterfaceDirectory`) names each library module's record
-  (`ModuleRecord`: its overload sets, module-scope compile-time facts, and
-  elaborated constants) and each library declaration's
-  (`DeclarationInterface`: its rows of the tables the package build's
-  check resolved), with its module, every table key the record holds,
-  and, for a struct, every method it declares. Every table is written
-  sorted by key, so equal tables encode equal bytes. A record holds no
-  binding owner, span-keyed fact, syntax identity, or parameter hole; its
-  expressions decode stamped with the path the importer reached the
-  module by. The process reads the directory once; a compilation decodes
-  the records of the modules its link reached, and a declaration's record
-  the first time a lookup names one of its keys. When a module record does
-  not decode, the program links and compiles the library from source; a
-  declaration record that does not decode fails the compilation.
-- A module record is opaque to the container: it is the linker's
+- A link module record is opaque to the container: it is the linker's
   (`module::package::PackageModule`), `postcard` bytecode of the module's
-  dotted name, the dotted names of the loads its link asked for, its
-  export and namespace
-  tables, and its linked declarations with their bodies emptied, as the
-  AST's serde form, which omits every `SyntaxId` (a decoded node draws a
-  fresh one, as a parsed one does) and every module stamp (the importer
-  stamps the path it reached the module by). It decodes when the
-  importer's link reaches the module; one that does not decode, or names
-  another module, links from source.
+  dotted name, the dotted names of the loads its link asked for, and its
+  export and namespace tables; it holds no declaration. It decodes when
+  the importer's link reaches the module; one that does not decode, or
+  names another module, links from source.
 - The importer refuses a package whose `compiler` or `root` differs
   from its own build identity, which covers the library's source, and
   the library root it links against.

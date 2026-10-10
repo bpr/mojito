@@ -3,5 +3,7 @@
 //! invariant 4).
 
 pub mod checked;
+pub mod declaration;
 pub mod fact_store;
 pub mod interface;
+pub mod package;

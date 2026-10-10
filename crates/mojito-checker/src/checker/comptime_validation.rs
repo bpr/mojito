@@ -1094,7 +1094,7 @@ impl Checker {
             // An identity of its own names the function, as a binding's
             // names its display's; the empty owner keeps the name apart
             // from one MIR gives a function it lifts itself.
-            let name = format!("$comptime$${}", self.fresh_owner().ok()?.0);
+            let name = mojito_symbol::symbol::lifted_anonymous_name(self.fresh_owner().ok()?.0);
             let application = self.param_context.apply(
                 &name,
                 &binders,
@@ -1591,9 +1591,11 @@ impl Checker {
             }
             _ => application.meta().clone(),
         };
-        let renamed = self
-            .param_context
-            .apply(&format!("$comptime${name}$module"), args, meta);
+        let renamed = self.param_context.apply(
+            &mojito_symbol::symbol::lifted_constant_name(name),
+            args,
+            meta,
+        );
         self.lifted_expressions
             .borrow_mut()
             .insert(value.source_span(), renamed.clone());
@@ -1690,7 +1692,7 @@ impl Checker {
     ) -> ParamExpr {
         use mojito_types::param_expr::MetaTy;
         self.param_context.apply(
-            &format!("$comptime${name}${identity}"),
+            &mojito_symbol::symbol::lifted_binding_name(name, identity),
             &self.binders_in_scope(),
             MetaTy::ParamList(Box::new(MetaTy::value(element.clone()))),
         )

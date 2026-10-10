@@ -1098,7 +1098,7 @@ fn build_sigs(declarations: &mojito_mir::mir::MirDeclarations) -> HashMap<String
                     variadic_index: declaration.variadic_index,
                     kw_variadic: declaration.kw_variadic.clone(),
                     kw_variadic_index: declaration.kw_variadic_index,
-                    owned_pack_slot: declaration.owned_pack_slot(),
+                    owned_pack_slot: mojito_mir::mir::owned_pack_slot(declaration),
                     positional_only: declaration.positional_only,
                     keyword_only: declaration.keyword_only,
                     has_receiver: declaration.has_receiver,

@@ -10,6 +10,8 @@ mojito-ast = { path = "../mojito-ast" }
 mojito-common = { path = "../mojito-common" }
 mojito-symbol = { path = "../mojito-symbol" }
 mojito-types = { path = "../mojito-types" }
+memmap2.workspace = true
+postcard.workspace = true
 serde.workspace = true
 
 [lints]

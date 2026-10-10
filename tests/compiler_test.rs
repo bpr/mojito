@@ -3898,24 +3898,68 @@ fn an_importer_answers_no_package_struct_conformance_again() {
 
 #[test]
 fn a_package_reads_back_to_the_bytes_it_was_written_as() {
-    use mojito::mir::text::package::{PackageBytes, PackageHeader, read_package, write_package};
+    use mojito::checked_package::{DeclarationRecords, DeclaringModules, InterfaceTable};
+    use mojito::mir::text::package::{
+        PackageBytes, PackageHeader, PackagedModuleKey, read_package, write_package,
+    };
     let compiled = Compiler::default()
         .with_std_package(false)
-        .compile_unlinked("def main():\n    var xs: List[Int] = [1]\n    print(len(xs))\n")
+        .compile_source(
+            "def main():\n    var xs: List[Int] = [1]\n    print(len(xs))\n",
+            std::path::Path::new("/probe/main.mojo"),
+        )
         .expect("compile");
     let program = compiled.drop_elaborated_mir();
+    // Every declaration's record, opened as a package build's check opens
+    // it: under its declaring module, holding the traits it declares.
+    let records = || {
+        let declaring =
+            DeclaringModules::of(compiled.checked().statements()).expect("one module per name");
+        let mut records = DeclarationRecords {
+            modules: declaring
+                .modules()
+                .map(|module| (module.clone(), vec![0]))
+                .collect(),
+            ..DeclarationRecords::default()
+        };
+        for name in &program.declarations.traits {
+            let declaration = declaring.declaration_of(name).expect("a declared trait");
+            records
+                .declarations
+                .entry(declaration.to_string())
+                .or_insert_with(|| mojito::checked_package::DeclarationRecord {
+                    module: declaring.module(declaration).expect("declared").to_string(),
+                    ..Default::default()
+                })
+                .keys
+                .push((InterfaceTable::Traits, name.clone()));
+        }
+        records.declaring = declaring;
+        for declaration in &program.declarations.structs {
+            records.place_struct(declaration.clone()).expect("placed");
+        }
+        for declaration in &program.declarations.functions {
+            records.place_function(declaration.clone()).expect("placed");
+        }
+        records
+    };
     let header = PackageHeader {
         package: "probe".to_string(),
         compiler: "test".to_string(),
         root: "/probe".to_string(),
     };
     let interface = mojito::interface::PackageInterface::default();
-    let modules = vec![("/probe/module.mojo".to_string(), vec![0, 10, 255, 10])];
-    let checked = vec![10, 1, 2];
-    let bytes = write_package(&header, &interface, program, &modules, &checked).expect("write");
+    let modules = vec![(
+        PackagedModuleKey {
+            name: "module".to_string(),
+            canonical: "/probe/module.mojo".to_string(),
+            path: "/probe/module.mojo".to_string(),
+        },
+        vec![0, 10, 255, 10],
+    )];
+    let bytes = write_package(&header, &interface, program, &modules, records()).expect("write");
     let package = read_package(PackageBytes::Owned(bytes.clone())).expect("read");
     assert_eq!(package.modules, modules);
-    assert_eq!(package.checked, checked);
     assert_eq!(package.header, header);
     assert_eq!(package.bodies.materialized(), 0, "bodies decode on demand");
     assert_eq!(
@@ -3939,7 +3983,7 @@ fn a_package_reads_back_to_the_bytes_it_was_written_as() {
             &package.interface,
             &again,
             &package.modules,
-            &package.checked
+            records()
         )
         .expect("rewrite"),
         bytes

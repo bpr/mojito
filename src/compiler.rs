@@ -371,7 +371,7 @@ impl Compiler {
         Ok((
             program,
             PackageExports {
-                summaries: context.take_summaries(),
+                interface: context.take_package_interface(),
                 interfaces,
                 prepared,
             },
@@ -568,12 +568,12 @@ impl Compiler {
     }
 }
 
-/// What the compilation of a package's program exports: the effect
-/// summaries of its module-level callables, its encoded declaration
-/// interfaces, and the program as its `prepare` left it.
+/// What the compilation of a package's program exports: what its check
+/// recorded of it as a whole, its check's library interface, and the
+/// program as its `prepare` left it.
 pub(crate) struct PackageExports {
-    pub summaries: PackageInterface,
-    pub interfaces: Vec<u8>,
+    pub interface: PackageInterface,
+    pub interfaces: crate::checker::InterfaceExport,
     pub prepared: Vec<Stmt>,
 }
 

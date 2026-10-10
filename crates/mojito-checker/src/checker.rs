@@ -125,11 +125,11 @@ pub struct CheckContext {
     bound_default_arguments: HashMap<SyntaxId, BoundDefaultArguments>,
     /// The compiled package whose bodies this check takes as checked: its
     /// declarations resolve from their interfaces ([`Self::install`]),
-    /// and a call into it reads the package's summaries.
+    /// and its bodies may ask any trait it names of the program's types.
     package: Option<std::sync::Arc<mojito_checked::interface::PackageInterface>>,
-    /// The effect summaries of every module-level callable and method the
-    /// last check recorded, the interface of a package built from it.
-    summaries: mojito_checked::interface::PackageInterface,
+    /// What the last check recorded of its program as a whole, the
+    /// interface of a package built from it.
+    package_interface: mojito_checked::interface::PackageInterface,
     /// The declaration interfaces of the package modules the program's link
     /// reached, attached to every pass in place of their statements.
     installed: Option<InstalledInterfaces>,
@@ -138,7 +138,7 @@ pub struct CheckContext {
     record_interfaces: bool,
     /// The interfaces the last check exported, encoded with their
     /// directory.
-    interfaces: Option<Result<Vec<u8>, String>>,
+    interfaces: Option<Result<InterfaceExport, String>>,
     /// The module constants the program's comptime elaboration resolved,
     /// which an exported interface carries.
     elaborated: ElaboratedConstants,
@@ -151,7 +151,7 @@ impl CheckContext {
             body_fact_reuse: true,
             bound_default_arguments: HashMap::new(),
             package: None,
-            summaries: mojito_checked::interface::PackageInterface::default(),
+            package_interface: mojito_checked::interface::PackageInterface::default(),
             installed: None,
             record_interfaces: false,
             interfaces: None,
@@ -177,21 +177,21 @@ impl CheckContext {
         self.elaborated = elaborated;
     }
 
-    /// The interfaces the last check exported, encoded with their directory
-    /// ([`DeclarationInterfaces::read`]).
+    /// The library interface the last check exported, which the package
+    /// build makes the declaration records of once it has lowered the
+    /// library ([`InterfaceExport::records`]).
     ///
     /// # Errors
     ///
     /// What the check could not export, or that it exported nothing.
-    pub fn take_interfaces(&mut self) -> Result<Vec<u8>, String> {
+    pub fn take_interfaces(&mut self) -> Result<InterfaceExport, String> {
         self.interfaces
             .take()
             .unwrap_or_else(|| Err("the check exported no interface".to_string()))
     }
 
-    /// Check against `package`: a call into one of its bodies reads its
-    /// effect summaries, and its bodies may ask any trait it names of the
-    /// program's types.
+    /// Check against `package`, whose bodies may ask any trait it names of
+    /// the program's types.
     pub fn import_package(
         &mut self,
         package: std::sync::Arc<mojito_checked::interface::PackageInterface>,
@@ -199,11 +199,11 @@ impl CheckContext {
         self.package = Some(package);
     }
 
-    /// The effect summaries the last check recorded for its module-level
-    /// callables and methods, when it exported its interfaces
-    /// ([`Self::record_interfaces`]); its `modules` are empty.
-    pub fn take_summaries(&mut self) -> mojito_checked::interface::PackageInterface {
-        std::mem::take(&mut self.summaries)
+    /// What the last check recorded of its program as a whole, when it
+    /// exported its interfaces ([`Self::record_interfaces`]): the traits its
+    /// declarations and bodies ask; its `modules` and `names` are empty.
+    pub fn take_package_interface(&mut self) -> mojito_checked::interface::PackageInterface {
+        std::mem::take(&mut self.package_interface)
     }
 
     pub const fn param_context(&self) -> &ParamContext {
@@ -301,13 +301,8 @@ fn check_program_carrying(
     let mut rounds = 0;
     let checker = loop {
         let _round = timing::round("transfer.round", rounds);
-        let (mut transfer_seed, mut call_through_seed) =
+        let (transfer_seed, call_through_seed) =
             previous.as_ref().map(PassCarry::seeds).unwrap_or_default();
-        // A package's summaries are committed before any body is checked.
-        if let Some(package) = &context.package {
-            transfer_seed.extend(package.transfer_effects.clone());
-            call_through_seed.extend(package.call_through_effects.clone());
-        }
         let mut checker = Checker::new_seeded(transfer_seed, call_through_seed);
         if let Some(installed) = &context.installed {
             checker.attach_interfaces(installed)?;
@@ -372,13 +367,12 @@ fn check_program_carrying(
             mojito_checked::checked::ConformanceFacts::default(),
         ));
     };
-    // A package build exports its interfaces and summaries; an importer's
-    // check exports nothing.
+    // A package build exports its interfaces; an importer's check exports
+    // nothing.
     if context.record_interfaces {
         let _export = timing::span("export_interfaces");
         context.interfaces = Some(checker.export_interfaces(&expanded, &context.elaborated));
-        let _summaries = timing::span("summaries");
-        context.summaries = checker.effect_summaries();
+        context.package_interface = checker.package_interface();
     }
     // Context managers are desugared by the checker; later phases see only
     // the ordinary statements it checked.
@@ -425,6 +419,7 @@ pub(crate) use declaration_table::DeclarationTable;
 mod interface;
 pub use interface::{
     DeclarationInterfaces, ElaboratedConstant, ElaboratedConstants, InstalledInterfaces,
+    InterfaceExport,
 };
 mod overload_support;
 pub use body_carry::PassCarry;
@@ -1053,29 +1048,12 @@ impl Checker {
         Self::new_seeded(HashMap::new(), HashMap::new())
     }
 
-    /// The effect summaries this pass recorded for the module-level
-    /// callables and methods whose bodies it checked.
-    fn effect_summaries(&self) -> mojito_checked::interface::PackageInterface {
-        let callables = self.top_level_callables.borrow();
-        let summarized = |callable: &String| callables.contains(callable);
+    /// What this pass recorded of its program as a whole.
+    fn package_interface(&self) -> mojito_checked::interface::PackageInterface {
         mojito_checked::interface::PackageInterface {
             modules: std::collections::BTreeSet::new(),
             names: std::collections::BTreeSet::new(),
             asked_traits: self.constrained_traits(),
-            transfer_effects: self
-                .transfer_effects
-                .borrow()
-                .iter()
-                .filter(|(callable, _)| summarized(callable))
-                .map(|(callable, effects)| (callable.clone(), effects.clone()))
-                .collect(),
-            call_through_effects: self
-                .call_through_effects
-                .borrow()
-                .iter()
-                .filter(|(callable, _)| summarized(callable))
-                .map(|(callable, effects)| (callable.clone(), effects.clone()))
-                .collect(),
         }
     }
 
@@ -2525,15 +2503,9 @@ fn explicit_destroy_types(
                     name.clone(),
                     mojito_checked::checked::ExplicitDestroyInfo {
                         message: info.explicit_destroy_message.clone().unwrap_or_else(|| {
-                            let shown = mojito_types::types::unqualified_type_name(&Ty::Struct(
-                                name.clone(),
-                                mojito_types::types::TyArgs::default(),
-                            ));
-                            format!(
-                                "type '{shown}' does not conform to 'Deinitable' and must be \
-                                 explicitly destroyed"
-                            )
+                            mojito_checked::checked::ExplicitDestroyInfo::default_message(name)
                         }),
+                        declared: info.explicit_destroy_message.is_some(),
                         destructors: info.explicit_destructors.clone(),
                         fields: info
                             .fields
@@ -2595,6 +2567,7 @@ fn run_explicit_destroy(
             crate::explicit_destroy::LINEAR_TYPE_PARAMETER.to_string(),
             mojito_checked::checked::ExplicitDestroyInfo {
                 message: "unhandled explicitly destroyed type 'AnyType'".to_string(),
+                declared: true,
                 destructors: HashMap::new(),
                 fields: HashMap::new(),
             },

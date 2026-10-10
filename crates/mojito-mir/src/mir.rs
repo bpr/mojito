@@ -27,6 +27,9 @@ use mojito_ast::ast::{
 use mojito_ast::call::{effective_keyword_only_index, regular_marker_index};
 use mojito_checked::checked::{AnnotationSite, GenericSite};
 use mojito_checked::checked::{CheckedConst, CheckedProgram, StructConformance};
+pub use mojito_checked::declaration::{
+    FunctionDeclaration as MirFunctionDeclaration, StructDeclaration as MirStructDeclaration,
+};
 use mojito_checked::interface::PackageInterface;
 use mojito_common::timing;
 use mojito_common::token::{DUMMY_SPAN, SourceSpan};
@@ -247,111 +250,19 @@ pub fn reached_struct_fields(
     reached
 }
 
-/// A package stores each one as a bytecode record, its sets and maps
-/// written sorted, so equal declarations encode equal bytes.
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct MirStructDeclaration {
-    pub name: String,
-    pub fields: Vec<(String, Ty)>,
-    #[serde(serialize_with = "sorted_names")]
-    pub mut_self_methods: HashSet<String>,
-    pub fieldwise_init: bool,
-    pub param_decls: Vec<ParamDecl>,
-    pub explicit_destroy_message: Option<String>,
-    #[serde(serialize_with = "sorted_map")]
-    pub explicit_destructors: HashMap<String, bool>,
-    /// The struct's answer for each trait a `where` clause or a conformance
-    /// condition of the program names, sorted by trait: an instance conforms
-    /// when its arguments satisfy any of the row's conditions. A concrete
-    /// instance's rows are decided, so each holds `Bool(true)` or nothing.
-    pub conformances: Vec<StructConformance>,
-    /// The struct's unparameterized associated types (`Element` of `List`),
-    /// sorted by member, each over the struct's own binders: the elaborator
-    /// solves `C.Element` from them once `C` is bound to an instance, so
-    /// elaborated MIR carries none.
-    pub associated_types: Vec<(String, Ty)>,
-    /// The struct's compile-time value members (`K` of `comptime K = 7`),
-    /// sorted by member, each a parameter expression over the struct's own
-    /// binders: the elaborator answers `T.K` from them once `T` is bound to
-    /// an instance, so elaborated MIR carries none.
-    pub associated_values: Vec<(String, ParamExpr)>,
-}
-
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct MirFunctionDeclaration {
-    pub lowered_name: String,
-    pub param_names: Vec<String>,
-    pub param_types: Vec<Ty>,
-    pub defaults: Vec<Option<CheckedConst>>,
-    pub required: Vec<bool>,
-    pub variadic: Option<Ty>,
-    /// Declared convention of the positional variadic collector. Kept
-    /// independently because it is not represented in `param_conventions`.
-    pub variadic_convention: Option<ArgConvention>,
-    pub variadic_index: Option<usize>,
-    pub kw_variadic: Option<Ty>,
-    /// Declared convention of the keyword variadic collector. Kept
-    /// independently because it is not represented in `param_conventions`.
-    pub kw_variadic_convention: Option<ArgConvention>,
-    pub kw_variadic_index: Option<usize>,
-    pub positional_only: Option<usize>,
-    pub keyword_only: Option<usize>,
-    pub param_decls: Vec<ParamDecl>,
-    /// Whether this declaration has an implicit method receiver. This keeps a
-    /// plain `self` (whose convention is `None`) distinct from a static/free
-    /// callable with no receiver.
-    pub has_receiver: bool,
-    /// Declared convention of that implicit method receiver.
-    pub receiver_convention: Option<ArgConvention>,
-    /// Declared conventions of the explicit runtime parameters, aligned with
-    /// `param_types`. Effective per-call `ref` access may narrow to `Read`.
-    pub param_conventions: Vec<Option<ArgConvention>>,
-    /// Checked return type of the callable.
-    pub ret_ty: Ty,
-    /// Whether the callable returns a reference handle to `ret_ty` rather than
-    /// an owned value. The selected call carries the instantiated origin and
-    /// mutability; this declaration fact verifies the ABI family.
-    pub returns_reference: bool,
-    /// Checked raising contract and its declared error type.
-    pub raises: bool,
-    pub error_ty: Option<Ty>,
-    /// Whether each runtime parameter is a `mut`/`ref` reference whose final
-    /// value writes back through a caller place. Same order as `param_types`.
-    pub ref_params: Vec<bool>,
-    /// Whether each runtime parameter writes through that retained caller
-    /// place (`mut`/`var`/`deinit`, or a `ref` under a statically mutable
-    /// origin contract); `ref_params` says only that it needs one. The loan
-    /// analysis classifies a retained argument place by this mask. Same
-    /// order as `param_types`.
-    pub param_writes: Vec<bool>,
-    /// A struct member's `where` clauses, one entry per clause, over the
-    /// owner's and the member's binders. An instance whose arguments
-    /// disprove one does not have the member. Empty on a concrete instance,
-    /// whose clauses the elaborator decided.
-    pub availability: Vec<GenericConstraint>,
-    /// The lowered name of the function or method a nested function is
-    /// declared in, whose binders (and its own enclosing declaration's) the
-    /// nested body may name. `None` at top level and on a concrete instance.
-    pub enclosing: Option<String>,
-    /// The binders of the compile-time regions of the enclosing body that a
-    /// nested function is declared in — the indices of its enclosing
-    /// `comptime for` loops, outermost first — which its body and signature
-    /// may name. The elaborator instantiates such a body once per unrolled
-    /// copy of the region. Empty at top level and on a concrete instance.
-    pub region_binders: Vec<ParamDecl>,
-}
-
-impl MirFunctionDeclaration {
-    /// The variable slot holding an owning (`var`) positional collector. Its
-    /// elements are destroyed last to first, unlike a `Tuple`'s storage.
-    #[must_use]
-    pub fn owned_pack_slot(&self) -> Option<VarId> {
-        if self.variadic.is_none() || self.variadic_convention != Some(ArgConvention::Var) {
-            return None;
-        }
-        let index = self.variadic_index.unwrap_or(self.param_names.len());
-        VarId::try_from(usize::from(self.has_receiver) + index).ok()
+/// The variable slot holding `declaration`'s owning (`var`) positional
+/// collector. Its elements are destroyed last to first, unlike a `Tuple`'s
+/// storage.
+#[must_use]
+pub fn owned_pack_slot(declaration: &MirFunctionDeclaration) -> Option<VarId> {
+    if declaration.variadic.is_none() || declaration.variadic_convention != Some(ArgConvention::Var)
+    {
+        return None;
     }
+    let index = declaration
+        .variadic_index
+        .unwrap_or(declaration.param_names.len());
+    VarId::try_from(usize::from(declaration.has_receiver) + index).ok()
 }
 
 /// The compile-time parameters in scope of the body `name`: those of each
@@ -787,15 +698,15 @@ pub fn lower_checked_program_importing(
                         })
                         .unwrap_or(&[])
                         .to_vec(),
-                    explicit_destroy_message: checked
-                        .explicit_destroy_types()
-                        .get(name)
-                        .map(|info| info.message.clone()),
                     explicit_destructors: checked
+                        .struct_destructors()
+                        .get(name)
+                        .cloned()
+                        .unwrap_or_default(),
+                    explicit_destroy: checked
                         .explicit_destroy_types()
                         .get(name)
-                        .map(|info| info.destructors.clone())
-                        .unwrap_or_default(),
+                        .map(mojito_checked::declaration::ExplicitDestroyObligation::of),
                     conformances: checked
                         .conformances()
                         .structs
@@ -1356,7 +1267,7 @@ fn lower_default<P: DeclaredParam>(
     } else {
         EnclosingBinders::default()
     };
-    let function = format!("$default${owner}${}", parameter.name());
+    let function = mojito_symbol::symbol::lifted_default_name(owner, parameter.name());
     lower_expression_thunk(
         ExpressionThunk {
             checked,
@@ -1788,7 +1699,10 @@ impl ComptimeThunks {
             };
             // A call the check applied by the callee's own name lifts
             // nothing.
-            if !function.starts_with("$comptime$")
+            let lifted = mojito_symbol::symbol::lifted_owner(function).is_some_and(|owner| {
+                !matches!(owner, mojito_symbol::symbol::LiftedOwner::Default { .. })
+            });
+            if !lifted
                 || self
                     .requests
                     .iter()
@@ -1853,7 +1767,7 @@ impl ComptimeThunks {
         meta: mojito_types::param_expr::MetaTy,
         visible: usize,
     ) -> mojito_types::param_expr::ParamExpr {
-        let name = format!("$comptime${}${}", self.owner, self.requests.len());
+        let name = mojito_symbol::symbol::lifted_body_name(&self.owner, self.requests.len());
         self.requests.push(ThunkRequest {
             name: name.clone(),
             expression: expression.clone(),
@@ -4956,16 +4870,6 @@ pub(crate) fn pointer_keyword_subscript(e: &Expr) -> Option<(&Expr, &Expr)> {
         },
         _ => None,
     }
-}
-
-fn sorted_names<S: serde::Serializer>(
-    names: &HashSet<String>,
-    serializer: S,
-) -> Result<S::Ok, S::Error> {
-    serde::Serialize::serialize(
-        &names.iter().collect::<std::collections::BTreeSet<_>>(),
-        serializer,
-    )
 }
 
 fn sorted_map<K: Ord + serde::Serialize, V: serde::Serialize, S: serde::Serializer>(

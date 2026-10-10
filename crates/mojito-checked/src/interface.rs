@@ -1,14 +1,16 @@
-//! What a compiled package lends the check of a program that imports it.
+//! What a compiled package lends the check of a program that imports it,
+//! beside its declarations.
 //!
 //! A package's bodies were checked when it was built. Its importer installs
-//! the package's declarations from their checked interfaces and checks no
-//! package body again: what a call site reads from a callee's body, its
-//! transfer and call-through effect summaries, comes from here instead.
+//! the package's declarations from their records and checks no package body
+//! again: what a call site reads from a callee's body, its transfer and
+//! call-through effect summaries, rides in the callee's declaration record
+//! (`crate::package`); what the package says of itself as a whole comes
+//! from here.
 
-use crate::checked::{CallThroughEffect, TransferEffect};
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 
-/// The checked facts of a package's bodies its importer reads.
+/// The checked facts of a package as a whole its importer reads.
 #[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct PackageInterface {
     /// The source module (its stamped provenance) of every declaration the
@@ -18,12 +20,6 @@ pub struct PackageInterface {
     /// The linked name of every module-level declaration those modules
     /// make: an importer declaring one again cannot import the package.
     pub names: BTreeSet<String>,
-    /// The transfer effects of each module-level callable and method the
-    /// package's bodies record, by callable identity.
-    pub transfer_effects: BTreeMap<String, Vec<TransferEffect>>,
-    /// The call-through effects of each module-level callable and method,
-    /// by callable identity.
-    pub call_through_effects: BTreeMap<String, Vec<CallThroughEffect>>,
     /// Every trait the package's declarations and bodies ask a type's
     /// conformance to: an importer's struct answers each, since a package
     /// body may ask it of the importer's types.

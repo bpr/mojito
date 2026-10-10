@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R572**.
+Next free ID: **R575**.
 
 ## Ordered Work
 
@@ -49,19 +49,6 @@ belongs to is named in its title.
 Scope: what remains of the plan's stages, and what the pipeline order still
 leaves to close. A defect found on the way is filed by its kind; a
 divergence from the pin goes to a catch-up track, however small.
-
-- [ ] **R560 (P6) A package records each library declaration three times,
-  once per phase**
-
-  A module's declarations sit in its link record as prepared AST, in its
-  declaration interface as checked tables, and in the package's MIR
-  declarations.
-  - Upstream's module record holds each resolved declaration once, which
-    every phase of an importer reads.
-  - The link record keeps them only for R559's readers; the interface and
-    the MIR declarations would still be two encodings of one declaration.
-  - Depends on R559.
-  - Model: Fable, Not Planned.
 
 - [ ] **R563 (P6) An importer decodes every reached module's overload sets
   and module constants eagerly, where upstream resolves one on first
@@ -106,6 +93,51 @@ divergence from the pin goes to a catch-up track, however small.
     makes rows ahead of use.
   - Depends on nothing.
   - Model: Opus, Not Planned.
+
+- [ ] **R572 (P6) A library module has two records, under two module
+  tables**
+
+  A package holds a module's link record (`module::package::PackageModule`:
+  its loads, exports, and namespaces) keyed by dotted name, and apart its
+  checker record (`ModuleRecord`: its overload sets, elaborated constants,
+  and module-scope facts) keyed by path in the declaration directory.
+  - Upstream's package holds one module record, which its importer's link
+    and front end both read.
+  - R563 changes how the checker record decodes, so the merge should
+    follow it.
+  - Depends on R563.
+  - Model: Opus, Not Planned.
+
+- [ ] **R573 (P6) A package's directory names each library function twice,
+  and an importer decodes all of it eagerly**
+
+  A function's name sits in its body's directory entry and again in its
+  declaration's entry, and the 127 KB directory decodes whole when the
+  package is read.
+  - That is 0.55 ms of Hello World's 6.5 ms, release
+    (`package.directory`), its sortedness checks included.
+  - Upstream's bytecode holds one symbol table and resolves an entry on
+    lookup.
+  - The lever: a body entry named by its declaration's function position,
+    and a directory read lazily by name.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R574 (P6) A library callable's parameter defaults are recorded
+  twice: as checker syntax and as MIR defaults**
+
+  A method's checker residue keeps each default as an expression
+  (`MethodSig::defaults`), while its MIR declaration keeps the same default
+  as a constant or a lifted `$default$` function.
+  - The check reads the expression to spell a bound requirement's default
+    at a call (`bound_defaults.rs`) and to judge a default's type.
+  - A method's reference signatures (`RefSig`) beside MIR's `ref_params`
+    and `param_writes` masks are the same kind of second encoding.
+  - Upstream's signature holds a default once, as a parameter attribute.
+  - The lever: the check reads a package callee's default from its MIR
+    declaration, so the residue keeps no default expression.
+  - Depends on nothing.
+  - Model: Fable, Not Planned.
 
 - [ ] **R547 A function the check lifts from a body is numbered per
   compilation, so the bundled library cannot contain one**

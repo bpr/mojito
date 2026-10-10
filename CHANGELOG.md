@@ -105,6 +105,18 @@ to evolve under the `0.x` compatibility rules.
   library declaration from the declaration interfaces. A default whose
   signature names an origin is now rejected at its conformers (R571). The
   package format is now `mojito-package 10`.
+- A package records each library declaration once (R560): one record per
+  declaration under one directory holds its MIR struct and function
+  declarations and its callables' effect summaries, which every phase of
+  an importer decodes once per process, followed by only the checker rows
+  those do not say, as Mojo's package holds a declaration in one op every
+  phase of its importer reads. The package build compares each struct's
+  facts, method signature, and `def` type with its MIR declaration byte
+  for byte and refuses the package on a difference. A MIR struct
+  declaration now carries every named destructor and its
+  explicit-destruction obligation whole (MIR text schema 1.41). The
+  package shrinks from 1.64 to 1.56 MB; the package format is now
+  `mojito-package 11`.
 - A module under a search root is linked under its path there, whichever
   import reaches it first: `std/io/file.mojo` declares
   `__module$std$io$file$…`, not `__module$file$…`.

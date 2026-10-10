@@ -1458,6 +1458,9 @@ pub struct DiscoveryResult {
     pub interior_references: FactMap<SourceSpan, mojito_types::origin::OriginPlace>,
     pub interior_invalidations: FactMap<SourceSpan, Vec<InteriorInvalidation>>,
     pub explicit_destroy_types: HashMap<String, ExplicitDestroyInfo>,
+    /// Each struct's named destructors (`deinit self` methods), by struct,
+    /// beside whether each raises; a struct declaring none has no entry.
+    pub struct_destructors: HashMap<String, HashMap<String, bool>>,
     pub conformances: ConformanceFacts,
     pub explicit_destroy_calls: FactSet<SourceSpan>,
     pub reference_value_uses: FactMap<SourceSpan, bool>,
@@ -1513,6 +1516,7 @@ impl DiscoveryResult {
             &self.interior_references,
             &self.interior_invalidations,
             self.explicit_destroy_types,
+            self.struct_destructors,
             self.conformances,
             &self.explicit_destroy_calls,
             &self.reference_value_uses,
@@ -1632,6 +1636,7 @@ pub struct CheckedProgram {
     tables: Arc<CheckedTables>,
     expression_index: HashMap<SourceSpan, Vec<CheckedNodeId>>,
     explicit_destroy_types: HashMap<String, ExplicitDestroyInfo>,
+    struct_destructors: HashMap<String, HashMap<String, bool>>,
     conformances: ConformanceFacts,
     declaration_effects: HashMap<AnnotationSite, DeclarationEffect>,
     overloads: mojito_symbol::symbol::OverloadSets,
@@ -1675,16 +1680,31 @@ pub struct StructConformance {
     pub conditions: Vec<mojito_types::types::GenericConstraint>,
 }
 
-/// A struct's explicit-destruction obligation, which a package records for
-/// each of its structs that carries one.
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+/// A struct's explicit-destruction obligation, which its MIR declaration
+/// carries for each struct that has one.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct ExplicitDestroyInfo {
+    /// The `@explicit_destroy` message, or [`Self::default_message`].
     pub message: String,
+    /// Whether `@explicit_destroy` declared `message`.
+    pub declared: bool,
     #[serde(serialize_with = "sorted")]
     pub destructors: HashMap<String, bool>,
     /// Direct fields whose types carry their own explicit-destroy obligation.
     #[serde(serialize_with = "sorted")]
     pub fields: HashMap<String, String>,
+}
+
+impl ExplicitDestroyInfo {
+    /// The message of a struct `name` that is not `Deinitable` without
+    /// declaring `@explicit_destroy`.
+    pub fn default_message(name: &str) -> String {
+        let shown = mojito_types::types::unqualified_type_name(&mojito_types::types::Ty::Struct(
+            name.to_string(),
+            mojito_types::types::TyArgs::default(),
+        ));
+        format!("type '{shown}' does not conform to 'Deinitable' and must be explicitly destroyed")
+    }
 }
 
 /// The declaration-owned location of a source annotation. Unlike `SourceType`
@@ -1951,6 +1971,7 @@ impl CheckedProgram {
         interior_references: &HashMap<SourceSpan, mojito_types::origin::OriginPlace>,
         interior_invalidations: &HashMap<SourceSpan, Vec<InteriorInvalidation>>,
         explicit_destroy_types: HashMap<String, ExplicitDestroyInfo>,
+        struct_destructors: HashMap<String, HashMap<String, bool>>,
         conformances: ConformanceFacts,
         explicit_destroy_calls: &HashSet<SourceSpan>,
         reference_value_uses: &HashMap<SourceSpan, bool>,
@@ -2030,6 +2051,7 @@ impl CheckedProgram {
             )),
             expression_index,
             explicit_destroy_types,
+            struct_destructors,
             conformances,
             declaration_effects,
             overloads,
@@ -2148,6 +2170,11 @@ impl CheckedProgram {
 
     pub const fn explicit_destroy_types(&self) -> &HashMap<String, ExplicitDestroyInfo> {
         &self.explicit_destroy_types
+    }
+
+    /// Each struct's named destructors, beside whether each raises.
+    pub const fn struct_destructors(&self) -> &HashMap<String, HashMap<String, bool>> {
+        &self.struct_destructors
     }
 
     pub const fn conformances(&self) -> &ConformanceFacts {

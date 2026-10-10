@@ -1,5 +1,6 @@
 pub use mojito_ast::{ast, call};
-pub use mojito_checked::{checked, interface};
+pub use mojito_checked::package as checked_package;
+pub use mojito_checked::{checked, declaration, interface};
 pub use mojito_checker::{checker, explicit_destroy};
 pub use mojito_common::{error, literal, timing, token};
 pub use mojito_comptime::comptime;
