@@ -8,6 +8,14 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- A display argument to a generic call is typed by its parameter (R540):
+  `Dict[String, Int](["a"], [1], None)`, `W[String](["a", "b"], None)` over
+  `var keys: List[Self.K]`, a fieldwise `List[Self.K]` field, and
+  `f[String](["a", "b"])` construct `List`s as at the pin instead of
+  failing with "no constructor overload matches" or "expected List[String],
+  found Array[String, 2]", and an inferred element parameter is solved from
+  the display (`f(["a", "b"])`, `W(["a", "b"], None)`, `{"a": 1}` against
+  `Dict[K, V]`).
 - A closed module constant is a checked parameter value at every read
   (R517): a list, dictionary, or set display is one compile-time
   application, so `comptime S = total(L)` over `comptime L = [1, 2, 3]` and

@@ -2227,9 +2227,13 @@ impl Checker {
                 let sig = &sigs[0];
                 let params = sig.params.clone();
                 let decls = info.decls.clone();
+                let explicit = self.explicit_type_subst(name, &decls, param_args)?;
                 let arg_tys = args
                     .iter()
-                    .map(|a| self.infer(a))
+                    .zip(&params)
+                    .map(|(argument, pattern)| {
+                        self.solving_argument_ty(argument, pattern, &decls, &explicit)
+                    })
                     .collect::<Result<Vec<_>, _>>()?;
                 Self::reject_unconstrained_pack(name, &decls, param_args, &params)?;
                 let (mut subst, tyargs) =
@@ -2263,7 +2267,7 @@ impl Checker {
                 self.record_constructor_instantiation(span, name, &tyargs, sig, &subst);
                 self.record_struct_instantiation(name, &tyargs, span.source.as_deref());
                 let values = solved_value_bindings(&decls, &tyargs);
-                for (i, (aty, pty)) in arg_tys.iter().zip(&params).enumerate() {
+                for (i, pty) in params.iter().enumerate().take(args.len()) {
                     // The struct's own origin binders are bound before its
                     // type parameters, so an argument type's binder of the
                     // same slot number (an enclosing clone's) stays as it is.
@@ -2272,16 +2276,35 @@ impl Checker {
                         &subst,
                         &values,
                     )?;
-                    if coerces(aty, &expected) {
+                    // Checked against its solved parameter, last: a display
+                    // argument constructs that parameter's collection.
+                    let actual = self
+                        .infer_with_expected(&args[i], &expected, true)
+                        .map_err(|error| {
+                            let display = match &args[i].kind {
+                                ExprKind::ListLit(_) => "list literal",
+                                ExprKind::BraceLit(_) => "dictionary or set literal",
+                                _ => return error,
+                            };
+                            TypeError::TypeMismatch {
+                                expected: expected.to_string(),
+                                found: display.to_string(),
+                                context: format!(
+                                    "argument '{}' to '{name}.__init__'",
+                                    sig.names[i]
+                                ),
+                            }
+                        })?;
+                    if coerces(&actual, &expected) {
                         // A literal argument materializes to the solved
                         // parameter type exactly as it does for a non-generic
                         // constructor (`Box[Float64](2.5)` stores a Float64,
                         // not the exact literal).
-                        self.record_literal_materializations(&args[i], aty, &expected)?;
-                    } else if !self.record_constructor_conversion(&args[i], aty, &expected)? {
+                        self.record_literal_materializations(&args[i], &actual, &expected)?;
+                    } else if !self.record_constructor_conversion(&args[i], &actual, &expected)? {
                         return Err(TypeError::TypeMismatch {
                             expected: expected.to_string(),
-                            found: aty.to_string(),
+                            found: actual.to_string(),
                             context: format!("argument {} to '{}.__init__'", i + 1, name),
                         });
                     }
@@ -2291,7 +2314,7 @@ impl Checker {
                         let kind = consume_kind(*convention);
                         self.check_consuming_as(
                             &args[i],
-                            aty,
+                            &actual,
                             &format!("argument {} to '{}'", i + 1, name),
                             kind,
                         )?;
@@ -2315,6 +2338,7 @@ impl Checker {
                 ));
             }
             let decls = info.decls.clone();
+            let explicit = self.explicit_type_subst(name, &decls, param_args)?;
             let overloaded = sigs.len() > 1;
             let keyword_names: Vec<&str> = kwargs.iter().map(|k| k.name.as_str()).collect();
             // Map arguments (positional and keyword) to each candidate's
@@ -2390,9 +2414,9 @@ impl Checker {
                 let arg_tys = bound
                     .iter()
                     .enumerate()
-                    .map(|(index, (expression, ..))| match &forwarded {
+                    .map(|(index, (expression, pattern, _))| match &forwarded {
                         Some(actual) if Some(index) == forwarded_index => Ok(actual.clone()),
-                        _ => self.infer(expression),
+                        _ => self.solving_argument_ty(expression, pattern, &decls, &explicit),
                     })
                     .collect::<Result<Vec<_>, _>>()?;
                 let patterns: Vec<Ty> = bound
@@ -2447,8 +2471,7 @@ impl Checker {
                     };
                     let mut score = 0;
                     let mut ok = true;
-                    let mut conversions = Vec::new();
-                    let mut materializations = Vec::new();
+                    let mut expected_tys = Vec::with_capacity(bound.len());
                     // The k-th argument a `*args: *Self.Ts` collector took
                     // is expected at the k-th element of the pack it solved;
                     // a regular slot's pattern expands its spreads of the
@@ -2462,9 +2485,8 @@ impl Checker {
                     ) {
                         continue;
                     }
-                    for (index, (aty, pty)) in arg_tys
+                    for (index, pty) in patterns
                         .iter()
-                        .zip(&patterns)
                         .enumerate()
                         .filter(|(index, _)| Some(*index) != forwarded_index)
                     {
@@ -2487,23 +2509,30 @@ impl Checker {
                                     &bindings,
                                 )
                             });
-                        if coerces(aty, &expected) {
-                            if *aty != expected {
+                        // Scored against the solved parameter, as the
+                        // commit below checks it: a display argument is that
+                        // parameter's collection.
+                        let Ok(actual) = self.infer_with_expected(bound[index].0, &expected, false)
+                        else {
+                            ok = false;
+                            break;
+                        };
+                        if coerces(&actual, &expected) {
+                            if actual != expected {
                                 score += 1;
-                                // A literal argument materializes to the
-                                // solved parameter type once this candidate
-                                // wins (`Many(7.5, True)` stores a Float64).
-                                materializations.push((index, expected));
                             }
-                        } else if self.implicit_conversion_target(aty, &expected)?.is_some() {
+                        } else if self
+                            .implicit_conversion_target(&actual, &expected)?
+                            .is_some()
+                        {
                             // An implicit conversion ranks below any direct
                             // coercion so exact overloads keep winning.
                             score += 2;
-                            conversions.push((index, expected));
                         } else {
                             ok = false;
                             break;
                         }
+                        expected_tys.push((index, expected));
                     }
                     if ok
                         && let Some(unavailable) =
@@ -2530,25 +2559,24 @@ impl Checker {
                             0,
                             !decls_are_concrete(&sig.decls),
                         ) + binding.rank();
-                        matches.push((
+                        matches.push(GenericConstructorMatch {
                             rank,
-                            sig.clone(),
+                            sig: sig.clone(),
                             tyargs,
-                            conversions,
-                            materializations,
-                            matched.slots,
-                            matched.positional_overflow,
+                            expected: expected_tys,
+                            slots: matched.slots,
+                            overflow: matched.positional_overflow,
                             subst,
                             pointer_origins,
-                        ));
+                        });
                     }
                 }
             }
-            let best = matches.iter().map(|(rank, ..)| *rank).min();
+            let best = matches.iter().map(|candidate| candidate.rank).min();
             if let Some(best) = best {
                 let mut best_matches = matches
                     .into_iter()
-                    .filter(|(rank, ..)| *rank == best)
+                    .filter(|candidate| candidate.rank == best)
                     .collect::<Vec<_>>();
                 if best_matches.len() != 1 {
                     return Err(TypeError::BadCall {
@@ -2556,17 +2584,16 @@ impl Checker {
                         reason: "ambiguous overloaded constructor call".to_string(),
                     });
                 }
-                let (
-                    _,
+                let GenericConstructorMatch {
                     sig,
                     tyargs,
-                    conversions,
-                    materializations,
+                    expected,
                     slots,
                     overflow,
                     mut subst,
                     pointer_origins,
-                ) = best_matches.remove(0);
+                    ..
+                } = best_matches.remove(0);
                 unify_through_callable_bounds(&sig.decls, &mut subst)?;
                 if let Some(specialized) =
                     self.finish_variadic_construction(span, name, param_args, &tyargs, args, kwargs)
@@ -2576,7 +2603,7 @@ impl Checker {
                 self.record_struct_instantiation(name, &tyargs, span.source.as_deref());
                 // Rebuild the packed bound used during scoring: regular slots in
                 // slot order (skipping defaults), then variadic overflow. The
-                // `conversions` indices address into this same layout. Overflow
+                // `expected` indices address into this same layout. Overflow
                 // carries no consuming convention here (see the scoring note).
                 let mut bound: Vec<(&Expr, Option<ArgConvention>)> = slots
                     .iter()
@@ -2599,27 +2626,30 @@ impl Checker {
                         .filter(|argument| self.forwarded_pack(argument).is_none())
                         .map(|argument| (argument, sig.variadic_convention)),
                 );
-                for (index, expected) in &conversions {
-                    let (expression, _) = bound[*index];
-                    let actual = self.infer(expression)?;
-                    self.record_implicit_conversion(expression, &actual, expected)?;
-                }
-                for (index, expected) in &materializations {
-                    let (expression, _) = bound[*index];
-                    let actual = self.infer(expression)?;
-                    self.record_literal_materializations(expression, &actual, expected)?;
-                }
-                for (i, (expression, convention)) in bound.iter().enumerate() {
+                // Each argument's last inference is the contextual one against
+                // its solved parameter, so a display keeps that collection.
+                for (index, expected) in &expected {
+                    let Some(&(expression, convention)) = bound.get(*index) else {
+                        continue;
+                    };
+                    let actual = self.infer_with_expected(expression, expected, true)?;
+                    if coerces(&actual, expected) {
+                        self.record_literal_materializations(expression, &actual, expected)?;
+                    } else if !self.record_implicit_conversion(expression, &actual, expected)? {
+                        return Err(TypeError::TypeMismatch {
+                            expected: expected.to_string(),
+                            found: actual.to_string(),
+                            context: format!("argument {} to '{name}.__init__'", index + 1),
+                        });
+                    }
                     if let Some(convention @ (ArgConvention::Var | ArgConvention::Deinit)) =
                         convention
                     {
-                        let kind = consume_kind(*convention);
-                        let aty = self.infer(expression)?;
                         self.check_consuming_as(
                             expression,
-                            &aty,
-                            &format!("argument {} to '{}'", i + 1, name),
-                            kind,
+                            &actual,
+                            &format!("argument {} to '{}'", index + 1, name),
+                            consume_kind(convention),
                         )?;
                     }
                 }
@@ -2686,6 +2716,7 @@ impl Checker {
             ordered.as_slice()
         };
         let decls = info.decls.clone();
+        let explicit = self.explicit_type_subst(name, &decls, param_args)?;
         let field_tys: Vec<Ty> = info.fields.iter().map(|(_, t)| t.clone()).collect();
         if field_tys.len() != args.len() {
             return Err(TypeError::ArityMismatch {
@@ -2705,12 +2736,14 @@ impl Checker {
                     // storage rule below must still see a capturing closure's
                     // full environment rather than an adapted contract.
                     self.infer(argument)
+                } else if mojito_types::types::is_symbolic(field) {
+                    // A field naming the struct's binders: the argument is
+                    // checked against the solved field below.
+                    self.solving_argument_ty(argument, field, &decls, &explicit)
                 } else {
                     // Contextual: a display argument checks its elements
                     // against the field's element types, so a string literal
                     // converts where a nominal String element is expected.
-                    // Generic (parameter-typed) fields fall through to plain
-                    // inference inside `infer_with_expected`.
                     self.infer_with_expected(argument, field, true)
                 }
             })
@@ -2746,6 +2779,16 @@ impl Checker {
                 &origin_bindings.substitute(&expand_bound_pack(fty, &decls, &tyargs)),
                 &bindings,
             );
+            let contextual;
+            let aty = if !mojito_types::types::is_symbolic(fty)
+                || self.type_contains_reference(fty)
+                || matches!(fty, Ty::Func { .. } | Ty::GenericFunc { .. })
+            {
+                aty
+            } else {
+                contextual = self.infer_with_expected(&args[i], &expected, true)?;
+                &contextual
+            };
             if Self::storage_value_coerces(aty, &expected) {
                 self.record_literal_materializations(&args[i], aty, &expected)?;
             } else if !self.record_constructor_conversion(&args[i], aty, &expected)? {
@@ -2814,93 +2857,7 @@ impl Checker {
             return Ok((subst, Vec::new()));
         }
         if !param_args.is_empty() {
-            let mut bound: Vec<Vec<&mojito_ast::ast::ParamArg>> = vec![Vec::new(); decls.len()];
-            let mut positional = 0;
-            let mut saw_keyword = false;
-            for argument in param_args {
-                match argument {
-                    mojito_ast::ast::ParamArg::Named {
-                        name: keyword,
-                        value,
-                    } => {
-                        saw_keyword = true;
-                        let Some(index) = decls
-                            .iter()
-                            .position(|decl| decl.name().trim_start_matches('*') == keyword)
-                        else {
-                            return Err(TypeError::Unsupported(format!(
-                                "generic '{name}' has no parameter named '{keyword}'"
-                            )));
-                        };
-                        if !bound[index].is_empty() {
-                            return Err(TypeError::Redeclaration(keyword.clone()));
-                        }
-                        bound[index].push(value);
-                    }
-                    positional_argument => {
-                        if saw_keyword {
-                            return Err(TypeError::Unsupported(
-                                "positional compile-time argument follows a keyword argument"
-                                    .to_string(),
-                            ));
-                        }
-                        while positional < decls.len()
-                            && (matches!(
-                                decls[positional],
-                                ParamDecl::Type {
-                                    infer_only: true,
-                                    ..
-                                } | ParamDecl::Value {
-                                    infer_only: true,
-                                    ..
-                                }
-                            ) || (!bound[positional].is_empty()
-                                && !matches!(
-                                    decls[positional],
-                                    ParamDecl::Type { variadic: true, .. }
-                                        | ParamDecl::Value { variadic: true, .. }
-                                )))
-                        {
-                            positional += 1;
-                        }
-                        if positional >= decls.len() {
-                            // Surplus positional arguments where infer-only
-                            // slots were skipped mean the caller spelled an
-                            // infer-only binder explicitly.
-                            if let Some(hidden) = decls.iter().find(|decl| {
-                                matches!(
-                                    decl,
-                                    ParamDecl::Type {
-                                        infer_only: true,
-                                        ..
-                                    } | ParamDecl::Value {
-                                        infer_only: true,
-                                        ..
-                                    }
-                                )
-                            }) {
-                                return Err(TypeError::Unsupported(format!(
-                                    "infer-only parameter '{}' cannot be supplied explicitly",
-                                    hidden.name().trim_start_matches('*')
-                                )));
-                            }
-                            return Err(TypeError::WrongTypeArgCount {
-                                name: name.to_string(),
-                                expected: decls.len(),
-                                got: param_args.len(),
-                            });
-                        }
-                        bound[positional].push(positional_argument);
-                        if !matches!(
-                            decls[positional],
-                            ParamDecl::Type { variadic: true, .. }
-                                | ParamDecl::Value { variadic: true, .. }
-                        ) {
-                            positional += 1;
-                        }
-                    }
-                }
-            }
+            let bound = bracket_bindings(name, decls, param_args)?;
             // Infer parameters hidden before `//` even when later parameters
             // were supplied explicitly (`hash[Fnv1a](value)` infers `T` from
             // `value` while binding the explicit hasher argument). A pack
@@ -3262,6 +3219,36 @@ impl Checker {
         self.validate_callable_parameter_bounds(name, decls, &tyargs)?;
         self.validate_generic_constraints(name, decls, &tyargs)?;
         Ok((subst, tyargs))
+    }
+
+    /// The type binders of `decls` a call's bracket arguments bind
+    /// explicitly, each with the type it names: an argument display solves
+    /// only the binders these leave open.
+    pub(super) fn explicit_type_subst(
+        &self,
+        name: &str,
+        decls: &[ParamDecl],
+        param_args: &[mojito_ast::ast::ParamArg],
+    ) -> Result<TySubst, TypeError> {
+        let mut explicit = TySubst::new();
+        if param_args.is_empty() || decls.is_empty() {
+            return Ok(explicit);
+        }
+        for (decl, arguments) in decls.iter().zip(bracket_bindings(name, decls, param_args)?) {
+            if let (
+                ParamDecl::Type {
+                    id,
+                    variadic: false,
+                    ..
+                },
+                [argument],
+            ) = (decl, arguments.as_slice())
+                && let TyArg::Ty(ty) = self.resolve_param_arg(decl, argument)?
+            {
+                explicit.insert(id.clone(), ty);
+            }
+        }
+        Ok(explicit)
     }
 
     /// Solve the type binders a value parameter's declared type names
@@ -3716,4 +3703,116 @@ fn substituted_value_decl(decl: &ParamDecl, subst: &TySubst) -> Option<ParamDecl
     };
     let solved = mojito_types::types::substitute(ty, subst);
     (solved != **ty).then(|| decl.with_value_type(solved))
+}
+
+/// Each of `decls`' bracket arguments in `param_args`, positional ones
+/// skipping infer-only binders and keyword ones bound by name.
+fn bracket_bindings<'a>(
+    name: &str,
+    decls: &[ParamDecl],
+    param_args: &'a [mojito_ast::ast::ParamArg],
+) -> Result<Vec<Vec<&'a mojito_ast::ast::ParamArg>>, TypeError> {
+    let mut bound: Vec<Vec<&mojito_ast::ast::ParamArg>> = vec![Vec::new(); decls.len()];
+    let mut positional = 0;
+    let mut saw_keyword = false;
+    for argument in param_args {
+        match argument {
+            mojito_ast::ast::ParamArg::Named {
+                name: keyword,
+                value,
+            } => {
+                saw_keyword = true;
+                let Some(index) = decls
+                    .iter()
+                    .position(|decl| decl.name().trim_start_matches('*') == keyword)
+                else {
+                    return Err(TypeError::Unsupported(format!(
+                        "generic '{name}' has no parameter named '{keyword}'"
+                    )));
+                };
+                if !bound[index].is_empty() {
+                    return Err(TypeError::Redeclaration(keyword.clone()));
+                }
+                bound[index].push(value);
+            }
+            positional_argument => {
+                if saw_keyword {
+                    return Err(TypeError::Unsupported(
+                        "positional compile-time argument follows a keyword argument".to_string(),
+                    ));
+                }
+                while positional < decls.len()
+                    && (matches!(
+                        decls[positional],
+                        ParamDecl::Type {
+                            infer_only: true,
+                            ..
+                        } | ParamDecl::Value {
+                            infer_only: true,
+                            ..
+                        }
+                    ) || (!bound[positional].is_empty()
+                        && !matches!(
+                            decls[positional],
+                            ParamDecl::Type { variadic: true, .. }
+                                | ParamDecl::Value { variadic: true, .. }
+                        )))
+                {
+                    positional += 1;
+                }
+                if positional >= decls.len() {
+                    // Surplus positional arguments where infer-only
+                    // slots were skipped mean the caller spelled an
+                    // infer-only binder explicitly.
+                    if let Some(hidden) = decls.iter().find(|decl| {
+                        matches!(
+                            decl,
+                            ParamDecl::Type {
+                                infer_only: true,
+                                ..
+                            } | ParamDecl::Value {
+                                infer_only: true,
+                                ..
+                            }
+                        )
+                    }) {
+                        return Err(TypeError::Unsupported(format!(
+                            "infer-only parameter '{}' cannot be supplied explicitly",
+                            hidden.name().trim_start_matches('*')
+                        )));
+                    }
+                    return Err(TypeError::WrongTypeArgCount {
+                        name: name.to_string(),
+                        expected: decls.len(),
+                        got: param_args.len(),
+                    });
+                }
+                bound[positional].push(positional_argument);
+                if !matches!(
+                    decls[positional],
+                    ParamDecl::Type { variadic: true, .. }
+                        | ParamDecl::Value { variadic: true, .. }
+                ) {
+                    positional += 1;
+                }
+            }
+        }
+    }
+    Ok(bound)
+}
+
+/// One generic constructor overload the arguments match: its rank, its
+/// solved struct parameters, and the solved parameter type each bound
+/// argument is checked against once it wins.
+struct GenericConstructorMatch {
+    rank: usize,
+    sig: MethodSig,
+    tyargs: Vec<TyArg>,
+    /// Indexed by position in the scored bound (regular slots, then
+    /// variadic overflow), the forwarded pack left out.
+    expected: Vec<(usize, Ty)>,
+    slots: Vec<ArgSlot>,
+    overflow: Vec<usize>,
+    subst: TySubst,
+    pointer_origins: ConstructorOriginBindings,
 }

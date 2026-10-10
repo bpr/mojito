@@ -1161,6 +1161,69 @@ impl Checker {
         })
     }
 
+    /// The type an argument solves its parameter's binders from, before
+    /// they are solved. A list, set, or dictionary display against a
+    /// collection whose element (key, value) is one of `decls`' open binders
+    /// takes its element type from its own elements, as an annotation hole
+    /// (`List[_]`) does, so `f(["a"])` solves `K` in `List[K]`; `explicit`
+    /// substitutes the binders the brackets already bound first. The solve
+    /// is shallow, and anything else is inferred bare.
+    pub(super) fn solving_argument_ty(
+        &self,
+        expression: &Expr,
+        pattern: &Ty,
+        decls: &[ParamDecl],
+        explicit: &TySubst,
+    ) -> Result<Ty, TypeError> {
+        let holes = match &expression.kind {
+            ExprKind::ListLit(values) if !values.is_empty() => 1,
+            ExprKind::BraceLit(entries)
+                if entries.first().is_some_and(|(_, value)| value.is_some()) =>
+            {
+                2
+            }
+            ExprKind::BraceLit(entries) if !entries.is_empty() => 1,
+            _ => return self.infer(expression),
+        };
+        let pattern = substitute(pattern, explicit);
+        let shaped = match holes {
+            2 => dict_elements(&pattern).is_some(),
+            _ => match &expression.kind {
+                ExprKind::ListLit(_) => list_element(&pattern).is_some(),
+                _ => set_element(&pattern).is_some(),
+            },
+        };
+        let Ty::Struct(name, arguments) = &pattern else {
+            return self.infer(expression);
+        };
+        if !shaped {
+            return self.infer(expression);
+        }
+        let open = |ty: &Ty| {
+            matches!(ty, Ty::Param { binder, .. }
+                if decls.iter().any(|decl| matches!(decl,
+                    ParamDecl::Type { id, variadic: false, .. } if *id == binder.id)))
+        };
+        let holed = Ty::Struct(
+            name.clone(),
+            arguments
+                .iter()
+                .enumerate()
+                .map(|(index, argument)| match argument {
+                    TyArg::Ty(ty) if index < holes && open(ty) => TyArg::Ty(Ty::Infer),
+                    argument => argument.clone(),
+                })
+                .collect(),
+        );
+        if holed == pattern {
+            return self.infer(expression);
+        }
+        // A display the hole rule cannot type is left to the solved
+        // parameter's check, which reports it.
+        self.infer_with_expected(expression, &holed, false)
+            .or_else(|_| self.infer(expression))
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub(super) fn instantiate_method_generics(
         &self,
@@ -1219,6 +1282,7 @@ impl Checker {
             mojito_ast::call::bind_spread(&matched, *position)
                 .map_err(|error| error.into_type_error(name))?;
         }
+        let explicit = self.explicit_type_subst(name, &signature.decls, param_args)?;
         let mut patterns = Vec::new();
         let mut actuals = Vec::new();
         for (index, slot) in matched.slots.iter().enumerate() {
@@ -1228,7 +1292,12 @@ impl Checker {
                 ArgSlot::Default => continue,
             };
             patterns.push(params[index].clone());
-            actuals.push(self.infer(expression)?);
+            actuals.push(self.solving_argument_ty(
+                expression,
+                &params[index],
+                &signature.decls,
+                &explicit,
+            )?);
         }
         if let Some(element) = variadic {
             for position in matched.positional_overflow {
@@ -1244,7 +1313,12 @@ impl Checker {
                             Some(ArgConvention::Var)
                         )),
                     )?,
-                    _ => self.infer(&args[position])?,
+                    _ => self.solving_argument_ty(
+                        &args[position],
+                        element,
+                        &signature.decls,
+                        &explicit,
+                    )?,
                 };
                 actuals.push(actual);
             }

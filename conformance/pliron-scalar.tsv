@@ -216,6 +216,8 @@ assets/ok/generic_ctfe_associated_value.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/generic_ctfe_value_param.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/generic_ctor_literal_materialization.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/generic_def_static_receiver_binder.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/generic_display_argument_infers_parameter.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/generic_display_argument_typed_by_parameter.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/generic_equatable_dispatch.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/generic_field_pointer_deref_in_place.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/generic_method_per_call_clones.mojo	-	ineligible	no-scalar-entry-shape

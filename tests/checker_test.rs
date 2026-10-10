@@ -3059,6 +3059,37 @@ fn checked_calls_mark_ordinary_and_parameterized_implicit_receiver_copies() {
 }
 
 #[test]
+fn display_argument_to_generic_constructor_constructs_its_parameter() {
+    // The display is checked against the solved `List[String]` last, so its
+    // span records the collection construction, not the bare `Array`
+    // literal a solving inference would have left.
+    let source = "struct W[K: Copyable & Deinitable]:\n    var keys: List[Self.K]\n\n    def __init__(out self, var keys: List[Self.K], n: Optional[Int]):\n        self.keys = keys^\n\ndef main():\n    var w = W[String](['a', 'b'], None)\n    print(len(w.keys))\n";
+    let linked =
+        mojito::link_source(source, std::path::Path::new("checker_test.mojo")).expect("link");
+    let checked = check_program(&mojito::elaborate(linked).expect("elaborate")).expect("check");
+    let display = checked
+        .expressions()
+        .iter()
+        .find(|expression| matches!(expression.syntax.kind, mojito::ast::ExprKind::ListLit(_)))
+        .expect("the display argument is checked");
+    assert!(
+        display.adjustments.iter().any(|adjustment| matches!(
+            adjustment,
+            SemanticAdjustment::ConstructCollection { target, .. }
+                if target.to_string() == "List[String]"
+        )),
+        "{:#?}",
+        display.adjustments
+    );
+    assert!(
+        !display.adjustments.iter().any(|adjustment| matches!(
+            adjustment,
+            SemanticAdjustment::ConstructArrayLiteral { .. }
+        ))
+    );
+}
+
+#[test]
 fn losing_overload_probe_leaves_no_compile_time_argument_fact() {
     // `kind[T]` is probed first and tries `n` as a type; the winning
     // `kind[n]` passes `n` as a runtime value register.

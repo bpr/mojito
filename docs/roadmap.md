@@ -1036,21 +1036,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R540 A display argument to an explicitly parameterized generic
-  constructor is not typed by its parameter**
-
-  Problem: `Dict[String, Int](["a"], [1], None)` stops with "no
-  constructor overload matches the supplied arguments", and
-  `W[String](["a", "b"], None)` over `var keys: List[Self.K]` with "expected
-  List[String], found Array[String, 2]", where the pin runs both.
-  - The generic constructor paths in `checker/declarations.rs` infer each
-    argument bare before solving the struct's parameters, so a list display
-    is an `Array` there; a plain function's display argument is typed by
-    its parameter.
-  - Found while landing R517 (2026-10-09).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R25 A user `Hasher` cannot spell `update` the way the pin requires**
 
   Problem: the `26cfe94f40` pin's `Hasher` requires

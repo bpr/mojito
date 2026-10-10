@@ -1672,6 +1672,7 @@ impl Checker {
             matched.positional_overflow,
             matched.keyword_overflow,
         );
+        let explicit = self.explicit_type_subst(name, decls, param_args)?;
         let mut use_params = Vec::new();
         let mut arg_tys = Vec::new();
         let mut arg_exprs = Vec::new();
@@ -1682,7 +1683,7 @@ impl Checker {
                 ArgSlot::Default => continue,
             };
             use_params.push(params[i].clone());
-            arg_tys.push(self.infer(arg)?);
+            arg_tys.push(self.solving_argument_ty(arg, &params[i], decls, &explicit)?);
             arg_exprs.push(arg);
         }
         if let Some(elem) = variadic.as_deref() {
@@ -1696,7 +1697,7 @@ impl Checker {
                         elem,
                         self.owned_collectors.get(name).copied(),
                     )?,
-                    _ => self.infer(&args[p])?,
+                    _ => self.solving_argument_ty(&args[p], elem, decls, &explicit)?,
                 };
                 arg_tys.push(actual);
                 arg_exprs.push(&args[p]);
@@ -1737,27 +1738,20 @@ impl Checker {
                 matches!(pty, Ty::Param { .. }) && mojito_types::types::simd_shape(aty).is_some(),
             );
             let expected = resolve(pty)?;
-            // A dependent generic parameter can resolve to a reference-bearing
-            // type only after explicit value arguments have been substituted
-            // (for example `Ts[index]` in Tuple.consume_elements over a struct
-            // with a `ref` field). Re-infer in that resolved context so the
-            // actual is the stored handle rather than the ordinary read-through
-            // referent.
-            let contextual;
-            let actual = if self.type_contains_reference(&expected) {
-                contextual = self.infer_with_expected(expression, &expected, true)?;
-                &contextual
-            } else {
-                aty
-            };
-            if !self.record_implicit_conversion(expression, actual, &expected)? {
+            // Re-inferred against the solved parameter: a display argument
+            // constructs that parameter's collection, and a parameter that
+            // resolves to a reference-bearing type only once explicit value
+            // arguments are substituted (`Ts[index]` over a struct with a
+            // `ref` field) takes the stored handle, not its referent.
+            let actual = self.infer_with_expected(expression, &expected, true)?;
+            if !self.record_implicit_conversion(expression, &actual, &expected)? {
                 return Err(TypeError::TypeMismatch {
                     expected: expected.to_string(),
                     found: actual.to_string(),
                     context: format!("argument to '{name}'"),
                 });
             }
-            conversions += conversion_count(actual, &expected);
+            conversions += conversion_count(&actual, &expected);
         }
         if let Some(element) = kw_variadic.as_deref() {
             let expected = resolve(element)?;
@@ -1836,7 +1830,12 @@ impl Checker {
                     ArgSlot::Default => return Ok(false),
                 };
                 let convention = effective_conventions.get(index).copied().flatten();
-                let ty = self.infer(expression)?;
+                // Contextual, as the argument was just checked: a bare
+                // inference would re-record a display as an `Array`.
+                let ty = match resolve(&params[index]) {
+                    Ok(expected) => self.infer_with_expected(expression, &expected, true)?,
+                    Err(_) => self.infer(expression)?,
+                };
                 Ok(self.argument_is_independent_copy(convention, expression, &ty))
             })
             .collect::<Result<Vec<_>, TypeError>>()?;

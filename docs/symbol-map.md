@@ -579,6 +579,12 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `substitute_variadic_at` types a member's struct-pack collector
   (`*b: *Self.Ts`) at a receiver as the runtime pack of its elements, a
   forwarded caller pack retyped with the struct pack's bounds.
+  `solving_argument_ty` types an argument before its callee's binders are
+  solved: a display against `List[K]`/`Set[T]`/`Dict[K, V]` takes its open
+  element binder from its own elements, the bracket bindings
+  (`declarations.rs:explicit_type_subst`) substituted first; every generic
+  call path then checks each argument against its solved parameter with
+  `infer_with_expected`, last, so a display records that collection.
 - `checker/declarations.rs` owns parameter classification and method/function
   signature and body checking.
 - `checker/annotations.rs` converts AST annotations into checked `Ty` values.
