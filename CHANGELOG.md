@@ -79,6 +79,12 @@ to evolve under the `0.x` compatibility rules.
   Editing the library takes a compiler rebuild, which every `cargo`
   command does. Hello World compiles and runs in 7.8 ms release, from
   9.0 ms. The package format is now `mojito-package 7`.
+- An importer's link resolves a bundled library import against the
+  package's module table, now keyed by dotted module name, instead of
+  probing and canonicalizing the library's files (R565), as Mojo's importer
+  finds a module in a package. Hello World makes 2 `readlink` calls instead
+  of 1593 and runs in 8.5 ms release, from 10.2 ms. The package format is
+  now `mojito-package 8`.
 - A module under a search root is linked under its path there, whichever
   import reaches it first: `std/io/file.mojo` declares
   `__module$std$io$file$…`, not `__module$file$…`.

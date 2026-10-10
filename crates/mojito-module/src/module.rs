@@ -4,9 +4,13 @@
 //! declarations collision-free internal names, resolve qualified and selective
 //! aliases, and erase module objects before the flat checked-program pipeline.
 //! Imports are lexical, dependencies are deduplicated by canonical path, and
-//! source provenance survives rewriting.
+//! source provenance survives rewriting. With a compiled package, an import
+//! the package's library root answers is resolved against the package's
+//! module table, probing no library file.
 
-use crate::package::{ModuleRecords, PackageModule, PackageModules};
+use crate::package::{
+    ModuleIdentity, ModuleRecords, PackageModule, PackageModules, PackagedModule,
+};
 use mojito_ast::ast::{Expr, ExprKind, ImportNames, ParamArg, Stmt, StmtKind, TStringPart, Type};
 use mojito_common::error::ParseError;
 use mojito_common::timing;
@@ -135,7 +139,7 @@ pub fn inject_prelude_with_package(
 
 /// Link `source` as [`link_source_with_options`] does, and record what
 /// linking each module produced, for a package compiled from them: every
-/// record beside the canonical path of its module's source file.
+/// record beside its module's identity.
 pub fn link_source_recording(
     source: &str,
     entry_path: &Path,
@@ -628,14 +632,15 @@ fn canonical(path: &Path) -> PathBuf {
     path.canonicalize().unwrap_or_else(|_| path.to_path_buf())
 }
 
+/// Refuse `imported` when it is the module whose canonical path is
+/// `importer`.
 fn check_self_import(
     importer: Option<&Path>,
-    imported: &Path,
-    module: &str,
+    imported: &ResolvedModule,
 ) -> Result<(), ModuleError> {
-    if importer.is_some_and(|path| canonical(path) == canonical(imported)) {
+    if importer == Some(imported.key.as_path()) {
         Err(ModuleError::SelfImport {
-            module: module.to_string(),
+            module: imported.asked.clone(),
         })
     } else {
         Ok(())
@@ -711,11 +716,13 @@ struct Linker<'p> {
     options: LinkOptions,
     /// The compiled package whose modules link from their records.
     package: Option<&'p PackageModules>,
-    /// While recording, the loads each module being loaded asks for,
-    /// innermost last.
-    loads: Vec<Vec<(String, String)>>,
-    /// While recording, each loaded module's record, beside the canonical
-    /// path of its source file.
+    /// The search roots' canonical paths, in order, computed when a module
+    /// found on the filesystem is first named.
+    canonical_roots: std::cell::OnceCell<Vec<PathBuf>>,
+    /// While recording, the dotted names of the loads each module being
+    /// loaded asks for, innermost last.
+    loads: Vec<Vec<String>>,
+    /// While recording, each loaded module's record, beside its identity.
     records: Option<ModuleRecords>,
     /// Module files already entered (canonical path) — dedup + cycle break.
     loaded: HashSet<PathBuf>,
@@ -733,6 +740,31 @@ struct Linker<'p> {
     /// Stable public bindings exported by the fully loaded implicit prelude.
     /// `None` while the prelude and its own dependency graph are bootstrapping.
     prelude_bindings: Option<HashMap<String, String>>,
+}
+
+/// An import's module, resolved once: every later step reads its identity
+/// rather than consulting the filesystem again.
+struct ResolvedModule {
+    /// Its source file, as its declarations' locations name it.
+    path: PathBuf,
+    /// Its source file's canonical path, its identity in the link.
+    key: PathBuf,
+    /// Its dotted name, which its linked names spell.
+    name: String,
+    /// The dotted path the import spelled, which diagnostics name.
+    asked: String,
+}
+
+impl ResolvedModule {
+    /// The package module `entry`, recorded under `name`.
+    fn packaged(name: &str, entry: &PackagedModule) -> Self {
+        Self {
+            path: entry.path.clone(),
+            key: entry.canonical.clone(),
+            name: name.to_string(),
+            asked: name.to_string(),
+        }
+    }
 }
 
 struct ImportScope<'a> {
@@ -754,6 +786,7 @@ impl<'p> Linker<'p> {
         Self {
             options,
             package,
+            canonical_roots: std::cell::OnceCell::new(),
             loads: Vec::new(),
             records: None,
             loaded: HashSet::new(),
@@ -769,16 +802,16 @@ impl<'p> Linker<'p> {
             return Ok(());
         }
         let _prelude = timing::span("prelude.load");
-        let Some(path) = bundled_path(PRELUDE_PATH) else {
+        let Some(prelude) = self.bundled_module(PRELUDE_MODULE) else {
             // `CARGO_MANIFEST_DIR` is present for normal Cargo builds. Keeping
             // this branch permits parse-only consumers on unusual build systems.
             self.prelude_bindings = Some(HashMap::new());
             return Ok(());
         };
-        self.load_module(&path, PRELUDE_MODULE)?;
+        self.load_module(&prelude)?;
         let exports = self
             .exports
-            .get(&canonical(&path))
+            .get(&prelude.key)
             .expect("a loaded prelude records its exports");
         let mut bindings = HashMap::with_capacity(PRELUDE_EXPORTS.len());
         for &name in PRELUDE_EXPORTS {
@@ -802,20 +835,13 @@ impl<'p> Linker<'p> {
     ) -> Result<Vec<Stmt>, ModuleError> {
         let _resolve = timing::span("entry.resolve");
         self.ensure_prelude()?;
-        let uses_kwargs = program_uses_kwargs(&program);
-        if uses_kwargs
-            && let Some(runtime) = bundled_path("stdlib/std/collections/string_dict.mojo")
-        {
-            self.load_module(&runtime, "std.collections.string_dict")?;
-        }
+        let importer = importer.map(canonical);
+        let importer = importer.as_deref();
         let mut bindings = self.prelude_bindings.clone().unwrap_or_default();
         let mut namespaces = HashMap::new();
         let mut explicit_imports = HashSet::new();
-        if uses_kwargs
-            && let Some(runtime) = bundled_path("stdlib/std/collections/string_dict.mojo")
-            && let Some(target) = self.exports[&canonical(&runtime)].get("StringDict")
-        {
-            bindings.insert("StringDict".to_string(), target.clone());
+        if program_uses_kwargs(&program) {
+            self.bind_kwargs_runtime(&mut bindings)?;
         }
         let mut body = Vec::new();
         for stmt in program {
@@ -852,29 +878,39 @@ impl<'p> Linker<'p> {
         Ok(body)
     }
 
+    /// Load the kwargs runtime and bind its `StringDict`, for a module that
+    /// declares a `**kwargs` parameter.
+    fn bind_kwargs_runtime(
+        &mut self,
+        bindings: &mut HashMap<String, String>,
+    ) -> Result<(), ModuleError> {
+        let Some(runtime) = self.bundled_module("std.collections.string_dict") else {
+            return Ok(());
+        };
+        self.load_module(&runtime)?;
+        if let Some(target) = self.exports[&runtime.key].get("StringDict") {
+            bindings.insert("StringDict".to_string(), target.clone());
+        }
+        Ok(())
+    }
+
     /// Load a module file (once): resolve its own imports first, then hoist its
     /// top-level declarations (excluding `main`).
-    fn load_module(&mut self, path: &Path, module_name: &str) -> Result<(), ModuleError> {
+    fn load_module(&mut self, module: &ResolvedModule) -> Result<(), ModuleError> {
         if let Some(loads) = self.loads.last_mut() {
-            loads.push((display(path), module_name.to_string()));
+            loads.push(module.name.clone());
         }
-        let canon = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
-        if !self.loaded.insert(canon.clone()) {
+        if !self.loaded.insert(module.key.clone()) {
             // A completed module has its final exports; a mutual-cycle peer has
             // the provisional local exports published below.
             return Ok(());
         }
-        // A module under a search root is named by its path there, as Mojo
-        // names a symbol by its module path, whichever import first reached
-        // it: `from .file import FileHandle` inside `std/io` loads
-        // `std.io.file`.
-        let rooted = self.rooted_module_name(&canon);
-        let module_name = rooted.as_deref().unwrap_or(module_name);
+        let (path, canon, module_name) = (&module.path, &module.key, module.name.as_str());
         if let Some(record) = self
             .package
-            .and_then(|package| package.module(&canon, module_name))
+            .and_then(|package| package.module(module_name, canon))
         {
-            return self.load_packaged(path, canon, record);
+            return self.load_packaged(module, record);
         }
         if self.records.is_some() {
             self.loads.push(Vec::new());
@@ -893,6 +929,7 @@ impl<'p> Linker<'p> {
         // Publish local declarations before following imports so a distinct
         // module in a mutual cycle can bind them while this module is loading.
         self.exports.insert(canon.clone(), local.clone());
+        let importer = Some(canon.as_path());
         // Modules loaded after prelude bootstrap see the same implicit names as
         // the entry module. Prelude dependencies themselves are loaded while the
         // table is `None` and therefore use only their explicit imports.
@@ -901,14 +938,8 @@ impl<'p> Linker<'p> {
         let mut namespaces = HashMap::new();
         let mut explicit_exports = HashSet::new();
         let mut explicit_imports = HashSet::new();
-        if module_name != "std.collections.string_dict"
-            && program_uses_kwargs(&program)
-            && let Some(runtime) = bundled_path("stdlib/std/collections/string_dict.mojo")
-        {
-            self.load_module(&runtime, "std.collections.string_dict")?;
-            if let Some(target) = self.exports[&canonical(&runtime)].get("StringDict") {
-                bindings.insert("StringDict".to_string(), target.clone());
-            }
+        if module_name != "std.collections.string_dict" && program_uses_kwargs(&program) {
+            self.bind_kwargs_runtime(&mut bindings)?;
         }
         for stmt in &program {
             match &stmt.kind {
@@ -919,7 +950,7 @@ impl<'p> Linker<'p> {
                 } => {
                     self.apply_from_import(
                         dir,
-                        Some(path),
+                        importer,
                         *level,
                         mpath,
                         names,
@@ -938,7 +969,7 @@ impl<'p> Linker<'p> {
                     }
                 }
                 StmtKind::Import { path: mpath, alias } => {
-                    self.apply_import(dir, Some(path), mpath, alias.as_deref(), &mut namespaces)?;
+                    self.apply_import(dir, importer, mpath, alias.as_deref(), &mut namespaces)?;
                 }
                 _ => {}
             }
@@ -948,7 +979,7 @@ impl<'p> Linker<'p> {
             .into_iter()
             .filter(|stmt| declared_name(stmt).is_some_and(|name| name != "main"))
             .collect();
-        self.resolve_scoped_imports(&mut declarations, dir, Some(path), &bindings, &namespaces)?;
+        self.resolve_scoped_imports(&mut declarations, dir, importer, &bindings, &namespaces)?;
         rewrite_program(&mut declarations, &bindings, &namespaces);
         mojito_ast::ast::stamp_source(&mut declarations, &display(path));
         let recorded = self.records.is_some().then(|| {
@@ -982,7 +1013,7 @@ impl<'p> Linker<'p> {
         // the checker resolves these names structurally, and bound-string
         // comparisons (`bounds == ["Origin"]`) require the unqualified
         // spelling to survive `rewrite_program`/`rewrite_type_param`.
-        if let Some(builtin_names) = builtin_module_exports(&canon) {
+        if let Some(builtin_names) = builtin_module_exports(canon) {
             for name in builtin_names {
                 exports
                     .entry((*name).to_string())
@@ -1004,37 +1035,53 @@ impl<'p> Linker<'p> {
                     .collect(),
                 declarations,
             };
+            let identity = ModuleIdentity {
+                name: module_name.to_string(),
+                canonical: canon.to_string_lossy().into_owned(),
+                path: display(path),
+            };
             if let Some(records) = &mut self.records {
-                records.push((canon.to_string_lossy().into_owned(), record));
+                records.push((identity, record));
             }
         }
-        self.exports.insert(canon, exports);
+        self.exports.insert(canon.clone(), exports);
         self.namespace_exports
-            .insert(canonical(path), visible_namespaces);
+            .insert(canon.clone(), visible_namespaces);
         Ok(())
     }
 
-    /// Load the module at `path` from its package `record`: what linking
-    /// it from source would produce, with no source read.
+    /// Load `module` from its package `record`: what linking it from source
+    /// would produce, with no source read. Each load the record replays is
+    /// found in the package's module table by its dotted name.
     fn load_packaged(
         &mut self,
-        path: &Path,
-        canon: PathBuf,
+        module: &ResolvedModule,
         record: PackageModule,
     ) -> Result<(), ModuleError> {
         // The module's final exports are published before its loads, as
         // its local ones are when it links from source, so a mutual-cycle
         // peer can bind them.
         self.exports
-            .insert(canon.clone(), record.exports.into_iter().collect());
-        for (load, name) in &record.loads {
-            self.load_module(Path::new(load), name)?;
+            .insert(module.key.clone(), record.exports.into_iter().collect());
+        for name in &record.loads {
+            let load = self
+                .package
+                .and_then(|package| package.entry(name))
+                .map(|entry| ResolvedModule::packaged(name, entry))
+                .ok_or_else(|| ModuleError::Io {
+                    module: name.clone(),
+                    err: std::io::Error::new(
+                        std::io::ErrorKind::NotFound,
+                        "the package records no such module",
+                    ),
+                })?;
+            self.load_module(&load)?;
         }
         let mut declarations = record.declarations;
-        mojito_ast::ast::stamp_source(&mut declarations, &display(path));
+        mojito_ast::ast::stamp_source(&mut declarations, &display(&module.path));
         self.decls.extend(declarations);
         self.namespace_exports.insert(
-            canon,
+            module.key.clone(),
             record
                 .namespaces
                 .into_iter()
@@ -1056,37 +1103,35 @@ impl<'p> Linker<'p> {
         alias: Option<&str>,
         namespaces: &mut HashMap<String, HashMap<String, String>>,
     ) -> Result<(), ModuleError> {
-        let (module_path, module_name) = self.resolve_module(dir, 0, path)?;
-        check_self_import(importer, &module_path, &module_name)?;
-        self.load_module(&module_path, &module_name)?;
+        let module = self.resolve_module(dir, 0, path)?;
+        check_self_import(importer, &module)?;
+        self.load_module(&module)?;
         if let Some(alias) = alias {
-            self.bind_namespace_tree(&module_path, alias, namespaces);
+            self.bind_namespace_tree(&module.key, alias, namespaces);
             return Ok(());
         }
 
         for end in 1..path.len() {
             let prefix = &path[..end];
-            let (prefix_path, prefix_name) = self.resolve_module(dir, 0, prefix)?;
-            if prefix_path.exists() {
-                self.load_module(&prefix_path, &prefix_name)?;
-                self.bind_namespace_tree(&prefix_path, &prefix.join("."), namespaces);
+            if let Some(prefix_module) = self.find_module(dir, prefix) {
+                self.load_module(&prefix_module)?;
+                self.bind_namespace_tree(&prefix_module.key, &prefix.join("."), namespaces);
             } else {
                 namespaces.entry(prefix.join(".")).or_default();
             }
         }
-        self.bind_namespace_tree(&module_path, &path.join("."), namespaces);
+        self.bind_namespace_tree(&module.key, &path.join("."), namespaces);
         Ok(())
     }
 
     fn bind_namespace_tree(
         &self,
-        path: &Path,
+        canon: &Path,
         local: &str,
         namespaces: &mut HashMap<String, HashMap<String, String>>,
     ) {
-        let canon = canonical(path);
-        namespaces.insert(local.to_string(), self.exports[&canon].clone());
-        if let Some(children) = self.namespace_exports.get(&canon) {
+        namespaces.insert(local.to_string(), self.exports[canon].clone());
+        if let Some(children) = self.namespace_exports.get(canon) {
             for (suffix, exports) in children {
                 namespaces.insert(format!("{local}.{suffix}"), exports.clone());
             }
@@ -1099,14 +1144,12 @@ impl<'p> Linker<'p> {
     )]
     fn bind_from_imports(
         &self,
-        path: &Path,
-        module_name: &str,
+        module: &ResolvedModule,
         names: &ImportNames,
         scope: ImportScope<'_>,
     ) -> Result<(), ModuleError> {
-        let canon = canonical(path);
-        let exports = &self.exports[&canon];
-        let namespace_exports = self.namespace_exports.get(&canon);
+        let exports = &self.exports[&module.key];
+        let namespace_exports = self.namespace_exports.get(&module.key);
         match names {
             ImportNames::Wildcard => {
                 scope.bindings.extend(
@@ -1134,7 +1177,7 @@ impl<'p> Linker<'p> {
                                 .is_some_and(|previous| previous != target)
                         {
                             return Err(ModuleError::DuplicateImport {
-                                module: module_name.to_string(),
+                                module: module.asked.clone(),
                                 name: local,
                             });
                         }
@@ -1176,22 +1219,22 @@ impl<'p> Linker<'p> {
             };
             for item in items {
                 let submodule = vec![item.name.clone()];
-                let (module_path, module_name) = self.resolve_module(dir, level, &submodule)?;
-                check_self_import(importer, &module_path, &module_name)?;
-                self.load_module(&module_path, &module_name)?;
+                let module = self.resolve_module(dir, level, &submodule)?;
+                check_self_import(importer, &module)?;
+                self.load_module(&module)?;
                 self.bind_namespace_tree(
-                    &module_path,
+                    &module.key,
                     &item.alias.clone().unwrap_or_else(|| item.name.clone()),
                     scope.namespaces,
                 );
             }
             return Ok(());
         }
-        let (module_path, module_name) = self.resolve_module(dir, level, path)?;
-        check_self_import(importer, &module_path, &module_name)?;
-        self.load_module(&module_path, &module_name)?;
-        self.check_names(&module_path, &module_name, names)?;
-        self.bind_from_imports(&module_path, &module_name, names, scope)
+        let module = self.resolve_module(dir, level, path)?;
+        check_self_import(importer, &module)?;
+        self.load_module(&module)?;
+        self.check_names(&module, names)?;
+        self.bind_from_imports(&module, names, scope)
     }
 
     fn resolve_scoped_imports(
@@ -1343,22 +1386,20 @@ impl<'p> Linker<'p> {
     /// (a wildcard `*` is unconditional).
     fn check_names(
         &self,
-        path: &Path,
-        module_name: &str,
+        module: &ResolvedModule,
         names: &mojito_ast::ast::ImportNames,
     ) -> Result<(), ModuleError> {
-        let canon = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
-        let exports = self.exports.get(&canon);
+        let exports = self.exports.get(&module.key);
         if let mojito_ast::ast::ImportNames::Names(list) = names {
             for item in list {
                 let known = exports.is_some_and(|e| e.contains_key(&item.name))
                     || self
                         .namespace_exports
-                        .get(&canon)
+                        .get(&module.key)
                         .is_some_and(|e| e.contains_key(&item.name));
                 if !known {
                     return Err(ModuleError::NameNotFound {
-                        module: module_name.to_string(),
+                        module: module.asked.clone(),
                         name: item.name.clone(),
                     });
                 }
@@ -1372,10 +1413,16 @@ impl<'p> Linker<'p> {
     /// `__init__.mojo` its directory), or `None` outside every root.
     fn rooted_module_name(&self, canon: &Path) -> Option<String> {
         let relative = self
-            .options
-            .search_roots
+            .canonical_roots
+            .get_or_init(|| {
+                self.options
+                    .search_roots
+                    .iter()
+                    .map(|root| canonical(root))
+                    .collect()
+            })
             .iter()
-            .find_map(|root| canon.strip_prefix(canonical(root)).ok())?;
+            .find_map(|root| canon.strip_prefix(root).ok())?;
         let mut parts: Vec<String> = relative
             .components()
             .map(|component| component.as_os_str().to_string_lossy().into_owned())
@@ -1387,13 +1434,87 @@ impl<'p> Linker<'p> {
         (!parts.is_empty()).then(|| parts.join("."))
     }
 
+    /// Resolve an import's module. `level` is the leading-dot count (0 =
+    /// absolute: the importing file's directory, then each search root; 1 =
+    /// same package, i.e. `from_dir`; each extra level climbs one
+    /// directory). An absolute module found nowhere resolves to its missing
+    /// file beside the importer, whose load reports it.
     fn resolve_module(
         &self,
         from_dir: &Path,
         level: usize,
         path: &[String],
-    ) -> Result<(PathBuf, String), ModuleError> {
-        module_file(from_dir, level, path, &self.options.search_roots)
+    ) -> Result<ResolvedModule, ModuleError> {
+        if path.is_empty() {
+            return Err(ModuleError::EmptyModulePath);
+        }
+        if level > 0 {
+            let mut base = from_dir.to_path_buf();
+            for _ in 1..level {
+                base.pop();
+            }
+            return Ok(self.filesystem_module(module_path_under(base, path), path));
+        }
+        Ok(self.find_module(from_dir, path).unwrap_or_else(|| {
+            self.filesystem_module(module_path_under(from_dir.to_path_buf(), path), path)
+        }))
+    }
+
+    /// The absolute module `path` in the importing file's directory
+    /// `from_dir`, else under the first search root holding it.
+    fn find_module(&self, from_dir: &Path, path: &[String]) -> Option<ResolvedModule> {
+        let local = module_path_under(from_dir.to_path_buf(), path);
+        if local.exists() {
+            return Some(self.filesystem_module(local, path));
+        }
+        self.options
+            .search_roots
+            .iter()
+            .find_map(|root| self.find_at_root(root, path))
+    }
+
+    /// The module `path` under the search root `root`. The compiled
+    /// package's library root is answered by the package's module table,
+    /// as upstream's importer finds a module in a package, probing no file;
+    /// any other root is probed.
+    fn find_at_root(&self, root: &Path, path: &[String]) -> Option<ResolvedModule> {
+        if let Some(package) = self.package.filter(|package| package.root() == root) {
+            let name = path.join(".");
+            return package
+                .entry(&name)
+                .map(|entry| ResolvedModule::packaged(&name, entry));
+        }
+        let candidate = module_path_under(root.to_path_buf(), path);
+        candidate
+            .exists()
+            .then(|| self.filesystem_module(candidate, path))
+    }
+
+    /// The bundled library's module `name` (`std.prelude`), if the library
+    /// has it.
+    fn bundled_module(&self, name: &str) -> Option<ResolvedModule> {
+        let root = bundled_path("stdlib")?;
+        let path: Vec<String> = name.split('.').map(str::to_string).collect();
+        self.find_at_root(&root, &path)
+    }
+
+    /// The module file at `path`, imported as `asked`.
+    fn filesystem_module(&self, path: PathBuf, asked: &[String]) -> ResolvedModule {
+        let key = canonical(&path);
+        let asked = asked.join(".");
+        // A module under a search root is named by its path there, as Mojo
+        // names a symbol by its module path, whichever import first reached
+        // it: `from .file import FileHandle` inside `std/io` loads
+        // `std.io.file`.
+        let name = self
+            .rooted_module_name(&key)
+            .unwrap_or_else(|| asked.clone());
+        ResolvedModule {
+            path,
+            key,
+            name,
+            asked,
+        }
     }
 }
 
@@ -1903,40 +2024,6 @@ fn lexical_binding_name(statement: &Stmt) -> Option<&str> {
         | StmtKind::Comptime { name, .. } => Some(name),
         _ => None,
     }
-}
-
-/// Resolve an import's module to a file path, returning `(path, display_name)`.
-/// `level` is the leading-dot count (0 = relative to `from_dir`; 1 = same package,
-/// i.e. also `from_dir`; each extra level climbs one directory).
-fn module_file(
-    from_dir: &Path,
-    level: usize,
-    path: &[String],
-    search_roots: &[PathBuf],
-) -> Result<(PathBuf, String), ModuleError> {
-    if path.is_empty() {
-        return Err(ModuleError::EmptyModulePath);
-    }
-    let display_name = path.join(".");
-    if level > 0 {
-        let mut base = from_dir.to_path_buf();
-        for _ in 1..level {
-            base.pop();
-        }
-        return Ok((module_path_under(base, path), display_name));
-    }
-
-    let local = module_path_under(from_dir.to_path_buf(), path);
-    if local.exists() {
-        return Ok((local, display_name));
-    }
-    for root in search_roots {
-        let candidate = module_path_under(root.clone(), path);
-        if candidate.exists() {
-            return Ok((candidate, display_name));
-        }
-    }
-    Ok((local, display_name))
 }
 
 fn read_and_parse(path: &Path) -> Result<Vec<Stmt>, ModuleError> {

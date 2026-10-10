@@ -16,7 +16,7 @@
 //! The container is a directory followed by records:
 //!
 //! ```text
-//! mojito-package 7
+//! mojito-package 8
 //! <the directory's length, 8 bytes little-endian>
 //! <the directory, as bytecode>
 //! <the payload: every record, as bytecode>
@@ -25,7 +25,8 @@
 //! The directory holds the header and the payload range of every record:
 //! the interface, the source-file table every body's locations name, the
 //! sorted trait list, each struct and function declaration (sorted by
-//! name), each module record (by path), the declaration interfaces, and
+//! name), each module record (by dotted module name, beside its source
+//! file's canonical and stamped paths), the declaration interfaces, and
 //! each body (in package order, with its runtime parameter count, its
 //! reference parameter mask, and a by-name permutation). Every record is
 //! postcard bytecode; a module record and the declaration interfaces (one
@@ -47,7 +48,7 @@ use std::ops::{Deref, Range};
 use std::sync::{Arc, Mutex, OnceLock};
 
 /// The container format this compiler writes and reads.
-pub const PACKAGE_FORMAT: &str = "mojito-package 7";
+pub const PACKAGE_FORMAT: &str = "mojito-package 8";
 
 /// A package file's bytes: mapped from the file, or owned when the package
 /// was just built.
@@ -98,14 +99,24 @@ pub struct Package {
     pub header: PackageHeader,
     pub interface: PackageInterface,
     pub declarations: Arc<PackageDeclarations>,
-    /// Each module's encoded record, beside its canonical source path:
-    /// copied out of the file, since the linker that reads them sits above
-    /// MIR and holds no [`PackageBytes`].
-    pub modules: Vec<(String, Vec<u8>)>,
+    /// Each module's encoded record, beside the module's identity: copied
+    /// out of the file, since the linker that reads them sits above MIR and
+    /// holds no [`PackageBytes`].
+    pub modules: Vec<(PackagedModuleKey, Vec<u8>)>,
     /// The encoded declaration interfaces, copied out for the checker as
     /// the module records are.
     pub checked: Vec<u8>,
     pub bodies: PackageBodies,
+}
+
+/// Which module a package's module record is: its dotted name, the
+/// canonical path of its source file, and the path its declarations'
+/// locations name.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct PackagedModuleKey {
+    pub name: String,
+    pub canonical: String,
+    pub path: String,
 }
 
 /// A package's MIR struct and function declarations, each decoded the
@@ -365,7 +376,7 @@ pub fn write_package(
     header: &PackageHeader,
     interface: &PackageInterface,
     program: &MirProgram,
-    modules: &[(String, Vec<u8>)],
+    modules: &[(PackagedModuleKey, Vec<u8>)],
     checked: &[u8],
 ) -> Result<Vec<u8>, PackageError> {
     let mut findings = program.invariant_errors.clone();
@@ -407,7 +418,7 @@ pub fn write_package(
         .collect::<Result<Vec<_>, PackageError>>()?;
     let modules = modules
         .iter()
-        .map(|(path, bytes)| (path.clone(), record(bytes)))
+        .map(|(key, bytes)| (key.clone(), record(bytes)))
         .collect();
     let checked = record(checked);
     let bodies = program
@@ -500,13 +511,11 @@ pub fn read_package(bytes: PackageBytes) -> Result<Package, PackageError> {
     drop(decoding);
     let files = from_bytecode(payload.get(&directory.files), "files")?;
     let traits = from_bytecode(payload.get(&directory.traits), "traits")?;
-    let copied = |records: Vec<(String, Range<usize>)>| {
-        records
-            .into_iter()
-            .map(|(path, range)| (path, payload.get(&range).to_vec()))
-            .collect()
-    };
-    let modules = copied(directory.modules);
+    let modules = directory
+        .modules
+        .into_iter()
+        .map(|(key, range)| (key, payload.get(&range).to_vec()))
+        .collect();
     let checked = payload.get(&directory.checked).to_vec();
     let declarations = Arc::new(PackageDeclarations {
         payload: payload.clone(),
@@ -545,7 +554,8 @@ struct PackageDirectory {
     structs: Vec<(String, Range<usize>)>,
     /// Each function declaration's lowered name and record, sorted by name.
     functions: Vec<(String, Range<usize>)>,
-    modules: Vec<(String, Range<usize>)>,
+    /// Each module record, beside the module's identity.
+    modules: Vec<(PackagedModuleKey, Range<usize>)>,
     checked: Range<usize>,
     /// Each body, in package order.
     bodies: Vec<BodyEntry>,
@@ -562,11 +572,12 @@ impl PackageDirectory {
         let ranges = [&self.interface, &self.files, &self.traits, &self.checked]
             .into_iter()
             .chain(
-                [&self.structs, &self.functions, &self.modules]
+                [&self.structs, &self.functions]
                     .into_iter()
                     .flatten()
                     .map(|(_, range)| range),
             )
+            .chain(self.modules.iter().map(|(_, range)| range))
             .chain(self.bodies.iter().map(|entry| &entry.range));
         for range in ranges {
             if range.start > range.end || !(..=self.payload).contains(&range.end) {

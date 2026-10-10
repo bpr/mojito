@@ -14,10 +14,11 @@ use crate::compiler::{Compiler, CompilerError};
 use crate::interface::PackageInterface;
 use crate::mir::MirProgram;
 use crate::mir::text::package::{
-    PackageBodies, PackageBytes, PackageDeclarations, PackageHeader, read_package, write_package,
+    PackageBodies, PackageBytes, PackageDeclarations, PackageHeader, PackagedModuleKey,
+    read_package, write_package,
 };
 use crate::module::{LinkOptions, bundled_root, link_source_recording};
-use crate::module_package::PackageModules;
+use crate::module_package::{ModuleIdentity, PackageModules};
 use std::collections::{BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, OnceLock};
@@ -144,7 +145,17 @@ fn import(bytes: PackageBytes, header: &PackageHeader) -> Result<ImportedPackage
         ));
     }
     Ok(ImportedPackage {
-        modules: PackageModules::new(package.modules),
+        modules: PackageModules::new(
+            &package.header.root,
+            package.modules.into_iter().map(|(key, bytes)| {
+                let identity = ModuleIdentity {
+                    name: key.name,
+                    canonical: key.canonical,
+                    path: key.path,
+                };
+                (identity, bytes)
+            }),
+        ),
         interface: Arc::new(package.interface),
         checked: Arc::new(crate::checker::DeclarationInterfaces::read(
             package.checked,
@@ -195,8 +206,8 @@ fn build(root: &Path, header: &PackageHeader) -> Result<Vec<u8>, CompilerError> 
             .or_default()
             .push((*statement).clone());
     }
-    for (path, record) in &mut records {
-        record.replace_declarations(prepared.remove(path).unwrap_or_default());
+    for (identity, record) in &mut records {
+        record.replace_declarations(prepared.remove(&identity.canonical).unwrap_or_default());
     }
     if let Some(path) = prepared.keys().next() {
         return Err(CompilerError::Verify(vec![format!(
@@ -205,7 +216,14 @@ fn build(root: &Path, header: &PackageHeader) -> Result<Vec<u8>, CompilerError> 
     }
     let modules = records
         .iter()
-        .map(|(path, record)| Ok((path.clone(), record.encode()?)))
+        .map(|(identity, record)| {
+            let key = PackagedModuleKey {
+                name: identity.name.clone(),
+                canonical: identity.canonical.clone(),
+                path: identity.path.clone(),
+            };
+            Ok((key, record.encode()?))
+        })
         .collect::<Result<Vec<_>, String>>()
         .map_err(|error| CompilerError::Verify(vec![error]))?;
     let mut interface = exports.summaries;

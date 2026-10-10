@@ -852,10 +852,10 @@ declarations, module records, and declaration interfaces, one file per
 package. The bundled library's is the only producer today
 (`src/package.rs`). No part of a package is MIR text: it is a directory
 followed by bytecode records, as upstream's package is MLIR bytecode
-throughout. The format line is `mojito-package 7`.
+throughout. The format line is `mojito-package 8`.
 
 ```text
-mojito-package 7
+mojito-package 8
 <the directory's length, 8 bytes little-endian>
 <the directory, as bytecode>
 <the payload: every record, as bytecode>
@@ -865,7 +865,9 @@ mojito-package 7
   `compiler`, `source`), the payload's length, and the payload range of
   every record: the interface, the `files` table, the sorted trait list,
   each struct and function declaration (sorted by name), each module
-  record (by path), the declaration interfaces, and each body. A body's
+  record (by dotted module name, beside its source file's canonical path
+  and the path its declarations are stamped with), the declaration
+  interfaces, and each body. A body's
   entry carries its name, its runtime parameter count, and its
   `ref_params` mask, so overload resolution and the loan analysis read a
   body's signature without decoding it; the bodies keep package order,
@@ -921,7 +923,8 @@ mojito-package 7
   declaration record that does not decode fails the compilation.
 - A module record is opaque to the container: it is the linker's
   (`module::package::PackageModule`), `postcard` bytecode of the module's
-  dotted name, the loads its link asked for, its export and namespace
+  dotted name, the dotted names of the loads its link asked for, its
+  export and namespace
   tables, and its linked declarations with their bodies emptied, as the
   AST's serde form, which omits every `SyntaxId` (a decoded node draws a
   fresh one, as a parsed one does) and every module stamp (the importer

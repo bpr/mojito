@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R567**.
+Next free ID: **R568**.
 
 ## Ordered Work
 
@@ -49,23 +49,6 @@ belongs to is named in its title.
 Scope: what remains of the plan's stages, and what the pipeline order still
 leaves to close. A defect found on the way is filed by its kind; a
 divergence from the pin goes to a catch-up track, however small.
-
-- [ ] **R565 (P6) An importer's link probes the library's files to resolve
-  a library import**
-
-  On the package path, `module_path_under` still checks the filesystem
-  for `std/…/__init__.mojo` and then `std/….mojo` to find a module the
-  package already records.
-  - Seen as two `statx` calls for `hashlib._ahash` under
-    `assets/ok/hashlib_bytes_hash.mojo`; Hello World probes only the
-    prelude.
-  - Upstream resolves an import against the package's module table and
-    consults no library file.
-  - The lever: resolve a `std.*` path through `PackageModules` before the
-    filesystem probe (`crates/mojito-module/src/module.rs`).
-  - Found while landing R562 (2026-10-10).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
 
 - [ ] **R559 (P6) An importer's front end reads the package's struct,
   trait, and function declarations as AST**
@@ -4557,6 +4540,23 @@ retained on purpose and re-probed rather than fixed; they are listed in
   - Pinned by `conformance/probes/callable_parameter_by_value_capture.mojo`.
   - Ledger name: `callable-parameter-by-value-capture`.
   - Found while landing R526 (2026-10-09).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R567 A user `std/` directory merges into the bundled `std`, where
+  the pin binds `std` to its library package alone**
+
+  `from std.mine import mine` runs in Mojito when `std/mine.mojo` sits
+  beside the entry file or under a `-I` root; the pin rejects it ("unable
+  to locate module 'mine'") in both cases.
+  - Mojito probes every root for the whole dotted path, so a user
+    `std/x.mojo` also shadows the library's `std.x`.
+  - Following the pin means binding the top-level `std` once, to the
+    library package, before any user root is searched for its members.
+  - Reproduce with a scratch directory holding `std/mine.mojo` and the
+    importing file; no probe is checked in, since a `std/` beside the
+    probes would reach every other probe's imports.
+  - Found while landing R565 (2026-10-10).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

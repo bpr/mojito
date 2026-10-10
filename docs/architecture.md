@@ -136,12 +136,17 @@ import (every compilation that links the bundled library):
   derived `copy`/`__hash__`, qualified packs, folded SIMD bounds), with
   their bodies emptied (`ast::clear_bodies`,
   `PackageModule::replace_declarations`). It is bytecode (`postcard` over
-  the AST's serde form), keyed by the module's canonical source path, and
-  decoded when a link reaches the module. The importer's link
+  the AST's serde form), keyed by the module's dotted name beside its
+  canonical and stamped source paths (`PackageModules`), and decoded when
+  a link reaches the module. The importer's link
   (`module::link_*_with_package`) replays a record in place of reading,
-  parsing, and resolving the module, and stamps its declarations with the
-  path it reached the module by, so each module links exactly what
-  preparing a source link gives it, bodiless; no library source is read.
+  parsing, and resolving the module, finding each recorded load by name,
+  and stamps its declarations with the recorded path, so each module
+  links exactly what preparing a source link gives it, bodiless. An import
+  resolves against the package's module table at the library root's
+  position in the search order (`Linker::find_at_root`), as upstream's
+  importer finds a module in a package: no library file is probed,
+  canonicalized, or read.
 - **The interface** is what an importer's check reads from the package's
   bodies: the modules the package compiled, their top-level names, each
   module-level callable's transfer and call-through effect summaries, and

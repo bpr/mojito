@@ -16,25 +16,52 @@
 use mojito_ast::ast::Stmt;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
-/// The records a package build's link made, each beside the canonical path
-/// of its module's source file.
-pub type ModuleRecords = Vec<(String, PackageModule)>;
+/// The records a package build's link made, each beside its module's
+/// identity.
+pub type ModuleRecords = Vec<(ModuleIdentity, PackageModule)>;
 
-/// A package's module records, by the canonical path of each module's
-/// source file.
+/// Which module a record is: its dotted name, by which the package's
+/// module table finds it, and the source file it was compiled from.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ModuleIdentity {
+    /// The module's dotted name (`std.io.file`).
+    pub name: String,
+    /// The canonical path of its source file, its identity in a link.
+    pub canonical: String,
+    /// The path its declarations' locations name.
+    pub path: String,
+}
+
+/// A package's module table: each module's encoded record, by the
+/// module's dotted name, and the library root the package was built from.
 #[derive(Debug, Default)]
 pub struct PackageModules {
-    modules: HashMap<String, Vec<u8>>,
+    root: PathBuf,
+    modules: HashMap<String, PackagedModule>,
 }
 
 impl PackageModules {
-    /// The modules whose encoded records `sections` holds, each beside the
-    /// canonical path of its source file.
-    pub fn new(sections: impl IntoIterator<Item = (String, Vec<u8>)>) -> Self {
+    /// The modules of the library under `root` whose encoded records
+    /// `sections` holds, each beside its identity.
+    pub fn new(
+        root: impl Into<PathBuf>,
+        sections: impl IntoIterator<Item = (ModuleIdentity, Vec<u8>)>,
+    ) -> Self {
         Self {
-            modules: sections.into_iter().collect(),
+            root: root.into(),
+            modules: sections
+                .into_iter()
+                .map(|(identity, bytes)| {
+                    let module = PackagedModule {
+                        canonical: identity.canonical.into(),
+                        path: identity.path.into(),
+                        bytes,
+                    };
+                    (identity.name, module)
+                })
+                .collect(),
         }
     }
 
@@ -48,15 +75,38 @@ impl PackageModules {
         self.modules.is_empty()
     }
 
-    /// The record of the module at `canonical`, decoded, when the package
-    /// holds one under the dotted name `name`; `None` otherwise, or when
-    /// the record does not decode, and the module links from source.
-    pub(crate) fn module(&self, canonical: &Path, name: &str) -> Option<PackageModule> {
-        let bytes = self.modules.get(canonical.to_str()?)?;
+    /// The library root the package's modules were compiled under.
+    pub(crate) fn root(&self) -> &Path {
+        &self.root
+    }
+
+    /// The module the package records under the dotted name `name`, if
+    /// any, reading no record.
+    pub(crate) fn entry(&self, name: &str) -> Option<&PackagedModule> {
+        self.modules.get(name)
+    }
+
+    /// The record of the module `name`, decoded, when the package holds one
+    /// for the source file `canonical`; `None` otherwise, or when the record
+    /// does not decode, and the module links from source.
+    pub(crate) fn module(&self, name: &str, canonical: &Path) -> Option<PackageModule> {
+        let module = self
+            .entry(name)
+            .filter(|module| module.canonical == canonical)?;
         let _decode = mojito_common::timing::span("package.module");
         mojito_common::timing::count("package_modules", 1);
-        PackageModule::decode(bytes).filter(|record| record.name == name)
+        PackageModule::decode(&module.bytes).filter(|record| record.name == name)
     }
+}
+
+/// One module of a package's table.
+#[derive(Debug)]
+pub(crate) struct PackagedModule {
+    /// The canonical path of its source file.
+    pub(crate) canonical: PathBuf,
+    /// The path its declarations' locations name.
+    pub(crate) path: PathBuf,
+    bytes: Vec<u8>,
 }
 
 /// What linking one module from source produced.
@@ -65,10 +115,9 @@ pub struct PackageModule {
     /// The module's dotted name (`std.io.file`), which its linked names
     /// spell.
     pub(crate) name: String,
-    /// Every module its link asked to load, whether loaded already or not,
-    /// in order: the path it was asked by, and the dotted name it asked
-    /// for.
-    pub(crate) loads: Vec<(String, String)>,
+    /// The dotted name of every module its link asked to load, whether
+    /// loaded already or not, in order.
+    pub(crate) loads: Vec<String>,
     /// The declarations it exposes by local name, and the linked name each
     /// binds.
     pub(crate) exports: BTreeMap<String, String>,
@@ -111,7 +160,7 @@ mod tests {
     fn a_record_reads_back_only_whole_and_under_its_name() {
         let record = PackageModule {
             name: "std.probe".to_string(),
-            loads: vec![("/lib/std/other.mojo".to_string(), "std.other".to_string())],
+            loads: vec!["std.other".to_string()],
             exports: BTreeMap::from([("f".to_string(), "__module$std$probe$f".to_string())]),
             namespaces: BTreeMap::new(),
             declarations: mojito_parser::parser::Parser::new(mojito_lexer::lexer::Lexer::new(
@@ -121,27 +170,42 @@ mod tests {
             .expect("parses"),
         };
         let bytes = record.encode().expect("encodes");
-        let package = PackageModules::new([
-            ("/lib/std/probe.mojo".to_string(), bytes.clone()),
-            (
-                "/lib/std/torn.mojo".to_string(),
-                bytes[..bytes.len() / 2].to_vec(),
-            ),
-        ]);
-        let read = package
-            .module(Path::new("/lib/std/probe.mojo"), "std.probe")
-            .expect("decodes");
+        let identity = |name: &str, file: &str| ModuleIdentity {
+            name: name.to_string(),
+            canonical: format!("/lib/std/{file}"),
+            path: format!("/lib/./std/{file}"),
+        };
+        let package = PackageModules::new(
+            "/lib",
+            [
+                (identity("std.probe", "probe.mojo"), bytes.clone()),
+                (
+                    identity("std.torn", "torn.mojo"),
+                    bytes[..bytes.len() / 2].to_vec(),
+                ),
+                (identity("probe", "probe.mojo"), bytes.clone()),
+            ],
+        );
+        let canonical = Path::new("/lib/std/probe.mojo");
+        let read = package.module("std.probe", canonical).expect("decodes");
         assert_eq!(read.declarations, record.declarations);
         assert_eq!(read.loads, record.loads);
         assert_eq!(read.exports, record.exports);
+        assert_eq!(
+            package
+                .entry("std.probe")
+                .map(|module| module.path.as_path()),
+            Some(Path::new("/lib/./std/probe.mojo"))
+        );
+        assert!(package.module("probe", canonical).is_none());
         assert!(
             package
-                .module(Path::new("/lib/std/probe.mojo"), "probe")
+                .module("std.probe", Path::new("/elsewhere/std/probe.mojo"))
                 .is_none()
         );
         assert!(
             package
-                .module(Path::new("/lib/std/torn.mojo"), "std.probe")
+                .module("std.torn", Path::new("/lib/std/torn.mojo"))
                 .is_none()
         );
     }
