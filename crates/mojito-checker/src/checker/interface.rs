@@ -113,12 +113,15 @@ impl DeclarationInterfaces {
 
 /// What a package build's check exports of its library.
 ///
-/// Each module's checker record, encoded, each declaration's rows, which
+/// Each library module's path, each declaration's rows, which
 /// [`Self::records`] encodes as the residue of the declaration's record
-/// once its lowering is known, and the effect summaries of its callables.
+/// once its lowering is known, and the overload facts and effect summaries
+/// its lowered part holds.
 pub struct InterfaceExport {
-    modules: BTreeMap<String, Vec<u8>>,
+    modules: std::collections::BTreeSet<String>,
     declarations: BTreeMap<String, (DeclarationInterface, Vec<(Table, String)>)>,
+    /// Each declaration's overload facts, by declaration.
+    overloads: BTreeMap<String, mojito_symbol::symbol::OverloadSets>,
     declaring: DeclaringModules,
     /// The transfer effects of each module-level callable and method whose
     /// body the check summarized, by callable identity.
@@ -140,8 +143,8 @@ impl std::fmt::Debug for InterfaceExport {
 
 impl InterfaceExport {
     /// The package's declaration records: `structs` and `functions`, the
-    /// library's lowered declarations, and the check's effect summaries,
-    /// each in the record of the declaration it belongs to, beside that
+    /// library's lowered declarations, and the check's overload facts and
+    /// effect summaries, each in the record of the declaration it belongs to, beside that
     /// declaration's residue, which leaves out what its lowered
     /// declarations say.
     ///
@@ -178,6 +181,13 @@ impl InterfaceExport {
                 }),
         );
         unplaced.extend(
+            self.overloads
+                .into_iter()
+                .filter_map(|(declaration, sets)| {
+                    records.place_overloads(&declaration, sets).err()
+                }),
+        );
+        unplaced.extend(
             self.call_through_effects
                 .into_iter()
                 .filter_map(|(callable, effects)| {
@@ -190,6 +200,7 @@ impl InterfaceExport {
         for (name, (mut interface, mut keys)) in self.declarations {
             interface.sort();
             keys.sort();
+            keys.dedup();
             let mut methods: Vec<String> = interface
                 .structs
                 .iter()
@@ -243,24 +254,17 @@ impl std::fmt::Debug for InstalledInterfaces {
 
 impl InstalledInterfaces {
     /// The interfaces of `modules`, in the order the link reached them,
-    /// from `package`: each module's own record (its overload sets, its
-    /// elaborated constants, and its module-scope compile-time facts)
-    /// decodes now, and no declaration's.
-    ///
-    /// # Errors
-    ///
-    /// The first module record that does not decode.
+    /// from `package`. Nothing decodes here: a declaration's record decodes
+    /// the first time a lookup names one of its keys.
     pub fn reaching<'a>(
         package: &Arc<DeclarationInterfaces>,
         modules: impl IntoIterator<Item = &'a str>,
-    ) -> Result<Self, String> {
+    ) -> Self {
         let count = package.package.directory().modules.len();
         let mut reached = vec![false; count];
         let mut reached_order = Vec::new();
         let mut binding_bases = vec![None; count];
         let mut binding_count = 0u32;
-        let mut records = Vec::new();
-        let mut overloads = mojito_symbol::symbol::OverloadSets::default();
         for path in modules {
             let Some(&module) = package.modules.get(path) else {
                 continue;
@@ -272,12 +276,6 @@ impl InstalledInterfaces {
             reached_order.push(module);
             binding_bases[module as usize] = Some(binding_count);
             binding_count += package.module_bindings[module as usize].len() as u32;
-            let record: ModuleRecord = mojito_ast::ast::decoding_from(path, || {
-                postcard::from_bytes(package.package.module_record(module as usize))
-            })
-            .map_err(|error| format!("the interface of `{path}` does not decode: {error}"))?;
-            overloads.extend(record.overloads.clone());
-            records.push(record);
         }
         let decoded = package
             .package
@@ -286,28 +284,35 @@ impl InstalledInterfaces {
             .iter()
             .map(|_| OnceLock::new())
             .collect();
-        Ok(Self(Arc::new(Installed {
+        Self(Arc::new(Installed {
             package: Arc::clone(package),
-            reached,
+            reached: reached.into(),
             reached_order,
             binding_bases,
             binding_count,
-            records,
-            overloads,
             decoded,
             failures: Mutex::new(Vec::new()),
-        })))
+        }))
     }
 
-    /// Every module constant of the reached modules, as the build's
-    /// comptime elaboration left it.
-    pub fn elaborated(&self) -> impl Iterator<Item = (&str, &ElaboratedConstant)> {
-        self.0.records.iter().flat_map(|record| {
-            record
-                .elaborated
-                .iter()
-                .map(|(name, constant)| (name.as_str(), constant))
-        })
+    /// The module constant `name` of a reached module, as the build's
+    /// comptime elaboration left it, decoding its declaration's record on
+    /// first use.
+    pub fn elaborated(&self, name: &str) -> Option<&ElaboratedConstant> {
+        let constants = &self.declaration(Table::Elaborated, name)?.elaborated;
+        constants
+            .binary_search_by(|(constant, _)| constant.as_str().cmp(name))
+            .ok()
+            .map(|position| &constants[position].1)
+    }
+
+    /// The reached part of the package, whose declarations answer a name
+    /// the program's own overload sets miss.
+    pub fn package_scope(&self) -> mojito_checked::package::PackageScope {
+        mojito_checked::package::PackageScope::new(
+            Arc::clone(&self.0.package.package),
+            Arc::clone(&self.0.reached),
+        )
     }
 
     /// How many declaration records have decoded.
@@ -348,7 +353,7 @@ impl InstalledInterfaces {
                         .lowered(position)
                         .ok_or_else(|| "its lowered declarations do not decode".to_string())?;
                     record.join(lowered)?;
-                    Ok(record)
+                    Ok(Box::new(record))
                 })
                 .map_err(|error| {
                     self.0
@@ -362,7 +367,7 @@ impl InstalledInterfaces {
                 })
                 .ok()
             })
-            .as_ref()
+            .as_deref()
     }
 
     /// The transfer effects the package recorded for its callable `name`,
@@ -505,6 +510,17 @@ pub(super) struct DeclarationInterface {
     /// The declaration's module-scope bindings: a `def`, its overloads
     /// merged, or a module constant.
     bindings: Vec<ModuleBinding>,
+    /// The module constant it declares, as the build's comptime elaboration
+    /// resolved it.
+    elaborated: Vec<(String, ElaboratedConstant)>,
+    /// Its module-scope compile-time facts, as the scope-0 entries of the
+    /// checker's per-scope tables.
+    comptime_dtypes: Vec<(String, SimdDtype)>,
+    comptime_parameters: Vec<(String, (usize, ParamExpr))>,
+    comptime_values: Vec<(String, Expr)>,
+    type_aliases: Vec<(String, Ty)>,
+    /// The `SIMDLength` binders it owns.
+    simd_length_binders: Vec<ParamId>,
     /// The structs whose declared parameters, fields, fieldwise
     /// initializer, and explicit-destruction facts the record leaves to
     /// their lowered declarations, sorted by name.
@@ -576,9 +592,9 @@ pub(super) struct ModuleBinding {
 }
 
 impl Checker {
-    /// The interface of every library module `program` declares something
-    /// in, from this checker's tables after it checked `program` whole, with
-    /// the module constants `elaborated` places in each module.
+    /// The interface of every library declaration `program` makes, from
+    /// this checker's tables after it checked `program` whole, with each
+    /// module constant of `elaborated` in its own declaration's record.
     ///
     /// # Errors
     ///
@@ -589,12 +605,8 @@ impl Checker {
         program: &[Stmt],
         elaborated: &[(String, String, ElaboratedConstant)],
     ) -> Result<InterfaceExport, String> {
-        let modules = DeclaringModules::of(program)?;
+        let modules = declaring_modules(program, elaborated)?;
         let builtin = Self::new();
-        let mut records: BTreeMap<String, ModuleRecord> = modules
-            .modules()
-            .map(|module| (module.clone(), ModuleRecord::default()))
-            .collect();
         let mut declarations: BTreeMap<String, (DeclarationInterface, Vec<(Table, String)>)> =
             BTreeMap::new();
         let mut unplaced = Vec::new();
@@ -632,17 +644,10 @@ impl Checker {
             };
         }
         macro_rules! export_module_scope {
-            ($source:expr, $builtin:expr, $field:ident) => {
+            ($source:expr, $builtin:expr, $table:expr, $field:ident) => {
+                let source = module_scope(&$source);
                 let builtin_scope = module_scope(&$builtin);
-                for (name, value) in module_scope(&$source) {
-                    if place(&name, builtin_scope.contains_key(&name)).is_some()
-                        && let Some(record) = modules
-                            .module_of(&name)
-                            .and_then(|module| records.get_mut(module))
-                    {
-                        record.$field.push((name, value));
-                    }
-                }
+                export_map!(source, builtin_scope, $table, $field);
             };
         }
         export_map!(self.structs, builtin.structs, Table::Structs, structs);
@@ -725,30 +730,34 @@ impl Checker {
         export_module_scope!(
             self.comptime_dtypes,
             builtin.comptime_dtypes,
+            Table::ComptimeDtypes,
             comptime_dtypes
         );
         export_module_scope!(
             self.local_comptime_parameters,
             builtin.local_comptime_parameters,
+            Table::ComptimeParameters,
             comptime_parameters
         );
         export_module_scope!(
             self.local_comptime_values,
             builtin.local_comptime_values,
+            Table::ComptimeValues,
             comptime_values
         );
         export_module_scope!(
             self.local_type_aliases,
             builtin.local_type_aliases,
+            Table::TypeAliases,
             type_aliases
         );
         for binder in &self.simd_length_binders {
-            if place(&binder.owner, builtin.simd_length_binders.contains(binder)).is_some()
-                && let Some(record) = modules
-                    .module_of(&binder.owner)
-                    .and_then(|module| records.get_mut(module))
+            if let Some(declaration) =
+                place(&binder.owner, builtin.simd_length_binders.contains(binder))
             {
+                let (record, keys) = declarations.entry(declaration).or_default();
                 record.simd_length_binders.push(binder.clone());
+                keys.push((Table::SimdLengthBinders, binder.owner.to_string()));
             }
         }
         let scope = module_scope(&self.scopes);
@@ -777,44 +786,30 @@ impl Checker {
                 keys.push((Table::Bindings, name.clone()));
             }
         }
-        for (module, name, constant) in elaborated {
-            records
-                .entry(module.clone())
-                .or_default()
-                .elaborated
-                .push((name.clone(), constant.clone()));
+        for (_, name, constant) in elaborated {
+            if let Some(declaration) = place(name, false) {
+                let (record, keys) = declarations.entry(declaration).or_default();
+                record.elaborated.push((name.clone(), constant.clone()));
+                keys.push((Table::Elaborated, name.clone()));
+            }
         }
-        for (module, record) in &mut records {
-            record.overloads = self
-                .overload_sets
-                .restricted(|name| modules.module_of(name) == Some(module.as_str()));
-        }
+        let overloads = self
+            .overload_sets
+            .own()
+            .partitioned(|name| modules.declaration_of(name).map(str::to_string))
+            .unwrap_or_else(|names| {
+                unplaced.extend(names);
+                BTreeMap::new()
+            });
         self.refuse_uncarried(&modules)?;
-        if !unplaced.is_empty() {
-            unplaced.sort();
-            unplaced.dedup();
-            return Err(format!(
-                "no library module declares {}",
-                unplaced.join(", ")
-            ));
-        }
-        let modules_encoded = records
-            .into_iter()
-            .map(|(module, mut record)| {
-                record.sort();
-                postcard::to_stdvec(&record)
-                    .map(|bytes| (module.clone(), bytes))
-                    .map_err(|error| {
-                        format!("the interface of `{module}` cannot be exported: {error}")
-                    })
-            })
-            .collect::<Result<_, _>>()?;
+        refuse_unplaced(unplaced)?;
         let callables = self.top_level_callables.borrow();
         let transfer_effects = summarized(&self.transfer_effects.borrow(), &callables);
         let call_through_effects = summarized(&self.call_through_effects.borrow(), &callables);
         Ok(InterfaceExport {
-            modules: modules_encoded,
+            modules: modules.modules().cloned().collect(),
             declarations,
+            overloads,
             declaring: modules,
             transfer_effects,
             call_through_effects,
@@ -824,8 +819,9 @@ impl Checker {
     /// Resolve every table lookup the program's own declarations miss from
     /// `installed`, and bind the reached modules' bindings below the module
     /// scope, with a block of owners reserved for them in their install
-    /// order. Only each module's own record is copied in: its overload sets
-    /// and its module-scope compile-time facts.
+    /// order. Nothing is copied in: a module-scope compile-time fact, and a
+    /// name the program's own overload sets miss, are answered from the
+    /// package declaration owning the name.
     ///
     /// # Errors
     ///
@@ -834,18 +830,6 @@ impl Checker {
         &mut self,
         installed: &InstalledInterfaces,
     ) -> Result<(), TypeError> {
-        fn extend<V: Clone>(
-            stack: &mut [HashMap<String, V>],
-            entries: &[(String, V)],
-        ) -> Result<(), TypeError> {
-            stack
-                .first_mut()
-                .ok_or_else(|| {
-                    TypeError::InvariantViolation("checker scope stack is empty".to_string())
-                })?
-                .extend(entries.iter().cloned());
-            Ok(())
-        }
         self.structs
             .attach(installed, Table::Structs, |record| &record.structs);
         self.traits
@@ -886,18 +870,9 @@ impl Checker {
             .attach(installed, Table::AppliedModuleConstants);
         self.nested_origins_read_only_functions
             .attach(installed, Table::NestedOriginsReadOnlyFunctions);
-        self.overload_sets.extend(installed.0.overloads.clone());
-        for record in &installed.0.records {
-            extend(&mut self.comptime_dtypes, &record.comptime_dtypes)?;
-            extend(
-                &mut self.local_comptime_parameters,
-                &record.comptime_parameters,
-            )?;
-            extend(&mut self.local_comptime_values, &record.comptime_values)?;
-            extend(&mut self.local_type_aliases, &record.type_aliases)?;
-            self.simd_length_binders
-                .extend(record.simd_length_binders.iter().cloned());
-        }
+        self.overload_sets = Arc::new(mojito_checked::package::ProgramOverloads::importing(Some(
+            installed.package_scope(),
+        )));
         let base = self.reserve_owners(installed.binding_count())?;
         self.installed = Some((installed.clone(), base));
         Ok(())
@@ -912,6 +887,60 @@ impl Checker {
         self.structs
             .iter_selected(|installed| installed.structs_declaring(method))
             .filter(move |(_, info)| info.methods.contains_key(method))
+    }
+
+    /// The dtype the installed module `comptime` binding `name` holds.
+    pub(super) fn installed_comptime_dtype(&self, name: &str) -> Option<&SimdDtype> {
+        self.installed_fact(Table::ComptimeDtypes, name, |record| {
+            &record.comptime_dtypes
+        })
+    }
+
+    /// The application an installed module constant the check lifted
+    /// denotes, beside its scope level.
+    pub(super) fn installed_comptime_parameter(&self, name: &str) -> Option<&(usize, ParamExpr)> {
+        self.installed_fact(Table::ComptimeParameters, name, |record| {
+            &record.comptime_parameters
+        })
+    }
+
+    /// The defining expression of an installed module compile-time value.
+    pub(super) fn installed_comptime_value(&self, name: &str) -> Option<&Expr> {
+        self.installed_fact(Table::ComptimeValues, name, |record| {
+            &record.comptime_values
+        })
+    }
+
+    /// The type an installed module type alias names.
+    pub(super) fn installed_type_alias(&self, name: &str) -> Option<&Ty> {
+        self.installed_fact(Table::TypeAliases, name, |record| &record.type_aliases)
+    }
+
+    /// Whether an installed module holds `table`'s `name`, decoding
+    /// nothing.
+    pub(super) fn installs(&self, table: Table, name: &str) -> bool {
+        self.installed
+            .as_ref()
+            .is_some_and(|(installed, _)| installed.has_key(table, name))
+    }
+
+    /// Whether any installed module holds a key of `table`, decoding
+    /// nothing.
+    pub(super) fn installs_any(&self, table: Table) -> bool {
+        self.installed
+            .as_ref()
+            .is_some_and(|(installed, _)| installed.keys(table).next().is_some())
+    }
+
+    /// Whether `binder` is a `SIMDLength` binder: one the check declared,
+    /// or one an installed declaration owns.
+    pub(super) fn is_simd_length_binder(&self, binder: &ParamId) -> bool {
+        self.simd_length_binders.contains(binder)
+            || self.installed.as_ref().is_some_and(|(installed, _)| {
+                installed
+                    .declaration(Table::SimdLengthBinders, &binder.owner)
+                    .is_some_and(|record| record.simd_length_binders.contains(binder))
+            })
     }
 
     /// The explicit-destruction obligations `own` gives the program's own
@@ -930,6 +959,22 @@ impl Checker {
         }
         table
     }
+    /// The module-scope fact `table` holds for `name` in the installed
+    /// declaration owning it, decoded on first lookup.
+    fn installed_fact<V>(
+        &self,
+        table: Table,
+        name: &str,
+        select: impl FnOnce(&DeclarationInterface) -> &Vec<(String, V)>,
+    ) -> Option<&V> {
+        let (installed, _) = self.installed.as_ref()?;
+        let entries = select(installed.declaration(table, name)?);
+        entries
+            .binary_search_by(|(entry, _)| entry.as_str().cmp(name))
+            .ok()
+            .map(|position| &entries[position].1)
+    }
+
     /// Refuse a module-scope fact of a library declaration no interface
     /// carries.
     fn refuse_uncarried(&self, modules: &DeclaringModules) -> Result<(), String> {
@@ -985,46 +1030,15 @@ where
 struct Installed {
     package: Arc<DeclarationInterfaces>,
     /// Per module, whether the link reached it.
-    reached: Vec<bool>,
+    reached: Arc<[bool]>,
     /// The reached modules, in the order the link reached them.
     reached_order: Vec<u32>,
     /// Per reached module, the ordinal of its first binding.
     binding_bases: Vec<Option<u32>>,
     binding_count: u32,
-    /// The reached modules' own records, in reach order.
-    records: Vec<ModuleRecord>,
-    /// The reached modules' overload sets, merged.
-    overloads: mojito_symbol::symbol::OverloadSets,
     /// Per declaration, its record once a lookup asked for it.
-    decoded: Vec<OnceLock<Option<DeclarationInterface>>>,
+    decoded: Vec<OnceLock<Option<Box<DeclarationInterface>>>>,
     failures: Mutex<Vec<String>>,
-}
-
-/// One library module's facts an importer reads whole: the overload sets
-/// MIR lowering asks about by name, the constants the importer's
-/// elaboration reads, and the module scope's compile-time facts.
-#[derive(Default, serde::Serialize, serde::Deserialize)]
-struct ModuleRecord {
-    overloads: mojito_symbol::symbol::OverloadSets,
-    /// The module's constants as the build's comptime elaboration resolved
-    /// them.
-    elaborated: Vec<(String, ElaboratedConstant)>,
-    comptime_dtypes: Vec<(String, SimdDtype)>,
-    comptime_parameters: Vec<(String, (usize, ParamExpr))>,
-    comptime_values: Vec<(String, Expr)>,
-    type_aliases: Vec<(String, Ty)>,
-    simd_length_binders: Vec<ParamId>,
-}
-
-impl ModuleRecord {
-    fn sort(&mut self) {
-        by_name(&mut self.elaborated);
-        by_name(&mut self.comptime_dtypes);
-        by_name(&mut self.comptime_parameters);
-        by_name(&mut self.comptime_values);
-        by_name(&mut self.type_aliases);
-        self.simd_length_binders.sort();
-    }
 }
 
 impl DeclarationInterface {
@@ -1164,6 +1178,12 @@ impl DeclarationInterface {
         by_name(&mut self.owned_collectors);
         by_name(&mut self.collector_names);
         by_name(&mut self.explicit_destroy);
+        by_name(&mut self.elaborated);
+        by_name(&mut self.comptime_dtypes);
+        by_name(&mut self.comptime_parameters);
+        by_name(&mut self.comptime_values);
+        by_name(&mut self.type_aliases);
+        self.simd_length_binders.sort();
         self.bindings
             .sort_by(|left, right| left.name.cmp(&right.name));
         self.projected_structs
@@ -1546,4 +1566,31 @@ fn scope_names<V>(stack: &[HashMap<String, V>]) -> Vec<String> {
         .first()
         .map(|scope| scope.keys().cloned().collect())
         .unwrap_or_default()
+}
+
+/// The module declaring each library declaration of `program`, and each
+/// constant of `elaborated`: one the elaboration folded away (a type
+/// handle) is still a declaration of its module.
+fn declaring_modules(
+    program: &[Stmt],
+    elaborated: &[(String, String, ElaboratedConstant)],
+) -> Result<DeclaringModules, String> {
+    let mut modules = DeclaringModules::of(program)?;
+    for (module, name, _) in elaborated {
+        modules.declare(name, module)?;
+    }
+    Ok(modules)
+}
+
+/// Refuse a library fact no library declaration owns, naming each.
+fn refuse_unplaced(mut unplaced: Vec<String>) -> Result<(), String> {
+    if unplaced.is_empty() {
+        return Ok(());
+    }
+    unplaced.sort();
+    unplaced.dedup();
+    Err(format!(
+        "no library module declares {}",
+        unplaced.join(", ")
+    ))
 }

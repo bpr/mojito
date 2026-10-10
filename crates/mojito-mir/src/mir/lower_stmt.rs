@@ -1775,7 +1775,7 @@ impl Flatten<'_> {
                 enclosing_binders: self.enclosing_binders.clone(),
                 comptime_thunks: std::mem::take(&mut self.comptime_thunks),
                 parameter_reads: self.parameter_reads.clone(),
-                overloads: self.overloads.clone(),
+                overloads: std::sync::Arc::clone(&self.overloads),
                 checked: std::sync::Arc::clone(&self.checked),
                 active_semantics: Vec::new(),
                 aliases: self.aliases.clone(),

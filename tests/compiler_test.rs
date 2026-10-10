@@ -3916,10 +3916,7 @@ fn a_package_reads_back_to_the_bytes_it_was_written_as() {
         let declaring =
             DeclaringModules::of(compiled.checked().statements()).expect("one module per name");
         let mut records = DeclarationRecords {
-            modules: declaring
-                .modules()
-                .map(|module| (module.clone(), vec![0]))
-                .collect(),
+            modules: declaring.modules().cloned().collect(),
             ..DeclarationRecords::default()
         };
         for name in &program.declarations.traits {

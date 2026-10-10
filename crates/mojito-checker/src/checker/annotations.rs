@@ -108,6 +108,7 @@ impl Checker {
             .iter()
             .rev()
             .find_map(|scope| scope.get(name))
+            .or_else(|| self.installed_comptime_dtype(name))
     }
 }
 

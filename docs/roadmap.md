@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R575**.
+Next free ID: **R577**.
 
 ## Ordered Work
 
@@ -49,30 +49,6 @@ belongs to is named in its title.
 Scope: what remains of the plan's stages, and what the pipeline order still
 leaves to close. A defect found on the way is filed by its kind; a
 divergence from the pin goes to a catch-up track, however small.
-
-- [ ] **R563 (P6) An importer decodes every reached module's overload sets
-  and module constants eagerly, where upstream resolves one on first
-  lookup**
-
-  Each compilation decodes the module record of every library module its
-  link reached, though a declaration's own record decodes only when a
-  lookup names it.
-  - That is 0.2 ms of Hello World's 14 ms, release (`package.interfaces`).
-  - The record holds the module's overload sets, its elaborated module
-    constants, and its module-scope compile-time facts.
-  - Each checker pass then clones the merged overload sets into its fresh
-    `Checker`.
-  - The elaborator's conformance oracle (`ConformanceOracle::importing`)
-    makes the same copies through `Checker::attach_interfaces`, so the
-    lever removes them there too.
-  - The overload sets cross into MIR through `CheckedProgram::overloads`,
-    and `mojito-checked` and `mojito-mir` sit below the checker, so they
-    cannot hold the checker's lookup handle.
-  - The lever: a lookup-miss view of `OverloadSets` that `CheckedProgram`
-    can carry to MIR, and a lookup miss on the elaborator's module
-    constants (`comptime::ImportedScope`).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
 
 - [ ] **R564 (P6) An importer answers a package struct's conformance to
   a trait the package never asked, ahead of any use**
@@ -138,6 +114,25 @@ divergence from the pin goes to a catch-up track, however small.
     declaration, so the residue keeps no default expression.
   - Depends on nothing.
   - Model: Fable, Not Planned.
+
+- [ ] **R575 (P6) A package declaration's overload facts restate what its
+  lowered functions already say**
+
+  A declaration record's lowered part holds its overload facts
+  (`LoweredDeclaration::overloads`) beside the function declarations that
+  imply most of them.
+  - A function's arities are its `name$ov$…` declarations' parameter
+    counts, and whether a name is a function is whether one of them, or
+    the plain name, is declared.
+  - A struct's fieldwise initializer is its `fieldwise_init` flag and
+    field list, when it declares no `__init__`.
+  - Upstream derives a name's overload set from the declarations a lookup
+    finds under it, and stores none.
+  - The lever: R560's pattern, projecting the facts the functions say out
+    of the record with a byte-for-byte guard at build time, and joining
+    them back on decode.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
 
 - [ ] **R547 A function the check lifts from a body is numbered per
   compilation, so the bundled library cannot contain one**
@@ -270,6 +265,21 @@ change that needs a new `MJRT_ABI_VERSION`.
   - An applied constant of type `Tuple` or `Int` runs natively; the frozen
     one-lane vector does not.
   - Found while landing R517 (2026-10-09).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R576 Natively, a module constant declared at a sized scalar type
+  fails IR verification**
+
+  Problem: `comptime S: UInt8 = 2`, then `print(S)`, prints `2` on the VM
+  and at the pin, and stops natively with "llvm.ptr is not builtin.integer
+  or a vector of it".
+  - The bundled `std.os.os.SEEK_END: UInt8` fails the same way, with or
+    without the compiled package.
+  - An untyped integer constant (`O_CREAT`) runs natively.
+  - R541 is the same failure for an applied constant of a sized scalar
+    type, so one fix may close both.
+  - Found while landing R563 (2026-10-10).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

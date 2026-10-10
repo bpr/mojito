@@ -473,6 +473,65 @@ mod tests {
     }
 
     #[test]
+    fn a_package_answers_overload_queries_as_its_source_does() {
+        // An importer's overload sets answer a library name from the
+        // record of the declaration owning it, as the whole library's
+        // sets answer it when the program compiles from source.
+        use crate::symbol::OverloadLookup;
+        let source = "from std.io.file import O_CREAT\n\n\
+                      def main():\n    print(O_CREAT, len(List[Int]()))\n";
+        let compile = |package: bool| {
+            Compiler::default()
+                .with_std_package(package)
+                .compile_source(source, Path::new("/probe/overloads.mojo"))
+                .expect("compiles")
+        };
+        let (from_source, from_package) = (compile(false), compile(true));
+        let whole = from_source.checked().overloads();
+        let imported = from_package.checked().overloads();
+        for (name, arity) in [("range", 1), ("range", 2), ("reversed", 1), ("hash", 1)] {
+            assert_eq!(
+                imported.function_is_overloaded(name, arity),
+                whole.function_is_overloaded(name, arity),
+                "`{name}` at {arity}"
+            );
+        }
+        for name in ["print", "len", "range", "reversed", "main", "List"] {
+            assert_eq!(
+                imported.is_function(name),
+                whole.is_function(name),
+                "`{name}`"
+            );
+        }
+        for name in ["StopIteration", "List", "String"] {
+            assert_eq!(
+                imported.fieldwise_parameters(name),
+                whole.fieldwise_parameters(name),
+                "`{name}`"
+            );
+        }
+        for (method, arity) in [
+            ("String.__init__", 1),
+            ("List.__init__", 1),
+            ("List.append", 1),
+        ] {
+            assert_eq!(
+                imported.method_is_overloaded(method, arity),
+                whole.method_is_overloaded(method, arity),
+                "`{method}` at {arity}"
+            );
+        }
+        // A module's own name is spelled through its module once linked.
+        let constant = "__module$std$io$file$O_CREAT";
+        assert_eq!(imported.comptime(constant), whole.comptime(constant));
+        assert!(imported.function_is_overloaded("range", 2));
+        assert_eq!(
+            imported.comptime("__module$std$io$file$O_CREAT"),
+            Some(0x40)
+        );
+    }
+
+    #[test]
     fn a_package_links_what_its_source_links() {
         use crate::module::{link_source_with_options, link_source_with_package};
         let package = bundled_std_package().expect("the bundled library packages");
@@ -515,10 +574,10 @@ mod tests {
             .find(|module| module.ends_with("collections/list.mojo"))
             .expect("the library has a list module");
         assert!(package.checked.declares(list));
-        crate::checker::InstalledInterfaces::reaching(
+        let installed = crate::checker::InstalledInterfaces::reaching(
             &package.checked,
             package.interface.modules.iter().map(String::as_str),
-        )
-        .expect("every module record decodes");
+        );
+        assert_eq!(installed.decoded(), 0);
     }
 }

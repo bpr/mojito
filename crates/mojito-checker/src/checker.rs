@@ -30,6 +30,7 @@ use declarations::*;
 #[allow(clippy::wildcard_imports, reason = "pages of this split module")]
 use generics::*;
 use mojito_checked::fact_store::{FactMap, FactSet, FactVec};
+use mojito_symbol::symbol::OverloadLookup;
 use mojito_types::types::{TransferSet, VariantIndex};
 #[allow(clippy::wildcard_imports, reason = "pages of this split module")]
 use operators::*;
@@ -533,8 +534,10 @@ pub struct Checker {
     /// implementation independent of declaration order.
     declared_structs: declaration_table::DeclarationSet,
     /// The program's overloaded top-level names, so an overloaded `def` owns
-    /// its binders under the signature-qualified symbol MIR names it by.
-    overload_sets: mojito_symbol::symbol::OverloadSets,
+    /// its binders under the signature-qualified symbol MIR names it by: its
+    /// own, and an imported package's, answered from the package's
+    /// declarations. Shared with the checked program it carries to MIR.
+    overload_sets: std::sync::Arc<mojito_checked::package::ProgramOverloads>,
     /// The binder owner of each struct method, shared with the elaborator.
     method_binder_owners: mojito_symbol::symbol::MethodBinderOwners,
     /// The wrapper of every trait default a top-level struct inherits, in
@@ -1096,7 +1099,7 @@ impl Checker {
             capture_contexts: RefCell::new(Vec::new()),
             structs: declaration_table::DeclarationTable::default(),
             declared_structs: declaration_table::DeclarationSet::default(),
-            overload_sets: mojito_symbol::symbol::OverloadSets::default(),
+            overload_sets: std::sync::Arc::default(),
             method_binder_owners: mojito_symbol::symbol::MethodBinderOwners::default(),
             default_wrappers: Vec::new(),
             predeclared_structs: HashSet::new(),

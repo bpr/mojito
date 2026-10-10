@@ -6,19 +6,21 @@ use mojito_ast::ast::Method;
 use mojito_ast::visit::{MutVisitor, walk_block_mut};
 
 /// The type handles a block's `comptime T = ...` statements bound so far:
-/// each handle, and its source spelling.
+/// each handle, and its source spelling. A module block also reads the
+/// type handles of the package its program imports, on first lookup.
 #[derive(Default)]
-pub(super) struct TypeAliases {
+pub(super) struct TypeAliases<'a> {
     values: HashMap<String, CtValue>,
     sources: HashMap<String, Type>,
+    installed: Option<&'a InstalledInterfaces>,
 }
 
-impl TypeAliases {
-    /// Bind `name` when `value` is a type handle with a source spelling.
-    pub(super) fn bind(&mut self, name: &str, value: &CtValue) {
-        if let Some((value, source)) = type_alias(value) {
-            self.values.insert(name.to_string(), value);
-            self.sources.insert(name.to_string(), source);
+impl<'a> TypeAliases<'a> {
+    /// A module block's aliases, over the package `installed` holds.
+    pub(super) fn importing(installed: Option<&'a InstalledInterfaces>) -> Self {
+        Self {
+            installed,
+            ..Self::default()
         }
     }
 }
@@ -29,7 +31,7 @@ impl Elab<'_> {
     pub(super) fn block(
         &self,
         stmts: &[Stmt],
-        env: &mut HashMap<String, CtValue>,
+        env: &mut ConstEnv<'_>,
         in_fn: bool,
     ) -> Result<Vec<Stmt>, ComptimeError> {
         // A local `comptime` a template body keeps is a binder of its own
@@ -50,9 +52,9 @@ impl Elab<'_> {
     pub(super) fn block_statements(
         &self,
         stmts: &[Stmt],
-        env: &mut HashMap<String, CtValue>,
+        env: &mut ConstEnv<'_>,
         in_fn: bool,
-        aliases: TypeAliases,
+        aliases: TypeAliases<'_>,
     ) -> Result<Vec<Stmt>, ComptimeError> {
         let mut out = Vec::new();
         // Type handles bound by `comptime T = ...` in this block have no
@@ -63,7 +65,9 @@ impl Elab<'_> {
         let TypeAliases {
             values: mut type_aliases,
             sources: mut source_aliases,
+            installed,
         } = aliases;
+        let installed_alias = |name: &str| installed_value(installed, name).and_then(type_alias);
         // The pack elements the template's aliases denote, as written.
         let mut element_aliases: HashMap<String, Expr> = HashMap::new();
         for stmt in stmts {
@@ -87,14 +91,24 @@ impl Elab<'_> {
             // Runtime uses of the bindings elaborated so far cross explicitly
             // (`materialize[X]()`, `comptime(e)`) or are rejected.
             self.fold_runtime_crossings(&mut out[first_new..], env)?;
-            if !type_aliases.is_empty() {
-                let subs: Subs = &|name| type_aliases.get(name).cloned();
+            if !type_aliases.is_empty() || installed.is_some() {
+                let subs: Subs = &|name| {
+                    type_aliases
+                        .get(name)
+                        .cloned()
+                        .or_else(|| installed_alias(name).map(|(value, _)| value))
+                };
                 for statement in &mut out[first_new..] {
                     *statement = rewrite_stmt_cloned(statement, subs, true);
                 }
             }
-            if !source_aliases.is_empty() {
-                substitute_type_bindings_in_block(&mut out[first_new..], &source_aliases);
+            if !source_aliases.is_empty() || installed.is_some() {
+                substitute_type_bindings_in_block(&mut out[first_new..], &|name| {
+                    source_aliases
+                        .get(name)
+                        .cloned()
+                        .or_else(|| installed_alias(name).map(|(_, source)| source))
+                });
             }
             if !element_aliases.is_empty() {
                 spell_aliases_in_conditions(&mut out[first_new..], &element_aliases);
@@ -129,7 +143,7 @@ impl Elab<'_> {
     pub(super) fn stmt(
         &self,
         stmt: &Stmt,
-        env: &mut HashMap<String, CtValue>,
+        env: &mut ConstEnv<'_>,
         in_fn: bool,
         out: &mut Vec<Stmt>,
     ) -> Result<(), ComptimeError> {
@@ -214,8 +228,10 @@ impl Elab<'_> {
                 // a reflection handle such an initializer may name
                 // (`comptime types = r.field_types()`).
                 if in_fn
-                    && (env[name].typelist_elements().is_some()
-                        || matches!(env[name], CtValue::Reflected(_)))
+                    && env.get(name).is_some_and(|value| {
+                        value.typelist_elements().is_some()
+                            || matches!(value, CtValue::Reflected(_))
+                    })
                 {
                     out.push(stmt.clone());
                     return Ok(());
@@ -223,7 +239,7 @@ impl Elab<'_> {
                 // Type and reflection handles have no runtime representation.
                 // Keep those only in the elaboration environment; subsequent
                 // comptime expressions consume them before checking/lowering.
-                if let Some(value) = env[name].materialize(span) {
+                if let Some(value) = env.get(name).and_then(|value| value.materialize(span)) {
                     out.push(rebuilt(
                         stmt,
                         StmtKind::Comptime {
@@ -354,7 +370,7 @@ impl Elab<'_> {
                 body,
             } => {
                 let body = self.def_body(&[], type_params, params, body, env)?;
-                let params = fold_default_bindings(params, env, &self.top_consts.borrow());
+                let params = fold_default_bindings(params, env, &|name| self.module_constant(name));
                 out.push(rebuilt(
                     stmt,
                     StmtKind::Def {
@@ -440,7 +456,7 @@ impl Elab<'_> {
     pub(super) fn opt_block(
         &self,
         block: &Option<Vec<Stmt>>,
-        env: &mut HashMap<String, CtValue>,
+        env: &mut ConstEnv<'_>,
         in_fn: bool,
     ) -> Result<Option<Vec<Stmt>>, ComptimeError> {
         match block {
@@ -453,7 +469,7 @@ impl Elab<'_> {
         &self,
         decl: &ParamDecl,
         arg: &ParamArg,
-        scope: &HashMap<String, CtValue>,
+        scope: &ConstEnv<'_>,
     ) -> Result<CtValue, ComptimeError> {
         match decl {
             ParamDecl::Type { name, .. } => match arg {
@@ -506,7 +522,7 @@ impl Elab<'_> {
         &self,
         name: &str,
         args: &[ParamArg],
-        scope: &HashMap<String, CtValue>,
+        scope: &ConstEnv<'_>,
     ) -> Result<CtValue, ComptimeError> {
         self.type_from_name(name, args, scope)
             .map(|ty| CtValue::Type(Box::new(ty)))
@@ -517,7 +533,7 @@ impl Elab<'_> {
     pub(super) fn param_arg_type(
         &self,
         arg: &ParamArg,
-        scope: &HashMap<String, CtValue>,
+        scope: &ConstEnv<'_>,
     ) -> Result<Ty, ComptimeError> {
         match arg {
             ParamArg::Type(t) => self.type_from_anno(t, scope),
@@ -542,7 +558,7 @@ impl Elab<'_> {
     pub(super) fn type_from_anno(
         &self,
         ty: &Type,
-        scope: &HashMap<String, CtValue>,
+        scope: &ConstEnv<'_>,
     ) -> Result<Ty, ComptimeError> {
         match ty {
             Type::Int => Ok(Ty::Int),
@@ -655,7 +671,7 @@ impl Elab<'_> {
         &self,
         name: &str,
         args: &[ParamArg],
-        scope: &HashMap<String, CtValue>,
+        scope: &ConstEnv<'_>,
     ) -> Result<Ty, ComptimeError> {
         if args.is_empty() {
             if let Some(CtValue::Type(ty)) = scope.get(name) {
@@ -837,7 +853,7 @@ impl Elab<'_> {
                     "type '{base}' has no compile-time member '{member}'"
                 ))
             })?;
-        let mut env = HashMap::new();
+        let mut env = ConstEnv::default();
         for (decl, arg) in info.decls.iter().zip(args) {
             match (decl, arg) {
                 (ParamDecl::Type { name, .. }, TyArg::Ty(ty)) => {
@@ -857,7 +873,7 @@ impl Elab<'_> {
     fn evaluated_simd_dims(
         &self,
         args: &[ParamArg],
-        scope: &HashMap<String, CtValue>,
+        scope: &ConstEnv<'_>,
     ) -> Option<(mojito_ast::ast::Dtype, i64)> {
         let [ParamArg::Value(dtype), ParamArg::Value(width)] = args else {
             return None;
@@ -879,15 +895,12 @@ impl Elab<'_> {
     /// binds ([`CtMarker::Applied`]): it applies a callable, asks a layout
     /// (`size_of[T]()`), reads an applied constant, or calls a method of a
     /// value binding (`s.byte_length()`), which the pin's interpreter runs.
-    fn applied_initializer(&self, expression: &Expr, env: &HashMap<String, CtValue>) -> bool {
-        let applied: HashSet<String> = env
-            .iter()
-            .filter(|(_, value)| matches!(value, CtValue::Marker(CtMarker::Applied)))
-            .map(|(name, _)| name.clone())
-            .collect();
+    fn applied_initializer(&self, expression: &Expr, env: &ConstEnv<'_>) -> bool {
         self.applies_callable(expression)
             || asks_layout(expression)
-            || (!applied.is_empty() && expression_names_any(expression, &applied))
+            || expression_names_any(expression, &|name| {
+                matches!(env.get(name), Some(CtValue::Marker(CtMarker::Applied)))
+            })
             || calls_value_method(expression, env)
     }
 }
@@ -916,7 +929,7 @@ impl Elab<'_> {
         &self,
         value: CtValue,
         annotation: &Type,
-        env: &HashMap<String, CtValue>,
+        env: &ConstEnv<'_>,
     ) -> CtValue {
         if !matches!(
             value,
@@ -949,12 +962,12 @@ impl Elab<'_> {
 /// (`module`) stays a name, which the check reads as its parameter value.
 fn fold_default_bindings(
     params: &[mojito_ast::ast::FnParam],
-    env: &HashMap<String, CtValue>,
-    module: &HashMap<String, CtValue>,
+    env: &ConstEnv<'_>,
+    module: &dyn Fn(&str) -> Option<CtValue>,
 ) -> Vec<mojito_ast::ast::FnParam> {
     let subs: rewrite::Subs = &|name| {
         env.get(name)
-            .filter(|value| module.get(name) != Some(*value))
+            .filter(|value| module(name).as_ref() != Some(*value))
             .cloned()
     };
     params
@@ -983,7 +996,7 @@ impl Elab<'_> {
         type_params: &[TypeParam],
         params: &[FnParam],
         body: &[Stmt],
-        env: &HashMap<String, CtValue>,
+        env: &ConstEnv<'_>,
     ) -> Result<Vec<Stmt>, ComptimeError> {
         // A body's local `comptime` bindings are its own: a later
         // declaration never reads them.
@@ -1027,7 +1040,7 @@ impl Elab<'_> {
         &self,
         stmt: &Stmt,
         value: &Expr,
-        env: &HashMap<String, CtValue>,
+        env: &ConstEnv<'_>,
         in_fn: bool,
         out: &mut Vec<Stmt>,
     ) -> bool {
@@ -1041,7 +1054,7 @@ impl Elab<'_> {
         let Some(binders) = binders.last_mut() else {
             return false;
         };
-        if !(expression_names_any(value, binders)
+        if !(expression_names_any(value, &|name| binders.contains(name))
             || self.applied_initializer(value, env)
             || mojito_checker::checker::lifts_comptime_value(value, self))
         {
@@ -1061,7 +1074,7 @@ impl Elab<'_> {
     fn keep_template_comptime_if(
         &self,
         stmt: &Stmt,
-        env: &HashMap<String, CtValue>,
+        env: &ConstEnv<'_>,
         in_fn: bool,
         out: &mut Vec<Stmt>,
     ) -> Result<bool, ComptimeError> {
@@ -1097,7 +1110,7 @@ impl Elab<'_> {
     fn keep_template_comptime_for(
         &self,
         stmt: &Stmt,
-        env: &HashMap<String, CtValue>,
+        env: &ConstEnv<'_>,
         in_fn: bool,
         out: &mut Vec<Stmt>,
     ) -> Result<bool, ComptimeError> {
@@ -1114,7 +1127,7 @@ impl Elab<'_> {
         self.template_binders.borrow_mut().push(binders);
         // The index shadows a module constant of its name in the body.
         let mut inner = env.clone();
-        inner.remove(var);
+        inner.shadow(var);
         let body = self.block(body, &mut inner, true);
         self.template_binders.borrow_mut().pop();
         out.push(rebuilt(
@@ -1147,13 +1160,13 @@ fn asks_layout(expression: &Expr) -> bool {
 
 /// Whether `expression` calls a method of a binding of `env` that holds a
 /// value (`S.byte_length()`, `w.twice()`), not a type or a handle.
-fn calls_value_method(expression: &Expr, env: &HashMap<String, CtValue>) -> bool {
-    struct Finder<'e> {
-        env: &'e HashMap<String, CtValue>,
+fn calls_value_method(expression: &Expr, env: &ConstEnv<'_>) -> bool {
+    struct Finder<'e, 'a> {
+        env: &'e ConstEnv<'a>,
         found: bool,
     }
 
-    impl mojito_ast::visit::Visitor for Finder<'_> {
+    impl mojito_ast::visit::Visitor for Finder<'_, '_> {
         fn visit_expr(&mut self, expr: &Expr) {
             if let ExprKind::MethodCall { object, .. } = &expr.kind
                 && let ExprKind::Identifier(name) = &object.kind
@@ -1179,9 +1192,9 @@ fn calls_value_method(expression: &Expr, env: &HashMap<String, CtValue>) -> bool
 
 /// Whether `expression` spells one of `names` as an identifier, a call, a
 /// type, or a `Self.`-qualified parameter (an entry [`self_qualified`]).
-pub(super) fn expression_names_any(expression: &Expr, names: &HashSet<String>) -> bool {
+pub(super) fn expression_names_any(expression: &Expr, names: &dyn Fn(&str) -> bool) -> bool {
     struct Finder<'a> {
-        names: &'a HashSet<String>,
+        names: &'a dyn Fn(&str) -> bool,
         found: bool,
     }
 
@@ -1189,11 +1202,11 @@ pub(super) fn expression_names_any(expression: &Expr, names: &HashSet<String>) -
         fn visit_expr(&mut self, expr: &Expr) {
             match &expr.kind {
                 ExprKind::Identifier(name) | ExprKind::Call { name, .. } => {
-                    self.found |= self.names.contains(name);
+                    self.found |= (self.names)(name);
                 }
                 ExprKind::Member { object, field } if matches!(&object.kind, ExprKind::Identifier(base) if base == "Self") =>
                 {
-                    self.found |= self.names.contains(&self_qualified(field));
+                    self.found |= (self.names)(&self_qualified(field));
                 }
                 _ => {}
             }
@@ -1202,10 +1215,10 @@ pub(super) fn expression_names_any(expression: &Expr, names: &HashSet<String>) -
         fn visit_type(&mut self, ty: &mojito_ast::ast::Type) {
             match ty {
                 mojito_ast::ast::Type::Named(name, _) => {
-                    self.found |= self.names.contains(name.trim_start_matches('*'));
+                    self.found |= (self.names)(name.trim_start_matches('*'));
                 }
                 mojito_ast::ast::Type::SelfParam(name) => {
-                    self.found |= self.names.contains(&self_qualified(name));
+                    self.found |= (self.names)(&self_qualified(name));
                 }
                 _ => {}
             }
@@ -1315,11 +1328,11 @@ impl Elab<'_> {
     pub(super) fn freeze_struct_value_arguments(
         &self,
         program: &mut [Stmt],
-        consts: &HashMap<String, CtValue>,
+        consts: &ConstEnv<'_>,
     ) {
         struct Freezer<'e, 'a> {
             elab: &'e Elab<'a>,
-            consts: &'e HashMap<String, CtValue>,
+            consts: &'e ConstEnv<'a>,
         }
         impl MutVisitor for Freezer<'_, '_> {
             fn visit_expr_mut(&mut self, expr: &mut Expr) {
@@ -1342,12 +1355,7 @@ impl Elab<'_> {
         walk_block_mut(&mut Freezer { elab: self, consts }, program);
     }
 
-    fn freeze_arguments(
-        &self,
-        name: &str,
-        arguments: &mut [ParamArg],
-        consts: &HashMap<String, CtValue>,
-    ) {
+    fn freeze_arguments(&self, name: &str, arguments: &mut [ParamArg], consts: &ConstEnv<'_>) {
         let computed = |argument: &ParamArg| match argument {
             ParamArg::Value(expression) => matches!(
                 expression.kind,

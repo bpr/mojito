@@ -400,11 +400,10 @@ impl Compiler {
         if let Some(package) = self.std_package()
             && let Ok(linked) = link(Some(&package))
             && imports_cleanly(&linked.statements, &package.interface)
-            && let Some(importing) = importing(package, &linked.packaged)
         {
             return self.compile_importing(
                 &linked.statements,
-                Some(importing),
+                Some(importing(package, &linked.packaged)),
                 &mut CheckContext::new(),
                 None,
             );
@@ -587,17 +586,15 @@ const fn from_source(statements: Vec<Stmt>) -> LinkedProgram {
 
 /// `package` with the declaration interfaces of the modules `packaged`, the
 /// link read from its records, each declaration's to decode on first
-/// lookup; `None` when a module's own record does not decode, and the
-/// program compiles without the package.
+/// lookup.
 fn importing(
     package: Arc<ImportedPackage>,
     packaged: &[String],
-) -> Option<(Arc<ImportedPackage>, InstalledInterfaces)> {
+) -> (Arc<ImportedPackage>, InstalledInterfaces) {
     let _decode = timing::span("package.interfaces");
     let installed =
-        InstalledInterfaces::reaching(&package.checked, packaged.iter().map(String::as_str))
-            .ok()?;
-    Some((package, installed))
+        InstalledInterfaces::reaching(&package.checked, packaged.iter().map(String::as_str));
+    (package, installed)
 }
 
 /// Whether `linked` can import `package`: the link replays no declaration

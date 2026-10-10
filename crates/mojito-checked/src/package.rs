@@ -14,14 +14,20 @@
 //! each declaration of a package from one op, no phase reads a second copy
 //! of a declaration.
 //!
-//! The directory also places each library module's own checker record (its
-//! overload sets, elaborated constants, and module-scope facts).
+//! The lowered part also holds the declaration's overload facts, which MIR
+//! and the check both ask by name: an importer's program asks its own sets
+//! first and the package's owning declaration on a miss
+//! ([`ProgramOverloads`]).
+//!
+//! The directory lists each library module by path, which no record of its
+//! own describes: a module's compile-time facts and constants are each its
+//! declaration's.
 
 use crate::checked::{CallThroughEffect, TransferEffect};
 use crate::declaration::{FunctionDeclaration, StructDeclaration};
 use mojito_ast::ast::{Stmt, StmtKind};
-use mojito_symbol::symbol::{LiftedOwner, OV_SEP, lifted_owner};
-use std::collections::{BTreeMap, HashMap};
+use mojito_symbol::symbol::{LiftedOwner, OV_SEP, OverloadLookup, OverloadSets, lifted_owner};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::ops::{Deref, Range};
 use std::sync::{Arc, Mutex, OnceLock};
 
@@ -110,10 +116,21 @@ pub enum InterfaceTable {
     NestedOriginsReadOnlyFunctions,
     ExplicitDestroy,
     Bindings,
+    /// A module constant as the build's comptime elaboration resolved it.
+    Elaborated,
+    /// The module scope's compile-time facts, each under its binding's
+    /// name: a bound dtype, a lifted constant's application, a kept
+    /// compile-time value, and a type alias.
+    ComptimeDtypes,
+    ComptimeParameters,
+    ComptimeValues,
+    TypeAliases,
+    /// The `SIMDLength` binders a declaration owns, under the owner.
+    SimdLengthBinders,
 }
 
 impl InterfaceTable {
-    pub const COUNT: usize = Self::Bindings as usize + 1;
+    pub const COUNT: usize = Self::SimdLengthBinders as usize + 1;
 }
 
 /// The lowered part of a declaration's record.
@@ -133,6 +150,10 @@ pub struct LoweredDeclaration {
     pub transfer_effects: Vec<(String, Vec<TransferEffect>)>,
     /// The call-through effects of each callable it declares, likewise.
     pub call_through_effects: Vec<(String, Vec<CallThroughEffect>)>,
+    /// The overload facts of the names it owns: its functions' arities, its
+    /// methods' and its trait's requirements', its struct's fieldwise
+    /// initializer, and its constant's integer value.
+    pub overloads: OverloadSets,
 }
 
 impl LoweredDeclaration {
@@ -150,7 +171,7 @@ impl LoweredDeclaration {
 /// Where every declaration record of a package lies in its payload.
 #[derive(Debug, Default, serde::Serialize, serde::Deserialize)]
 pub struct DeclarationDirectory {
-    /// Each library module's own checker record, sorted by path.
+    /// Each library module, sorted by path.
     pub modules: Vec<ModuleEntry>,
     /// Each library declaration's record, sorted by name.
     pub declarations: Vec<DeclarationEntry>,
@@ -166,12 +187,7 @@ impl DeclarationDirectory {
     /// whose names are not strictly sorted, which the lookups by name rely
     /// on, or whose positions name nothing.
     fn validate(&self, length: usize) -> Result<(), String> {
-        let ranges = self
-            .modules
-            .iter()
-            .map(|module| &module.record)
-            .chain(self.declarations.iter().map(|entry| &entry.record));
-        for range in ranges {
+        for range in self.declarations.iter().map(|entry| &entry.record) {
             if range.start > range.end || range.end > length {
                 return Err("a declaration record overruns the payload".to_string());
             }
@@ -221,7 +237,6 @@ impl DeclarationDirectory {
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
 pub struct ModuleEntry {
     pub path: String,
-    pub record: Range<usize>,
 }
 
 /// One library declaration: what its record answers, and where it lies.
@@ -362,7 +377,7 @@ impl PackageDeclarations {
         &self.traits
     }
 
-    /// The directory, which names every declaration and module record.
+    /// The directory, which names every module and declaration record.
     pub const fn directory(&self) -> &DeclarationDirectory {
         &self.directory
     }
@@ -390,24 +405,13 @@ impl PackageDeclarations {
     /// The lowered part of the declaration the name `name` belongs to
     /// ([`DeclaringModules::declaration_of`]), decoded on first use.
     pub fn lowered_owning(&self, name: &str) -> Option<&LoweredDeclaration> {
-        let declarations = &self.directory.declarations;
-        let entry = declaration_candidates(name).find_map(|candidate| {
-            declarations
-                .binary_search_by(|entry| entry.name.as_str().cmp(candidate))
-                .ok()
-        })?;
-        self.lowered(entry)
+        self.lowered(self.owning(name)?)
     }
 
     /// The checker residue of the declaration at `entry`, undecoded.
     pub fn residue(&self, entry: usize) -> &[u8] {
         let declaration = &self.directory.declarations[entry];
         &self.payload.get(&declaration.record)[declaration.residue..]
-    }
-
-    /// The checker record of the module at `module`, undecoded.
-    pub fn module_record(&self, module: usize) -> &[u8] {
-        self.payload.get(&self.directory.modules[module].record)
     }
 
     /// How many declaration records' lowered parts have been decoded so
@@ -425,6 +429,17 @@ impl PackageDeclarations {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .clone()
+    }
+
+    /// The position of the declaration the name `name` belongs to,
+    /// decoding nothing.
+    fn owning(&self, name: &str) -> Option<usize> {
+        let declarations = &self.directory.declarations;
+        declaration_candidates(name).find_map(|candidate| {
+            declarations
+                .binary_search_by(|entry| entry.name.as_str().cmp(candidate))
+                .ok()
+        })
     }
 
     fn function_position(&self, name: &str) -> Option<usize> {
@@ -445,15 +460,125 @@ impl PackageDeclarations {
     }
 }
 
+/// The part of a package an importer's link reached, which its lookups
+/// answer from.
+#[derive(Debug, Clone)]
+pub struct PackageScope {
+    package: Arc<PackageDeclarations>,
+    /// Per module, whether the link reached it.
+    reached: Arc<[bool]>,
+}
+
+impl PackageScope {
+    /// The declarations of `package` in the modules `reached` marks.
+    pub const fn new(package: Arc<PackageDeclarations>, reached: Arc<[bool]>) -> Self {
+        Self { package, reached }
+    }
+
+    /// The overload facts of the declaration the name `name` belongs to,
+    /// decoded on first use; `None` when no reached module declares it.
+    pub fn overloads_of(&self, name: &str) -> Option<&OverloadSets> {
+        let entry = self.package.owning(name)?;
+        let module = self.package.directory.declarations[entry].module;
+        if !self.reached.get(module as usize).copied().unwrap_or(false) {
+            return None;
+        }
+        self.package
+            .lowered(entry)
+            .map(|lowered| &lowered.overloads)
+    }
+}
+
+/// A program's overload sets: its own, and the package it imports, whose
+/// declarations answer a name the own sets miss.
+///
+/// An importer declares none of its package's names, so the two never
+/// answer the same name.
+#[derive(Debug, Clone, Default)]
+pub struct ProgramOverloads {
+    own: OverloadSets,
+    package: Option<PackageScope>,
+}
+
+impl ProgramOverloads {
+    /// The sets of a program importing `package`, before its own
+    /// statements are scanned.
+    pub fn importing(package: Option<PackageScope>) -> Self {
+        Self {
+            own: OverloadSets::default(),
+            package,
+        }
+    }
+
+    /// The program's own sets.
+    pub const fn own(&self) -> &OverloadSets {
+        &self.own
+    }
+
+    /// Add the declarations of `program`, the program's own, whose
+    /// constants may read the package's.
+    pub fn scan_more(&mut self, program: &[Stmt]) {
+        let package = self.package.as_ref();
+        self.own
+            .scan_more(program, |name| package?.overloads_of(name)?.comptime(name));
+    }
+
+    /// Record the own method `source_name`'s declarations by arity
+    /// ([`OverloadSets::declare_method`]).
+    pub fn declare_method(&mut self, source_name: &str, arities: Vec<usize>) {
+        self.own.declare_method(source_name, arities);
+    }
+
+    /// The overload facts of the package declaration owning `name`.
+    fn package(&self, name: &str) -> Option<&OverloadSets> {
+        self.package.as_ref()?.overloads_of(name)
+    }
+}
+
+impl OverloadLookup for ProgramOverloads {
+    fn function_is_overloaded(&self, name: &str, arity: usize) -> bool {
+        self.own.function_is_overloaded(name, arity)
+            || self
+                .package(name)
+                .is_some_and(|sets| sets.function_is_overloaded(name, arity))
+    }
+
+    fn is_function(&self, name: &str) -> bool {
+        self.own.is_function(name)
+            || self
+                .package(name)
+                .is_some_and(|sets| sets.is_function(name))
+    }
+
+    fn method_is_overloaded(&self, source_name: &str, arity: usize) -> bool {
+        self.own.method_is_overloaded(source_name, arity)
+            || self
+                .package(source_name)
+                .is_some_and(|sets| sets.method_is_overloaded(source_name, arity))
+    }
+
+    fn fieldwise_parameters(&self, name: &str) -> Option<&[String]> {
+        self.own
+            .fieldwise_parameters(name)
+            .or_else(|| self.package(name)?.fieldwise_parameters(name))
+    }
+
+    fn comptime(&self, name: &str) -> Option<i64> {
+        self.own
+            .comptime(name)
+            .or_else(|| self.package(name)?.comptime(name))
+    }
+}
+
 /// The declarations a package build writes.
 ///
-/// Each library module's checker record, and each library declaration's
-/// record: its lowered part, which the build places name by name
-/// ([`Self::place_struct`] and its siblings), and its checker residue.
+/// Each library module, and each library declaration's record: its lowered
+/// part, which the build places name by name ([`Self::place_struct`] and
+/// its siblings), and its checker residue.
 #[derive(Debug, Default)]
 pub struct DeclarationRecords {
-    /// Each module's encoded checker record, by path.
-    pub modules: BTreeMap<String, Vec<u8>>,
+    /// Each library module's path.
+    pub modules: BTreeSet<String>,
     /// Each declaration's record, by name.
     pub declarations: BTreeMap<String, DeclarationRecord>,
     /// The module declaring each library declaration.
@@ -540,6 +665,21 @@ impl DeclarationRecords {
         Ok(())
     }
 
+    /// Put the overload facts of the names the declaration `declaration`
+    /// owns in its record.
+    ///
+    /// # Errors
+    ///
+    /// No library declaration is named `declaration`.
+    pub fn place_overloads(
+        &mut self,
+        declaration: &str,
+        overloads: OverloadSets,
+    ) -> Result<(), String> {
+        self.record_of(declaration)?.lowered.overloads = overloads;
+        Ok(())
+    }
+
     /// Encode every record with `append`, which stores its bytes and
     /// answers their range, and answer the directory placing them.
     ///
@@ -553,7 +693,7 @@ impl DeclarationRecords {
     ) -> Result<DeclarationDirectory, String> {
         let positions: HashMap<&str, u32> = self
             .modules
-            .keys()
+            .iter()
             .enumerate()
             .map(|(position, module)| (module.as_str(), position as u32))
             .collect();
@@ -612,10 +752,7 @@ impl DeclarationRecords {
         directory.modules = self
             .modules
             .into_iter()
-            .map(|(path, bytes)| ModuleEntry {
-                path,
-                record: append(&bytes),
-            })
+            .map(|path| ModuleEntry { path })
             .collect();
         Ok(directory)
     }
@@ -679,6 +816,25 @@ impl DeclaringModules {
             }
         }
         Ok(Self { names })
+    }
+
+    /// Record `name` as a declaration of `module`, one the program no
+    /// longer spells (a module constant its elaboration folded away).
+    ///
+    /// # Errors
+    ///
+    /// Another module declares `name`.
+    pub fn declare(&mut self, name: &str, module: &str) -> Result<(), String> {
+        match self.names.get(name) {
+            Some(declared) if declared != module => Err(format!(
+                "`{name}` is declared in both `{declared}` and `{module}`"
+            )),
+            Some(_) => Ok(()),
+            None => {
+                self.names.insert(name.to_string(), module.to_string());
+                Ok(())
+            }
+        }
     }
 
     /// Every declaring module.

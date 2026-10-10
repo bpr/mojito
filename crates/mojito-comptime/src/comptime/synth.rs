@@ -312,24 +312,21 @@ fn is_simd_wildcard_type(ty: &Type) -> bool {
 /// vector type — before the specialization registry classifies it. Uses in
 /// annotations and constructions fold through the ordinary alias machinery.
 /// An imported package's aliases, as its build elaborated them, bound
-/// `program`'s parameters too.
+/// `program`'s parameters too, each looked up by the bound's name.
 pub(super) fn fold_simd_alias_bounds(
     program: &mut [Stmt],
     installed: Option<&InstalledInterfaces>,
 ) {
-    let imported = installed
-        .into_iter()
-        .flat_map(InstalledInterfaces::elaborated)
-        .filter_map(|(name, constant)| match constant {
-            ElaboratedConstant::Value(CtValue::Type(ty)) if matches!(**ty, Ty::Simd { .. }) => {
-                match source_type_from_ty(ty)? {
-                    Type::Named(_, args) => Some((name.to_string(), args)),
-                    _ => None,
-                }
+    let imported = |name: &str| match installed?.elaborated(name)? {
+        ElaboratedConstant::Value(CtValue::Type(ty)) if matches!(**ty, Ty::Simd { .. }) => {
+            match source_type_from_ty(ty)? {
+                Type::Named(_, args) => Some(args),
+                _ => None,
             }
-            _ => None,
-        });
-    let own = program
+        }
+        _ => None,
+    };
+    let own: HashMap<String, Vec<ParamArg>> = program
         .iter()
         .filter_map(|statement| match &statement.kind {
             StmtKind::Comptime {
@@ -347,9 +344,9 @@ pub(super) fn fold_simd_alias_bounds(
                 _ => None,
             },
             _ => None,
-        });
-    let aliases: HashMap<String, Vec<ParamArg>> = imported.chain(own).collect();
-    if aliases.is_empty() {
+        })
+        .collect();
+    if own.is_empty() && installed.is_none() {
         return;
     }
     for statement in program {
@@ -359,9 +356,9 @@ pub(super) fn fold_simd_alias_bounds(
         for parameter in type_params {
             if parameter.value_type.is_none()
                 && let [only] = parameter.bounds.as_slice()
-                && let Some(args) = aliases.get(only)
+                && let Some(args) = own.get(only).cloned().or_else(|| imported(only))
             {
-                parameter.value_type = Some(Type::Named("SIMD".to_string(), args.clone()));
+                parameter.value_type = Some(Type::Named("SIMD".to_string(), args));
                 parameter.bounds = vec!["SIMD".to_string()];
             }
         }

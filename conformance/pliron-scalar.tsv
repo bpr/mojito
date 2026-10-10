@@ -443,6 +443,7 @@ assets/ok/pack_struct_static_method_through_instance.mojo	-	ineligible	no-scalar
 assets/ok/pack_struct_variadic_init.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pack_struct_writable.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pack_template_served.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/package_constant_in_own_signature.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/param_expr_alias.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/param_expr_arithmetic.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/param_expr_array.mojo	-	ineligible	no-scalar-entry-shape

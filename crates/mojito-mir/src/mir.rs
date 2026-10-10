@@ -34,6 +34,7 @@ use mojito_checked::interface::PackageInterface;
 use mojito_common::timing;
 use mojito_common::token::{DUMMY_SPAN, SourceSpan};
 use mojito_hir::hir::{self, Cfg, HirInstr, Terminator, VarId};
+use mojito_symbol::symbol::OverloadLookup;
 use mojito_types::ct::CtValue;
 use mojito_types::param_expr::{ParamContext, ParamExpr};
 use mojito_types::types::{
@@ -62,7 +63,7 @@ pub fn lower_cfg(cfg: &Cfg) -> MirFunction {
     lower_cfg_nested(
         cfg,
         &HashMap::new(),
-        &mojito_symbol::symbol::OverloadSets::default(),
+        &std::sync::Arc::default(),
         false,
         &[],
         &[],
@@ -458,8 +459,12 @@ pub fn lower_checked_program_importing(
                     .iter()
                     .map(|p| is_ref(&p.convention))
                     .collect();
-                let lowered_name =
-                    mojito_symbol::symbol::lowered_def_name(name, type_params, params, overloads);
+                let lowered_name = mojito_symbol::symbol::lowered_def_name(
+                    name,
+                    type_params,
+                    params,
+                    &**overloads,
+                );
                 let variadic_idx = params.iter().position(|p| p.kind == ParamKind::Variadic);
                 let kw_variadic_idx = params.iter().position(|p| p.kind == ParamKind::KwVariadic);
                 let regular: Vec<_> = params
@@ -639,7 +644,7 @@ pub fn lower_checked_program_importing(
                             &source,
                             type_params,
                             mojito_symbol::symbol::MethodShape::of(m),
-                            overloads,
+                            &**overloads,
                         );
                         if lowered == source {
                             method_name.to_string()
@@ -744,7 +749,7 @@ pub fn lower_checked_program_importing(
                                 &format!("{name}.{method_name}"),
                                 type_params,
                                 mojito_symbol::symbol::MethodShape::of(m),
-                                overloads,
+                                &**overloads,
                             ),
                             params: &m.params,
                             has_self: m.has_self,
@@ -1191,7 +1196,7 @@ fn lower_struct_member<P: DeclaredParam>(
 #[derive(Clone, Copy)]
 struct StructLowering<'a> {
     checked: &'a CheckedProgram,
-    overloads: &'a mojito_symbol::symbol::OverloadSets,
+    overloads: &'a std::sync::Arc<mojito_checked::package::ProgramOverloads>,
     module: &'a Option<String>,
     name: &'a str,
     type_params: &'a [mojito_ast::ast::TypeParam],
@@ -1223,7 +1228,7 @@ struct StructMember<'a, P> {
 /// the default function lacks.
 struct DefaultLowering<'a, P> {
     checked: &'a CheckedProgram,
-    overloads: &'a mojito_symbol::symbol::OverloadSets,
+    overloads: &'a std::sync::Arc<mojito_checked::package::ProgramOverloads>,
     owner: &'a str,
     parameter: &'a P,
     binders: &'a EnclosingBinders,
@@ -1292,7 +1297,7 @@ fn lower_default<P: DeclaredParam>(
 #[derive(Clone, Copy)]
 struct ExpressionThunk<'a> {
     checked: &'a CheckedProgram,
-    overloads: &'a mojito_symbol::symbol::OverloadSets,
+    overloads: &'a std::sync::Arc<mojito_checked::package::ProgramOverloads>,
     name: &'a str,
     prologue: &'a [Stmt],
     expression: &'a Expr,
@@ -1803,7 +1808,7 @@ impl ComptimeThunks {
     fn lower(
         self,
         checked: &CheckedProgram,
-        overloads: &mojito_symbol::symbol::OverloadSets,
+        overloads: &std::sync::Arc<mojito_checked::package::ProgramOverloads>,
         functions: &mut Vec<(String, MirFunction)>,
         declarations: &mut MirDeclarations,
     ) {
@@ -2014,9 +2019,10 @@ struct Flatten<'a> {
     /// rewritten to the mangled function with its captures prepended, and the
     /// nested `def` statement itself lowers to nothing.
     nested: HashMap<mojito_types::origin::OwnerId, NestedInfo>,
-    /// The program's overloaded declarations. Kept only for unchecked HIR tests;
-    /// production lowering consumes `ResolveCallable` checked adjustments.
-    overloads: mojito_symbol::symbol::OverloadSets,
+    /// The program's overload sets, which name a function value, an
+    /// overloaded call's lowered symbol, and a fieldwise constructor's
+    /// parameters; shared by every function lowered from one program.
+    overloads: std::sync::Arc<mojito_checked::package::ProgramOverloads>,
     /// The program's checked tables, shared with HIR construction.
     checked: std::sync::Arc<mojito_checked::checked::CheckedTables>,
     /// Semantic facts indexed by the in-memory identity of the active HIR syntax
@@ -3805,7 +3811,7 @@ struct ExprFacts {
 fn lower_cfg_nested(
     cfg: &Cfg,
     nested: &HashMap<mojito_types::origin::OwnerId, NestedInfo>,
-    overloads: &mojito_symbol::symbol::OverloadSets,
+    overloads: &std::sync::Arc<mojito_checked::package::ProgramOverloads>,
     returns_reference: bool,
     reference_parameters: &[bool],
     capture_bindings: &[mojito_types::origin::OwnerId],
@@ -3866,7 +3872,7 @@ fn lower_cfg_nested(
             enclosing_binders: enclosing_binders.clone(),
             comptime_thunks: std::mem::take(comptime_thunks),
             parameter_reads: enclosing_binders.loop_bindings.iter().cloned().collect(),
-            overloads: overloads.clone(),
+            overloads: std::sync::Arc::clone(overloads),
             checked: std::sync::Arc::clone(&cfg.checked),
             call_transfers: call_transfers.clone(),
             active_semantics: Vec::new(),

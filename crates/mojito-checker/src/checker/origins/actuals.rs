@@ -844,9 +844,12 @@ impl Checker {
         let ExprKind::Identifier(name) = &expr.kind else {
             return false;
         };
-        self.binding_scope(name)
-            .and_then(|scope| self.local_comptime_parameters.get(scope))
-            .is_some_and(|scope| scope.contains_key(name))
+        self.binding_scope(name).is_some_and(|scope| {
+            self.local_comptime_parameters
+                .get(scope)
+                .is_some_and(|scope| scope.contains_key(name))
+                || (scope == 0 && self.installs(interface::Table::ComptimeParameters, name))
+        })
     }
 }
 

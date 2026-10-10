@@ -118,8 +118,9 @@ import (every compilation that links the bundled library):
   root) and every record's byte range: the checker interface
   (`checked::interface::PackageInterface`), one record per library
   declaration under one declaration directory
-  (`checked::package::DeclarationDirectory`), each library module's checker
-  record and link record, and each function body, before drop elaboration.
+  (`checked::package::DeclarationDirectory`, which also lists each library
+  module by path), each library module's link record, and each function
+  body, before drop elaboration.
   The importer maps the file (`PackageBytes`) and reads its directory and
   interface; declarations and bodies decode from their own ranges on
   demand: Hello World decodes three of 223 declaration records and three
@@ -191,16 +192,23 @@ import (every compilation that links the bundled library):
   callable origin facts, and the applicable functions and declared results
   a compile-time call reads. A table key belongs to the declaration it
   names, an overload's signature-qualified key or a member's
-  `Owner.member` included. Beside them sits one record per library module
-  (`ModuleRecord`): its overload sets, its module-scope compile-time facts,
-  and its constants as the build's comptime elaboration resolved them
+  `Owner.member` included. A module constant's residue also holds the
+  constant as the build's comptime elaboration resolved it
   (`checker::ElaboratedConstant`: a folded value or `Applied` marker, or a
   generic alias's parameters and body; `comptime::elaborate_exporting`,
-  `CheckContext::record_elaborated`). The build's check exports them once
-  the whole library is checked (`Checker::export_interfaces`); the
-  declaration directory lists each module record, and each declaration's
-  record with every table key it holds and, for a struct, every method it
-  declares. A residue holds no binding owner, span-keyed
+  `CheckContext::record_elaborated`), and a declaration's residue holds the
+  module-scope compile-time facts its names bind (a bound dtype, a lifted
+  constant's application, a kept compile-time value, a type alias, its
+  `SIMDLength` binders). Its lowered part holds its overload facts
+  (`package::LoweredDeclaration::overloads`): its functions' arities, its
+  methods' and requirements', its struct's fieldwise initializer, and its
+  integer constant. No module has a checker record of its own, as
+  upstream's package holds no per-module overload set: a name's overload
+  set is the declarations a lookup finds under it. The build's check
+  exports the rows once the whole library is checked
+  (`Checker::export_interfaces`); the declaration directory lists each
+  module by path, and each declaration's record with every table key it
+  holds and, for a struct, every method it declares. A residue holds no binding owner, span-keyed
   fact, syntax identity, or parameter hole, and encoding a table that
   holds one fails the build, which then compiles the library from source.
   It is bytecode (`postcard`); a default argument or a conformance
@@ -210,14 +218,17 @@ import (every compilation that links the bundled library):
   resolves a package declaration from bytecode
   (`lookupAndResolveMangledDecl`, `resolveDeclFromBytecode`). The process
   indexes the declaration directory once (`checker::DeclarationInterfaces`); each
-  compilation decodes the module records of the modules its link reached
-  and no declaration's (`checker::InstalledInterfaces::reaching`). The
+  compilation marks the modules its link reached and decodes no record
+  (`checker::InstalledInterfaces::reaching`). The
   checker's declaration-keyed tables (`checker::DeclarationTable`,
   `DeclarationSet`) hold the program's own entries over that handle: a
   lookup the own entries miss finds its key's declaration in the
   directory and decodes that residue the first time, once per compilation,
   for every checker pass and the conformance oracle alike; a key list or a
-  name-set membership answers from the directory alone. A package module
+  name-set membership answers from the directory alone. A module-scope
+  compile-time fact the checker's own scopes miss is the installed
+  declaration's of that name (`Checker::installed_comptime_parameter` and
+  its siblings), below the module scope. A package module
   binding resolves below the module scope, with an owner from a block each
   pass reserves for every reached binding, numbered as the modules were
   reached and then by name (`Checker::installed_binding`). Only a whole-
@@ -231,10 +242,13 @@ import (every compilation that links the bundled library):
   the own statements alone, reading the package's traits, which a
   conformer inherits defaults from, and its SIMD aliases as its build
   elaborated them. `comptime::elaborate_importing` elaborates them alone
-  (`comptime::ImportedScope`): its module environment, generic aliases,
-  and module type aliases start from the reached modules' constants, and
-  its conformance oracle attaches the interfaces and registers the own
-  statements over them (`ConformanceOracle::importing`). Its struct and
+  (`comptime::ImportedScope`): a name its module environment
+  (`comptime::ConstEnv`), generic aliases, or module type aliases miss is
+  the reached package's constant of that name, decoded with its
+  declaration's record on first lookup
+  (`checker::InstalledInterfaces::elaborated`), and its conformance oracle
+  attaches the interfaces and registers the own statements over them
+  (`ConformanceOracle::importing`). Its struct and
   function indexes hold the own declarations; a package struct or `def`
   is read from the oracle as the package's check resolved it
   (`ConformanceOracle::{package_struct, package_associated_value,
@@ -242,14 +256,16 @@ import (every compilation that links the bundled library):
   read a package declaration resolved, never its syntax.
   The check is given the program's own statements alone: each transfer
   pass attaches the declaration records of the modules the link reached
-  to its fresh `Checker` (`Checker::attach_interfaces`), then scans and
-  checks the own statements over them, taking a package callable's
-  summaries as committed effects. The
+  to its fresh `Checker` (`Checker::attach_interfaces`), copying nothing
+  in, then scans and checks the own statements over them, taking a
+  package callable's summaries as committed effects. The
   checked arena, explicit destruction, and lowering therefore see the
   program's own statements alone.
 - **Lowering** (`mir::lower_checked_program_importing`) lowers the checked
   statements, reads the checker's overload sets
-  (`CheckedProgram::overloads`, the package's included), and links the
+  (`CheckedProgram::overloads`: a shared `package::ProgramOverloads`, which
+  asks the program's own sets and then the reached package declaration
+  owning the name, `package::PackageScope`), and links the
   package's MIR declarations (`mir::link`) before closing and verifying the
   program's own functions. The check answers conformance rows for the
   program's own structs alone (`Checker::conformance_facts`), as upstream's
@@ -278,9 +294,11 @@ import (every compilation that links the bundled library):
   resolves a package declaration on first lookup. Mojito's holds lowered
   MIR (`docs/roadmap.md`, `pmir` track: R546). A module record holds no
   declaration: an importer reads every library declaration, trait
-  defaults included, from its declaration record. A module still has two
-  records, its link record and its checker record, under two module
-  tables (`docs/roadmap.md`, `pmir` track).
+  defaults included, from its declaration record. A module is still listed
+  in two tables, the link's module records by dotted name and the
+  declaration directory's modules by path (`docs/roadmap.md`, `pmir`
+  track: R572), and a declaration's overload facts restate what its
+  lowered functions imply (`pmir` track).
 
 `native::mono` is the one elaborator below the waist. `concrete_mir()` runs it
 from the program's entry roots and caches the graph, so the VM and the native

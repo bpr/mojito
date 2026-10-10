@@ -193,6 +193,7 @@ impl Checker {
                     || self.is_value_parameter(root)
                     || (self.binding_scope(root) == Some(0)
                         && (self.local_comptime_parameters[0].contains_key(root)
+                            || self.installs(interface::Table::ComptimeParameters, root)
                             || self.module_values.contains_key(root))))
         })
     }

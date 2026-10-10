@@ -16,6 +16,7 @@ use mojito_ast::visit::{MutVisitor, walk_block_mut, walk_expr_mut, walk_stmt_mut
 use mojito_checked::checked::{CheckedDefaultWrapper, SignatureParam};
 use mojito_common::error::TypeError;
 use mojito_common::token::{Span, SyntaxId};
+use mojito_symbol::symbol::OverloadLookup;
 use mojito_symbol::symbol::SignatureKey;
 
 use super::declarations::{BodyParam, MethodBody};
@@ -381,7 +382,7 @@ impl Checker {
             wrappers.extend(found);
         }
         for (source, arities) in declared {
-            self.overload_sets.declare_method(&source, arities);
+            std::sync::Arc::make_mut(&mut self.overload_sets).declare_method(&source, arities);
         }
         Ok(wrappers)
     }

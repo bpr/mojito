@@ -10,14 +10,14 @@ use mojito_types::types::TransferSet;
 impl Checker {
     pub fn check_program(&mut self, stmts: &[Stmt]) -> Result<(), TypeError> {
         let phase = timing::span("declarations.tuple_prepass");
-        // An importer's installed package sets stay: its own statements add
-        // to them.
-        self.overload_sets.scan_more(stmts);
+        // An importer's own statements add to its own sets, which a name
+        // they miss falls through to the package's.
+        std::sync::Arc::make_mut(&mut self.overload_sets).scan_more(stmts);
         self.default_wrappers = self.plan_default_wrappers(stmts)?;
         self.method_binder_owners =
-            mojito_symbol::symbol::MethodBinderOwners::scan(stmts, &self.overload_sets);
+            mojito_symbol::symbol::MethodBinderOwners::scan(stmts, &*self.overload_sets);
         let applicable =
-            super::comptime_validation::applicable_functions(stmts, &self.overload_sets);
+            super::comptime_validation::applicable_functions(stmts, &*self.overload_sets);
         self.applicable_functions.extend(applicable);
         for statement in stmts {
             if let StmtKind::Def {
@@ -2498,7 +2498,7 @@ impl Checker {
         // Two overloads of one name are two declarations, so each owns its
         // binders under the symbol it lowers to.
         let owner = if self.function_bases.is_empty() {
-            mojito_symbol::symbol::lowered_def_name(name, type_params, params, &self.overload_sets)
+            mojito_symbol::symbol::lowered_def_name(name, type_params, params, &*self.overload_sets)
         } else {
             name.clone()
         };
@@ -3244,6 +3244,7 @@ impl Checker {
                     .local_comptime_values
                     .iter()
                     .any(|values| values.contains_key(name.as_str()))
+                && !self.installs(interface::Table::ComptimeValues, name)
         })
     }
 

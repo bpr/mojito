@@ -13,11 +13,7 @@ impl Elab<'_> {
         clippy::too_many_lines,
         reason = "TODO: split this pass; TODO: split this pass"
     )]
-    pub(super) fn eval(
-        &self,
-        e: &Expr,
-        scope: &HashMap<String, CtValue>,
-    ) -> Result<CtValue, ComptimeError> {
+    pub(super) fn eval(&self, e: &Expr, scope: &ConstEnv<'_>) -> Result<CtValue, ComptimeError> {
         match &e.kind {
             ExprKind::Int(n) => Ok(CtValue::IntLiteral(n.clone())),
             ExprKind::Float(value) => Ok(CtValue::FloatLiteral(value.clone())),
@@ -57,9 +53,7 @@ impl Elab<'_> {
             // A module-scope generic comptime alias applied in a compile-time
             // position (typically a `comptime if` condition, pruned before the
             // checker's own alias registry could expand it).
-            ExprKind::TypeApply { name, args }
-                if self.generic_aliases.borrow().contains_key(name) =>
-            {
+            ExprKind::TypeApply { name, args } if self.is_generic_alias(name) => {
                 self.apply_generic_alias(name, args, scope)
             }
             ExprKind::TypeApply { name, args } => self.type_value(name, args, scope),
@@ -142,7 +136,7 @@ impl Elab<'_> {
                 // argument parses as indexing (`MyPred[Plain]`), or a
                 // multi-argument application (`MyPred[A, B]`, a tuple index).
                 if let ExprKind::Identifier(name) = &object.kind
-                    && self.generic_aliases.borrow().contains_key(name)
+                    && self.is_generic_alias(name)
                 {
                     let args: Vec<ParamArg> = match &index.kind {
                         ExprKind::TupleLit(elements) => {
@@ -647,7 +641,7 @@ impl Elab<'_> {
         receiver: &CtValue,
         method: &str,
         args: &[Expr],
-        scope: &HashMap<String, CtValue>,
+        scope: &ConstEnv<'_>,
     ) -> Result<CtValue, ComptimeError> {
         match (receiver, method, args) {
             (CtValue::Dict { entries, .. }, "keys", []) => Ok(CtValue::List(
@@ -691,7 +685,7 @@ impl Elab<'_> {
         &self,
         name: &str,
         args: &[ParamArg],
-        scope: &HashMap<String, CtValue>,
+        scope: &ConstEnv<'_>,
     ) -> Result<CtValue, ComptimeError> {
         let mut values = Vec::with_capacity(args.len());
         for argument in args {
@@ -699,7 +693,7 @@ impl Elab<'_> {
                 // A nested application of a generic alias (`Twice[Twice[5]]`)
                 // parses as a type argument but evaluates as the alias.
                 ParamArg::Type(mojito_ast::ast::Type::Named(alias, alias_args))
-                    if self.generic_aliases.borrow().contains_key(alias) =>
+                    if self.is_generic_alias(alias) =>
                 {
                     self.apply_generic_alias(alias, alias_args, scope)?
                 }
@@ -727,19 +721,16 @@ impl Elab<'_> {
         name: &str,
         values: Vec<CtValue>,
     ) -> Result<CtValue, ComptimeError> {
-        let (params, body) = self
-            .generic_aliases
-            .borrow()
-            .get(name)
-            .cloned()
-            .expect("guarded by generic_aliases lookup");
+        let (params, body) = self.generic_alias(name).ok_or_else(|| {
+            ComptimeError::NotComptime(format!("`{name}` is not a generic comptime alias"))
+        })?;
         if values.len() != params.len() {
             return Err(ComptimeError::Arity(format!(
                 "{name}[...] takes exactly {} argument(s)",
                 params.len()
             )));
         }
-        let mut env = self.top_consts.borrow().clone();
+        let mut env = ConstEnv::over(self.top_consts.borrow().clone(), self.installed);
         for (param, value) in params.iter().zip(values) {
             env.insert(param.name.clone(), value);
         }
@@ -753,7 +744,7 @@ impl Elab<'_> {
     fn eval_typelist_of(
         &self,
         param_args: &[ParamArg],
-        scope: &HashMap<String, CtValue>,
+        scope: &ConstEnv<'_>,
     ) -> Result<CtValue, ComptimeError> {
         let mut types = Vec::new();
         for argument in param_args {
@@ -773,7 +764,7 @@ impl Elab<'_> {
         receiver: &CtValue,
         field: &str,
         param_args: &[ParamArg],
-        scope: &HashMap<String, CtValue>,
+        scope: &ConstEnv<'_>,
     ) -> Result<CtValue, ComptimeError> {
         let elements = receiver
             .typelist_elements()
@@ -818,7 +809,7 @@ impl Elab<'_> {
                         mojito_types::types::trivial_predicate_name(&predicate)
                     {
                         self.conformance.trivially(kind, ty)
-                    } else if self.generic_aliases.borrow().contains_key(&predicate) {
+                    } else if self.is_generic_alias(&predicate) {
                         self.apply_generic_alias_values(
                             &predicate,
                             vec![CtValue::Type(Box::new(ty.clone()))],
@@ -856,7 +847,7 @@ impl Elab<'_> {
     pub(super) fn eval_all(
         &self,
         exprs: &[Expr],
-        scope: &HashMap<String, CtValue>,
+        scope: &ConstEnv<'_>,
     ) -> Result<Vec<CtValue>, ComptimeError> {
         exprs.iter().map(|e| self.eval(e, scope)).collect()
     }
@@ -865,7 +856,7 @@ impl Elab<'_> {
         &self,
         ty: &Ty,
         method: &str,
-        outer_scope: &HashMap<String, CtValue>,
+        outer_scope: &ConstEnv<'_>,
     ) -> Result<CtValue, ComptimeError> {
         // Every type Mojito names is a Mojo struct; only an MLIR primitive,
         // which no Mojito program spells, answers `False` at the pin.
@@ -906,7 +897,7 @@ impl Elab<'_> {
         ty: &Ty,
         method: &str,
         parameters: &[ParamArg],
-        scope: &HashMap<String, CtValue>,
+        scope: &ConstEnv<'_>,
     ) -> Result<CtValue, ComptimeError> {
         if method == "field_type" {
             return Err(ComptimeError::NotComptime(
@@ -984,7 +975,7 @@ impl Elab<'_> {
         ty: &Ty,
         selector: &str,
         argument: &Expr,
-        scope: &HashMap<String, CtValue>,
+        scope: &ConstEnv<'_>,
     ) -> Result<CtValue, ComptimeError> {
         let Ty::Struct(name, arguments) = ty else {
             return Err(ComptimeError::NotComptime(format!(
@@ -1051,7 +1042,7 @@ impl Elab<'_> {
         info: StructView<'_>,
         ty: &Ty,
         arguments: &[TyArg],
-        scope: &HashMap<String, CtValue>,
+        scope: &ConstEnv<'_>,
         index: usize,
     ) -> Result<Ty, ComptimeError> {
         let StructView::Own(info) = info else {
@@ -1081,7 +1072,7 @@ impl Elab<'_> {
     pub(super) fn resolve_reflected_type(
         &self,
         source: &Type,
-        scope: &HashMap<String, CtValue>,
+        scope: &ConstEnv<'_>,
     ) -> Result<Type, ComptimeError> {
         if let Type::Assoc { base, name, .. } = source
             && name == "T"
@@ -1164,7 +1155,7 @@ impl Elab<'_> {
     pub(super) fn resolve_reflected_param_arg(
         &self,
         argument: &ParamArg,
-        scope: &HashMap<String, CtValue>,
+        scope: &ConstEnv<'_>,
     ) -> Result<ParamArg, ComptimeError> {
         Ok(match argument {
             ParamArg::Type(ty) => ParamArg::Type(self.resolve_reflected_type(ty, scope)?),
@@ -1181,7 +1172,7 @@ impl Elab<'_> {
         op: InfixOp,
         left: &Expr,
         right: &Expr,
-        scope: &HashMap<String, CtValue>,
+        scope: &ConstEnv<'_>,
     ) -> Result<CtValue, ComptimeError> {
         match op {
             InfixOp::In | InfixOp::NotIn => {
@@ -1245,7 +1236,7 @@ impl Elab<'_> {
         &self,
         name: &str,
         param_args: &[ParamArg],
-        scope: &HashMap<String, CtValue>,
+        scope: &ConstEnv<'_>,
     ) -> Option<(mojito_ast::ast::Dtype, i64)> {
         if name == "SIMD" {
             return simd_source_dims(param_args);
@@ -1256,7 +1247,7 @@ impl Elab<'_> {
         let bound = scope
             .get(name)
             .cloned()
-            .or_else(|| self.top_consts.borrow().get(name).cloned())?;
+            .or_else(|| self.module_constant(name))?;
         match bound {
             CtValue::Type(ty) => match *ty {
                 Ty::Simd { .. } => mojito_types::types::simd_shape(&ty),

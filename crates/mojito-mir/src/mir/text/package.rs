@@ -47,7 +47,7 @@ use std::ops::Range;
 use std::sync::{Arc, Mutex, OnceLock};
 
 /// The container format this compiler writes and reads.
-pub const PACKAGE_FORMAT: &str = "mojito-package 11";
+pub const PACKAGE_FORMAT: &str = "mojito-package 12";
 
 /// Who built a package from what: an importer refuses a package another
 /// compiler built, or one built from other sources.

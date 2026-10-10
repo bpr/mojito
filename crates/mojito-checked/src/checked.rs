@@ -1473,9 +1473,9 @@ pub struct DiscoveryResult {
     /// Each erased `rebind` the check judged, at its operand.
     pub rebind_assertions: FactMap<SourceSpan, RebindAssertion>,
     pub declaration_effects: FactMap<AnnotationSite, DeclarationEffect>,
-    /// The overload sets of every declaration the check knew, its own and
-    /// an imported package's.
-    pub overloads: mojito_symbol::symbol::OverloadSets,
+    /// The overload sets of every declaration the check knew: its own,
+    /// and an imported package's, answered from the package's declarations.
+    pub overloads: Arc<crate::package::ProgramOverloads>,
     /// Every inherited trait default's wrapper the check built.
     pub default_wrappers: Vec<CheckedDefaultWrapper>,
 }
@@ -1639,7 +1639,7 @@ pub struct CheckedProgram {
     struct_destructors: HashMap<String, HashMap<String, bool>>,
     conformances: ConformanceFacts,
     declaration_effects: HashMap<AnnotationSite, DeclarationEffect>,
-    overloads: mojito_symbol::symbol::OverloadSets,
+    overloads: Arc<crate::package::ProgramOverloads>,
     default_wrappers: Vec<CheckedDefaultWrapper>,
 }
 
@@ -1983,7 +1983,7 @@ impl CheckedProgram {
         truthiness_conditions: &HashSet<SourceSpan>,
         rebind_assertions: &HashMap<SourceSpan, RebindAssertion>,
         declaration_effects: HashMap<AnnotationSite, DeclarationEffect>,
-        overloads: mojito_symbol::symbol::OverloadSets,
+        overloads: Arc<crate::package::ProgramOverloads>,
         default_wrappers: Vec<CheckedDefaultWrapper>,
     ) -> Self {
         let expressions_span = mojito_common::timing::span("expressions");
@@ -2072,7 +2072,7 @@ impl CheckedProgram {
 
     /// The overload sets of every declaration the check knew: the
     /// program's own and those of a package it imports.
-    pub const fn overloads(&self) -> &mojito_symbol::symbol::OverloadSets {
+    pub const fn overloads(&self) -> &Arc<crate::package::ProgramOverloads> {
         &self.overloads
     }
 

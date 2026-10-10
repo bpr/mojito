@@ -43,7 +43,7 @@ pub(super) struct FunctionLowering<'a> {
     pub(super) error_ty: Option<Ty>,
     pub(super) named_result: Option<&'a str>,
     pub(super) body: &'a [Stmt],
-    pub(super) overloads: &'a mojito_symbol::symbol::OverloadSets,
+    pub(super) overloads: &'a std::sync::Arc<mojito_checked::package::ProgramOverloads>,
 }
 
 pub(super) fn lower_fn_nested(
@@ -356,7 +356,7 @@ fn lower_nested_node(
     checked: &mojito_checked::checked::CheckedProgram,
     node: NestedNode<'_>,
     inherited_registry: &HashMap<mojito_types::origin::OwnerId, NestedInfo>,
-    overloads: &mojito_symbol::symbol::OverloadSets,
+    overloads: &std::sync::Arc<mojito_checked::package::ProgramOverloads>,
     out: &mut Vec<(String, MirFunction)>,
     declarations: &mut MirDeclarations,
     enclosing: Enclosing<'_>,

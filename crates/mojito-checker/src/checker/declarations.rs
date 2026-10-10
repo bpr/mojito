@@ -3187,7 +3187,12 @@ impl Checker {
         // argument types.
         let mut value_solutions = HashMap::new();
         for (pat, act) in patterns.iter().zip(actuals) {
-            solve_value_args(pat, act, &self.simd_length_binders, &mut value_solutions);
+            solve_value_args(
+                pat,
+                act,
+                &|binder| self.is_simd_length_binder(binder),
+                &mut value_solutions,
+            );
         }
         for (pat, act) in patterns.iter().zip(actuals) {
             if let Ty::Param { binder, bounds, .. } = pat

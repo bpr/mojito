@@ -1072,3 +1072,28 @@ directory the check used to decode on its own, outside any span.
 | generic | 15.8 → 15.3 | — | — |
 | keyed | 34.2 → 33.2 | — | — |
 | stdlib_heavy | 70.2 → 69.7 | — | — |
+
+### An importer copies nothing in when a compilation starts (2026-10-10, R563)
+
+Same environment as the tables above, on the R563 tree against the R560
+tree (`83809dfd`), both importing the package from their own cache;
+`--timings` medians of 15 interleaved runs, milliseconds. A declaration's
+record now holds the overload facts of its names, its module constant as
+the build's elaboration resolved it, and its module-scope compile-time
+facts, and the check, the elaborator, and MIR answer a name their own
+tables miss from the reached declaration owning it, decoded on first
+lookup. `package.interfaces` used to decode every reached module's
+checker record (31 for Hello World) and merge their overload sets; it now
+only marks the reached modules. The elaborator no longer copies every
+reached constant into its environment, so `elaborate` loses that copy and
+`elaborate.indexes` the oracle's merged-set clone. A program that reads a
+package constant decodes that constant's record (one more for the probe
+and `hashlib_keyed_ahasher`). The package grows from 1.551 to 1.566 MB:
+each declaration's record carries its own overload facts.
+
+| Program | total | package.interfaces | elaborate | elaborate.indexes |
+|---|---:|---:|---:|---:|
+| hello | 4.40 → 4.02 | 0.19 → 0.02 | 0.27 → 0.11 | 0.08 → 0.05 |
+| package_constant_in_own_signature | 19.5 → 19.1 | 0.19 → 0.02 | 0.46 → 0.25 | 0.10 → 0.07 |
+| hashlib_keyed_ahasher | 28.1 → 27.9 | 0.18 → 0.02 | 0.29 → 0.18 | 0.07 → 0.04 |
+| path_operations | 185.3 → 185.5 | 0.19 → 0.02 | 0.39 → 0.27 | 0.07 → 0.05 |

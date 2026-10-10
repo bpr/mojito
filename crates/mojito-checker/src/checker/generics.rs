@@ -330,7 +330,7 @@ pub(super) fn solved_value_bindings(
 pub(super) fn solve_value_args(
     pattern: &Ty,
     actual: &Ty,
-    width_binders: &HashSet<ParamId>,
+    width_binders: &dyn Fn(&ParamId) -> bool,
     out: &mut HashMap<String, CtValue>,
 ) {
     match (pattern, actual) {
@@ -366,7 +366,7 @@ pub(super) fn solve_value_args(
             }
             if let SimdWidth::Expr(lanes) = width
                 && let Some(reference) = lanes.as_decl_ref()
-                && width_binders.contains(&reference.id)
+                && width_binders(&reference.id)
             {
                 let value = match actual_width {
                     SimdWidth::Known(width) => CtValue::Int(width),
@@ -672,7 +672,7 @@ fn substitute_origin(
 fn solve_applied_args(
     pattern: &ParamExpr,
     actual: &ParamExpr,
-    width_binders: &HashSet<ParamId>,
+    width_binders: &dyn Fn(&ParamId) -> bool,
     out: &mut HashMap<String, CtValue>,
 ) {
     let (

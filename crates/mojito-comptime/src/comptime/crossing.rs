@@ -15,7 +15,7 @@ impl Elab<'_> {
     pub(super) fn fold_runtime_crossings(
         &self,
         stmts: &mut [Stmt],
-        env: &HashMap<String, CtValue>,
+        env: &ConstEnv<'_>,
     ) -> Result<(), ComptimeError> {
         let shadowed = HashSet::new();
         for stmt in stmts {
@@ -27,7 +27,7 @@ impl Elab<'_> {
     fn cross_block(
         &self,
         stmts: &mut [Stmt],
-        env: &HashMap<String, CtValue>,
+        env: &ConstEnv<'_>,
         shadowed: &HashSet<String>,
     ) -> Result<(), ComptimeError> {
         for stmt in stmts {
@@ -40,7 +40,7 @@ impl Elab<'_> {
         &self,
         params: &[FnParam],
         body: &mut [Stmt],
-        env: &HashMap<String, CtValue>,
+        env: &ConstEnv<'_>,
         shadowed: &HashSet<String>,
     ) -> Result<(), ComptimeError> {
         let mut shadowed = shadowed.clone();
@@ -55,7 +55,7 @@ impl Elab<'_> {
         &self,
         params: &[FnParam],
         body: &mut [Stmt],
-        env: &HashMap<String, CtValue>,
+        env: &ConstEnv<'_>,
         shadowed: &HashSet<String>,
     ) -> Result<(), ComptimeError> {
         let depth = self.crossing_templates.get();
@@ -74,7 +74,7 @@ impl Elab<'_> {
     fn cross_stmt(
         &self,
         stmt: &mut Stmt,
-        env: &HashMap<String, CtValue>,
+        env: &ConstEnv<'_>,
         shadowed: &HashSet<String>,
     ) -> Result<(), ComptimeError> {
         match &mut stmt.kind {
@@ -169,7 +169,7 @@ impl Elab<'_> {
     fn cross_opt_block(
         &self,
         block: &mut Option<Vec<Stmt>>,
-        env: &HashMap<String, CtValue>,
+        env: &ConstEnv<'_>,
         shadowed: &HashSet<String>,
     ) -> Result<(), ComptimeError> {
         match block {
@@ -181,7 +181,7 @@ impl Elab<'_> {
     fn cross_expr(
         &self,
         expr: &mut Expr,
-        env: &HashMap<String, CtValue>,
+        env: &ConstEnv<'_>,
         shadowed: &HashSet<String>,
     ) -> Result<(), ComptimeError> {
         // A generic comptime alias applied in a runtime position
@@ -195,9 +195,7 @@ impl Elab<'_> {
             ExprKind::TypeApply { name, .. } => Some(name.as_str()),
             _ => None,
         }
-        .is_some_and(|alias| {
-            !shadowed.contains(alias) && self.generic_aliases.borrow().contains_key(alias)
-        });
+        .is_some_and(|alias| !shadowed.contains(alias) && self.is_generic_alias(alias));
         if alias_application && let Some(mut literal) = self.eval(expr, env)?.materialize(expr.span)
         {
             literal.source.clone_from(&expr.source);
@@ -525,7 +523,7 @@ pub(super) fn reflection_query<'e, 'a>(
 
 /// Whether `expr` asks a closed reflection handle for its field names
 /// (`reflect[P].field_names()`), a list the check binds.
-pub(super) fn lists_field_names(expr: &Expr, env: &HashMap<String, CtValue>) -> bool {
+pub(super) fn lists_field_names(expr: &Expr, env: &ConstEnv<'_>) -> bool {
     let binding = |name: &str| env.get(name);
     let method = match &expr.kind {
         ExprKind::MethodCall { method, .. } => method,

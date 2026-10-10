@@ -189,7 +189,9 @@ impl Checker {
         &self,
         source: &SourceType,
     ) -> Result<Option<Ty>, TypeError> {
-        if self.local_comptime_values.iter().all(HashMap::is_empty) {
+        if self.local_comptime_values.iter().all(HashMap::is_empty)
+            && !self.installs_any(interface::Table::ComptimeValues)
+        {
             return Ok(None);
         }
         match source {
@@ -257,6 +259,7 @@ impl Checker {
             .iter()
             .rev()
             .find_map(|scope| scope.get(name))
+            .or_else(|| self.installed_comptime_value(name))
     }
 
     /// The handle and query an expression reads: `r.field_count()`,

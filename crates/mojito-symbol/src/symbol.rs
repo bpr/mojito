@@ -255,12 +255,7 @@ pub struct TypeKey(String);
 impl TypeKey {
     /// Mangle a declared parameter annotation (the MIR/VM definition side).
     pub fn from_ast(ty: &Type) -> Self {
-        Self(sanitize(&ast_raw(
-            ty,
-            &HashMap::new(),
-            &HashMap::new(),
-            None,
-        )))
+        Self(sanitize(&ast_raw(ty, &|_| None, &HashMap::new(), None)))
     }
 
     /// Mangle a declared parameter annotation in the scope of the
@@ -272,7 +267,7 @@ impl TypeKey {
     pub fn from_ast_in_scope(ty: &Type, type_params: &[TypeParam]) -> Self {
         Self(sanitize(&ast_raw(
             ty,
-            &HashMap::new(),
+            &|_| None,
             &binder_spellings(type_params),
             None,
         )))
@@ -700,17 +695,45 @@ pub struct OverloadSets {
     fieldwise_constructors: HashMap<String, Vec<String>>,
 }
 
+/// What lowering a program asks of its overload sets, name by name.
+///
+/// [`OverloadSets`] answers from its own maps; an importer's program
+/// answers from its own sets first and from the declaration of its package
+/// that owns the name on a miss, as upstream resolves a name's overload set
+/// from the declarations a lookup finds.
+pub trait OverloadLookup {
+    /// Whether free function `name` is overloaded and defines arity `arity`.
+    fn function_is_overloaded(&self, name: &str, arity: usize) -> bool;
+
+    /// Whether `name` denotes any linked free-function declaration. MIR uses
+    /// this to distinguish a function value from a non-local runtime name.
+    fn is_function(&self, name: &str) -> bool;
+
+    /// Whether method `source_name` (`Type.method`) is overloaded and defines
+    /// arity `arity` (`self` excluded, matching the declared parameter list).
+    fn method_is_overloaded(&self, source_name: &str, arity: usize) -> bool;
+
+    /// The parameter names of struct `name`'s synthesized `@fieldwise_init`
+    /// constructor (its field names, in order); `None` when the struct has no
+    /// such constructor.
+    fn fieldwise_parameters(&self, name: &str) -> Option<&[String]>;
+
+    /// The value of the module integer constant `name`, which a signature's
+    /// spelling folds.
+    fn comptime(&self, name: &str) -> Option<i64>;
+}
+
 impl OverloadSets {
     pub fn scan(program: &[Stmt]) -> Self {
         let mut sets = Self::default();
-        sets.scan_more(program);
+        sets.scan_more(program, |_| None);
         sets
     }
 
     /// Add the declarations of `program`, which declares none of the names
-    /// already here and may read the constants already here: an importer's
-    /// own statements over its package's installed sets.
-    pub fn scan_more(&mut self, program: &[Stmt]) {
+    /// already here and may read the constants already here or those
+    /// `outer` answers: an importer's own statements over its package.
+    pub fn scan_more(&mut self, program: &[Stmt], outer: impl Fn(&str) -> Option<i64>) {
         let mut functions: HashMap<String, Vec<usize>> = HashMap::new();
         let mut methods: HashMap<String, Vec<usize>> = HashMap::new();
         let comptimes = &mut self.comptimes;
@@ -718,7 +741,10 @@ impl OverloadSets {
         for stmt in program {
             match &stmt.kind {
                 StmtKind::Comptime { name, value, .. } => {
-                    if let Some(value) = eval_comptime_int(value, comptimes) {
+                    let folded = eval_comptime_int(value, &|name| {
+                        comptimes.get(name).copied().or_else(|| outer(name))
+                    });
+                    if let Some(value) = folded {
                         comptimes.insert(name.clone(), value);
                     }
                 }
@@ -780,69 +806,83 @@ impl OverloadSets {
         }
     }
 
-    /// The sets of the names `keep` keeps: a free function, a constant, or
-    /// a struct by its name, and a method by its `Type.method` name.
-    #[must_use]
-    pub fn restricted(&self, keep: impl Fn(&str) -> bool) -> Self {
-        fn kept<V: Clone>(
-            map: &HashMap<String, V>,
-            keep: &impl Fn(&str) -> bool,
-        ) -> HashMap<String, V> {
-            map.iter()
-                .filter(|(name, _)| keep(name))
-                .map(|(name, value)| (name.clone(), value.clone()))
-                .collect()
+    /// The sets split by the part `part` puts each name in: a free
+    /// function, a constant, or a struct by its name, and a method by its
+    /// `Type.method` name. A name `part` places nowhere is answered in
+    /// `Err`, sorted.
+    ///
+    /// # Errors
+    ///
+    /// The names `part` places nowhere.
+    pub fn partitioned<K: Ord>(
+        &self,
+        part: impl Fn(&str) -> Option<K>,
+    ) -> Result<std::collections::BTreeMap<K, Self>, Vec<String>> {
+        let mut parts = std::collections::BTreeMap::<K, Self>::new();
+        let mut unplaced = Vec::new();
+        let mut place = |name: &String, add: &mut dyn FnMut(&mut Self)| match part(name) {
+            Some(key) => add(parts.entry(key).or_default()),
+            None => unplaced.push(name.clone()),
+        };
+        for (name, arities) in &self.functions {
+            place(name, &mut |sets| {
+                sets.functions.insert(name.clone(), arities.clone());
+            });
         }
-        Self {
-            functions: kept(&self.functions, &keep),
-            all_functions: self
-                .all_functions
-                .iter()
-                .filter(|name| keep(name))
-                .cloned()
-                .collect(),
-            methods: kept(&self.methods, &keep),
-            comptimes: kept(&self.comptimes, &keep),
-            fieldwise_constructors: kept(&self.fieldwise_constructors, &keep),
+        for name in &self.all_functions {
+            place(name, &mut |sets| {
+                sets.all_functions.insert(name.clone());
+            });
+        }
+        for (name, arities) in &self.methods {
+            place(name, &mut |sets| {
+                sets.methods.insert(name.clone(), arities.clone());
+            });
+        }
+        for (name, value) in &self.comptimes {
+            place(name, &mut |sets| {
+                sets.comptimes.insert(name.clone(), *value);
+            });
+        }
+        for (name, fields) in &self.fieldwise_constructors {
+            place(name, &mut |sets| {
+                sets.fieldwise_constructors
+                    .insert(name.clone(), fields.clone());
+            });
+        }
+        if unplaced.is_empty() {
+            Ok(parts)
+        } else {
+            unplaced.sort();
+            unplaced.dedup();
+            Err(unplaced)
         }
     }
+}
 
-    /// Add `other`'s sets, which name none of these.
-    pub fn extend(&mut self, other: Self) {
-        self.functions.extend(other.functions);
-        self.all_functions.extend(other.all_functions);
-        self.methods.extend(other.methods);
-        self.comptimes.extend(other.comptimes);
-        self.fieldwise_constructors
-            .extend(other.fieldwise_constructors);
-    }
-
-    /// The parameter names of struct `name`'s synthesized `@fieldwise_init`
-    /// constructor (its field names, in order); `None` when the struct has no
-    /// such constructor.
-    pub fn fieldwise_parameters(&self, name: &str) -> Option<&[String]> {
-        self.fieldwise_constructors.get(name).map(Vec::as_slice)
-    }
-
-    /// Whether free function `name` is overloaded and defines arity `arity`.
-    pub fn function_is_overloaded(&self, name: &str, arity: usize) -> bool {
+impl OverloadLookup for OverloadSets {
+    fn function_is_overloaded(&self, name: &str, arity: usize) -> bool {
         self.functions
             .get(name)
             .is_some_and(|arities| arities.contains(&arity))
     }
 
-    /// Whether `name` denotes any linked free-function declaration. MIR uses
-    /// this to distinguish a function value from a non-local runtime name.
-    pub fn is_function(&self, name: &str) -> bool {
+    fn is_function(&self, name: &str) -> bool {
         self.all_functions.contains(name)
     }
 
-    /// Whether method `source_name` (`Type.method`) is overloaded and defines
-    /// arity `arity` (`self` excluded, matching the declared parameter list).
-    pub fn method_is_overloaded(&self, source_name: &str, arity: usize) -> bool {
+    fn method_is_overloaded(&self, source_name: &str, arity: usize) -> bool {
         self.methods
             .get(source_name)
             .is_some_and(|arities| arities.contains(&arity))
+    }
+
+    fn fieldwise_parameters(&self, name: &str) -> Option<&[String]> {
+        self.fieldwise_constructors.get(name).map(Vec::as_slice)
+    }
+
+    fn comptime(&self, name: &str) -> Option<i64> {
+        self.comptimes.get(name).copied()
     }
 }
 
@@ -852,7 +892,7 @@ pub fn lowered_def_name(
     name: &str,
     type_params: &[TypeParam],
     params: &[FnParam],
-    sets: &OverloadSets,
+    sets: &impl OverloadLookup,
 ) -> String {
     if sets.function_is_overloaded(name, params.len()) {
         function_symbol(
@@ -861,7 +901,7 @@ pub fn lowered_def_name(
             // The parameters after a `*args` collector are keyword-only, and
             // their names tell `f(a: Int, *rest: Int)` from
             // `f(*rest: Int, a: Int)`, whose type sequences agree.
-            &signature_from_ast(params, type_params, &sets.comptimes, None)
+            &signature_from_ast(params, type_params, &|name| sets.comptime(name), None)
                 .with_keyword_names(keyword_only_names(params, None))
                 .with_owned_params(
                     &params
@@ -911,7 +951,7 @@ pub fn lowered_method_name(
     source_name: &str,
     type_params: &[TypeParam],
     method: MethodShape<'_>,
-    sets: &OverloadSets,
+    sets: &impl OverloadLookup,
 ) -> String {
     let MethodShape {
         type_params: method_type_params,
@@ -931,9 +971,13 @@ pub fn lowered_method_name(
             .chain(method_type_params)
             .cloned()
             .collect();
-        let signature =
-            signature_from_ast(params, &scope, &sets.comptimes, self_spelling.as_deref())
-                .with_keyword_names(keyword_only_names(params, keyword_only));
+        let signature = signature_from_ast(
+            params,
+            &scope,
+            &|name| sets.comptime(name),
+            self_spelling.as_deref(),
+        )
+        .with_keyword_names(keyword_only_names(params, keyword_only));
         match split_method_symbol(source_name)
             .filter(|(_, method)| receiver_overloaded_method(method))
         {
@@ -981,7 +1025,7 @@ pub struct MethodBinderOwners {
 }
 
 impl MethodBinderOwners {
-    pub fn scan(program: &[Stmt], sets: &OverloadSets) -> Self {
+    pub fn scan(program: &[Stmt], sets: &impl OverloadLookup) -> Self {
         let overloaded = program
             .iter()
             .filter_map(|statement| match &statement.kind {
@@ -1402,7 +1446,7 @@ fn encode_identifier(name: &str) -> String {
 
 fn ast_raw(
     ty: &Type,
-    comptimes: &HashMap<String, i64>,
+    comptimes: &dyn Fn(&str) -> Option<i64>,
     type_bounds: &HashMap<String, BinderSpelling>,
     self_spelling: Option<&str>,
 ) -> String {
@@ -1727,7 +1771,7 @@ fn expr_dtype(expr: &Expr) -> Option<mojito_ast::ast::Dtype> {
 }
 
 /// A comptime-evaluable SIMD width annotation argument.
-fn param_arg_width(argument: &ParamArg, comptimes: &HashMap<String, i64>) -> Option<i64> {
+fn param_arg_width(argument: &ParamArg, comptimes: &dyn Fn(&str) -> Option<i64>) -> Option<i64> {
     let ParamArg::Value(expr) = argument else {
         return None;
     };
@@ -1741,11 +1785,11 @@ fn simd_annotation_raw(dtype: mojito_ast::ast::Dtype, width: i64) -> String {
     canonical_simd_ty(dtype, width).to_string()
 }
 
-fn eval_comptime_int(expr: &Expr, comptimes: &HashMap<String, i64>) -> Option<i64> {
+fn eval_comptime_int(expr: &Expr, comptimes: &dyn Fn(&str) -> Option<i64>) -> Option<i64> {
     use mojito_ast::ast::{InfixOp, PrefixOp};
     match &expr.kind {
         ExprKind::Int(value) => value.to_i64(),
-        ExprKind::Identifier(name) => comptimes.get(name).copied(),
+        ExprKind::Identifier(name) => comptimes(name),
         ExprKind::Prefix(PrefixOp::Neg, value) => {
             eval_comptime_int(value, comptimes)?.checked_neg()
         }
@@ -1912,7 +1956,7 @@ fn syntactic_origin_argument(
 /// as a checked `CtValue` displays). A non-literal expression degrades to a
 /// stable placeholder — good enough because the name only needs to be
 /// deterministic.
-fn value_expr_raw(expr: &Expr, comptimes: &HashMap<String, i64>) -> String {
+fn value_expr_raw(expr: &Expr, comptimes: &dyn Fn(&str) -> Option<i64>) -> String {
     if let Some(value) = eval_comptime_int(expr, comptimes) {
         return value.to_string();
     }
@@ -1980,7 +2024,7 @@ fn keep_overloaded(counts: HashMap<String, Vec<usize>>) -> HashMap<String, HashS
 fn signature_from_ast(
     params: &[FnParam],
     type_params: &[TypeParam],
-    comptimes: &HashMap<String, i64>,
+    comptimes: &dyn Fn(&str) -> Option<i64>,
     self_spelling: Option<&str>,
 ) -> SignatureKey {
     let type_bounds = binder_spellings(type_params);

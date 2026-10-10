@@ -705,11 +705,11 @@ fn a_nested_instance_argument_spells_as_its_own_symbol() {
 }
 
 #[test]
-fn overload_sets_restrict_and_extend_to_the_whole() {
-    // An importer installs each package module's restriction of the sets and
-    // scans its own statements over them: together they are the whole
-    // program's, a constant the own statements read included.
-    use mojito::symbol::OverloadSets;
+fn overload_sets_partition_by_declaration_and_scan_over_a_package() {
+    // A package build splits its sets by the declaration owning each name;
+    // an importer scans its own statements alone, reading a constant the
+    // package declares through a lookup.
+    use mojito::symbol::{OverloadLookup, OverloadSets};
     let library = parse(
         "comptime N = 2\n\
          def pick() -> Int:\n    return 0\n\
@@ -723,13 +723,77 @@ fn overload_sets_restrict_and_extend_to_the_whole() {
          def mine(x: Int, y: Int) -> Int:\n    return y\n",
     )
     .expect("parse error");
-    let whole = OverloadSets::scan(&[library.clone(), own.clone()].concat());
-    let mut installed = OverloadSets::default();
-    installed.extend(OverloadSets::scan(&library).restricted(|name| name != "solo"));
-    installed.extend(OverloadSets::scan(&library).restricted(|name| name == "solo"));
-    installed.scan_more(&own);
-    assert_eq!(installed, whole);
-    assert!(installed.function_is_overloaded("pick", 1));
-    assert!(installed.function_is_overloaded("mine", 2));
-    assert!(installed.is_function("solo"));
+    let sets = OverloadSets::scan(&library);
+    let parts = sets
+        .partitioned(|name| Some(name.to_string()))
+        .expect("every name has a part");
+    assert!(parts["pick"].function_is_overloaded("pick", 1));
+    assert!(!parts["pick"].is_function("solo"));
+    assert!(parts["solo"].is_function("solo"));
+    assert_eq!(parts["N"].comptime("N"), Some(2));
+    assert_eq!(
+        sets.partitioned(|name| (name != "solo").then_some(())),
+        Err(vec!["solo".to_string()])
+    );
+    let mut mine = OverloadSets::default();
+    mine.scan_more(&own, |name| sets.comptime(name));
+    assert_eq!(mine.comptime("M"), Some(3));
+    assert!(mine.function_is_overloaded("mine", 2));
+    assert!(!mine.is_function("pick"));
+}
+
+#[test]
+fn program_overloads_ask_the_own_sets_then_the_owning_package_declaration() {
+    // An importer's sets answer an own name from its own scan and a package
+    // name from the record of the reached declaration owning it, decoding
+    // each record only when a query names it.
+    use mojito::checked_package::{
+        DeclarationRecords, DeclaringModules, PackageDeclarations, PackageScope, ProgramOverloads,
+    };
+    use mojito::symbol::{OverloadLookup, OverloadSets};
+    use std::sync::Arc;
+    let mut library = parse(
+        "comptime N = 2\n\
+         def pick() -> Int:\n    return 0\n\
+         def pick(x: Int) -> Int:\n    return x\n",
+    )
+    .expect("parse error");
+    mojito::ast::stamp_source(&mut library, "/library/a.mojo");
+    let mut unreached = parse("def solo() -> Int:\n    return 1\n").expect("parse error");
+    mojito::ast::stamp_source(&mut unreached, "/library/b.mojo");
+    library.extend(unreached);
+    let declaring = DeclaringModules::of(&library).expect("one module per name");
+    let parts = OverloadSets::scan(&library)
+        .partitioned(|name| declaring.declaration_of(name).map(str::to_string))
+        .expect("every name has a declaration");
+    let mut records = DeclarationRecords {
+        modules: ["/library/a.mojo", "/library/b.mojo"]
+            .map(String::from)
+            .into(),
+        declaring,
+        ..DeclarationRecords::default()
+    };
+    for (declaration, sets) in parts {
+        records
+            .place_overloads(&declaration, sets)
+            .expect("a library declaration");
+    }
+    let package = Arc::new(PackageDeclarations::of_records(records).expect("the records encode"));
+    let scope = PackageScope::new(Arc::clone(&package), Arc::from([true, false]));
+    let mut overloads = ProgramOverloads::importing(Some(scope));
+    assert_eq!(package.decoded(), 0);
+    overloads.scan_more(
+        &parse(
+            "comptime M = N + 1\n\
+             def mine(x: Int) -> Int:\n    return x\n\
+             def mine(x: Int, y: Int) -> Int:\n    return y\n",
+        )
+        .expect("parse error"),
+    );
+    assert_eq!(overloads.comptime("M"), Some(3));
+    assert_eq!(package.decoded(), 1, "only `N`'s record decoded");
+    assert!(overloads.function_is_overloaded("mine", 2));
+    assert!(overloads.function_is_overloaded("pick", 1));
+    assert!(!overloads.is_function("solo"), "its module was not reached");
+    assert!(!overloads.is_function("absent"));
 }

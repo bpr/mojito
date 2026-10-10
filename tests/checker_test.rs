@@ -7714,6 +7714,56 @@ fn a_compiled_package_body_is_taken_as_checked() {
 }
 
 #[test]
+fn an_installed_declaration_that_does_not_decode_is_reported_where_named() {
+    // An importer decodes a declaration's record when a lookup first names
+    // it, so a record that does not decode is a failure the lookup reports,
+    // and the other declarations still install.
+    use mojito::checker::{
+        CheckContext, DeclarationInterfaces, InstalledInterfaces, check_program_in,
+    };
+    let library_path = "/library/widths.mojo";
+    let mut library = parse(
+        "comptime WIDTH = 4\n\
+         def double(x: Int) -> Int:\n    return x * 2\n",
+    )
+    .expect("parse error");
+    mojito::ast::stamp_source(&mut library, library_path);
+    let mut building = CheckContext::new();
+    building.record_interfaces();
+    check_program_in(&library, &mut building).expect("the library checks");
+    let mut records = building
+        .take_interfaces()
+        .expect("the library exports")
+        .records(Vec::new(), Vec::new())
+        .expect("the library records");
+    records
+        .declarations
+        .get_mut("WIDTH")
+        .expect("the constant's record")
+        .residue = vec![0xff; 4];
+    let declarations = mojito::checked_package::PackageDeclarations::of_records(records)
+        .expect("the records encode");
+    let package = std::sync::Arc::new(
+        DeclarationInterfaces::read(std::sync::Arc::new(declarations)).expect("reads"),
+    );
+    let installed = InstalledInterfaces::reaching(&package, [library_path]);
+    let mut context = CheckContext::new();
+    context.install(installed.clone());
+    let own = parse("def main():\n    var n: Int = double(2)\n").expect("parse error");
+    check_program_in(&own, &mut context).expect("an undecodable record nobody names is unread");
+    assert!(installed.failures().is_empty());
+    let own = parse("def main():\n    var n: Int = WIDTH\n").expect("parse error");
+    let mut context = CheckContext::new();
+    context.install(installed.clone());
+    let _ = check_program_in(&own, &mut context);
+    let failures = installed.failures();
+    assert!(
+        failures.iter().any(|failure| failure.contains("`WIDTH`")),
+        "{failures:?}"
+    );
+}
+
+#[test]
 fn an_installed_module_interface_checks_like_its_statements() {
     // A package build's check exports each library declaration's interface;
     // an importer's check resolves those it looks up and checks its own
@@ -7752,7 +7802,12 @@ fn an_installed_module_interface_checks_like_its_statements() {
         context.install(installed.clone());
         context
     };
-    let reaching = || InstalledInterfaces::reaching(&package, [library_path]).expect("decodes");
+    let reaching = || InstalledInterfaces::reaching(&package, [library_path]);
+    assert_eq!(
+        reaching().decoded(),
+        0,
+        "installing decodes no declaration's record"
+    );
     let own = parse(
         "def total[T: Shape](shape: T) -> Int:\n    return double(shape.area())\n\
          def main():\n    var s = Square(WIDTH)\n    var n: Int = total(s)\n",

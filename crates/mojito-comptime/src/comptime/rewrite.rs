@@ -43,7 +43,7 @@ pub(super) fn rewrite_stmt_cloned(s: &Stmt, subs: Subs, into_defs: bool) -> Stmt
 // nested declaration's own type parameter of the same name.
 
 /// A binding→concrete-source-type lookup for a dropped-parameter rewrite.
-pub(super) type TypeSubs<'a> = &'a HashMap<String, Type>;
+pub(super) type TypeSubs<'a> = &'a dyn Fn(&str) -> Option<Type>;
 
 pub(super) fn substitute_type_bindings_in_block(body: &mut [Stmt], subs: TypeSubs) {
     for statement in body {
@@ -52,9 +52,7 @@ pub(super) fn substitute_type_bindings_in_block(body: &mut [Stmt], subs: TypeSub
 }
 
 pub(super) fn substitute_type_bindings_in_type(ty: &mut Type, subs: TypeSubs) {
-    for (binding, replacement) in subs {
-        substitute_source_type_binding(ty, binding, replacement);
-    }
+    substitute_source_type_bindings(ty, subs);
 }
 
 pub(super) fn rewrite_expr(e: &mut Expr, subs: Subs) {
@@ -1391,9 +1389,7 @@ fn retype_stmt(s: &mut Stmt, subs: TypeSubs) {
             value,
             ..
         } => {
-            let Some(inner) = without_shadowed(subs, type_params) else {
-                return;
-            };
+            let inner = without_shadowed(subs, type_params);
             for parameter in type_params {
                 retype_type_parameter(parameter, &inner);
             }
@@ -1481,9 +1477,7 @@ fn retype_stmt(s: &mut Stmt, subs: TypeSubs) {
             body,
             ..
         } => {
-            let Some(inner) = without_shadowed(subs, type_params) else {
-                return;
-            };
+            let inner = without_shadowed(subs, type_params);
             retype_decorators(decorators, &inner);
             for parameter in type_params.iter_mut() {
                 retype_type_parameter(parameter, &inner);
@@ -1513,9 +1507,7 @@ fn retype_stmt(s: &mut Stmt, subs: TypeSubs) {
             methods,
             ..
         } => {
-            let Some(inner) = without_shadowed(subs, type_params) else {
-                return;
-            };
+            let inner = without_shadowed(subs, type_params);
             retype_decorators(decorators, &inner);
             for parameter in type_params.iter_mut() {
                 retype_type_parameter(parameter, &inner);
@@ -1533,9 +1525,7 @@ fn retype_stmt(s: &mut Stmt, subs: TypeSubs) {
                 substitute_type_bindings_in_type(&mut field.ty, &inner);
             }
             for member in associated {
-                let Some(member_inner) = without_shadowed(&inner, &member.params) else {
-                    continue;
-                };
+                let member_inner = without_shadowed(&inner, &member.params);
                 for parameter in &mut member.params {
                     retype_type_parameter(parameter, &member_inner);
                 }
@@ -1548,29 +1538,7 @@ fn retype_stmt(s: &mut Stmt, subs: TypeSubs) {
                 retype_expr(&mut member.value, &member_inner);
             }
             for method in methods {
-                let Some(method_inner) = without_shadowed(&inner, &method.type_params) else {
-                    continue;
-                };
-                retype_decorators(&mut method.decorators, &method_inner);
-                for parameter in &mut method.type_params {
-                    retype_type_parameter(parameter, &method_inner);
-                }
-                if let Some(origins) = &mut method.self_origin {
-                    retype_exprs(origins, &method_inner);
-                }
-                for parameter in &mut method.params {
-                    retype_fn_parameter(parameter, &method_inner);
-                }
-                if let Some(ret) = &mut method.ret {
-                    substitute_type_bindings_in_type(ret, &method_inner);
-                }
-                if let Some(error) = &mut method.raises_type {
-                    substitute_type_bindings_in_type(error, &method_inner);
-                }
-                for predicate in &mut method.where_clauses {
-                    retype_expr(predicate, &method_inner);
-                }
-                substitute_type_bindings_in_block(&mut method.body, &method_inner);
+                retype_method(method, &inner);
             }
         }
         StmtKind::Trait {
@@ -1579,9 +1547,7 @@ fn retype_stmt(s: &mut Stmt, subs: TypeSubs) {
             ..
         } => {
             for method in methods {
-                let Some(inner) = without_shadowed(subs, &method.type_params) else {
-                    continue;
-                };
+                let inner = without_shadowed(subs, &method.type_params);
                 for parameter in &mut method.type_params {
                     retype_type_parameter(parameter, &inner);
                 }
@@ -1605,9 +1571,7 @@ fn retype_stmt(s: &mut Stmt, subs: TypeSubs) {
                 }
             }
             for member in comptime_members {
-                let Some(inner) = without_shadowed(subs, &member.params) else {
-                    continue;
-                };
+                let inner = without_shadowed(subs, &member.params);
                 for parameter in &mut member.params {
                     retype_type_parameter(parameter, &inner);
                 }
@@ -1679,7 +1643,7 @@ fn retype_expr(e: &mut Expr, subs: TypeSubs) {
             // `Self.T(...)` on a dropped binding constructs the bound type,
             // spelled as the ordinary constructor call it names.
             if matches!(&object.kind, ExprKind::Identifier(name) if name == "Self")
-                && subs.contains_key(method.as_str())
+                && subs(method).is_some()
             {
                 let mut name = method.clone();
                 let mut param_args = Vec::new();
@@ -1810,9 +1774,9 @@ fn retype_param_arg(argument: &mut ParamArg, subs: TypeSubs) {
         // expression; once the binding is concrete it is a type argument.
         ParamArg::Value(expr) => {
             if let ExprKind::Identifier(name) = &expr.kind
-                && let Some(replacement) = subs.get(name)
+                && let Some(replacement) = subs(name)
             {
-                *argument = ParamArg::Type(replacement.clone());
+                *argument = ParamArg::Type(replacement);
             } else {
                 retype_expr(expr, subs);
             }
@@ -1824,11 +1788,11 @@ fn retype_param_arg(argument: &mut ParamArg, subs: TypeSubs) {
 /// (`T(…)` / `T[…]`) to the concrete type's own head, prepending the concrete
 /// type's arguments (`List[Int](…)` is head `List` with argument `[Int]`).
 fn retype_head(name: &mut String, args: &mut Vec<ParamArg>, subs: TypeSubs) {
-    let Some(replacement) = subs.get(name.as_str()) else {
+    let Some(replacement) = subs(name) else {
         return;
     };
     let (head, head_args) = match replacement {
-        Type::Named(head, head_args) => (head.clone(), head_args.clone()),
+        Type::Named(head, head_args) => (head, head_args),
         Type::Int => ("Int".to_string(), Vec::new()),
         Type::UInt => ("UInt".to_string(), Vec::new()),
         Type::Bool => ("Bool".to_string(), Vec::new()),
@@ -1850,20 +1814,49 @@ fn retype_exprs(exprs: &mut [Expr], subs: TypeSubs) {
     }
 }
 
+/// Substitute `subs` through a struct method, which its own parameters
+/// shadow.
+fn retype_method(method: &mut mojito_ast::ast::Method, subs: TypeSubs) {
+    let inner = without_shadowed(subs, &method.type_params);
+    retype_decorators(&mut method.decorators, &inner);
+    for parameter in &mut method.type_params {
+        retype_type_parameter(parameter, &inner);
+    }
+    if let Some(origins) = &mut method.self_origin {
+        retype_exprs(origins, &inner);
+    }
+    for parameter in &mut method.params {
+        retype_fn_parameter(parameter, &inner);
+    }
+    if let Some(ret) = &mut method.ret {
+        substitute_type_bindings_in_type(ret, &inner);
+    }
+    if let Some(error) = &mut method.raises_type {
+        substitute_type_bindings_in_type(error, &inner);
+    }
+    for predicate in &mut method.where_clauses {
+        retype_expr(predicate, &inner);
+    }
+    substitute_type_bindings_in_block(&mut method.body, &inner);
+}
+
 /// The substitutions still live inside a nested declaration that introduces its
 /// own type parameters: a same-named parameter shadows the outer binding.
-/// `None` means nothing is left to substitute.
-fn without_shadowed(subs: TypeSubs, type_params: &[TypeParam]) -> Option<HashMap<String, Type>> {
-    let inner: HashMap<String, Type> = subs
+fn without_shadowed<'a>(
+    subs: TypeSubs<'a>,
+    type_params: &[TypeParam],
+) -> impl Fn(&str) -> Option<Type> + 'a {
+    let binders: Vec<String> = type_params
         .iter()
-        .filter(|(binding, _)| {
-            !type_params
-                .iter()
-                .any(|parameter| parameter.name.trim_start_matches('*') == binding.as_str())
-        })
-        .map(|(binding, replacement)| (binding.clone(), replacement.clone()))
+        .map(|parameter| parameter.name.trim_start_matches('*').to_string())
         .collect();
-    if inner.is_empty() { None } else { Some(inner) }
+    move |name| {
+        if binders.iter().any(|binder| binder == name) {
+            None
+        } else {
+            subs(name)
+        }
+    }
 }
 
 /// The concrete default construction a bound pack element's `Ts[i]()`

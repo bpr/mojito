@@ -57,7 +57,9 @@ pub(super) fn qualify_struct_packs(program: &mut [Stmt]) -> Result<(), ComptimeE
             })
             .collect();
         if !spreads.is_empty() {
-            substitute_type_bindings_in_block(std::slice::from_mut(statement), &spreads);
+            substitute_type_bindings_in_block(std::slice::from_mut(statement), &|name| {
+                spreads.get(name).cloned()
+            });
         }
     }
     Ok(())

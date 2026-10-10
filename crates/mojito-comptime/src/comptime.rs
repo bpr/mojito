@@ -253,7 +253,7 @@ pub fn elaborate(program: Vec<Stmt>) -> Result<Vec<Stmt>, ComptimeError> {
 pub struct ImportedScope<'a> {
     /// The declaration interfaces of the modules the link reached: the
     /// package's resolved declarations, and its module constants as the
-    /// build's elaboration folded them.
+    /// build's elaboration folded them, each read on first lookup.
     pub installed: Option<&'a InstalledInterfaces>,
 }
 
@@ -375,33 +375,14 @@ fn elaborate_in<'a>(
         crossing_templates: Cell::new(0),
         top_consts: RefCell::new(HashMap::new()),
         generic_aliases: RefCell::new(HashMap::new()),
+        installed: imported.installed,
     };
     drop(indexes);
-    let mut env = HashMap::new();
-    let mut aliases = elab::TypeAliases::default();
-    for (name, constant) in imported
-        .installed
-        .into_iter()
-        .flat_map(InstalledInterfaces::elaborated)
-    {
-        match constant {
-            ElaboratedConstant::Value(value) => {
-                elab.top_consts
-                    .borrow_mut()
-                    .insert(name.to_string(), value.clone());
-                env.insert(name.to_string(), value.clone());
-                aliases.bind(name, value);
-            }
-            ElaboratedConstant::Alias(parameters, body) => {
-                elab.generic_aliases
-                    .borrow_mut()
-                    .insert(name.to_string(), (parameters.clone(), body.clone()));
-            }
-        }
-    }
+    let mut env = ConstEnv::over(HashMap::new(), imported.installed);
+    let aliases = elab::TypeAliases::importing(imported.installed);
     let mut elaborated = elab.block_statements(program, &mut env, false, aliases)?;
     // A module constant declared after its use crosses here.
-    let consts = elab.top_consts.borrow().clone();
+    let consts = ConstEnv::over(elab.top_consts.borrow().clone(), imported.installed);
     elab.fold_runtime_crossings(&mut elaborated, &consts)?;
     // A body's read of a module constant stays a name: the check binds it as
     // the parameter value its declaration denotes (decision D3).
@@ -424,6 +405,17 @@ const fn rebuilt(source: &Stmt, kind: StmtKind) -> Stmt {
         span: source.span,
         module: None,
         syntax_id: source.syntax_id,
+    }
+}
+
+/// The value of the imported package's module constant `name`.
+fn installed_value<'a>(
+    installed: Option<&'a InstalledInterfaces>,
+    name: &str,
+) -> Option<&'a CtValue> {
+    match installed?.elaborated(name)? {
+        ElaboratedConstant::Value(value) => Some(value),
+        ElaboratedConstant::Alias(..) => None,
     }
 }
 
@@ -523,36 +515,42 @@ pub(super) fn def_pack_names(type_params: &[TypeParam], params: &[FnParam]) -> H
         .collect()
 }
 
-/// Substitute one now-concrete type binder in a source annotation, wherever
-/// it appears unshadowed.
-fn substitute_source_type_binding(ty: &mut Type, binding: &str, replacement: &Type) {
+/// Substitute every now-concrete type binder `subs` answers in a source
+/// annotation, wherever it appears unshadowed.
+fn substitute_source_type_bindings(ty: &mut Type, subs: rewrite::TypeSubs) {
     match ty {
-        Type::Named(name, arguments) if name == binding && arguments.is_empty() => {
-            *ty = replacement.clone();
+        Type::Named(name, arguments) if arguments.is_empty() => {
+            if let Some(replacement) = subs(name) {
+                *ty = replacement;
+            }
         }
         Type::Named(_, arguments) => {
             for argument in arguments {
-                substitute_source_param_arg_binding(argument, binding, replacement);
+                substitute_source_param_arg_bindings(argument, subs);
             }
         }
         // `Self.T` — the enclosing struct's own parameter spelled through
         // `Self`, the dominant spelling inside struct bodies.
-        Type::SelfParam(name) if name == binding => {
-            *ty = replacement.clone();
+        Type::SelfParam(name) => {
+            if let Some(replacement) = subs(name) {
+                *ty = replacement;
+            }
         }
         Type::Assoc { base, name, args }
-            if args.is_empty() && name == binding && matches!(base.as_ref(), Type::SelfType) =>
+            if args.is_empty() && matches!(base.as_ref(), Type::SelfType) =>
         {
-            *ty = replacement.clone();
+            if let Some(replacement) = subs(name) {
+                *ty = replacement;
+            }
         }
         Type::Assoc { base, args, .. } => {
-            substitute_source_type_binding(base, binding, replacement);
+            substitute_source_type_bindings(base, subs);
             for argument in args {
-                substitute_source_param_arg_binding(argument, binding, replacement);
+                substitute_source_param_arg_bindings(argument, subs);
             }
         }
         Type::IndexedProjection { base, .. } => {
-            substitute_source_type_binding(base, binding, replacement);
+            substitute_source_type_bindings(base, subs);
         }
         Type::Func {
             type_params,
@@ -562,30 +560,35 @@ fn substitute_source_type_binding(ty: &mut Type, binding: &str, replacement: &Ty
             ..
         } => {
             // The contract's own binder of that spelling shadows the binding.
-            if type_params
+            let binders: Vec<String> = type_params
                 .iter()
-                .any(|parameter| parameter.name.trim_start_matches('*') == binding)
-            {
-                return;
-            }
+                .map(|parameter| parameter.name.trim_start_matches('*').to_string())
+                .collect();
+            let inner = |name: &str| {
+                if binders.iter().any(|binder| binder == name) {
+                    None
+                } else {
+                    subs(name)
+                }
+            };
             for parameter in type_params {
                 if let Some(value_type) = &mut parameter.value_type {
-                    substitute_source_type_binding(value_type, binding, replacement);
+                    substitute_source_type_bindings(value_type, &inner);
                 }
                 if let Some(callable) = &mut parameter.callable_bound {
-                    substitute_source_type_binding(callable, binding, replacement);
+                    substitute_source_type_bindings(callable, &inner);
                 }
             }
             for parameter in params {
-                substitute_source_type_binding(&mut parameter.ty, binding, replacement);
+                substitute_source_type_bindings(&mut parameter.ty, &inner);
             }
-            substitute_source_type_binding(ret, binding, replacement);
+            substitute_source_type_bindings(ret, &inner);
             if let Some(error) = raises_type {
-                substitute_source_type_binding(error, binding, replacement);
+                substitute_source_type_bindings(error, &inner);
             }
         }
         Type::Ref { referent, .. } => {
-            substitute_source_type_binding(referent, binding, replacement);
+            substitute_source_type_bindings(referent, subs);
         }
         Type::Int
         | Type::UInt
@@ -594,7 +597,6 @@ fn substitute_source_type_binding(ty: &mut Type, binding: &str, replacement: &Ty
         | Type::ClosedStringLiteral
         | Type::Float64
         | Type::None
-        | Type::SelfParam(_)
         | Type::SelfType => {}
     }
 }
@@ -872,16 +874,104 @@ struct Elab<'a> {
     template_binders: RefCell<Vec<HashSet<String>>>,
     /// How many function bodies the runtime-crossing pass has descended into.
     crossing_templates: Cell<usize>,
+    /// The program's own module constants; an imported package's are
+    /// `installed`'s ([`Self::module_constant`]).
     top_consts: RefCell<HashMap<String, CtValue>>,
-    /// Module-scope generic `comptime` aliases in declaration order, name →
-    /// (parameters, body). The declarations pass through elaboration for the
-    /// checker's alias registry, but an application inside a `comptime if`
-    /// condition must already evaluate here — the branches are pruned before
-    /// checking.
+    /// The program's own module-scope generic `comptime` aliases in
+    /// declaration order, name → (parameters, body); an imported package's
+    /// are `installed`'s ([`Self::generic_alias`]). The declarations pass
+    /// through elaboration for the checker's alias registry, but an
+    /// application inside a `comptime if` condition must already evaluate
+    /// here — the branches are pruned before checking.
     generic_aliases: RefCell<HashMap<String, (Vec<TypeParam>, Expr)>>,
+    /// The declaration interfaces of the package the program imports, whose
+    /// module constants a lookup the program's own miss reads, each decoded
+    /// on first lookup.
+    installed: Option<&'a InstalledInterfaces>,
+}
+
+/// The compile-time values an elaboration reads by name: its own frame,
+/// and under it the module constants of the package the program imports,
+/// each decoded the first time a lookup the frame misses names it, as
+/// upstream resolves a package declaration on first lookup.
+#[derive(Clone, Default)]
+struct ConstEnv<'a> {
+    frame: HashMap<String, CtValue>,
+    /// The names a local binding of the frame's scope shadows without a
+    /// value, which no package constant answers.
+    shadowed: HashSet<String>,
+    installed: Option<&'a InstalledInterfaces>,
+}
+
+impl<'a> ConstEnv<'a> {
+    /// `frame` over the module constants of the package `installed` holds.
+    fn over(frame: HashMap<String, CtValue>, installed: Option<&'a InstalledInterfaces>) -> Self {
+        Self {
+            frame,
+            shadowed: HashSet::new(),
+            installed,
+        }
+    }
+
+    /// The value bound to `name`: the frame's, or a package constant's.
+    fn get(&self, name: &str) -> Option<&CtValue> {
+        self.frame.get(name).or_else(|| {
+            if self.shadowed.contains(name) {
+                None
+            } else {
+                installed_value(self.installed, name)
+            }
+        })
+    }
+
+    /// Bind `name` in the frame.
+    fn insert(&mut self, name: String, value: CtValue) -> Option<CtValue> {
+        self.frame.insert(name, value)
+    }
+
+    /// Shadow `name` with a binding of no compile-time value.
+    fn shadow(&mut self, name: &str) {
+        self.frame.remove(name);
+        self.shadowed.insert(name.to_string());
+    }
 }
 
 impl Elab<'_> {
+    /// The module constant `name`: the program's own, or the imported
+    /// package's.
+    fn module_constant(&self, name: &str) -> Option<CtValue> {
+        self.top_consts
+            .borrow()
+            .get(name)
+            .cloned()
+            .or_else(|| installed_value(self.installed, name).cloned())
+    }
+
+    /// Whether `name` is a module-scope generic alias, the program's own or
+    /// the imported package's.
+    fn is_generic_alias(&self, name: &str) -> bool {
+        self.generic_aliases.borrow().contains_key(name)
+            || matches!(
+                self.installed
+                    .and_then(|installed| installed.elaborated(name)),
+                Some(ElaboratedConstant::Alias(..))
+            )
+    }
+
+    /// The parameters and body of the module-scope generic alias `name`.
+    fn generic_alias(&self, name: &str) -> Option<(Vec<TypeParam>, Expr)> {
+        self.generic_aliases
+            .borrow()
+            .get(name)
+            .cloned()
+            .or_else(|| match self.installed?.elaborated(name)? {
+                ElaboratedConstant::Alias(parameters, body) => {
+                    Some((parameters.clone(), body.clone()))
+                }
+                ElaboratedConstant::Value(_) => None,
+            })
+    }
+
     /// Struct `name`, the program's own or the imported package's.
     fn ct_struct(&self, name: &str) -> Option<StructView<'_>> {
         self.structs.get(name).map(StructView::Own).or_else(|| {
@@ -914,17 +1004,17 @@ fn materialize_ct_value(value: CtValue, ty: &Ty) -> Option<CtValue> {
     value.materialize_as(ty)
 }
 
-fn substitute_source_param_arg_binding(argument: &mut ParamArg, binding: &str, replacement: &Type) {
+fn substitute_source_param_arg_bindings(argument: &mut ParamArg, subs: rewrite::TypeSubs) {
     match argument {
-        ParamArg::Type(ty) => substitute_source_type_binding(ty, binding, replacement),
-        ParamArg::Named { value, .. } => {
-            substitute_source_param_arg_binding(value, binding, replacement);
-        }
+        ParamArg::Type(ty) => substitute_source_type_bindings(ty, subs),
+        ParamArg::Named { value, .. } => substitute_source_param_arg_bindings(value, subs),
         // The parser encodes a bare identifier argument (`Tuple[T, T]`) as a
         // value expression; once the binding is concrete it is a type argument.
         ParamArg::Value(expr) => {
-            if matches!(&expr.kind, ExprKind::Identifier(name) if name == binding) {
-                *argument = ParamArg::Type(replacement.clone());
+            if let ExprKind::Identifier(name) = &expr.kind
+                && let Some(replacement) = subs(name)
+            {
+                *argument = ParamArg::Type(replacement);
             }
         }
     }

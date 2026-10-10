@@ -139,7 +139,7 @@ pub(in crate::checker) struct ApplicableFunction {
 /// spells: `h` for a module `def`, `S.f` for a static method.
 pub(super) fn applicable_functions(
     stmts: &[Stmt],
-    overloads: &mojito_symbol::symbol::OverloadSets,
+    overloads: &impl mojito_symbol::symbol::OverloadLookup,
 ) -> HashMap<String, Vec<ApplicableFunction>> {
     let mut functions = HashMap::<String, Vec<ApplicableFunction>>::new();
     for statement in stmts {
@@ -714,6 +714,7 @@ impl Checker {
             .iter()
             .rev()
             .find_map(|scope| scope.get(name))
+            .or_else(|| self.installed_comptime_parameter(name))
             .map(|(_, expression)| expression)
             .filter(|expression| {
                 matches!(
@@ -1823,6 +1824,7 @@ impl Checker {
             .iter()
             .rev()
             .find_map(|scope| scope.get(name))
+            .or_else(|| self.installed_comptime_parameter(name))
             .and_then(|(_, expression)| match expression.meta() {
                 mojito_types::param_expr::MetaTy::ParamList(_) => self.lookup(name).cloned(),
                 meta => meta.as_value().cloned(),
@@ -2779,7 +2781,8 @@ impl Checker {
                 && !self
                     .local_comptime_parameters
                     .iter()
-                    .any(|scope| scope.contains_key(name));
+                    .any(|scope| scope.contains_key(name))
+                && !self.installs(interface::Table::ComptimeParameters, name);
             if evaluated {
                 Err(TypeError::NotComptime(name.to_string()))
             } else {
@@ -2958,15 +2961,12 @@ impl Checker {
     /// Substitute the defining expression of every function-local
     /// compile-time value binding named in `expr`.
     fn inline_local_comptime_values(&self, expr: &Expr) -> Expr {
-        if self.local_comptime_values.iter().all(HashMap::is_empty) {
+        if self.local_comptime_values.iter().all(HashMap::is_empty)
+            && !self.installs_any(interface::Table::ComptimeValues)
+        {
             return expr.clone();
         }
-        let lookup = |name: &str| {
-            self.local_comptime_values
-                .iter()
-                .rev()
-                .find_map(|scope| scope.get(name))
-        };
+        let lookup = |name: &str| self.local_comptime_value(name);
         substitute_identifiers(expr, &lookup)
     }
 }

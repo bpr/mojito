@@ -654,6 +654,7 @@ impl Checker {
             .iter()
             .rev()
             .find_map(|scope| scope.get(name))
+            .or_else(|| self.installed_comptime_parameter(name))
         {
             return Some(lifted.clone());
         }
@@ -769,6 +770,7 @@ impl Checker {
             .iter()
             .rev()
             .find_map(|scope| scope.get(name))
+            .or_else(|| self.installed_comptime_parameter(name))
             .filter(|(level, _)| parameter.is_none_or(|(declared, _)| *level >= declared));
         local
             .map(|(_, expression)| expression)
@@ -2072,7 +2074,8 @@ impl Checker {
                     .local_type_aliases
                     .iter()
                     .rev()
-                    .find_map(|scope| scope.get(name)) =>
+                    .find_map(|scope| scope.get(name))
+                    .or_else(|| self.installed_type_alias(name)) =>
             {
                 match ty {
                     Ty::Param { binder, .. } => ConstraintOperand::Param(binder.clone()),

@@ -5,6 +5,7 @@
 //! `docs/notes/ctfe-request-path.md`.
 
 use mojito_ast::ast::{Expr, ExprKind};
+use mojito_symbol::symbol::OverloadLookup;
 
 /// What a call by name applies, as the phase asking sees its declarations.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

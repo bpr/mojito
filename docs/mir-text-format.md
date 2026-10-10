@@ -865,10 +865,10 @@ library declaration, each library module's checker record, and each
 module's link record, one file per package. The bundled library's is the
 only producer today (`src/package.rs`). No part of a package is MIR text:
 it is a directory followed by bytecode records, as upstream's package is
-MLIR bytecode throughout. The format line is `mojito-package 11`.
+MLIR bytecode throughout. The format line is `mojito-package 12`.
 
 ```text
-mojito-package 11
+mojito-package 12
 <the directory's length, 8 bytes little-endian>
 <the directory, as bytecode>
 <the payload: every record, as bytecode>
@@ -887,7 +887,7 @@ mojito-package 11
   payload, whose payload length differs, or whose names are not strictly
   sorted.
 - The declaration directory (`mojito_checked::package::DeclarationDirectory`)
-  lists each library module's checker record by path, and each library
+  lists each library module by path, and each library
   declaration, sorted by linked name, with its module, every checker table
   key its record answers, every method its struct declares, the name of
   every struct and function declaration its record holds, and its record's
@@ -899,8 +899,12 @@ mojito-package 11
   `MirStructDeclaration` and `MirFunctionDeclaration` the declaration
   lowers to (its own, its methods, and the functions nested in or lifted
   from it), and the transfer and call-through effect summaries of its
-  callables, by callable identity, every list sorted by name and every set
-  and map written sorted, so equal declarations encode equal bytes. The
+  callables, by callable identity, and the overload facts of the names the
+  declaration owns (`mojito_symbol::symbol::OverloadSets`: its functions'
+  arities, its methods' and its trait's requirements', its struct's
+  fieldwise initializer, and its integer constant), every list sorted by
+  name and every set and map written sorted, so equal declarations encode
+  equal bytes. The
   importer decodes it once per process, the first time any phase looks one
   of its names up (`PackageDeclarations`), as upstream's importer resolves a
   declaration from the package's bytecode on first lookup; one that does
@@ -919,11 +923,12 @@ mojito-package 11
   hole; its expressions decode stamped with the path the importer reached
   the module by, so a compilation decodes it, and joins it with the
   lowered part, the first time a lookup names one of its keys. One that
-  does not decode fails the compilation.
-- A module's checker record (`ModuleRecord`: its overload sets,
-  module-scope compile-time facts, and elaborated constants) decodes when
-  a compilation's link reached the module; when one does not decode, the
-  program links and compiles the library from source.
+  does not decode fails the compilation. A module constant's residue
+  holds the constant as the build's comptime elaboration resolved it, and
+  a declaration's residue holds the module-scope compile-time facts its
+  names bind (tables `Elaborated`, `ComptimeDtypes`, `ComptimeParameters`,
+  `ComptimeValues`, `TypeAliases`, and `SimdLengthBinders`, the last keyed
+  by the binders' owner); no module has a checker record of its own.
 - The importer maps the file (`PackageBytes`, `memmap2`) and reads only
   the directory and the interface eagerly. A cached package is written to
   a private partial file and renamed over its path, and removed only by

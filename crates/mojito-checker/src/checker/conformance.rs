@@ -342,8 +342,8 @@ impl ConformanceOracle {
             && self.checker.structs.contains_key(name)
     }
 
-    /// Whether the imported package declares function `name`, decoding
-    /// nothing.
+    /// Whether the imported package declares function `name`, decoding at
+    /// most the lowered part of the declaration owning the name.
     pub fn names_package_function(&self, name: &str) -> bool {
         self.installed().is_some() && self.checker.overload_sets.is_function(name)
     }

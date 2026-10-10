@@ -158,7 +158,7 @@ impl Checker {
                         has_self: true,
                         self_convention: m.self_convention,
                     },
-                    &self.overload_sets,
+                    &*self.overload_sets,
                 );
                 let mut decls = self.classify_params(&owner, &m.type_params)?;
                 for condition in &m.where_clauses {

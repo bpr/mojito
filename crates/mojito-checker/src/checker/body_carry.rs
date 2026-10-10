@@ -542,7 +542,7 @@ fn carried_result(checker: &Checker) -> DiscoveryResult {
             .map(|(name, info)| (name.clone(), info.explicit_destructors.clone()))
             .collect(),
         conformances: mojito_checked::checked::ConformanceFacts::default(),
-        overloads: checker.overload_sets.clone(),
+        overloads: std::sync::Arc::clone(&checker.overload_sets),
         overload_targets: checker.overload_targets.take(),
         contextual_bases: checker.contextual_bases.take(),
         generic_instantiations: checker.generic_instantiations.take(),

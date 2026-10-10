@@ -117,6 +117,19 @@ to evolve under the `0.x` compatibility rules.
   explicit-destruction obligation whole (MIR text schema 1.41). The
   package shrinks from 1.64 to 1.56 MB; the package format is now
   `mojito-package 11`.
+- An importer copies nothing of the bundled package in when a compilation
+  starts (R563): a declaration's record now holds the overload facts of
+  its names, its module constant as the build's elaboration resolved it,
+  and its module-scope compile-time facts, and the check, the
+  elaborator, and MIR answer a name their own tables miss from the record
+  of the reached declaration owning it, decoded on first lookup, as
+  Mojo's importer resolves a package declaration when a lookup names it.
+  No library module has a checker record of its own any more, and MIR
+  shares one copy of the program's overload sets instead of one per
+  function. Hello World compiles and runs in 4.0 ms release, from 4.4 ms
+  (`package.interfaces` 0.19 → 0.02 ms, `elaborate` 0.27 → 0.11 ms). The
+  package grows from 1.55 to 1.57 MB, and its format is now
+  `mojito-package 12`.
 - A module under a search root is linked under its path there, whichever
   import reaches it first: `std/io/file.mojo` declares
   `__module$std$io$file$…`, not `__module$file$…`.
