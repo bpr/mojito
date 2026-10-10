@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R598**.
+Next free ID: **R599**.
 
 ## Ordered Work
 
@@ -50,22 +50,6 @@ Scope: what remains of the plan's stages, and what the pipeline order still
 leaves to close. A defect found on the way is filed by its kind; a
 divergence from the pin goes to a catch-up track, however small.
 
-- [ ] **R581 (P6) A package declaration's record restates the names and
-  masks its directory rows hold**
-
-  A function's name and `ref_params` mask sit in its directory row and
-  again in its record (`FunctionDeclaration::{lowered_name, ref_params}`),
-  as a struct's name does (`StructDeclaration::name`).
-  - The residue's table keys restate the directory's key index the same
-    way.
-  - Upstream's ops name every symbol through the one string section, so a
-    name is held once.
-  - The lever: R560's pattern, projecting the restated fields out of the
-    record with a byte-for-byte guard at build time, and joining them back
-    from the directory row on decode.
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R596 (P6) A module integer constant's value is held twice in its
   package record**
 
@@ -76,6 +60,23 @@ divergence from the pin goes to a catch-up track, however small.
   - The lever: R560's pattern, keeping the value in the lowered part only,
     with a byte-for-byte guard at build time, and joining the checker's
     row back from it on decode.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R598 (P6) A package record's method residues, constants, and effect
+  summaries are keyed by names the directory holds**
+
+  A projected struct's method residues are keyed by method name, which the
+  directory's `Methods` index already holds, and `LoweredDeclaration`'s
+  `constants`, `transfer_effects`, and `call_through_effects` are keyed by
+  the declaration's or its functions' names.
+  - Together about 7.5 KB of the bundled package.
+  - Upstream names every symbol once, through the string section.
+  - The lever: key a method residue by its function's directory row (or
+    group the `Methods` index per declaration), and an effect summary by
+    its function's index in the record, as the record's functions already
+    are.
+  - Found while landing R581 (2026-10-10).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

@@ -639,7 +639,7 @@ pub(super) fn region_crosses_control(body: &[Stmt]) -> bool {
     reason = "TODO: take Option<&T>; TODO: take by value and update the call sites"
 )]
 pub(super) const fn is_ref(c: &Option<ArgConvention>) -> bool {
-    matches!(c, Some(ArgConvention::Mut | ArgConvention::Ref))
+    ArgConvention::is_reference(*c)
 }
 use mojito_hir::hir::VarId;
 use std::collections::HashMap;

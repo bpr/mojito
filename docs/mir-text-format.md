@@ -881,10 +881,10 @@ library declaration, and one module table holding each module's link
 record, one file per package. The bundled library's is the
 only producer today (`src/package.rs`). No part of a package is MIR text:
 it is a header followed by bytecode records, as upstream's package is
-MLIR bytecode throughout. The format line is `mojito-package 20`.
+MLIR bytecode throughout. The format line is `mojito-package 21`.
 
 ```text
-mojito-package 20
+mojito-package 21
 <the header's length, 8 bytes little-endian>
 <the header, as bytecode>
 <the payload: every record, as bytecode>
@@ -941,14 +941,28 @@ mojito-package 20
   (`constants`); it stores no overload set, which an importer finds by
   looking up the declarations under a name (format 20). Every list is sorted by
   name and every set and map written sorted, so equal declarations encode
-  equal bytes. The
+  equal bytes. It names nothing the directory holds (format 21), as an MLIR
+  bytecode op names its symbol by an index into the one string section:
+  each function is its row in the function table (`function_rows`), whose
+  name the decoder joins back, after checking the row places the function
+  at its index in the record; its struct and trait are the declaration's
+  own, named by the declaration's row; and a function's `ref_params` is
+  derived from its `param_conventions`. The build refuses a record whose
+  masks or names would not join back. The
   importer decodes it once per process, the first time any phase looks one
   of its names up (`PackageDeclarations`), as upstream's importer resolves a
   declaration from the package's bytecode on first lookup; one that does
   not decode is reported and refuses the elaboration. Its checker residue
   follows, opaque to the container: the checker's rows for the declaration
   (`checker::interface::DeclarationInterface`), each table sorted by key,
-  less what the lowered part says. A struct's declared parameters, fields,
+  less what the lowered part says. A keyed table is written as its values
+  alone, and a projected struct or binding without its name: the keys are
+  the declaration's span of directory keys, the projected structs are the
+  `Structs` keys with a lowered struct, the projected bindings the
+  `Bindings` keys with a lowered function of their name, and a projected
+  struct's `ExplicitDestroy` key holds no row. The build refuses a residue
+  whose names are not those its keys and lowered part imply, so the join
+  restores each name from the string section. A struct's declared parameters, fields,
   fieldwise initializer, destructors, and explicit-destruction obligation,
   each method's signature apart from what MIR does not carry (its default
   expressions, reference signatures, view-return and origin facts, and

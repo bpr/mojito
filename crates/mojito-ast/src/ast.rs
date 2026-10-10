@@ -758,6 +758,14 @@ pub enum ArgConvention {
     Deinit,
 }
 
+impl ArgConvention {
+    /// Whether a parameter declared with `convention` is a written-back
+    /// reference (`mut`/`ref`).
+    pub const fn is_reference(convention: Option<Self>) -> bool {
+        matches!(convention, Some(Self::Mut | Self::Ref))
+    }
+}
+
 /// A keyword argument at a call site: `name=value`. Structural binding is owned
 /// by `crate::call`; the checker and VM interpret the matched argument slot.
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]

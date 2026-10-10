@@ -185,13 +185,22 @@ impl InterfaceTable {
 /// methods, and the functions nested in or lifted from it — and the effect
 /// summaries of its callables. [`DeclarationRecords`] keeps every list
 /// sorted.
+///
+/// Encoded, it names nothing the directory holds, as an MLIR bytecode op
+/// names its symbol by an index into the one string section: each function
+/// by its row in the function table, its struct and trait by the
+/// declaration's own row, and each reference mask is its conventions'
+/// ([`FunctionDeclaration::conventions_mask`]). Decoding joins them back.
 #[derive(Debug, Default, serde::Serialize, serde::Deserialize)]
 pub struct LoweredDeclaration {
-    /// Sorted by name.
+    /// Its own struct, when it declares one.
     pub structs: Vec<StructDeclaration>,
     /// Sorted by lowered name.
     pub functions: Vec<FunctionDeclaration>,
-    /// Its trait, with the traits it refines; sorted by name.
+    /// Each function's row in the directory's function table, aligned with
+    /// `functions`; filled when the record is encoded.
+    pub function_rows: Vec<u32>,
+    /// Its own trait, with the traits it refines, when it declares one.
     pub traits: Vec<TraitDeclaration>,
     /// The transfer effects the package's bodies record for each callable
     /// it declares, by callable identity, sorted.
@@ -216,6 +225,76 @@ impl LoweredDeclaration {
     /// The integer value of the module constant `name`.
     pub fn constant(&self, name: &str) -> Option<i64> {
         sorted_get(&self.constants, name).copied()
+    }
+
+    /// Refuse a record of the declaration `name` whose names and masks
+    /// would not join back from the directory as encoded: a struct or trait
+    /// not the declaration's own, or a reference mask other than its
+    /// function's conventions.
+    fn refuse_unjoinable(&self, name: &str) -> Result<(), String> {
+        if let Some(function) = self
+            .functions
+            .iter()
+            .find(|function| function.ref_params != function.conventions_mask())
+        {
+            return Err(format!(
+                "the reference mask of `{}` says other than its conventions",
+                function.lowered_name
+            ));
+        }
+        let own = |names: Vec<&str>| names.len() <= 1 && names.iter().all(|own| *own == name);
+        if !own(self
+            .structs
+            .iter()
+            .map(|declaration| declaration.name.as_str())
+            .collect())
+        {
+            return Err(format!("the record of `{name}` holds a struct not its own"));
+        }
+        if !own(self
+            .traits
+            .iter()
+            .map(|declaration| declaration.name.as_str())
+            .collect())
+        {
+            return Err(format!("the record of `{name}` holds a trait not its own"));
+        }
+        Ok(())
+    }
+
+    /// Restore what the encoded record of the declaration at `entry` (named
+    /// `name`) leaves to `directory`: each function's name from its row,
+    /// which must place it back at its index in this record, its reference
+    /// mask from its conventions, and its struct's and trait's names.
+    fn join(
+        &mut self,
+        directory: &DeclarationDirectory,
+        entry: usize,
+        name: &str,
+    ) -> Result<(), String> {
+        if self.function_rows.len() != self.functions.len() {
+            return Err("its function rows are not one per function".to_string());
+        }
+        for (index, (function, row)) in self
+            .functions
+            .iter_mut()
+            .zip(&self.function_rows)
+            .enumerate()
+        {
+            let word = |column| directory.word(Section::Functions, *row as usize, column);
+            if (word(1) as usize, word(2) as usize) != (entry, index) {
+                return Err(format!("function row {row} does not place its function"));
+            }
+            function.lowered_name = directory.string(word(0)).to_string();
+            function.ref_params = function.conventions_mask();
+        }
+        for declaration in &mut self.structs {
+            declaration.name = name.to_string();
+        }
+        for declaration in &mut self.traits {
+            declaration.name = name.to_string();
+        }
+        Ok(())
     }
 }
 
@@ -797,7 +876,10 @@ impl PackageDeclarations {
                     .get(..declaration.residue)
                     .ok_or_else(|| "its record is truncated".to_string())
                     .and_then(|lowered| {
-                        postcard::from_bytes(lowered).map_err(|error| error.to_string())
+                        let mut lowered: LoweredDeclaration =
+                            postcard::from_bytes(lowered).map_err(|error| error.to_string())?;
+                        lowered.join(&self.directory, entry, declaration.name)?;
+                        Ok(lowered)
                     })
                     .map_err(|error| {
                         self.fail(format!(
@@ -1160,7 +1242,8 @@ impl DeclarationRecords {
     ///
     /// # Errors
     ///
-    /// A record that does not encode, a module recorded twice, a
+    /// A record that does not encode, or whose names or masks would not
+    /// join back from the directory, a module recorded twice, a
     /// declaration of no recorded module, a name two declarations hold, a
     /// body no declaration declares, or a declared function with no body.
     pub fn encode(
@@ -1183,47 +1266,14 @@ impl DeclarationRecords {
             .enumerate()
             .map(|(position, module)| (module.path.as_str(), position as u32))
             .collect();
-        let mut writer = DirectoryWriter::default();
-        let mut structs = Vec::new();
         let mut functions: HashMap<String, (u32, u32)> = HashMap::new();
-        let mut keys = Vec::new();
-        let mut methods = Vec::new();
-        let mut bindings = vec![Vec::new(); self.modules.len()];
-        for (position, (name, record)) in self.declarations.into_iter().enumerate() {
-            let position = position as u32;
-            let module = positions
-                .get(record.module.as_str())
-                .copied()
-                .ok_or_else(|| format!("`{name}` has no module record"))?;
-            let mut bytes = postcard::to_stdvec(&record.lowered)
-                .map_err(|error| format!("the declarations of `{name}` do not encode: {error}"))?;
-            let residue = bytes.len();
-            bytes.extend_from_slice(&record.residue);
-            let range = append(&bytes);
-            let mut declared = record.keys;
-            declared.sort();
-            declared.dedup();
-            let first_key = writer.rows(Section::DeclarationKeys);
-            for (table, key) in &declared {
-                let key = writer.string(key);
-                writer.row(Section::DeclarationKeys, &[*table as u32, key]);
-            }
-            let row = [
-                writer.string(&name),
-                module,
-                offset(range.start)?,
-                offset(range.end)?,
-                offset(residue)?,
-                offset(first_key)?,
-                offset(declared.len())?,
-            ];
-            writer.row(Section::Declarations, &row);
-            for (index, declaration) in record.lowered.structs.iter().enumerate() {
-                structs.push((declaration.name.clone(), position, index as u32));
-            }
+        for (position, record) in self.declarations.values().enumerate() {
             for (index, declaration) in record.lowered.functions.iter().enumerate() {
                 if functions
-                    .insert(declaration.lowered_name.clone(), (position, index as u32))
+                    .insert(
+                        declaration.lowered_name.clone(),
+                        (position as u32, index as u32),
+                    )
                     .is_some()
                 {
                     return Err(format!(
@@ -1232,13 +1282,6 @@ impl DeclarationRecords {
                     ));
                 }
             }
-            for (table, key) in declared {
-                if table == InterfaceTable::Bindings {
-                    bindings[module as usize].push(key.clone());
-                }
-                keys.push((table, key, position));
-            }
-            methods.extend(record.methods.into_iter().map(|method| (method, position)));
         }
         let bodies = if let Some(bodies) = bodies {
             let mut joined = Vec::with_capacity(bodies.len());
@@ -1268,6 +1311,63 @@ impl DeclarationRecords {
             declared.sort_by(|left, right| left.0.name.cmp(&right.0.name));
             declared
         };
+        let mut function_rows: Vec<Vec<u32>> = self
+            .declarations
+            .values()
+            .map(|record| vec![0; record.lowered.functions.len()])
+            .collect();
+        for (row, (_, declaration, index)) in bodies.iter().enumerate() {
+            function_rows[*declaration as usize][*index as usize] = offset(row)?;
+        }
+        let mut writer = DirectoryWriter::default();
+        let mut structs = Vec::new();
+        let mut keys = Vec::new();
+        let mut methods = Vec::new();
+        let mut bindings = vec![Vec::new(); self.modules.len()];
+        for (position, ((name, mut record), rows)) in
+            self.declarations.into_iter().zip(function_rows).enumerate()
+        {
+            let position = position as u32;
+            let module = positions
+                .get(record.module.as_str())
+                .copied()
+                .ok_or_else(|| format!("`{name}` has no module record"))?;
+            record.lowered.refuse_unjoinable(&name)?;
+            record.lowered.function_rows = rows;
+            let mut bytes = postcard::to_stdvec(&record.lowered)
+                .map_err(|error| format!("the declarations of `{name}` do not encode: {error}"))?;
+            let residue = bytes.len();
+            bytes.extend_from_slice(&record.residue);
+            let range = append(&bytes);
+            let mut declared = record.keys;
+            declared.sort();
+            declared.dedup();
+            let first_key = writer.rows(Section::DeclarationKeys);
+            for (table, key) in &declared {
+                let key = writer.string(key);
+                writer.row(Section::DeclarationKeys, &[*table as u32, key]);
+            }
+            let row = [
+                writer.string(&name),
+                module,
+                offset(range.start)?,
+                offset(range.end)?,
+                offset(residue)?,
+                offset(first_key)?,
+                offset(declared.len())?,
+            ];
+            writer.row(Section::Declarations, &row);
+            for (index, declaration) in record.lowered.structs.iter().enumerate() {
+                structs.push((declaration.name.clone(), position, index as u32));
+            }
+            for (table, key) in declared {
+                if table == InterfaceTable::Bindings {
+                    bindings[module as usize].push(key.clone());
+                }
+                keys.push((table, key, position));
+            }
+            methods.extend(record.methods.into_iter().map(|method| (method, position)));
+        }
         for (body, declaration, index) in &bodies {
             let name = writer.string(&body.name);
             let mask = writer.rows(Section::Masks);

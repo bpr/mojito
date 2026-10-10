@@ -7696,14 +7696,17 @@ fn an_installed_declaration_that_does_not_decode_is_reported_where_named() {
     let mut building = CheckContext::new();
     building.record_interfaces();
     check_program_in(&library, &mut building).expect("the library checks");
+    let lowered = mojito::mir::lower_program(&library)
+        .expect("the library lowers")
+        .declarations;
     let mut records = building
         .take_interfaces()
         .expect("the library exports")
         .records(
             vec![library_module(library_path)],
-            Vec::new(),
-            Vec::new(),
-            Vec::new(),
+            lowered.structs,
+            lowered.functions,
+            lowered.traits,
         )
         .expect("the library records");
     records
@@ -7756,14 +7759,17 @@ fn an_installed_module_interface_checks_like_its_statements() {
     let mut building = CheckContext::new();
     building.record_interfaces();
     check_program_in(&library, &mut building).expect("the library checks");
+    let lowered = mojito::mir::lower_program(&library)
+        .expect("the library lowers")
+        .declarations;
     let records = building
         .take_interfaces()
         .expect("the library exports")
         .records(
             vec![library_module(library_path)],
-            Vec::new(),
-            Vec::new(),
-            Vec::new(),
+            lowered.structs,
+            lowered.functions,
+            lowered.traits,
         )
         .expect("the library records");
     let declarations = mojito::checked_package::PackageDeclarations::of_records(records)

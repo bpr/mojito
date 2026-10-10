@@ -15,6 +15,9 @@ use std::collections::{HashMap, HashSet};
 /// written sorted, so equal declarations encode equal bytes.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct StructDeclaration {
+    /// A package record leaves it to its declaration's directory row, so
+    /// no other encoding may rely on it.
+    #[serde(skip)]
     pub name: String,
     pub fields: Vec<(String, Ty)>,
     #[serde(serialize_with = "sorted_names")]
@@ -78,6 +81,9 @@ impl StructDeclaration {
 /// the traits it refines.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct TraitDeclaration {
+    /// A package record leaves it to its declaration's directory row, so
+    /// no other encoding may rely on it.
+    #[serde(skip)]
     pub name: String,
     /// Its parents, in declaration order.
     pub refines: Vec<String>,
@@ -111,6 +117,9 @@ impl ExplicitDestroyObligation {
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct FunctionDeclaration {
+    /// A package record leaves it to the function's directory row, so no
+    /// other encoding may rely on it.
+    #[serde(skip)]
     pub lowered_name: String,
     pub param_names: Vec<String>,
     pub param_types: Vec<Ty>,
@@ -149,6 +158,9 @@ pub struct FunctionDeclaration {
     pub error_ty: Option<Ty>,
     /// Whether each runtime parameter is a `mut`/`ref` reference whose final
     /// value writes back through a caller place. Same order as `param_types`.
+    /// A package record derives it from `param_conventions`
+    /// ([`Self::conventions_mask`]), so no other encoding may rely on it.
+    #[serde(skip)]
     pub ref_params: Vec<bool>,
     /// Whether each runtime parameter writes through that retained caller
     /// place (`mut`/`var`/`deinit`, or a `ref` under a statically mutable
@@ -180,6 +192,15 @@ impl FunctionDeclaration {
         self.param_types.len()
             + usize::from(self.variadic.is_some())
             + usize::from(self.kw_variadic.is_some())
+    }
+
+    /// Whether each runtime parameter is a `mut`/`ref` reference, as its
+    /// declared convention says.
+    pub fn conventions_mask(&self) -> Vec<bool> {
+        self.param_conventions
+            .iter()
+            .map(|convention| ArgConvention::is_reference(*convention))
+            .collect()
     }
 
     /// The overload set the function belongs to, beside its source arity;

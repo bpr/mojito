@@ -178,6 +178,7 @@ impl InterfaceExport {
                         ..DeclarationRecord::default()
                     });
             interface.project(&record.lowered)?;
+            interface.refuse_unrestorable(&name, &keys, &record.lowered)?;
             record.residue = postcard::to_stdvec(&interface).map_err(|error| {
                 format!("the interface of `{name}` cannot be exported: {error}")
             })?;
@@ -304,7 +305,8 @@ impl InstalledInterfaces {
                     let lowered = package
                         .lowered(position)
                         .ok_or_else(|| "its lowered declarations do not decode".to_string())?;
-                    record.join(lowered)?;
+                    let keys: Vec<_> = directory.declaration_keys(position).collect();
+                    record.join(&keys, lowered)?;
                     Ok(Box::new(record))
                 })
                 .map_err(|error| {
@@ -458,35 +460,53 @@ pub type ElaboratedConstants = Vec<(String, String, ElaboratedConstant)>;
 /// Every table is sorted by key; a name-set table (`declared_structs` and
 /// the like) is only keys in the directory. Encoded, it is its record's
 /// residue: a fact the record's lowered part says is left out
-/// ([`Self::project`]) and restored when the residue decodes
-/// ([`Self::join`]).
+/// ([`Self::project`]), and so is every key and projected name, which the
+/// directory's key span for the declaration holds once; both are restored
+/// when the residue decodes ([`Self::join`]).
 #[derive(Default, serde::Serialize, serde::Deserialize)]
 pub(super) struct DeclarationInterface {
+    #[serde(with = "keyless")]
     structs: Vec<(String, StructInfo)>,
+    #[serde(with = "keyless")]
     traits: Vec<(String, TraitInfo)>,
+    #[serde(with = "keyless")]
     aliases: Vec<(String, ComptimeAlias)>,
+    #[serde(with = "keyless")]
     comptimes: Vec<(String, mojito_common::literal::IntLiteral)>,
+    #[serde(with = "keyless")]
     comptime_literals: Vec<(String, Expr)>,
+    #[serde(with = "keyless")]
     module_values: Vec<(String, CtValue)>,
+    #[serde(with = "keyless")]
     comptime_applied: Vec<(String, ParamExpr)>,
+    #[serde(with = "keyless")]
     applicable_functions: Vec<(String, Vec<comptime_validation::ApplicableFunction>)>,
+    #[serde(with = "keyless")]
     def_results: Vec<(String, SourceType)>,
+    #[serde(with = "keyless")]
     owned_collectors: Vec<(String, bool)>,
+    #[serde(with = "keyless")]
     collector_names: Vec<(String, String)>,
     /// The explicit-destruction obligation of a struct whose self-type is
     /// not `Deinitable`; a projected struct's is its lowered declaration's.
+    #[serde(with = "keyless")]
     explicit_destroy: Vec<(String, mojito_checked::checked::ExplicitDestroyInfo)>,
     /// The declaration's module-scope bindings: a `def`, its overloads
     /// merged, or a module constant.
     bindings: Vec<ModuleBinding>,
     /// The module constant it declares, as the build's comptime elaboration
     /// resolved it.
+    #[serde(with = "keyless")]
     elaborated: Vec<(String, ElaboratedConstant)>,
     /// Its module-scope compile-time facts, as the scope-0 entries of the
     /// checker's per-scope tables.
+    #[serde(with = "keyless")]
     comptime_dtypes: Vec<(String, SimdDtype)>,
+    #[serde(with = "keyless")]
     comptime_parameters: Vec<(String, (usize, ParamExpr))>,
+    #[serde(with = "keyless")]
     comptime_values: Vec<(String, Expr)>,
+    #[serde(with = "keyless")]
     type_aliases: Vec<(String, Ty)>,
     /// The `SIMDLength` binders it owns.
     simd_length_binders: Vec<ParamId>,
@@ -502,6 +522,9 @@ pub(super) struct DeclarationInterface {
 /// What a module `def`'s type says that its lowered declaration does not.
 #[derive(Clone, serde::Serialize, serde::Deserialize)]
 struct ProjectedBinding {
+    /// Restored from the declaration's bindings that have a lowered
+    /// function of their name.
+    #[serde(skip)]
     name: String,
     /// Whether the type is a `GenericFunc`, not a `Func`.
     generic: bool,
@@ -516,6 +539,9 @@ struct ProjectedBinding {
 /// A struct whose row leaves its declared facts to its lowered declaration.
 #[derive(serde::Serialize, serde::Deserialize)]
 struct ProjectedStruct {
+    /// Restored from the declaration's structs that have a lowered
+    /// declaration.
+    #[serde(skip)]
     name: String,
     /// When a function lowers each of its methods, every method's residue
     /// by name, sorted, one per overload in the row's order; its row then
@@ -547,6 +573,8 @@ struct MethodResidue {
 /// One name bound at module scope.
 #[derive(serde::Serialize, serde::Deserialize)]
 pub(super) struct ModuleBinding {
+    /// Restored from the directory's key span for its declaration.
+    #[serde(skip)]
     pub(super) name: String,
     pub(super) ty: Ty,
     pub(super) mutable: bool,
@@ -986,6 +1014,28 @@ where
     serde::Serialize::serialize(&map.iter().collect::<BTreeMap<_, _>>(), serializer)
 }
 
+/// A keyed table written as its values alone, its keys being the
+/// directory's, which [`DeclarationInterface::join`] restores.
+mod keyless {
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+
+    pub(super) fn serialize<V: Serialize, S: Serializer>(
+        entries: &[(String, V)],
+        serializer: S,
+    ) -> Result<S::Ok, S::Error> {
+        serializer.collect_seq(entries.iter().map(|(_, value)| value))
+    }
+
+    pub(super) fn deserialize<'de, V: Deserialize<'de>, D: Deserializer<'de>>(
+        deserializer: D,
+    ) -> Result<Vec<(String, V)>, D::Error> {
+        Ok(Vec::<V>::deserialize(deserializer)?
+            .into_iter()
+            .map(|value| (String::new(), value))
+            .collect())
+    }
+}
+
 /// What a compilation reached of a package's declaration interfaces.
 struct Installed {
     package: Arc<DeclarationInterfaces>,
@@ -1070,8 +1120,19 @@ impl DeclarationInterface {
         Ok(())
     }
 
-    /// Restore what [`Self::project`] left out from `lowered`.
-    fn join(&mut self, lowered: &LoweredDeclaration) -> Result<(), String> {
+    /// Restore what [`Self::project`] left out from `lowered`, and every
+    /// key and projected name from the directory's `keys` for the
+    /// declaration.
+    fn join(&mut self, keys: &[(Table, &str)], lowered: &LoweredDeclaration) -> Result<(), String> {
+        for (column, names) in self.key_columns() {
+            let implied = implied_keys(column, keys, lowered);
+            if names.len() != implied.len() {
+                return Err(format!("its {column:?} rows are not its directory's keys"));
+            }
+            for (name, key) in names.into_iter().zip(implied) {
+                *name = key.to_string();
+            }
+        }
         for projected in std::mem::take(&mut self.projected_structs) {
             let name = projected.name;
             let declaration = lowered_struct(lowered, &name)
@@ -1123,6 +1184,119 @@ impl DeclarationInterface {
             binding.ty = projected.ty(declaration, lowered);
         }
         Ok(())
+    }
+
+    /// Refuse the residue of the declaration `name` whose keys and
+    /// projected names are not those its directory `keys` and `lowered`
+    /// part imply, so that [`Self::join`] restores them.
+    fn refuse_unrestorable(
+        &mut self,
+        name: &str,
+        keys: &[(Table, String)],
+        lowered: &LoweredDeclaration,
+    ) -> Result<(), String> {
+        let keys: Vec<(Table, &str)> = keys
+            .iter()
+            .map(|(table, key)| (*table, key.as_str()))
+            .collect();
+        for (column, names) in self.key_columns() {
+            let implied = implied_keys(column, &keys, lowered);
+            if !names.iter().map(|name| name.as_str()).eq(implied) {
+                return Err(format!(
+                    "the residue of `{name}` holds other {column:?} keys than its directory"
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    /// Each column of names the encoded residue leaves to the directory.
+    fn key_columns(&mut self) -> [(KeyColumn, Vec<&mut String>); 20] {
+        fn keys<V>(entries: &mut [(String, V)]) -> Vec<&mut String> {
+            entries.iter_mut().map(|(key, _)| key).collect()
+        }
+        [
+            (KeyColumn::Table(Table::Structs), keys(&mut self.structs)),
+            (KeyColumn::Table(Table::Traits), keys(&mut self.traits)),
+            (KeyColumn::Table(Table::Aliases), keys(&mut self.aliases)),
+            (
+                KeyColumn::Table(Table::Comptimes),
+                keys(&mut self.comptimes),
+            ),
+            (
+                KeyColumn::Table(Table::ComptimeLiterals),
+                keys(&mut self.comptime_literals),
+            ),
+            (
+                KeyColumn::Table(Table::ModuleValues),
+                keys(&mut self.module_values),
+            ),
+            (
+                KeyColumn::Table(Table::ComptimeApplied),
+                keys(&mut self.comptime_applied),
+            ),
+            (
+                KeyColumn::Table(Table::ApplicableFunctions),
+                keys(&mut self.applicable_functions),
+            ),
+            (
+                KeyColumn::Table(Table::DefResults),
+                keys(&mut self.def_results),
+            ),
+            (
+                KeyColumn::Table(Table::OwnedCollectors),
+                keys(&mut self.owned_collectors),
+            ),
+            (
+                KeyColumn::Table(Table::CollectorNames),
+                keys(&mut self.collector_names),
+            ),
+            (
+                KeyColumn::Table(Table::ExplicitDestroy),
+                keys(&mut self.explicit_destroy),
+            ),
+            (
+                KeyColumn::Table(Table::Bindings),
+                self.bindings
+                    .iter_mut()
+                    .map(|binding| &mut binding.name)
+                    .collect(),
+            ),
+            (
+                KeyColumn::Table(Table::Elaborated),
+                keys(&mut self.elaborated),
+            ),
+            (
+                KeyColumn::Table(Table::ComptimeDtypes),
+                keys(&mut self.comptime_dtypes),
+            ),
+            (
+                KeyColumn::Table(Table::ComptimeParameters),
+                keys(&mut self.comptime_parameters),
+            ),
+            (
+                KeyColumn::Table(Table::ComptimeValues),
+                keys(&mut self.comptime_values),
+            ),
+            (
+                KeyColumn::Table(Table::TypeAliases),
+                keys(&mut self.type_aliases),
+            ),
+            (
+                KeyColumn::ProjectedStructs,
+                self.projected_structs
+                    .iter_mut()
+                    .map(|projected| &mut projected.name)
+                    .collect(),
+            ),
+            (
+                KeyColumn::ProjectedBindings,
+                self.projected_bindings
+                    .iter_mut()
+                    .map(|projected| &mut projected.name)
+                    .collect(),
+            ),
+        ]
     }
 
     fn sort(&mut self) {
@@ -1559,6 +1733,47 @@ fn same_bytes<L: serde::Serialize, R: serde::Serialize>(left: &L, right: &R) -> 
 /// Sort `entries` by name.
 fn by_name<V>(entries: &mut [(String, V)]) {
     entries.sort_by(|(left, _), (right, _)| left.cmp(right));
+}
+
+/// A column of names an encoded residue leaves to the directory.
+#[derive(Debug, Clone, Copy)]
+enum KeyColumn {
+    /// A table's keys.
+    Table(Table),
+    /// The names of the projected structs: the structs with a lowered
+    /// declaration.
+    ProjectedStructs,
+    /// The names of the projected bindings: the bindings with a lowered
+    /// function of their name.
+    ProjectedBindings,
+}
+
+/// The names `column` holds in the residue of a declaration whose
+/// directory keys are `keys` and whose lowered part is `lowered`: a table's
+/// keys, but for a projected struct's explicit-destruction row, which its
+/// lowered declaration holds.
+fn implied_keys<'k>(
+    column: KeyColumn,
+    keys: &[(Table, &'k str)],
+    lowered: &LoweredDeclaration,
+) -> Vec<&'k str> {
+    let of = |table| {
+        keys.iter()
+            .filter(move |(key_table, _)| *key_table == table)
+            .map(|(_, key)| *key)
+    };
+    match column {
+        KeyColumn::Table(Table::ExplicitDestroy) => of(Table::ExplicitDestroy)
+            .filter(|key| lowered_struct(lowered, key).is_none())
+            .collect(),
+        KeyColumn::Table(table) => of(table).collect(),
+        KeyColumn::ProjectedStructs => of(Table::Structs)
+            .filter(|key| lowered_struct(lowered, key).is_some())
+            .collect(),
+        KeyColumn::ProjectedBindings => of(Table::Bindings)
+            .filter(|key| lowered_function(lowered, key).is_some())
+            .collect(),
+    }
 }
 
 /// The module scope of a per-scope table.

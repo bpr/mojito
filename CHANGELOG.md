@@ -8,6 +8,15 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A package declaration's record names nothing its directory holds (R581),
+  as an MLIR bytecode op names its symbol through the one string section:
+  its lowered part holds each function by its directory row, its struct and
+  trait by the declaration's row, and no reference mask, which derives from
+  the function's conventions; its checker residue writes each table's
+  values without their keys, and each projection without its name, all
+  restored from the declaration's directory keys on decode. The build
+  refuses a record that would not join back. The bundled package shrinks
+  from 1.53 to 1.48 MB; the format is now `mojito-package 21`.
 - A package declaration stores no overload facts (R575): an importer finds
   a library name's overload set, as Mojo does, by looking up the reached
   declarations under the name, and its struct's fieldwise constructor from
