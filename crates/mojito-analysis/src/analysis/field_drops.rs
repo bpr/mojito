@@ -7,7 +7,7 @@
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
-use mojito_mir::mir::MirStructDeclaration;
+use mojito_mir::mir::MirDeclarations;
 use mojito_mir::mir::verify::{
     instruction_operand_regs, instruction_places, instruction_result_regs,
 };
@@ -15,10 +15,10 @@ use mojito_types::types::Ty;
 
 /// Splice `DropPlace`s for every refinable field of every `deinit`
 /// parameter of struct type with a known declaration.
-pub(super) fn refine_deinit_fields(f: &mut MirFunction, structs: &[MirStructDeclaration]) {
+pub(super) fn refine_deinit_fields(f: &mut MirFunction, declarations: &MirDeclarations) {
     let roots: Vec<DeinitRoot> = (0..f.n_params)
         .filter(|&i| f.deinit_params.get(i).copied().unwrap_or(false))
-        .filter_map(|i| deinit_root(f, i as VarId, structs))
+        .filter_map(|i| deinit_root(f, i as VarId, declarations))
         .collect();
     for root in roots {
         let top_live_in = top_level_field_liveness(&f.blocks, &root);
@@ -72,16 +72,12 @@ struct FieldSeeds<'a> {
     top_live_in: &'a [FieldSet],
 }
 
-fn deinit_root(
-    f: &MirFunction,
-    var: VarId,
-    structs: &[MirStructDeclaration],
-) -> Option<DeinitRoot> {
+fn deinit_root(f: &MirFunction, var: VarId, declarations: &MirDeclarations) -> Option<DeinitRoot> {
     let root_ty = f.var_tys.get(&var)?.clone();
     let Ty::Struct(name, _) = &root_ty else {
         return None;
     };
-    let decl = structs.iter().find(|decl| &decl.name == name)?;
+    let decl = declarations.structure(name)?;
     let mut pinned: HashSet<String> = HashSet::new();
     for_each_instr_deep(&f.blocks, &mut |instr| {
         let borrowing = matches!(

@@ -1515,6 +1515,7 @@ mod tests {
                 }],
                 functions: Vec::new(),
                 traits: Vec::new(),
+                imported: None,
             },
             invariant_errors: Vec::new(),
         };

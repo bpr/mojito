@@ -13,45 +13,23 @@ impl<'a> Specializer<'a> {
                 source.functions.iter().map(|(n, f)| (n.as_str(), f)),
                 None,
             ),
-            declarations: source
-                .declarations
-                .functions
-                .iter()
-                .map(|d| (d.lowered_name.as_str(), d))
-                .collect(),
-            structs: source
-                .declarations
-                .structs
-                .iter()
-                .map(|d| (d.name.as_str(), d))
-                .collect(),
-            generic_templates: Rc::new(
+            declarations: Catalog::new(
+                source
+                    .declarations
+                    .functions
+                    .iter()
+                    .map(|d| (d.lowered_name.as_str(), d)),
+                source.declarations.imported.as_ref(),
+            ),
+            structs: Catalog::new(
                 source
                     .declarations
                     .structs
                     .iter()
-                    .filter(|d| !d.param_decls.is_empty())
-                    .map(|d| d.name.clone())
-                    .collect(),
+                    .map(|d| (d.name.as_str(), d)),
+                source.declarations.imported.as_ref(),
             ),
-            struct_shapes: Rc::new(
-                source
-                    .declarations
-                    .structs
-                    .iter()
-                    .map(|d| {
-                        (
-                            d.name.clone(),
-                            StructShape {
-                                param_decls: d.param_decls.clone(),
-                                members: d.associated_types.clone(),
-                                values: d.associated_values.clone(),
-                                fields: d.fields.clone(),
-                            },
-                        )
-                    })
-                    .collect(),
-            ),
+            struct_catalog: Rc::new(StructCatalog::new(&source.declarations)),
             queue: VecDeque::new(),
             instances: Vec::new(),
             instance_index: HashMap::new(),
@@ -69,6 +47,7 @@ impl<'a> Specializer<'a> {
                     .iter()
                     .map(|declaration| declaration.lowered_name.clone())
                     .collect(),
+                imported: source.declarations.imported.clone(),
                 ..Applications::default()
             }),
             fuel: mojito_vm::crossing::CTFE_FUEL,
@@ -80,15 +59,7 @@ impl<'a> Specializer<'a> {
             output_structs: Vec::new(),
             output_struct_positions: HashMap::new(),
             conformance_answers: RefCell::default(),
-            layout_structs: Rc::new(RefCell::new(mojito_mir::mir::struct_field_index_of(
-                &source
-                    .declarations
-                    .structs
-                    .iter()
-                    .filter(|declaration| declaration.param_decls.is_empty())
-                    .cloned()
-                    .collect::<Vec<_>>(),
-            ))),
+            layout_structs: Rc::default(),
             constant_values: HashMap::new(),
             callable_targets: HashMap::new(),
             closure_captures: HashMap::new(),
@@ -122,7 +93,7 @@ impl<'a> Specializer<'a> {
     pub(super) fn run(mut self, entries: &[String]) -> Result<SpecializedProgram, MonoError> {
         let mut entry_map = HashMap::new();
         for entry in entries {
-            let decl = self.declarations.get(entry.as_str()).copied();
+            let decl = self.declarations.get(entry.as_str());
             self.functions.get(entry.as_str()).ok_or_else(|| {
                 self.error(
                     None,
@@ -179,6 +150,7 @@ impl<'a> Specializer<'a> {
                 structs: self.output_structs,
                 functions: self.output_function_decls,
                 traits: self.source.declarations.traits.clone(),
+                imported: None,
             },
             invariant_errors: self.source.invariant_errors.clone(),
         };
@@ -217,8 +189,7 @@ impl<'a> Specializer<'a> {
 
     pub(super) fn base_bindings(&self) -> Bindings {
         Bindings {
-            generic_templates: Rc::clone(&self.generic_templates),
-            struct_shapes: Rc::clone(&self.struct_shapes),
+            structs: Rc::clone(&self.struct_catalog),
             applications: Some(Rc::clone(&self.applications)),
             ..Bindings::default()
         }
@@ -233,7 +204,7 @@ impl<'a> Specializer<'a> {
         bindings: Bindings,
         arguments: Vec<InstanceArg>,
     ) -> Result<String, MonoError> {
-        if let Some(declaration) = self.declarations.get(template).copied()
+        if let Some(declaration) = self.declarations.get(template)
             && let Availability::Disproven(message) = self.availability(declaration, &bindings)
         {
             let instance = bindings
@@ -716,7 +687,7 @@ impl<'a> Specializer<'a> {
         repair_storage_result_types(&mut function);
         erase_specialized_generic_callable_storage(&mut function);
 
-        if let Some(declaration) = self.declarations.get(key.template.as_str()).copied() {
+        if let Some(declaration) = self.declarations.get(key.template.as_str()) {
             let mut declaration = declaration.clone();
             substitute_declaration(&mut declaration, bindings)?;
             erase_generic_callable_parameters(&mut declaration.param_types);
@@ -728,7 +699,7 @@ impl<'a> Specializer<'a> {
                 declare_runtime_parameter(&mut declaration, &parameter, ty);
             }
             for (target, slots) in environments {
-                let body = self.declarations[target.as_str()];
+                let body = &self.declarations[target.as_str()];
                 for (position, slot) in slots.into_iter().enumerate() {
                     declare_environment_parameter(
                         &mut declaration,
@@ -945,7 +916,7 @@ impl<'a> Specializer<'a> {
         args: &[ParamExpr],
         bindings: &Bindings,
     ) -> Result<CtValue, MonoError> {
-        let declaration = self.declarations.get(function).copied().ok_or_else(|| {
+        let declaration = self.declarations.get(function).ok_or_else(|| {
             self.error(
                 Some(template),
                 format!("compile-time application of `{function}`, which has no MIR declaration"),
@@ -954,7 +925,7 @@ impl<'a> Specializer<'a> {
         // A static method of a generic struct is applied to the instance it
         // is called on first (`G[n].f()`).
         let owner = mojito_symbol::symbol::split_method_symbol(function)
-            .and_then(|(owner, _)| self.structs.get(owner).copied())
+            .and_then(|(owner, _)| self.structs.get(owner))
             .filter(|owner| !owner.param_decls.is_empty());
         let (instance, args) = match (owner, args.split_first()) {
             (Some(owner), Some((instance, args))) => (Some((owner, instance)), args),
@@ -1099,6 +1070,7 @@ impl<'a> Specializer<'a> {
                     .cloned()
                     .collect(),
                 traits: self.source.declarations.traits.clone(),
+                imported: None,
             },
             invariant_errors: Vec::new(),
         })
@@ -1155,6 +1127,7 @@ impl<'a> Specializer<'a> {
                 "layout query: no native target for this host".to_string(),
             ));
         };
+        self.struct_catalog.fill_layout(&self.layout_structs, ty);
         let structs = self.layout_structs.borrow();
         let layout = mojito_native_core::layout::LayoutCx {
             target,
@@ -1175,6 +1148,7 @@ impl<'a> Specializer<'a> {
         Some(Rc::new(LayoutOracle {
             target,
             structs: Rc::clone(&self.layout_structs),
+            catalog: Rc::clone(&self.struct_catalog),
         }))
     }
 
@@ -1520,6 +1494,11 @@ impl<'a> Specializer<'a> {
                 "layout query: no native target for this host".to_string(),
             ));
         };
+        for query in &queries {
+            if let MirInstr::SizeOf { ty, .. } = query {
+                self.struct_catalog.fill_layout(&self.layout_structs, ty);
+            }
+        }
         let structs = self.layout_structs.borrow();
         let layout = mojito_native_core::layout::LayoutCx {
             target,
@@ -1606,8 +1585,8 @@ impl<'a> Specializer<'a> {
             // other concrete callee.
             if arguments.is_empty()
                 || !self
-                    .generic_templates
-                    .contains(nominal_template(struct_name))
+                    .struct_catalog
+                    .is_generic(nominal_template(struct_name))
             {
                 let Some(body) = self.functions.get(target.as_str()) else {
                     continue;
@@ -1629,7 +1608,7 @@ impl<'a> Specializer<'a> {
     /// The binders a body of `template` may name: those of each declaration
     /// it is nested in, outermost first, then its own.
     pub(super) fn binder_scope(&self, template: &str) -> Vec<ParamDecl> {
-        mojito_mir::mir::binder_scope(template, |name| self.declarations.get(name).copied())
+        mojito_mir::mir::binder_scope(template, |name| self.declarations.get(name))
             .into_iter()
             .cloned()
             .collect()
@@ -2778,7 +2757,7 @@ impl<'a> Specializer<'a> {
                 continue;
             }
             let template_name = name.split("$mono").next().unwrap_or(&name).to_string();
-            let Some(template) = self.structs.get(template_name.as_str()).copied() else {
+            let Some(template) = self.structs.get(template_name.as_str()) else {
                 continue;
             };
             // A static method being run at compile time may be what a field
@@ -2908,8 +2887,7 @@ impl<'a> Specializer<'a> {
                     .map(str::to_string)
                     .collect::<Vec<_>>();
                 for candidate in candidates {
-                    let Some(function_decl) = self.declarations.get(candidate.as_str()).copied()
-                    else {
+                    let Some(function_decl) = self.declarations.get(candidate.as_str()) else {
                         continue;
                     };
                     // An unspecialized variadic overload cannot materialize
@@ -2969,7 +2947,7 @@ impl<'a> Specializer<'a> {
     fn runtime_pack_constructor(&self, init_base: &str) -> Option<String> {
         let mut packs = self.functions.keys().filter(|name| {
             mojito_symbol::symbol::is_overload_of(name, init_base)
-                && self.declarations.get(*name).is_some_and(|declaration| {
+                && self.declarations.get(name).is_some_and(|declaration| {
                     declaration.variadic.as_ref().is_some_and(|element| {
                         matches!(element, mojito_types::types::Ty::RuntimePack(_))
                             || mojito_types::types::pack_spread(std::slice::from_ref(element))

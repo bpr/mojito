@@ -8,7 +8,7 @@
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
-use mojito_mir::mir::MirStructDeclaration;
+use mojito_mir::mir::MirDeclarations;
 use mojito_types::types::Ty;
 
 /// Splice a `DropPlace` before every write in function `name` that overwrites
@@ -21,9 +21,9 @@ use mojito_types::types::Ty;
 pub(super) fn elaborate_store_drops(
     f: &mut MirFunction,
     name: &str,
-    structs: &[MirStructDeclaration],
+    declarations: &MirDeclarations,
 ) {
-    let receiver = initializer_receiver_entry(f, name, structs);
+    let receiver = initializer_receiver_entry(f, name, declarations);
     let uninitialized_receiver = receiver.is_some();
     let mut entry: Vec<Node> = (0..f.n_vars)
         .map(|var| {
@@ -56,7 +56,7 @@ pub(super) fn elaborate_store_drops(
 fn initializer_receiver_entry(
     f: &MirFunction,
     name: &str,
-    structs: &[MirStructDeclaration],
+    declarations: &MirDeclarations,
 ) -> Option<Node> {
     let is_receiver = f.n_params > 0
         && f.var_names.first().is_some_and(|var| var == "self")
@@ -65,15 +65,12 @@ fn initializer_receiver_entry(
         return None;
     }
     let fields = match f.var_tys.get(&0) {
-        Some(Ty::Struct(struct_name, _)) => structs
-            .iter()
-            .find(|decl| &decl.name == struct_name)
-            .map(|decl| {
-                decl.fields
-                    .iter()
-                    .map(|(field, _)| field.clone())
-                    .collect::<Vec<_>>()
-            }),
+        Some(Ty::Struct(struct_name, _)) => declarations.structure(struct_name).map(|decl| {
+            decl.fields
+                .iter()
+                .map(|(field, _)| field.clone())
+                .collect::<Vec<_>>()
+        }),
         _ => None,
     };
     Some(fields.map_or_else(Node::moved, Node::with_uninitialized_fields))

@@ -11,24 +11,23 @@ use mojito_types::types::VariantIndex;
 /// initializer.
 #[derive(Clone, Copy)]
 pub(super) struct ConstructionDecls<'d, 'a> {
-    pub(super) structs: &'d HashMap<&'a str, &'a MirStructDeclaration>,
-    pub(super) functions: &'d HashMap<&'a str, &'a MirFunctionDeclaration>,
+    pub(super) structs: &'d Catalog<'a, MirStructDeclaration>,
+    pub(super) functions: &'d Catalog<'a, MirFunctionDeclaration>,
 }
 
-impl ConstructionDecls<'_, '_> {
+impl<'a> ConstructionDecls<'_, 'a> {
     /// The list-literal initializer of the struct `template`, as the
     /// checker selects it for a collection display.
-    fn list_literal_constructor(&self, template: &str) -> Option<&str> {
-        self.functions
-            .iter()
-            .find(|(symbol, declaration)| {
-                mojito_symbol::symbol::lifecycle_constructor(symbol) == Some((template, "__init__"))
-                    && mojito_symbol::symbol::is_list_literal_constructor(
+    fn list_literal_constructor(&self, template: &str) -> Option<&'a str> {
+        self.functions.names().find(|symbol| {
+            mojito_symbol::symbol::lifecycle_constructor(symbol) == Some((template, "__init__"))
+                && self.functions.get(symbol).is_some_and(|declaration| {
+                    mojito_symbol::symbol::is_list_literal_constructor(
                         &declaration.param_names,
                         declaration.variadic.is_some(),
                     )
-            })
-            .map(|(symbol, _)| *symbol)
+                })
+        })
     }
 }
 
@@ -986,27 +985,21 @@ pub(super) struct StructInstance<'b> {
 /// The source struct `ty` instantiates, read off the shapes `bindings`
 /// carries. `None` where `ty` is no struct the source declares.
 pub(super) fn struct_instance<'b>(
-    ty: &Ty,
+    ty: &'b Ty,
     bindings: &'b Bindings,
 ) -> Result<Option<StructInstance<'b>>, MonoError> {
     let Ty::Struct(struct_name, struct_args) = ty else {
         return Ok(None);
     };
-    let Some((template, shape)) = bindings
-        .struct_shapes
-        .get_key_value(struct_name.as_str())
-        .or_else(|| {
-            bindings
-                .struct_shapes
-                .get_key_value(nominal_template(struct_name))
-        })
+    let Some((template, shape)) = [struct_name.as_str(), nominal_template(struct_name)]
+        .into_iter()
+        .find_map(|name| Some((name, bindings.structs.shape(name)?)))
     else {
         return Ok(None);
     };
     let mut instance = Bindings {
-        generic_templates: Rc::clone(&bindings.generic_templates),
-        struct_shapes: Rc::clone(&bindings.struct_shapes),
-        self_instance: Some((template.clone(), ty.clone())),
+        structs: Rc::clone(&bindings.structs),
+        self_instance: Some((template.to_string(), ty.clone())),
         applications: bindings.applications.clone(),
         ..Bindings::default()
     };
@@ -1050,7 +1043,7 @@ pub(super) fn substitute_ty(ty: &Ty, bindings: &Bindings) -> Result<Ty, MonoErro
                 // `Tuple` applied to no element is the empty tuple's
                 // instance, not the template.
                 if mojito_types::types::binds_pack_elementwise(name)
-                    && bindings.generic_templates.contains(name.as_str())
+                    && bindings.structs.is_generic(name)
                 {
                     return Ok(Ty::Struct(
                         mojito_symbol::symbol::instance_symbol(name, &[]),
@@ -1119,7 +1112,7 @@ pub(super) fn substitute_ty(ty: &Ty, bindings: &Bindings) -> Result<Ty, MonoErro
             // rejection.
             let concrete_name = if args.iter().any(arg_has_symbolic)
                 || nominal_template(name) != name
-                || !bindings.generic_templates.contains(name.as_str())
+                || !bindings.structs.is_generic(name)
             {
                 name.clone()
             } else {

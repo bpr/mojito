@@ -3883,12 +3883,21 @@ fn a_package_reads_back_to_the_bytes_it_was_written_as() {
     assert_eq!(package.checked, checked);
     assert_eq!(package.header, header);
     assert_eq!(package.bodies.materialized(), 0, "bodies decode on demand");
+    assert_eq!(
+        package.declarations.decoded(),
+        0,
+        "declarations decode on demand"
+    );
     let again = mojito::mir::MirProgram {
         functions: package.bodies.all(),
-        declarations: package.declarations,
+        declarations: mojito::mir::MirDeclarations::of_package(std::sync::Arc::clone(
+            &package.declarations,
+        ))
+        .materialized(),
         invariant_errors: Vec::new(),
     };
     assert!(package.bodies.failures().is_empty());
+    assert!(package.declarations.failures().is_empty());
     assert_eq!(
         write_package(
             &header,

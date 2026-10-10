@@ -1599,7 +1599,7 @@ pub struct ConformanceFacts {
 /// One struct's conformance to one trait: it holds for the instances whose
 /// arguments satisfy any of `conditions`, each over the struct's own binders.
 /// No condition means no instance conforms.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct StructConformance {
     pub trait_name: String,
     pub conditions: Vec<mojito_types::types::GenericConstraint>,
@@ -1788,7 +1788,7 @@ impl DeclarationEffect {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 /// Literal value retained after semantic checking for declaration metadata.
 pub enum CheckedConst {
     Int(mojito_common::literal::IntLiteral),

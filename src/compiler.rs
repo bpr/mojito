@@ -53,8 +53,9 @@ impl CompiledProgram {
     /// Parametric MIR: the ownership-verified, pre-drop MIR produced by the
     /// authoritative compiler pipeline, whose generic bodies still name their
     /// parameters. The later phases derive from it. With an imported
-    /// package it holds the program's own functions and every declaration,
-    /// the package's included; the package's bodies stay in the package.
+    /// package it holds the program's own functions and declarations, with
+    /// the package's declarations attached, each resolved the first time a
+    /// lookup names it; the package's bodies stay in the package.
     pub const fn mir(&self) -> &MirProgram {
         &self.mir
     }
@@ -97,6 +98,9 @@ impl CompiledProgram {
             complete.functions.extend(package.bodies.all());
             complete.invariant_errors.extend(package.bodies.failures());
             complete
+                .invariant_errors
+                .extend(package.declarations.failures());
+            complete
         })
     }
 
@@ -115,7 +119,23 @@ impl CompiledProgram {
                     self.package.as_deref().map(|package| &package.bodies),
                     &crate::native::mono::entry_roots(mir),
                     self.target.as_ref(),
-                );
+                )
+                .and_then(|concrete| {
+                    let failures = self
+                        .package
+                        .as_ref()
+                        .map(|package| package.declarations.failures())
+                        .unwrap_or_default();
+                    if failures.is_empty() {
+                        Ok(concrete)
+                    } else {
+                        Err(crate::native::mono::MonoError {
+                            kind: crate::native::mono::MonoErrorKind::Unsupported,
+                            function: None,
+                            construct: failures.join("; "),
+                        })
+                    }
+                });
                 if let Ok(concrete) = &concrete {
                     timing::count(
                         "concrete_functions",
@@ -126,6 +146,10 @@ impl CompiledProgram {
                     timing::count(
                         "package_bodies_decoded",
                         package.bodies.materialized() as u64,
+                    );
+                    timing::count(
+                        "package_declarations_decoded",
+                        package.declarations.decoded() as u64,
                     );
                 }
                 concrete

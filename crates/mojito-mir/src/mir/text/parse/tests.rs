@@ -1555,6 +1555,7 @@ fn declaration_metadata_reprints_byte_identically() {
         structs: vec![zebra, boxed],
         functions: vec![add, other],
         traits: vec!["Shape".into(), "needs quoting!".into()],
+        imported: None,
     };
     assert_reprints(&program);
 }

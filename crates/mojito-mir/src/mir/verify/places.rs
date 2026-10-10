@@ -331,17 +331,18 @@ pub(super) fn verify_place(
                     .copied()
                     .unwrap_or(false);
             let receiver_handle = through == 0
-                && declarations.functions.iter().any(|declaration| {
-                    declaration.lowered_name == function_name
-                        && declaration.has_receiver
-                        && matches!(
-                            declaration.receiver_convention,
-                            Some(
-                                mojito_ast::ast::ArgConvention::Mut
-                                    | mojito_ast::ast::ArgConvention::Ref
+                && declarations
+                    .function(function_name)
+                    .is_some_and(|declaration| {
+                        declaration.has_receiver
+                            && matches!(
+                                declaration.receiver_convention,
+                                Some(
+                                    mojito_ast::ast::ArgConvention::Mut
+                                        | mojito_ast::ast::ArgConvention::Ref
+                                )
                             )
-                        )
-                });
+                    });
             let local_handle = match function.var_tys.get(&through) {
                 Some(Ty::Ref(_)) => true,
                 Some(Ty::Pointer { origin, .. }) => origin.as_origin().is_some(),
@@ -439,10 +440,7 @@ pub(super) fn verify_place(
                 // substitution the verifier deliberately does not re-derive.
                 if let Some(Ty::Struct(struct_name, arguments)) = &current
                     && arguments.is_empty()
-                    && let Some(declaration) = declarations
-                        .structs
-                        .iter()
-                        .find(|declaration| &declaration.name == struct_name)
+                    && let Some(declaration) = declarations.structure(struct_name)
                 {
                     match declaration
                         .fields

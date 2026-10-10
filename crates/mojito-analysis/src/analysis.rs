@@ -88,6 +88,7 @@ pub fn check_ownership_importing<'a>(
             .iter()
             .map(|declaration| declaration.name.as_str())
             .collect(),
+        imported: prog.declarations.imported.as_ref(),
     };
     timing::count("functions", prog.functions.len() as u64);
     for (_name, f) in &prog.functions {
@@ -116,12 +117,14 @@ pub fn check_ownership_importing<'a>(
 /// falls back to its function's `ref_params` mask (receiver at slot zero), and
 /// an unknown callee stays exclusive. `structs` resolves a single-`__init__`
 /// construction, which calls the bare struct name, to its `<name>.__init__`
-/// declaration.
+/// declaration. `param_writes` and `structs` cover the program's own
+/// declarations; a name they miss is looked up in the package it imports.
 #[derive(Default)]
 pub struct CalleeRefParams<'a> {
     pub ref_params: HashMap<&'a str, &'a [bool]>,
     pub param_writes: HashMap<&'a str, &'a [bool]>,
     pub structs: HashSet<&'a str>,
+    pub imported: Option<&'a mojito_mir::mir::link::ImportedDeclarations>,
 }
 
 impl CalleeRefParams<'_> {
@@ -134,13 +137,21 @@ impl CalleeRefParams<'_> {
     /// function-level mask carries `self` at slot zero.
     fn retained_access(&self, callee: &str, argument: usize, receiver: bool) -> LoanAccess {
         let init_name;
-        let declared = if self.structs.contains(callee) {
+        let imported = self.imported;
+        let declared = if self.structs.contains(callee)
+            || imported.is_some_and(|imported| imported.structure(callee).is_some())
+        {
             init_name = format!("{callee}.__init__");
             init_name.as_str()
         } else {
             callee
         };
-        if let Some(mask) = self.param_writes.get(declared) {
+        let mask = self.param_writes.get(declared).copied().or_else(|| {
+            imported?
+                .function(declared)
+                .map(|declaration| declaration.param_writes.as_slice())
+        });
+        if let Some(mask) = mask {
             return match mask.get(argument) {
                 Some(false) => LoanAccess::Read,
                 _ => LoanAccess::Write,
@@ -173,7 +184,7 @@ pub fn elaborate_drops_program(prog: MirProgram) -> MirProgram {
             // clear the slot).
             let elaborated = if name == "__toplevel__" {
                 let mut f = f;
-                elaborate_store_drops(&mut f, &name, &prog.declarations.structs);
+                elaborate_store_drops(&mut f, &name, &prog.declarations);
                 f
             } else {
                 elaborate_drops_function(&name, f, &prog.declarations)
@@ -196,16 +207,11 @@ pub fn elaborate_drops_function(
     mut function: MirFunction,
     declarations: &MirDeclarations,
 ) -> MirFunction {
-    elaborate_store_drops(&mut function, name, &declarations.structs);
-    let scope = binder_scope(name, |name| {
-        declarations
-            .functions
-            .iter()
-            .find(|declaration| declaration.lowered_name == name)
-    });
+    elaborate_store_drops(&mut function, name, declarations);
+    let scope = binder_scope(name, |name| declarations.function(name));
     let mut elaborated =
         elaborate_drops(&function, &materialized_parameter_slots(&function, &scope));
-    refine_deinit_fields(&mut elaborated, &declarations.structs);
+    refine_deinit_fields(&mut elaborated, declarations);
     elaborated
 }
 

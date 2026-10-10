@@ -147,7 +147,7 @@ impl Specializer<'_> {
         param_args: &[mojito_mir::mir::MirParamArg],
         instantiated: &[TyArg],
     ) -> Result<(String, Bindings, Vec<InstanceArg>), MonoError> {
-        let declaration = self.declarations.get(target).copied().ok_or_else(|| {
+        let declaration = self.declarations.get(target).ok_or_else(|| {
             self.error(
                 Some(owner),
                 format!("callee `{target}` lacks declaration facts"),
@@ -167,8 +167,7 @@ impl Specializer<'_> {
         if let Some(receiver) = receiver {
             let actual_receiver = peel_refs(reg_ty(caller, receiver, owner)?);
             if let Ty::Struct(receiver_name, arguments) = actual_receiver
-                && let Some(struct_decl) =
-                    self.structs.get(nominal_template(receiver_name)).copied()
+                && let Some(struct_decl) = self.structs.get(nominal_template(receiver_name))
             {
                 own_start =
                     owner_covered_prefix(&struct_decl.param_decls, &declaration.param_decls);
@@ -385,7 +384,7 @@ impl Specializer<'_> {
         {
             let concrete = substitute_ty(peel_refs(receiver_pattern), &bindings)?;
             bindings.self_instance = Some((nominal_template(template).to_string(), concrete));
-            if let Some(struct_decl) = self.structs.get(nominal_template(template)).copied() {
+            if let Some(struct_decl) = self.structs.get(nominal_template(template)) {
                 owner_covered =
                     owner_covered_prefix(&struct_decl.param_decls, &declaration.param_decls);
             }
@@ -393,7 +392,7 @@ impl Specializer<'_> {
         if bindings.self_instance.is_none()
             && let Some(receiver) = receiver
             && let Ty::Struct(receiver_name, _) = peel_refs(reg_ty(caller, receiver, owner)?)
-            && let Some(struct_decl) = self.structs.get(nominal_template(receiver_name)).copied()
+            && let Some(struct_decl) = self.structs.get(nominal_template(receiver_name))
             && !struct_decl.param_decls.is_empty()
         {
             bindings.self_instance = Some((
@@ -434,7 +433,7 @@ impl Specializer<'_> {
             return Ok(());
         };
         let template = nominal_template(receiver_name);
-        let Some(struct_decl) = self.structs.get(template).copied() else {
+        let Some(struct_decl) = self.structs.get(template) else {
             return Ok(());
         };
         if struct_decl.param_decls.is_empty() {
@@ -647,7 +646,7 @@ impl Specializer<'_> {
         explicit: &[(ParamRef, CtValue)],
         parameters: &[&Ty],
     ) -> Result<(Bindings, Vec<InstanceArg>, Ty), MonoError> {
-        let declaration = self.declarations.get(target).copied().ok_or_else(|| {
+        let declaration = self.declarations.get(target).ok_or_else(|| {
             self.error(
                 Some(owner),
                 format!("callee `{target}` lacks declaration facts"),
@@ -665,7 +664,7 @@ impl Specializer<'_> {
         }
         let mut owner_covered = 0;
         if let Ty::Struct(receiver_name, arguments) = receiver
-            && let Some(struct_decl) = self.structs.get(nominal_template(receiver_name)).copied()
+            && let Some(struct_decl) = self.structs.get(nominal_template(receiver_name))
         {
             bind_ty_args(&struct_decl.param_decls, arguments, &mut bindings).map_err(|e| {
                 self.error(
@@ -719,14 +718,14 @@ impl Specializer<'_> {
         {
             let concrete = substitute_ty(peel_refs(receiver_pattern), &bindings)?;
             bindings.self_instance = Some((nominal_template(template).to_string(), concrete));
-            if let Some(struct_decl) = self.structs.get(nominal_template(template)).copied() {
+            if let Some(struct_decl) = self.structs.get(nominal_template(template)) {
                 owner_covered =
                     owner_covered_prefix(&struct_decl.param_decls, &declaration.param_decls);
             }
         }
         if bindings.self_instance.is_none()
             && let Ty::Struct(receiver_name, _) = receiver
-            && let Some(struct_decl) = self.structs.get(nominal_template(receiver_name)).copied()
+            && let Some(struct_decl) = self.structs.get(nominal_template(receiver_name))
             && !struct_decl.param_decls.is_empty()
         {
             bindings.self_instance = Some((

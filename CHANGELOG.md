@@ -30,6 +30,14 @@ to evolve under the `0.x` compatibility rules.
   as Mojo's importer takes a package declaration already resolved. Hello
   World's check falls from 25 ms to 3 ms release, and the whole run from
   76 ms to 51 ms. The package format is now `mojito-package 3`.
+- An importer no longer decodes and copies every MIR declaration of the
+  bundled library (R554): the package holds each declaration as its own
+  bytecode record, the importer's lowering attaches the package's
+  declarations to its program instead of copying them, and every phase
+  looks one up by name and decodes it the first time, as Mojo's importer
+  resolves a package declaration on first lookup. Hello World decodes 3
+  of 942 declarations and compiles and runs in 33 ms release, from 51 ms.
+  The package format is now `mojito-package 4`.
 - A module under a search root is linked under its path there, whichever
   import reaches it first: `std/io/file.mojo` declares
   `__module$std$io$file$…`, not `__module$file$…`.

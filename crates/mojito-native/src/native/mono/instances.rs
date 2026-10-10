@@ -12,7 +12,7 @@ impl Specializer<'_> {
         let Ty::Struct(name, type_args) = peel_refs(receiver) else {
             return None;
         };
-        let struct_decl = self.structs.get(nominal_template(name)).copied()?;
+        let struct_decl = self.structs.get(nominal_template(name))?;
         if struct_decl
             .fields
             .iter()
@@ -142,7 +142,7 @@ impl Specializer<'_> {
             .keys()
             .filter(|name| mojito_symbol::symbol::is_overload_of(name, &base))
             .find(|name| {
-                let Some(declaration) = self.declarations.get(*name) else {
+                let Some(declaration) = self.declarations.get(name) else {
                     return false;
                 };
                 // The declaration lists no receiver; the function's first
@@ -255,12 +255,12 @@ impl Specializer<'_> {
         if !self.functions.contains_key(target.as_str()) || !self.writes_protocol(&target) {
             return Ok(());
         }
-        let Some(declaration) = self.declarations.get(target.as_str()).copied() else {
+        let Some(declaration) = self.declarations.get(target.as_str()) else {
             return Ok(());
         };
         let mut bindings = self.base_bindings();
         let mut owner_covered = 0;
-        if let Some(struct_decl) = self.structs.get(nominal_template(name)).copied() {
+        if let Some(struct_decl) = self.structs.get(nominal_template(name)) {
             bind_ty_args(&struct_decl.param_decls, arguments, &mut bindings).map_err(|e| {
                 self.error(
                     Some(owner),
@@ -330,13 +330,14 @@ impl Specializer<'_> {
     /// `Writer`.
     fn protocol_overload(&self, template: &str, method: &str) -> Option<String> {
         let base = format!("{template}.{method}");
-        let mut overloads = self.declarations.iter().filter_map(|(name, declaration)| {
-            (mojito_symbol::symbol::is_overload_of(name, &base)
-                && declaration
-                    .param_types
-                    .first()
-                    .is_some_and(mojito_types::types::is_writer_parameter))
-            .then_some(name)
+        let mut overloads = self.declarations.names().filter(|name| {
+            mojito_symbol::symbol::is_overload_of(name, &base)
+                && self.declarations.get(name).is_some_and(|declaration| {
+                    declaration
+                        .param_types
+                        .first()
+                        .is_some_and(mojito_types::types::is_writer_parameter)
+                })
         });
         let overload = overloads.next()?;
         overloads.next().is_none().then(|| overload.to_string())
@@ -378,12 +379,12 @@ impl Specializer<'_> {
         if !self.functions.contains_key(target.as_str()) {
             return Ok(None);
         }
-        let Some(declaration) = self.declarations.get(target.as_str()).copied() else {
+        let Some(declaration) = self.declarations.get(target.as_str()) else {
             return Ok(None);
         };
         let mut bindings = self.base_bindings();
         let mut owner_covered = 0;
-        if let Some(struct_decl) = self.structs.get(nominal_template(name)).copied() {
+        if let Some(struct_decl) = self.structs.get(nominal_template(name)) {
             bind_ty_args(&struct_decl.param_decls, arguments, &mut bindings).map_err(|e| {
                 self.error(
                     Some(owner),

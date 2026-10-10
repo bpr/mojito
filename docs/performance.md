@@ -893,3 +893,27 @@ conformances again 1.3 ms (`check.conformances`, R556); decoding the
 interfaces is 1.5 ms more, before the check (`package.interfaces`, R555).
 What scales with the library is now reading the package (R554) and
 preparing and elaborating the library's headers (R553).
+
+### The importer resolves a package declaration on first lookup (2026-10-10, R554)
+
+Same environment and method as the tables above, on the R552 tree against
+the R554 tree, both importing the package; medians of 5 interleaved runs,
+milliseconds, RSS in MB. The package stores each MIR struct and function
+declaration as its own bytecode record instead of one MIR text artifact
+(893 KB of text become 164 KB), and the importer's lowering attaches the
+package's declarations instead of copying all of them into its program:
+every phase looks a declaration up by name and decodes it the first time.
+Hello World decodes 3 of the 942 declarations. The package shrinks from
+8.6 MB to 8.0 MB.
+
+| Program | total (R552 → now) | declarations read | mir.lower | drops | mono elaborate | peak RSS MB |
+|---|---:|---:|---:|---:|---:|---:|
+| hello | 52.0 → 32.9 (−37%) | 18.4 → 0.0 | 1.4 → 0.2 | 1.0 → 0.5 | 2.4 → 1.9 | 47.8 → 38.2 |
+| generic | 60.5 → 41.4 (−32%) | 18.0 → 0.0 | 2.1 → 0.9 | 1.3 → 0.7 | 8.2 → 7.7 | 50.2 → 41.0 |
+| keyed | 81.1 → 60.9 (−25%) | 17.9 → 0.0 | 3.0 → 1.7 | 1.7 → 1.2 | 22.2 → 21.8 | 55.2 → 45.8 |
+| stdlib_heavy | 122.7 → 101.1 (−18%) | 17.9 → 0.0 | 2.6 → 1.4 | 1.5 → 0.9 | 55.6 → 55.4 | 72.4 → 61.6 |
+
+Reading the package is now the whole-file read (about 3.5 ms for 8 MB, of
+which 7.4 MB is body text that mostly never decodes) and its text
+interface record (0.3 ms); both are R557. What scales with the library is
+otherwise preparing and elaborating the library's headers (R553).

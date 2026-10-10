@@ -11,8 +11,10 @@
 
 use crate::compiler::{Compiler, CompilerError};
 use crate::interface::PackageInterface;
-use crate::mir::text::package::{PackageBodies, PackageHeader, read_package, write_package};
-use crate::mir::{MirDeclarations, MirProgram};
+use crate::mir::MirProgram;
+use crate::mir::text::package::{
+    PackageBodies, PackageDeclarations, PackageHeader, read_package, write_package,
+};
 use crate::module::{LinkOptions, bundled_root, link_source_recording};
 use crate::module_package::PackageModules;
 use std::collections::{BTreeSet, HashMap};
@@ -23,14 +25,14 @@ use std::sync::{Arc, OnceLock};
 ///
 /// It holds the module records its importer's link reads, the interface and
 /// the module declaration interfaces its importer's check reads, the MIR
-/// declarations its importer's lowering links, and its bodies.
+/// declarations its importer's lowering attaches, and its bodies.
 #[derive(Debug)]
 pub struct ImportedPackage {
     pub modules: PackageModules,
     pub interface: Arc<PackageInterface>,
     /// Each module's encoded declaration interface, by module path.
     pub checked: HashMap<String, Vec<u8>>,
-    pub declarations: MirDeclarations,
+    pub declarations: Arc<PackageDeclarations>,
     pub bodies: PackageBodies,
 }
 
@@ -356,6 +358,7 @@ fn declared_name(statement: &crate::ast::Stmt) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::mir::MirDeclarations;
 
     #[test]
     fn a_package_another_build_wrote_is_refused() {

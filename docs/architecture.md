@@ -71,7 +71,7 @@ each named by its accessor and each computed once:
 
 | Phase | Accessor | What it is | Who consumes it |
 |---|---|---|---|
-| Parametric MIR | `mir()` | The ownership-verified, pre-drop `MirProgram` the driver lowered; generic bodies name their parameters. With an imported package, the program's own functions and every declaration, the package's included | Ownership analysis |
+| Parametric MIR | `mir()` | The ownership-verified, pre-drop `MirProgram` the driver lowered; generic bodies name their parameters. With an imported package, the program's own functions and declarations, with the package's MIR declarations attached and each resolved the first time a lookup names it | Ownership analysis |
 | Drop-elaborated MIR | `elaborated_mir()` | Parametric MIR with drops inserted, re-verified; may still be generic | The elaborator, beside an imported package's bodies |
 | Whole drop-elaborated MIR | `drop_elaborated_mir()` | `elaborated_mir()` with every package body joined, decoded and drop-elaborated; the same program when nothing is imported | `emit_mir` and the serialized artifact |
 | Concrete MIR | `concrete_mir()` | The elaborator's entry-rooted output, a `SpecializedProgram` whose `mir::ConcreteMir` passed `verify_concrete` | The VM and the native backend |
@@ -93,8 +93,9 @@ import (every compilation that links the bundled library):
   source -> link (each library module from its record)
     -> prepare -> elaborate -> check (the reached modules' declaration
        interfaces installed; the program's own statements checked)
-    -> MIR of the program's own declarations, linked with the package's
-       MIR declarations -> verify + ownership (own functions)
+    -> MIR of the program's own declarations, with the package's MIR
+       declarations attached (each decoded on first lookup)
+    -> verify + ownership (own functions)
     -> drop elaboration (own functions)
     -> native::mono, which decodes a package body when it first reaches
        it and inserts its drops then -> VM
@@ -102,10 +103,21 @@ import (every compilation that links the bundled library):
 
 - **The package file** (`mir::text::package`) holds a header (package,
   compiler build identity, source digest), the checker interface
-  (`checked::interface::PackageInterface`), the package's MIR declarations,
-  one record and one declaration interface per library module, and each
-  function body as MIR text, before drop elaboration. Bodies decode on
-  demand: Hello World decodes three of about 875.
+  (`checked::interface::PackageInterface`), the package's MIR declarations
+  as one bytecode record each, one record and one declaration interface
+  per library module, and each function body as MIR text, before drop
+  elaboration. Declarations and bodies both decode on demand: Hello World
+  decodes three of about 940 declarations and three of about 875 bodies.
+- **The MIR declarations** are attached, never copied
+  (`mir::link::link_declarations`): the importer's `MirDeclarations` holds
+  its own declarations and an `ImportedDeclarations`, the shared
+  `PackageDeclarations` beside the conformance rows the importer adds to
+  package structs. `MirDeclarations::{function, structure}` answer from the
+  program's own declarations first, then the package's, so every phase
+  looks a declaration up by name; only a consumer of the whole program
+  (the disassembler, through `MirDeclarations::materialized`) decodes them
+  all. The verifier checks the program's own declarations; the package's
+  were verified when it was written.
 - **A module record** (`module::package::PackageModule`) is what linking
   the module from source produced, as upstream's `createBinaryPackageState`
   reads a package's module tree: the modules its link asked to load, in

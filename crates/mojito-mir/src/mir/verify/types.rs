@@ -185,10 +185,7 @@ pub(super) fn declared<'a>(
     declarations: &'a MirDeclarations,
     callee: &str,
 ) -> Option<&'a MirFunctionDeclaration> {
-    declarations
-        .functions
-        .iter()
-        .find(|declaration| declaration.lowered_name == callee)
+    declarations.function(callee)
 }
 
 pub(super) fn iterator_result_matches_declaration(

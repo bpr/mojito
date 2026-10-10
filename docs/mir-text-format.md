@@ -847,20 +847,27 @@ artifact {
 
 ## Package Container
 
-A compiled package (`mir::text::package`) wraps MIR text, module
-records, and declaration interfaces in a line-framed container, one file
-per package. The bundled library's is the only producer today
-(`src/package.rs`). The format line is `mojito-package 3`.
+A compiled package (`mir::text::package`) wraps MIR bodies, MIR
+declarations, module records, and declaration interfaces in a
+line-framed container, one file per package. The bundled library's is the
+only producer today (`src/package.rs`). The format line is
+`mojito-package 4`.
 
 ```text
-mojito-package 3
+mojito-package 4
 package std
 compiler <build identity>
 source <source digest>
 interface <bytes>
 <interface record>
-declarations <bytes>
-<a MIR artifact with an empty function list>
+files <bytes>
+<the source-file table, as bytecode>
+traits <bytes>
+<the sorted trait list, as bytecode>
+struct <bytes> <name>
+<one struct declaration, as bytecode>
+declaration <bytes> <lowered name>
+<one function declaration, as bytecode>
 module <bytes> <canonical source path>
 <one module record, as bytecode>
 checked <bytes> <module path>
@@ -871,10 +878,19 @@ end
 ```
 
 - Each section is exactly its byte count, then a newline. A body is
-  located by its range and decoded on first use, against the declarations
-  artifact's `files` table, which every body's locations name.
-- Every section but a module record or a declaration interface is UTF-8
-  text. A declaration interface is opaque to the container: it is the
+  located by its range and decoded on first use, against the `files`
+  table (`postcard` of each file id's optional path), which every body's
+  locations name.
+- The interface record and the bodies are UTF-8 text. The MIR
+  declarations are not a text artifact: each struct and function
+  declaration is its own `postcard` record of `MirStructDeclaration` or
+  `MirFunctionDeclaration`, its sets and maps written sorted so equal
+  declarations encode equal bytes, in name order. The importer indexes
+  them by the name on the section line and decodes one the first time a
+  lookup names it (`PackageDeclarations`), as upstream's importer resolves
+  a declaration from the package's bytecode on first lookup. A record
+  that does not decode is reported and refuses the elaboration.
+- A declaration interface is opaque to the container: it is the
   checker's (`checker::interface::ModuleInterface`), `postcard` bytecode of
   the tables the package build's check resolved for one module's
   declarations, sorted by name, so equal tables encode equal bytes. It

@@ -478,7 +478,7 @@ fn verify_value_instruction(cx: &InstrCx<'_>, instruction: &MirInstr, errors: &m
             let target = mojito_native_core::target::NativeTarget::new(
                 mojito_native_core::target::Triple::X86_64UnknownLinuxGnu,
             );
-            let structs = crate::mir::struct_field_index(cx.declarations);
+            let structs = crate::mir::struct_field_index_reaching(cx.declarations, ty);
             if let Err(error) = (mojito_native_core::layout::LayoutCx {
                 target: &target,
                 structs: &structs,

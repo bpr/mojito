@@ -154,7 +154,17 @@ impl std::error::Error for DisassembleError {}
 ///
 /// Verification happens before emission, so an error never exposes partial
 /// artifact text.
+///
+/// A program that imports a package is written with the package's
+/// declarations joined to its own, as one artifact.
 pub fn disassemble(program: &MirProgram) -> Result<String, DisassembleError> {
+    if program.declarations.imported.is_some() {
+        return disassemble(&MirProgram {
+            functions: program.functions.clone(),
+            declarations: program.declarations.materialized(),
+            invariant_errors: program.invariant_errors.clone(),
+        });
+    }
     let mut findings = program.invariant_errors.clone();
     findings.extend(super::verify::verify(program));
     findings.extend(write::schema_findings(program));

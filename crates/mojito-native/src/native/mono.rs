@@ -22,6 +22,7 @@ use symbolic::*;
 use unify::*;
 
 use availability::Availability;
+use catalog::{Catalog, StructCatalog};
 use mojito_ast::call::{ArgSlot, CallVariadics, match_call_slots};
 use mojito_checked::checked::CheckedConst;
 use mojito_mir::mir::text::package::PackageBodies;
@@ -243,15 +244,12 @@ struct Bindings {
     /// `self` spelling (`Struct(template, [])`) to the concrete instance so
     /// nested method calls can bind the owner's parameters from the receiver.
     self_instance: Option<(String, Ty)>,
-    /// The names of every generic struct template in the source program.
-    /// Substitution renames a concrete application of one of these to its
-    /// instance symbol.
-    generic_templates: Rc<HashSet<String>>,
     /// Each source struct's parameters, unparameterized associated types,
-    /// and fields. Substitution solves `C.Element` from them once `C` is
-    /// bound to an instance, where no signature spelled the member for
-    /// unification, and a reflection query reads the fields.
-    struct_shapes: Rc<HashMap<String, StructShape>>,
+    /// and fields. Substitution renames a concrete application of a generic
+    /// template to its instance symbol, and solves `C.Element` from them
+    /// once `C` is bound to an instance, where no signature spelled the
+    /// member for unification, and a reflection query reads the fields.
+    structs: Rc<StructCatalog>,
     /// The call-site arity of an unspecialized variadic callee: substitution
     /// rewrites `VariadicPack(T)` into the concrete `RuntimePack([T'; n])`.
     variadic_arity: Option<usize>,
@@ -295,7 +293,10 @@ struct CapturingArguments {
 /// it substitutes again ([`Specializer::answer_pending`]).
 #[derive(Default)]
 struct Applications {
+    /// The program's own lowered functions.
     declared: HashSet<String>,
+    /// The package whose functions are lowered too.
+    imported: Option<mojito_mir::mir::link::ImportedDeclarations>,
     answered: RefCell<HashMap<(String, Vec<ParamExpr>), CtValue>>,
     pending: RefCell<Vec<(String, Vec<ParamExpr>)>>,
 }
@@ -305,7 +306,12 @@ impl Applications {
     /// as pending when it is a lowered function's at constant arguments
     /// that nothing has run yet.
     fn answer(&self, function: &str, args: &[ParamExpr]) -> Option<CtValue> {
-        if !self.declared.contains(function) || args.iter().any(|arg| arg.as_constant().is_none()) {
+        let declared = self.declared.contains(function)
+            || self
+                .imported
+                .as_ref()
+                .is_some_and(|imported| imported.package().contains_function(function));
+        if !declared || args.iter().any(|arg| arg.as_constant().is_none()) {
             return None;
         }
         let key = (function.to_string(), args.to_vec());
@@ -324,11 +330,15 @@ impl Applications {
 struct LayoutOracle {
     target: NativeTarget,
     structs: Rc<RefCell<StructFieldIndex>>,
+    /// The source structs a layout reaches, joined to `structs` when one
+    /// is first asked.
+    catalog: Rc<StructCatalog>,
 }
 
 impl LayoutOracle {
     /// The size of the concrete `ty`, or the layout error naming why not.
     fn size_of(&self, ty: &Ty) -> Result<i64, MonoError> {
+        self.catalog.fill_layout(&self.structs, ty);
         let structs = self.structs.borrow();
         let layout = mojito_native_core::layout::LayoutCx {
             target: &self.target,
@@ -359,10 +369,9 @@ struct Specializer<'a> {
     /// The target every layout query is answered for.
     target: Option<&'a NativeTarget>,
     functions: bodies::Bodies<'a>,
-    declarations: HashMap<&'a str, &'a MirFunctionDeclaration>,
-    structs: HashMap<&'a str, &'a MirStructDeclaration>,
-    generic_templates: Rc<HashSet<String>>,
-    struct_shapes: Rc<HashMap<String, StructShape>>,
+    declarations: Catalog<'a, MirFunctionDeclaration>,
+    structs: Catalog<'a, MirStructDeclaration>,
+    struct_catalog: Rc<StructCatalog>,
     queue: VecDeque<(InstanceKey, Bindings)>,
     instances: Vec<(InstanceKey, String)>,
     /// Each demanded key's position in `instances`.
@@ -405,9 +414,10 @@ struct Specializer<'a> {
     output_structs: Vec<MirStructDeclaration>,
     /// Each output struct's position in `output_structs`, by name.
     output_struct_positions: HashMap<String, usize>,
-    /// The field types a layout query reads: the source's non-generic
-    /// structs, joined by each output struct as it is declared. Every
-    /// [`LayoutOracle`] shares it, so building one copies nothing.
+    /// The field types a layout query reads: each output struct as it is
+    /// declared, and each non-generic source struct a query reaches, when
+    /// one first does. Every [`LayoutOracle`] shares it, so building one
+    /// copies nothing.
     layout_structs: Rc<RefCell<StructFieldIndex>>,
     /// Each concrete type's conformance to a trait, as decided with no
     /// conformance under way: the answer depends on nothing else, so a
@@ -439,6 +449,7 @@ struct Specializer<'a> {
 
 mod availability;
 mod bodies;
+mod catalog;
 mod equiv;
 mod failure;
 mod gather;

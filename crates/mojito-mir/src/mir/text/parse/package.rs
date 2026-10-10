@@ -1,40 +1,23 @@
-//! Package part decoding: a package's interface, its declarations with the
-//! `files` table its bodies name, and one body at a time.
+//! Package part decoding: a package's interface, and one body at a time.
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 use mojito_checked::checked::{CallThroughArg, CallThroughCallee, CallThroughEffect};
 use mojito_checked::interface::PackageInterface;
 
-/// The `files` table of a package's declarations, which every body's
-/// locations name.
+/// The `files` table of a package, which every body's locations name.
 #[derive(Debug, Clone, Default)]
-pub struct PackageFiles(BTreeMap<usize, Option<String>>);
+pub struct PackageFiles(pub BTreeMap<usize, Option<String>>);
 
 /// Decode a package's interface record.
 pub(in crate::mir::text) fn interface(
     text: &str,
 ) -> Result<PackageInterface, Vec<ArtifactDiagnostic>> {
-    let value = whole_value(text, false)?;
+    let value = whole_value(text)?;
     let mut decoder = Decoder::new(false);
     let interface = decoder.interface(&value);
     match interface {
         Some(interface) if decoder.diagnostics.is_empty() => Ok(interface),
-        _ => Err(decoder.diagnostics),
-    }
-}
-
-/// Decode a package's declarations artifact, whose function list is empty.
-pub(in crate::mir::text) fn declarations(
-    text: &str,
-) -> Result<(MirDeclarations, PackageFiles), Vec<ArtifactDiagnostic>> {
-    let value = whole_value(text, true)?;
-    let mut decoder = Decoder::new(false);
-    let declarations = decoder.package_declarations(&value);
-    match declarations {
-        Some(declarations) if decoder.diagnostics.is_empty() => {
-            Ok((declarations, PackageFiles(decoder.files)))
-        }
         _ => Err(decoder.diagnostics),
     }
 }
@@ -44,7 +27,7 @@ pub(in crate::mir::text) fn function(
     text: &str,
     files: &PackageFiles,
 ) -> Result<(String, MirFunction), Vec<ArtifactDiagnostic>> {
-    let value = whole_value(text, false)?;
+    let value = whole_value(text)?;
     let mut decoder = Decoder::new(false);
     decoder.files.clone_from(&files.0);
     let function = decoder.function(&value);
@@ -54,12 +37,9 @@ pub(in crate::mir::text) fn function(
     }
 }
 
-/// The one value `text` holds, after the version header when `headed`.
-fn whole_value(text: &str, headed: bool) -> Result<Value, Vec<ArtifactDiagnostic>> {
+/// The one value `text` holds.
+fn whole_value(text: &str) -> Result<Value, Vec<ArtifactDiagnostic>> {
     let mut parser = Parser::new(text);
-    if headed {
-        parser.header();
-    }
     let value = parser.value();
     parser.space();
     if parser.pos < text.len() {
@@ -173,35 +153,5 @@ impl Decoder {
             .collect::<Option<Vec<_>>>()?;
         self.unknown(fields, &["callee", "args"]);
         Some(CallThroughEffect { callee, args })
-    }
-
-    fn package_declarations(&mut self, value: &Value) -> Option<MirDeclarations> {
-        let fields = self.record(value, "artifact").ok()?;
-        self.decode_files(self.field(fields, "files").ok()?);
-        let structs = self.struct_declarations(self.field(fields, "structs").ok()?);
-        let functions = self.function_declarations(self.field(fields, "decls").ok()?);
-        let traits = self.strings(self.field(fields, "traits").ok()?);
-        if self
-            .list(self.field(fields, "functions").ok()?)
-            .is_ok_and(|functions| !functions.is_empty())
-        {
-            self.error(value.span, "a package's declarations hold no function body");
-        }
-        self.unknown(
-            fields,
-            &[
-                "features",
-                "files",
-                "traits",
-                "structs",
-                "decls",
-                "functions",
-            ],
-        );
-        Some(MirDeclarations {
-            structs,
-            functions,
-            traits,
-        })
     }
 }

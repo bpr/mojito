@@ -85,15 +85,12 @@ pub(super) fn program(program: &MirProgram) -> String {
     output
 }
 
-/// A package's MIR parts: its declarations as an artifact whose function
-/// list is empty, whose `files` table every body's locations name, and each
-/// function's own record.
-pub(super) fn package_parts(program: &MirProgram) -> (String, Vec<String>) {
+/// A package's MIR bodies: the `files` table every body's locations name,
+/// by file id, and each function's own record.
+pub(super) fn package_parts(
+    program: &MirProgram,
+) -> (BTreeMap<usize, Option<String>>, Vec<String>) {
     let files = files(program);
-    let mut declarations = String::new();
-    write_artifact_head(&mut declarations, program, &files);
-    writeln!(declarations, "  functions: []").unwrap();
-    writeln!(declarations, "}}").unwrap();
     let functions = program
         .functions
         .iter()
@@ -103,7 +100,10 @@ pub(super) fn package_parts(program: &MirProgram) -> (String, Vec<String>) {
             output
         })
         .collect();
-    (declarations, functions)
+    (
+        files.into_iter().map(|(path, id)| (id, path)).collect(),
+        functions,
+    )
 }
 
 /// A package's interface: the modules it compiled, the traits its bodies

@@ -275,7 +275,7 @@ impl Specializer<'_> {
             // conforming aggregate is in doubt.
             return (!conforms || !undecided).then_some(conforms);
         };
-        let template = self.structs.get(nominal_template(name)).copied()?;
+        let template = self.structs.get(nominal_template(name))?;
         let row = template
             .conformances
             .iter()
@@ -327,7 +327,7 @@ fn operand_value(operand: &ConstraintOperand, bindings: &Bindings) -> Option<TyA
                 types: bindings.types.clone(),
                 values: bindings.values.clone(),
                 associated: bindings.associated.clone(),
-                struct_shapes: Rc::clone(&bindings.struct_shapes),
+                structs: Rc::clone(&bindings.structs),
                 ..Bindings::default()
             };
             substitute_ty(ty, &spelled)

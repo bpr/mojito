@@ -559,15 +559,11 @@ pub(super) fn validate_dependent_bindings_in(
 /// for a method, its struct's.
 fn enclosing_binders(name: &str, declarations: &MirDeclarations) -> HashSet<String> {
     let own = declarations
-        .functions
-        .iter()
-        .find(|declaration| declaration.lowered_name == name)
+        .function(name)
         .map_or(&[][..], |declaration| &declaration.param_decls);
     let owner = name.split_once('.').and_then(|(owner, _)| {
         declarations
-            .structs
-            .iter()
-            .find(|declaration| declaration.name == owner)
+            .structure(owner)
             .map(|declaration| &declaration.param_decls[..])
     });
     own.iter()
@@ -658,6 +654,9 @@ pub(super) fn verify_function(
 /// declaration from an ordinary homogeneous `*args: Tuple[...]`. It may occur
 /// only as the top-level positional-variadic ABI type. Once arguments have
 /// been matched, the body sees an ordinary native `Tuple[T0, ...]` slot.
+///
+/// Only the program's own declarations are checked: an imported package's
+/// were verified when the package was written.
 pub(super) fn verify_runtime_pack_abi(declarations: &MirDeclarations, errors: &mut Vec<String>) {
     for declaration in &declarations.structs {
         for (field, ty) in &declaration.fields {

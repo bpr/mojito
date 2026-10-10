@@ -414,7 +414,7 @@ fn colliding_instances_share_only_modulo_pointer_elements() {
 #[test]
 fn substitution_resolves_nested_type_and_value_arguments() {
     let mut bindings = Bindings {
-        generic_templates: Rc::new(HashSet::from(["Buffer".to_string()])),
+        structs: Rc::new(StructCatalog::generic(&["Buffer"])),
         ..Bindings::default()
     };
     bindings.types.insert(test_binder("T"), Ty::UInt);
@@ -457,7 +457,7 @@ fn substitution_resolves_nested_type_and_value_arguments() {
 #[test]
 fn value_binders_sharing_a_spelling_keep_their_own_solutions() {
     let mut bindings = Bindings {
-        generic_templates: Rc::new(HashSet::from(["Grid".to_string()])),
+        structs: Rc::new(StructCatalog::generic(&["Grid"])),
         ..Bindings::default()
     };
     let binder = |owner: &str| mojito_types::param_expr::ParamRef {
@@ -768,7 +768,7 @@ fn nullary_slot_init() -> String {
 
 /// The bindings of `Slot[argument]` over the compiled `CONDITIONAL_MEMBERS`.
 fn slot_bindings(specializer: &Specializer<'_>, argument: Ty) -> Bindings {
-    let template = specializer.structs["Slot"];
+    let template = &specializer.structs["Slot"];
     let mut bindings = specializer.base_bindings();
     bind_ty_args(&template.param_decls, &[TyArg::Ty(argument)], &mut bindings).unwrap();
     bindings
@@ -903,7 +903,7 @@ fn trivial_value_and_pack_clauses_are_decided() {
         .expect("compile trivial and value members");
     let specializer = Specializer::new(compiled.drop_elaborated_mir(), None);
     let cell = |argument: &str, n: i64| {
-        let template = specializer.structs["Cell"];
+        let template = &specializer.structs["Cell"];
         let mut bindings = specializer.base_bindings();
         let arguments = [
             TyArg::Ty(Ty::Struct(argument.into(), Vec::new().into())),
@@ -913,7 +913,7 @@ fn trivial_value_and_pack_clauses_are_decided() {
         bindings
     };
     let proven = |member: &str, bindings: &Bindings| match specializer
-        .availability(specializer.declarations[member], bindings)
+        .availability(&specializer.declarations[member], bindings)
     {
         Availability::Proven => true,
         Availability::Disproven(_) => false,

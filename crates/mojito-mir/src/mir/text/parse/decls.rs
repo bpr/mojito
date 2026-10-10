@@ -85,6 +85,7 @@ impl Decoder {
                         structs,
                         functions: function_declarations,
                         traits,
+                        imported: None,
                     },
                     invariant_errors: Vec::new(),
                 },

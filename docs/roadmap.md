@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R557**.
+Next free ID: **R558**.
 
 ## Ordered Work
 
@@ -50,22 +50,6 @@ Scope: what remains of the plan's stages, and what the pipeline order still
 leaves to close. A defect found on the way is filed by its kind; a
 divergence from the pin goes to a catch-up track, however small.
 
-- [ ] **R554 (P6) An importer decodes every package MIR declaration
-  eagerly, through the text grammar**
-
-  Reading the bundled package costs 22 ms of Hello World's 76 ms, release,
-  18 of them decoding the 0.9 MB `declarations` section.
-  - The MIR text decoder runs at about 50 MB/s; the module records beside
-    it are bytecode and decode in well under a millisecond.
-  - `read_package` also clones the decoded declarations whole for
-    `PackageBodies`.
-  - Upstream's importer reads bytecode, and resolves a declaration the
-    first time it is looked up.
-  - The lever is declarations as bytecode, per module or per declaration,
-    decoded when the importer's lowering or elaborator first names one.
-  - Depends on nothing.
-  - Model: Fable, Planned.
-
 - [ ] **R553 (P6) An importer prepares and elaborates the package's
   declaration headers on every compilation**
 
@@ -82,6 +66,21 @@ divergence from the pin goes to a catch-up track, however small.
   - The trait-default wrapper synthesis and `collect_structs` would still
     read the headers until R551 makes a default a trait member.
   - Depends on R552, which fixes what the check reads of a header.
+  - Model: Fable, Planned.
+
+- [ ] **R557 (P6) An importer reads the whole package file, and its
+  bodies and interface are MIR text**
+
+  `package.read` reads all 8 MB of the bundled package on every
+  compilation, though Hello World decodes 3 of its 875 bodies.
+  - That is about 3.5 ms of Hello World's 33 ms, release; 7.4 MB of the
+    file is body text.
+  - A body decodes through the MIR text grammar, at about 50 MB/s, and the
+    interface record (0.3 ms) is text too.
+  - Upstream's package is bytecode throughout, read on demand.
+  - The levers: bodies and the interface as bytecode, as the declarations
+    are since R554, and a mapped read of the file (`memmap2`).
+  - Depends on nothing.
   - Model: Fable, Planned.
 
 - [ ] **R555 (P6) An importer installs every reached package module's

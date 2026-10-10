@@ -222,10 +222,7 @@ impl Scope {
         let mut link = Some(name);
         while let Some(current) = link {
             root = current;
-            let declaration = declarations
-                .functions
-                .iter()
-                .find(|declaration| declaration.lowered_name == current);
+            let declaration = declarations.function(current);
             if let Some(declaration) = declaration {
                 scope.declare(&declaration.param_decls);
                 scope.declare(&declaration.region_binders);
@@ -234,9 +231,7 @@ impl Scope {
         }
         let owner = root.split_once('.').and_then(|(owner, _)| {
             declarations
-                .structs
-                .iter()
-                .find(|declaration| declaration.name == owner)
+                .structure(owner)
                 .map(|declaration| &declaration.param_decls[..])
         });
         scope.declare(owner.unwrap_or(&[]));
@@ -500,9 +495,7 @@ impl ScopeCx<'_> {
             Ty::Struct(name, args) => {
                 let declared = self
                     .declarations
-                    .structs
-                    .iter()
-                    .find(|declaration| &declaration.name == name)
+                    .structure(name)
                     .map(|declaration| &declaration.param_decls[..]);
                 self.arguments(role, declared, args, nested);
             }
@@ -854,6 +847,7 @@ mod tests {
                 region_binders: Vec::new(),
             }],
             traits: Vec::new(),
+            imported: None,
         }
     }
 

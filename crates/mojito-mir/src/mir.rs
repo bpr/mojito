@@ -121,14 +121,61 @@ impl std::ops::Deref for ConcreteMir {
     }
 }
 
+/// A program's MIR declarations: its own, and those of the package it
+/// imports, if any, which a lookup resolves on first use.
+///
+/// Look a declaration up by name through [`Self::function`] and
+/// [`Self::structure`]: `structs` and `functions` hold the program's own
+/// declarations alone, and an own declaration hides a package one of the
+/// same name.
 #[derive(Debug, Clone, Default)]
 pub struct MirDeclarations {
     pub structs: Vec<MirStructDeclaration>,
     pub functions: Vec<MirFunctionDeclaration>,
-    /// Every trait the program declares, sorted. A compiler-known type
-    /// conforms to a trait outside this list by its shape
-    /// (`mojito_types::conformance::leaf_conforms`) and to none inside it.
+    /// Every trait the program and its package declare, sorted. A
+    /// compiler-known type conforms to a trait outside this list by its
+    /// shape (`mojito_types::conformance::leaf_conforms`) and to none
+    /// inside it.
     pub traits: Vec<String>,
+    /// The imported package's declarations, attached by
+    /// [`link::link_declarations`].
+    pub imported: Option<link::ImportedDeclarations>,
+}
+
+impl MirDeclarations {
+    /// The function declaration lowered as `name`.
+    pub fn function(&self, name: &str) -> Option<&MirFunctionDeclaration> {
+        self.functions
+            .iter()
+            .find(|declaration| declaration.lowered_name == name)
+            .or_else(|| self.imported.as_ref()?.function(name))
+    }
+
+    /// The struct declaration `name`.
+    pub fn structure(&self, name: &str) -> Option<&MirStructDeclaration> {
+        self.structs
+            .iter()
+            .find(|declaration| declaration.name == name)
+            .or_else(|| self.imported.as_ref()?.structure(name))
+    }
+
+    /// Every declaration, the imported package's decoded and joined to the
+    /// program's own: own structs, then the package's in package order;
+    /// own functions, then the package's the program does not lower. For a
+    /// consumer of the whole program, such as its disassembly.
+    #[must_use]
+    pub fn materialized(&self) -> Self {
+        let mut declarations = Self {
+            structs: self.structs.clone(),
+            functions: self.functions.clone(),
+            traits: self.traits.clone(),
+            imported: None,
+        };
+        if let Some(imported) = &self.imported {
+            imported.materialize_into(&mut declarations);
+        }
+        declarations
+    }
 }
 
 /// Build the native layout's struct-field index from MIR declaration metadata.
@@ -138,15 +185,8 @@ pub struct MirDeclarations {
 pub fn struct_field_index(
     declarations: &MirDeclarations,
 ) -> mojito_native_core::layout::StructFieldIndex {
-    struct_field_index_of(&declarations.structs)
-}
-
-/// [`struct_field_index`] over the struct declarations alone.
-pub fn struct_field_index_of(
-    structs: &[MirStructDeclaration],
-) -> mojito_native_core::layout::StructFieldIndex {
     let mut index = mojito_native_core::layout::StructFieldIndex::default();
-    for decl in structs {
+    for decl in &declarations.structs {
         index.insert(
             decl.name.clone(),
             decl.fields.iter().map(|(_, ty)| ty.clone()).collect(),
@@ -155,14 +195,69 @@ pub fn struct_field_index_of(
     index
 }
 
-#[derive(Debug, Clone)]
+/// [`struct_field_index`] over the structs `ty` reaches, each looked up in
+/// `declarations`.
+pub fn struct_field_index_reaching(
+    declarations: &MirDeclarations,
+    ty: &Ty,
+) -> mojito_native_core::layout::StructFieldIndex {
+    let mut index = mojito_native_core::layout::StructFieldIndex::default();
+    for (name, fields) in reached_struct_fields(ty, |name| {
+        declarations.structure(name).map(|declaration| {
+            declaration
+                .fields
+                .iter()
+                .map(|(_, ty)| ty.clone())
+                .collect()
+        })
+    }) {
+        index.insert(name, fields);
+    }
+    index
+}
+
+/// Each struct `ty` reaches through its own structure and its structs'
+/// field types, beside those field types as `fields` gives them. A struct
+/// `fields` does not know ends the walk there.
+pub fn reached_struct_fields(
+    ty: &Ty,
+    mut fields: impl FnMut(&str) -> Option<Vec<Ty>>,
+) -> Vec<(String, Vec<Ty>)> {
+    let mut reached = Vec::new();
+    let mut seen = HashSet::new();
+    let mut pending = vec![ty.clone()];
+    while let Some(ty) = pending.pop() {
+        let named = std::cell::RefCell::new(Vec::new());
+        mojito_types::types::mentions(&ty, &|nested| {
+            if let Ty::Struct(name, _) = nested {
+                named.borrow_mut().push(name.clone());
+            }
+            false
+        });
+        for name in named.into_inner() {
+            if seen.insert(name.clone())
+                && let Some(types) = fields(&name)
+            {
+                pending.extend(types.iter().cloned());
+                reached.push((name, types));
+            }
+        }
+    }
+    reached
+}
+
+/// A package stores each one as a bytecode record, its sets and maps
+/// written sorted, so equal declarations encode equal bytes.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct MirStructDeclaration {
     pub name: String,
     pub fields: Vec<(String, Ty)>,
+    #[serde(serialize_with = "sorted_names")]
     pub mut_self_methods: HashSet<String>,
     pub fieldwise_init: bool,
     pub param_decls: Vec<ParamDecl>,
     pub explicit_destroy_message: Option<String>,
+    #[serde(serialize_with = "sorted_map")]
     pub explicit_destructors: HashMap<String, bool>,
     /// The struct's answer for each trait a `where` clause or a conformance
     /// condition of the program names, sorted by trait: an instance conforms
@@ -181,7 +276,7 @@ pub struct MirStructDeclaration {
     pub associated_values: Vec<(String, ParamExpr)>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct MirFunctionDeclaration {
     pub lowered_name: String,
     pub param_names: Vec<String>,
@@ -349,8 +444,8 @@ pub fn lower_checked_program(checked: &CheckedProgram) -> MirProgram {
 /// [`lower_checked_program`] for a program that imports a compiled package.
 ///
 /// A declaration the package compiled is not lowered again, and the
-/// package's MIR declarations join the program's before its functions are
-/// closed and verified. The package's functions stay out of the result; a
+/// package's MIR declarations are attached to the program's before its
+/// functions are closed and verified. The package's functions stay out of the result; a
 /// consumer reaches them through the package.
 ///
 /// # Panics
@@ -359,7 +454,10 @@ pub fn lower_checked_program(checked: &CheckedProgram) -> MirProgram {
 #[allow(clippy::too_many_lines, reason = "TODO: split this pass")]
 pub fn lower_checked_program_importing(
     checked: &CheckedProgram,
-    package: Option<(&PackageInterface, &MirDeclarations)>,
+    package: Option<(
+        &PackageInterface,
+        &std::sync::Arc<text::package::PackageDeclarations>,
+    )>,
 ) -> MirProgram {
     let program = checked.statements();
     let mut functions = Vec::new();
@@ -4108,9 +4206,7 @@ fn close_register_types(
     }
     fn declared_return(declarations: &MirDeclarations, callee: &str) -> Option<Ty> {
         declarations
-            .functions
-            .iter()
-            .find(|declaration| declaration.lowered_name == callee)
+            .function(callee)
             .map(|declaration| declaration.ret_ty.clone())
     }
     fn struct_field(declarations: &MirDeclarations, base: &Ty, field: &str) -> Option<Ty> {
@@ -4118,9 +4214,7 @@ fn close_register_types(
             return None;
         };
         declarations
-            .structs
-            .iter()
-            .find(|declaration| &declaration.name == name)?
+            .structure(name)?
             .fields
             .iter()
             .find(|(candidate, _)| candidate == field)
@@ -4739,4 +4833,24 @@ pub(crate) fn pointer_keyword_subscript(e: &Expr) -> Option<(&Expr, &Expr)> {
         },
         _ => None,
     }
+}
+
+fn sorted_names<S: serde::Serializer>(
+    names: &HashSet<String>,
+    serializer: S,
+) -> Result<S::Ok, S::Error> {
+    serde::Serialize::serialize(
+        &names.iter().collect::<std::collections::BTreeSet<_>>(),
+        serializer,
+    )
+}
+
+fn sorted_map<V: serde::Serialize, S: serde::Serializer>(
+    map: &HashMap<String, V>,
+    serializer: S,
+) -> Result<S::Ok, S::Error> {
+    serde::Serialize::serialize(
+        &map.iter().collect::<std::collections::BTreeMap<_, _>>(),
+        serializer,
+    )
 }
