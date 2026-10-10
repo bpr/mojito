@@ -2697,8 +2697,8 @@ struct TraitInfo {
     #[serde(serialize_with = "interface::sorted")]
     comptime_constraints: HashMap<String, Vec<GenericConstraint>>,
     /// The trait's own defaults, in declaration order; a refinement's are
-    /// its parent's.
-    defaults: Vec<trait_defaults::TraitDefault>,
+    /// its parent's. Each names its requirement row in [`Self::methods`].
+    defaults: Vec<trait_defaults::DefaultShape>,
 }
 
 /// A concrete method candidate after receiver-type substitution and argument

@@ -50,24 +50,6 @@ Scope: what remains of the plan's stages, and what the pipeline order still
 leaves to close. A defect found on the way is filed by its kind; a
 divergence from the pin goes to a catch-up track, however small.
 
-- [ ] **R588 (P6) A library trait default's parameter defaults are held
-  as syntax beside its lifted function's MIR defaults**
-
-  A trait's `DefaultShape::params` keeps each default method parameter's
-  default as an expression, while the lifted `Trait$default$m` function's
-  declaration holds the same default again.
-  - Each conformer's forwarding wrapper re-lowers the syntax in the
-    conformer's context (`register_default_wrapper`).
-  - `TraitDefault::signature` clones the requirement's whole signature
-    into the package's trait row.
-  - Upstream's conformer reaches the default as a member of its trait, so
-    its signature holds each default once.
-  - The lever: once the default is a trait member, a conformer reads its
-    defaults from the member's declaration and the shape keeps none.
-  - Found while landing R574 (2026-10-10).
-  - Depends on R551.
-  - Model: Opus, Not Planned.
-
 - [ ] **R575 (P6) A package declaration's overload facts restate what its
   lowered functions already say**
 

@@ -1365,7 +1365,9 @@ pub struct RebindAssertion {
 /// body is one call of the default's function with `Self` bound first and
 /// every argument forwarded (`populateDefaultedTraitFunction`). It has no
 /// syntax of its own: the struct's method list holds only what the struct
-/// spells, and every wrapper's index follows them.
+/// spells, and every wrapper's index follows them. Its parameters' defaults
+/// are its member's, which the member's lowered declaration holds, as
+/// `getTraitFunctionSignature` gives the wrapper its trait function's.
 #[derive(Debug, Clone)]
 pub struct CheckedDefaultWrapper {
     pub module: Option<String>,
@@ -1379,6 +1381,8 @@ pub struct CheckedDefaultWrapper {
     /// The symbol it lowers to: signature-qualified when the name is
     /// overloaded.
     pub lowered_name: String,
+    /// The trait member it calls ([`CheckedTraitMember`]'s symbol).
+    pub member: String,
     pub self_convention: Option<mojito_ast::ast::ArgConvention>,
     /// Every declared parameter but the receiver, in order.
     pub params: Vec<SignatureParam>,
@@ -1407,12 +1411,11 @@ pub struct CheckedTraitMember {
 
 /// A parameter of a resolved signature as a call binds and a body declares
 /// it: everything but its type, which the signature holds.
-#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct SignatureParam {
     pub name: String,
     pub kind: mojito_ast::ast::ParamKind,
     pub convention: Option<mojito_ast::ast::ArgConvention>,
-    pub default: Option<Expr>,
 }
 
 impl mojito_ast::ast::DeclaredParam for SignatureParam {
@@ -1428,8 +1431,10 @@ impl mojito_ast::ast::DeclaredParam for SignatureParam {
         self.convention
     }
 
+    /// None: a wrapper's defaults are its member's, which the member's
+    /// declaration holds.
     fn default_value(&self) -> Option<&Expr> {
-        self.default.as_ref()
+        None
     }
 }
 
@@ -1931,8 +1936,16 @@ pub enum CheckedConst {
     /// (`String("a")`, `TWO + 1`): MIR lowers the expression as the
     /// zero-parameter function `function`, which each call that takes the
     /// slot runs, so the default is evaluated anew at every such call.
+    ///
+    /// `arguments` applies the function's own compile-time parameters, in
+    /// the order of its declaration, over the binders of the declaration
+    /// holding the default: a conformer's wrapper reaches its trait member's
+    /// default at the wrapper's instantiation of the member. Empty when the
+    /// default's owner declares the function, whose binders it binds by
+    /// identity.
     Evaluate {
         function: String,
+        arguments: Vec<mojito_types::types::TyArg>,
     },
 }
 
@@ -2999,13 +3012,6 @@ fn build_checked_expressions(
     };
     builder.block(statements);
     for wrapper in default_wrappers {
-        for value in wrapper
-            .params
-            .iter()
-            .filter_map(|param| param.default.as_ref())
-        {
-            builder.expr(value);
-        }
         builder.block(&wrapper.body);
     }
     (builder.nodes, builder.index)

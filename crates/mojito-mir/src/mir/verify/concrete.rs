@@ -69,6 +69,13 @@ pub(super) fn verify_concrete_program(program: &MirProgram, errors: &mut Vec<Str
         for ty in types {
             require_concrete(&head, "signature", ty, errors);
         }
+        if declaration.defaults.iter().flatten().any(|default| {
+            matches!(default, mojito_checked::checked::CheckedConst::Evaluate { arguments, .. } if !arguments.is_empty())
+        }) {
+            errors.push(format!(
+                "{head} still applies an evaluated default to compile-time arguments"
+            ));
+        }
     }
     for declaration in &program.declarations.structs {
         let head = format!("MIR struct '{}' declaration", declaration.name);

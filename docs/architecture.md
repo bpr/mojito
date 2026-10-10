@@ -1727,9 +1727,9 @@ the source-order walk, so its body calls any module function wherever
 declared (as at the pin), and `CheckedProgram::trait_members` carries it to
 MIR, whose trait arm lowers it, its calls on `self` dispatching through the
 bound. A package places it in its trait's declaration record. A trait's
-check records each of its defaults in its `TraitInfo`
-(`trait_defaults::TraitDefault`: the requirement's resolved signature beside
-its shape), which a package exports in the trait's declaration interface.
+check records each of its defaults in its `TraitInfo` as a
+`trait_defaults::DefaultShape` naming its requirement row by overload
+index, which a package exports in the trait's declaration interface.
 Each conformer that does not spell a
 defaulted overload gets a wrapper the check builds, as
 `synthesizeDefaultTraitMethodWrapper` builds one from the trait function's
@@ -1743,7 +1743,14 @@ member, checks its body, one statement calling the trait's member with
 (`populateDefaultedTraitFunction`). The wrapper is never syntax of
 its struct: its sites follow the spelled methods' indexes, and
 `CheckedProgram::default_wrappers` carries it to MIR, which lowers it
-through the same `lower_struct_member` as a spelled method. Defaults are
+through the same `lower_struct_member` as a spelled method. Its parameters'
+defaults are its member's, held once by the member's lowered declaration,
+as upstream's wrapper takes them from `getTraitFunctionSignature`: MIR's
+`adopt_member_defaults` copies them onto the wrapper's declaration once the
+package is attached, an evaluated default applied to the wrapper's
+instantiation of the member (`CheckedConst::Evaluate::arguments`, which its
+forwarding call records), so the elaborator binds the member's default
+function from the wrapper's binders. Defaults are
 inherited per overload; an explicit struct method suppresses the default of
 its own parameter shape (upstream suppresses only by satisfaction, R570), and
 two different defaults reaching one conformer are rejected as at the pin. So

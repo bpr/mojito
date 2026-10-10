@@ -868,6 +868,7 @@ assets/ok/trait_default_calls_later_function.mojo	main	exe-differential	sanitize
 assets/ok/trait_default_comptime_if.mojo	main	exe-differential	sanitized
 assets/ok/trait_default_method.mojo	main	exe-differential	sanitized
 assets/ok/trait_default_overloads.mojo	main	exe-differential	sanitized
+assets/ok/trait_default_parameter_defaults.mojo	main	exe-differential	sanitized
 assets/ok/trait_default_refinement.mojo	main	exe-differential	sanitized
 assets/ok/trait_default_wrapper_conventions.mojo	main	exe-differential	sanitized
 assets/ok/trait_inheritance.mojo	main	exe-differential	sanitized

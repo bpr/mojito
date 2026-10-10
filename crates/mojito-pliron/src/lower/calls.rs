@@ -614,7 +614,7 @@ impl FnLowering<'_> {
                 };
                 self.constructed_default_value(ctx, target, arg, *layout, callee, dest)
             }
-            CheckedConst::Evaluate { function } => {
+            CheckedConst::Evaluate { function, .. } => {
                 self.evaluated_default_value(ctx, function, expected, owned, callee, dest)
             }
             CheckedConst::Int(_)

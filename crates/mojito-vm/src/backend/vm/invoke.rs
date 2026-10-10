@@ -216,7 +216,7 @@ impl VmBackend {
                     vec![],
                     &CallTypes::default(),
                 ),
-                Some(CheckedConst::Evaluate { function }) => {
+                Some(CheckedConst::Evaluate { function, .. }) => {
                     let index = prog.index_of(function).ok_or_else(|| {
                         RuntimeError::Unsupported(format!(
                             "vm: missing default function '{function}'"

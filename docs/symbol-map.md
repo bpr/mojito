@@ -265,9 +265,9 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   check, and the handoff alike. `Checker::check_trait_members` checks every
   member after the module walk and `checked_trait_members` hands it over
   as `checked::CheckedTraitMember` (`CheckedProgram::trait_members`). A trait's
-  check records its defaults in its `TraitInfo` (`TraitDefault`: a
-  `DefaultShape` from `default_shapes`, and the requirement's resolved
-  signature), which a package exports. The check builds each conformer's
+  check records its defaults in its `TraitInfo` (a `DefaultShape` from
+  `default_shapes`, naming its requirement row in `TraitInfo::methods` by
+  overload index), which a package exports. The check builds each conformer's
   wrapper per inherited overload (`inherited_defaults`, `default_wrappers`,
   `DefaultWrapper`): `Checker::plan_default_wrappers` counts it in the
   overload prescan, `register_default_wrappers` registers its signature
@@ -277,6 +277,11 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   member, which calls the trait's member with `Self` bound first and every argument forwarded, and
   `checked_default_wrappers` hands it over as
   `checked::CheckedDefaultWrapper` (`CheckedProgram::default_wrappers`).
+  A wrapper declares no default of its own: MIR's `adopt_member_defaults`
+  gives its declaration its member's, an evaluated one applied to the
+  wrapper's instantiation of the member (`CheckedConst::Evaluate`'s
+  `arguments`), which `native::mono`'s `default_function_bindings`
+  substitutes.
   `inherited_destructors` names the inherited `deinit`-receiver wrappers
   the struct shell records. It reports the pin's conflicting default and
   struct-parameter name-conflict rejections. A method body's check binds

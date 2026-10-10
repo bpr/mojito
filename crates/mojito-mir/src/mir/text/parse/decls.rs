@@ -456,14 +456,25 @@ impl Decoder {
                 "checked_bool" => self.boolean(inner).map(CheckedConst::Bool),
                 "checked_string" => self.string(inner).map(CheckedConst::String),
                 "checked_dtype" => self.dtype(inner).map(CheckedConst::Dtype),
-                "checked_evaluate" => self
-                    .string(inner)
-                    .map(|function| CheckedConst::Evaluate { function }),
+                "checked_evaluate" => self.string(inner).map(|function| CheckedConst::Evaluate {
+                    function,
+                    arguments: Vec::new(),
+                }),
                 other => {
                     self.error(value.span, format!("unknown checked constant `{other}`"));
                     None
                 }
             },
+            // Schema 1.43 applies an evaluated default's function to the
+            // arguments of its own binders.
+            ValueKind::Record(tag, fields) if tag == "checked_evaluate" => {
+                let function = self.string(self.field(fields, "function").ok()?)?;
+                let arguments = self.ty_args(self.field(fields, "arguments").ok()?);
+                Some(CheckedConst::Evaluate {
+                    function,
+                    arguments,
+                })
+            }
             ValueKind::Record(tag, fields) if tag == "checked_construct" => {
                 let target = self.string(self.field(fields, "target").ok()?)?;
                 let arg = self.checked_const(self.field(fields, "arg").ok()?)?;

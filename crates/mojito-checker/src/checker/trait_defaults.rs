@@ -13,7 +13,7 @@ use mojito_ast::ast::{
     ArgConvention, DeclaredParam, Expr, ExprKind, FnParam, KwArg, ParamArg, ParamKind, Stmt,
     StmtKind, TraitMethod, Type, TypeParam,
 };
-use mojito_ast::visit::{MutVisitor, walk_block_mut, walk_expr_mut, walk_stmt_mut};
+use mojito_ast::visit::{MutVisitor, walk_block_mut, walk_stmt_mut};
 use mojito_checked::checked::{CheckedDefaultWrapper, CheckedTraitMember, SignatureParam};
 use mojito_common::error::TypeError;
 use mojito_common::token::{Span, SyntaxId};
@@ -24,7 +24,7 @@ use super::declarations::{BodyParam, MethodBody};
 use super::origins::ref_binding_is_writable;
 use super::overload_support::method_lowered_name;
 use super::traits_support::same_method_shape;
-use super::{Checker, MethodSig, SignatureDefault, StructDeclaration, Ty};
+use super::{Checker, MethodSig, StructDeclaration, Ty};
 use mojito_symbol::symbol::lifecycle_method_name;
 
 /// The declaration trait default `index` of `trait_stmt` is checked and
@@ -119,11 +119,15 @@ pub(super) struct DefaultShape {
     /// requirement's binder owner is when the name is overloaded.
     pub(super) member: String,
     key: OverloadKey,
+    /// Its requirement's position among its trait's same-name requirement
+    /// signatures, which the trait's check records ([`Self::at_overload`]).
+    overload: usize,
     /// Its declared parameter count, as the overload prescan counts it.
     pub(super) arity: usize,
     /// Its own compile-time parameters' names, a pack's without its `*`.
     binders: Vec<String>,
-    /// Every declared parameter but the receiver, in order.
+    /// Every declared parameter but the receiver, in order. Their defaults
+    /// are the member's, which its declaration holds.
     pub(super) params: Vec<SignatureParam>,
     receiver: Option<ArgConvention>,
     /// Whether it declares a result, which the forwarding call returns.
@@ -139,16 +143,15 @@ pub(super) struct DefaultShape {
     unforwardable: Option<String>,
 }
 
+impl DefaultShape {
+    /// This default, its requirement the `overload`-th signature of its name.
+    pub(super) fn at_overload(self, overload: usize) -> Self {
+        Self { overload, ..self }
+    }
+}
+
 /// What a trait gives a conformer: its refinements, and its own defaults.
 pub(super) type TraitDefaults = (Vec<String>, Vec<DefaultShape>);
-
-/// A default as its trait's check records it: its shape, and the
-/// requirement's resolved signature over the trait's `Self`.
-#[derive(Clone, serde::Serialize, serde::Deserialize)]
-pub(super) struct TraitDefault {
-    pub(super) shape: DefaultShape,
-    pub(super) signature: MethodSig,
-}
 
 /// A trait default the check checked as its trait's member.
 pub(super) struct TraitMember {
@@ -172,8 +175,6 @@ pub(super) struct DefaultWrapper {
     /// Its member position: after the struct's spelled methods, in the order
     /// its defaults are reached.
     pub(super) method_index: usize,
-    /// The shape's parameters, each default expression its own occurrence.
-    pub(super) params: Vec<SignatureParam>,
     pub(super) body: Vec<Stmt>,
     /// The symbol it lowers to, which registration qualifies when the name
     /// is overloaded.
@@ -200,6 +201,7 @@ pub(super) fn default_shapes(
             method: method.name.clone(),
             member: member_symbol(trait_name, method, sets),
             key: overload_key(&method.name, &method.params, method.keyword_only, None),
+            overload: 0,
             arity: method.params.len(),
             binders: method
                 .type_params
@@ -213,7 +215,6 @@ pub(super) fn default_shapes(
                     name: param.name.clone(),
                     kind: param.kind,
                     convention: param.convention,
-                    default: param.default.clone(),
                 })
                 .collect(),
             receiver: method.self_convention,
@@ -320,10 +321,6 @@ pub(super) fn default_wrappers(
             if let Some(reason) = &shape.unforwardable {
                 return Err(TypeError::Unsupported(reason.clone()));
             }
-            let mut params = shape.params.clone();
-            for default in params.iter_mut().filter_map(|param| param.default.as_mut()) {
-                walk_expr_mut(&mut ids, default);
-            }
             let mut body = vec![forwarding_statement(&shape, stmt.span)];
             if let Some(module) = &stmt.module {
                 mojito_ast::ast::stamp_source(&mut body, module);
@@ -336,7 +333,6 @@ pub(super) fn default_wrappers(
                 trait_name,
                 shape,
                 method_index: methods.len() + index,
-                params,
                 body,
             })
         })
@@ -372,15 +368,9 @@ impl Checker {
             .collect();
         let lookup = |name: &str| {
             own.get(name).cloned().or_else(|| {
-                self.traits.get(name).map(|info| {
-                    (
-                        info.refines.clone(),
-                        info.defaults
-                            .iter()
-                            .map(|default| default.shape.clone())
-                            .collect(),
-                    )
-                })
+                self.traits
+                    .get(name)
+                    .map(|info| (info.refines.clone(), info.defaults.clone()))
             })
         };
         let mut wrappers = Vec::new();
@@ -557,8 +547,9 @@ impl Checker {
                 method: wrapper.shape.method.clone(),
                 method_index: wrapper.method_index,
                 lowered_name: wrapper.lowered_name.clone(),
+                member: wrapper.shape.member.clone(),
                 self_convention: wrapper.shape.receiver,
-                params: wrapper.params.clone(),
+                params: wrapper.shape.params.clone(),
                 body: wrapper.body.clone(),
             })
             .collect()
@@ -574,15 +565,17 @@ impl Checker {
         use mojito_checked::checked::{AnnotationSite, DeclarationEffect, GenericSite};
         let name = declaration.name;
         let method = wrapper.shape.method.as_str();
-        let default = self
+        let requirement = self
             .traits
             .get(&wrapper.trait_name)
             .and_then(|info| {
-                info.defaults
+                let default = info
+                    .defaults
                     .iter()
-                    .find(|default| default.shape.member == wrapper.shape.member)
-                    .cloned()
+                    .find(|default| default.member == wrapper.shape.member)?;
+                info.methods.get(&default.method)?.get(default.overload)
             })
+            .cloned()
             .ok_or_else(|| {
                 TypeError::InvariantViolation(format!(
                     "trait '{}' records no default '{method}'",
@@ -592,7 +585,7 @@ impl Checker {
         let self_ty = self.self_ty.clone().ok_or_else(|| {
             TypeError::InvariantViolation(format!("struct '{name}' is not in scope"))
         })?;
-        let mut sig = self.requirement_at(&default.signature, &self_ty);
+        let mut sig = self.requirement_at(&requirement, &self_ty);
         let source = format!("{name}.{method}");
         let overloaded = self
             .overload_sets
@@ -624,14 +617,6 @@ impl Checker {
             **ty = moved(ty);
         }
         sig.ret = moved(&sig.ret);
-        sig.defaults = wrapper
-            .params
-            .iter()
-            .filter(|param| {
-                param.kind == ParamKind::Regular && param.convention != Some(ArgConvention::Out)
-            })
-            .map(|param| param.default.clone().map(SignatureDefault::Spelled))
-            .collect();
         sig.overload = overloaded
             .then(|| mojito_symbol::symbol::overload_qualifier(&lowered).map(str::to_string))
             .flatten();
@@ -646,7 +631,7 @@ impl Checker {
             sig.decls.clone(),
         );
         let mut regular = sig.params.iter();
-        for (param, declared) in wrapper.params.iter().enumerate() {
+        for (param, declared) in wrapper.shape.params.iter().enumerate() {
             let ty = match declared.kind {
                 ParamKind::Regular => regular.next().cloned(),
                 ParamKind::Variadic => sig.variadic.as_deref().cloned(),
@@ -750,24 +735,6 @@ impl Checker {
         effect_key: String,
     ) -> Result<(), TypeError> {
         let method = wrapper.shape.method.as_str();
-        let regular: Vec<(&SignatureParam, &Ty)> = wrapper
-            .params
-            .iter()
-            .filter(|param| param.kind == ParamKind::Regular)
-            .zip(&signature.params)
-            .collect();
-        self.push_scope();
-        let defaults = self
-            .declare_value_parameters(&signature.decls)
-            .and_then(|()| {
-                regular.iter().try_for_each(|(param, ty)| {
-                    param.default.as_ref().map_or(Ok(()), |default| {
-                        self.check_parameter_default(&param.name, default, ty)
-                    })
-                })
-            });
-        self.pop_scope();
-        defaults?;
         self.push_scope();
         self.raising_context
             .push(signature.error.as_deref().cloned());
@@ -777,7 +744,7 @@ impl Checker {
                 let self_writable = ref_binding_is_writable(signature.self_convention, None, &[]);
                 self.bind_receiver(self_ty, self_writable)?;
                 let mut regular = signature.params.iter();
-                for param in &wrapper.params {
+                for param in &wrapper.shape.params {
                     let pty =
                         match param.kind {
                             ParamKind::Regular => regular.next().cloned(),
@@ -819,6 +786,7 @@ impl Checker {
                 self.check_method_body(MethodBody {
                     name: method,
                     params: wrapper
+                        .shape
                         .params
                         .iter()
                         .map(|param| BodyParam {

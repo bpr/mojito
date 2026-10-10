@@ -1523,7 +1523,11 @@ impl<'a> Specializer<'a> {
         for (index, default) in declaration.defaults.iter_mut().enumerate() {
             // A lowered default function has one instance per assignment of
             // the binders it reads, which only this default reaches.
-            if let Some(CheckedConst::Evaluate { function }) = default {
+            if let Some(CheckedConst::Evaluate {
+                function,
+                arguments,
+            }) = default
+            {
                 // The pin evaluates a default once, at compile time, where
                 // the VM runs it at each call leaving the slot out: the two
                 // agree only for a default that does no I/O.
@@ -1541,9 +1545,10 @@ impl<'a> Specializer<'a> {
                     ));
                 }
                 if self.functions.contains_key(function.as_str()) {
-                    let (default_bindings, arguments) =
-                        self.default_function_bindings(function, bindings)?;
-                    *function = self.enqueue(function, default_bindings, arguments)?;
+                    let (default_bindings, instance) =
+                        self.default_function_bindings(function, arguments, bindings)?;
+                    *function = self.enqueue(function, default_bindings, instance)?;
+                    arguments.clear();
                 }
                 continue;
             }
@@ -1694,9 +1699,13 @@ impl<'a> Specializer<'a> {
     /// The bindings and instance arguments of the lowered default function
     /// `function` under its owner's `bindings`: each binder it declares takes
     /// the owner's solution, or a lifted body's folded capture of its name.
+    /// A default `applied` to arguments (a wrapper reaching its trait
+    /// member's default) takes each binder's solution from its argument,
+    /// substituted under the owner's `bindings`.
     fn default_function_bindings(
         &self,
         function: &str,
+        applied: &[TyArg],
         bindings: &Bindings,
     ) -> Result<(Bindings, Vec<InstanceArg>), MonoError> {
         let mut default_bindings = self.base_bindings();
@@ -1705,6 +1714,20 @@ impl<'a> Specializer<'a> {
             .declarations
             .get(function)
             .map_or(&[][..], |declaration| &declaration.param_decls);
+        let applied_bindings;
+        let bindings = if applied.is_empty() {
+            bindings
+        } else {
+            let concrete = applied
+                .iter()
+                .map(|argument| substitute_arg(argument, bindings))
+                .collect::<Result<Vec<_>, _>>()?;
+            let mut own = self.base_bindings();
+            bind_ty_args(scope, &concrete, &mut own)
+                .map_err(|error| self.error(Some(function), error))?;
+            applied_bindings = own;
+            &applied_bindings
+        };
         for decl in scope {
             let binder = decl.binder();
             let unresolved = || {

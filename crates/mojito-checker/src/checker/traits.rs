@@ -123,7 +123,7 @@ impl Checker {
         self.trait_self_comptime.push(ct_members.clone());
         let result = (|| {
             let mut sigs: HashMap<String, Vec<MethodSig>> = HashMap::new();
-            let mut default_signatures = Vec::new();
+            let mut default_overloads = Vec::new();
             for parent in refines {
                 let inherited = &self.traits[parent].methods;
                 for (method, parent_sigs) in inherited {
@@ -282,21 +282,21 @@ impl Checker {
                     return Err(TypeError::Redeclaration(m.name.clone()));
                 }
                 if m.default_body.is_some() {
-                    default_signatures.push(sig.clone());
+                    default_overloads.push(overloads.len());
                 }
                 overloads.push(sig);
             }
-            Ok((sigs, default_signatures))
+            Ok((sigs, default_overloads))
         })();
         self.trait_self_comptime.pop();
         self.self_ty = saved_self_ty;
         self.self_decls = saved_self_decls;
         let shapes = super::trait_defaults::default_shapes(name, methods, &*self.overload_sets);
-        let (methods, default_signatures) = result?;
+        let (methods, default_overloads) = result?;
         let defaults = shapes
             .into_iter()
-            .zip(default_signatures)
-            .map(|(shape, signature)| super::trait_defaults::TraitDefault { shape, signature })
+            .zip(default_overloads)
+            .map(|(shape, overload)| shape.at_overload(overload))
             .collect();
         self.traits.insert(
             name.to_string(),

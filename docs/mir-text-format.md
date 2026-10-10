@@ -1,4 +1,4 @@
-# Mojito Textual MIR Format, Version 1.42
+# Mojito Textual MIR Format, Version 1.43
 
 This document is the normative specification of Mojito's textual verified-MIR
 artifact. The Rust data model in `src/mir.rs` and `src/mir/ir.rs` remains the
@@ -6,7 +6,7 @@ in-memory authority; this format is its stable inspection and interchange
 boundary. `docs/vm-instruction-set.md` explains execution semantics, while this
 document defines syntax and serialized data.
 
-Version 1.42 is implemented end to end for inspection and loading: canonical
+Version 1.43 is implemented end to end for inspection and loading: canonical
 in-memory disassembly, full-grammar assembly parsing, and artifact-loading
 verification (`mir::text::load_artifact`, which reports canonical-verifier
 findings at artifact source spans). Lossless print → parse → print round trips
@@ -22,10 +22,10 @@ which may be generic; it is always elaborated before it runs.
 Every artifact begins with exactly:
 
 ```text
-mojito-mir 1.42
+mojito-mir 1.43
 ```
 
-The writer emits 1.42. The reader accepts 1.0 through 1.42; *Schema 1.0*
+The writer emits 1.43. The reader accepts 1.0 through 1.43; *Schema 1.0*
 below says how a 1.0 artifact is read, and *Binder identity* under *Types*
 how a binder without an identity is.
 
@@ -517,7 +517,15 @@ exact decimal form does not exist in general. A parser accepts a non-reduced
 rational; reprinting reduces it.
 
 `CheckedConst` uses `checked_int`, `checked_float`, `checked_bool`,
-`checked_string`, or `checked_none` with the same fidelity rules.
+`checked_string`, or `checked_none` with the same fidelity rules, plus
+`checked_dtype(name)`, `checked_construct { target, arg }` for an
+implicit-conversion default, and `checked_evaluate("function")` for a
+default lowered as a function. Schema 1.43 adds the applied form
+`checked_evaluate { function, arguments: [ty-arg, ...] }`: the function's
+own compile-time parameters, in declaration order, written over the
+binders of the declaration holding the default, as a conformer's trait
+default wrapper reaches its trait member's default. Concrete MIR carries
+only the positional form.
 
 `CtValue` uses `ct_int`, `ct_uint`, `ct_float_bits`, `ct_int_literal`,
 `ct_float_literal`, `ct_bool`, `ct_string`, `ct_tuple`, `ct_list`, `ct_dict`,
@@ -832,7 +840,7 @@ Unknown terminators and instructions are fatal for schema major version 1.
 ## Complete Artifact Example
 
 ```text
-mojito-mir 1.42
+mojito-mir 1.43
 artifact {
   features: [],
   files: [file { id: file0, path: present("main.mojo"), module: absent }],
@@ -873,10 +881,10 @@ library declaration, and one module table holding each module's link
 record, one file per package. The bundled library's is the
 only producer today (`src/package.rs`). No part of a package is MIR text:
 it is a header followed by bytecode records, as upstream's package is
-MLIR bytecode throughout. The format line is `mojito-package 18`.
+MLIR bytecode throughout. The format line is `mojito-package 19`.
 
 ```text
-mojito-package 18
+mojito-package 19
 <the header's length, 8 bytes little-endian>
 <the header, as bytecode>
 <the payload: every record, as bytecode>

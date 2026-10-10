@@ -8,6 +8,12 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A trait default's parameter defaults are now held once, by its trait
+  member's declaration (R588): a conformer's wrapper adopts them, an
+  evaluated default applied to the wrapper's instantiation of the member,
+  instead of each conformer re-checking the default's syntax and lowering
+  its own default function. MIR text is now 1.43 and the package format
+  `mojito-package 19`.
 - A trait default is now its trait's member `Trait.method`, one function
   over the trait's `Self` checked once after every module declaration and
   lowered in its trait (R551), as Mojo emits a default inside its trait,

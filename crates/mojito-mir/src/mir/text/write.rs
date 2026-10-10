@@ -2032,7 +2032,20 @@ fn checked_const(value: &CheckedConst) -> String {
             "checked_construct",
             &[("target", quote(target)), ("arg", checked_const(arg))],
         ),
-        CheckedConst::Evaluate { function } => positional("checked_evaluate", &quote(function)),
+        CheckedConst::Evaluate {
+            function,
+            arguments,
+        } if arguments.is_empty() => positional("checked_evaluate", &quote(function)),
+        CheckedConst::Evaluate {
+            function,
+            arguments,
+        } => record(
+            "checked_evaluate",
+            &[
+                ("function", quote(function)),
+                ("arguments", list(arguments.iter().map(ty_arg))),
+            ],
+        ),
     }
 }
 /// A parameter expression in schema 1.1's typed structural form. Operands

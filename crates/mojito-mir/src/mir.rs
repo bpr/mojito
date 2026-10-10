@@ -666,6 +666,7 @@ pub fn lower_checked_program_importing(
     if let Some((_, compiled)) = package {
         link::link_declarations(&mut declarations, compiled);
     }
+    adopt_member_defaults(checked, &mut declarations, &mut invariant_errors);
     {
         let _close = timing::span("close_register_types");
         for (name, function) in &mut functions {
@@ -1357,7 +1358,10 @@ fn lower_default<P: DeclaredParam>(
         functions,
         declarations,
     );
-    Some(CheckedConst::Evaluate { function })
+    Some(CheckedConst::Evaluate {
+        function,
+        arguments: Vec::new(),
+    })
 }
 
 /// A zero-parameter function returning one checked expression over the
@@ -4668,6 +4672,110 @@ fn close_register_types(
     }
     f.reg_types = reg_types;
     f.var_tys = var_tys;
+}
+
+/// Give each trait default wrapper's declaration its member's parameter
+/// defaults, as upstream's wrapper takes its trait function's signature
+/// (`getTraitFunctionSignature`): the member's declaration holds each
+/// default once, for every conformer. An evaluated default is applied to
+/// the wrapper's instantiation of the member, which its forwarding call
+/// records, so the default's function binds its binders from the wrapper's.
+fn adopt_member_defaults(
+    checked: &CheckedProgram,
+    declarations: &mut MirDeclarations,
+    invariant_errors: &mut Vec<String>,
+) {
+    for wrapper in checked.default_wrappers() {
+        match member_defaults(checked, declarations, wrapper) {
+            Ok((defaults, required)) => {
+                if let Some(declaration) = declarations
+                    .functions
+                    .iter_mut()
+                    .find(|declaration| declaration.lowered_name == wrapper.lowered_name)
+                {
+                    declaration.defaults = defaults;
+                    declaration.required = required;
+                }
+            }
+            Err(error) => invariant_errors.push(format!(
+                "trait default wrapper '{}' of member '{}': {error}",
+                wrapper.lowered_name, wrapper.member
+            )),
+        }
+    }
+}
+
+/// The defaults and required flags `wrapper` adopts from its member's
+/// declaration: every parameter's after the member's leading `self`.
+fn member_defaults(
+    checked: &CheckedProgram,
+    declarations: &MirDeclarations,
+    wrapper: &mojito_checked::checked::CheckedDefaultWrapper,
+) -> Result<(Vec<Option<CheckedConst>>, Vec<bool>), String> {
+    let own = declarations
+        .function(&wrapper.lowered_name)
+        .ok_or("its declaration was not lowered")?;
+    let member = declarations
+        .function(&wrapper.member)
+        .ok_or("the member's declaration is not reached")?;
+    if member.has_receiver || member.param_names.first().map(String::as_str) != Some("self") {
+        return Err("the member does not take its receiver first".into());
+    }
+    if member.param_names[1..] != own.param_names[..] {
+        return Err(format!(
+            "parameters {:?} differ from the member's {:?}",
+            own.param_names,
+            &member.param_names[1..]
+        ));
+    }
+    let call = wrapper
+        .body
+        .first()
+        .and_then(|statement| match &statement.kind {
+            StmtKind::Return(Some(call)) | StmtKind::Expr(call) => Some(call),
+            _ => None,
+        })
+        .ok_or("its body is not one forwarding call")?;
+    let instantiation = checked
+        .generic_instantiations()
+        .get(&call.source_span())
+        .map_or(&[][..], |instantiation| &instantiation.arguments[..]);
+    let defaults = member.defaults[1..]
+        .iter()
+        .map(|default| match default {
+            Some(CheckedConst::Evaluate {
+                function,
+                arguments,
+            }) if arguments.is_empty() => {
+                let binders = declarations
+                    .function(function)
+                    .map_or(&[][..], |thunk| &thunk.param_decls[..]);
+                let arguments = binders
+                    .iter()
+                    .map(|binder| {
+                        member
+                            .param_decls
+                            .iter()
+                            .position(|own| own.id() == binder.id())
+                            .and_then(|position| instantiation.get(position))
+                            .cloned()
+                            .ok_or_else(|| {
+                                format!(
+                                    "the call binds no argument for `{}` of `{function}`",
+                                    binder.name()
+                                )
+                            })
+                    })
+                    .collect::<Result<_, _>>()?;
+                Ok(Some(CheckedConst::Evaluate {
+                    function: function.clone(),
+                    arguments,
+                }))
+            }
+            default => Ok(default.clone()),
+        })
+        .collect::<Result<_, String>>()?;
+    Ok((defaults, member.required[1..].to_vec()))
 }
 
 /// Return a source integer literal as a host index without materializing it as

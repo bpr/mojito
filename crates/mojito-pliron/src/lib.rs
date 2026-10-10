@@ -893,7 +893,9 @@ fn reachable_set<'p>(
             for default in declaration.defaults.iter().flatten() {
                 use mojito_checked::checked::CheckedConst;
                 if let CheckedConst::Construct { target, .. }
-                | CheckedConst::Evaluate { function: target } = default
+                | CheckedConst::Evaluate {
+                    function: target, ..
+                } = default
                     && let Some((callee, _)) = functions.get_key_value(target.as_str())
                     && reachable.insert(*callee)
                 {
