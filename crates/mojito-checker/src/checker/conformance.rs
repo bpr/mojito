@@ -30,7 +30,7 @@ impl ConformanceOracle {
     ) -> Result<Self, TypeError> {
         let mut checker = Checker::new();
         if let Some(installed) = installed {
-            checker.install_interfaces(installed)?;
+            checker.attach_interfaces(installed)?;
         }
         // A field type may apply a module function to a parameter.
         checker

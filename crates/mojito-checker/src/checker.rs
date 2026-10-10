@@ -124,20 +124,21 @@ pub struct CheckContext {
     /// passes, the requirement defaults it binds (`bound_defaults.rs`).
     bound_default_arguments: HashMap<SyntaxId, BoundDefaultArguments>,
     /// The compiled package whose bodies this check takes as checked: its
-    /// declarations are installed from their interfaces ([`Self::install`]),
+    /// declarations resolve from their interfaces ([`Self::install`]),
     /// and a call into it reads the package's summaries.
     package: Option<std::sync::Arc<mojito_checked::interface::PackageInterface>>,
     /// The effect summaries of every module-level callable and method the
     /// last check recorded, the interface of a package built from it.
     summaries: mojito_checked::interface::PackageInterface,
     /// The declaration interfaces of the package modules the program's link
-    /// reached, installed into every pass in place of their statements.
+    /// reached, attached to every pass in place of their statements.
     installed: Option<InstalledInterfaces>,
     /// Whether the check exports each library module's declaration
     /// interface, as a package build's does.
     record_interfaces: bool,
-    /// The interfaces the last check exported, by module path.
-    interfaces: Option<Result<std::collections::BTreeMap<String, Vec<u8>>, String>>,
+    /// The interfaces the last check exported, encoded with their
+    /// directory.
+    interfaces: Option<Result<Vec<u8>, String>>,
     /// The module constants the program's comptime elaboration resolved,
     /// which an exported interface carries.
     elaborated: ElaboratedConstants,
@@ -176,14 +177,13 @@ impl CheckContext {
         self.elaborated = elaborated;
     }
 
-    /// The interfaces the last check exported, by module path.
+    /// The interfaces the last check exported, encoded with their directory
+    /// ([`DeclarationInterfaces::read`]).
     ///
     /// # Errors
     ///
     /// What the check could not export, or that it exported nothing.
-    pub fn take_interfaces(
-        &mut self,
-    ) -> Result<std::collections::BTreeMap<String, Vec<u8>>, String> {
+    pub fn take_interfaces(&mut self) -> Result<Vec<u8>, String> {
         self.interfaces
             .take()
             .unwrap_or_else(|| Err("the check exported no interface".to_string()))
@@ -200,7 +200,8 @@ impl CheckContext {
     }
 
     /// The effect summaries the last check recorded for its module-level
-    /// callables and methods; its `modules` are empty.
+    /// callables and methods, when it exported its interfaces
+    /// ([`Self::record_interfaces`]); its `modules` are empty.
     pub fn take_summaries(&mut self) -> mojito_checked::interface::PackageInterface {
         std::mem::take(&mut self.summaries)
     }
@@ -309,7 +310,7 @@ fn check_program_carrying(
         }
         let mut checker = Checker::new_seeded(transfer_seed, call_through_seed);
         if let Some(installed) = &context.installed {
-            checker.install_interfaces(installed)?;
+            checker.attach_interfaces(installed)?;
         }
         checker.package.clone_from(&context.package);
         if let Some(previous) = &previous {
@@ -371,17 +372,17 @@ fn check_program_carrying(
             mojito_checked::checked::ConformanceFacts::default(),
         ));
     };
+    // A package build exports its interfaces and summaries; an importer's
+    // check exports nothing.
     if context.record_interfaces {
         let _export = timing::span("export_interfaces");
         context.interfaces = Some(checker.export_interfaces(&expanded, &context.elaborated));
+        let _summaries = timing::span("summaries");
+        context.summaries = checker.effect_summaries();
     }
     // Context managers are desugared by the checker; later phases see only
     // the ordinary statements it checked.
     with_stmt::splice_with_desugars(&mut expanded, &checker.with_desugars.borrow());
-    context.summaries = {
-        let _summaries = timing::span("summaries");
-        checker.effect_summaries()
-    };
     let explicit_destroy_types = {
         let _finish = timing::span("explicit_destroy");
         let explicit_destroy_types = explicit_destroy_types(&checker);
@@ -418,8 +419,12 @@ pub struct ConformanceFailure {
 
 mod body_carry;
 mod conformance;
+mod declaration_table;
+pub(crate) use declaration_table::DeclarationTable;
 mod interface;
-pub use interface::{ElaboratedConstant, ElaboratedConstants, InstalledInterfaces};
+pub use interface::{
+    DeclarationInterfaces, ElaboratedConstant, ElaboratedConstants, InstalledInterfaces,
+};
 mod overload_support;
 pub use body_carry::PassCarry;
 pub use overload_support::is_bundled_module_source;
@@ -526,11 +531,11 @@ pub struct Checker {
     /// Explicit capture policy for each nested function body being checked.
     capture_contexts: RefCell<Vec<CapturePolicy>>,
     /// Defined structs, by name (a separate namespace from value bindings).
-    structs: HashMap<String, StructInfo>,
+    structs: declaration_table::DeclarationTable<StructInfo>,
     /// Top-level struct symbols in the checked program, collected before body
     /// checking. Concrete Tuple types can therefore select their generated
     /// implementation independent of declaration order.
-    declared_structs: HashSet<String>,
+    declared_structs: declaration_table::DeclarationSet,
     /// The program's overloaded top-level names, so an overloaded `def` owns
     /// its binders under the signature-qualified symbol MIR names it by.
     overload_sets: mojito_symbol::symbol::OverloadSets,
@@ -548,7 +553,7 @@ pub struct Checker {
     /// The module constants whose initializer applies a callable, or reads
     /// such a constant: a parameter expression, never a type, so
     /// `comptime E = A` over one is a value binding and not an alias.
-    applied_module_constants: HashSet<String>,
+    applied_module_constants: declaration_table::DeclarationSet,
     /// The object of the field read being inferred: a compile-time value
     /// read there is projected, never materialized whole.
     projected_object: RefCell<Option<SourceSpan>>,
@@ -556,7 +561,7 @@ pub struct Checker {
     /// removes each entry instead of re-registering.
     predeclared_traits: HashSet<String>,
     /// Defined traits, by name (their method requirements).
-    traits: HashMap<String, TraitInfo>,
+    traits: declaration_table::DeclarationTable<TraitInfo>,
     /// Stack of a generic `def`'s checked type parameters, innermost last. A
     /// bare `T` annotation resolves to the complete `Ty::Param`, including any
     /// anonymous callable-trait contract.
@@ -616,6 +621,10 @@ pub struct Checker {
     /// by its binding: a compile-time expression the elaborator evaluates
     /// per instance may read them.
     comptime_binding_owners: HashSet<mojito_types::origin::OwnerId>,
+    /// The package interfaces the check resolves its misses from, and the
+    /// first of the owners reserved for their module bindings, which bind
+    /// below the module scope ([`Self::installed_binding`]).
+    installed: Option<(InstalledInterfaces, u32)>,
     /// How many type or parameter arguments, or local `comptime` values,
     /// the check is evaluating: an `Int` or `Bool` expression there that
     /// compiles to no parameter expression is lifted as a function
@@ -626,11 +635,12 @@ pub struct Checker {
     /// ([`comptime_validation::applicable_functions`]): known before any
     /// declaration is checked, since a field type or a signature may call
     /// one declared below it.
-    applicable_functions: HashMap<String, Vec<comptime_validation::ApplicableFunction>>,
+    applicable_functions:
+        declaration_table::DeclarationTable<Vec<comptime_validation::ApplicableFunction>>,
     /// The declared result of each non-generic module `def` that declares
     /// one, the first declaration's under an overloaded name: what a module
     /// constant applying it denotes ([`Self::applied_constant_expr`]).
-    module_def_results: HashMap<String, SourceType>,
+    module_def_results: declaration_table::DeclarationTable<SourceType>,
     /// The expressions lifted so far, each with the application it denotes.
     lifted_applications: RefCell<Vec<comptime_validation::LiftedApplication>>,
     /// The application each lifted expression of the executable check
@@ -658,11 +668,11 @@ pub struct Checker {
     /// the ownership a forwarded pack must match (`Ty::GenericFunc` carries
     /// the regular conventions only). A name whose overloads disagree is
     /// absent.
-    owned_collectors: HashMap<String, bool>,
+    owned_collectors: declaration_table::DeclarationTable<bool>,
     /// Each function's positional collector's parameter name, by function
     /// name, for the argument exclusivity rule's diagnostics. A name whose
     /// overloads disagree is absent.
-    collector_names: HashMap<String, String>,
+    collector_names: declaration_table::DeclarationTable<String>,
     /// Per-scope compile-time bindings of a validated body: `comptime for`
     /// variables and the declaration's value parameters. The elaborator
     /// substitutes each as a literal, so a nested function or lambda reading
@@ -682,20 +692,20 @@ pub struct Checker {
     /// own method requirement signatures, so `Self.Element` can resolve.
     trait_self_comptime: Vec<HashMap<String, CtMemberReq>>,
     /// Exact integer constants declared by `comptime NAME = value`.
-    comptimes: HashMap<String, mojito_common::literal::IntLiteral>,
+    comptimes: declaration_table::DeclarationTable<mojito_common::literal::IntLiteral>,
     /// Module constants declared by `comptime NAME = <literal>`, which a
     /// trait requirement's default folds to (`Float`, `Bool`, string).
-    comptime_literals: HashMap<String, Expr>,
+    comptime_literals: declaration_table::DeclarationTable<Expr>,
     /// Module constants whose initializer folds to a closed attribute
     /// (`comptime D = DType.int16`, `comptime T = (1, 2)`, a vector of
     /// literal lanes): the value a body's read denotes (decision D3).
-    module_values: HashMap<String, CtValue>,
+    module_values: declaration_table::DeclarationTable<CtValue>,
     /// Module constants whose initializer applies a function (`comptime B =
     /// f(A)`, `comptime S = size_of[T]()`), as the symbolic application the
     /// pin keeps through the check (decision D3,
     /// `docs/notes/ctfe-request-path.md`). Only source validation builds one:
     /// the executable check sees the elaborator's folded literal.
-    comptime_applied: HashMap<String, ParamExpr>,
+    comptime_applied: declaration_table::DeclarationTable<ParamExpr>,
     /// Dtypes declared by `comptime NAME = <dtype>`, for SIMD element-type
     /// arguments, one map per lexical scope: a binding is visible to the
     /// rest of its block. A binding of a `[dt: DType]` parameter keys a lane
@@ -703,7 +713,7 @@ pub struct Checker {
     comptime_dtypes: Vec<HashMap<String, SimdDtype>>,
     /// Generic top-level type aliases declared by `comptime NAME[params] = Type`,
     /// expanded per application during type resolution. See [`ComptimeAlias`].
-    comptime_aliases: HashMap<String, ComptimeAlias>,
+    comptime_aliases: declaration_table::DeclarationTable<ComptimeAlias>,
     /// Whether `self` is writable in the method body being checked — set while
     /// checking a `mut self` method's body (so `self.x = e` is allowed there).
     self_mutable: bool,
@@ -740,7 +750,7 @@ pub struct Checker {
     overload_targets: RefCell<FactMap<SourceSpan, String>>,
     /// Free functions decorated `@__unsafe_nested_origins_read_only`; see
     /// [`MethodSig::nested_origins`].
-    nested_origins_read_only_functions: HashSet<String>,
+    nested_origins_read_only_functions: declaration_table::DeclarationSet,
     /// The value binders declared `SIMDLength`, SIMD's own width type: a
     /// vector argument's width slot solves one, while an `Int` binder in the
     /// slot is a conversion the pin leaves unresolved.
@@ -1102,16 +1112,16 @@ impl Checker {
             function_bases: Vec::new(),
             aggregate_escape_contexts: Vec::new(),
             capture_contexts: RefCell::new(Vec::new()),
-            structs: HashMap::new(),
-            declared_structs: HashSet::new(),
+            structs: declaration_table::DeclarationTable::default(),
+            declared_structs: declaration_table::DeclarationSet::default(),
             overload_sets: mojito_symbol::symbol::OverloadSets::default(),
             method_binder_owners: mojito_symbol::symbol::MethodBinderOwners::default(),
             predeclared_structs: HashSet::new(),
             predeclared_constants: HashSet::new(),
-            applied_module_constants: HashSet::new(),
+            applied_module_constants: declaration_table::DeclarationSet::default(),
             projected_object: RefCell::new(None),
             predeclared_traits: HashSet::new(),
-            traits: HashMap::new(),
+            traits: declaration_table::DeclarationTable::default(),
             tparams: Vec::new(),
             vparams: Vec::new(),
             pack_params: Vec::new(),
@@ -1125,34 +1135,35 @@ impl Checker {
             local_comptime_parameters: vec![HashMap::new()],
             local_comptime_displays: vec![HashMap::new()],
             comptime_binding_owners: HashSet::new(),
+            installed: None,
             lifting_positions: std::rc::Rc::default(),
-            applicable_functions: HashMap::new(),
-            module_def_results: HashMap::new(),
+            applicable_functions: declaration_table::DeclarationTable::default(),
+            module_def_results: declaration_table::DeclarationTable::default(),
             lifted_applications: RefCell::new(Vec::new()),
             lifted_expressions: RefCell::new(FactMap::default()),
             rebind_targets: RebindTargets::default(),
             owned_packs: HashSet::new(),
             value_parameter_owners: HashSet::new(),
-            owned_collectors: HashMap::new(),
-            collector_names: HashMap::new(),
+            owned_collectors: declaration_table::DeclarationTable::default(),
+            collector_names: declaration_table::DeclarationTable::default(),
             compile_time_bindings: vec![HashSet::new()],
             comptime_positions: std::rc::Rc::default(),
             enclosing_type_params: Vec::new(),
             self_ty: None,
             trait_self_comptime: Vec::new(),
-            comptimes: HashMap::new(),
-            comptime_literals: HashMap::new(),
-            module_values: HashMap::new(),
-            comptime_applied: HashMap::new(),
+            comptimes: declaration_table::DeclarationTable::default(),
+            comptime_literals: declaration_table::DeclarationTable::default(),
+            module_values: declaration_table::DeclarationTable::default(),
+            comptime_applied: declaration_table::DeclarationTable::default(),
             comptime_dtypes: vec![HashMap::new()],
-            comptime_aliases: HashMap::new(),
+            comptime_aliases: declaration_table::DeclarationTable::default(),
             self_mutable: false,
             self_initializing: false,
             parametric_write_frames: RefCell::new(Vec::new()),
             bundled_stdlib_declaration: false,
             parameter_list_brackets: std::cell::Cell::new(false),
             overload_targets: RefCell::new(FactMap::default()),
-            nested_origins_read_only_functions: HashSet::new(),
+            nested_origins_read_only_functions: declaration_table::DeclarationSet::default(),
             simd_length_binders: HashSet::from([builtins::hasher_simd_update_binders().1.id]),
             contextual_bases: RefCell::new(FactMap::default()),
             generic_instantiations: RefCell::new(FactMap::default()),
@@ -2493,13 +2504,14 @@ impl StructInfo {
     }
 }
 
-/// The explicit-destruction obligations a checked program's structs carry:
-/// one entry per struct whose self-type is not `Deinitable`.
+/// The explicit-destruction obligations a checked program's own structs
+/// carry: one entry per struct whose self-type is not `Deinitable`.
 fn explicit_destroy_types(
     checker: &Checker,
 ) -> HashMap<String, mojito_checked::checked::ExplicitDestroyInfo> {
     checker
         .structs
+        .own()
         .iter()
         .filter_map(|(name, info)| {
             let self_ty = Ty::Struct(name.clone(), params_as_args(&info.decls).into());
@@ -2545,6 +2557,8 @@ fn run_explicit_destroy(
     let binding_types = checker.binding_types.borrow();
     let comprehension_bindings = checker.comprehension_bindings.borrow();
     let deletability = checker.explicit_destroy_deletability.borrow();
+    // An installed struct's entry is the package build's.
+    let mut types = checker.explicit_destroy_table(struct_types.clone());
     // A non-`Deinitable` temporary in a position that takes no ownership of
     // it is one the caller owns and cannot implicitly destroy, keyed by its
     // struct's entry or, typed by a type parameter, the linear one.
@@ -2557,7 +2571,7 @@ fn run_explicit_destroy(
         .filter(|span| unconsumed.contains(span))
         .map(|span| {
             let key = match expression_types.get(span) {
-                Some(Ty::Struct(name, _)) if struct_types.contains_key(name) => name.clone(),
+                Some(Ty::Struct(name, _)) if types.contains_key(name) => name.clone(),
                 _ => crate::explicit_destroy::LINEAR_TYPE_PARAMETER.to_string(),
             };
             (span.clone(), key)
@@ -2566,7 +2580,6 @@ fn run_explicit_destroy(
     // A value typed by a non-`Deinitable` type parameter is linear with
     // upstream's message; the entry exists only for this pass, and only when
     // some value is one.
-    let mut types = struct_types.clone();
     if !deletability.linear_declarations.is_empty()
         || !deletability.linear_bindings.is_empty()
         || linear_temporaries

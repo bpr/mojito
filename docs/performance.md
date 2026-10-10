@@ -944,3 +944,31 @@ untimed scan and index building (`frontend` self time falls from 3.3 to
 inside mono elaboration, which no longer parses MIR text (about 8× faster
 per body). Of what remains untimed in `frontend`, about 1.2 ms is
 digesting the library's source to key the package cache (R562).
+
+### The importer resolves a declaration interface on first lookup (2026-10-10, R555)
+
+Same environment and method as the tables above, on the R557 tree (with
+R555's overload-set fix) against the R555 tree, both importing the
+package; medians of 5 interleaved runs, milliseconds, RSS in MB. The
+package build exports one declaration interface per library declaration
+under a directory of every table key each holds, beside a small record per
+module (overload sets, module-scope compile-time facts, elaborated
+constants). The process reads the directory once; a compilation decodes
+the module records of the modules its link reached, and a declaration's
+record the first time a lookup its own tables miss names one of its keys.
+Nothing is installed: every checker pass and the conformance oracle read
+the same decoded records. The package grows from 1.71 to 1.74 MB.
+
+| Program | total (R557 → now) | package.interfaces | elaborate.indexes | check | check.conformances | peak RSS MB |
+|---|---:|---:|---:|---:|---:|---:|
+| hello | 17.0 → 14.1 (−17%) | 2.27 → 0.22 | 1.61 → 0.16 | 3.15 → 3.86 | 1.50 → 3.58 | 29.5 → 28.2 |
+| generic | 23.6 → 21.1 (−11%) | 2.14 → 0.20 | 1.53 → 0.19 | 3.88 → 4.70 | 1.44 → 3.20 | 32.0 → 31.2 |
+| keyed | 40.9 → 38.6 (−6%) | 2.07 → 0.20 | 1.53 → 0.22 | 5.06 → 5.83 | 1.41 → 3.13 | 37.4 → 36.9 |
+| stdlib_heavy | 75.8 → 73.6 (−3%) | 2.05 → 0.20 | 1.55 → 0.22 | 5.01 → 5.91 | 1.43 → 2.88 | 54.1 → 54.7 |
+
+The check's install span (0.8 ms) and the oracle's (1.4 ms) are gone, and
+`package.interfaces` now decodes only the reached module records. Each
+program decodes 63 or 64 declaration records, almost all of them the
+reached structs: the conformance rows still walk every struct
+(`check.conformances`, R556), which is where their decoding now lands.
+With R556, a compilation would decode only the declarations it names.

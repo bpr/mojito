@@ -1,5 +1,6 @@
 //! Checked explicit-destruction obligations over structured source CFGs.
 
+use crate::checker::DeclarationTable;
 use mojito_ast::ast::{ArgConvention, Expr, ExprKind, SourceType, Stmt, StmtKind, TStringPart};
 use mojito_checked::checked::{AnnotationSite, ExplicitDestroyInfo};
 use mojito_checked::fact_store::FactSet;
@@ -45,8 +46,7 @@ pub struct SpanFacts {
 /// non-`Deinitable` type parameter (`ExplicitDestroyInfo` key).
 pub const LINEAR_TYPE_PARAMETER: &str = "$linear";
 
-#[allow(clippy::implicit_hasher, reason = "TODO: generalize over BuildHasher")]
-pub fn check(
+pub(crate) fn check(
     statements: &[Stmt],
     binding_types: &HashMap<SourceSpan, Ty>,
     comprehension_bindings: &HashMap<
@@ -54,7 +54,7 @@ pub fn check(
         Vec<mojito_checked::checked::CheckedComprehensionBinding>,
     >,
     deletability: &CheckedDeletability,
-    types: &HashMap<String, ExplicitDestroyInfo>,
+    types: &DeclarationTable<ExplicitDestroyInfo>,
     spans: SpanFacts,
 ) -> Result<(), TypeError> {
     if types.is_empty() {
@@ -130,7 +130,7 @@ fn check_expr(
         SourceSpan,
         Vec<mojito_checked::checked::CheckedComprehensionBinding>,
     >,
-    types: &HashMap<String, ExplicitDestroyInfo>,
+    types: &DeclarationTable<ExplicitDestroyInfo>,
 ) -> Result<(), TypeError> {
     if let Some(key) = env.spans.linear_temporaries.get(&expr.source_span())
         && let Some(info) = types.get(key)
@@ -422,7 +422,7 @@ fn check_block(
         Vec<mojito_checked::checked::CheckedComprehensionBinding>,
     >,
     deletability: &CheckedDeletability,
-    types: &HashMap<String, ExplicitDestroyInfo>,
+    types: &DeclarationTable<ExplicitDestroyInfo>,
 ) -> Result<Option<Env>, TypeError> {
     if scoped {
         env.push();
@@ -575,7 +575,7 @@ fn branch_exits(
         Vec<mojito_checked::checked::CheckedComprehensionBinding>,
     >,
     deletability: &CheckedDeletability,
-    types: &HashMap<String, ExplicitDestroyInfo>,
+    types: &DeclarationTable<ExplicitDestroyInfo>,
 ) -> Result<Vec<Env>, TypeError> {
     let mut exits = Vec::new();
     for (condition, body) in branches {
@@ -626,7 +626,7 @@ fn check_if(
         Vec<mojito_checked::checked::CheckedComprehensionBinding>,
     >,
     deletability: &CheckedDeletability,
-    types: &HashMap<String, ExplicitDestroyInfo>,
+    types: &DeclarationTable<ExplicitDestroyInfo>,
 ) -> Result<Option<Env>, TypeError> {
     let exits = branch_exits(
         branches,
@@ -661,7 +661,7 @@ fn check_comptime_if(
         Vec<mojito_checked::checked::CheckedComprehensionBinding>,
     >,
     deletability: &CheckedDeletability,
-    types: &HashMap<String, ExplicitDestroyInfo>,
+    types: &DeclarationTable<ExplicitDestroyInfo>,
 ) -> Result<Option<Env>, TypeError> {
     let parametric = branches
         .iter()
@@ -737,7 +737,7 @@ impl mojito_ast::visit::Visitor for ParamMention<'_> {
 fn type_at_path(
     root_type: &str,
     path: &[String],
-    types: &HashMap<String, ExplicitDestroyInfo>,
+    types: &DeclarationTable<ExplicitDestroyInfo>,
 ) -> Option<String> {
     let mut current = root_type.to_string();
     for field in path {
@@ -746,7 +746,7 @@ fn type_at_path(
     Some(current)
 }
 
-fn ty_explicit_name(ty: &Ty, types: &HashMap<String, ExplicitDestroyInfo>) -> Option<String> {
+fn ty_explicit_name(ty: &Ty, types: &DeclarationTable<ExplicitDestroyInfo>) -> Option<String> {
     match ty {
         Ty::Struct(name, _) if types.contains_key(name) => Some(name.clone()),
         _ => None,
@@ -782,7 +782,7 @@ fn check_function<'a>(
         Vec<mojito_checked::checked::CheckedComprehensionBinding>,
     >,
     deletability: &CheckedDeletability,
-    types: &HashMap<String, ExplicitDestroyInfo>,
+    types: &DeclarationTable<ExplicitDestroyInfo>,
     mut env: Env,
 ) -> Result<(), TypeError> {
     env.push();
@@ -899,7 +899,7 @@ fn expose_path(
     root_type: &str,
     path: &[String],
     env: &mut Env,
-    types: &HashMap<String, ExplicitDestroyInfo>,
+    types: &DeclarationTable<ExplicitDestroyInfo>,
 ) -> Result<(), TypeError> {
     for depth in 0..path.len() {
         let ancestor = path[..depth].to_vec();
@@ -929,7 +929,7 @@ fn check_stmt(
         Vec<mojito_checked::checked::CheckedComprehensionBinding>,
     >,
     deletability: &CheckedDeletability,
-    types: &HashMap<String, ExplicitDestroyInfo>,
+    types: &DeclarationTable<ExplicitDestroyInfo>,
 ) -> Result<Option<Env>, TypeError> {
     match &stmt.kind {
         StmtKind::VarDecl { name, value, .. } => {
@@ -1258,7 +1258,7 @@ fn check_def(
         Vec<mojito_checked::checked::CheckedComprehensionBinding>,
     >,
     deletability: &CheckedDeletability,
-    types: &HashMap<String, ExplicitDestroyInfo>,
+    types: &DeclarationTable<ExplicitDestroyInfo>,
     outer: &Env,
 ) -> Result<(), TypeError> {
     let StmtKind::Def {
@@ -1318,7 +1318,7 @@ fn check_comprehension_expr(
         SourceSpan,
         Vec<mojito_checked::checked::CheckedComprehensionBinding>,
     >,
-    types: &HashMap<String, ExplicitDestroyInfo>,
+    types: &DeclarationTable<ExplicitDestroyInfo>,
 ) -> Result<(), TypeError> {
     let bindings = comprehension_bindings
         .get(&expression.source_span())
@@ -1381,7 +1381,7 @@ fn check_comprehension_expr(
 fn move_root(
     expr: &Expr,
     env: &mut Env,
-    types: &HashMap<String, ExplicitDestroyInfo>,
+    types: &DeclarationTable<ExplicitDestroyInfo>,
 ) -> Result<(), TypeError> {
     if contains_index(expr)
         && let Some(id) = root_id(expr, env)
@@ -1411,7 +1411,7 @@ fn destructor_at_path(
     root_type: &str,
     path: &[String],
     method: &str,
-    types: &HashMap<String, ExplicitDestroyInfo>,
+    types: &DeclarationTable<ExplicitDestroyInfo>,
 ) -> bool {
     type_at_path(root_type, path, types)
         .and_then(|name| types.get(&name))
@@ -1422,7 +1422,7 @@ fn consume_destructor(
     id: usize,
     path: &[String],
     env: &mut Env,
-    types: &HashMap<String, ExplicitDestroyInfo>,
+    types: &DeclarationTable<ExplicitDestroyInfo>,
 ) -> Result<(), TypeError> {
     let root_type = env.vars[id]
         .explicit_type
@@ -1465,7 +1465,7 @@ fn consume_destructor(
 fn reinitialize_place(
     expr: &Expr,
     env: &mut Env,
-    types: &HashMap<String, ExplicitDestroyInfo>,
+    types: &DeclarationTable<ExplicitDestroyInfo>,
 ) -> Result<(), TypeError> {
     let Some((id, path)) = obligation_place(expr, env) else {
         return Ok(());
@@ -1487,7 +1487,7 @@ fn reinitialize_place(
 
 fn source_explicit_name(
     ty: &SourceType,
-    types: &HashMap<String, ExplicitDestroyInfo>,
+    types: &DeclarationTable<ExplicitDestroyInfo>,
 ) -> Option<String> {
     match ty {
         SourceType::Named(name, _) if types.contains_key(name) => Some(name.clone()),

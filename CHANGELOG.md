@@ -55,12 +55,24 @@ to evolve under the `0.x` compatibility rules.
   package shrinks from 8.0 MB to 1.7 MB; Hello World compiles and runs in
   16.5 ms release, from 19.5 ms, and a program reaching 70 library bodies
   in 75 ms, from 91 ms. The package format is now `mojito-package 5`.
+- An importer's check no longer installs every reached library module's
+  declarations into each pass and into the elaborator's conformance oracle
+  (R555): the package holds one declaration interface per library
+  declaration under a directory of its table keys, and a lookup the
+  program's own declarations miss decodes the record the first time, as
+  Mojo's importer resolves a package declaration on first lookup. Hello
+  World compiles and runs in 14.1 ms release, from 17.0 ms. The package
+  format is now `mojito-package 6`.
 - A module under a search root is linked under its path there, whichever
   import reaches it first: `std/io/file.mojo` declares
   `__module$std$io$file$…`, not `__module$file$…`.
 
 ### Fixed
 
+- A bundled library function used as a value in an importer (`var g =
+  next_pow2`, or passed to a `def` parameter) runs instead of failing with
+  "'None' is not callable": the importer's check keeps the package's
+  overload sets and applicable functions beside its own (R555).
 - A trait default is checked once, in its trait, and a conformer that does
   not spell it gets a forwarding wrapper that calls it (R544), as upstream's
   `synthesizeDefaultTraitMethodWrapper`: a default calling a method only the

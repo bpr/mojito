@@ -224,8 +224,7 @@ impl Checker {
         index: usize,
         name: &str,
     ) -> bool {
-        self.structs
-            .iter()
+        self.structs_declaring(method)
             .filter_map(|(struct_name, info)| Some((struct_name, info, info.methods.get(method)?)))
             .filter(|(struct_name, info, _)| {
                 let implementation =
@@ -248,8 +247,7 @@ impl Checker {
         parameter: &str,
         default: &Expr,
     ) -> bool {
-        self.structs
-            .iter()
+        self.structs_declaring(method)
             .filter_map(|(name, info)| Some((name, info, info.methods.get(method)?)))
             .filter(|(name, info, _)| {
                 let implementation =

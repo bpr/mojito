@@ -217,9 +217,19 @@ impl Checker {
     /// `comptime` binding, or a value parameter) — a compile-time constant,
     /// not runtime storage.
     pub(super) fn is_compile_time_binding(&self, name: &str) -> bool {
-        self.binding_scope(name)
-            .and_then(|scope| self.compile_time_bindings.get(scope))
-            .is_some_and(|bindings| bindings.contains(name))
+        match self
+            .scopes
+            .iter()
+            .rposition(|scope| scope.contains_key(name))
+        {
+            Some(scope) => self
+                .compile_time_bindings
+                .get(scope)
+                .is_some_and(|bindings| bindings.contains(name)),
+            None => self
+                .installed_binding(name)
+                .is_some_and(|(_, binding)| binding.compile_time),
+        }
     }
 
     /// Open a compile-time position, closed when the guard drops.
@@ -249,6 +259,10 @@ impl Checker {
             .iter()
             .rev()
             .find_map(|scope| scope.get(name).copied())
+            .or_else(|| {
+                self.installed_binding(name)
+                    .map(|(_, binding)| binding.mutable)
+            })
             .unwrap_or(true)
     }
 
@@ -276,8 +290,34 @@ impl Checker {
     }
 
     /// Look up `name`, walking outward through the scope chain (lexical lookup).
+    /// A package module binding resolves below the module scope.
     pub(super) fn lookup(&self, name: &str) -> Option<&Ty> {
-        self.scopes.iter().rev().find_map(|scope| scope.get(name))
+        self.scopes
+            .iter()
+            .rev()
+            .find_map(|scope| scope.get(name))
+            .or_else(|| self.installed_binding(name).map(|(_, binding)| &binding.ty))
+    }
+
+    /// The package module binding `name` resolves to below the module
+    /// scope, with its owner, resolving its declaration's record on first
+    /// lookup.
+    pub(super) fn installed_binding(
+        &self,
+        name: &str,
+    ) -> Option<(mojito_types::origin::OwnerId, &interface::ModuleBinding)> {
+        let (installed, base) = self.installed.as_ref()?;
+        let (ordinal, binding) = installed.binding(name)?;
+        Some((mojito_types::origin::OwnerId(base + ordinal), binding))
+    }
+
+    /// Whether `owner` is a module `comptime` binding a compile-time
+    /// expression may read.
+    pub(super) fn is_comptime_binding_owner(&self, owner: mojito_types::origin::OwnerId) -> bool {
+        self.comptime_binding_owners.contains(&owner)
+            || self
+                .installed_owner(owner)
+                .is_some_and(|(_, binding)| binding.comptime)
     }
 
     pub(super) fn register_callable_origins(
@@ -301,12 +341,20 @@ impl Checker {
             .iter()
             .rev()
             .find_map(|scope| scope.get(name).cloned())
+            .or_else(|| {
+                (!self.scopes.iter().any(|scope| scope.contains_key(name)))
+                    .then(|| self.installed_binding(name)?.1.callable_origins.clone())
+                    .flatten()
+            })
     }
 
+    /// The scope binding `name`; a package module binding's is the module
+    /// scope.
     pub(super) fn binding_scope(&self, name: &str) -> Option<usize> {
         self.scopes
             .iter()
             .rposition(|scope| scope.contains_key(name))
+            .or_else(|| self.installed_binding(name).map(|_| 0))
     }
 
     /// Reject a nested function naming itself from inside its own body — a
@@ -484,17 +532,22 @@ impl Checker {
             .iter()
             .rev()
             .find_map(|scope| scope.get(name).copied())
+            .or_else(|| self.installed_binding(name).map(|(owner, _)| owner))
     }
 
     /// The source name of an owner in scope (the inverse of
     /// [`Self::lookup_owner`]), for diagnostics that spell an origin as
     /// upstream's `origin_of(name)`.
     pub(super) fn owner_name(&self, owner: mojito_types::origin::OwnerId) -> Option<&str> {
-        self.owner_scopes.iter().rev().find_map(|scope| {
-            scope
-                .iter()
-                .find_map(|(name, candidate)| (*candidate == owner).then_some(name.as_str()))
-        })
+        self.owner_scopes
+            .iter()
+            .rev()
+            .find_map(|scope| {
+                scope
+                    .iter()
+                    .find_map(|(name, candidate)| (*candidate == owner).then_some(name.as_str()))
+            })
+            .or_else(|| self.installed_owner(owner).map(|(name, _)| name))
     }
 
     pub(super) fn record_statement_binding(&self, statement: &Stmt, name: &str) {
@@ -516,7 +569,20 @@ impl Checker {
                     .find(|(_, id)| **id == owner)
                     .and_then(|(name, _)| mutability.get(name).copied())
             })
+            .or_else(|| {
+                self.installed_owner(owner)
+                    .map(|(_, binding)| binding.mutable)
+            })
             .unwrap_or(false)
+    }
+
+    /// The outermost scope binding `owner`; a package module binding's is
+    /// the module scope.
+    pub(super) fn owner_scope(&self, owner: mojito_types::origin::OwnerId) -> Option<usize> {
+        self.owner_scopes
+            .iter()
+            .position(|owners| owners.values().any(|candidate| *candidate == owner))
+            .or_else(|| self.installed_owner(owner).map(|_| 0))
     }
 
     /// Whether `name` binds a value parameter of a declaration in scope:
@@ -525,6 +591,18 @@ impl Checker {
     pub(super) fn is_value_parameter(&self, name: &str) -> bool {
         self.lookup_owner(name)
             .is_some_and(|owner| self.value_parameter_owners.contains(&owner))
+    }
+
+    /// The package module binding owning `owner`, by name.
+    fn installed_owner(
+        &self,
+        owner: mojito_types::origin::OwnerId,
+    ) -> Option<(&str, &interface::ModuleBinding)> {
+        let (installed, base) = self.installed.as_ref()?;
+        let name = installed.binding_name(owner.0.checked_sub(*base)?)?;
+        self.installed_binding(name)
+            .filter(|(found, _)| *found == owner)
+            .map(|(_, binding)| (name, binding))
     }
 }
 

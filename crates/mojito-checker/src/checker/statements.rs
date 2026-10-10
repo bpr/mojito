@@ -10,11 +10,14 @@ use mojito_types::types::TransferSet;
 impl Checker {
     pub fn check_program(&mut self, stmts: &[Stmt]) -> Result<(), TypeError> {
         let phase = timing::span("declarations.tuple_prepass");
-        self.overload_sets = mojito_symbol::symbol::OverloadSets::scan(stmts);
+        // An importer's installed package sets stay: its own statements add
+        // to them.
+        self.overload_sets.scan_more(stmts);
         self.method_binder_owners =
             mojito_symbol::symbol::MethodBinderOwners::scan(stmts, &self.overload_sets);
-        self.applicable_functions =
+        let applicable =
             super::comptime_validation::applicable_functions(stmts, &self.overload_sets);
+        self.applicable_functions.extend(applicable);
         for statement in stmts {
             if let StmtKind::Def {
                 name,
@@ -1013,12 +1016,19 @@ impl Checker {
                                 .rev()
                                 .find_map(|s| s.get(name))
                                 .copied()
+                                .or_else(|| {
+                                    self.installed_binding(name)
+                                        .map(|(_, binding)| binding.mutable)
+                                })
                                 .unwrap_or(false);
                             if mutable {
                                 self.scopes[..base]
                                     .iter()
                                     .rev()
                                     .find_map(|s| s.get(name))
+                                    .or_else(|| {
+                                        self.installed_binding(name).map(|(_, binding)| &binding.ty)
+                                    })
                                     .cloned()
                             } else {
                                 None

@@ -30,8 +30,9 @@ use std::sync::{Arc, OnceLock};
 pub struct ImportedPackage {
     pub modules: PackageModules,
     pub interface: Arc<PackageInterface>,
-    /// Each module's encoded declaration interface, by module path.
-    pub checked: HashMap<String, Vec<u8>>,
+    /// Its declaration interfaces, each declaration's decoded on first
+    /// lookup by each compilation.
+    pub checked: Arc<crate::checker::DeclarationInterfaces>,
     pub declarations: Arc<PackageDeclarations>,
     pub bodies: PackageBodies,
 }
@@ -144,7 +145,9 @@ fn import(bytes: PackageBytes, header: &PackageHeader) -> Result<ImportedPackage
     Ok(ImportedPackage {
         modules: PackageModules::new(package.modules),
         interface: Arc::new(package.interface),
-        checked: package.checked.into_iter().collect(),
+        checked: Arc::new(crate::checker::DeclarationInterfaces::read(
+            package.checked,
+        )?),
         declarations: package.declarations,
         bodies: package
             .bodies
@@ -512,16 +515,11 @@ mod tests {
             .iter()
             .find(|module| module.ends_with("collections/list.mojo"))
             .expect("the library has a list module");
-        assert!(package.checked.contains_key(list));
-        for module in package.checked.keys() {
-            assert!(package.interface.modules.contains(module), "{module}");
-        }
-        crate::checker::InstalledInterfaces::decode(
-            package
-                .checked
-                .iter()
-                .map(|(module, bytes)| (module.as_str(), bytes.as_slice())),
+        assert!(package.checked.declares(list));
+        crate::checker::InstalledInterfaces::reaching(
+            &package.checked,
+            package.interface.modules.iter().map(String::as_str),
         )
-        .expect("every interface decodes");
+        .expect("every module record decodes");
     }
 }

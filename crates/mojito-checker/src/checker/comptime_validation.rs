@@ -754,7 +754,7 @@ impl Checker {
                 || self.is_compile_time_binding(name)
                 || self.lookup_owner(name).is_some_and(|owner| {
                     self.value_parameter_owners.contains(&owner)
-                        || self.comptime_binding_owners.contains(&owner)
+                        || self.is_comptime_binding_owner(owner)
                 })
         })
     }
@@ -2768,7 +2768,7 @@ impl Checker {
         Self::each_constraint_parameter(constraint, &|name| {
             let evaluated = self
                 .lookup_owner(name)
-                .is_some_and(|owner| self.comptime_binding_owners.contains(&owner))
+                .is_some_and(|owner| self.is_comptime_binding_owner(owner))
                 && !self
                     .local_comptime_parameters
                     .iter()
@@ -3345,7 +3345,11 @@ fn is_bool_loop_binder(binder: &ParamExpr) -> bool {
 
 /// Record `value` for `name` unless a different value is already recorded,
 /// in which case the disagreement leaves `name` unrecorded.
-fn record_agreed<V: PartialEq>(recorded: &mut HashMap<String, V>, name: &str, value: V) {
+fn record_agreed<V: PartialEq>(
+    recorded: &mut declaration_table::DeclarationTable<V>,
+    name: &str,
+    value: V,
+) {
     match recorded.get(name) {
         Some(known) if *known != value => {
             recorded.remove(name);

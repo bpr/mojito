@@ -15,10 +15,7 @@ impl Checker {
         let Some(base) = self.function_bases.last().copied() else {
             return false;
         };
-        self.owner_scopes
-            .iter()
-            .take(base)
-            .any(|scope| scope.values().any(|candidate| *candidate == owner))
+        self.owner_scope(owner).is_some_and(|scope| scope < base)
     }
 
     /// Judge the struct origin tails of a returned value against the
@@ -161,10 +158,7 @@ impl Checker {
         };
         match origin {
             Origin::Place(place) => {
-                let scope = self
-                    .owner_scopes
-                    .iter()
-                    .position(|owners| owners.values().any(|candidate| *candidate == place.root));
+                let scope = self.owner_scope(place.root);
                 match scope {
                     Some(scope) => scope >= *base && !allowed.contains(&place.root),
                     // An owner registered in no named scope is a materialized

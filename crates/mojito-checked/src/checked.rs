@@ -1605,11 +1605,15 @@ pub struct StructConformance {
     pub conditions: Vec<mojito_types::types::GenericConstraint>,
 }
 
-#[derive(Debug, Clone)]
+/// A struct's explicit-destruction obligation, which a package records for
+/// each of its structs that carries one.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct ExplicitDestroyInfo {
     pub message: String,
+    #[serde(serialize_with = "sorted")]
     pub destructors: HashMap<String, bool>,
     /// Direct fields whose types carry their own explicit-destroy obligation.
+    #[serde(serialize_with = "sorted")]
     pub fields: HashMap<String, String>,
 }
 
@@ -3174,6 +3178,19 @@ fn inferred_value_arguments(
         .collect();
     (!arguments.is_empty()).then_some(arguments)
 }
+
+/// Write `map` sorted by key, so a record encodes the same bytes in every
+/// build.
+fn sorted<V: serde::Serialize, S: serde::Serializer>(
+    map: &HashMap<String, V>,
+    serializer: S,
+) -> Result<S::Ok, S::Error> {
+    serde::Serialize::serialize(
+        &map.iter().collect::<std::collections::BTreeMap<_, _>>(),
+        serializer,
+    )
+}
+
 #[cfg(test)]
 mod transfer_set_tests {
     use super::*;

@@ -3862,6 +3862,21 @@ fn the_bundled_library_is_imported_from_its_compiled_package() {
 }
 
 #[test]
+fn a_package_function_is_a_value_in_an_importer() {
+    // An importer's check keeps the package's overload sets, so a package
+    // function read as a value lowers to that function.
+    let source = "from std.algorithms import next_pow2\n\ndef apply(f: def(Int) -> Int, x: Int) -> Int:\n    return f(x)\n\ndef main():\n    var g = next_pow2\n    print(g(9))\n    print(apply(next_pow2, 5))\n";
+    let entry = std::path::Path::new("package_function_value.mojo");
+    let importing = Compiler::default().with_std_package(true);
+    let imported = importing.compile_source(source, entry).expect("compile");
+    assert!(imported.imported_package().is_some());
+    assert_eq!(
+        importing.execute(&imported).expect("execute").output,
+        "16\n8\n"
+    );
+}
+
+#[test]
 fn a_package_reads_back_to_the_bytes_it_was_written_as() {
     use mojito::mir::text::package::{PackageBytes, PackageHeader, read_package, write_package};
     let compiled = Compiler::default()
@@ -3876,7 +3891,7 @@ fn a_package_reads_back_to_the_bytes_it_was_written_as() {
     };
     let interface = mojito::interface::PackageInterface::default();
     let modules = vec![("/probe/module.mojo".to_string(), vec![0, 10, 255, 10])];
-    let checked = vec![("/probe/module.mojo".to_string(), vec![10, 1, 2])];
+    let checked = vec![10, 1, 2];
     let bytes = write_package(&header, &interface, program, &modules, &checked).expect("write");
     let package = read_package(PackageBytes::Owned(bytes.clone())).expect("read");
     assert_eq!(package.modules, modules);

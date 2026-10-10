@@ -430,10 +430,11 @@ impl Checker {
                     let leaf = name.rsplit('$').next().unwrap_or(name);
                     let mut matches = self
                         .comptime_aliases
-                        .iter()
-                        .filter(|(candidate, _)| candidate.rsplit('$').next() == Some(leaf));
-                    if let Some((candidate, alias)) = matches.next()
+                        .keys()
+                        .filter(|candidate| candidate.rsplit('$').next() == Some(leaf));
+                    if let Some(candidate) = matches.next()
                         && matches.next().is_none()
+                        && let Some(alias) = self.comptime_aliases.get(candidate)
                     {
                         let candidate = candidate.clone();
                         let alias = alias.clone();

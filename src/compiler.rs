@@ -370,7 +370,7 @@ impl Compiler {
             program,
             PackageExports {
                 summaries: context.take_summaries(),
-                interfaces: interfaces.into_iter().collect(),
+                interfaces,
                 prepared,
             },
         ))
@@ -473,11 +473,21 @@ impl Compiler {
         if !self.allow_executable_module_scope {
             validate_module_scope(&own).map_err(CompilerError::Type)?;
         }
-        let package = package.map(|(package, _)| package);
+        let (package, installed): (Option<_>, Option<_>) = package.unzip();
         let checked = {
             let _check = timing::span("check");
-            crate::checker::check_program_in(&own, context).map_err(CompilerError::Type)?
+            crate::checker::check_program_in(&own, context)
         };
+        // A package declaration whose record does not decode is missing from
+        // every lookup, so its failure outranks the check's verdict.
+        if let Some(installed) = &installed {
+            timing::count("package.interfaces_decoded", installed.decoded() as u64);
+            let failures = installed.failures();
+            if !failures.is_empty() {
+                return Err(CompilerError::Verify(failures));
+            }
+        }
+        let checked = checked.map_err(CompilerError::Type)?;
         let mir = {
             let _lower = timing::span("mir.lower");
             crate::mir::lower_checked_program_importing(
@@ -564,40 +574,28 @@ impl Compiler {
 }
 
 /// What the compilation of a package's program exports: the effect
-/// summaries of its module-level callables, each module's encoded
-/// declaration interface, by module path, and the program as its `prepare`
-/// left it.
+/// summaries of its module-level callables, its encoded declaration
+/// interfaces, and the program as its `prepare` left it.
 pub(crate) struct PackageExports {
     pub summaries: PackageInterface,
-    pub interfaces: Vec<(String, Vec<u8>)>,
+    pub interfaces: Vec<u8>,
     pub prepared: Vec<Stmt>,
 }
 
 /// `package` with the declaration interfaces of the modules `linked`
-/// reached from it, decoded; `None` when one does not decode, and the
-/// program compiles without the package.
+/// reached from it, each declaration's to decode on first lookup; `None`
+/// when a module's own record does not decode, and the program compiles
+/// without the package.
 fn importing(
     package: Arc<ImportedPackage>,
     linked: &[Stmt],
 ) -> Option<(Arc<ImportedPackage>, InstalledInterfaces)> {
     let _decode = timing::span("package.interfaces");
-    let mut reached: Vec<&str> = Vec::new();
-    for module in linked
+    let reached = linked
         .iter()
         .filter_map(|statement| statement.module.as_deref())
-        .filter(|module| package.interface.compiles(Some(module)))
-    {
-        if !reached.contains(&module) {
-            reached.push(module);
-        }
-    }
-    let installed = InstalledInterfaces::decode(reached.into_iter().filter_map(|module| {
-        package
-            .checked
-            .get(module)
-            .map(|bytes| (module, bytes.as_slice()))
-    }))
-    .ok()?;
+        .filter(|module| package.interface.compiles(Some(module)));
+    let installed = InstalledInterfaces::reaching(&package.checked, reached).ok()?;
     Some((package, installed))
 }
 

@@ -86,8 +86,8 @@ compiler build (`src/package.rs`):
 build (once per compiler build, then cached):
   every std module -> link (recording each module) -> prepare (each
     module record keeps its prepared declarations) -> elaborate (exporting
-    the module constants it folded) -> check (exporting each module's
-    declaration interface) -> MIR -> ownership
+    the module constants it folded) -> check (exporting each library
+    declaration's interface) -> MIR -> ownership
     -> std package: interface + MIR declarations + module records
        + declaration interfaces + pre-drop bodies
 
@@ -95,8 +95,9 @@ import (every compilation that links the bundled library):
   source -> link (each library module from its record)
     -> prepare -> elaborate (the program's own statements, the reached
        modules' prepared declarations and module constants as context)
-    -> check (the reached modules' declaration interfaces installed; the
-       program's own statements checked)
+    -> check (the reached modules' declaration interfaces attached, each
+       declaration's decoded on first lookup; the program's own
+       statements checked)
     -> MIR of the program's own declarations, with the package's MIR
        declarations attached (each decoded on first lookup)
     -> verify + ownership (own functions)
@@ -110,8 +111,8 @@ import (every compilation that links the bundled library):
   directory holds the header (package, compiler build identity, source
   digest) and every record's byte range: the checker interface
   (`checked::interface::PackageInterface`), the package's MIR declarations
-  one record each, one record and one declaration interface per library
-  module, and each function body, before drop elaboration. The importer
+  one record each, one record per library module, the declaration
+  interfaces, and each function body, before drop elaboration. The importer
   maps the file (`PackageBytes`) and reads its directory and interface;
   declarations and bodies decode from their own ranges on demand: Hello
   World decodes three of about 940 declarations and three of 874 bodies.
@@ -143,25 +144,49 @@ import (every compilation that links the bundled library):
   bodies: the modules the package compiled, their top-level names, each
   module-level callable's transfer and call-through effect summaries, and
   the traits the package's bodies ask a type's conformance to.
-- **A declaration interface** (`checker::interface::ModuleInterface`) is
-  what the build's check resolved for one library module's declarations,
-  as upstream's importer takes a package declaration `loadedFromBytecode`:
-  its structs' and traits' checked signatures (`StructInfo`, `TraitInfo`,
-  a method's parametric origin writes included), its aliases and module
-  constants, each module-scope binding's type and callable origin facts,
-  its overload sets, and the applicable functions and declared results a
-  compile-time call reads, by linked name. It also holds the module's
-  constants as the build's comptime elaboration resolved them
+- **A declaration interface** (`checker::interface::DeclarationInterface`)
+  is what the build's check resolved for one library declaration, as
+  upstream's importer takes a package declaration `loadedFromBytecode`:
+  its rows of the checker's tables, by linked name — a struct's or trait's
+  checked signature (`StructInfo`, `TraitInfo`, a method's parametric
+  origin writes included) and a struct's explicit-destruction obligation,
+  an alias or module constant, its module-scope binding's type and
+  callable origin facts, and the applicable functions and declared results
+  a compile-time call reads. A table key belongs to the declaration it
+  names, an overload's signature-qualified key or a member's
+  `Owner.member` included. Beside them sits one record per library module
+  (`ModuleRecord`): its overload sets, its module-scope compile-time facts,
+  and its constants as the build's comptime elaboration resolved them
   (`checker::ElaboratedConstant`: a folded value or `Applied` marker, or a
   generic alias's parameters and body; `comptime::elaborate_exporting`,
-  `CheckContext::record_elaborated`). The build's check exports one
-  per module once the whole library is checked
-  (`Checker::export_interfaces`); it holds no binding owner, span-keyed
-  fact, syntax identity, or parameter hole, and encoding a table that holds
-  one fails the build, which then compiles the library from source. It is
-  bytecode (`postcard`), keyed by module path; a default argument or a
-  conformance condition in it stays AST, stamped on decoding with the path
-  the importer reached the module by (`ast::decoding_from`).
+  `CheckContext::record_elaborated`). The build's check exports them once
+  the whole library is checked (`Checker::export_interfaces`), as one
+  opaque record holding its own directory: each module record, and each
+  declaration's record with every table key it holds and, for a struct,
+  every method it declares. A record holds no binding owner, span-keyed
+  fact, syntax identity, or parameter hole, and encoding a table that
+  holds one fails the build, which then compiles the library from source.
+  It is bytecode (`postcard`); a default argument or a conformance
+  condition in it stays AST, stamped on decoding with the path the
+  importer reached the module by (`ast::decoding_from`).
+- **A declaration resolves on first lookup**, as upstream's importer
+  resolves a package declaration from bytecode
+  (`lookupAndResolveMangledDecl`, `resolveDeclFromBytecode`). The process
+  reads the directory once (`checker::DeclarationInterfaces`); each
+  compilation decodes the module records of the modules its link reached
+  and no declaration's (`checker::InstalledInterfaces::reaching`). The
+  checker's declaration-keyed tables (`checker::DeclarationTable`,
+  `DeclarationSet`) hold the program's own entries over that handle: a
+  lookup the own entries miss finds its key's declaration in the
+  directory and decodes that record the first time, once per compilation,
+  for every checker pass and the conformance oracle alike; a key list or a
+  name-set membership answers from the directory alone. A package module
+  binding resolves below the module scope, with an owner from a block each
+  pass reserves for every reached binding, numbered as the modules were
+  reached and then by name (`Checker::installed_binding`). Only a whole-
+  table walk decodes every record of its table: the conformance rows still
+  walk every struct (R556). A record that does not decode is a lookup
+  miss and fails the compilation (`InstalledInterfaces::failures`).
 - **Above the waist no package body or declaration is prepared,
   elaborated, or checked again.** The driver partitions the link into the
   package's declarations, borrowed, and the program's own statements
@@ -169,15 +194,15 @@ import (every compilation that links the bundled library):
   the own statements alone, reading the package's traits, functions, and
   SIMD aliases as context. `comptime::elaborate_importing` elaborates them
   alone (`comptime::ImportedScope`): its module environment, generic
-  aliases, and module type aliases start from the installed interfaces'
-  module constants, its struct and function indexes read the package's
-  prepared declarations, and its conformance oracle installs the
-  interfaces and registers the own statements over them
-  (`ConformanceOracle::importing`). The check is given the program's own statements
-  alone: each transfer pass installs the declaration interfaces of the
-  modules the link reached into its fresh `Checker`
-  (`Checker::install_interfaces`), then scans and checks the own
-  statements over them, taking the summaries as committed effects. The
+  aliases, and module type aliases start from the reached modules'
+  constants, its struct and function indexes read the package's prepared
+  declarations, and its conformance oracle attaches the interfaces and
+  registers the own statements over them (`ConformanceOracle::importing`).
+  The check is given the program's own statements alone: each transfer
+  pass attaches the declaration interfaces of the modules the link reached
+  to its fresh `Checker` (`Checker::attach_interfaces`), then scans and
+  checks the own statements over them, taking the summaries as committed
+  effects. The
   checked arena, explicit destruction, and lowering therefore see the
   program's own statements alone.
 - **Lowering** (`mir::lower_checked_program_importing`) lowers the checked

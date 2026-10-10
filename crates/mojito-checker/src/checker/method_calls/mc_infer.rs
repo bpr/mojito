@@ -26,9 +26,7 @@ impl Checker {
         method: &str,
     ) -> Vec<String> {
         let mut conformers: Vec<String> = self
-            .structs
-            .iter()
-            .filter(|(_, info)| info.methods.contains_key(method))
+            .structs_declaring(method)
             .filter(|(name, info)| {
                 let implementation =
                     Ty::Struct((*name).clone(), params_as_args(&info.decls).into());

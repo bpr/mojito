@@ -852,10 +852,10 @@ declarations, module records, and declaration interfaces, one file per
 package. The bundled library's is the only producer today
 (`src/package.rs`). No part of a package is MIR text: it is a directory
 followed by bytecode records, as upstream's package is MLIR bytecode
-throughout. The format line is `mojito-package 5`.
+throughout. The format line is `mojito-package 6`.
 
 ```text
-mojito-package 5
+mojito-package 6
 <the directory's length, 8 bytes little-endian>
 <the directory, as bytecode>
 <the payload: every record, as bytecode>
@@ -865,7 +865,7 @@ mojito-package 5
   `compiler`, `source`), the payload's length, and the payload range of
   every record: the interface, the `files` table, the sorted trait list,
   each struct and function declaration (sorted by name), each module
-  record and declaration interface (by path), and each body. A body's
+  record (by path), the declaration interfaces, and each body. A body's
   entry carries its name, its runtime parameter count, and its
   `ref_params` mask, so overload resolution and the loan analysis read a
   body's signature without decoding it; the bodies keep package order,
@@ -878,8 +878,9 @@ mojito-package 5
   decode from their own byte ranges on first use. A cached package is
   written to a private partial file and renamed over its path, and removed
   only by unlinking, so a mapping's bytes never change under it. Module
-  records and declaration interfaces are copied out of the mapping, since
-  the linker and checker that read them sit above MIR.
+  records and the declaration interfaces are copied out of the mapping,
+  once per process, since the linker and checker that read them sit
+  above MIR.
 - The interface is `postcard` of `PackageInterface`: the modules the
   package compiled, their declarations' names, the traits its bodies ask,
   and each callable's transfer and call-through effect summaries, by
@@ -901,15 +902,23 @@ mojito-package 5
   build's check-local binding owners some bodies' types still name are
   carried as bare numbers, under `origin::encoding_packaged_owners`, as
   the MIR text spells them `$v<n>` (R561).
-- A declaration interface is opaque to the container: it is the
-  checker's (`checker::interface::ModuleInterface`), `postcard` bytecode of
-  the tables the package build's check resolved for one module's
-  declarations, sorted by name, so equal tables encode equal bytes. It
-  holds no binding owner, span-keyed fact, syntax identity, or parameter
-  hole; its expressions decode stamped with the path the importer reached
-  the module by. The importer decodes the interfaces of the modules its
-  link reached; when one does not decode, the program links and compiles
-  the library from source.
+- The declaration interfaces are one record, opaque to the container:
+  the checker's (`checker::interface`), its own directory's length (8
+  bytes little-endian), the directory, and its records. The directory
+  (`InterfaceDirectory`) names each library module's record
+  (`ModuleRecord`: its overload sets, module-scope compile-time facts, and
+  elaborated constants) and each library declaration's
+  (`DeclarationInterface`: its rows of the tables the package build's
+  check resolved), with its module, every table key the record holds,
+  and, for a struct, every method it declares. Every table is written
+  sorted by key, so equal tables encode equal bytes. A record holds no
+  binding owner, span-keyed fact, syntax identity, or parameter hole; its
+  expressions decode stamped with the path the importer reached the
+  module by. The process reads the directory once; a compilation decodes
+  the records of the modules its link reached, and a declaration's record
+  the first time a lookup names one of its keys. When a module record does
+  not decode, the program links and compiles the library from source; a
+  declaration record that does not decode fails the compilation.
 - A module record is opaque to the container: it is the linker's
   (`module::package::PackageModule`), `postcard` bytecode of the module's
   dotted name, the loads its link asked for, its export and namespace

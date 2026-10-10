@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R563**.
+Next free ID: **R564**.
 
 ## Ordered Work
 
@@ -49,22 +49,6 @@ belongs to is named in its title.
 Scope: what remains of the plan's stages, and what the pipeline order still
 leaves to close. A defect found on the way is filed by its kind; a
 divergence from the pin goes to a catch-up track, however small.
-
-- [ ] **R555 (P6) An importer installs every reached package module's
-  declarations eagerly, where upstream resolves one on first lookup**
-
-  The check installs the whole declaration interface of each library module
-  the link reached, in every transfer pass, whatever the program names.
-  - That is 2.6 ms of Hello World, release: decoding 39 interfaces 1.5 ms
-    and installing them 1.1 ms.
-  - Each pass clones every installed table into its fresh `Checker`, and
-    each compilation decodes the interfaces again.
-  - Upstream resolves a package declaration from bytecode on first lookup
-    (`resolveDeclFromBytecode`, `lookupAndResolveMangledDecl`).
-  - The lever is a lookup-miss hook on the checker's name-keyed tables that
-    decodes one declaration's entry (`checker/interface.rs`).
-  - Depends on nothing.
-  - Model: Fable, Planned.
 
 - [ ] **R558 (P6) The elaborator's conformance oracle installs the
   package's declaration interfaces once more per compilation**
@@ -144,6 +128,27 @@ divergence from the pin goes to a catch-up track, however small.
     the MIR declarations would still be two encodings of one declaration.
   - Depends on R559.
   - Model: Fable, Not Planned.
+
+- [ ] **R563 (P6) An importer decodes every reached module's overload sets
+  and module constants eagerly, where upstream resolves one on first
+  lookup**
+
+  Each compilation decodes the module record of every library module its
+  link reached, though a declaration's own record decodes only when a
+  lookup names it.
+  - That is 0.2 ms of Hello World's 14 ms, release (`package.interfaces`).
+  - The record holds the module's overload sets, its elaborated module
+    constants, and its module-scope compile-time facts.
+  - Each checker pass then clones the merged overload sets into its fresh
+    `Checker`.
+  - The overload sets cross into MIR through `CheckedProgram::overloads`,
+    and `mojito-checked` and `mojito-mir` sit below the checker, so they
+    cannot hold the checker's lookup handle.
+  - The lever: a lookup-miss view of `OverloadSets` that `CheckedProgram`
+    can carry to MIR, and a lookup miss on the elaborator's module
+    constants (`comptime::ImportedScope`).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
 
 - [ ] **R547 A function the check lifts from a body is numbered per
   compilation, so the bundled library cannot contain one**

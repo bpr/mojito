@@ -2,13 +2,13 @@
 //!
 //! It holds the package's checker interface, its MIR declarations, the
 //! record its importer's link reads for each of its source modules, the
-//! declaration interface its importer's check installs for each module,
+//! declaration interfaces its importer's check resolves declarations from,
 //! and each of its verified, ownership-checked function bodies, before
 //! drop elaboration. An importer maps the file and reads its directory and
 //! interface eagerly, a MIR declaration the first time one of its phases
 //! looks the name up (as upstream's importer resolves a declaration from
-//! bytecode on first lookup), a module's record and declaration interface
-//! when its link reaches the module, and a body only when the elaborator
+//! bytecode on first lookup), a module's record when its link reaches the
+//! module, and a body only when the elaborator
 //! first reaches it, inserting that body's drops then, as upstream
 //! materializes a package's bodies on demand and runs its lifetime pass on
 //! each in the importer.
@@ -16,7 +16,7 @@
 //! The container is a directory followed by records:
 //!
 //! ```text
-//! mojito-package 5
+//! mojito-package 6
 //! <the directory's length, 8 bytes little-endian>
 //! <the directory, as bytecode>
 //! <the payload: every record, as bytecode>
@@ -25,12 +25,13 @@
 //! The directory holds the header and the payload range of every record:
 //! the interface, the source-file table every body's locations name, the
 //! sorted trait list, each struct and function declaration (sorted by
-//! name), each module record and declaration interface (by path), and each
-//! body (in package order, with its runtime parameter count, its reference
-//! parameter mask, and a by-name permutation). Every record is postcard
-//! bytecode; a module record and a declaration interface are opaque here,
-//! since the linker and the checker that read them sit above MIR. No part
-//! of a package is MIR text.
+//! name), each module record (by path), the declaration interfaces, and
+//! each body (in package order, with its runtime parameter count, its
+//! reference parameter mask, and a by-name permutation). Every record is
+//! postcard bytecode; a module record and the declaration interfaces (one
+//! record holding its own directory of per-declaration records) are opaque
+//! here, since the linker and the checker that read them sit above MIR. No
+//! part of a package is MIR text.
 
 use crate::mir::{
     MirDeclarations, MirFunction, MirFunctionDeclaration, MirProgram, MirStructDeclaration,
@@ -46,7 +47,7 @@ use std::ops::{Deref, Range};
 use std::sync::{Arc, Mutex, OnceLock};
 
 /// The container format this compiler writes and reads.
-pub const PACKAGE_FORMAT: &str = "mojito-package 5";
+pub const PACKAGE_FORMAT: &str = "mojito-package 6";
 
 /// A package file's bytes: mapped from the file, or owned when the package
 /// was just built.
@@ -101,9 +102,9 @@ pub struct Package {
     /// copied out of the file, since the linker that reads them sits above
     /// MIR and holds no [`PackageBytes`].
     pub modules: Vec<(String, Vec<u8>)>,
-    /// Each module's encoded declaration interface, beside its module path,
-    /// copied out for the checker as the module records are.
-    pub checked: Vec<(String, Vec<u8>)>,
+    /// The encoded declaration interfaces, copied out for the checker as
+    /// the module records are.
+    pub checked: Vec<u8>,
     pub bodies: PackageBodies,
 }
 
@@ -357,7 +358,7 @@ impl std::error::Error for PackageError {}
 
 /// Write a package: `program`, its verified, ownership-checked MIR before
 /// drop elaboration, its interface, its `modules`' encoded records, and
-/// their `checked` declaration interfaces.
+/// its encoded `checked` declaration interfaces.
 ///
 /// Verification runs first, so an error never leaves a partial package.
 pub fn write_package(
@@ -365,7 +366,7 @@ pub fn write_package(
     interface: &PackageInterface,
     program: &MirProgram,
     modules: &[(String, Vec<u8>)],
-    checked: &[(String, Vec<u8>)],
+    checked: &[u8],
 ) -> Result<Vec<u8>, PackageError> {
     let mut findings = program.invariant_errors.clone();
     findings.extend(crate::mir::verify::verify(program));
@@ -408,10 +409,7 @@ pub fn write_package(
         .iter()
         .map(|(path, bytes)| (path.clone(), record(bytes)))
         .collect();
-    let checked = checked
-        .iter()
-        .map(|(path, bytes)| (path.clone(), record(bytes)))
-        .collect();
+    let checked = record(checked);
     let bodies = program
         .functions
         .iter()
@@ -509,7 +507,7 @@ pub fn read_package(bytes: PackageBytes) -> Result<Package, PackageError> {
             .collect()
     };
     let modules = copied(directory.modules);
-    let checked = copied(directory.checked);
+    let checked = payload.get(&directory.checked).to_vec();
     let declarations = Arc::new(PackageDeclarations {
         payload: payload.clone(),
         structs: Records::new(directory.structs),
@@ -548,7 +546,7 @@ struct PackageDirectory {
     /// Each function declaration's lowered name and record, sorted by name.
     functions: Vec<(String, Range<usize>)>,
     modules: Vec<(String, Range<usize>)>,
-    checked: Vec<(String, Range<usize>)>,
+    checked: Range<usize>,
     /// Each body, in package order.
     bodies: Vec<BodyEntry>,
     /// Each body's position, sorted by the body's name.
@@ -561,10 +559,10 @@ impl PackageDirectory {
     /// Refuse a directory whose ranges leave the payload or whose names are
     /// not strictly sorted, which the lookups by name rely on.
     fn validate(&self) -> Result<(), PackageError> {
-        let ranges = [&self.interface, &self.files, &self.traits]
+        let ranges = [&self.interface, &self.files, &self.traits, &self.checked]
             .into_iter()
             .chain(
-                [&self.structs, &self.functions, &self.modules, &self.checked]
+                [&self.structs, &self.functions, &self.modules]
                     .into_iter()
                     .flatten()
                     .map(|(_, range)| range),

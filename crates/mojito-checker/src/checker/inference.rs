@@ -244,17 +244,12 @@ impl Checker {
                 .find_map(|scope| scope.get(name))
                 .cloned()
             else {
-                let names_function = self
-                    .scopes
-                    .iter()
-                    .rev()
-                    .find_map(|scope| scope.get(name))
-                    .is_some_and(|ty| {
-                        matches!(
-                            ty,
-                            Ty::Func { .. } | Ty::GenericFunc { .. } | Ty::Overload(_)
-                        )
-                    });
+                let names_function = self.lookup(name).is_some_and(|ty| {
+                    matches!(
+                        ty,
+                        Ty::Func { .. } | Ty::GenericFunc { .. } | Ty::Overload(_)
+                    )
+                });
                 return Err(if names_function {
                     TypeError::ImmutableBinding(name.clone())
                 } else {

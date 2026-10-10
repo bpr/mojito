@@ -7715,14 +7715,17 @@ fn a_compiled_package_body_is_taken_as_checked() {
 
 #[test]
 fn an_installed_module_interface_checks_like_its_statements() {
-    // A package build's check exports each library module's declarations;
-    // an importer's check installs them and checks its own statements alone,
-    // with the same verdicts the whole program gets.
-    use mojito::checker::{CheckContext, InstalledInterfaces, check_program_in};
+    // A package build's check exports each library declaration's interface;
+    // an importer's check resolves those it looks up and checks its own
+    // statements alone, with the same verdicts the whole program gets.
+    use mojito::checker::{
+        CheckContext, DeclarationInterfaces, InstalledInterfaces, check_program_in,
+    };
     let library_path = "/library/shapes.mojo";
     let mut library = parse(
         "comptime WIDTH = 4\n\
          def double(x: Int) -> Int:\n    return x * 2\n\
+         def unused(x: Int) -> Int:\n    return x\n\
          trait Shape:\n    def area(self) -> Int: ...\n\
          struct Square(Shape):\n    var side: Int\n\
          \x20   def __init__(out self, side: Int):\n        self.side = side\n\
@@ -7733,26 +7736,32 @@ fn an_installed_module_interface_checks_like_its_statements() {
     let mut building = CheckContext::new();
     building.record_interfaces();
     check_program_in(&library, &mut building).expect("the library checks");
-    let interfaces = building.take_interfaces().expect("the library exports");
-    let bytes = interfaces
-        .get(library_path)
-        .expect("an interface for the module");
-    let install = || {
+    let bytes = building.take_interfaces().expect("the library exports");
+    let package = std::sync::Arc::new(DeclarationInterfaces::read(bytes.clone()).expect("reads"));
+    assert!(package.declares(library_path));
+    let install = |installed: &InstalledInterfaces| {
         let mut context = CheckContext::new();
-        context.install(
-            InstalledInterfaces::decode([(library_path, bytes.as_slice())]).expect("decodes"),
-        );
+        context.install(installed.clone());
         context
     };
+    let reaching = || InstalledInterfaces::reaching(&package, [library_path]).expect("decodes");
     let own = parse(
         "def total[T: Shape](shape: T) -> Int:\n    return double(shape.area())\n\
          def main():\n    var s = Square(WIDTH)\n    var n: Int = total(s)\n",
     )
     .expect("parse error");
-    check_program_in(&own, &mut install()).expect("the importer checks against the interface");
+    let installed = reaching();
+    check_program_in(&own, &mut install(&installed))
+        .expect("the importer checks against the interface");
+    assert!(installed.failures().is_empty());
+    assert!(
+        installed.decoded() < 5,
+        "a declaration the importer never names stays undecoded"
+    );
     let wrong = parse("def main():\n    var n: Int = double(Square(1))\n").expect("parse error");
     let whole = check(&[library.clone(), wrong.clone()].concat()).expect_err("rejected whole");
-    let installed = check_program_in(&wrong, &mut install()).expect_err("rejected installed");
+    let installed =
+        check_program_in(&wrong, &mut install(&reaching())).expect_err("rejected installed");
     assert_eq!(installed.to_string(), whole.to_string());
-    assert!(InstalledInterfaces::decode([(library_path, &bytes[..bytes.len() / 2])]).is_err());
+    assert!(DeclarationInterfaces::read(bytes[..bytes.len() / 2].to_vec()).is_err());
 }

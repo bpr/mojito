@@ -3036,12 +3036,12 @@ impl Checker {
 /// Whether the declared trait `candidate` refines `required`, directly or
 /// through its parents.
 pub(super) fn refines_trait(
-    traits: &HashMap<String, TraitInfo>,
+    traits: &declaration_table::DeclarationTable<TraitInfo>,
     candidate: &str,
     required: &str,
 ) -> bool {
     fn walk(
-        traits: &HashMap<String, TraitInfo>,
+        traits: &declaration_table::DeclarationTable<TraitInfo>,
         candidate: &str,
         required: &str,
         visiting: &mut HashSet<String>,
