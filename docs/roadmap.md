@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R599**.
+Next free ID: **R600**.
 
 ## Ordered Work
 
@@ -50,16 +50,17 @@ Scope: what remains of the plan's stages, and what the pipeline order still
 leaves to close. A defect found on the way is filed by its kind; a
 divergence from the pin goes to a catch-up track, however small.
 
-- [ ] **R596 (P6) A module integer constant's value is held twice in its
-  package record**
+- [ ] **R599 (P6) A module integer constant is folded twice, by the
+  overload scan and by the check**
 
-  The checker residue's `Comptimes` row holds the constant as an
-  `IntLiteral`, and the lowered part holds it again as the `i64` a
-  signature's spelling folds (`LoweredDeclaration::constants`).
-  - Upstream holds a constant once, in its declaration's op.
-  - The lever: R560's pattern, keeping the value in the lowered part only,
-    with a byte-for-byte guard at build time, and joining the checker's
-    row back from it on decode.
+  MIR's name lowering spells signatures from a pre-check scan
+  (`OverloadSets::scan`), which folds every module integer constant again
+  beside the check's fold.
+  - Upstream folds a constant once, in its declaration.
+  - Both folds now use `fold_infix`, and the package build refuses a
+    library whose two folds differ, so the copy is redundant, not wrong.
+  - The lever: MIR name lowering reads the check's constants instead of
+    the scan's.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

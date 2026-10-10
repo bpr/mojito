@@ -206,8 +206,13 @@ import (every compilation that links the bundled library):
   `CheckContext::record_elaborated`), and a declaration's residue holds the
   module-scope compile-time facts its names bind (a bound dtype, a lifted
   constant's application, a kept compile-time value, a type alias, its
-  `SIMDLength` binders). Its lowered part holds its integer constant
-  (`package::LoweredDeclaration::constants`) and no overload set: as
+  `SIMDLength` binders). Its lowered part holds its integer constant's
+  one exact value (`package::LoweredDeclaration::constants`), which the
+  residue's integer row and elaborated value are joined back from, as
+  upstream holds a constant once in its declaration's op; the build
+  refuses a library whose overload scan, check, or elaboration folds a
+  constant to other values (`InterfaceExport::checked_constants`,
+  `DeclarationInterface::project`). It holds no overload set: as
   upstream's package holds none, an importer's name's overload set is the
   reached declarations a lookup finds under it, the plain name and its
   `$ov$` run of the by-name function table (`PackageScope`'s

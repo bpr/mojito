@@ -23,6 +23,7 @@ use mojito_checked::package::{
     DeclarationRecord, DeclarationRecords, DeclaringModules, LoweredDeclaration,
     PackageDeclarations, PackagedModule,
 };
+use mojito_common::literal::IntLiteral;
 use mojito_types::types::{FuncTy, GenericFuncTy};
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex, OnceLock};
@@ -58,8 +59,9 @@ impl DeclarationInterfaces {
 /// Each declaration's rows, which
 /// [`Self::records`] encodes as the residue of the declaration's record
 /// once its lowering is known, the overload sets its lowered declarations
-/// must imply, and the constants and effect summaries its lowered part
-/// holds.
+/// must imply, and the effect summaries its lowered part holds. The
+/// constants its lowered part holds are the check's integer rows, which the
+/// overload scan must fold alike.
 pub struct InterfaceExport {
     declarations: BTreeMap<String, (DeclarationInterface, Vec<(Table, String)>)>,
     /// The library's overload sets, as its check scanned them.
@@ -94,7 +96,8 @@ impl InterfaceExport {
     ///
     /// A lowered declaration, constant, or summary no library declaration
     /// owns, lowered declarations whose overload sets differ from the
-    /// check's, a struct, method, or function whose lowered declaration
+    /// check's, an integer constant the overload scan folds other than the
+    /// check, a struct, method, or function whose lowered declaration
     /// says other than the check's rows, or a residue that does not
     /// encode.
     pub fn records(
@@ -111,6 +114,7 @@ impl InterfaceExport {
                 "the library's lowered declarations say other than its check of the overloads of `{name}`"
             ));
         }
+        let constants = self.checked_constants()?;
         let mut records = DeclarationRecords {
             modules,
             declaring: self.declaring,
@@ -138,8 +142,7 @@ impl InterfaceExport {
                 }),
         );
         unplaced.extend(
-            self.overloads
-                .constants()
+            constants
                 .into_iter()
                 .filter_map(|(name, value)| records.place_constant(name, value).err()),
         );
@@ -186,6 +189,37 @@ impl InterfaceExport {
             record.methods = methods;
         }
         Ok(records)
+    }
+
+    /// Every library integer constant as the check folded it, sorted, once
+    /// the guard finds the overload scan, which spelled the library's
+    /// signatures before the check, folded each to the same value.
+    fn checked_constants(&self) -> Result<Vec<(String, IntLiteral)>, String> {
+        let checked: BTreeMap<&str, &IntLiteral> = self
+            .declarations
+            .values()
+            .flat_map(|(interface, _)| &interface.comptimes)
+            .map(|(name, value)| (name.as_str(), value))
+            .collect();
+        let scanned = self.overloads.constants();
+        let scanned: BTreeMap<&str, &IntLiteral> = scanned
+            .iter()
+            .map(|(name, value)| (name.as_str(), value))
+            .collect();
+        if let Some(name) = checked
+            .keys()
+            .chain(scanned.keys())
+            .filter(|name| checked.get(*name) != scanned.get(*name))
+            .min()
+        {
+            return Err(format!(
+                "the library's overload scan folds other than its check the constant `{name}`"
+            ));
+        }
+        Ok(checked
+            .into_iter()
+            .map(|(name, value)| (name.to_string(), value.clone()))
+            .collect())
     }
 }
 
@@ -460,7 +494,9 @@ pub type ElaboratedConstants = Vec<(String, String, ElaboratedConstant)>;
 /// Every table is sorted by key; a name-set table (`declared_structs` and
 /// the like) is only keys in the directory. Encoded, it is its record's
 /// residue: a fact the record's lowered part says is left out
-/// ([`Self::project`]), and so is every key and projected name, which the
+/// ([`Self::project`]) — a projected struct's or function's declared facts,
+/// and a module integer constant's value, which only its lowered part
+/// holds — and so is every key and projected name, which the
 /// directory's key span for the declaration holds once; both are restored
 /// when the residue decodes ([`Self::join`]).
 #[derive(Default, serde::Serialize, serde::Deserialize)]
@@ -1057,6 +1093,7 @@ impl DeclarationInterface {
     /// exactly that: a method's declaration is the function named by its
     /// struct, its name, and its overload qualifier.
     fn project(&mut self, lowered: &LoweredDeclaration) -> Result<(), String> {
+        self.project_constants(lowered)?;
         for (name, info) in &mut self.structs {
             let Some(declaration) = lowered_struct(lowered, name) else {
                 continue;
@@ -1120,6 +1157,35 @@ impl DeclarationInterface {
         Ok(())
     }
 
+    /// Leave out each integer row and elaborated value of a module constant
+    /// whose one value `lowered` holds, once the guard finds each says
+    /// exactly that value.
+    fn project_constants(&mut self, lowered: &LoweredDeclaration) -> Result<(), String> {
+        for (name, value) in &self.comptimes {
+            if !lowered
+                .constant(name)
+                .is_some_and(|constant| same_bytes(value, constant))
+            {
+                return Err(format!(
+                    "the lowered constant `{name}` says other than its check"
+                ));
+            }
+        }
+        for (name, constant) in &self.elaborated {
+            if let Some(value) = lowered.constant(name)
+                && !same_bytes(constant, &elaborated_constant(value))
+            {
+                return Err(format!(
+                    "the elaboration of `{name}` says other than its check"
+                ));
+            }
+        }
+        self.comptimes.clear();
+        self.elaborated
+            .retain(|(name, _)| lowered.constant(name).is_none());
+        Ok(())
+    }
+
     /// Restore what [`Self::project`] left out from `lowered`, and every
     /// key and projected name from the directory's `keys` for the
     /// declaration.
@@ -1172,6 +1238,20 @@ impl DeclarationInterface {
             }
         }
         by_name(&mut self.explicit_destroy);
+        for (table, key) in keys {
+            let Some(value) = lowered.constant(key) else {
+                continue;
+            };
+            match table {
+                Table::Comptimes => self.comptimes.push((key.to_string(), value.clone())),
+                Table::Elaborated => self
+                    .elaborated
+                    .push((key.to_string(), elaborated_constant(value))),
+                _ => {}
+            }
+        }
+        by_name(&mut self.comptimes);
+        by_name(&mut self.elaborated);
         for projected in std::mem::take(&mut self.projected_bindings) {
             let declaration = lowered_function(lowered, &projected.name).ok_or_else(|| {
                 format!("function `{}` has no lowered declaration", projected.name)
@@ -1722,6 +1802,12 @@ fn summarized<V: Clone>(
         .collect()
 }
 
+/// The elaborated value of the module integer constant whose one value is
+/// `value`.
+fn elaborated_constant(value: &IntLiteral) -> ElaboratedConstant {
+    ElaboratedConstant::Value(CtValue::IntLiteral(value.clone()))
+}
+
 /// Whether `left` and `right` encode the same bytes.
 fn same_bytes<L: serde::Serialize, R: serde::Serialize>(left: &L, right: &R) -> bool {
     matches!(
@@ -1751,7 +1837,8 @@ enum KeyColumn {
 /// The names `column` holds in the residue of a declaration whose
 /// directory keys are `keys` and whose lowered part is `lowered`: a table's
 /// keys, but for a projected struct's explicit-destruction row, which its
-/// lowered declaration holds.
+/// lowered declaration holds, and a module integer constant's integer row
+/// and elaborated value, which its lowered constant holds.
 fn implied_keys<'k>(
     column: KeyColumn,
     keys: &[(Table, &'k str)],
@@ -1765,6 +1852,9 @@ fn implied_keys<'k>(
     match column {
         KeyColumn::Table(Table::ExplicitDestroy) => of(Table::ExplicitDestroy)
             .filter(|key| lowered_struct(lowered, key).is_none())
+            .collect(),
+        KeyColumn::Table(table @ (Table::Comptimes | Table::Elaborated)) => of(table)
+            .filter(|key| lowered.constant(key).is_none())
             .collect(),
         KeyColumn::Table(table) => of(table).collect(),
         KeyColumn::ProjectedStructs => of(Table::Structs)
@@ -1814,4 +1904,68 @@ fn refuse_unplaced(mut unplaced: Vec<String>) -> Result<(), String> {
         "no library module declares {}",
         unplaced.join(", ")
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn constant_n(value: i64) -> LoweredDeclaration {
+        LoweredDeclaration {
+            constants: vec![("N".to_string(), IntLiteral::from(value))],
+            ..LoweredDeclaration::default()
+        }
+    }
+
+    fn residue_of_n(value: i64) -> DeclarationInterface {
+        DeclarationInterface {
+            comptimes: vec![("N".to_string(), IntLiteral::from(value))],
+            elaborated: vec![(
+                "N".to_string(),
+                elaborated_constant(&IntLiteral::from(value)),
+            )],
+            ..DeclarationInterface::default()
+        }
+    }
+
+    const KEYS: [(Table, &str); 2] = [(Table::Comptimes, "N"), (Table::Elaborated, "N")];
+
+    #[test]
+    fn a_constant_value_is_held_once_and_joined_back() {
+        let lowered = constant_n(3);
+        let mut residue = residue_of_n(3);
+        residue.project(&lowered).expect("the rows agree");
+        assert!(residue.comptimes.is_empty() && residue.elaborated.is_empty());
+        let bytes = postcard::to_stdvec(&residue).expect("encodes");
+        let mut decoded: DeclarationInterface = postcard::from_bytes(&bytes).expect("decodes");
+        decoded.join(&KEYS, &lowered).expect("joins");
+        assert!(same_bytes(&decoded.comptimes, &residue_of_n(3).comptimes));
+        assert!(same_bytes(&decoded.elaborated, &residue_of_n(3).elaborated));
+    }
+
+    #[test]
+    fn a_lowered_constant_other_than_the_check_is_refused() {
+        let error = residue_of_n(3)
+            .project(&constant_n(4))
+            .expect_err("the values differ");
+        assert!(error.contains("the lowered constant `N`"), "{error}");
+    }
+
+    #[test]
+    fn an_elaborated_value_other_than_the_check_is_refused() {
+        let mut residue = residue_of_n(3);
+        residue.elaborated[0].1 = elaborated_constant(&IntLiteral::from(4_i64));
+        let error = residue
+            .project(&constant_n(3))
+            .expect_err("the elaboration differs");
+        assert!(error.contains("the elaboration of `N`"), "{error}");
+    }
+
+    #[test]
+    fn a_constant_key_with_neither_row_nor_lowered_value_is_refused() {
+        let error = DeclarationInterface::default()
+            .join(&KEYS, &LoweredDeclaration::default())
+            .expect_err("the key has no row");
+        assert!(error.contains("Comptimes"), "{error}");
+    }
 }

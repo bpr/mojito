@@ -8,6 +8,14 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A library module integer constant's value is held once in its package
+  record (R596), exactly, in its declaration's lowered part, as upstream
+  holds a constant once in its declaration's op: the checker's integer row
+  and the elaboration's value are joined back from it on decode. The
+  overload scan now folds a constant with the check's one exact folder, so
+  `//` floors toward the divisor's sign and shifts fold in its spellings,
+  and the build refuses a library whose scan, check, or elaboration fold a
+  constant to other values. The package format is now `mojito-package 22`.
 - A package declaration's record names nothing its directory holds (R581),
   as an MLIR bytecode op names its symbol through the one string section:
   its lowered part holds each function by its directory row, its struct and

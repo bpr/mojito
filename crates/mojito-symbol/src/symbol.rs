@@ -700,7 +700,7 @@ pub struct OverloadSets {
     #[serde(serialize_with = "sorted_arities")]
     methods: HashMap<String, HashSet<usize>>,
     #[serde(serialize_with = "sorted_map")]
-    comptimes: HashMap<String, i64>,
+    comptimes: HashMap<String, IntLiteral>,
     #[serde(serialize_with = "sorted_map")]
     fieldwise_constructors: HashMap<String, Vec<String>>,
 }
@@ -730,7 +730,7 @@ pub trait OverloadLookup {
 
     /// The value of the module integer constant `name`, which a signature's
     /// spelling folds.
-    fn comptime(&self, name: &str) -> Option<i64>;
+    fn comptime(&self, name: &str) -> Option<IntLiteral>;
 }
 
 impl OverloadSets {
@@ -743,7 +743,7 @@ impl OverloadSets {
     /// Add the declarations of `program`, which declares none of the names
     /// already here and may read the constants already here or those
     /// `outer` answers: an importer's own statements over its package.
-    pub fn scan_more(&mut self, program: &[Stmt], outer: impl Fn(&str) -> Option<i64>) {
+    pub fn scan_more(&mut self, program: &[Stmt], outer: impl Fn(&str) -> Option<IntLiteral>) {
         let mut functions: HashMap<String, Vec<usize>> = HashMap::new();
         let mut methods: HashMap<String, Vec<usize>> = HashMap::new();
         let comptimes = &mut self.comptimes;
@@ -752,7 +752,7 @@ impl OverloadSets {
             match &stmt.kind {
                 StmtKind::Comptime { name, value, .. } => {
                     let folded = eval_comptime_int(value, &|name| {
-                        comptimes.get(name).copied().or_else(|| outer(name))
+                        comptimes.get(name).cloned().or_else(|| outer(name))
                     });
                     if let Some(value) = folded {
                         comptimes.insert(name.clone(), value);
@@ -847,11 +847,11 @@ impl OverloadSets {
     }
 
     /// Every integer constant, by name, sorted.
-    pub fn constants(&self) -> Vec<(String, i64)> {
-        let mut constants: Vec<(String, i64)> = self
+    pub fn constants(&self) -> Vec<(String, IntLiteral)> {
+        let mut constants: Vec<(String, IntLiteral)> = self
             .comptimes
             .iter()
-            .map(|(name, value)| (name.clone(), *value))
+            .map(|(name, value)| (name.clone(), value.clone()))
             .collect();
         constants.sort();
         constants
@@ -911,8 +911,8 @@ impl OverloadLookup for OverloadSets {
             .map(|names| Cow::Borrowed(names.as_slice()))
     }
 
-    fn comptime(&self, name: &str) -> Option<i64> {
-        self.comptimes.get(name).copied()
+    fn comptime(&self, name: &str) -> Option<IntLiteral> {
+        self.comptimes.get(name).cloned()
     }
 }
 
@@ -1476,7 +1476,7 @@ fn encode_identifier(name: &str) -> String {
 
 fn ast_raw(
     ty: &Type,
-    comptimes: &dyn Fn(&str) -> Option<i64>,
+    comptimes: &dyn Fn(&str) -> Option<IntLiteral>,
     type_bounds: &HashMap<String, BinderSpelling>,
     self_spelling: Option<&str>,
 ) -> String {
@@ -1801,11 +1801,14 @@ fn expr_dtype(expr: &Expr) -> Option<mojito_ast::ast::Dtype> {
 }
 
 /// A comptime-evaluable SIMD width annotation argument.
-fn param_arg_width(argument: &ParamArg, comptimes: &dyn Fn(&str) -> Option<i64>) -> Option<i64> {
+fn param_arg_width(
+    argument: &ParamArg,
+    comptimes: &dyn Fn(&str) -> Option<IntLiteral>,
+) -> Option<i64> {
     let ParamArg::Value(expr) = argument else {
         return None;
     };
-    eval_comptime_int(expr, comptimes)
+    eval_comptime_int(expr, comptimes)?.to_i64()
 }
 
 /// The canonical checked spelling of a scalar/SIMD annotation: width-1
@@ -1815,26 +1818,26 @@ fn simd_annotation_raw(dtype: mojito_ast::ast::Dtype, width: i64) -> String {
     canonical_simd_ty(dtype, width).to_string()
 }
 
-fn eval_comptime_int(expr: &Expr, comptimes: &dyn Fn(&str) -> Option<i64>) -> Option<i64> {
-    use mojito_ast::ast::{InfixOp, PrefixOp};
+/// The exact value of a module integer constant's expression, folded as the
+/// check folds it (`fold_infix` over `IntLiteral`s); `None` for anything the
+/// check would not fold to an integer.
+fn eval_comptime_int(
+    expr: &Expr,
+    comptimes: &dyn Fn(&str) -> Option<IntLiteral>,
+) -> Option<IntLiteral> {
+    use mojito_ast::ast::PrefixOp;
+    use mojito_types::param_expr::fold::fold_infix;
     match &expr.kind {
-        ExprKind::Int(value) => value.to_i64(),
+        ExprKind::Int(value) => Some(value.clone()),
         ExprKind::Identifier(name) => comptimes(name),
-        ExprKind::Prefix(PrefixOp::Neg, value) => {
-            eval_comptime_int(value, comptimes)?.checked_neg()
-        }
+        ExprKind::Prefix(PrefixOp::Neg, value) => Some(eval_comptime_int(value, comptimes)?.neg()),
         ExprKind::Infix(op, left, right) => {
             let (left, right) = (
                 eval_comptime_int(left, comptimes)?,
                 eval_comptime_int(right, comptimes)?,
             );
-            match op {
-                InfixOp::Add => left.checked_add(right),
-                InfixOp::Sub => left.checked_sub(right),
-                InfixOp::Mul => left.checked_mul(right),
-                InfixOp::FloorDiv if right != 0 => Some(left.div_euclid(right)),
-                InfixOp::Mod if right != 0 => Some(left.rem_euclid(right)),
-                InfixOp::Pow if right >= 0 => left.checked_pow(right as u32),
+            match fold_infix(*op, &CtValue::IntLiteral(left), &CtValue::IntLiteral(right)) {
+                Ok(CtValue::IntLiteral(value)) => Some(value),
                 _ => None,
             }
         }
@@ -1986,7 +1989,7 @@ fn syntactic_origin_argument(
 /// as a checked `CtValue` displays). A non-literal expression degrades to a
 /// stable placeholder — good enough because the name only needs to be
 /// deterministic.
-fn value_expr_raw(expr: &Expr, comptimes: &dyn Fn(&str) -> Option<i64>) -> String {
+fn value_expr_raw(expr: &Expr, comptimes: &dyn Fn(&str) -> Option<IntLiteral>) -> String {
     if let Some(value) = eval_comptime_int(expr, comptimes) {
         return value.to_string();
     }
@@ -2054,7 +2057,7 @@ fn keep_overloaded(counts: HashMap<String, Vec<usize>>) -> HashMap<String, HashS
 fn signature_from_ast(
     params: &[FnParam],
     type_params: &[TypeParam],
-    comptimes: &dyn Fn(&str) -> Option<i64>,
+    comptimes: &dyn Fn(&str) -> Option<IntLiteral>,
     self_spelling: Option<&str>,
 ) -> SignatureKey {
     let type_bounds = binder_spellings(type_params);

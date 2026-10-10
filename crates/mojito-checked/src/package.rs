@@ -14,8 +14,8 @@
 //! each declaration of a package from one op, no phase reads a second copy
 //! of a declaration.
 //!
-//! The lowered part also holds the integer value of the declaration's
-//! constant. It holds no overload set: as upstream does, an importer finds
+//! The lowered part also holds the one exact value of the declaration's
+//! integer constant, which the residue does not repeat. It holds no overload set: as upstream does, an importer finds
 //! a name's overload set by looking up the declarations under the name,
 //! after its program's own sets miss ([`ProgramOverloads`]), and the build
 //! refuses a library whose lowered declarations say other than its check's
@@ -33,6 +33,7 @@
 use crate::checked::{CallThroughEffect, TransferEffect};
 use crate::declaration::{FunctionDeclaration, StructDeclaration, TraitDeclaration};
 use mojito_ast::ast::{Stmt, StmtKind};
+use mojito_common::literal::IntLiteral;
 use mojito_symbol::symbol::{
     LiftedOwner, OV_SEP, OverloadFamily, OverloadLookup, OverloadSets, lifted_owner,
 };
@@ -207,8 +208,10 @@ pub struct LoweredDeclaration {
     pub transfer_effects: Vec<(String, Vec<TransferEffect>)>,
     /// The call-through effects of each callable it declares, likewise.
     pub call_through_effects: Vec<(String, Vec<CallThroughEffect>)>,
-    /// The integer value of its module constant, by name, sorted.
-    pub constants: Vec<(String, i64)>,
+    /// The exact value of its module integer constant, by name, sorted:
+    /// the constant's one value, which the check's integer row and the
+    /// elaboration's value join back from.
+    pub constants: Vec<(String, IntLiteral)>,
 }
 
 impl LoweredDeclaration {
@@ -222,9 +225,9 @@ impl LoweredDeclaration {
         sorted_get(&self.call_through_effects, name)
     }
 
-    /// The integer value of the module constant `name`.
-    pub fn constant(&self, name: &str) -> Option<i64> {
-        sorted_get(&self.constants, name).copied()
+    /// The exact value of the module integer constant `name`.
+    pub fn constant(&self, name: &str) -> Option<&IntLiteral> {
+        sorted_get(&self.constants, name)
     }
 
     /// Refuse a record of the declaration `name` whose names and masks
@@ -1023,12 +1026,12 @@ impl OverloadLookup for PackageScope {
             .map(Cow::Owned)
     }
 
-    fn comptime(&self, name: &str) -> Option<i64> {
+    fn comptime(&self, name: &str) -> Option<IntLiteral> {
         let entry = self.package.owning(name)?;
         if !self.reaches(entry) {
             return None;
         }
-        self.package.lowered(entry)?.constant(name)
+        self.package.lowered(entry)?.constant(name).cloned()
     }
 }
 
@@ -1103,7 +1106,7 @@ impl OverloadLookup for ProgramOverloads {
             .or_else(|| self.package.as_ref()?.fieldwise_parameters(name))
     }
 
-    fn comptime(&self, name: &str) -> Option<i64> {
+    fn comptime(&self, name: &str) -> Option<IntLiteral> {
         self.own
             .comptime(name)
             .or_else(|| self.package.as_ref()?.comptime(name))
@@ -1220,13 +1223,13 @@ impl DeclarationRecords {
         Ok(())
     }
 
-    /// Put the integer value of the module constant `name` in the record
-    /// of the declaration it belongs to.
+    /// Put the exact value of the module integer constant `name`, as the
+    /// check folds it, in the record of the declaration it belongs to.
     ///
     /// # Errors
     ///
     /// No library declaration owns `name`.
-    pub fn place_constant(&mut self, name: String, value: i64) -> Result<(), String> {
+    pub fn place_constant(&mut self, name: String, value: IntLiteral) -> Result<(), String> {
         let record = self.record_of(&name)?;
         sorted_insert(&mut record.lowered.constants, name, value);
         Ok(())

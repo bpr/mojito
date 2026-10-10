@@ -725,12 +725,30 @@ fn overload_sets_scan_over_a_package() {
     let sets = OverloadSets::scan(&library);
     assert!(sets.function_is_overloaded("pick", 1));
     assert!(sets.is_function("solo"));
-    assert_eq!(sets.comptime("N"), Some(2));
+    assert_eq!(sets.comptime("N"), Some(mojito::IntLiteral::from(2_i64)));
     let mut mine = OverloadSets::default();
     mine.scan_more(&own, |name| sets.comptime(name));
-    assert_eq!(mine.comptime("M"), Some(3));
+    assert_eq!(mine.comptime("M"), Some(mojito::IntLiteral::from(3_i64)));
     assert!(mine.function_is_overloaded("mine", 2));
     assert!(!mine.is_function("pick"));
+}
+
+#[test]
+fn overload_scan_folds_constants_as_the_check_does() {
+    // The scan folds a module constant exactly, with the one folder: `//`
+    // floors toward the divisor's sign and shifts fold, as at the pin.
+    use mojito::symbol::{OverloadLookup, OverloadSets};
+    let library = parse("comptime A = 7 // -2\ncomptime B = 1 << 3\n").expect("parse error");
+    let sets = OverloadSets::scan(&library);
+    assert_eq!(sets.comptime("A"), Some(mojito::IntLiteral::from(-4_i64)));
+    assert_eq!(sets.comptime("B"), Some(mojito::IntLiteral::from(8_i64)));
+}
+
+#[test]
+fn overload_scan_folds_no_integer_from_a_true_division() {
+    use mojito::symbol::{OverloadLookup, OverloadSets};
+    let library = parse("comptime C = 1 / 2\n").expect("parse error");
+    assert_eq!(OverloadSets::scan(&library).comptime("C"), None);
 }
 
 #[test]
@@ -791,7 +809,10 @@ fn program_overloads_ask_the_own_sets_then_the_owning_package_declaration() {
         )
         .expect("parse error"),
     );
-    assert_eq!(overloads.comptime("M"), Some(3));
+    assert_eq!(
+        overloads.comptime("M"),
+        Some(mojito::IntLiteral::from(3_i64))
+    );
     assert_eq!(package.decoded(), 1, "only `N`'s record decoded");
     assert!(overloads.function_is_overloaded("mine", 2));
     assert!(overloads.function_is_overloaded("pick", 1));
