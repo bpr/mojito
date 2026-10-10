@@ -2220,7 +2220,7 @@ struct MethodSig {
     /// declare its own: a call through the bound leaving one out runs the
     /// requirement's, which the check spells at the call where some witness
     /// differs (`bound_defaults.rs`).
-    defaults: Vec<Option<mojito_ast::ast::Expr>>,
+    defaults: Vec<Option<SignatureDefault>>,
     variadic: Option<Box<Ty>>,
     variadic_index: Option<usize>,
     /// The positional collector's convention (`var *args`), which a pack
@@ -2312,6 +2312,37 @@ impl MethodSig {
             synthesized_default: false,
             nested_origins: NestedOrigins::AsDeclared,
             overload: None,
+        }
+    }
+}
+
+/// A regular parameter's declared default, as a signature holds it: checked
+/// from source for an own declaration or a trait requirement, whose default
+/// a call through the bound spells, or as an imported method's lowered
+/// declaration holds it.
+#[derive(Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+enum SignatureDefault {
+    Spelled(Expr),
+    Declared(mojito_checked::checked::CheckedConst),
+}
+
+impl SignatureDefault {
+    /// The default's checked syntax, unless it is a lowered declaration's.
+    const fn spelled(&self) -> Option<&Expr> {
+        match self {
+            Self::Spelled(expr) => Some(expr),
+            Self::Declared(_) => None,
+        }
+    }
+
+    /// Whether the default is the literal `literal`. A declared conversion
+    /// of a literal is that literal, the conversion being the parameter
+    /// type's; a declared evaluated default is no literal.
+    fn is_literal(&self, literal: &Expr) -> bool {
+        match self {
+            Self::Spelled(expr) => expr == literal,
+            Self::Declared(constant) => mojito_checked::checked::CheckedConst::from_expr(literal)
+                .is_some_and(|literal| &literal == constant.unconverted()),
         }
     }
 }

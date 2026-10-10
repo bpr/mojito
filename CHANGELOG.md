@@ -183,6 +183,12 @@ to evolve under the `0.x` compatibility rules.
   bundled library bodies falls from 32 to 18 ms release, finishing them
   from 64 to 47 ms, and `self_hosted_dict.mojo` runs in 51 ms from 64 ms.
   The package format is now `mojito-package 16`.
+- A library method's parameter defaults are held once in the package, as
+  its lowered declaration's constants, instead of again as checker syntax
+  (R574): an importer's check reads a package method's defaults from its
+  declaration, as Mojo's signature holds a default once. The package
+  build refuses a method whose checked defaults and declaration differ.
+  The package format is now `mojito-package 17`.
 - A module under a search root is linked under its path there, whichever
   import reaches it first: `std/io/file.mojo` declares
   `__module$std$io$file$…`, not `__module$file$…`.

@@ -182,7 +182,10 @@ impl Checker {
                         param
                             .default
                             .as_ref()
-                            .map(|default| self.requirement_default(default, &decls))
+                            .map(|default| {
+                                self.requirement_default(default, &decls)
+                                    .map(SignatureDefault::Spelled)
+                            })
                             .transpose()
                     })
                     .collect::<Result<Vec<_>, _>>()?;

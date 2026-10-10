@@ -83,7 +83,7 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
 - `checker::Checker` is one type whose ~250 methods are split across
   `impl Checker` blocks in the `checker/` submodules below; `checker.rs` retains
   the struct, constructors, `check_program` glue, the shared prelude types
-  (`StructInfo`, `MethodSig`, overload helpers, `ConformanceOracle`), and the
+  (`StructInfo`, `MethodSig` with its `SignatureDefault`, overload helpers, `ConformanceOracle`), and the
   call-effect/coercion helpers; the `ConformanceOracle` impl lives in
   `checker/conformance.rs`, and the free overload/signature and trait-support
   helpers live in `checker/overload_support.rs` and

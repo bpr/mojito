@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R588**.
+Next free ID: **R591**.
 
 ## Ordered Work
 
@@ -50,21 +50,23 @@ Scope: what remains of the plan's stages, and what the pipeline order still
 leaves to close. A defect found on the way is filed by its kind; a
 divergence from the pin goes to a catch-up track, however small.
 
-- [ ] **R574 (P6) A library callable's parameter defaults are recorded
-  twice: as checker syntax and as MIR defaults**
+- [ ] **R588 (P6) A library trait default's parameter defaults are held
+  as syntax beside its lifted function's MIR defaults**
 
-  A method's checker residue keeps each default as an expression
-  (`MethodSig::defaults`), while its MIR declaration keeps the same default
-  as a constant or a lifted `$default$` function.
-  - The check reads the expression to spell a bound requirement's default
-    at a call (`bound_defaults.rs`) and to judge a default's type.
-  - A method's reference signatures (`RefSig`) beside MIR's `ref_params`
-    and `param_writes` masks are the same kind of second encoding.
-  - Upstream's signature holds a default once, as a parameter attribute.
-  - The lever: the check reads a package callee's default from its MIR
-    declaration, so the residue keeps no default expression.
-  - Depends on nothing.
-  - Model: Fable, Not Planned.
+  A trait's `DefaultShape::params` keeps each default method parameter's
+  default as an expression, while the lifted `Trait$default$m` function's
+  declaration holds the same default again.
+  - Each conformer's forwarding wrapper re-lowers the syntax in the
+    conformer's context (`register_default_wrapper`).
+  - `TraitDefault::signature` clones the requirement's whole signature
+    into the package's trait row.
+  - Upstream's conformer reaches the default as a member of its trait, so
+    its signature holds each default once.
+  - The lever: once the default is a trait member, a conformer reads its
+    defaults from the member's declaration and the shape keeps none.
+  - Found while landing R574 (2026-10-10).
+  - Depends on R551.
+  - Model: Opus, Not Planned.
 
 - [ ] **R575 (P6) A package declaration's overload facts restate what its
   lowered functions already say**
@@ -4741,6 +4743,45 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Found while landing R584 (2026-10-10).
   - Depends on nothing.
   - Model: Opus, Not Planned.
+
+- [ ] **R589 A method's reference contracts are held as checker `RefSig`s
+  beside MIR's coarser masks**
+
+  A method's signature keeps each `ref` parameter's origin contract and
+  mutability as a `RefSig` (`MethodSig::ref_params`, `ref_return`), while
+  its MIR declaration holds `ref_params` and `param_writes` bool masks.
+  - `ref_params` restates `param_conventions`.
+  - `param_writes` derives from the conventions plus the mutability a
+    `RefSig` decides.
+  - The package keeps both: the residue's `RefSig`s and the declaration's
+    masks.
+  - Upstream's parameter type holds the reference contract, and nothing
+    restates it.
+  - The lever: the declaration holds each contract with its parameter, and
+    the masks and the residue's `ref_params`/`ref_return` derive from it.
+  - Related: R581 drops the mask the directory row restates.
+  - Found while landing R574 (2026-10-10).
+  - Depends on nothing.
+  - Model: Fable, Not Planned.
+
+- [ ] **R590 An own signature holds a parameter default as checked syntax,
+  not as an attribute**
+
+  A program's own method, and every trait requirement, keeps each default
+  as an expression (`SignatureDefault::Spelled`), while upstream's checked
+  signature holds a default as a parameter attribute.
+  - Only a package method's signature holds its declaration's constant
+    (`SignatureDefault::Declared`).
+  - A requirement default reading the method's value parameters
+    (`factor: Int = n`) has no constant form.
+  - A call through the bound spells such a default with the call's
+    arguments (`bound_defaults.rs`).
+  - The lever: a parametric default attribute, like a `ParamExpr`, that
+    the bound-default spelling substitutes, so every signature holds the
+    one form.
+  - Found while landing R574 (2026-10-10).
+  - Depends on nothing.
+  - Model: Fable, Not Planned.
 
 - [ ] **R523 A local implicitly-copyable compile-time binding materializes at its declaration**
 

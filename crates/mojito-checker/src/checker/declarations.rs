@@ -539,7 +539,10 @@ impl Checker {
                 &regular.iter().map(|(_, p)| *p).collect::<Vec<_>>(),
                 collectors.keyword_only,
             )?,
-            defaults: regular.iter().map(|(_, p)| p.default.clone()).collect(),
+            defaults: regular
+                .iter()
+                .map(|(_, p)| p.default.clone().map(SignatureDefault::Spelled))
+                .collect(),
             variadic: collectors.variadic,
             variadic_index: collectors.variadic_index,
             variadic_convention: collectors.variadic_convention,

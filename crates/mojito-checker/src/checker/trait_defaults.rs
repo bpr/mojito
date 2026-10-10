@@ -23,7 +23,7 @@ use super::declarations::{BodyParam, MethodBody};
 use super::origins::ref_binding_is_writable;
 use super::overload_support::method_lowered_name;
 use super::traits_support::same_method_shape;
-use super::{Checker, MethodSig, StructDeclaration, Ty};
+use super::{Checker, MethodSig, SignatureDefault, StructDeclaration, Ty};
 use mojito_symbol::symbol::lifecycle_method_name;
 
 /// Give every trait default its function.
@@ -533,7 +533,7 @@ impl Checker {
             .filter(|param| {
                 param.kind == ParamKind::Regular && param.convention != Some(ArgConvention::Out)
             })
-            .map(|param| param.default.clone())
+            .map(|param| param.default.clone().map(SignatureDefault::Spelled))
             .collect();
         sig.overload = overloaded
             .then(|| mojito_symbol::symbol::overload_qualifier(&lowered).map(str::to_string))

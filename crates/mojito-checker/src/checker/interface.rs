@@ -16,6 +16,7 @@
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 use mojito_ast::ast::TypeParam;
+use mojito_checked::checked::CheckedConst;
 use mojito_checked::declaration::{FunctionDeclaration, StructDeclaration};
 pub(super) use mojito_checked::package::InterfaceTable as Table;
 use mojito_checked::package::{
@@ -521,7 +522,6 @@ type MethodResidues = Vec<(String, Vec<MethodResidue>)>;
 /// What a method's signature says that its lowered declaration does not.
 #[derive(serde::Serialize, serde::Deserialize)]
 struct MethodResidue {
-    defaults: Vec<Option<mojito_ast::ast::Expr>>,
     variadic_name: Option<String>,
     ret_mlir_index: bool,
     ref_params: Vec<Option<mojito_types::origin::RefSig>>,
@@ -1223,6 +1223,17 @@ fn method_projection_differs(
         ),
         ("parameter names", sig.names == declaration.param_names),
         ("required", sig.required == declaration.required),
+        (
+            "defaults",
+            sig.defaults.len() == declaration.defaults.len()
+                && sig
+                    .defaults
+                    .iter()
+                    .zip(&declaration.defaults)
+                    .all(|(default, declared)| {
+                        default_declared_alike(default.as_ref(), declared.as_ref())
+                    }),
+        ),
         ("variadic", same_bytes(&sig.variadic, &declaration.variadic)),
         (
             "variadic index",
@@ -1259,6 +1270,26 @@ fn method_projection_differs(
     ]
     .into_iter()
     .find_map(|(fact, same)| (!same).then_some(fact))
+}
+
+/// Whether a signature's default and its lowered declaration's hold the
+/// same default: a checked literal as its constant or a conversion of it,
+/// any other checked expression as an evaluated default.
+fn default_declared_alike(
+    default: Option<&SignatureDefault>,
+    declared: Option<&CheckedConst>,
+) -> bool {
+    match (default, declared) {
+        (None, None) => true,
+        (Some(SignatureDefault::Spelled(expr)), Some(declared)) => {
+            match CheckedConst::from_expr(expr) {
+                Some(literal) => &literal == declared.unconverted(),
+                None => matches!(declared, CheckedConst::Evaluate { .. }),
+            }
+        }
+        (Some(SignatureDefault::Declared(default)), Some(declared)) => default == declared,
+        _ => false,
+    }
 }
 
 /// The residue of every method of the struct `owner` (`info`), when a
@@ -1301,7 +1332,6 @@ fn project_methods(
 impl MethodResidue {
     fn of(sig: &MethodSig) -> Self {
         Self {
-            defaults: sig.defaults.clone(),
             variadic_name: sig.variadic_name.clone(),
             ret_mlir_index: sig.ret_mlir_index,
             ref_params: sig.ref_params.clone(),
@@ -1329,7 +1359,11 @@ impl MethodResidue {
             params: declaration.param_types.clone(),
             names: declaration.param_names.clone(),
             required: declaration.required.clone(),
-            defaults: self.defaults,
+            defaults: declaration
+                .defaults
+                .iter()
+                .map(|default| default.clone().map(SignatureDefault::Declared))
+                .collect(),
             variadic: declaration.variadic.clone().map(Box::new),
             variadic_index: declaration.variadic_index,
             variadic_convention: declaration.variadic_convention,

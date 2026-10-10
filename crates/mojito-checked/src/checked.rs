@@ -1883,7 +1883,7 @@ impl DeclarationEffect {
     }
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 /// Literal value retained after semantic checking for declaration metadata.
 pub enum CheckedConst {
     Int(mojito_common::literal::IntLiteral),
@@ -1929,6 +1929,14 @@ impl CheckedConst {
                 _ => None,
             },
             _ => None,
+        }
+    }
+
+    /// The literal a conversion default converts, or the default itself.
+    pub fn unconverted(&self) -> &Self {
+        match self {
+            Self::Construct { arg, .. } => arg.unconverted(),
+            _ => self,
         }
     }
 }

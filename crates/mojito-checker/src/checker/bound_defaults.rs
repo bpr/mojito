@@ -169,12 +169,31 @@ impl Checker {
         let Some(syntax) = call.span.syntax else {
             return Ok(());
         };
+        // A requirement is checked from source, never decoded from a lowered
+        // declaration.
+        let defaults = requirement
+            .defaults
+            .iter()
+            .map(|default| {
+                default
+                    .as_ref()
+                    .map(|default| {
+                        default.spelled().ok_or_else(|| {
+                            TypeError::InvariantViolation(format!(
+                                "trait requirement '{method}' holds a lowered declaration's \
+                                 default"
+                            ))
+                        })
+                    })
+                    .transpose()
+            })
+            .collect::<Result<Vec<_>, _>>()?;
         // A requirement declares no positional-only marker, so each default
         // binds by name.
         let keywords: Vec<KwArg> = call
             .slots
             .iter()
-            .zip(&requirement.defaults)
+            .zip(defaults)
             .zip(&requirement.names)
             .filter_map(|((slot, default), name)| match (slot, default) {
                 (ArgSlot::Default, Some(default))
@@ -259,9 +278,9 @@ impl Checker {
             .all(|(_, _, signatures)| {
                 let mut named = signatures.iter().filter_map(|signature| {
                     let index = signature.names.iter().position(|name| name == parameter)?;
-                    Some(signature.defaults.get(index).cloned().flatten())
+                    Some(signature.defaults.get(index).and_then(Option::as_ref))
                 });
-                named.all(|witness| witness.as_ref() == Some(default))
+                named.all(|witness| witness.is_some_and(|witness| witness.is_literal(default)))
                     && signatures
                         .iter()
                         .any(|signature| signature.names.iter().any(|name| name == parameter))
