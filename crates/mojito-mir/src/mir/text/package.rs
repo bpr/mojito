@@ -139,9 +139,18 @@ impl PackageBodies {
         self.package.body_row(name).is_some()
     }
 
-    /// Every function's name and runtime parameter count, in package order.
-    pub fn signatures(&self) -> impl Iterator<Item = (&str, usize)> + Clone {
-        self.package.bodies()
+    /// The name and runtime parameter count of every function whose name
+    /// starts with `prefix`, in name order, decoding nothing.
+    pub fn functions_prefixed<'s>(
+        &'s self,
+        prefix: &str,
+    ) -> impl Iterator<Item = (&'s str, usize)> + use<'s> {
+        self.package.functions_prefixed(prefix)
+    }
+
+    /// The row in package order of the function `name`.
+    pub fn row(&self, name: &str) -> Option<usize> {
+        self.package.body_row(name)
     }
 
     /// How many bodies have been decoded so far.

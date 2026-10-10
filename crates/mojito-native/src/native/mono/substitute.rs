@@ -19,7 +19,8 @@ impl<'a> ConstructionDecls<'_, 'a> {
     /// The list-literal initializer of the struct `template`, as the
     /// checker selects it for a collection display.
     fn list_literal_constructor(&self, template: &str) -> Option<&'a str> {
-        self.functions.names().find(|symbol| {
+        let constructors = format!("{template}.__init__");
+        self.functions.prefixed(&constructors).find(|symbol| {
             mojito_symbol::symbol::lifecycle_constructor(symbol) == Some((template, "__init__"))
                 && self.functions.get(symbol).is_some_and(|declaration| {
                     mojito_symbol::symbol::is_list_literal_constructor(

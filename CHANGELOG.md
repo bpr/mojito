@@ -158,6 +158,12 @@ to evolve under the `0.x` compatibility rules.
   analysis ask a package callee's facts on lookup instead of indexing all
   of them, and Hello World runs in 3.2 ms release, from 4.1 ms. The package
   shrinks from 1.56 to 1.54 MB, and its format is now `mojito-package 15`.
+- The elaborator finds a callee's overload set by looking its name up
+  (R580), as upstream's symbol table does, instead of scanning every
+  function of the program and the bundled package: a call's family is one
+  range of the package's by-name function table beside the program's own
+  bodies, kept by name. Hello World's elaboration falls from 1.61 to
+  1.48 ms release, and a method-heavy program's by about 9%.
 - A module under a search root is linked under its path there, whichever
   import reaches it first: `std/io/file.mojo` declares
   `__module$std$io$file$…`, not `__module$file$…`.

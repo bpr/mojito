@@ -743,16 +743,7 @@ impl Prog {
     }
 
     fn overload_name(&self, name: &str, argc: usize) -> String {
-        mojito_symbol::symbol::resolve_callable_symbol(
-            self.mir.functions.iter().map(|(name, function)| {
-                mojito_symbol::symbol::CallableCandidate {
-                    name,
-                    n_params: function.n_params,
-                }
-            }),
-            name,
-            argc,
-        )
+        mojito_symbol::symbol::resolve_callable_symbol(self, name, argc)
     }
 
     /// Resolve a selected method signature against the receiver's concrete
@@ -766,18 +757,29 @@ impl Prog {
         resolved: Option<&str>,
         argc: usize,
     ) -> String {
-        mojito_symbol::symbol::resolve_method_symbol(
-            self.mir.functions.iter().map(|(name, function)| {
-                mojito_symbol::symbol::CallableCandidate {
+        mojito_symbol::symbol::resolve_method_symbol(self, receiver_type, method, resolved, argc)
+    }
+}
+
+impl mojito_symbol::symbol::CallableLookup for Prog {
+    fn contains(&self, name: &str) -> bool {
+        self.index_of(name).is_some()
+    }
+
+    fn overloads(
+        &self,
+        base: &str,
+    ) -> impl Iterator<Item = mojito_symbol::symbol::CallableCandidate<'_>> {
+        self.mir
+            .functions
+            .iter()
+            .filter(move |(name, _)| mojito_symbol::symbol::is_overload_of(name, base))
+            .map(
+                |(name, function)| mojito_symbol::symbol::CallableCandidate {
                     name,
                     n_params: function.n_params,
-                }
-            }),
-            receiver_type,
-            method,
-            resolved,
-            argc,
-        )
+                },
+            )
     }
 }
 

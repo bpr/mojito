@@ -803,3 +803,66 @@ fn program_overloads_ask_the_own_sets_then_the_owning_package_declaration() {
     assert!(!overloads.is_function("solo"), "its module was not reached");
     assert!(!overloads.is_function("absent"));
 }
+
+#[test]
+fn a_package_answers_a_function_name_prefix_from_its_by_name_table() {
+    // An overload set is one run of the package's by-name function table,
+    // read in place: the base's `$ov$` overloads, and nothing beside them.
+    use mojito::checked_package::{
+        DeclarationRecords, DeclaringModules, PackageDeclarations, PackagedModule,
+    };
+    let mut library = parse(
+        "def f() -> Int:\n    return 0\n\
+         def f(x: Int) -> Int:\n    return x\n\
+         def f(x: Bool) -> Int:\n    return 1\n\
+         def fa() -> Int:\n    return 2\n\
+         def g() -> Int:\n    return 3\n\
+         struct fs:\n    var x: Int\n    def get(self) -> Int:\n        return self.x\n",
+    )
+    .expect("parse error");
+    mojito::ast::stamp_source(&mut library, "/library/a.mojo");
+    let mut records = DeclarationRecords {
+        modules: vec![PackagedModule {
+            name: "a".to_string(),
+            canonical: "/library/a.mojo".to_string(),
+            path: "/library/a.mojo".to_string(),
+            link: Vec::new(),
+        }],
+        declaring: DeclaringModules::of(&library).expect("one module per name"),
+        ..DeclarationRecords::default()
+    };
+    let program = lower_program(&library).expect("type error");
+    let mut names = Vec::new();
+    for declaration in program.declarations.functions {
+        if declaration.lowered_name.starts_with(['f', 'g']) {
+            names.push(declaration.lowered_name.clone());
+            records.place_function(declaration).expect("placed");
+        }
+    }
+    names.sort();
+    let package = PackageDeclarations::of_records(records).expect("the records encode");
+    let prefixed = |prefix: &str| -> Vec<String> {
+        package
+            .functions_prefixed(prefix)
+            .map(|(name, _)| name.to_string())
+            .collect()
+    };
+    let expected = |prefix: &str| -> Vec<String> {
+        names
+            .iter()
+            .filter(|name| name.starts_with(prefix))
+            .cloned()
+            .collect()
+    };
+    let overloads = prefixed("f$ov$");
+    assert_eq!(overloads.len(), 3, "{names:?}");
+    assert_eq!(overloads, expected("f$ov$"));
+    assert!(prefixed("f").contains(&"fa".to_string()));
+    assert!(prefixed("f").contains(&"fs.get".to_string()));
+    assert_eq!(prefixed("f"), expected("f"));
+    assert_eq!(prefixed("g"), ["g"]);
+    assert_eq!(prefixed("fs."), ["fs.get"]);
+    assert!(prefixed("h").is_empty());
+    assert!(prefixed("f$ov$Z").is_empty());
+    assert_eq!(package.struct_count(), 0);
+}

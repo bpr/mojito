@@ -139,8 +139,8 @@ impl Specializer<'_> {
         let qualifier = mojito_symbol::symbol::overload_qualifier(dispatch)?;
         let base = format!("{template}.{method}");
         self.functions
-            .keys()
-            .filter(|name| mojito_symbol::symbol::is_overload_of(name, &base))
+            .overloads(&base)
+            .map(|candidate| candidate.name)
             .find(|name| {
                 let Some(declaration) = self.declarations.get(name) else {
                     return false;
@@ -237,7 +237,7 @@ impl Specializer<'_> {
         }
         // The template's `write_to` is instantiated for the receiver.
         let target = mojito_symbol::symbol::resolve_method_symbol(
-            self.functions.candidates(),
+            &self.functions,
             nominal_template(name),
             method,
             None,
@@ -309,7 +309,7 @@ impl Specializer<'_> {
             return Ok(());
         };
         let target = mojito_symbol::symbol::resolve_method_symbol(
-            self.functions.candidates(),
+            &self.functions,
             nominal_template(name),
             "__int__",
             None,
@@ -329,15 +329,14 @@ impl Specializer<'_> {
     /// The one overload of `template.method` whose first parameter is a
     /// `Writer`.
     fn protocol_overload(&self, template: &str, method: &str) -> Option<String> {
-        let base = format!("{template}.{method}");
-        let mut overloads = self.declarations.names().filter(|name| {
-            mojito_symbol::symbol::is_overload_of(name, &base)
-                && self.declarations.get(name).is_some_and(|declaration| {
-                    declaration
-                        .param_types
-                        .first()
-                        .is_some_and(mojito_types::types::is_writer_parameter)
-                })
+        let family = format!("{template}.{method}{}", mojito_symbol::symbol::OV_SEP);
+        let mut overloads = self.declarations.prefixed(&family).filter(|name| {
+            self.declarations.get(name).is_some_and(|declaration| {
+                declaration
+                    .param_types
+                    .first()
+                    .is_some_and(mojito_types::types::is_writer_parameter)
+            })
         });
         let overload = overloads.next()?;
         overloads.next().is_none().then(|| overload.to_string())
@@ -370,7 +369,7 @@ impl Specializer<'_> {
             return Ok(None);
         };
         let target = mojito_symbol::symbol::resolve_method_symbol(
-            self.functions.candidates(),
+            &self.functions,
             nominal_template(name),
             method,
             None,

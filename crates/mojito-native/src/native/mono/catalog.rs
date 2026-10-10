@@ -7,38 +7,30 @@
 use super::*;
 use mojito_mir::mir::link::ImportedDeclarations;
 use std::cell::OnceCell;
+use std::collections::BTreeMap;
+use std::ops::Bound;
 
 /// One kind of declaration, by name: the program's own first, then the
 /// package's.
 pub(super) struct Catalog<'a, T> {
-    own: HashMap<&'a str, &'a T>,
+    own: BTreeMap<&'a str, &'a T>,
     imported: Option<&'a ImportedDeclarations>,
 }
 
 /// A declaration kind a package can hold.
 pub(super) trait Declared: Sized {
     fn imported<'a>(imported: &'a ImportedDeclarations, name: &str) -> Option<&'a Self>;
-
-    fn imported_names(imported: &ImportedDeclarations) -> Vec<&str>;
 }
 
 impl Declared for MirFunctionDeclaration {
     fn imported<'a>(imported: &'a ImportedDeclarations, name: &str) -> Option<&'a Self> {
         imported.function(name)
     }
-
-    fn imported_names(imported: &ImportedDeclarations) -> Vec<&str> {
-        imported.package().function_names().collect()
-    }
 }
 
 impl Declared for MirStructDeclaration {
     fn imported<'a>(imported: &'a ImportedDeclarations, name: &str) -> Option<&'a Self> {
         imported.structure(name)
-    }
-
-    fn imported_names(imported: &ImportedDeclarations) -> Vec<&str> {
-        imported.package().struct_names().collect()
     }
 }
 
@@ -64,18 +56,24 @@ impl<'a, T: Declared> Catalog<'a, T> {
     pub(super) fn contains_key(&self, name: &str) -> bool {
         self.get(name).is_some()
     }
+}
 
-    /// Every declared name, own first, decoding nothing.
-    pub(super) fn names(&self) -> impl Iterator<Item = &'a str> + '_ {
-        let imported = self
-            .imported
-            .map(|imported| T::imported_names(imported))
-            .unwrap_or_default();
-        self.own.keys().copied().chain(
+impl<'a> Catalog<'a, MirFunctionDeclaration> {
+    /// Every function name starting with `prefix`, own first, each in name
+    /// order, decoding nothing: a range of each by-name table.
+    pub(super) fn prefixed<'s>(&'s self, prefix: &'s str) -> impl Iterator<Item = &'a str> + 's {
+        let own = self
+            .own
+            .range::<str, _>((Bound::Included(prefix), Bound::Unbounded))
+            .map(|(name, _)| *name)
+            .take_while(move |name| name.starts_with(prefix));
+        let imported = self.imported.into_iter().flat_map(move |imported| {
             imported
-                .into_iter()
-                .filter(|name| !self.own.contains_key(name)),
-        )
+                .package()
+                .functions_prefixed(prefix)
+                .map(|(name, _)| name)
+        });
+        own.chain(imported.filter(|name| !self.own.contains_key(name)))
     }
 }
 
@@ -109,10 +107,8 @@ impl StructCatalog {
                 .map(|declaration| (declaration.name.clone(), StructShape::of(declaration)))
                 .collect(),
             package_shapes: imported.as_ref().map_or_else(Vec::new, |imported| {
-                imported
-                    .package()
-                    .struct_names()
-                    .map(|_| OnceCell::new())
+                std::iter::repeat_with(OnceCell::new)
+                    .take(imported.package().struct_count())
                     .collect()
             }),
             imported,

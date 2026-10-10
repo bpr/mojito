@@ -99,21 +99,26 @@ pub enum InstanceArg {
     Value(CtValue),
 }
 
+/// What callable resolution asks of a symbol table, name by name, as
+/// upstream finds an overload set by looking its name up.
+pub trait CallableLookup {
+    /// Whether a function is named exactly `name`.
+    fn contains(&self, name: &str) -> bool;
+
+    /// The `base$ov$…` overloads of `base`, with their runtime arities.
+    fn overloads(&self, base: &str) -> impl Iterator<Item = CallableCandidate<'_>>;
+}
+
 /// Resolve a source callable name, preserving an exact declaration and using
 /// arity only when precisely one overload is viable.
-pub fn resolve_callable_symbol<'a>(
-    declarations: impl IntoIterator<Item = CallableCandidate<'a>>,
-    name: &str,
-    argc: usize,
-) -> String {
-    let declarations = declarations.into_iter().collect::<Vec<_>>();
-    if declarations.iter().any(|candidate| candidate.name == name) {
+pub fn resolve_callable_symbol(table: &impl CallableLookup, name: &str, argc: usize) -> String {
+    if table.contains(name) {
         return name.to_string();
     }
     let expected_params = if name.contains('.') { argc + 1 } else { argc };
-    let mut matches = declarations.iter().filter(|candidate| {
-        is_overload_of(candidate.name, name) && candidate.n_params == expected_params
-    });
+    let mut matches = table
+        .overloads(name)
+        .filter(|candidate| candidate.n_params == expected_params);
     let Some(first) = matches.next() else {
         return name.to_string();
     };
@@ -126,10 +131,7 @@ pub fn resolve_callable_symbol<'a>(
     // overload answers when it exists (`String.__eq__$ov$Self` beside
     // `String.__eq__$ov$StringSpan`).
     let self_shaped = format!("{name}{OV_SEP}{}", vec!["Self"; argc].join("$"));
-    if declarations
-        .iter()
-        .any(|candidate| candidate.name == self_shaped)
-    {
+    if table.contains(&self_shaped) {
         return self_shaped;
     }
     name.to_string()
@@ -137,8 +139,8 @@ pub fn resolve_callable_symbol<'a>(
 
 /// Resolve a checker-selected method against a concrete receiver declaration
 /// view, including the borrowed-iterator alternate used by VM protocol calls.
-pub fn resolve_method_symbol<'a>(
-    declarations: impl IntoIterator<Item = CallableCandidate<'a>> + Clone,
+pub fn resolve_method_symbol(
+    table: &impl CallableLookup,
     receiver_type: &str,
     method: &str,
     resolved: Option<&str>,
@@ -151,23 +153,16 @@ pub fn resolve_method_symbol<'a>(
         }
         for selected in selected_symbols {
             if let Some(retargeted) = retarget_method_symbol(&selected, receiver_type)
-                && declarations
-                    .clone()
-                    .into_iter()
-                    .any(|candidate| candidate.name == retargeted)
+                && table.contains(&retargeted)
             {
                 return retargeted;
             }
-            if declarations
-                .clone()
-                .into_iter()
-                .any(|candidate| candidate.name == selected)
-            {
+            if table.contains(&selected) {
                 return selected;
             }
         }
     }
-    resolve_callable_symbol(declarations, &format!("{receiver_type}.{method}"), argc)
+    resolve_callable_symbol(table, &format!("{receiver_type}.{method}"), argc)
 }
 
 /// A type or value argument as a specialization clone spells it.

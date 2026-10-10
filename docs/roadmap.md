@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R582**.
+Next free ID: **R584**.
 
 ## Ordered Work
 
@@ -50,23 +50,24 @@ Scope: what remains of the plan's stages, and what the pipeline order still
 leaves to close. A defect found on the way is filed by its kind; a
 divergence from the pin goes to a catch-up track, however small.
 
-- [ ] **R580 (P6) The elaborator scans every package function's name to
-  resolve one call**
+- [ ] **R582 (P6) An importer drop-elaborates and verifies a package body
+  each time a process decodes it**
 
-  `native::mono` walks all 874 rows of the package's function table each
-  time it resolves a callee, collects a candidate list, or looks for a
-  pack constructor.
-  - The sites are `mono/bodies.rs::{keys, candidates}`, fed to
-    `resolve_callable_symbol` and the specializer's `function_order`,
-    `negates_equality`, and `runtime_pack_constructor` scans.
-  - Since R573 the directory is read in place, so each scan reads every
-    name from the mapping: `backend.prepare.elaborate` rose from about
-    1.55 to 1.62 ms on Hello World, release, the largest phase of its
-    3.2 ms.
-  - Upstream finds an overload set by looking its name up.
-  - The lever: a range lookup over the by-name function permutation, for
-    the `name`, `name$ov$…`, and `Type.method` prefixes a call can resolve
-    to.
+  The package holds each body before drop elaboration, so the elaborator's
+  first `get` of a library body runs `BodyFinish` (the driver's
+  `analysis::elaborate_drops_function`, then `verify_function_in`) on it.
+  - The site is `PackageBodies::get` (`mir/text/package.rs`), finished by
+    `src/package.rs::open` through `PackageBodies::finishing`.
+  - It is about 0.54 ms of Hello World's 1.5 ms `backend.prepare.elaborate`
+    (release; `_uint_digits_at` alone takes 268 µs to finish), and 9–11 ms
+    of method-heavy fixtures such as
+    `assign_interior_view_to_other_local`.
+  - The obvious lever is to store the finished body in the package, but
+    the package module docs say upstream runs its lifetime pass on each
+    package body in the importer. Whether upstream's package holds bodies
+    before or after destructor insertion was not verified; settle that
+    first, and follow upstream.
+  - Found while landing R580 (2026-10-10).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -5172,6 +5173,23 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - A bare `List[ref Int]` still parses and is rejected by the checker, so a `Ty::Ref` element type can still be formed until it is rejected.
   - Depends on nothing.
   - Model: Opus, Planned.
+
+- [ ] **R583 The VM resolves a callee by name at run time, scanning every
+  concrete function**
+
+  Problem: `Prog::{overload_name, runtime_method_name, constructor_name,
+  index_of}` (`mojito-vm/src/backend/vm.rs`) walk the whole concrete
+  program for each dispatch they resolve, while upstream resolves every
+  call at compile time and the VM runs concrete MIR the elaborator already
+  resolved.
+  - The VM's `CallableLookup` implementation scans `mir.functions` for both
+    the exact name and the overload family.
+  - The lever is to have the elaborator record each concrete call's
+    target, so the VM resolves no name; failing that, an index by name.
+  - Found while landing R580 (2026-10-10), which moved the elaborator's
+    resolution onto by-name lookups.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
 
 ### Grow The CPU Standard Library *(demand-first)*
 

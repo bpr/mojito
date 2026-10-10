@@ -110,21 +110,6 @@ impl<'a> Specializer<'a> {
             entry_map.insert(entry.clone(), name);
         }
         self.drain()?;
-        let function_order = self
-            .source
-            .functions
-            .iter()
-            .map(|(name, _)| name.as_str())
-            .chain(self.functions.keys().filter(|name| {
-                !self
-                    .source
-                    .functions
-                    .iter()
-                    .any(|(resident, _)| resident == name)
-            }))
-            .enumerate()
-            .map(|(index, name)| (name, index))
-            .collect::<HashMap<_, _>>();
         let instance_templates = self
             .instances
             .iter()
@@ -135,14 +120,14 @@ impl<'a> Specializer<'a> {
                 .get(name.as_str())
                 .copied()
                 .unwrap_or(name);
-            function_order.get(template).copied().unwrap_or(usize::MAX)
+            self.functions.position(template).unwrap_or(usize::MAX)
         });
         self.output_function_decls.sort_by_key(|decl| {
             let template = instance_templates
                 .get(decl.lowered_name.as_str())
                 .copied()
                 .unwrap_or(decl.lowered_name.as_str());
-            function_order.get(template).copied().unwrap_or(usize::MAX)
+            self.functions.position(template).unwrap_or(usize::MAX)
         });
         let program = MirProgram {
             functions: self.output_functions,
@@ -1780,8 +1765,7 @@ impl<'a> Specializer<'a> {
             return Some(target.to_string());
         }
         let init = format!("{target}.__init__");
-        let resolved =
-            mojito_symbol::symbol::resolve_callable_symbol(self.functions.candidates(), &init, 1);
+        let resolved = mojito_symbol::symbol::resolve_callable_symbol(&self.functions, &init, 1);
         self.functions
             .contains_key(resolved.as_str())
             .then_some(resolved)
@@ -2061,7 +2045,7 @@ impl<'a> Specializer<'a> {
                                 }
                                 let init_base = format!("{}.__init__", func.0);
                                 let init = mojito_symbol::symbol::resolve_callable_symbol(
-                                    self.functions.candidates(),
+                                    &self.functions,
                                     &init_base,
                                     args.len() + kwargs.len(),
                                 );
@@ -2229,7 +2213,7 @@ impl<'a> Specializer<'a> {
                         // resolves against `List.*` and gets its instance
                         // identity from `infer_call`'s receiver binding.
                         let mut target = mojito_symbol::symbol::resolve_method_symbol(
-                            self.functions.candidates(),
+                            &self.functions,
                             nominal_template(receiver_name),
                             method,
                             resolved.as_deref(),
@@ -2253,7 +2237,7 @@ impl<'a> Specializer<'a> {
                             // instance for the lowered expansion.
                             if method == mojito_symbol::symbol::WRITE_FORMATTED {
                                 let write_string = mojito_symbol::symbol::resolve_callable_symbol(
-                                    self.functions.candidates(),
+                                    &self.functions,
                                     &format!("{}.write_string", nominal_template(receiver_name)),
                                     1,
                                 );
@@ -2460,7 +2444,7 @@ impl<'a> Specializer<'a> {
                             continue;
                         };
                         let target = mojito_symbol::symbol::resolve_method_symbol(
-                            self.functions.candidates(),
+                            &self.functions,
                             nominal_template(receiver_name),
                             "__call__",
                             resolved.as_deref(),
@@ -2880,16 +2864,7 @@ impl<'a> Specializer<'a> {
                 "__call__",
             ] {
                 let base = format!("{template_name}.{method}");
-                let candidates = self
-                    .functions
-                    .keys()
-                    .filter(|candidate| {
-                        *candidate == base
-                            || mojito_symbol::symbol::is_overload_of(candidate, &base)
-                    })
-                    .map(str::to_string)
-                    .collect::<Vec<_>>();
-                for candidate in candidates {
+                for candidate in self.functions.family(&base) {
                     let Some(function_decl) = self.declarations.get(candidate.as_str()) else {
                         continue;
                     };
@@ -2933,8 +2908,9 @@ impl<'a> Specializer<'a> {
         };
         let declares = |method: &str| {
             let base = format!("{}.{method}", nominal_template(name));
-            self.functions.keys().any(|symbol| {
-                symbol
+            self.functions.prefixed(base.clone()).any(|candidate| {
+                candidate
+                    .name
                     .strip_prefix(base.as_str())
                     .is_some_and(|rest| rest.is_empty() || rest.starts_with('$'))
             })
@@ -2948,9 +2924,10 @@ impl<'a> Specializer<'a> {
     /// which arity-keyed selection cannot see — the VM's `constructor_name`
     /// fallback.
     fn runtime_pack_constructor(&self, init_base: &str) -> Option<String> {
-        let mut packs = self.functions.keys().filter(|name| {
-            mojito_symbol::symbol::is_overload_of(name, init_base)
-                && self.declarations.get(name).is_some_and(|declaration| {
+        let mut packs = self.functions.overloads(init_base).filter(|candidate| {
+            self.declarations
+                .get(candidate.name)
+                .is_some_and(|declaration| {
                     declaration.variadic.as_ref().is_some_and(|element| {
                         matches!(element, mojito_types::types::Ty::RuntimePack(_))
                             || mojito_types::types::pack_spread(std::slice::from_ref(element))
@@ -2958,7 +2935,7 @@ impl<'a> Specializer<'a> {
                     })
                 })
         });
-        let first = (*packs.next()?).to_string();
+        let first = packs.next()?.name.to_string();
         packs.next().is_none().then_some(first)
     }
 

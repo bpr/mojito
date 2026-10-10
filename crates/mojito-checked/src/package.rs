@@ -464,10 +464,28 @@ impl DeclarationDirectory {
     /// The position of the function `name` in name order.
     fn function_position(&self, name: &str) -> Option<usize> {
         self.find(Section::FunctionsByName, |position| {
-            let row = self.word(Section::FunctionsByName, position, 0) as usize;
-            self.text(self.word(Section::Functions, row, 0))
-                .cmp(name.as_bytes())
+            self.function_name(position).cmp(name.as_bytes())
         })
+    }
+
+    /// The positions in name order of every function whose name starts
+    /// with `prefix`: one run, since names sort by their bytes.
+    fn function_positions(&self, prefix: &str) -> Range<usize> {
+        let prefix = prefix.as_bytes();
+        let rows = 0..self.rows(Section::FunctionsByName);
+        let start = partition_point(rows.clone(), |position| {
+            self.function_name(position) < prefix
+        });
+        let end = partition_point(start..rows.end, |position| {
+            self.function_name(position).starts_with(prefix)
+        });
+        start..end
+    }
+
+    /// The name bytes of the function at `position` in name order.
+    fn function_name(&self, position: usize) -> &[u8] {
+        let row = self.word(Section::FunctionsByName, position, 0) as usize;
+        self.text(self.word(Section::Functions, row, 0))
     }
 
     /// The position of the struct `name` in name order.
@@ -635,6 +653,28 @@ impl PackageDeclarations {
             let row = directory.word(Section::FunctionsByName, position, 0) as usize;
             directory.string(directory.word(Section::Functions, row, 0))
         })
+    }
+
+    /// The name and runtime parameter count of every function whose name
+    /// starts with `prefix`, in name order, decoding nothing: a range of
+    /// the by-name table, as upstream looks an overload set up by name.
+    pub fn functions_prefixed<'s>(
+        &'s self,
+        prefix: &str,
+    ) -> impl Iterator<Item = (&'s str, usize)> + use<'s> {
+        let directory = &self.directory;
+        directory.function_positions(prefix).map(|position| {
+            let row = directory.word(Section::FunctionsByName, position, 0) as usize;
+            (
+                directory.string(directory.word(Section::Functions, row, 0)),
+                directory.word(Section::Functions, row, 3) as usize,
+            )
+        })
+    }
+
+    /// How many structs the package declares.
+    pub const fn struct_count(&self) -> usize {
+        self.directory.rows(Section::Structs)
     }
 
     /// Every function's name and runtime parameter count, in the order the
