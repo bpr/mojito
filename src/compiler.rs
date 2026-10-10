@@ -414,12 +414,11 @@ impl Compiler {
     }
 
     /// Compile `linked`, importing `package` when there is one: the
-    /// package's trait declarations, which its link read from their records
-    /// as the package's build prepared them, and its installed declaration
-    /// interfaces are read beside the program's own statements, and only the
-    /// program's own are prepared, elaborated, and checked. A package build (`exports`) records its prepared program
-    /// there, and its check exports its module constants as its
-    /// elaboration resolved them.
+    /// package's installed declaration interfaces are read beside the
+    /// program's own statements, which are all `linked` holds, and only the
+    /// program's own are prepared, elaborated, and checked. A package build
+    /// (`exports`) records its prepared program there, and its check exports
+    /// its module constants as its elaboration resolved them.
     fn compile_importing(
         &self,
         linked: &[Stmt],
@@ -428,15 +427,6 @@ impl Compiler {
         exports: Option<&mut Vec<Stmt>>,
     ) -> Result<CompiledProgram, CompilerError> {
         let _compile = timing::span("compile");
-        let (traits, own): (Vec<&Stmt>, Vec<Stmt>) = match &package {
-            Some((package, _)) => {
-                let (traits, own): (Vec<&Stmt>, Vec<&Stmt>) = linked
-                    .iter()
-                    .partition(|statement| package.interface.compiles(statement.module.as_deref()));
-                (traits, own.into_iter().cloned().collect())
-            }
-            None => (Vec::new(), linked.to_vec()),
-        };
         if let Some((package, installed)) = &package {
             context.import_package(Arc::clone(&package.interface));
             context.install(installed.clone());
@@ -444,8 +434,7 @@ impl Compiler {
         let prepared = {
             let _prepare = timing::span("prepare");
             prepare_importing(
-                own,
-                &traits,
+                linked.to_vec(),
                 package.as_ref().map(|(_, installed)| installed),
             )
             .map_err(CompilerError::Comptime)?
@@ -611,10 +600,10 @@ fn importing(
     Some((package, installed))
 }
 
-/// Whether `linked` can import `package`: a statement from one of the
-/// package's modules is a trait declaration the package made, and none of the
-/// program's own reuses a name the package declares, as a second copy of a
-/// packaged module, or an entry file inside the library, would.
+/// Whether `linked` can import `package`: the link replays no declaration
+/// of the package's modules, so no statement comes from one, and none of
+/// the program's own reuses a name the package declares, as a second copy
+/// of a packaged module, or an entry file inside the library, would.
 fn imports_cleanly(linked: &[Stmt], package: &PackageInterface) -> bool {
     linked.iter().all(|statement| {
         let declared = match &statement.kind {
@@ -624,7 +613,7 @@ fn imports_cleanly(linked: &[Stmt], package: &PackageInterface) -> bool {
             | StmtKind::Comptime { name, .. } => package.names.contains(name),
             _ => false,
         };
-        declared == package.compiles(statement.module.as_deref())
+        !declared && !package.compiles(statement.module.as_deref())
     })
 }
 

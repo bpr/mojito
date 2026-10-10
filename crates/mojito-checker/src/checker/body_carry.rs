@@ -575,6 +575,7 @@ fn carried_result(checker: &Checker) -> DiscoveryResult {
         truthiness_conditions: checker.truthiness_conditions.take(),
         rebind_assertions: checker.rebind_assertions.take(),
         declaration_effects: checker.declaration_effects.take(),
+        default_wrappers: checker.checked_default_wrappers(),
     }
 }
 

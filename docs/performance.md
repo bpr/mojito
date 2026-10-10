@@ -1027,5 +1027,25 @@ package shrinks from 1.74 to 1.64 MB.
 | keyed | 34.2 → 32.9 (−4%) | 1.24 → 0.10 | 0.80 → 0.70 | 0.18 → 0.09 |
 | stdlib_heavy | 71.0 → 69.7 (−2%) | 1.27 → 0.10 | 0.65 → 0.55 | 0.20 → 0.10 |
 
-The trait declarations stay in the records until a conformer's wrapper is
-built from the trait's resolved signature (R568).
+The trait declarations stayed in the records until a conformer's wrapper
+was built from the trait's resolved signature (R568, below).
+
+### The importer's link replays no declaration (2026-10-10, R568)
+
+Same environment as the tables above, on the R568 tree against the R559
+tree (`a2676e53`), both importing the package; `hyperfine` means of 3 × 60
+interleaved runs, and `--timings` over 15 interleaved runs. A conformer's
+wrapper for a trait default is built by the check from the default's
+resolved signature, which the trait's declaration interface records, so a
+module record holds no declaration and Hello World's link replays none (6
+before). The change is below the noise: the six bodiless traits it no
+longer decodes, stamps, or partitions cost about 20 µs of
+`package.module`, which the check's wrapper planning spends again. The
+package grows from 1.632 to 1.640 MB, the defaults' recorded signatures.
+
+| Program | hyperfine wall | package.module |
+|---|---:|---:|
+| hello | 6.4 / 6.9 / 6.2 → 6.4 / 6.7 / 6.2 | 0.12 → 0.10 |
+| generic | 15.8 → 14.7 | — |
+| keyed | 33.2 → 33.6 | — |
+| stdlib_heavy | 69.6 → 70.6 | — |

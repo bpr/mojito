@@ -6,7 +6,7 @@
 //! kept here is `MatchError::into_type_error`, the checker-facing rendering
 //! that must live beside the type it converts.
 
-use crate::ast::{FnParam, ParamKind};
+use crate::ast::{DeclaredParam, ParamKind};
 use mojito_common::error::TypeError;
 
 #[derive(Clone, Copy)]
@@ -214,20 +214,23 @@ pub fn match_fieldwise_slots(
     clippy::single_option_map,
     reason = "all 14 call sites thread Option<usize> through unchanged"
 )]
-pub fn regular_marker_index(params: &[FnParam], marker: Option<usize>) -> Option<usize> {
+pub fn regular_marker_index<P: DeclaredParam>(
+    params: &[P],
+    marker: Option<usize>,
+) -> Option<usize> {
     marker.map(|index| {
         params[..index]
             .iter()
             .filter(|parameter| {
-                parameter.kind == ParamKind::Regular && !parameter.is_named_result()
+                parameter.kind() == ParamKind::Regular && !parameter.is_named_result()
             })
             .count()
     })
 }
 
 /// Effective keyword-only boundary after combining `*` and `*args` markers.
-pub fn effective_keyword_only_index(
-    params: &[FnParam],
+pub fn effective_keyword_only_index<P: DeclaredParam>(
+    params: &[P],
     keyword_only: Option<usize>,
     variadic_index: Option<usize>,
 ) -> Option<usize> {

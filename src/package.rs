@@ -19,7 +19,7 @@ use crate::mir::text::package::{
 };
 use crate::module::{LinkOptions, bundled_root, link_source_recording};
 use crate::module_package::{ModuleIdentity, PackageModules};
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeSet, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, OnceLock};
 
@@ -182,35 +182,35 @@ fn build(root: &Path, header: &PackageHeader) -> Result<Vec<u8>, CompilerError> 
     // The entry sits where no `std` resolves beside it, so every import
     // resolves through the bundled root, as an importer's does.
     let entry = root.join(".package").join("std.mojo");
-    let (linked, mut records) = link_source_recording(&source, &entry, LinkOptions::default())
+    let (linked, records) = link_source_recording(&source, &entry, LinkOptions::default())
         .map_err(CompilerError::Module)?;
     let (compiled, exports) = Compiler::default().compile_for_package(&linked)?;
-    // A record holds its module's trait declarations as the build prepared
-    // them, which an importer's conformers inherit from; every other
-    // declaration an importer reads from the declaration interfaces.
+    // An importer reads every library declaration from the declaration
+    // interfaces, so a record holds none: each declaring module needs only
+    // its record.
     let entry_module = entry.display().to_string();
     let packaged: Vec<_> = exports
         .prepared
         .iter()
         .filter(|statement| statement.module.as_deref() != Some(entry_module.as_str()))
         .collect();
-    let mut prepared: HashMap<String, Vec<crate::ast::Stmt>> = HashMap::new();
-    for statement in &packaged {
-        let Some(module) = &statement.module else {
-            continue;
-        };
-        let canonical = Path::new(module)
-            .canonicalize()
-            .map_or_else(|_| module.clone(), |path| path.display().to_string());
-        let declarations = prepared.entry(canonical).or_default();
-        if matches!(statement.kind, crate::ast::StmtKind::Trait { .. }) {
-            declarations.push((*statement).clone());
-        }
-    }
-    for (identity, record) in &mut records {
-        record.replace_declarations(prepared.remove(&identity.canonical).unwrap_or_default());
-    }
-    if let Some(path) = prepared.keys().next() {
+    let recorded: HashSet<&str> = records
+        .iter()
+        .map(|(identity, _)| identity.canonical.as_str())
+        .collect();
+    let declaring: BTreeSet<&String> = packaged
+        .iter()
+        .filter_map(|statement| statement.module.as_ref())
+        .collect();
+    if let Some(path) = declaring
+        .into_iter()
+        .map(|module| {
+            Path::new(module)
+                .canonicalize()
+                .map_or_else(|_| module.clone(), |path| path.display().to_string())
+        })
+        .find(|canonical| !recorded.contains(canonical.as_str()))
+    {
         return Err(CompilerError::Verify(vec![format!(
             "the prepared library declares in `{path}`, which its link recorded no module for"
         )]));
@@ -480,7 +480,6 @@ mod tests {
         let entry = Path::new("probe.mojo");
         let from_source = link_source_with_options(&source, entry, LinkOptions::default())
             .expect("links from source");
-        let prepared = crate::comptime::prepare(from_source.clone()).expect("prepares");
         let from_package =
             link_source_with_package(&source, entry, LinkOptions::default(), &package.modules)
                 .expect("links from the package")
@@ -494,31 +493,9 @@ mod tests {
                 .filter(|statement| !packaged(statement))
                 .eq(from_package.iter().filter(|statement| !packaged(statement)))
         );
-        // A package module's statements are, in order, the traits preparing
-        // the source link gives that module, bodiless.
-        for module in &package.interface.modules {
-            let in_module =
-                |statement: &&crate::ast::Stmt| statement.module.as_ref() == Some(module);
-            let expected: Vec<_> = prepared
-                .iter()
-                .filter(in_module)
-                .filter(|statement| matches!(statement.kind, crate::ast::StmtKind::Trait { .. }))
-                .cloned()
-                .map(|mut statement| {
-                    crate::ast::clear_bodies(&mut statement);
-                    statement
-                })
-                .collect();
-            let linked: Vec<_> = from_package.iter().filter(in_module).collect();
-            assert_eq!(expected.len(), linked.len(), "{module}");
-            for (source, packaged) in expected.iter().zip(linked) {
-                assert_eq!(source, packaged);
-                assert_eq!(
-                    (&source.module, source.span),
-                    (&packaged.module, packaged.span)
-                );
-            }
-        }
+        // An importer reads every package declaration from the interfaces,
+        // so its link replays none.
+        assert!(!from_package.iter().any(|statement| packaged(&statement)));
     }
 
     #[test]

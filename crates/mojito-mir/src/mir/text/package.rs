@@ -48,7 +48,7 @@ use std::ops::{Deref, Range};
 use std::sync::{Arc, Mutex, OnceLock};
 
 /// The container format this compiler writes and reads.
-pub const PACKAGE_FORMAT: &str = "mojito-package 9";
+pub const PACKAGE_FORMAT: &str = "mojito-package 10";
 
 /// A package file's bytes: mapped from the file, or owned when the package
 /// was just built.

@@ -74,7 +74,7 @@ Explain `Ty::Func` and generic function signatures, required/default parameters,
 
 ### 15. Traits, Bounds, and Associated Facts
 
-Introduce built-in and user-defined traits, nominal conformance, method requirements, receiver conventions, associated compile-time values/types, and opaque bounded type parameters. Organize the implemented trait families by capability—equality, ordering, hashing, sizing, numeric operations, iteration, and lifecycle markers—and explain how a bound grants operations without exposing a concrete representation.
+Introduce built-in and user-defined traits, nominal conformance, method requirements, receiver conventions, associated compile-time values/types, and opaque bounded type parameters. Organize the implemented trait families by capability—equality, ordering, hashing, sizing, numeric operations, iteration, and lifecycle markers—and explain how a bound grants operations without exposing a concrete representation. How a conformer inherits a trait default — a wrapper the check builds from the default's resolved signature — and why a spelled method of the default's shape suppresses it even where upstream keeps both is worked through in `docs/notes/trait-default-suppression.md`.
 
 ### 16. Methods, `Self`, and Receiver Conventions
 

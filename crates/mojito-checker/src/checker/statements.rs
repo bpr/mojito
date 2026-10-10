@@ -13,6 +13,7 @@ impl Checker {
         // An importer's installed package sets stay: its own statements add
         // to them.
         self.overload_sets.scan_more(stmts);
+        self.default_wrappers = self.plan_default_wrappers(stmts)?;
         self.method_binder_owners =
             mojito_symbol::symbol::MethodBinderOwners::scan(stmts, &self.overload_sets);
         let applicable =
@@ -2917,7 +2918,7 @@ impl Checker {
                             || ref_parameter_is_writable(param, type_params),
                     );
                     if result.is_ok() {
-                        self.record_owned_pack(param);
+                        self.record_owned_pack(&param.name, param.kind, param.convention);
                     }
                     if result.is_ok()
                         && matches!(param.convention, Some(mojito_ast::ast::ArgConvention::Ref))

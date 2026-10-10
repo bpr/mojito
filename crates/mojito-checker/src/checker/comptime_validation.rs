@@ -2358,10 +2358,15 @@ impl Checker {
     }
 
     /// Note a positional collector declared `var *args` once it is bound.
-    pub(super) fn record_owned_pack(&mut self, param: &FnParam) {
-        if param.kind == mojito_ast::ast::ParamKind::Variadic
-            && matches!(param.convention, Some(ArgConvention::Var))
-            && let Some(owner) = self.lookup_owner(&param.name)
+    pub(super) fn record_owned_pack(
+        &mut self,
+        name: &str,
+        kind: mojito_ast::ast::ParamKind,
+        convention: Option<ArgConvention>,
+    ) {
+        if kind == mojito_ast::ast::ParamKind::Variadic
+            && matches!(convention, Some(ArgConvention::Var))
+            && let Some(owner) = self.lookup_owner(name)
         {
             self.owned_packs.insert(owner);
         }

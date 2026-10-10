@@ -3,17 +3,15 @@
 //! Upstream's `createBinaryPackageState` reads a package's module tree and
 //! registers each module's declarations from the package, never reading
 //! the library's source. A package records, for every module it compiled,
-//! what linking that module from source would have produced: the modules
-//! its link loaded, in order, its export tables, and its trait
-//! declarations as the package's build prepared them, whose bodies are in
-//! the package already. Every other declaration an importer reads from the
-//! package's declaration interfaces. An importer's link replays the record
-//! in place of reading, parsing, and resolving the module.
+//! what linking that module from source would have produced but its
+//! declarations: the modules its link loaded, in order, and its export
+//! tables. An importer reads every declaration from the package's
+//! declaration interfaces, and its link replays the record in place of
+//! reading, parsing, and resolving the module.
 //!
 //! A record is encoded as binary bytecode (`postcard` over the AST's serde
 //! form), one per module, and decoded only when a link reaches its module.
 
-use mojito_ast::ast::Stmt;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
@@ -109,7 +107,7 @@ pub(crate) struct PackagedModule {
     bytes: Vec<u8>,
 }
 
-/// What linking one module from source produced.
+/// What linking one module from source produced, its declarations aside.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PackageModule {
     /// The module's dotted name (`std.io.file`), which its linked names
@@ -124,24 +122,9 @@ pub struct PackageModule {
     /// The namespaces it exposes, by relative qualified path, and the
     /// declarations visible through each.
     pub(crate) namespaces: BTreeMap<String, BTreeMap<String, String>>,
-    /// Its trait declarations, as the package build's `prepare` left them,
-    /// in order, bodies emptied ([`mojito_ast::ast::clear_bodies`]). The
-    /// link records every declaration as linked; the build replaces them
-    /// with the traits ([`Self::replace_declarations`]).
-    pub(crate) declarations: Vec<Stmt>,
 }
 
 impl PackageModule {
-    /// Record `declarations`, the module's trait declarations as the
-    /// package build prepared them, in place of its linked declarations;
-    /// their bodies are emptied.
-    pub fn replace_declarations(&mut self, mut declarations: Vec<Stmt>) {
-        declarations
-            .iter_mut()
-            .for_each(mojito_ast::ast::clear_bodies);
-        self.declarations = declarations;
-    }
-
     /// This record as bytecode.
     pub fn encode(&self) -> Result<Vec<u8>, String> {
         postcard::to_stdvec(self).map_err(|error| format!("module `{}`: {error}", self.name))
@@ -163,11 +146,6 @@ mod tests {
             loads: vec!["std.other".to_string()],
             exports: BTreeMap::from([("f".to_string(), "__module$std$probe$f".to_string())]),
             namespaces: BTreeMap::new(),
-            declarations: mojito_parser::parser::Parser::new(mojito_lexer::lexer::Lexer::new(
-                "def f(x: Int = 1) -> Int:\n    return x\n",
-            ))
-            .parse_program()
-            .expect("parses"),
         };
         let bytes = record.encode().expect("encodes");
         let identity = |name: &str, file: &str| ModuleIdentity {
@@ -188,7 +166,6 @@ mod tests {
         );
         let canonical = Path::new("/lib/std/probe.mojo");
         let read = package.module("std.probe", canonical).expect("decodes");
-        assert_eq!(read.declarations, record.declarations);
         assert_eq!(read.loads, record.loads);
         assert_eq!(read.exports, record.exports);
         assert_eq!(

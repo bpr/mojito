@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R570**.
+Next free ID: **R572**.
 
 ## Ordered Work
 
@@ -49,31 +49,6 @@ belongs to is named in its title.
 Scope: what remains of the plan's stages, and what the pipeline order still
 leaves to close. A defect found on the way is filed by its kind; a
 divergence from the pin goes to a catch-up track, however small.
-
-- [ ] **R568 (P6) An importer's conformer wrapper is cloned from a package
-  trait default's syntax, so the module record still carries the
-  package's trait declarations**
-
-  `prepare_importing` builds a conformer's wrapper for an inherited
-  package default from the trait's prepared AST, which the link replays
-  from each module record.
-  - `synthesize_trait_default_wrappers` reads each trait's `TraitMethod`s:
-    their parameters, defaults, and overload keys.
-  - Every other package declaration the front end reads is resolved, from
-    the declaration interfaces (R559).
-  - Upstream builds the wrapper from the trait function's resolved
-    signature (`StructEmitter::synthesizeDefaultTraitMethodWrapper` takes
-    the `FnOp`).
-  - `TraitInfo` records no defaults and no overload key matching the
-    conformer's, and a method's check, HIR, and MIR read its AST parameter
-    types, so a wrapper with a resolved signature needs a check entry over
-    a `MethodSig`.
-  - The lever: record each default in `TraitInfo`, register the wrapper at
-    the check's struct registration from that signature, and drop the
-    declarations from the module record (`PackageModule::declarations`).
-  - R551 changes only the callee the wrapper names.
-  - Depends on nothing.
-  - Model: Fable, Not Planned.
 
 - [ ] **R560 (P6) A package records each library declaration three times,
   once per phase**
@@ -1897,6 +1872,43 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   already requires is accepted at the pin, while Mojito reports "'a' is
   already declared in this scope".
   - Found while landing R544 (2026-10-09).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R570 A conformer method that does not satisfy a trait default
+  still suppresses it**
+
+  Problem: `trait T` defaulting `def f(self) -> Int` and `struct S(T)`
+  spelling `def f(self) -> String` is accepted at the pin, which keeps the
+  default's wrapper beside `S.f` and rejects only a call of either as
+  ambiguous, while Mojito reports "struct 'S' method 'f' does not match
+  the signature required by trait 'T'".
+  - Mojito suppresses a default by its parameter shape
+    (`trait_defaults::inherited_defaults`), upstream by satisfaction
+    (`filterOverloadSetForValueType`).
+  - Keeping both needs two methods of one parameter shape on one struct,
+    whose symbols collide: `SignatureKey` carries no result type, and the
+    `OverloadSets` prescan keys a name by arity.
+  - Rationale: `docs/notes/trait-default-suppression.md`.
+  - Found while landing R568 (2026-10-10).
+  - Depends on nothing.
+  - Model: Fable, Not Planned.
+
+- [ ] **R571 A conformer cannot inherit a trait default whose signature
+  names an origin**
+
+  Problem: a default `def pick(self, ref a: Int, ref b: Int) -> ref [a] Int`
+  inherited by `struct S(T)` prints `4` at the pin for `S(1).pick(a, b)`,
+  while Mojito reports that a wrapper over such a signature is not
+  supported.
+  - The check builds a conformer's wrapper from the default's resolved
+    signature (`trait_defaults::default_wrappers`), and the method origin
+    binders and origin clauses it would bind are erased from it.
+  - `DefaultShape::unforwardable` rejects a receiver or parameter origin
+    clause, a reference return, and an origin parameter.
+  - Before R568 the cloned wrapper failed too, with "returned reference
+    escapes storage outside its declared origin".
+  - Found while landing R568 (2026-10-10).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

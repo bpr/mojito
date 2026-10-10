@@ -669,17 +669,62 @@ pub struct FnParam {
     pub origin: Option<OriginSpec>,
 }
 
-impl FnParam {
+/// A declared parameter as a call binds it and a lowering frames it: its
+/// name, kind, convention, and default, whatever holds its type.
+pub trait DeclaredParam {
+    fn name(&self) -> &str;
+    fn kind(&self) -> ParamKind;
+    fn convention(&self) -> Option<ArgConvention>;
+    fn default_value(&self) -> Option<&Expr>;
+
     /// Whether this is a named `out` result: a callee-local slot the callable
     /// returns, which no caller passes.
-    pub fn is_named_result(&self) -> bool {
-        self.kind == ParamKind::Regular && self.convention == Some(ArgConvention::Out)
+    fn is_named_result(&self) -> bool {
+        self.kind() == ParamKind::Regular && self.convention() == Some(ArgConvention::Out)
+    }
+}
+
+impl<P: DeclaredParam + ?Sized> DeclaredParam for &P {
+    fn name(&self) -> &str {
+        (**self).name()
+    }
+
+    fn kind(&self) -> ParamKind {
+        (**self).kind()
+    }
+
+    fn convention(&self) -> Option<ArgConvention> {
+        (**self).convention()
+    }
+
+    fn default_value(&self) -> Option<&Expr> {
+        (**self).default_value()
+    }
+}
+
+impl DeclaredParam for FnParam {
+    fn name(&self) -> &str {
+        &self.name
+    }
+
+    fn kind(&self) -> ParamKind {
+        self.kind
+    }
+
+    fn convention(&self) -> Option<ArgConvention> {
+        self.convention
+    }
+
+    fn default_value(&self) -> Option<&Expr> {
+        self.default.as_ref()
     }
 }
 
 /// The named `out` result among `params`, when the callable declares one.
 pub fn named_result(params: &[FnParam]) -> Option<&FnParam> {
-    params.iter().find(|param| param.is_named_result())
+    params
+        .iter()
+        .find(|param| DeclaredParam::is_named_result(*param))
 }
 
 /// Whether a `FnParam` is a plain parameter or a variadic (`*args`/`**kwargs`).
@@ -840,11 +885,6 @@ pub enum MethodProvenance {
     /// serves every instance of a generic struct, which mints no clone of
     /// it.
     SynthesizedDefault,
-    /// The forwarding wrapper a conformer gets for a trait default it does
-    /// not spell, as upstream's `synthesizeDefaultTraitMethodWrapper`: its
-    /// body is one call of the default's function with `Self` bound to the
-    /// conformer.
-    TraitDefaultWrapper,
 }
 
 /// A method in a `trait`: either a **requirement** (`def …:` with a `...`
@@ -2439,32 +2479,6 @@ impl SyntaxOrigins {
         id.derivation().map_or(id, |(parent, ordinal)| {
             mojito_common::token::SyntaxId::derived(self.origin(parent), ordinal)
         })
-    }
-}
-
-/// Empty `statement`'s bodies, leaving its declaration.
-///
-/// A function's or method's body is emptied, and a trait default's, which
-/// keeps its (empty) body so its trait still declares a default. A compiled
-/// package's declarations travel so: their bodies are in the package
-/// already.
-pub fn clear_bodies(statement: &mut Stmt) {
-    match &mut statement.kind {
-        StmtKind::Def { body, .. } => body.clear(),
-        StmtKind::Struct { methods, .. } => {
-            for method in methods {
-                method.body.clear();
-            }
-        }
-        StmtKind::Trait { methods, .. } => {
-            for body in methods
-                .iter_mut()
-                .filter_map(|method| method.default_body.as_mut())
-            {
-                body.clear();
-            }
-        }
-        _ => {}
     }
 }
 

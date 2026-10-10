@@ -2,6 +2,44 @@
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
+use mojito_ast::ast::DeclaredParam;
+
+/// A method body as its check binds and walks it, whether the method was
+/// spelled or is a struct's wrapper of a trait default it inherits.
+pub(super) struct MethodBody<'a> {
+    pub(super) name: &'a str,
+    /// Every declared parameter but the receiver, in order.
+    pub(super) params: Vec<BodyParam<'a>>,
+    pub(super) self_writable: bool,
+    /// Whether the body initializes its `out self` receiver.
+    pub(super) initializing: bool,
+    /// The callable identity its transfer effects are committed under.
+    pub(super) effect_key: String,
+    pub(super) method_decls: &'a [ParamDecl],
+    pub(super) ref_return: Option<mojito_types::origin::RefSig>,
+    /// The return annotation a `return` re-resolves
+    /// ([`Checker::body_return_annotation`]).
+    pub(super) return_annotation: Option<(SourceType, bool)>,
+    /// Whether the method declares compile-time parameters of its own.
+    pub(super) generic: bool,
+    pub(super) ret_ty: &'a Ty,
+    pub(super) body: &'a [Stmt],
+}
+
+/// A method parameter as its body binds it.
+#[derive(Clone, Copy)]
+pub(super) struct BodyParam<'a> {
+    pub(super) name: &'a str,
+    pub(super) kind: mojito_ast::ast::ParamKind,
+    pub(super) convention: Option<ArgConvention>,
+}
+
+impl BodyParam<'_> {
+    fn is_named_result(&self) -> bool {
+        self.kind == mojito_ast::ast::ParamKind::Regular
+            && self.convention == Some(ArgConvention::Out)
+    }
+}
 
 pub(super) fn definitely_returns(body: &[Stmt]) -> bool {
     body.iter().any(stmt_returns)
@@ -1064,6 +1102,42 @@ impl Checker {
         Ok(facts)
     }
 
+    /// The callable identity the `overload_index`-th registered overload of
+    /// method `declaration.method_name` commits its transfer effects under:
+    /// its symbol, since same-name overloads may differ in loan behavior and
+    /// a bare method key would merge them by declaration order.
+    pub(super) fn method_effect_key(
+        &self,
+        declaration: &str,
+        method_name: &str,
+        overload_index: usize,
+    ) -> Result<String, TypeError> {
+        let (overloaded, signature) = self
+            .structs
+            .get(declaration)
+            .and_then(|info| info.methods.get(method_name))
+            .and_then(|methods| {
+                methods
+                    .get(overload_index)
+                    .map(|signature| (methods.len() > 1, signature))
+            })
+            .ok_or_else(|| {
+                TypeError::InvariantViolation(format!(
+                    "method signature for '{declaration}.{method_name}' is not registered"
+                ))
+            })?;
+        Ok(if overloaded {
+            method_lowered_name(
+                declaration,
+                method_name,
+                signature,
+                self.self_instance_ty(declaration).as_ref(),
+            )
+        } else {
+            format!("{declaration}.{method_name}")
+        })
+    }
+
     pub(super) fn check_method(
         &mut self,
         self_ty: &Ty,
@@ -1128,32 +1202,11 @@ impl Checker {
                     // as dispatch. Same-name overloads may have different loan
                     // behavior, so a bare method key would merge unrelated
                     // effects according to declaration order.
-                    let method_name = lifecycle_method_name(m);
-                    let (overloaded, signature) = self
-                        .structs
-                        .get(declaration)
-                        .and_then(|info| info.methods.get(method_name))
-                        .and_then(|methods| {
-                            methods
-                                .get(overload_index)
-                                .cloned()
-                                .map(|signature| (methods.len() > 1, signature))
-                        })
-                        .ok_or_else(|| {
-                            TypeError::InvariantViolation(format!(
-                                "method signature for '{declaration}.{method_name}' is not registered"
-                            ))
-                        })?;
-                    let effect_key = if overloaded {
-                        method_lowered_name(
-                            declaration,
-                            method_name,
-                            &signature,
-                            self.self_instance_ty(declaration).as_ref(),
-                        )
-                    } else {
-                        format!("{declaration}.{method_name}")
-                    };
+                    let effect_key = self.method_effect_key(
+                        declaration,
+                        lifecycle_method_name(m),
+                        overload_index,
+                    )?;
                     self.check_method_inner(self_ty, m, effect_key)
                 })();
                 self.assumed_conformances.pop();
@@ -1261,7 +1314,12 @@ impl Checker {
             ));
         }
         let named_result = mojito_ast::ast::named_result(&m.params);
-        if m.params.iter().filter(|p| p.is_named_result()).count() > 1 {
+        if m.params
+            .iter()
+            .filter(|p| DeclaredParam::is_named_result(*p))
+            .count()
+            > 1
+        {
             return Err(TypeError::Unsupported(
                 "multiple named 'out' results".to_string(),
             ));
@@ -1406,20 +1464,7 @@ impl Checker {
             &reference_type_params,
         );
         if m.has_self {
-            self.declare_with_mutability("self", self_ty.clone(), self_writable)?;
-            if self.type_carries_loans(self_ty)
-                && let Some(owner) = self.lookup_owner("self")
-            {
-                self.set_aggregate_origins(
-                    "self",
-                    vec![mojito_types::origin::Origin::Place(
-                        mojito_types::origin::OriginPlace {
-                            root: owner,
-                            path: Vec::new(),
-                        },
-                    )],
-                );
-            }
+            self.bind_receiver(self_ty, self_writable)?;
         }
         for p in &m.params {
             // Parameter annotations follow the initialized-local rule
@@ -1452,55 +1497,139 @@ impl Checker {
                 }
                 mojito_ast::ast::ParamKind::Regular => pty,
             };
-            self.declare_with_mutability(
-                &p.name,
-                pty.clone(),
-                p.kind == mojito_ast::ast::ParamKind::KwVariadic
-                    || p.is_named_result()
-                    || ref_parameter_is_writable(p, &reference_type_params),
+            let writable = ref_parameter_is_writable(p, &reference_type_params);
+            let binder = matches!(p.convention, Some(mojito_ast::ast::ArgConvention::Ref))
+                .then(|| self.reference_parameter_struct_binder(p.origin.as_deref()))
+                .flatten();
+            self.bind_parameter(
+                BodyParam {
+                    name: &p.name,
+                    kind: p.kind,
+                    convention: p.convention,
+                },
+                &pty,
+                writable,
+                binder,
             )?;
-            self.record_owned_pack(p);
-            if matches!(p.convention, Some(mojito_ast::ast::ArgConvention::Ref)) {
-                let binder = self.reference_parameter_struct_binder(p.origin.as_deref());
-                self.register_reference_parameter(
-                    &p.name,
-                    pty.clone(),
-                    ref_parameter_is_writable(p, &reference_type_params),
-                    binder,
-                );
-            }
-            if !matches!(pty, Ty::Ref(_))
-                && self.type_may_carry_loans(&pty)
-                && let Some(owner) = self.lookup_owner(&p.name)
-            {
-                self.set_aggregate_origins(
-                    &p.name,
-                    vec![mojito_types::origin::Origin::Place(
-                        mojito_types::origin::OriginPlace {
-                            root: owner,
-                            path: Vec::new(),
-                        },
-                    )],
-                );
-            }
         }
+        self.check_method_body(MethodBody {
+            name: &m.name,
+            params: m
+                .params
+                .iter()
+                .map(|param| BodyParam {
+                    name: &param.name,
+                    kind: param.kind,
+                    convention: param.convention,
+                })
+                .collect(),
+            self_writable,
+            initializing: matches!(m.self_convention, Some(mojito_ast::ast::ArgConvention::Out))
+                && matches!(
+                    lifecycle_method_name(m),
+                    "__init__" | "__copyinit__" | "__moveinit__"
+                ),
+            effect_key,
+            method_decls: &method_decls,
+            ref_return,
+            return_annotation: Self::body_return_annotation(m.ret.as_ref(), &m.name),
+            generic: !m.type_params.is_empty(),
+            ret_ty,
+            body: &m.body,
+        })
+    }
+
+    /// Declare a method's receiver `self` at `self_ty`, rooting the loans
+    /// its value carries at its own place.
+    pub(super) fn bind_receiver(&mut self, self_ty: &Ty, writable: bool) -> Result<(), TypeError> {
+        self.declare_with_mutability("self", self_ty.clone(), writable)?;
+        if self.type_carries_loans(self_ty)
+            && let Some(owner) = self.lookup_owner("self")
+        {
+            self.set_aggregate_origins(
+                "self",
+                vec![mojito_types::origin::Origin::Place(
+                    mojito_types::origin::OriginPlace {
+                        root: owner,
+                        path: Vec::new(),
+                    },
+                )],
+            );
+        }
+        Ok(())
+    }
+
+    /// Declare a method's parameter `param` at its body type `pty`: a `ref`
+    /// one as a reference parameter (`binder` the enclosing struct's origin
+    /// binder its clause names), and every one rooting the loans its value
+    /// carries at its own place.
+    pub(super) fn bind_parameter(
+        &mut self,
+        param: BodyParam<'_>,
+        pty: &Ty,
+        writable: bool,
+        binder: Option<mojito_types::origin::PointerOrigin>,
+    ) -> Result<(), TypeError> {
+        let BodyParam {
+            name,
+            kind,
+            convention,
+        } = param;
+        self.declare_with_mutability(
+            name,
+            pty.clone(),
+            kind == mojito_ast::ast::ParamKind::KwVariadic || param.is_named_result() || writable,
+        )?;
+        self.record_owned_pack(name, kind, convention);
+        if matches!(convention, Some(mojito_ast::ast::ArgConvention::Ref)) {
+            self.register_reference_parameter(name, pty.clone(), writable, binder);
+        }
+        if !matches!(pty, Ty::Ref(_))
+            && self.type_may_carry_loans(pty)
+            && let Some(owner) = self.lookup_owner(name)
+        {
+            self.set_aggregate_origins(
+                name,
+                vec![mojito_types::origin::Origin::Place(
+                    mojito_types::origin::OriginPlace {
+                        root: owner,
+                        path: Vec::new(),
+                    },
+                )],
+            );
+        }
+        Ok(())
+    }
+
+    /// Check a method's body over its bound receiver and parameters, in the
+    /// transfer frame its effect key names, and commit the effects it
+    /// records.
+    pub(super) fn check_method_body(&mut self, method: MethodBody<'_>) -> Result<(), TypeError> {
+        let MethodBody {
+            name,
+            params,
+            self_writable,
+            initializing,
+            effect_key,
+            method_decls,
+            ref_return,
+            return_annotation,
+            generic,
+            ret_ty,
+            body,
+        } = method;
         // `self` is writable in a `mut self` method, or an `out self` `__init__`
         // (which assigns its fields). Restored after the body.
         let saved = std::mem::replace(&mut self.self_mutable, self_writable);
-        let initializing = matches!(m.self_convention, Some(mojito_ast::ast::ArgConvention::Out))
-            && matches!(
-                lifecycle_method_name(m),
-                "__init__" | "__copyinit__" | "__moveinit__"
-            );
         let saved_initializing = std::mem::replace(&mut self.self_initializing, initializing);
-        let owners: Vec<_> = m
-            .params
-            .iter()
-            .filter(|param| {
+        let regular = || {
+            params.iter().filter(|param| {
                 param.kind == mojito_ast::ast::ParamKind::Regular && !param.is_named_result()
             })
+        };
+        let owners: Vec<_> = regular()
             .map(|param| {
-                self.lookup_owner(&param.name)
+                self.lookup_owner(param.name)
                     .expect("bound method parameter")
             })
             .collect();
@@ -1512,22 +1641,17 @@ impl Checker {
         // bundled Tuple constructor stores its `*args` collector into
         // `self.storage`).
         allowed.extend(
-            m.params
+            params
                 .iter()
                 .filter(|param| param.kind != mojito_ast::ast::ParamKind::Regular)
-                .filter_map(|param| self.lookup_owner(&param.name)),
+                .filter_map(|param| self.lookup_owner(param.name)),
         );
         self.aggregate_escape_contexts
             .push((self.scopes.len().saturating_sub(1), allowed));
         self.transfer_frames.borrow_mut().push(TransferFrame {
             callable: effect_key,
             param_owners: owners.clone(),
-            param_borrowed: m
-                .params
-                .iter()
-                .filter(|param| {
-                    param.kind == mojito_ast::ast::ParamKind::Regular && !param.is_named_result()
-                })
+            param_borrowed: regular()
                 .map(|param| {
                     matches!(
                         param.convention,
@@ -1568,24 +1692,19 @@ impl Checker {
                 }),
             )
         }));
-        self.return_annotations
-            .push(Self::body_return_annotation(m.ret.as_ref(), &m.name));
+        self.return_annotations.push(return_annotation);
         // A method body is a function scope for nested closures just as a
         // top-level `def` body is. In particular, an explicit capture list on a
         // method-local function may name `self`, parameters, and method locals.
         self.function_bases.push(self.scopes.len() - 1);
-        let named_result = mojito_ast::ast::named_result(&m.params);
+        let named_result = params.iter().find(|param| param.is_named_result());
         self.named_result_context.push(named_result.is_some());
-        count_body_inference(
-            !self.self_decls.is_empty() || !m.type_params.is_empty(),
-            || {
-                self.method_site.as_ref().map_or_else(
-                    || m.name.clone(),
-                    |(_, owner)| format!("{owner}.{}", m.name),
-                )
-            },
-        );
-        let result = self.check_block(&m.body, Some(ret_ty), false);
+        count_body_inference(!self.self_decls.is_empty() || generic, || {
+            self.method_site
+                .as_ref()
+                .map_or_else(|| name.to_string(), |(_, owner)| format!("{owner}.{name}"))
+        });
+        let result = self.check_block(body, Some(ret_ty), false);
         self.named_result_context.pop();
         self.function_bases.pop();
         self.return_annotations.pop();
@@ -1621,11 +1740,11 @@ impl Checker {
         self.self_initializing = saved_initializing;
         result?;
         let completes = match named_result {
-            Some(result) => definitely_initializes_named_result(&m.body, &result.name),
-            None => *ret_ty == Ty::None || definitely_returns(&m.body),
+            Some(result) => definitely_initializes_named_result(body, result.name),
+            None => *ret_ty == Ty::None || definitely_returns(body),
         };
         if !completes {
-            return Err(TypeError::MissingReturn(m.name.clone()));
+            return Err(TypeError::MissingReturn(name.to_string()));
         }
         Ok(())
     }
@@ -1683,23 +1802,34 @@ impl Checker {
             let Some(default) = &param.default else {
                 continue;
             };
-            if let Some(name) = self.dynamic_default_reference(default) {
-                return Err(TypeError::DynamicDefault(name));
-            }
-            let expected = self.ty_from_anno(&param.ty)?;
-            let found = self.infer_with_expected(default, &expected, true)?;
-            // Fall back to an `@implicit` converting constructor (records the
-            // ctor target for omitted-arg materialization), matching the
-            // free-function default path and the binding/argument positions.
-            if !coerces(&found, &expected)
-                && !self.record_constructor_conversion(default, &found, &expected)?
-            {
-                return Err(TypeError::TypeMismatch {
-                    expected: expected.to_string(),
-                    found: found.to_string(),
-                    context: format!("default value of method parameter '{}'", param.name),
-                });
-            }
+            self.check_parameter_default(&param.name, default, &self.ty_from_anno(&param.ty)?)?;
+        }
+        Ok(())
+    }
+
+    /// A method parameter `name`'s default fits its type `expected` and
+    /// names no runtime binding.
+    pub(super) fn check_parameter_default(
+        &self,
+        name: &str,
+        default: &Expr,
+        expected: &Ty,
+    ) -> Result<(), TypeError> {
+        if let Some(name) = self.dynamic_default_reference(default) {
+            return Err(TypeError::DynamicDefault(name));
+        }
+        let found = self.infer_with_expected(default, expected, true)?;
+        // Fall back to an `@implicit` converting constructor (records the
+        // ctor target for omitted-arg materialization), matching the
+        // free-function default path and the binding/argument positions.
+        if !coerces(&found, expected)
+            && !self.record_constructor_conversion(default, &found, expected)?
+        {
+            return Err(TypeError::TypeMismatch {
+                expected: expected.to_string(),
+                found: found.to_string(),
+                context: format!("default value of method parameter '{name}'"),
+            });
         }
         Ok(())
     }

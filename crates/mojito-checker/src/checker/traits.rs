@@ -123,6 +123,7 @@ impl Checker {
         self.trait_self_comptime.push(ct_members.clone());
         let result = (|| {
             let mut sigs: HashMap<String, Vec<MethodSig>> = HashMap::new();
+            let mut default_signatures = Vec::new();
             for parent in refines {
                 let inherited = &self.traits[parent].methods;
                 for (method, parent_sigs) in inherited {
@@ -277,14 +278,23 @@ impl Checker {
                 }) {
                     return Err(TypeError::Redeclaration(m.name.clone()));
                 }
+                if m.default_body.is_some() {
+                    default_signatures.push(sig.clone());
+                }
                 overloads.push(sig);
             }
-            Ok(sigs)
+            Ok((sigs, default_signatures))
         })();
         self.trait_self_comptime.pop();
         self.self_ty = saved_self_ty;
         self.self_decls = saved_self_decls;
-        let methods = result?;
+        let shapes = super::trait_defaults::default_shapes(name, methods);
+        let (methods, default_signatures) = result?;
+        let defaults = shapes
+            .into_iter()
+            .zip(default_signatures)
+            .map(|(shape, signature)| super::trait_defaults::TraitDefault { shape, signature })
+            .collect();
         self.traits.insert(
             name.to_string(),
             TraitInfo {
@@ -292,6 +302,7 @@ impl Checker {
                 methods,
                 comptime_members: ct_members,
                 comptime_constraints: ct_constraints,
+                defaults,
             },
         );
         Ok(())
@@ -366,6 +377,7 @@ impl Checker {
                 method.name != "__deinit__" && method.self_convention == Some(ArgConvention::Deinit)
             })
             .map(|method| (method.name.clone(), method.raises))
+            .chain(self.inherited_destructors(declaration))
             .collect::<HashMap<_, _>>();
         self.structs.insert(
             name.to_string(),
@@ -793,7 +805,7 @@ impl Checker {
             }
             overloads.push(sig);
         }
-        Ok(())
+        self.register_default_wrappers(declaration)
     }
 
     /// Verify declared conformances, select the callable target, and check
@@ -887,7 +899,7 @@ impl Checker {
                 overload_index,
             )?;
         }
-        Ok(())
+        self.check_default_wrappers(declaration, self_ty, &mut overload_indices)
     }
 
     /// With every module struct shell registered before field resolution, a
@@ -1189,7 +1201,7 @@ impl Checker {
     /// A trait requirement as struct `Self` type `self_ty` must satisfy it:
     /// the requirement's `Self` becomes the struct's type, and receiver
     /// conventions are part of the contract.
-    fn requirement_at(&self, req_sig: &MethodSig, self_ty: &Ty) -> MethodSig {
+    pub(super) fn requirement_at(&self, req_sig: &MethodSig, self_ty: &Ty) -> MethodSig {
         MethodSig {
             decls: req_sig.decls.clone(),
             availability: req_sig.availability.clone(),

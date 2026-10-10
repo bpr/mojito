@@ -249,7 +249,7 @@ pub fn instance_symbol(template: &str, arguments: &[InstanceArg]) -> String {
 
 /// The canonical mangled spelling of one parameter type. Only this module can
 /// construct one, so every signature part obeys the same sanitization rules.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct TypeKey(String);
 
 impl TypeKey {
@@ -305,7 +305,7 @@ impl TypeKey {
 /// An overload signature as typed data: the ordered parameter type keys.
 /// Format it only through [`function_symbol`]/[`method_symbol`] (or the
 /// `lowered_*` helpers below).
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct SignatureKey {
     types: Vec<TypeKey>,
     /// The homogeneous keyword-variadic collector type, kept outside the
@@ -765,6 +765,19 @@ impl OverloadSets {
         self.all_functions.extend(functions.keys().cloned());
         self.functions.extend(keep_overloaded(functions));
         self.methods.extend(keep_overloaded(methods));
+    }
+
+    /// Record every declaration of method `source_name` (`Type.method`) by
+    /// its arity, the struct's spelled ones and those its check synthesizes
+    /// alike: the name is overloaded when it is declared more than once.
+    pub fn declare_method(&mut self, source_name: &str, arities: Vec<usize>) {
+        if let Some((name, arities)) =
+            keep_overloaded(HashMap::from([(source_name.to_string(), arities)]))
+                .into_iter()
+                .next()
+        {
+            self.methods.insert(name, arities);
+        }
     }
 
     /// The sets of the names `keep` keeps: a free function, a constant, or

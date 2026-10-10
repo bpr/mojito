@@ -80,6 +80,7 @@ impl ConformanceOracle {
                     methods: HashMap::new(),
                     comptime_members: HashMap::new(),
                     comptime_constraints: HashMap::new(),
+                    defaults: Vec::new(),
                 },
             );
         }

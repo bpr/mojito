@@ -1554,8 +1554,10 @@ fn callable_contract_binder_shadows_the_enclosing_binder() {
 #[test]
 fn a_conformer_inherits_a_trait_default_as_a_forwarding_wrapper() {
     // As upstream's `synthesizeDefaultTraitMethodWrapper`: the default is one
-    // function over the trait's `Self`, and the conformer's method is one
-    // call of it with `Self` bound first, holding none of the default's body.
+    // function over the trait's `Self`, and the conformer's method is a
+    // member the check builds over the default's resolved signature, one
+    // call of the function with `Self` bound first, holding none of the
+    // default's body.
     let src = "trait T:\n    def req(self) -> Int:\n        ...\n    def d(self, k: Int = 2) -> Int:\n        var doubled = self.req() * k\n        return doubled\n\n@fieldwise_init\nstruct S(T):\n    var x: Int\n    def req(self) -> Int:\n        return self.x\n";
     let prepared = mojito::comptime::prepare(parse(src).unwrap()).unwrap();
     let function = prepared
@@ -1566,18 +1568,31 @@ fn a_conformer_inherits_a_trait_default_as_a_forwarding_wrapper() {
         })
         .expect("the default's function");
     assert_eq!(function.len(), 2);
-    let wrapper = prepared
+    let spelled = prepared
         .iter()
         .find_map(|stmt| match &stmt.kind {
-            mojito::ast::StmtKind::Struct { methods, .. } => {
-                methods.iter().find(|method| method.name == "d")
-            }
+            mojito::ast::StmtKind::Struct { methods, .. } => Some(methods),
             _ => None,
         })
-        .expect("the conformer's wrapper");
+        .expect("the conformer");
+    assert!(
+        spelled.iter().all(|method| method.name != "d"),
+        "preparing builds no wrapper"
+    );
+    let program = format!("{src}\ndef main():\n    print(S(3).d(), S(3).d(5))\n");
+    let compiler = Compiler::default();
+    let compiled = compiler.compile_unlinked(&program).unwrap();
+    let [wrapper] = compiled.checked().default_wrappers() else {
+        panic!("one wrapper: {:?}", compiled.checked().default_wrappers());
+    };
     assert_eq!(
-        wrapper.provenance,
-        mojito::ast::MethodProvenance::TraitDefaultWrapper
+        (wrapper.declaration.as_str(), wrapper.method.as_str()),
+        ("S", "d")
+    );
+    assert_eq!(
+        wrapper.method_index,
+        spelled.len(),
+        "after the spelled methods"
     );
     let [statement] = wrapper.body.as_slice() else {
         panic!("the wrapper is one statement: {:?}", wrapper.body);
@@ -1600,11 +1615,5 @@ fn a_conformer_inherits_a_trait_default_as_a_forwarding_wrapper() {
         [mojito::ast::ParamArg::Type(mojito::ast::Type::SelfType)]
     );
     assert_eq!(args.len(), 2);
-    assert_eq!(
-        run(&format!(
-            "{src}\ndef main():\n    print(S(3).d(), S(3).d(5))\n"
-        ))
-        .unwrap(),
-        "6 15\n"
-    );
+    assert_eq!(compiler.execute(&compiled).unwrap().output, "6 15\n");
 }

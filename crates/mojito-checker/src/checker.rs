@@ -278,8 +278,8 @@ fn check_program_carrying(
     }
 
     let mut expanded = {
-        let _expand = timing::span("trait_default_wrappers");
-        synthesize_trait_default_wrappers(stmts, &[])?
+        let _expand = timing::span("trait_default_functions");
+        lift_trait_default_functions(stmts)
     };
     // Source locations survive elaboration clones and therefore cannot identify
     // semantic occurrences. Re-key the final checked tree after the last
@@ -431,7 +431,7 @@ pub use body_carry::PassCarry;
 pub use overload_support::is_bundled_module_source;
 mod trait_defaults;
 mod traits_support;
-pub use trait_defaults::synthesize_trait_default_wrappers;
+pub use trait_defaults::lift_trait_default_functions;
 
 /// Type-check a program and return the concrete lowered callee chosen for
 /// every overloaded call site.
@@ -542,6 +542,9 @@ pub struct Checker {
     overload_sets: mojito_symbol::symbol::OverloadSets,
     /// The binder owner of each struct method, shared with the elaborator.
     method_binder_owners: mojito_symbol::symbol::MethodBinderOwners,
+    /// The wrapper of every trait default a top-level struct inherits, in
+    /// program order.
+    default_wrappers: Vec<trait_defaults::DefaultWrapper>,
     /// Top-level structs whose shell, member types, and method signatures were
     /// registered by `check_program`'s order-independent pre-passes. The
     /// source-order walk removes each entry and runs only the completion phase
@@ -1117,6 +1120,7 @@ impl Checker {
             declared_structs: declaration_table::DeclarationSet::default(),
             overload_sets: mojito_symbol::symbol::OverloadSets::default(),
             method_binder_owners: mojito_symbol::symbol::MethodBinderOwners::default(),
+            default_wrappers: Vec::new(),
             predeclared_structs: HashSet::new(),
             predeclared_constants: HashSet::new(),
             applied_module_constants: declaration_table::DeclarationSet::default(),
@@ -2747,6 +2751,9 @@ struct TraitInfo {
     /// clause on the requirement.
     #[serde(serialize_with = "interface::sorted")]
     comptime_constraints: HashMap<String, Vec<GenericConstraint>>,
+    /// The trait's own defaults, in declaration order; a refinement's are
+    /// its parent's.
+    defaults: Vec<trait_defaults::TraitDefault>,
 }
 
 /// A concrete method candidate after receiver-type substitution and argument

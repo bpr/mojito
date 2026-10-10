@@ -84,8 +84,8 @@ compiler build (`src/package.rs`):
 
 ```text
 build (once per compiler build, then cached):
-  every std module -> link (recording each module) -> prepare (each
-    module record keeps its prepared traits) -> elaborate (exporting
+  every std module -> link (recording each module) -> prepare
+    -> elaborate (exporting
     the module constants it folded) -> check (exporting each library
     declaration's interface) -> MIR -> ownership
     -> std package: interface + MIR declarations + module records
@@ -94,8 +94,7 @@ build (once per compiler build, then cached):
 import (every compilation that links the bundled library):
   source -> link (each library module from its record)
     -> prepare -> elaborate (the program's own statements, the reached
-       modules' prepared traits, declaration interfaces, and module
-       constants as context)
+       modules' declaration interfaces and module constants as context)
     -> check (the reached modules' declaration interfaces attached, each
        declaration's decoded on first lookup; the program's own
        statements checked)
@@ -132,17 +131,15 @@ import (every compilation that links the bundled library):
 - **A module record** (`module::package::PackageModule`) is what linking
   the module from source produced, as upstream's `createBinaryPackageState`
   reads a package's module tree: the modules its link asked to load, in
-  order, its export and namespace tables, and its trait declarations as
-  the build's `prepare` left them, with their bodies emptied
-  (`ast::clear_bodies`, `PackageModule::replace_declarations`); every other
-  declaration an importer reads resolved, from the declaration interfaces. It is bytecode (`postcard` over
-  the AST's serde form), keyed by the module's dotted name beside its
+  order, and its export and namespace tables. It holds no declaration:
+  an importer reads every library declaration resolved, from the
+  declaration interfaces. It is bytecode (`postcard` over
+  its serde form), keyed by the module's dotted name beside its
   canonical and stamped source paths (`PackageModules`), and decoded when
   a link reaches the module. The importer's link
   (`module::link_*_with_package`) replays a record in place of reading,
   parsing, and resolving the module, finding each recorded load by name,
-  and stamps its declarations with the recorded path, so each module
-  links exactly the traits preparing a source link gives it, bodiless. The
+  and adds none of the module's declarations to the program. The
   link reports each module it read from a record (`LinkedProgram::packaged`),
   whose interfaces the compilation then installs. An import
   resolves against the package's module table at the library root's
@@ -248,9 +245,9 @@ import (every compilation that links the bundled library):
   So does `MOJITO_STD_PACKAGE=0`, or `Compiler::with_std_package(false)`.
 - **Divergences.** Upstream's package holds post-parse IR, and its importer
   resolves a package declaration on first lookup. Mojito's holds lowered
-  MIR, and its importer's conformer wrapper is cloned from a package
-  trait default's syntax, so the module record still carries trait
-  declarations (`docs/roadmap.md`, `pmir` track: R546, R568).
+  MIR (`docs/roadmap.md`, `pmir` track: R546). A module record holds no
+  declaration: an importer reads every library declaration, trait
+  defaults included, from the declaration interfaces.
 
 `native::mono` is the one elaborator below the waist. `concrete_mir()` runs it
 from the program's entry roots and caches the graph, so the VM and the native
@@ -1663,17 +1660,30 @@ Trait refinement is flattened during checking: inherited method and associated
 compile-time requirements become part of the refined contract, and a refined
 bound satisfies its ancestors. Trait defaults follow upstream's
 `StructEmitter`: before compile-time elaboration (`comptime::prepare`, through
-`checker::synthesize_trait_default_wrappers`) each default becomes one
+`checker::lift_trait_default_functions`) each default becomes one
 function over its trait's `Self` (`Trait$default$method`, whose first
 compile-time parameter `_Self` is bound by the trait and whose first argument
 is the receiver), checked, lowered, and packaged once like any generic `def`,
-its calls on `self` dispatching through the bound. Each conformer that does
-not spell a defaulted overload gets a forwarding wrapper with the default's
-signature, whose one statement calls that function with `Self` bound first
-and every argument forwarded (`MethodProvenance::TraitDefaultWrapper`).
-Defaults are inherited per overload; an explicit struct method suppresses the
-default of its own shape, and two different defaults reaching one conformer
-are rejected as at the pin. So an importer checks no library default: a
+its calls on `self` dispatching through the bound. A trait's check records
+each of its defaults in its `TraitInfo` (`trait_defaults::TraitDefault`: the
+requirement's resolved signature beside its shape), which a package exports
+in the trait's declaration interface. Each conformer that does not spell a
+defaulted overload gets a wrapper the check builds, as
+`synthesizeDefaultTraitMethodWrapper` builds one from the trait function's
+resolved signature: the check plans every wrapper before its overload
+prescan (`plan_default_wrappers`), so a spelled method sharing its name is
+qualified as an overload, registers its signature after the struct's
+spelled ones from the default's, with `Self` the conformer and its binders
+owned by the wrapper (`reown_generic_signature`), and checks its body, one
+statement calling that function with `Self` bound first and every argument
+forwarded (`populateDefaultedTraitFunction`). The wrapper is never syntax of
+its struct: its sites follow the spelled methods' indexes, and
+`CheckedProgram::default_wrappers` carries it to MIR, which lowers it
+through the same `lower_struct_member` as a spelled method. Defaults are
+inherited per overload; an explicit struct method suppresses the default of
+its own parameter shape (upstream suppresses only by satisfaction, R570), and
+two different defaults reaching one conformer are rejected as at the pin. So
+an importer checks no library default and reads no library trait's syntax: a
 `Writer` conformer's `write` calls the package's `Writer$default$write`. The
 function is a module `def` rather than a member of its trait (R551). MIR and
 the VM retain static dispatch and need no trait-object representation.

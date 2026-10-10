@@ -95,6 +95,16 @@ to evolve under the `0.x` compatibility rules.
   still clones (R568). Hello World compiles and runs in 6.1 ms release,
   from 8.2 ms, and the package shrinks from 1.74 to 1.64 MB. The package
   format is now `mojito-package 9`.
+- A conformer's wrapper for a trait default it inherits is built by the
+  check from the default's resolved signature, which the trait's check
+  records, instead of cloned from the trait's syntax at `prepare` (R568),
+  as Mojo's `synthesizeDefaultTraitMethodWrapper` builds it from the trait
+  function's signature. The wrapper is a member with no syntax of its own,
+  which MIR lowers beside the struct's spelled methods, so a package's
+  module record now holds no declaration and an importer reads every
+  library declaration from the declaration interfaces. A default whose
+  signature names an origin is now rejected at its conformers (R571). The
+  package format is now `mojito-package 10`.
 - A module under a search root is linked under its path there, whichever
   import reaches it first: `std/io/file.mojo` declares
   `__module$std$io$file$…`, not `__module$file$…`.

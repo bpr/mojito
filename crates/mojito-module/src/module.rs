@@ -1007,16 +1007,6 @@ impl<'p> Linker<'p> {
         self.resolve_scoped_imports(&mut declarations, dir, importer, &bindings, &namespaces)?;
         rewrite_program(&mut declarations, &bindings, &namespaces);
         mojito_ast::ast::stamp_source(&mut declarations, &display(path));
-        let recorded = self.records.is_some().then(|| {
-            declarations
-                .iter()
-                .cloned()
-                .map(|mut declaration| {
-                    mojito_ast::ast::clear_bodies(&mut declaration);
-                    declaration
-                })
-                .collect::<Vec<_>>()
-        });
         self.decls.extend(declarations);
         let mut exports = local;
         for (name, target) in bindings {
@@ -1049,7 +1039,9 @@ impl<'p> Linker<'p> {
             .into_iter()
             .filter(|(name, _)| !name.split('.').next().is_some_and(|p| p.starts_with('_')))
             .collect();
-        if let (Some(declarations), Some(loads)) = (recorded, self.loads.pop()) {
+        if self.records.is_some()
+            && let Some(loads) = self.loads.pop()
+        {
             let record = PackageModule {
                 name: module_name.to_string(),
                 loads,
@@ -1058,7 +1050,6 @@ impl<'p> Linker<'p> {
                     .iter()
                     .map(|(name, exports)| (name.clone(), exports.clone().into_iter().collect()))
                     .collect(),
-                declarations,
             };
             let identity = ModuleIdentity {
                 name: module_name.to_string(),
@@ -1102,11 +1093,7 @@ impl<'p> Linker<'p> {
                 })?;
             self.load_module(&load)?;
         }
-        let path = display(&module.path);
-        let mut declarations = record.declarations;
-        mojito_ast::ast::stamp_source(&mut declarations, &path);
-        self.decls.extend(declarations);
-        self.packaged.push(path);
+        self.packaged.push(display(&module.path));
         self.namespace_exports.insert(
             module.key.clone(),
             record

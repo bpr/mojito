@@ -2891,7 +2891,7 @@ pub fn canonical_generic_signature(
                     ParamContext::detached().index_ref(
                         0,
                         u32::try_from(index).unwrap_or(u32::MAX),
-                        crate::param_expr::MetaTy::value((**ty).clone()),
+                        MetaTy::value((**ty).clone()),
                     ),
                 );
                 binders.insert(
@@ -2938,6 +2938,97 @@ pub fn canonical_generic_signature(
         }
     }
     (canonical_decls, canonical_params)
+}
+
+/// `decls` owned by the declaration `owner` instead.
+///
+/// Each binder keeps its slot and spelling, and the bindings returned move a
+/// reference to one of them ([`replace_parameters`]). Upstream renames a
+/// trait function's binders into the wrapper a conformer gets for its
+/// default this way (`replaceIndexRefsWithNamedRefs`).
+pub fn reown_generic_signature(
+    decls: &[ParamDecl],
+    owner: &str,
+) -> (Vec<ParamDecl>, ParamBindings) {
+    let mut bindings = ParamBindings::new();
+    let mut binders: HashMap<ParamId, ParamRef> = HashMap::new();
+    let mut subst = TySubst::new();
+    for decl in decls {
+        let declared = decl.binder();
+        let reowned = ParamRef {
+            id: ParamId::new(owner, declared.id.slot),
+            name: declared.name.clone(),
+        };
+        match decl {
+            ParamDecl::Type {
+                bounds,
+                callable_bound,
+                ..
+            } => {
+                let ty = Ty::Param {
+                    binder: reowned.clone(),
+                    bounds: bounds.clone(),
+                    callable_bound: callable_bound.clone(),
+                };
+                bindings.bind_type(declared.id.clone(), ty.clone());
+                subst.insert(declared.id.clone(), ty);
+            }
+            ParamDecl::Value { name, ty, .. } => bindings.bind(
+                declared.id.clone(),
+                ParamContext::detached().decl_ref(
+                    reowned.id.clone(),
+                    name.trim_start_matches('*'),
+                    crate::param_expr::MetaTy::value((**ty).clone()),
+                ),
+            ),
+        }
+        binders.insert(declared.id, reowned);
+    }
+    let moved = |ty: &Ty| bind_signature_slots(ty, &bindings);
+    let reowned = decls
+        .iter()
+        .map(|decl| {
+            let mut decl = decl.clone();
+            let (id, constraints) = match &mut decl {
+                ParamDecl::Type {
+                    id,
+                    callable_bound,
+                    default,
+                    constraints,
+                    ..
+                } => {
+                    for ty in callable_bound.iter_mut().chain(default.iter_mut()) {
+                        **ty = moved(ty);
+                    }
+                    (id, constraints)
+                }
+                ParamDecl::Value {
+                    id,
+                    ty,
+                    default,
+                    constraints,
+                    ..
+                } => {
+                    **ty = moved(ty);
+                    if let Some(default) = default {
+                        *default = ParamContext::detached()
+                            .replace(default, &bindings)
+                            .unwrap_or_else(|_| default.clone());
+                    }
+                    (id, constraints)
+                }
+            };
+            *id = binders[id].id.clone();
+            *constraints = constraints
+                .iter()
+                .map(|constraint| {
+                    rename_constraint_parameters(constraint, &binders, &subst, &bindings)
+                })
+                .collect();
+            decl
+        })
+        .collect();
+    (reowned, bindings)
 }
 
 /// The substitution mapping a struct's type-parameter names to an instance's

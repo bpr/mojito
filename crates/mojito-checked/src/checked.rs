@@ -1356,6 +1356,63 @@ pub struct RebindAssertion {
     pub by_value: bool,
 }
 
+/// The wrapper a struct gets for a trait default it inherits and does not
+/// spell.
+///
+/// As upstream's `StructEmitter::synthesizeDefaultTraitMethodWrapper` builds
+/// it, it is a member over the default's resolved signature, whose parameter
+/// and return types are the checked sites of its `method_index`, and whose
+/// body is one call of the default's function with `Self` bound first and
+/// every argument forwarded (`populateDefaultedTraitFunction`). It has no
+/// syntax of its own: the struct's method list holds only what the struct
+/// spells, and every wrapper's index follows them.
+#[derive(Debug, Clone)]
+pub struct CheckedDefaultWrapper {
+    pub module: Option<String>,
+    /// The struct that inherits the default.
+    pub declaration: String,
+    pub method: String,
+    /// Its position among the struct's members, after every spelled method:
+    /// the index of its `AnnotationSite::MethodParam`/`MethodReturn` and
+    /// `GenericSite::Method` sites.
+    pub method_index: usize,
+    /// The symbol it lowers to: signature-qualified when the name is
+    /// overloaded.
+    pub lowered_name: String,
+    pub self_convention: Option<mojito_ast::ast::ArgConvention>,
+    /// Every declared parameter but the receiver, in order.
+    pub params: Vec<SignatureParam>,
+    pub body: Vec<Stmt>,
+}
+
+/// A parameter of a resolved signature as a call binds and a body declares
+/// it: everything but its type, which the signature holds.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct SignatureParam {
+    pub name: String,
+    pub kind: mojito_ast::ast::ParamKind,
+    pub convention: Option<mojito_ast::ast::ArgConvention>,
+    pub default: Option<Expr>,
+}
+
+impl mojito_ast::ast::DeclaredParam for SignatureParam {
+    fn name(&self) -> &str {
+        &self.name
+    }
+
+    fn kind(&self) -> mojito_ast::ast::ParamKind {
+        self.kind
+    }
+
+    fn convention(&self) -> Option<mojito_ast::ast::ArgConvention> {
+        self.convention
+    }
+
+    fn default_value(&self) -> Option<&Expr> {
+        self.default.as_ref()
+    }
+}
+
 /// What one check of an elaborated program established, before the executable
 /// handoff is assembled.
 ///
@@ -1416,6 +1473,8 @@ pub struct DiscoveryResult {
     /// The overload sets of every declaration the check knew, its own and
     /// an imported package's.
     pub overloads: mojito_symbol::symbol::OverloadSets,
+    /// Every inherited trait default's wrapper the check built.
+    pub default_wrappers: Vec<CheckedDefaultWrapper>,
 }
 
 impl DiscoveryResult {
@@ -1466,6 +1525,7 @@ impl DiscoveryResult {
             &self.rebind_assertions,
             self.declaration_effects.into_inner(),
             self.overloads,
+            self.default_wrappers,
         )
     }
 
@@ -1508,6 +1568,7 @@ impl DiscoveryResult {
             &self.rebind_assertions,
             &self.generic_instantiations,
             &self.method_instantiations,
+            &self.default_wrappers,
             Some(visit),
         );
     }
@@ -1574,6 +1635,7 @@ pub struct CheckedProgram {
     conformances: ConformanceFacts,
     declaration_effects: HashMap<AnnotationSite, DeclarationEffect>,
     overloads: mojito_symbol::symbol::OverloadSets,
+    default_wrappers: Vec<CheckedDefaultWrapper>,
 }
 
 /// What decides a conformance below the checker: the declared traits, and
@@ -1901,6 +1963,7 @@ impl CheckedProgram {
         rebind_assertions: &HashMap<SourceSpan, RebindAssertion>,
         declaration_effects: HashMap<AnnotationSite, DeclarationEffect>,
         overloads: mojito_symbol::symbol::OverloadSets,
+        default_wrappers: Vec<CheckedDefaultWrapper>,
     ) -> Self {
         let expressions_span = mojito_common::timing::span("expressions");
         let (expressions, expression_index) = build_checked_expressions(
@@ -1937,6 +2000,7 @@ impl CheckedProgram {
             rebind_assertions,
             &generic_instantiations,
             &method_instantiations,
+            &default_wrappers,
             None,
         );
         drop(expressions_span);
@@ -1969,12 +2033,19 @@ impl CheckedProgram {
             conformances,
             declaration_effects,
             overloads,
+            default_wrappers,
         }
     }
 
     /// Elaborated statements accepted by semantic checking.
     pub fn statements(&self) -> &[Stmt] {
         &self.statements
+    }
+
+    /// The wrapper of every trait default a struct of the program inherits
+    /// and does not spell, as the check built it.
+    pub fn default_wrappers(&self) -> &[CheckedDefaultWrapper] {
+        &self.default_wrappers
     }
 
     /// The overload sets of every declaration the check knew: the
@@ -2133,6 +2204,7 @@ fn build_checked_expressions(
     rebind_assertions: &HashMap<SourceSpan, RebindAssertion>,
     generic_instantiations: &HashMap<SourceSpan, GenericInstantiation>,
     method_instantiations: &HashMap<SourceSpan, MethodInstantiation>,
+    default_wrappers: &[CheckedDefaultWrapper],
     scan: Option<&mut dyn FnMut(&Expr)>,
 ) -> (Vec<CheckedExpr>, HashMap<SourceSpan, Vec<CheckedNodeId>>) {
     struct Builder<'a, 's> {
@@ -2856,6 +2928,16 @@ fn build_checked_expressions(
         method_instantiations,
     };
     builder.block(statements);
+    for wrapper in default_wrappers {
+        for value in wrapper
+            .params
+            .iter()
+            .filter_map(|param| param.default.as_ref())
+        {
+            builder.expr(value);
+        }
+        builder.block(&wrapper.body);
+    }
     (builder.nodes, builder.index)
 }
 

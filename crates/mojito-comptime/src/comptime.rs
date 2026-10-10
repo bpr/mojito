@@ -260,34 +260,32 @@ pub struct ImportedScope<'a> {
 /// Prepare a linked program for source validation and elaboration.
 ///
 /// Qualify struct packs, synthesize the derived `copy`/`__hash__` methods,
-/// give each trait default its function and each conformer a wrapper for
-/// every default it inherits, desugar `SIMD[_, _]`
-/// parameters, and fold SIMD alias bounds.
+/// give each trait default its function, desugar `SIMD[_, _]`
+/// parameters, and fold SIMD alias bounds. A conformer's wrapper for a
+/// default it inherits is the check's to build, over the default's resolved
+/// signature.
 ///
 /// These rewrites normalize declarations without selecting a `comptime if`
 /// arm or unrolling a loop, so the result still carries every source body
 /// the check must see.
 pub fn prepare(program: Vec<Stmt>) -> Result<Vec<Stmt>, ComptimeError> {
-    prepare_importing(program, &[], None)
+    prepare_importing(program, None)
 }
 
 /// [`prepare`] a program's own statements, `own`, beside the package it
 /// imports.
 ///
-/// `traits` are the package's trait declarations, as its build prepared
-/// them, which a conformer inherits from; `installed` holds the package's
-/// module constants as its build elaborated them, whose SIMD aliases bound
-/// an own parameter. No package declaration is rewritten again.
+/// `installed` holds the package's module constants as its build
+/// elaborated them, whose SIMD aliases bound an own parameter. No package
+/// declaration is read or rewritten.
 pub fn prepare_importing(
     mut own: Vec<Stmt>,
-    traits: &[&Stmt],
     installed: Option<&InstalledInterfaces>,
 ) -> Result<Vec<Stmt>, ComptimeError> {
     pack_qualification::qualify_struct_packs(&mut own)?;
     synthesize_copyable_copy(&mut own);
     synthesize_hashable_hash(&mut own);
-    let mut own = mojito_checker::checker::synthesize_trait_default_wrappers(&own, traits)
-        .map_err(ComptimeError::Type)?;
+    let mut own = mojito_checker::checker::lift_trait_default_functions(&own);
     desugar_simd_wildcard_parameters(&mut own);
     fold_simd_alias_bounds(&mut own, installed);
     read_materialize_self_operands(&mut own);

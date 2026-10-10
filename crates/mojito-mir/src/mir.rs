@@ -19,9 +19,10 @@
 //! chain), mirroring `rustc` MIR's place/rvalue split, so `p.items[i].x = e` and
 //! `xs[i] += e` lower uniformly (indices evaluated once).
 
+use mojito_ast::ast::DeclaredParam;
 use mojito_ast::ast::{
-    ArgConvention, Dtype, Expr, ExprKind, FnParam, InfixOp, ParamArg, ParamKind, PrefixOp, Stmt,
-    StmtKind, TStringPart,
+    ArgConvention, Dtype, Expr, ExprKind, InfixOp, ParamArg, ParamKind, PrefixOp, Stmt, StmtKind,
+    TStringPart,
 };
 use mojito_ast::call::{effective_keyword_only_index, regular_marker_index};
 use mojito_checked::checked::{AnnotationSite, GenericSite};
@@ -735,6 +736,26 @@ pub fn lower_checked_program_importing(
                             lowered
                         }
                     })
+                    .chain(
+                        checked
+                            .default_wrappers()
+                            .iter()
+                            .filter(|wrapper| {
+                                wrapper.declaration == *name
+                                    && wrapper.module == s.module
+                                    && matches!(
+                                        wrapper.self_convention,
+                                        Some(ArgConvention::Mut | ArgConvention::Ref)
+                                    )
+                            })
+                            .map(|wrapper| {
+                                if wrapper.lowered_name == format!("{name}.{}", wrapper.method) {
+                                    wrapper.method.clone()
+                                } else {
+                                    wrapper.lowered_name.clone()
+                                }
+                            }),
+                    )
                     .collect();
                 declarations.structs.push(MirStructDeclaration {
                     name: name.clone(),
@@ -794,314 +815,61 @@ pub fn lower_checked_program_importing(
                         .cloned()
                         .unwrap_or_default(),
                 });
-                for (method_index, m) in methods.iter().enumerate() {
+                let structure = StructLowering {
+                    checked,
+                    overloads,
+                    module: &s.module,
+                    name,
+                    type_params,
+                };
+                for (index, m) in methods.iter().enumerate() {
                     let method_name = mojito_symbol::symbol::lifecycle_method_name(m);
-                    let source_mangled = format!("{name}.{method_name}");
-                    let mangled = mojito_symbol::symbol::lowered_method_name(
-                        &source_mangled,
-                        type_params,
-                        mojito_symbol::symbol::MethodShape::of(m),
-                        overloads,
-                    );
-                    let variadic_idx = m
-                        .params
-                        .iter()
-                        .position(|param| param.kind == ParamKind::Variadic);
-                    let kw_variadic_idx = m
-                        .params
-                        .iter()
-                        .position(|param| param.kind == ParamKind::KwVariadic);
-                    let regular: Vec<_> = m
-                        .params
-                        .iter()
-                        .filter(|param| {
-                            param.kind == ParamKind::Regular
-                                && !matches!(param.convention, Some(ArgConvention::Out))
-                        })
-                        .collect();
-                    let return_site = AnnotationSite::MethodReturn {
-                        module: s.module.clone(),
-                        declaration: name.clone(),
-                        method: method_index,
-                    };
-                    let ret_ty = checked_type_or_record(
-                        checked,
-                        &return_site.clone(),
-                        &format!("return type of method '{source_mangled}'"),
-                        &mut invariant_errors,
-                    );
-                    let effect = checked
-                        .declaration_effect_at(&return_site)
-                        .cloned()
-                        .unwrap_or_else(|| {
-                            invariant_errors.push(format!(
-                                "missing checked effect for method '{source_mangled}'"
-                            ));
-                            mojito_checked::checked::DeclarationEffect {
-                                raises: false,
-                                error: None,
-                                returns_reference: false,
-                                param_writes: Vec::new(),
-                                availability: Vec::new(),
-                            }
-                        });
-                    let generic_site = GenericSite::Method {
-                        module: s.module.clone(),
-                        declaration: name.clone(),
-                        method: method_index,
-                    };
-                    let mut param_decls = checked
-                        .generic_parameters_at(&generic_site)
-                        .unwrap_or(&[])
-                        .to_vec();
-                    if method_name == "__init__" {
-                        // A constructor's compile-time interface is the struct's
-                        // parameter list: an explicit `Array[Int, 3](fill=7)`
-                        // call supplies the struct arguments, and the VM reifies
-                        // the constructed value's `value_params` in this
-                        // declaration order.
-                        let struct_decls = checked
-                            .generic_parameters_at(&GenericSite::Struct {
-                                module: s.module.clone(),
-                                declaration: name.clone(),
-                            })
-                            .unwrap_or(&[]);
-                        param_decls = struct_decls.iter().cloned().chain(param_decls).collect();
-                    }
-                    let value_parameter_locals = value_parameter_locals(&param_decls);
-                    let enclosing_binders = EnclosingBinders::of(
-                        checked
-                            .generic_parameters_at(&GenericSite::Struct {
-                                module: s.module.clone(),
-                                declaration: name.clone(),
-                            })
-                            .unwrap_or(&[])
-                            .iter()
-                            .chain(checked.generic_parameters_at(&generic_site).unwrap_or(&[])),
-                    );
-                    let receiver_value_parameters: Vec<(String, Ty)> = checked
-                        .generic_parameters_at(&GenericSite::Struct {
-                            module: s.module.clone(),
-                            declaration: name.clone(),
-                        })
-                        .unwrap_or(&[])
-                        .iter()
-                        .filter_map(|decl| match decl {
-                            ParamDecl::Value {
-                                name,
-                                ty,
-                                variadic: false,
-                                ..
-                            } if !matches!(
-                                ty.as_ref(),
-                                Ty::Func { .. } | Ty::GenericFunc { .. }
-                            ) =>
-                            {
-                                Some((name.clone(), (**ty).clone()))
-                            }
-                            _ => None,
-                        })
-                        .collect();
-                    let static_receiver = (!m.has_self && !receiver_value_parameters.is_empty())
-                        .then(|| {
-                            let decls = checked
-                                .generic_parameters_at(&GenericSite::Struct {
-                                    module: s.module.clone(),
-                                    declaration: name.clone(),
-                                })
-                                .unwrap_or(&[]);
-                            Ty::Struct(
-                                name.clone(),
-                                decls.iter().map(ParamDecl::own_argument).collect(),
-                            )
-                        });
-                    let defaults = regular
-                        .iter()
-                        .map(|param| {
-                            let ty = checked.checked_type_at(&AnnotationSite::MethodParam {
-                                module: s.module.clone(),
-                                declaration: name.clone(),
-                                method: method_index,
-                                param: m
-                                    .params
-                                    .iter()
-                                    .position(|candidate| std::ptr::eq(candidate, *param))
-                                    .unwrap_or(m.params.len()),
-                            });
-                            lower_default(
-                                DefaultLowering {
-                                    checked,
-                                    overloads,
-                                    owner: &mangled,
-                                    parameter: param,
-                                    binders: &enclosing_binders,
-                                    ty,
-                                },
-                                &mut functions,
-                                &mut declarations,
-                            )
-                        })
-                        .collect();
-                    declarations.functions.push(MirFunctionDeclaration {
-                        lowered_name: mangled.clone(),
-                        param_names: regular.iter().map(|param| param.name.clone()).collect(),
-                        param_types: regular
-                            .iter()
-                            .map(|param| {
-                                checked_type_or_record(
-                                    checked,
-                                    &AnnotationSite::MethodParam {
-                                        module: s.module.clone(),
-                                        declaration: name.clone(),
-                                        method: method_index,
-                                        param: m
-                                            .params
-                                            .iter()
-                                            .position(|candidate| std::ptr::eq(candidate, *param))
-                                            .unwrap_or(m.params.len()),
-                                    },
-                                    &format!(
-                                        "parameter '{}' of method '{source_mangled}'",
-                                        param.name
-                                    ),
-                                    &mut invariant_errors,
-                                )
-                            })
-                            .collect(),
-                        defaults,
-                        required: regular
-                            .iter()
-                            .map(|param| param.default.is_none())
-                            .collect(),
-                        variadic: variadic_idx.map(|index| {
-                            checked_type_or_record(
-                                checked,
-                                &AnnotationSite::MethodParam {
-                                    module: s.module.clone(),
-                                    declaration: name.clone(),
-                                    method: method_index,
-                                    param: index,
-                                },
-                                &format!("variadic parameter of method '{source_mangled}'"),
-                                &mut invariant_errors,
-                            )
-                        }),
-                        variadic_convention: variadic_idx
-                            .and_then(|index| m.params[index].convention),
-                        variadic_index: runtime_variadic_index(&m.params, variadic_idx),
-                        kw_variadic: kw_variadic_idx.map(|index| {
-                            checked_type_or_record(
-                                checked,
-                                &AnnotationSite::MethodParam {
-                                    module: s.module.clone(),
-                                    declaration: name.clone(),
-                                    method: method_index,
-                                    param: index,
-                                },
-                                &format!("keyword variadic parameter of method '{source_mangled}'"),
-                                &mut invariant_errors,
-                            )
-                        }),
-                        kw_variadic_convention: kw_variadic_idx
-                            .and_then(|index| m.params[index].convention),
-                        kw_variadic_index: runtime_parameter_index(&m.params, kw_variadic_idx),
-                        positional_only: regular_marker_index(&m.params, m.positional_only),
-                        keyword_only: effective_keyword_only_index(
-                            &m.params,
-                            m.keyword_only,
-                            variadic_idx,
-                        ),
-                        param_decls,
-                        has_receiver: m.has_self,
-                        receiver_convention: m.self_convention,
-                        param_conventions: regular
-                            .iter()
-                            .map(|parameter| parameter.convention)
-                            .collect(),
-                        ret_ty: ret_ty.clone(),
-                        returns_reference: effect.returns_reference,
-                        raises: effect.raises,
-                        error_ty: effect.error.clone(),
-                        ref_params: regular
-                            .iter()
-                            .map(|param| is_ref(&param.convention))
-                            .collect(),
-                        param_writes: effect.param_writes.clone(),
-                        availability: effect.availability.clone(),
-                        enclosing: None,
-                        region_binders: Vec::new(),
-                    });
-                    // A method's receiver `self` is the implicit first parameter,
-                    // followed by the declared params.
-                    let mut names: Vec<String> = Vec::new();
-                    let mut ptys: Vec<Ty> = Vec::new();
-                    let mut owned: Vec<bool> = Vec::new();
-                    let mut deinit: Vec<bool> = Vec::new();
-                    let mut refp: Vec<bool> = Vec::new();
-                    if m.has_self {
-                        names.push("self".to_string());
-                        ptys.push(Ty::Struct(name.clone(), Vec::new().into()));
-                        owned.push(is_owned(&m.self_convention));
-                        deinit.push(is_deinit(&m.self_convention));
-                        refp.push(is_ref(&m.self_convention));
-                    }
-                    // The named result follows the ABI parameters as a
-                    // callee-local uninitialized slot no caller passes.
-                    let named_result = mojito_ast::ast::named_result(&m.params);
-                    let caller_params = || {
-                        m.params
-                            .iter()
-                            .enumerate()
-                            .filter(|(_, p)| !p.is_named_result())
-                    };
-                    names.extend(caller_params().map(|(_, p)| p.name.clone()));
-                    names.extend(named_result.map(|result| result.name.clone()));
-                    names.extend(value_parameter_locals.iter().map(|(name, _)| name.clone()));
-                    ptys.extend(caller_params().map(|(param, p)| {
-                        body_parameter_ty(
-                            p,
-                            checked_type_or_record(
-                                checked,
-                                &AnnotationSite::MethodParam {
-                                    module: s.module.clone(),
-                                    declaration: name.clone(),
-                                    method: method_index,
-                                    param,
-                                },
-                                &format!("parameter '{}' of method '{source_mangled}'", p.name),
-                                &mut invariant_errors,
+                    lower_struct_member(
+                        &structure,
+                        StructMember {
+                            index,
+                            name: method_name,
+                            lowered: mojito_symbol::symbol::lowered_method_name(
+                                &format!("{name}.{method_name}"),
+                                type_params,
+                                mojito_symbol::symbol::MethodShape::of(m),
+                                overloads,
                             ),
-                        )
-                    }));
-                    owned.extend(caller_params().map(|(_, p)| is_owned(&p.convention)));
-                    deinit.extend(caller_params().map(|(_, p)| is_deinit(&p.convention)));
-                    refp.extend(caller_params().map(|(_, p)| is_ref(&p.convention)));
-                    lower_fn_nested(
-                        FunctionLowering {
-                            checked,
-                            name: &mangled,
-                            parameter_names: &names,
-                            parameter_types: ptys,
-                            value_parameter_locals,
-                            receiver_value_parameters,
-                            static_receiver,
-                            enclosing_origin_parameters: origin_binder_names(
-                                type_params.iter().chain(&m.type_params),
-                            ),
-                            enclosing_binders,
-                            owned_parameters: owned,
-                            deinit_parameters: deinit,
-                            reference_parameters: refp,
-                            returns_reference: effect.returns_reference,
-                            ret_ty,
-                            raises: effect.raises,
-                            error_ty: effect.error,
-                            named_result: named_result.map(|result| result.name.as_str()),
+                            params: &m.params,
+                            has_self: m.has_self,
+                            self_convention: m.self_convention,
+                            positional_only: m.positional_only,
+                            keyword_only: m.keyword_only,
+                            type_params: &m.type_params,
                             body: &m.body,
-                            overloads,
                         },
                         &mut functions,
                         &mut declarations,
+                        &mut invariant_errors,
+                    );
+                }
+                for wrapper in checked
+                    .default_wrappers()
+                    .iter()
+                    .filter(|wrapper| wrapper.declaration == *name && wrapper.module == s.module)
+                {
+                    lower_struct_member(
+                        &structure,
+                        StructMember {
+                            index: wrapper.method_index,
+                            name: &wrapper.method,
+                            lowered: wrapper.lowered_name.clone(),
+                            params: &wrapper.params,
+                            has_self: true,
+                            self_convention: wrapper.self_convention,
+                            positional_only: None,
+                            keyword_only: None,
+                            type_params: &[],
+                            body: &wrapper.body,
+                        },
+                        &mut functions,
+                        &mut declarations,
+                        &mut invariant_errors,
                     );
                 }
             }
@@ -1197,18 +965,367 @@ fn mir_default(checked: &CheckedProgram, default: Option<&Expr>) -> Option<Check
     }
 }
 
+/// Lower struct `structure`'s member `m`: its declaration, its parameter
+/// defaults, and its body.
+fn lower_struct_member<P: DeclaredParam>(
+    structure: &StructLowering<'_>,
+    m: StructMember<'_, P>,
+    functions: &mut Vec<(String, MirFunction)>,
+    declarations: &mut MirDeclarations,
+    invariant_errors: &mut Vec<String>,
+) {
+    let StructLowering {
+        checked,
+        overloads,
+        module,
+        name,
+        type_params,
+    } = *structure;
+    let method_index = m.index;
+    let method_name = m.name;
+    let source_mangled = format!("{name}.{method_name}");
+    let mangled = m.lowered;
+    let variadic_idx = m
+        .params
+        .iter()
+        .position(|param| param.kind() == ParamKind::Variadic);
+    let kw_variadic_idx = m
+        .params
+        .iter()
+        .position(|param| param.kind() == ParamKind::KwVariadic);
+    let regular: Vec<_> = m
+        .params
+        .iter()
+        .filter(|param| {
+            param.kind() == ParamKind::Regular
+                && !matches!(param.convention(), Some(ArgConvention::Out))
+        })
+        .collect();
+    let return_site = AnnotationSite::MethodReturn {
+        module: module.clone(),
+        declaration: name.to_string(),
+        method: method_index,
+    };
+    let ret_ty = checked_type_or_record(
+        checked,
+        &return_site,
+        &format!("return type of method '{source_mangled}'"),
+        invariant_errors,
+    );
+    let effect = checked
+        .declaration_effect_at(&return_site)
+        .cloned()
+        .unwrap_or_else(|| {
+            invariant_errors.push(format!(
+                "missing checked effect for method '{source_mangled}'"
+            ));
+            mojito_checked::checked::DeclarationEffect {
+                raises: false,
+                error: None,
+                returns_reference: false,
+                param_writes: Vec::new(),
+                availability: Vec::new(),
+            }
+        });
+    let generic_site = GenericSite::Method {
+        module: module.clone(),
+        declaration: name.to_string(),
+        method: method_index,
+    };
+    let mut param_decls = checked
+        .generic_parameters_at(&generic_site)
+        .unwrap_or(&[])
+        .to_vec();
+    if method_name == "__init__" {
+        // A constructor's compile-time interface is the struct's
+        // parameter list: an explicit `Array[Int, 3](fill=7)`
+        // call supplies the struct arguments, and the VM reifies
+        // the constructed value's `value_params` in this
+        // declaration order.
+        let struct_decls = checked
+            .generic_parameters_at(&GenericSite::Struct {
+                module: module.clone(),
+                declaration: name.to_string(),
+            })
+            .unwrap_or(&[]);
+        param_decls = struct_decls.iter().cloned().chain(param_decls).collect();
+    }
+    let value_parameter_locals = value_parameter_locals(&param_decls);
+    let enclosing_binders = EnclosingBinders::of(
+        checked
+            .generic_parameters_at(&GenericSite::Struct {
+                module: module.clone(),
+                declaration: name.to_string(),
+            })
+            .unwrap_or(&[])
+            .iter()
+            .chain(checked.generic_parameters_at(&generic_site).unwrap_or(&[])),
+    );
+    let receiver_value_parameters: Vec<(String, Ty)> = checked
+        .generic_parameters_at(&GenericSite::Struct {
+            module: module.clone(),
+            declaration: name.to_string(),
+        })
+        .unwrap_or(&[])
+        .iter()
+        .filter_map(|decl| match decl {
+            ParamDecl::Value {
+                name,
+                ty,
+                variadic: false,
+                ..
+            } if !matches!(ty.as_ref(), Ty::Func { .. } | Ty::GenericFunc { .. }) => {
+                Some((name.clone(), (**ty).clone()))
+            }
+            _ => None,
+        })
+        .collect();
+    let static_receiver = (!m.has_self && !receiver_value_parameters.is_empty()).then(|| {
+        let decls = checked
+            .generic_parameters_at(&GenericSite::Struct {
+                module: module.clone(),
+                declaration: name.to_string(),
+            })
+            .unwrap_or(&[]);
+        Ty::Struct(
+            name.to_string(),
+            decls.iter().map(ParamDecl::own_argument).collect(),
+        )
+    });
+    let defaults = regular
+        .iter()
+        .map(|param| {
+            let ty = checked.checked_type_at(&AnnotationSite::MethodParam {
+                module: module.clone(),
+                declaration: name.to_string(),
+                method: method_index,
+                param: m
+                    .params
+                    .iter()
+                    .position(|candidate| std::ptr::eq(candidate, *param))
+                    .unwrap_or(m.params.len()),
+            });
+            lower_default(
+                DefaultLowering {
+                    checked,
+                    overloads,
+                    owner: &mangled,
+                    parameter: param,
+                    binders: &enclosing_binders,
+                    ty,
+                },
+                functions,
+                declarations,
+            )
+        })
+        .collect();
+    declarations.functions.push(MirFunctionDeclaration {
+        lowered_name: mangled.clone(),
+        param_names: regular
+            .iter()
+            .map(|param| param.name().to_string())
+            .collect(),
+        param_types: regular
+            .iter()
+            .map(|param| {
+                checked_type_or_record(
+                    checked,
+                    &AnnotationSite::MethodParam {
+                        module: module.clone(),
+                        declaration: name.to_string(),
+                        method: method_index,
+                        param: m
+                            .params
+                            .iter()
+                            .position(|candidate| std::ptr::eq(candidate, *param))
+                            .unwrap_or(m.params.len()),
+                    },
+                    &format!("parameter '{}' of method '{source_mangled}'", param.name()),
+                    invariant_errors,
+                )
+            })
+            .collect(),
+        defaults,
+        required: regular
+            .iter()
+            .map(|param| param.default_value().is_none())
+            .collect(),
+        variadic: variadic_idx.map(|index| {
+            checked_type_or_record(
+                checked,
+                &AnnotationSite::MethodParam {
+                    module: module.clone(),
+                    declaration: name.to_string(),
+                    method: method_index,
+                    param: index,
+                },
+                &format!("variadic parameter of method '{source_mangled}'"),
+                invariant_errors,
+            )
+        }),
+        variadic_convention: variadic_idx.and_then(|index| m.params[index].convention()),
+        variadic_index: runtime_variadic_index(m.params, variadic_idx),
+        kw_variadic: kw_variadic_idx.map(|index| {
+            checked_type_or_record(
+                checked,
+                &AnnotationSite::MethodParam {
+                    module: module.clone(),
+                    declaration: name.to_string(),
+                    method: method_index,
+                    param: index,
+                },
+                &format!("keyword variadic parameter of method '{source_mangled}'"),
+                invariant_errors,
+            )
+        }),
+        kw_variadic_convention: kw_variadic_idx.and_then(|index| m.params[index].convention()),
+        kw_variadic_index: runtime_parameter_index(m.params, kw_variadic_idx),
+        positional_only: regular_marker_index(m.params, m.positional_only),
+        keyword_only: effective_keyword_only_index(m.params, m.keyword_only, variadic_idx),
+        param_decls,
+        has_receiver: m.has_self,
+        receiver_convention: m.self_convention,
+        param_conventions: regular.iter().map(DeclaredParam::convention).collect(),
+        ret_ty: ret_ty.clone(),
+        returns_reference: effect.returns_reference,
+        raises: effect.raises,
+        error_ty: effect.error.clone(),
+        ref_params: regular
+            .iter()
+            .map(|param| is_ref(&param.convention()))
+            .collect(),
+        param_writes: effect.param_writes.clone(),
+        availability: effect.availability.clone(),
+        enclosing: None,
+        region_binders: Vec::new(),
+    });
+    // A method's receiver `self` is the implicit first parameter,
+    // followed by the declared params.
+    let mut names: Vec<String> = Vec::new();
+    let mut ptys: Vec<Ty> = Vec::new();
+    let mut owned: Vec<bool> = Vec::new();
+    let mut deinit: Vec<bool> = Vec::new();
+    let mut refp: Vec<bool> = Vec::new();
+    if m.has_self {
+        names.push("self".to_string());
+        ptys.push(Ty::Struct(name.to_string(), Vec::new().into()));
+        owned.push(is_owned(&m.self_convention));
+        deinit.push(is_deinit(&m.self_convention));
+        refp.push(is_ref(&m.self_convention));
+    }
+    // The named result follows the ABI parameters as a
+    // callee-local uninitialized slot no caller passes.
+    let named_result = m
+        .params
+        .iter()
+        .find(|param| DeclaredParam::is_named_result(*param));
+    let caller_params = || {
+        m.params
+            .iter()
+            .enumerate()
+            .filter(|(_, p)| !p.is_named_result())
+    };
+    names.extend(caller_params().map(|(_, p)| p.name().to_string()));
+    names.extend(named_result.map(|result| result.name().to_string()));
+    names.extend(value_parameter_locals.iter().map(|(name, _)| name.clone()));
+    ptys.extend(caller_params().map(|(param, p)| {
+        body_parameter_ty(
+            p,
+            checked_type_or_record(
+                checked,
+                &AnnotationSite::MethodParam {
+                    module: module.clone(),
+                    declaration: name.to_string(),
+                    method: method_index,
+                    param,
+                },
+                &format!("parameter '{}' of method '{source_mangled}'", p.name()),
+                invariant_errors,
+            ),
+        )
+    }));
+    owned.extend(caller_params().map(|(_, p)| is_owned(&p.convention())));
+    deinit.extend(caller_params().map(|(_, p)| is_deinit(&p.convention())));
+    refp.extend(caller_params().map(|(_, p)| is_ref(&p.convention())));
+    lower_fn_nested(
+        FunctionLowering {
+            checked,
+            name: &mangled,
+            parameter_names: &names,
+            parameter_types: ptys,
+            value_parameter_locals,
+            receiver_value_parameters,
+            static_receiver,
+            enclosing_origin_parameters: origin_binder_names(
+                type_params.iter().chain(m.type_params),
+            ),
+            enclosing_binders,
+            owned_parameters: owned,
+            deinit_parameters: deinit,
+            reference_parameters: refp,
+            returns_reference: effect.returns_reference,
+            ret_ty,
+            raises: effect.raises,
+            error_ty: effect.error,
+            named_result: named_result.map(DeclaredParam::name),
+            body: m.body,
+            overloads,
+        },
+        functions,
+        declarations,
+    );
+}
+
+/// The struct a member of which MIR lowers.
+#[derive(Clone, Copy)]
+struct StructLowering<'a> {
+    checked: &'a CheckedProgram,
+    overloads: &'a mojito_symbol::symbol::OverloadSets,
+    module: &'a Option<String>,
+    name: &'a str,
+    type_params: &'a [mojito_ast::ast::TypeParam],
+}
+
+/// A struct member as MIR lowers it: a method the struct spells, or the
+/// wrapper of a trait default it inherits, whose parameters are a resolved
+/// signature's ([`mojito_checked::checked::CheckedDefaultWrapper`]).
+struct StructMember<'a, P> {
+    /// Its position among the struct's members, which its checked sites
+    /// name.
+    index: usize,
+    /// The name it is registered and counted under.
+    name: &'a str,
+    /// The symbol it lowers to.
+    lowered: String,
+    params: &'a [P],
+    has_self: bool,
+    self_convention: Option<ArgConvention>,
+    positional_only: Option<usize>,
+    keyword_only: Option<usize>,
+    /// Its own compile-time parameters.
+    type_params: &'a [mojito_ast::ast::TypeParam],
+    body: &'a [Stmt],
+}
+
 /// A declaration parameter whose default [`lower_default`] lowers: `ty` is its
 /// checked type, and `binders` the binders in scope at the declaration, which
 /// the default function lacks.
-#[derive(Clone, Copy)]
-struct DefaultLowering<'a> {
+struct DefaultLowering<'a, P> {
     checked: &'a CheckedProgram,
     overloads: &'a mojito_symbol::symbol::OverloadSets,
     owner: &'a str,
-    parameter: &'a FnParam,
+    parameter: &'a P,
     binders: &'a EnclosingBinders,
     ty: Option<&'a Ty>,
 }
+
+impl<P> Clone for DefaultLowering<'_, P> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+
+impl<P> Copy for DefaultLowering<'_, P> {}
 
 /// A parameter's default metadata ([`mir_default`]), or, for any other
 /// default, the zero-parameter function `$default$<owner>$<parameter>`
@@ -1216,8 +1333,8 @@ struct DefaultLowering<'a> {
 /// default naming a binder in scope (`Self.n * 2`, an enclosing `n`) reads
 /// it as the function's own: the function declares those binders, and the
 /// elaborator instantiates it with its owner instance's arguments.
-fn lower_default(
-    request: DefaultLowering<'_>,
+fn lower_default<P: DeclaredParam>(
+    request: DefaultLowering<'_, P>,
     functions: &mut Vec<(String, MirFunction)>,
     declarations: &mut MirDeclarations,
 ) -> Option<CheckedConst> {
@@ -1229,7 +1346,7 @@ fn lower_default(
         binders,
         ty,
     } = request;
-    let default = parameter.default.as_ref()?;
+    let default = parameter.default_value()?;
     if let Some(constant) = mir_default(checked, Some(default)) {
         return Some(constant);
     }
@@ -1239,7 +1356,7 @@ fn lower_default(
     } else {
         EnclosingBinders::default()
     };
-    let function = format!("$default${owner}${}", parameter.name);
+    let function = format!("$default${owner}${}", parameter.name());
     lower_expression_thunk(
         ExpressionThunk {
             checked,
@@ -3891,13 +4008,13 @@ fn lower_cfg_nested(
     clippy::single_option_map,
     reason = "all 14 call sites thread Option<usize> through unchanged"
 )]
-fn runtime_parameter_index(params: &[FnParam], marker: Option<usize>) -> Option<usize> {
+fn runtime_parameter_index<P: DeclaredParam>(params: &[P], marker: Option<usize>) -> Option<usize> {
     marker.map(|index| {
         params[..index]
             .iter()
             .filter(|parameter| {
-                !matches!(parameter.convention, Some(ArgConvention::Out))
-                    && parameter.kind != ParamKind::KwVariadic
+                !matches!(parameter.convention(), Some(ArgConvention::Out))
+                    && parameter.kind() != ParamKind::KwVariadic
             })
             .count()
     })
@@ -3910,13 +4027,13 @@ fn runtime_parameter_index(params: &[FnParam], marker: Option<usize>) -> Option<
     clippy::single_option_map,
     reason = "all 14 call sites thread Option<usize> through unchanged"
 )]
-fn runtime_variadic_index(params: &[FnParam], marker: Option<usize>) -> Option<usize> {
+fn runtime_variadic_index<P: DeclaredParam>(params: &[P], marker: Option<usize>) -> Option<usize> {
     marker.map(|index| {
         params[..index]
             .iter()
             .filter(|parameter| {
-                parameter.kind == ParamKind::Regular
-                    && !matches!(parameter.convention, Some(ArgConvention::Out))
+                parameter.kind() == ParamKind::Regular
+                    && !matches!(parameter.convention(), Some(ArgConvention::Out))
             })
             .count()
     })
@@ -3930,8 +4047,8 @@ fn runtime_variadic_index(params: &[FnParam], marker: Option<usize>) -> Option<u
 /// discriminator out of `MirFunction` prevents ordinary tuple operations,
 /// ownership, and place typing from having to understand an artificial
 /// source-inexpressible aggregate kind.
-fn body_parameter_ty(parameter: &FnParam, ty: Ty) -> Ty {
-    match (parameter.kind, ty) {
+fn body_parameter_ty<P: DeclaredParam>(parameter: &P, ty: Ty) -> Ty {
+    match (parameter.kind(), ty) {
         (ParamKind::Variadic, Ty::RuntimePack(elements)) => Ty::Tuple(elements),
         (ParamKind::Variadic, element) => Ty::VariadicPack(Box::new(element)),
         (ParamKind::KwVariadic, element) => Ty::Struct(
