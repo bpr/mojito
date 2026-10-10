@@ -485,13 +485,25 @@ mod tests {
                 "`{name}` at {arity}"
             );
         }
-        for name in ["print", "len", "range", "reversed", "main", "List"] {
+        for name in [
+            "print",
+            "len",
+            "range",
+            "reversed",
+            "main",
+            "List",
+            "List.append",
+        ] {
             assert_eq!(
                 imported.is_function(name),
                 whole.is_function(name),
                 "`{name}`"
             );
         }
+        assert!(
+            !imported.is_function("List.append"),
+            "a method is no function"
+        );
         for name in ["StopIteration", "List", "String"] {
             assert_eq!(
                 imported.fieldwise_parameters(name),

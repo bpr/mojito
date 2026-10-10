@@ -206,12 +206,15 @@ import (every compilation that links the bundled library):
   `CheckContext::record_elaborated`), and a declaration's residue holds the
   module-scope compile-time facts its names bind (a bound dtype, a lifted
   constant's application, a kept compile-time value, a type alias, its
-  `SIMDLength` binders). Its lowered part holds its overload facts
-  (`package::LoweredDeclaration::overloads`): its functions' arities, its
-  methods' and requirements', its struct's fieldwise initializer, and its
-  integer constant. No module has a checker record of its own, as
-  upstream's package holds no per-module overload set: a name's overload
-  set is the declarations a lookup finds under it. The build's check
+  `SIMDLength` binders). Its lowered part holds its integer constant
+  (`package::LoweredDeclaration::constants`) and no overload set: as
+  upstream's package holds none, an importer's name's overload set is the
+  reached declarations a lookup finds under it, the plain name and its
+  `$ov$` run of the by-name function table (`PackageScope`'s
+  `OverloadLookup`), and the build refuses a library whose lowered
+  declarations imply other sets than its check scanned
+  (`checked::declaration::declared_overloads`). No module has a checker
+  record of its own. The build's check
   exports the rows once the whole library is checked
   (`Checker::export_interfaces`); the declaration directory lists each
   module by path, and each declaration's record with every table key it

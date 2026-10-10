@@ -20,6 +20,7 @@
 //! as the checker before formatting, so `FixedBuffer[N]` and `FixedBuffer[2+6]`
 //! name the same `FixedBuffer[8]` specialization selected at a call site.
 
+use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
 use std::fmt::Write as _;
 
@@ -650,6 +651,33 @@ pub fn is_index_normalization_symbol(symbol: &str) -> bool {
     })
 }
 
+/// The overload set a lowered function declaration belongs to, by the
+/// source name a lookup finds it under.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OverloadFamily<'a> {
+    /// A free function `name`.
+    Free(&'a str),
+    /// A method or trait requirement `Type.method`.
+    Method(&'a str),
+}
+
+/// The overload set the function lowered as `lowered_name` belongs to: the
+/// name before its signature qualifier, a free function's or a
+/// `Type.method`. A lifted function belongs to none.
+pub fn overload_family(lowered_name: &str) -> Option<OverloadFamily<'_>> {
+    if lifted_owner(lowered_name).is_some() {
+        return None;
+    }
+    let base = lowered_name
+        .split_once(OV_SEP)
+        .map_or(lowered_name, |(base, _)| base);
+    Some(if split_method_symbol(base).is_some() {
+        OverloadFamily::Method(base)
+    } else {
+        OverloadFamily::Free(base)
+    })
+}
+
 /// The overloaded declarations of a program, scanned from its top level: which
 /// free-function names and `Type.method` names have more than one definition
 /// (and at which arities).
@@ -698,7 +726,7 @@ pub trait OverloadLookup {
     /// The parameter names of struct `name`'s synthesized `@fieldwise_init`
     /// constructor (its field names, in order); `None` when the struct has no
     /// such constructor.
-    fn fieldwise_parameters(&self, name: &str) -> Option<&[String]>;
+    fn fieldwise_parameters(&self, name: &str) -> Option<Cow<'_, [String]>>;
 
     /// The value of the module integer constant `name`, which a signature's
     /// spelling folds.
@@ -743,7 +771,11 @@ impl OverloadSets {
                     fieldwise_init,
                     ..
                 } => {
-                    if *fieldwise_init && !ms.iter().any(|method| method.name == "__init__") {
+                    if *fieldwise_init
+                        && !ms
+                            .iter()
+                            .any(|method| lifecycle_method_name(method) == "__init__")
+                    {
                         fieldwise_constructors.insert(
                             name.clone(),
                             fields.iter().map(|field| field.name.clone()).collect(),
@@ -788,57 +820,71 @@ impl OverloadSets {
         }
     }
 
-    /// The sets split by the part `part` puts each name in: a free
-    /// function, a constant, or a struct by its name, and a method by its
-    /// `Type.method` name. A name `part` places nowhere is answered in
-    /// `Err`, sorted.
-    ///
-    /// # Errors
-    ///
-    /// The names `part` places nowhere.
-    pub fn partitioned<K: Ord>(
-        &self,
-        part: impl Fn(&str) -> Option<K>,
-    ) -> Result<std::collections::BTreeMap<K, Self>, Vec<String>> {
-        let mut parts = std::collections::BTreeMap::<K, Self>::new();
-        let mut unplaced = Vec::new();
-        let mut place = |name: &String, add: &mut dyn FnMut(&mut Self)| match part(name) {
-            Some(key) => add(parts.entry(key).or_default()),
-            None => unplaced.push(name.clone()),
-        };
-        for (name, arities) in &self.functions {
-            place(name, &mut |sets| {
-                sets.functions.insert(name.clone(), arities.clone());
-            });
+    /// The sets the declarations `members` imply, each a function's
+    /// overload family and source arity, beside the parameter names of each
+    /// struct's synthesized fieldwise constructor: what [`Self::scan`] finds
+    /// of a program, but its constants.
+    pub fn declared<'a>(
+        members: impl IntoIterator<Item = (OverloadFamily<'a>, usize)>,
+        fieldwise: impl IntoIterator<Item = (String, Vec<String>)>,
+    ) -> Self {
+        let mut functions: HashMap<String, Vec<usize>> = HashMap::new();
+        let mut methods: HashMap<String, Vec<usize>> = HashMap::new();
+        for (family, arity) in members {
+            let (counts, name) = match family {
+                OverloadFamily::Free(name) => (&mut functions, name),
+                OverloadFamily::Method(name) => (&mut methods, name),
+            };
+            counts.entry(name.to_string()).or_default().push(arity);
         }
-        for name in &self.all_functions {
-            place(name, &mut |sets| {
-                sets.all_functions.insert(name.clone());
-            });
+        Self {
+            all_functions: functions.keys().cloned().collect(),
+            functions: keep_overloaded(functions),
+            methods: keep_overloaded(methods),
+            comptimes: HashMap::new(),
+            fieldwise_constructors: fieldwise.into_iter().collect(),
         }
-        for (name, arities) in &self.methods {
-            place(name, &mut |sets| {
-                sets.methods.insert(name.clone(), arities.clone());
-            });
+    }
+
+    /// Every integer constant, by name, sorted.
+    pub fn constants(&self) -> Vec<(String, i64)> {
+        let mut constants: Vec<(String, i64)> = self
+            .comptimes
+            .iter()
+            .map(|(name, value)| (name.clone(), *value))
+            .collect();
+        constants.sort();
+        constants
+    }
+
+    /// The first name, sorted, whose facts here differ from `other`'s,
+    /// constants aside; `None` when the two agree.
+    pub fn differing_name(&self, other: &Self) -> Option<String> {
+        fn differing<V: PartialEq>(
+            left: &HashMap<String, V>,
+            right: &HashMap<String, V>,
+        ) -> impl Iterator<Item = String> {
+            let names: std::collections::BTreeSet<&String> =
+                left.keys().chain(right.keys()).collect();
+            names
+                .into_iter()
+                .filter(|name| left.get(*name) != right.get(*name))
+                .cloned()
+                .collect::<Vec<_>>()
+                .into_iter()
         }
-        for (name, value) in &self.comptimes {
-            place(name, &mut |sets| {
-                sets.comptimes.insert(name.clone(), *value);
-            });
-        }
-        for (name, fields) in &self.fieldwise_constructors {
-            place(name, &mut |sets| {
-                sets.fieldwise_constructors
-                    .insert(name.clone(), fields.clone());
-            });
-        }
-        if unplaced.is_empty() {
-            Ok(parts)
-        } else {
-            unplaced.sort();
-            unplaced.dedup();
-            Err(unplaced)
-        }
+        differing(&self.functions, &other.functions)
+            .chain(
+                self.all_functions
+                    .symmetric_difference(&other.all_functions)
+                    .cloned(),
+            )
+            .chain(differing(&self.methods, &other.methods))
+            .chain(differing(
+                &self.fieldwise_constructors,
+                &other.fieldwise_constructors,
+            ))
+            .min()
     }
 }
 
@@ -859,8 +905,10 @@ impl OverloadLookup for OverloadSets {
             .is_some_and(|arities| arities.contains(&arity))
     }
 
-    fn fieldwise_parameters(&self, name: &str) -> Option<&[String]> {
-        self.fieldwise_constructors.get(name).map(Vec::as_slice)
+    fn fieldwise_parameters(&self, name: &str) -> Option<Cow<'_, [String]>> {
+        self.fieldwise_constructors
+            .get(name)
+            .map(|names| Cow::Borrowed(names.as_slice()))
     }
 
     fn comptime(&self, name: &str) -> Option<i64> {

@@ -6,6 +6,7 @@
 
 use crate::checked::{CheckedConst, ExplicitDestroyInfo, StructConformance};
 use mojito_ast::ast::ArgConvention;
+use mojito_symbol::symbol::{OverloadFamily, OverloadSets, overload_family};
 use mojito_types::param_expr::ParamExpr;
 use mojito_types::types::{GenericConstraint, ParamDecl, Ty};
 use std::collections::{HashMap, HashSet};
@@ -52,6 +53,13 @@ pub struct StructDeclaration {
 }
 
 impl StructDeclaration {
+    /// The parameter names of the struct's synthesized `@fieldwise_init`
+    /// constructor, its field names in order; `None` when it has none.
+    pub fn fieldwise_parameters(&self) -> Option<Vec<String>> {
+        self.fieldwise_init
+            .then(|| self.fields.iter().map(|(name, _)| name.clone()).collect())
+    }
+
     /// The struct's explicit-destruction obligation, its destructors
     /// joined, as the check analyzes one.
     pub fn explicit_destroy_info(&self) -> Option<ExplicitDestroyInfo> {
@@ -163,6 +171,44 @@ pub struct FunctionDeclaration {
     /// may name. The elaborator instantiates such a body once per unrolled
     /// copy of the region. Empty at top level and on a concrete instance.
     pub region_binders: Vec<ParamDecl>,
+}
+
+impl FunctionDeclaration {
+    /// How many parameters the function's source spells, its receiver
+    /// aside: the runtime ones and each variadic collector.
+    pub fn source_arity(&self) -> usize {
+        self.param_types.len()
+            + usize::from(self.variadic.is_some())
+            + usize::from(self.kw_variadic.is_some())
+    }
+
+    /// The overload set the function belongs to, beside its source arity;
+    /// `None` for a nested or lifted function, which no lookup by name
+    /// finds.
+    pub fn overload_member(&self) -> Option<(OverloadFamily<'_>, usize)> {
+        if self.enclosing.is_some() {
+            return None;
+        }
+        overload_family(&self.lowered_name).map(|family| (family, self.source_arity()))
+    }
+}
+
+/// The overload sets the declarations `functions` and `structs` imply, as
+/// a lookup by name finds them ([`OverloadSets::declared`]).
+pub fn declared_overloads(
+    functions: &[FunctionDeclaration],
+    structs: &[StructDeclaration],
+) -> OverloadSets {
+    OverloadSets::declared(
+        functions
+            .iter()
+            .filter_map(FunctionDeclaration::overload_member),
+        structs.iter().filter_map(|declaration| {
+            declaration
+                .fieldwise_parameters()
+                .map(|names| (declaration.name.clone(), names))
+        }),
+    )
 }
 
 fn sorted_names<S: serde::Serializer>(

@@ -57,12 +57,13 @@ impl DeclarationInterfaces {
 ///
 /// Each declaration's rows, which
 /// [`Self::records`] encodes as the residue of the declaration's record
-/// once its lowering is known, and the overload facts and effect summaries
-/// its lowered part holds.
+/// once its lowering is known, the overload sets its lowered declarations
+/// must imply, and the constants and effect summaries its lowered part
+/// holds.
 pub struct InterfaceExport {
     declarations: BTreeMap<String, (DeclarationInterface, Vec<(Table, String)>)>,
-    /// Each declaration's overload facts, by declaration.
-    overloads: BTreeMap<String, mojito_symbol::symbol::OverloadSets>,
+    /// The library's overload sets, as its check scanned them.
+    overloads: mojito_symbol::symbol::OverloadSets,
     declaring: DeclaringModules,
     /// The transfer effects of each module-level callable and method whose
     /// body the check summarized, by callable identity.
@@ -84,17 +85,18 @@ impl std::fmt::Debug for InterfaceExport {
 impl InterfaceExport {
     /// The package's declaration records, under the module table `modules`
     /// the build's link recorded: `structs`, `functions`, and
-    /// `traits`, the library's lowered declarations, and the check's overload facts and
-    /// effect summaries, each in the record of the declaration it belongs to, beside that
-    /// declaration's residue, which leaves out what its lowered
-    /// declarations say.
+    /// `traits`, the library's lowered declarations, and the check's
+    /// constants and effect summaries, each in the record of the
+    /// declaration it belongs to, beside that declaration's residue, which
+    /// leaves out what its lowered declarations say.
     ///
     /// # Errors
     ///
-    /// A lowered declaration or summary no library declaration owns, a
-    /// struct, method, or function whose
-    /// lowered declaration says other than the check's rows, or a residue
-    /// that does not encode.
+    /// A lowered declaration, constant, or summary no library declaration
+    /// owns, lowered declarations whose overload sets differ from the
+    /// check's, a struct, method, or function whose lowered declaration
+    /// says other than the check's rows, or a residue that does not
+    /// encode.
     pub fn records(
         self,
         modules: Vec<PackagedModule>,
@@ -102,6 +104,13 @@ impl InterfaceExport {
         functions: Vec<FunctionDeclaration>,
         traits: Vec<mojito_checked::declaration::TraitDeclaration>,
     ) -> Result<DeclarationRecords, String> {
+        if let Some(name) = mojito_checked::declaration::declared_overloads(&functions, &structs)
+            .differing_name(&self.overloads)
+        {
+            return Err(format!(
+                "the library's lowered declarations say other than its check of the overloads of `{name}`"
+            ));
+        }
         let mut records = DeclarationRecords {
             modules,
             declaring: self.declaring,
@@ -130,10 +139,9 @@ impl InterfaceExport {
         );
         unplaced.extend(
             self.overloads
+                .constants()
                 .into_iter()
-                .filter_map(|(declaration, sets)| {
-                    records.place_overloads(&declaration, sets).err()
-                }),
+                .filter_map(|(name, value)| records.place_constant(name, value).err()),
         );
         unplaced.extend(
             self.call_through_effects
@@ -753,14 +761,7 @@ impl Checker {
                 keys.push((Table::Elaborated, name.clone()));
             }
         }
-        let overloads = self
-            .overload_sets
-            .own()
-            .partitioned(|name| modules.declaration_of(name).map(str::to_string))
-            .unwrap_or_else(|names| {
-                unplaced.extend(names);
-                BTreeMap::new()
-            });
+        let overloads = self.overload_sets.own().clone();
         self.refuse_uncarried(&modules)?;
         refuse_unplaced(unplaced)?;
         let callables = self.top_level_callables.borrow();

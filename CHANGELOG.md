@@ -8,6 +8,12 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A package declaration stores no overload facts (R575): an importer finds
+  a library name's overload set, as Mojo does, by looking up the reached
+  declarations under the name, and its struct's fieldwise constructor from
+  its declaration; the build refuses a library whose lowered declarations
+  imply other sets than its check scanned. The package format is now
+  `mojito-package 20`.
 - A trait default's parameter defaults are now held once, by its trait
   member's declaration (R588): a conformer's wrapper adopts them, an
   evaluated default applied to the wrapper's instantiation of the member,
@@ -207,6 +213,10 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- A `@fieldwise_init` struct whose copy or move constructor is spelled
+  `__init__(out self, *, copy: Self)` keeps its fieldwise constructor, so
+  `P(y=2, x=1)` runs as at the pin instead of failing with "keyword
+  arguments to 'P' are not supported".
 - A bundled library function used as a value in an importer (`var g =
   next_pow2`, or passed to a `def` parameter) runs instead of failing with
   "'None' is not callable": the importer's check keeps the package's

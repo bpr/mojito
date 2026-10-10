@@ -646,7 +646,7 @@ impl Flatten<'_> {
             .overloads
             .fieldwise_parameters(constructed)
             .and_then(|names| {
-                mojito_ast::call::match_fieldwise_slots(names, regs.len(), &keyword_names).ok()
+                mojito_ast::call::match_fieldwise_slots(&names, regs.len(), &keyword_names).ok()
             })
         else {
             return (regs, places, keywords, keyword_places);

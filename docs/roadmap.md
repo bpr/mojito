@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R596**.
+Next free ID: **R598**.
 
 ## Ordered Work
 
@@ -50,25 +50,6 @@ Scope: what remains of the plan's stages, and what the pipeline order still
 leaves to close. A defect found on the way is filed by its kind; a
 divergence from the pin goes to a catch-up track, however small.
 
-- [ ] **R575 (P6) A package declaration's overload facts restate what its
-  lowered functions already say**
-
-  A declaration record's lowered part holds its overload facts
-  (`LoweredDeclaration::overloads`) beside the function declarations that
-  imply most of them.
-  - A function's arities are its `name$ov$…` declarations' parameter
-    counts, and whether a name is a function is whether one of them, or
-    the plain name, is declared.
-  - A struct's fieldwise initializer is its `fieldwise_init` flag and
-    field list, when it declares no `__init__`.
-  - Upstream derives a name's overload set from the declarations a lookup
-    finds under it, and stores none.
-  - The lever: R560's pattern, projecting the facts the functions say out
-    of the record with a byte-for-byte guard at build time, and joining
-    them back on decode.
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R581 (P6) A package declaration's record restates the names and
   masks its directory rows hold**
 
@@ -82,6 +63,36 @@ divergence from the pin goes to a catch-up track, however small.
   - The lever: R560's pattern, projecting the restated fields out of the
     record with a byte-for-byte guard at build time, and joining them back
     from the directory row on decode.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R596 (P6) A module integer constant's value is held twice in its
+  package record**
+
+  The checker residue's `Comptimes` row holds the constant as an
+  `IntLiteral`, and the lowered part holds it again as the `i64` a
+  signature's spelling folds (`LoweredDeclaration::constants`).
+  - Upstream holds a constant once, in its declaration's op.
+  - The lever: R560's pattern, keeping the value in the lowered part only,
+    with a byte-for-byte guard at build time, and joining the checker's
+    row back from it on decode.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R597 (P6) A library trait's overloaded requirement with no default
+  would keep the bundled library from being packaged**
+
+  An importer finds a name's overload set by looking up its function
+  declarations, and a requirement with no default lowers to none.
+  - So a library trait overloading such a requirement would make its
+    lowered declarations imply other sets than the build's check, which
+    refuses the package; the library then compiles from source after a
+    warning.
+  - No library trait has an overloaded requirement today.
+  - Upstream's trait op declares each requirement, defaulted or not, so a
+    lookup finds every one.
+  - The lever: a trait declaration records its requirements' arities by
+    name (`TraitDeclaration`), which the lookup reads beside the functions.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

@@ -705,9 +705,8 @@ fn a_nested_instance_argument_spells_as_its_own_symbol() {
 }
 
 #[test]
-fn overload_sets_partition_by_declaration_and_scan_over_a_package() {
-    // A package build splits its sets by the declaration owning each name;
-    // an importer scans its own statements alone, reading a constant the
+fn overload_sets_scan_over_a_package() {
+    // An importer scans its own statements alone, reading a constant the
     // package declares through a lookup.
     use mojito::symbol::{OverloadLookup, OverloadSets};
     let library = parse(
@@ -724,17 +723,9 @@ fn overload_sets_partition_by_declaration_and_scan_over_a_package() {
     )
     .expect("parse error");
     let sets = OverloadSets::scan(&library);
-    let parts = sets
-        .partitioned(|name| Some(name.to_string()))
-        .expect("every name has a part");
-    assert!(parts["pick"].function_is_overloaded("pick", 1));
-    assert!(!parts["pick"].is_function("solo"));
-    assert!(parts["solo"].is_function("solo"));
-    assert_eq!(parts["N"].comptime("N"), Some(2));
-    assert_eq!(
-        sets.partitioned(|name| (name != "solo").then_some(())),
-        Err(vec!["solo".to_string()])
-    );
+    assert!(sets.function_is_overloaded("pick", 1));
+    assert!(sets.is_function("solo"));
+    assert_eq!(sets.comptime("N"), Some(2));
     let mut mine = OverloadSets::default();
     mine.scan_more(&own, |name| sets.comptime(name));
     assert_eq!(mine.comptime("M"), Some(3));
@@ -745,8 +736,8 @@ fn overload_sets_partition_by_declaration_and_scan_over_a_package() {
 #[test]
 fn program_overloads_ask_the_own_sets_then_the_owning_package_declaration() {
     // An importer's sets answer an own name from its own scan and a package
-    // name from the record of the reached declaration owning it, decoding
-    // each record only when a query names it.
+    // name by looking up the reached declarations under it, decoding each
+    // record only when a query names it; a package stores only constants.
     use mojito::checked_package::{
         DeclarationRecords, DeclaringModules, PackageDeclarations, PackageScope, PackagedModule,
         ProgramOverloads,
@@ -764,9 +755,8 @@ fn program_overloads_ask_the_own_sets_then_the_owning_package_declaration() {
     mojito::ast::stamp_source(&mut unreached, "/library/b.mojo");
     library.extend(unreached);
     let declaring = DeclaringModules::of(&library).expect("one module per name");
-    let parts = OverloadSets::scan(&library)
-        .partitioned(|name| declaring.declaration_of(name).map(str::to_string))
-        .expect("every name has a declaration");
+    let constants = OverloadSets::scan(&library).constants();
+    let program = lower_program(&library).expect("type error");
     let mut records = DeclarationRecords {
         modules: ["a", "b"]
             .map(|name| PackagedModule {
@@ -779,9 +769,14 @@ fn program_overloads_ask_the_own_sets_then_the_owning_package_declaration() {
         declaring,
         ..DeclarationRecords::default()
     };
-    for (declaration, sets) in parts {
+    for declaration in program.declarations.functions {
+        if declaration.lowered_name.starts_with("pick") || declaration.lowered_name == "solo" {
+            records.place_function(declaration).expect("placed");
+        }
+    }
+    for (name, value) in constants {
         records
-            .place_overloads(&declaration, sets)
+            .place_constant(name, value)
             .expect("a library declaration");
     }
     let package = Arc::new(PackageDeclarations::of_records(records).expect("the records encode"));

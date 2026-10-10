@@ -14,10 +14,12 @@
 //! each declaration of a package from one op, no phase reads a second copy
 //! of a declaration.
 //!
-//! The lowered part also holds the declaration's overload facts, which MIR
-//! and the check both ask by name: an importer's program asks its own sets
-//! first and the package's owning declaration on a miss
-//! ([`ProgramOverloads`]).
+//! The lowered part also holds the integer value of the declaration's
+//! constant. It holds no overload set: as upstream does, an importer finds
+//! a name's overload set by looking up the declarations under the name,
+//! after its program's own sets miss ([`ProgramOverloads`]), and the build
+//! refuses a library whose lowered declarations say other than its check's
+//! sets.
 //!
 //! The directory also holds the package's one module table: each library
 //! module, by dotted name, beside its source file's identity and the record
@@ -31,7 +33,10 @@
 use crate::checked::{CallThroughEffect, TransferEffect};
 use crate::declaration::{FunctionDeclaration, StructDeclaration, TraitDeclaration};
 use mojito_ast::ast::{Stmt, StmtKind};
-use mojito_symbol::symbol::{LiftedOwner, OV_SEP, OverloadLookup, OverloadSets, lifted_owner};
+use mojito_symbol::symbol::{
+    LiftedOwner, OV_SEP, OverloadFamily, OverloadLookup, OverloadSets, lifted_owner,
+};
+use std::borrow::Cow;
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, HashMap};
 use std::ops::{Deref, Range};
@@ -193,10 +198,8 @@ pub struct LoweredDeclaration {
     pub transfer_effects: Vec<(String, Vec<TransferEffect>)>,
     /// The call-through effects of each callable it declares, likewise.
     pub call_through_effects: Vec<(String, Vec<CallThroughEffect>)>,
-    /// The overload facts of the names it owns: its functions' arities, its
-    /// methods' and its trait's requirements', its struct's fieldwise
-    /// initializer, and its constant's integer value.
-    pub overloads: OverloadSets,
+    /// The integer value of its module constant, by name, sorted.
+    pub constants: Vec<(String, i64)>,
 }
 
 impl LoweredDeclaration {
@@ -208,6 +211,11 @@ impl LoweredDeclaration {
     /// The call-through effects of the callable `name`.
     pub fn call_through_effects(&self, name: &str) -> Option<&Vec<CallThroughEffect>> {
         sorted_get(&self.call_through_effects, name)
+    }
+
+    /// The integer value of the module constant `name`.
+    pub fn constant(&self, name: &str) -> Option<i64> {
+        sorted_get(&self.constants, name).copied()
     }
 }
 
@@ -868,17 +876,77 @@ impl PackageScope {
         Self { package, reached }
     }
 
-    /// The overload facts of the declaration the name `name` belongs to,
-    /// decoded on first use; `None` when no reached module declares it.
-    pub fn overloads_of(&self, name: &str) -> Option<&OverloadSets> {
-        let entry = self.package.owning(name)?;
-        let module = self.package.directory.declaration(entry)?.module;
-        if !self.reached.get(module as usize).copied().unwrap_or(false) {
+    /// Whether the link reached the module of the declaration at `entry`.
+    fn reaches(&self, entry: usize) -> bool {
+        self.package
+            .directory
+            .declaration(entry)
+            .is_some_and(|declaration| {
+                self.reached
+                    .get(declaration.module as usize)
+                    .copied()
+                    .unwrap_or(false)
+            })
+    }
+
+    /// The source arity of every reached function of the overload set
+    /// `family`: the declarations a lookup finds under its name, the plain
+    /// one and each signature-qualified one, decoded on first use.
+    fn arities(&self, family: OverloadFamily<'_>) -> Vec<usize> {
+        let (OverloadFamily::Free(name) | OverloadFamily::Method(name)) = family;
+        let directory = &self.package.directory;
+        directory
+            .function_position(name)
+            .into_iter()
+            .chain(directory.function_positions(&format!("{name}{OV_SEP}")))
+            .filter(|position| {
+                let row = directory.word(Section::FunctionsByName, *position, 0) as usize;
+                self.reaches(directory.word(Section::Functions, row, 1) as usize)
+            })
+            .filter_map(|position| self.package.function_at(position)?.overload_member())
+            .filter(|(member, _)| *member == family)
+            .map(|(_, arity)| arity)
+            .collect()
+    }
+
+    /// Whether `arities`, one overload set's, are an overloaded name's
+    /// that defines `arity`.
+    fn overloaded(arities: &[usize], arity: usize) -> bool {
+        arities.len() > 1 && arities.contains(&arity)
+    }
+}
+
+impl OverloadLookup for PackageScope {
+    fn function_is_overloaded(&self, name: &str, arity: usize) -> bool {
+        Self::overloaded(&self.arities(OverloadFamily::Free(name)), arity)
+    }
+
+    fn is_function(&self, name: &str) -> bool {
+        !self.arities(OverloadFamily::Free(name)).is_empty()
+    }
+
+    fn method_is_overloaded(&self, source_name: &str, arity: usize) -> bool {
+        Self::overloaded(&self.arities(OverloadFamily::Method(source_name)), arity)
+    }
+
+    fn fieldwise_parameters(&self, name: &str) -> Option<Cow<'_, [String]>> {
+        let position = self.package.struct_position(name)?;
+        let entry = self.package.directory.word(Section::Structs, position, 1) as usize;
+        if !self.reaches(entry) {
             return None;
         }
         self.package
-            .lowered(entry)
-            .map(|lowered| &lowered.overloads)
+            .structure_at(position)?
+            .fieldwise_parameters()
+            .map(Cow::Owned)
+    }
+
+    fn comptime(&self, name: &str) -> Option<i64> {
+        let entry = self.package.owning(name)?;
+        if !self.reaches(entry) {
+            return None;
+        }
+        self.package.lowered(entry)?.constant(name)
     }
 }
 
@@ -912,8 +980,7 @@ impl ProgramOverloads {
     /// constants may read the package's.
     pub fn scan_more(&mut self, program: &[Stmt]) {
         let package = self.package.as_ref();
-        self.own
-            .scan_more(program, |name| package?.overloads_of(name)?.comptime(name));
+        self.own.scan_more(program, |name| package?.comptime(name));
     }
 
     /// Record the own method `source_name`'s declarations by arity
@@ -921,45 +988,43 @@ impl ProgramOverloads {
     pub fn declare_method(&mut self, source_name: &str, arities: Vec<usize>) {
         self.own.declare_method(source_name, arities);
     }
-
-    /// The overload facts of the package declaration owning `name`.
-    fn package(&self, name: &str) -> Option<&OverloadSets> {
-        self.package.as_ref()?.overloads_of(name)
-    }
 }
 
 impl OverloadLookup for ProgramOverloads {
     fn function_is_overloaded(&self, name: &str, arity: usize) -> bool {
         self.own.function_is_overloaded(name, arity)
             || self
-                .package(name)
-                .is_some_and(|sets| sets.function_is_overloaded(name, arity))
+                .package
+                .as_ref()
+                .is_some_and(|package| package.function_is_overloaded(name, arity))
     }
 
     fn is_function(&self, name: &str) -> bool {
         self.own.is_function(name)
             || self
-                .package(name)
-                .is_some_and(|sets| sets.is_function(name))
+                .package
+                .as_ref()
+                .is_some_and(|package| package.is_function(name))
     }
 
     fn method_is_overloaded(&self, source_name: &str, arity: usize) -> bool {
         self.own.method_is_overloaded(source_name, arity)
             || self
-                .package(source_name)
-                .is_some_and(|sets| sets.method_is_overloaded(source_name, arity))
+                .package
+                .as_ref()
+                .is_some_and(|package| package.method_is_overloaded(source_name, arity))
     }
 
-    fn fieldwise_parameters(&self, name: &str) -> Option<&[String]> {
+    fn fieldwise_parameters(&self, name: &str) -> Option<Cow<'_, [String]>> {
         self.own
             .fieldwise_parameters(name)
-            .or_else(|| self.package(name)?.fieldwise_parameters(name))
+            .or_else(|| self.package.as_ref()?.fieldwise_parameters(name))
     }
 
     fn comptime(&self, name: &str) -> Option<i64> {
         self.own
             .comptime(name)
-            .or_else(|| self.package(name)?.comptime(name))
+            .or_else(|| self.package.as_ref()?.comptime(name))
     }
 }
 
@@ -1073,18 +1138,15 @@ impl DeclarationRecords {
         Ok(())
     }
 
-    /// Put the overload facts of the names the declaration `declaration`
-    /// owns in its record.
+    /// Put the integer value of the module constant `name` in the record
+    /// of the declaration it belongs to.
     ///
     /// # Errors
     ///
-    /// No library declaration is named `declaration`.
-    pub fn place_overloads(
-        &mut self,
-        declaration: &str,
-        overloads: OverloadSets,
-    ) -> Result<(), String> {
-        self.record_of(declaration)?.lowered.overloads = overloads;
+    /// No library declaration owns `name`.
+    pub fn place_constant(&mut self, name: String, value: i64) -> Result<(), String> {
+        let record = self.record_of(&name)?;
+        sorted_insert(&mut record.lowered.constants, name, value);
         Ok(())
     }
 

@@ -881,10 +881,10 @@ library declaration, and one module table holding each module's link
 record, one file per package. The bundled library's is the
 only producer today (`src/package.rs`). No part of a package is MIR text:
 it is a header followed by bytecode records, as upstream's package is
-MLIR bytecode throughout. The format line is `mojito-package 19`.
+MLIR bytecode throughout. The format line is `mojito-package 20`.
 
 ```text
-mojito-package 19
+mojito-package 20
 <the header's length, 8 bytes little-endian>
 <the header, as bytecode>
 <the payload: every record, as bytecode>
@@ -937,10 +937,9 @@ mojito-package 19
   `MirStructDeclaration` and `MirFunctionDeclaration` the declaration
   lowers to (its own, its methods, and the functions nested in or lifted
   from it), its trait with the traits it refines, and the transfer and call-through effect summaries of its
-  callables, by callable identity, and the overload facts of the names the
-  declaration owns (`mojito_symbol::symbol::OverloadSets`: its functions'
-  arities, its methods' and its trait's requirements', its struct's
-  fieldwise initializer, and its integer constant), every list sorted by
+  callables, by callable identity, and its module constant's integer value
+  (`constants`); it stores no overload set, which an importer finds by
+  looking up the declarations under a name (format 20). Every list is sorted by
   name and every set and map written sorted, so equal declarations encode
   equal bytes. The
   importer decodes it once per process, the first time any phase looks one
