@@ -1,16 +1,18 @@
 //! The compiled package container, one file per package.
 //!
-//! It holds the package's checker interface, its MIR declarations, and each
-//! of its verified, ownership-checked function bodies as MIR text, before
-//! drop elaboration. An importer reads the interface and the declarations eagerly and a body
-//! only when the elaborator first reaches it, and inserts that body's drops
-//! then, as upstream materializes a package's bodies on demand and runs its
-//! lifetime pass on each in the importer.
+//! It holds the package's checker interface, its MIR declarations, the
+//! record its importer's link reads for each of its source modules, and
+//! each of its verified, ownership-checked function bodies as MIR text,
+//! before drop elaboration. An importer reads the interface and the
+//! declarations eagerly, a module's record when its link reaches the
+//! module, and a body only when the elaborator first reaches it, inserting
+//! that body's drops then, as upstream materializes a package's bodies on
+//! demand and runs its lifetime pass on each in the importer.
 //!
 //! The container is line-framed:
 //!
 //! ```text
-//! mojito-package 1
+//! mojito-package 2
 //! package <name>
 //! compiler <identity>
 //! source <hash>
@@ -18,13 +20,18 @@
 //! <the interface record>
 //! declarations <bytes>
 //! <a MIR artifact whose function list is empty>
+//! module <bytes> <canonical source path>
+//! <the module's record, as bytecode>
+//! …
 //! function <bytes> <params> <ref-parameter mask> <name>
 //! <the function's MIR record>
 //! …
 //! end
 //! ```
 //!
-//! Each section's text is exactly its byte count, followed by a newline.
+//! Each section is exactly its byte count, followed by a newline. Every
+//! section but a module record is UTF-8 text; a module record is opaque
+//! here, since the linker that reads it sits above MIR.
 
 use super::parse::package::{self as decode, PackageFiles};
 use super::{ArtifactDiagnostic, DisassembleError, write};
@@ -35,7 +42,7 @@ use std::fmt;
 use std::sync::{Mutex, OnceLock};
 
 /// The container format this compiler writes and reads.
-pub const PACKAGE_FORMAT: &str = "mojito-package 1";
+pub const PACKAGE_FORMAT: &str = "mojito-package 2";
 
 /// Who built a package from what: an importer refuses a package another
 /// compiler built, or one built from other sources.
@@ -50,12 +57,14 @@ pub struct PackageHeader {
 }
 
 /// A read package: its header, its checker interface, its MIR declarations,
-/// and its bodies, decoded on demand.
+/// its module records, and its bodies, decoded on demand.
 #[derive(Debug)]
 pub struct Package {
     pub header: PackageHeader,
     pub interface: PackageInterface,
     pub declarations: MirDeclarations,
+    /// Each module's encoded record, beside its canonical source path.
+    pub modules: Vec<(String, Vec<u8>)>,
     pub bodies: PackageBodies,
 }
 
@@ -63,7 +72,7 @@ pub struct Package {
 /// for, then finished as its importer finishes a body it lowers itself.
 #[derive(Debug)]
 pub struct PackageBodies {
-    text: String,
+    bytes: Vec<u8>,
     files: PackageFiles,
     declarations: MirDeclarations,
     entries: Vec<BodyEntry>,
@@ -87,7 +96,15 @@ impl PackageBodies {
         self.decoded[position]
             .get_or_init(|| {
                 let entry = &self.entries[position];
-                match decode::function(&self.text[entry.start..entry.end], &self.files) {
+                let text =
+                    std::str::from_utf8(&self.bytes[entry.start..entry.end]).map_err(|error| {
+                        vec![ArtifactDiagnostic {
+                            span: (0, 0),
+                            message: error.to_string(),
+                            context: Vec::new(),
+                        }]
+                    });
+                match text.and_then(|text| decode::function(text, &self.files)) {
                     Ok((decoded, function)) if decoded == entry.name => {
                         let Some(finish) = self.finish else {
                             return Some(function);
@@ -203,14 +220,16 @@ impl From<DisassembleError> for PackageError {
     }
 }
 
-/// Write `program`, a package's verified, ownership-checked MIR before
-/// drop elaboration, with its interface. Verification runs first, so an error never leaves partial
-/// text.
+/// Write a package: `program`, its verified, ownership-checked MIR before
+/// drop elaboration, its interface, and its `modules`' encoded records.
+///
+/// Verification runs first, so an error never leaves a partial package.
 pub fn write_package(
     header: &PackageHeader,
     interface: &PackageInterface,
     program: &MirProgram,
-) -> Result<String, PackageError> {
+    modules: &[(String, Vec<u8>)],
+) -> Result<Vec<u8>, PackageError> {
     let mut findings = program.invariant_errors.clone();
     findings.extend(crate::mir::verify::verify(program));
     findings.extend(write::schema_findings(program));
@@ -227,23 +246,30 @@ pub fn write_package(
     let mut output = format!(
         "{PACKAGE_FORMAT}\npackage {}\ncompiler {}\nsource {}\n",
         header.package, header.compiler, header.source
-    );
-    let mut section = |label: String, text: &str| {
-        output.push_str(&label);
-        output.push('\n');
-        output.push_str(text);
-        output.push('\n');
+    )
+    .into_bytes();
+    let mut section = |label: String, bytes: &[u8]| {
+        output.extend_from_slice(label.as_bytes());
+        output.push(b'\n');
+        output.extend_from_slice(bytes);
+        output.push(b'\n');
     };
     let interface_text = write::package_interface(interface);
     section(
         format!("interface {}", interface_text.len()),
-        &interface_text,
+        interface_text.as_bytes(),
     );
     let (declarations, functions) = write::package_parts(program);
     section(
         format!("declarations {}", declarations.len()),
-        &declarations,
+        declarations.as_bytes(),
     );
+    for (path, record) in modules {
+        if path.contains('\n') {
+            return Err(PackageError(format!("module path `{path}` spans lines")));
+        }
+        section(format!("module {} {path}", record.len()), record);
+    }
     for ((name, function), text) in program.functions.iter().zip(&functions) {
         if name.contains('\n') {
             return Err(PackageError(format!("function name `{name}` spans lines")));
@@ -260,18 +286,18 @@ pub fn write_package(
                 function.n_params,
                 if mask.is_empty() { "-" } else { &mask }
             ),
-            text,
+            text.as_bytes(),
         );
     }
-    output.push_str("end\n");
+    output.extend_from_slice(b"end\n");
     Ok(output)
 }
 
-/// Read a package: its header, interface, and declarations now, and an
-/// index of its bodies, which decode on demand.
-pub fn read_package(text: String) -> Result<Package, PackageError> {
+/// Read a package: its header, interface, declarations, and module
+/// records now, and an index of its bodies, which decode on demand.
+pub fn read_package(bytes: Vec<u8>) -> Result<Package, PackageError> {
     let mut reader = Reader {
-        text: &text,
+        bytes: &bytes,
         pos: 0,
     };
     if reader.line()? != PACKAGE_FORMAT {
@@ -282,17 +308,32 @@ pub fn read_package(text: String) -> Result<Package, PackageError> {
         compiler: reader.labelled("compiler")?.to_string(),
         source: reader.labelled("source")?.to_string(),
     };
-    let interface_text = reader.section("interface")?;
+    let interface_text = reader.text_section("interface")?;
+    let decoding = mojito_common::timing::span("package.interface");
     let interface = decode::interface(interface_text)
         .map_err(|diagnostics| PackageError(describe(&diagnostics)))?;
-    let declarations_text = reader.section("declarations")?;
+    drop(decoding);
+    let declarations_text = reader.text_section("declarations")?;
+    let decoding = mojito_common::timing::span("package.declarations");
     let (declarations, files) = decode::declarations(declarations_text)
         .map_err(|diagnostics| PackageError(describe(&diagnostics)))?;
+    drop(decoding);
+    let mut modules = Vec::new();
     let mut entries = Vec::new();
     loop {
         let line = reader.line()?;
         if line == "end" {
             break;
+        }
+        if let Some(rest) = line.strip_prefix("module ") {
+            let Some((length, path)) = rest.split_once(' ') else {
+                return Err(PackageError(format!("malformed module line `{line}`")));
+            };
+            let length = number(length)?;
+            let start = reader.pos;
+            reader.skip(length)?;
+            modules.push((path.to_string(), bytes[start..start + length].to_vec()));
+            continue;
         }
         let mut fields = line.splitn(5, ' ');
         let (Some("function"), Some(length), Some(params), Some(mask), Some(name)) = (
@@ -321,7 +362,7 @@ pub fn read_package(text: String) -> Result<Package, PackageError> {
             end: start + length,
         });
     }
-    if reader.pos != text.len() {
+    if reader.pos != bytes.len() {
         return Err(PackageError("trailing text after `end`".to_string()));
     }
     let index = entries
@@ -338,8 +379,9 @@ pub fn read_package(text: String) -> Result<Package, PackageError> {
         header,
         interface,
         declarations,
+        modules,
         bodies: PackageBodies {
-            text,
+            bytes,
             files,
             declarations: package_declarations,
             entries,
@@ -361,18 +403,20 @@ struct BodyEntry {
 }
 
 struct Reader<'a> {
-    text: &'a str,
+    bytes: &'a [u8],
     pos: usize,
 }
 
 impl<'a> Reader<'a> {
     fn line(&mut self) -> Result<&'a str, PackageError> {
-        let rest = &self.text[self.pos..];
+        let rest = &self.bytes[self.pos..];
         let end = rest
-            .find('\n')
+            .iter()
+            .position(|byte| *byte == b'\n')
             .ok_or_else(|| PackageError("truncated package".to_string()))?;
         self.pos += end + 1;
-        Ok(&rest[..end])
+        std::str::from_utf8(&rest[..end])
+            .map_err(|_| PackageError("a section label is not UTF-8".to_string()))
     }
 
     fn labelled(&mut self, label: &str) -> Result<&'a str, PackageError> {
@@ -382,17 +426,18 @@ impl<'a> Reader<'a> {
             .ok_or_else(|| PackageError(format!("expected `{label}`")))
     }
 
-    fn section(&mut self, label: &str) -> Result<&'a str, PackageError> {
+    fn text_section(&mut self, label: &str) -> Result<&'a str, PackageError> {
         let length = number(self.labelled(label)?)?;
         let start = self.pos;
         self.skip(length)?;
-        Ok(&self.text[start..start + length])
+        std::str::from_utf8(&self.bytes[start..start + length])
+            .map_err(|_| PackageError(format!("the `{label}` section is not UTF-8")))
     }
 
     /// Step over `length` bytes of section text and its closing newline.
     fn skip(&mut self, length: usize) -> Result<(), PackageError> {
         let end = self.pos + length;
-        if self.text.get(end..=end) != Some("\n") {
+        if self.bytes.get(end) != Some(&b'\n') {
             return Err(PackageError("a section overruns its length".to_string()));
         }
         self.pos = end + 1;

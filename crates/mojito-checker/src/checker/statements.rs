@@ -3056,6 +3056,7 @@ impl Checker {
         // A function with a non-`None` return type must return on every
         // path (falling off the end would yield `None`).
         if result.is_ok()
+            && !packaged
             && named_result.is_none()
             && ret_ty != Ty::None
             && !definitely_returns(body)
@@ -3063,6 +3064,7 @@ impl Checker {
             result = Err(TypeError::MissingReturn(name.clone()));
         }
         if result.is_ok()
+            && !packaged
             && let Some(named_result) = named_result
             && !definitely_initializes_named_result(body, &named_result.name)
         {

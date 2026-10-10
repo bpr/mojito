@@ -6,6 +6,7 @@
 //! Imports are lexical, dependencies are deduplicated by canonical path, and
 //! source provenance survives rewriting.
 
+use crate::package::{ModuleRecords, PackageModule, PackageModules};
 use mojito_ast::ast::{Expr, ExprKind, ImportNames, ParamArg, Stmt, StmtKind, TStringPart, Type};
 use mojito_common::error::ParseError;
 use mojito_common::timing;
@@ -93,8 +94,66 @@ pub fn link_with_options(
     entry_path: &Path,
     options: LinkOptions,
 ) -> Result<Vec<Stmt>, ModuleError> {
+    link_path(entry_path, options, None)
+}
+
+/// [`link_with_options`], linking every module `package` records from its
+/// record instead of its source.
+pub fn link_with_package(
+    entry_path: &Path,
+    options: LinkOptions,
+    package: &PackageModules,
+) -> Result<Vec<Stmt>, ModuleError> {
+    link_path(entry_path, options, Some(package))
+}
+
+/// [`link_source_with_options`], linking every module `package` records
+/// from its record instead of its source.
+pub fn link_source_with_package(
+    source: &str,
+    entry_path: &Path,
+    options: LinkOptions,
+    package: &PackageModules,
+) -> Result<Vec<Stmt>, ModuleError> {
+    let mut linker = Linker::new(options, Some(package));
+    link_source_in(&mut linker, source, entry_path)
+}
+
+/// [`inject_prelude_with_options`], linking every module `package` records
+/// from its record instead of its source.
+pub fn inject_prelude_with_package(
+    program: Vec<Stmt>,
+    options: LinkOptions,
+    package: &PackageModules,
+) -> Result<Vec<Stmt>, ModuleError> {
+    let mut linker = Linker::new(options, Some(package));
+    let body = linker.resolve_entry(program, Path::new("."), None)?;
+    let mut result = std::mem::take(&mut linker.decls);
+    result.extend(body);
+    Ok(result)
+}
+
+/// Link `source` as [`link_source_with_options`] does, and record what
+/// linking each module produced, for a package compiled from them: every
+/// record beside the canonical path of its module's source file.
+pub fn link_source_recording(
+    source: &str,
+    entry_path: &Path,
+    options: LinkOptions,
+) -> Result<(Vec<Stmt>, ModuleRecords), ModuleError> {
+    let mut linker = Linker::new(options, None);
+    linker.records = Some(Vec::new());
+    let linked = link_source_in(&mut linker, source, entry_path)?;
+    Ok((linked, linker.records.take().unwrap_or_default()))
+}
+
+fn link_path(
+    entry_path: &Path,
+    options: LinkOptions,
+    package: Option<&PackageModules>,
+) -> Result<Vec<Stmt>, ModuleError> {
     let _link = timing::span("link");
-    let mut linker = Linker::new(options);
+    let mut linker = Linker::new(options, package);
     let program = {
         let _parse = timing::span("entry.parse");
         read_and_parse(entry_path)?
@@ -103,7 +162,7 @@ pub fn link_with_options(
     let mut body = linker.resolve_entry(program, dir, Some(entry_path))?;
     let entry_module = display(entry_path);
     mojito_ast::ast::stamp_source(&mut body, &entry_module);
-    let mut result = linker.decls;
+    let mut result = std::mem::take(&mut linker.decls);
     result.extend(body);
     timing::count("declarations", result.len() as u64);
     Ok(result)
@@ -121,23 +180,7 @@ pub fn link_source_with_options(
     entry_path: &Path,
     options: LinkOptions,
 ) -> Result<Vec<Stmt>, ModuleError> {
-    let _link = timing::span("link");
-    let program = {
-        let _parse = timing::span("entry.parse");
-        parse(source).map_err(|err| ModuleError::Parse {
-            module: display(entry_path),
-            err,
-        })?
-    };
-    let mut linker = Linker::new(options);
-    let dir = entry_path.parent().unwrap_or_else(|| Path::new("."));
-    let mut body = linker.resolve_entry(program, dir, Some(entry_path))?;
-    let entry_module = display(entry_path);
-    mojito_ast::ast::stamp_source(&mut body, &entry_module);
-    let mut result = linker.decls;
-    result.extend(body);
-    timing::count("declarations", result.len() as u64);
-    Ok(result)
+    link_source_in(&mut Linker::new(options, None), source, entry_path)
 }
 
 /// Inject the compiler-bundled implicit prelude into an already parsed program.
@@ -156,9 +199,9 @@ pub fn inject_prelude_with_options(
     program: Vec<Stmt>,
     options: LinkOptions,
 ) -> Result<Vec<Stmt>, ModuleError> {
-    let mut linker = Linker::new(options);
+    let mut linker = Linker::new(options, None);
     let body = linker.resolve_entry(program, Path::new("."), None)?;
-    let mut result = linker.decls;
+    let mut result = std::mem::take(&mut linker.decls);
     result.extend(body);
     Ok(result)
 }
@@ -637,12 +680,43 @@ fn program_uses_kwargs(program: &[Stmt]) -> bool {
     })
 }
 
+fn link_source_in(
+    linker: &mut Linker<'_>,
+    source: &str,
+    entry_path: &Path,
+) -> Result<Vec<Stmt>, ModuleError> {
+    let _link = timing::span("link");
+    let program = {
+        let _parse = timing::span("entry.parse");
+        parse(source).map_err(|err| ModuleError::Parse {
+            module: display(entry_path),
+            err,
+        })?
+    };
+    let dir = entry_path.parent().unwrap_or_else(|| Path::new("."));
+    let mut body = linker.resolve_entry(program, dir, Some(entry_path))?;
+    let entry_module = display(entry_path);
+    mojito_ast::ast::stamp_source(&mut body, &entry_module);
+    let mut result = std::mem::take(&mut linker.decls);
+    result.extend(body);
+    timing::count("declarations", result.len() as u64);
+    Ok(result)
+}
+
 fn display(path: &Path) -> String {
     path.display().to_string()
 }
 
-struct Linker {
+struct Linker<'p> {
     options: LinkOptions,
+    /// The compiled package whose modules link from their records.
+    package: Option<&'p PackageModules>,
+    /// While recording, the loads each module being loaded asks for,
+    /// innermost last.
+    loads: Vec<Vec<(String, String)>>,
+    /// While recording, each loaded module's record, beside the canonical
+    /// path of its source file.
+    records: Option<ModuleRecords>,
     /// Module files already entered (canonical path) — dedup + cycle break.
     loaded: HashSet<PathBuf>,
     /// The top-level declaration names each loaded module exposes (for validating
@@ -667,8 +741,8 @@ struct ImportScope<'a> {
     explicit_imports: &'a mut HashSet<String>,
 }
 
-impl Linker {
-    fn new(mut options: LinkOptions) -> Self {
+impl<'p> Linker<'p> {
+    fn new(mut options: LinkOptions, package: Option<&'p PackageModules>) -> Self {
         // Explicit LinkOptions replace `Default`, but the compiler-bundled
         // prelude must remain resolvable. Keep user roots ahead of the bundled
         // fallback so their ordinary import-resolution order is unchanged.
@@ -679,6 +753,9 @@ impl Linker {
         }
         Self {
             options,
+            package,
+            loads: Vec::new(),
+            records: None,
             loaded: HashSet::new(),
             exports: HashMap::new(),
             namespace_exports: HashMap::new(),
@@ -778,6 +855,9 @@ impl Linker {
     /// Load a module file (once): resolve its own imports first, then hoist its
     /// top-level declarations (excluding `main`).
     fn load_module(&mut self, path: &Path, module_name: &str) -> Result<(), ModuleError> {
+        if let Some(loads) = self.loads.last_mut() {
+            loads.push((display(path), module_name.to_string()));
+        }
         let canon = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
         if !self.loaded.insert(canon.clone()) {
             // A completed module has its final exports; a mutual-cycle peer has
@@ -790,6 +870,15 @@ impl Linker {
         // `std.io.file`.
         let rooted = self.rooted_module_name(&canon);
         let module_name = rooted.as_deref().unwrap_or(module_name);
+        if let Some(record) = self
+            .package
+            .and_then(|package| package.module(&canon, module_name))
+        {
+            return self.load_packaged(path, canon, record);
+        }
+        if self.records.is_some() {
+            self.loads.push(Vec::new());
+        }
         let program = read_and_parse_named(path, module_name)?;
         let dir = path.parent().unwrap_or_else(|| Path::new("."));
         let mut local = HashMap::new();
@@ -861,10 +950,18 @@ impl Linker {
             .collect();
         self.resolve_scoped_imports(&mut declarations, dir, Some(path), &bindings, &namespaces)?;
         rewrite_program(&mut declarations, &bindings, &namespaces);
-        for mut stmt in declarations {
-            mojito_ast::ast::stamp_source(std::slice::from_mut(&mut stmt), &display(path));
-            self.decls.push(stmt);
-        }
+        mojito_ast::ast::stamp_source(&mut declarations, &display(path));
+        let recorded = self.records.is_some().then(|| {
+            declarations
+                .iter()
+                .cloned()
+                .map(|mut declaration| {
+                    mojito_ast::ast::clear_bodies(&mut declaration);
+                    declaration
+                })
+                .collect::<Vec<_>>()
+        });
+        self.decls.extend(declarations);
         let mut exports = local;
         for (name, target) in bindings {
             // Implicit prelude visibility is not an implicit re-export from every
@@ -892,13 +989,58 @@ impl Linker {
                     .or_insert_with(|| (*name).to_string());
             }
         }
-        self.exports.insert(canon, exports);
-        let visible_namespaces = namespaces
+        let visible_namespaces: HashMap<_, _> = namespaces
             .into_iter()
             .filter(|(name, _)| !name.split('.').next().is_some_and(|p| p.starts_with('_')))
             .collect();
+        if let (Some(declarations), Some(loads)) = (recorded, self.loads.pop()) {
+            let record = PackageModule {
+                name: module_name.to_string(),
+                loads,
+                exports: exports.clone().into_iter().collect(),
+                namespaces: visible_namespaces
+                    .iter()
+                    .map(|(name, exports)| (name.clone(), exports.clone().into_iter().collect()))
+                    .collect(),
+                declarations,
+            };
+            if let Some(records) = &mut self.records {
+                records.push((canon.to_string_lossy().into_owned(), record));
+            }
+        }
+        self.exports.insert(canon, exports);
         self.namespace_exports
             .insert(canonical(path), visible_namespaces);
+        Ok(())
+    }
+
+    /// Load the module at `path` from its package `record`: what linking
+    /// it from source would produce, with no source read.
+    fn load_packaged(
+        &mut self,
+        path: &Path,
+        canon: PathBuf,
+        record: PackageModule,
+    ) -> Result<(), ModuleError> {
+        // The module's final exports are published before its loads, as
+        // its local ones are when it links from source, so a mutual-cycle
+        // peer can bind them.
+        self.exports
+            .insert(canon.clone(), record.exports.into_iter().collect());
+        for (load, name) in &record.loads {
+            self.load_module(Path::new(load), name)?;
+        }
+        let mut declarations = record.declarations;
+        mojito_ast::ast::stamp_source(&mut declarations, &display(path));
+        self.decls.extend(declarations);
+        self.namespace_exports.insert(
+            canon,
+            record
+                .namespaces
+                .into_iter()
+                .map(|(name, exports)| (name, exports.into_iter().collect()))
+                .collect(),
+        );
         Ok(())
     }
 

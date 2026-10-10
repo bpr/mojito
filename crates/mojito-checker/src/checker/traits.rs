@@ -722,14 +722,26 @@ impl Checker {
             self.enclosing_struct_type_params.set(saved_struct_count);
             self.tparams.pop();
             let (all_types, mut sig) = signature?;
-            if let Some(info) = self.structs.get(name) {
-                sig.parametric_origin_writes =
-                    parametric_origin_writes_in_body(&m.body, &info.fields);
-            }
             sig.overload = self
                 .method_binder_owners
                 .call_qualifier(name, m)
                 .map(str::to_string);
+            // A package's method body is not read: its writes are the
+            // package's summary of it.
+            let package = self
+                .package
+                .as_ref()
+                .filter(|package| package.compiles(declaration.module.as_deref()));
+            if let Some(package) = package {
+                sig.parametric_origin_writes = package
+                    .parametric_origin_writes
+                    .get(&sig.write_summary_key(name, lifecycle_method_name(m)))
+                    .cloned()
+                    .unwrap_or_default();
+            } else if let Some(info) = self.structs.get(name) {
+                sig.parametric_origin_writes =
+                    parametric_origin_writes_in_body(&m.body, &info.fields);
+            }
             for (param, ty) in all_types.iter().enumerate() {
                 self.declaration_types.borrow_mut().insert(
                     mojito_checked::checked::AnnotationSite::MethodParam {

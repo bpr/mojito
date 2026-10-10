@@ -906,19 +906,16 @@ pub fn lifecycle_method_name(m: &Method) -> &str {
 
 /// The declaration that owns each struct method's own binders.
 ///
-/// It is `Struct.method`, or for an overloaded method the symbol its
-/// template lowers to, so two overloads own distinct binders and every clone
-/// of one shares its template's. The checker and the elaborator both number
-/// a method's binders under this owner.
+/// It is `Struct.method`, or for an overloaded method the symbol it lowers
+/// to, so two overloads own distinct binders. The checker and the
+/// elaborator both number a method's binders under this owner.
 #[derive(Debug, Clone, Default)]
 pub struct MethodBinderOwners {
-    /// The lowered symbol of every overloaded template method, keyed by its
-    /// template struct and beside the byte range its body spans: a clone
-    /// keeps its template's body spans but not its signature, so the owner
-    /// is computed once, from the template, and a clone whose leading
-    /// `comptime if` folded still starts inside that range. Its signature
-    /// qualifier is the one a call selecting that overload records.
-    overloaded: HashMap<String, Vec<(mojito_common::token::Span, String)>>,
+    /// The lowered symbol of every overloaded method, keyed by its struct
+    /// and beside the declaration it lowers: overloads differ in name or
+    /// signature, never in both alike. Its signature qualifier is the one a
+    /// call selecting that overload records.
+    overloaded: HashMap<String, Vec<(OverloadDeclaration, String)>>,
 }
 
 impl MethodBinderOwners {
@@ -942,8 +939,8 @@ impl MethodBinderOwners {
                         let source = format!("{name}.{}", lifecycle_method_name(m));
                         let lowered =
                             lowered_method_name(&source, type_params, MethodShape::of(m), sets);
-                        let extent = (m.body.first()?.span.0, m.body.last()?.span.1);
-                        (lowered != source).then(|| (name.clone(), (extent, lowered)))
+                        (lowered != source)
+                            .then(|| (name.clone(), (OverloadDeclaration::of(m), lowered)))
                     })
             })
             .fold(
@@ -982,14 +979,13 @@ impl MethodBinderOwners {
             .and_then(overload_qualifier)
     }
 
-    /// The lowered symbol of the overloaded template method on `template`
-    /// whose body `m`'s first statement lies in.
+    /// The lowered symbol of the overloaded method on `template` that `m`
+    /// declares.
     fn lowered(&self, template: &str, m: &Method) -> Option<&str> {
-        let first = m.body.first()?.span;
         self.overloaded
             .get(template)?
             .iter()
-            .find(|((start, end), _)| *start <= first.0 && first.1 <= *end)
+            .find(|(declaration, _)| declaration.declares(m))
             .map(|(_, lowered)| lowered.as_str())
     }
 }
@@ -2541,5 +2537,39 @@ fn encode_specialization_value(value: &CtValue, out: &mut String) {
         }
         // `mangle_parts` validated the whole key before encoding began.
         CtValue::Expr(_) | CtValue::Deferred(_) | CtValue::Marker(_) => {}
+    }
+}
+
+/// What tells one overloaded method from another: its name and the
+/// signature facts its lowered symbol spells.
+#[derive(Debug, Clone)]
+struct OverloadDeclaration {
+    name: String,
+    type_params: Vec<TypeParam>,
+    params: Vec<FnParam>,
+    keyword_only: Option<usize>,
+    has_self: bool,
+    self_convention: Option<ArgConvention>,
+}
+
+impl OverloadDeclaration {
+    fn of(m: &Method) -> Self {
+        Self {
+            name: m.name.clone(),
+            type_params: m.type_params.clone(),
+            params: m.params.clone(),
+            keyword_only: m.keyword_only,
+            has_self: m.has_self,
+            self_convention: m.self_convention,
+        }
+    }
+
+    fn declares(&self, m: &Method) -> bool {
+        self.name == m.name
+            && self.has_self == m.has_self
+            && self.self_convention == m.self_convention
+            && self.keyword_only == m.keyword_only
+            && self.params == m.params
+            && self.type_params == m.type_params
     }
 }

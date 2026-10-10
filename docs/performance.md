@@ -846,3 +846,26 @@ prelude's link and parse (33), comptime elaboration (26), the declaration
 phases of the check (about 25), and reading the package itself (about 27).
 Building the package costs one source-mode compilation of every library
 module, once per compiler build (about 1.3 s release, 6 s debug).
+
+### The importer reads no library source (2026-10-09, R545)
+
+Same environment and method as the table above, on the R545 tree. The
+importer's link reads each library module's record from the package
+(`module::package`) instead of reading, parsing, and resolving its source,
+and no package body reaches `prepare`, comptime elaboration, or the check.
+The package grows by its 61 module records, about 140 KB of bytecode, to
+8.5 MB.
+
+| Program | total (R11 package → now) | link | prepare | comptime elaborate | check | peak RSS MB |
+|---|---:|---:|---:|---:|---:|---:|
+| hello | 140 → 76 (−46%) | 33 → 2.2 | 6.7 → 1.6 | 26 → 9.2 | 32 → 25 | 75 → 54 |
+| generic | 150 → 85 (−43%) | 32 → 2.2 | 6.8 → 1.5 | 26 → 9.4 | 35 → 27 | 78 → 56 |
+| keyed | 172 → 107 (−38%) | 32 → 2.4 | 6.6 → 1.5 | 26 → 9.9 | 36 → 29 | 83 → 62 |
+| stdlib_heavy | 209 → 148 (−29%) | 32 → 2.3 | 6.6 → 1.6 | 26 → 9.7 | 35 → 29 | 94 → 78 |
+
+Linking decodes the 39 records Hello World reaches in about 1.5 ms. Of
+Hello World's 76 ms, what scales with the library is now reading the
+package (22: the MIR `declarations` section's text decode is 18, R554),
+the check's registration of the library's declaration headers (about 20 of
+its 25: method signatures 7, the module walk 9, the arena 4; R552), and
+preparing and elaborating those headers (11, R553).

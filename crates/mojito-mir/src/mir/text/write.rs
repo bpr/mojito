@@ -107,7 +107,8 @@ pub(super) fn package_parts(program: &MirProgram) -> (String, Vec<String>) {
 }
 
 /// A package's interface: the modules it compiled, the traits its bodies
-/// ask, and its callables' effect summaries.
+/// ask, its callables' effect summaries, and its methods' parametric
+/// origin writes.
 pub(super) fn package_interface(interface: &mojito_checked::interface::PackageInterface) -> String {
     let summary = |callable: &str, effects: String| {
         record(
@@ -154,6 +155,17 @@ pub(super) fn package_interface(interface: &mojito_checked::interface::PackageIn
                         .iter()
                         .map(|(callable, effects)| {
                             summary(callable, list(effects.iter().map(call_through)))
+                        }),
+                ),
+            ),
+            (
+                "parametric_origin_writes",
+                list(
+                    interface
+                        .parametric_origin_writes
+                        .iter()
+                        .map(|(method, origins)| {
+                            summary(method, list(origins.iter().map(|id| id.0.to_string())))
                         }),
                 ),
             ),

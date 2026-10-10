@@ -8,7 +8,8 @@ use crate::error::{OwnershipError, ParseError, TypeError};
 use crate::mir::MirProgram;
 use crate::mir::text::{DisassembleError, disassemble};
 use crate::module::{
-    LinkOptions, ModuleError, inject_prelude, link_source_with_options, link_with_options,
+    LinkOptions, ModuleError, inject_prelude, inject_prelude_with_package,
+    link_source_with_options, link_source_with_package, link_with_options, link_with_package,
 };
 use crate::native::mono::{MonoError, SpecializedProgram};
 use crate::runtime::RuntimeError;
@@ -283,9 +284,10 @@ impl Compiler {
     }
     /// Link and compile a source entry path through ownership verification.
     pub fn compile_path(&self, entry: &Path) -> Result<CompiledProgram, CompilerError> {
-        let linked =
-            link_with_options(entry, self.link_options.clone()).map_err(CompilerError::Module)?;
-        self.compile_linked(&linked)
+        self.compile_linking(|package| match package {
+            Some(package) => link_with_package(entry, self.link_options.clone(), &package.modules),
+            None => link_with_options(entry, self.link_options.clone()),
+        })
     }
     /// Link in-memory source as `entry` and compile it through ownership
     /// verification.
@@ -294,15 +296,24 @@ impl Compiler {
         source: &str,
         entry: &Path,
     ) -> Result<CompiledProgram, CompilerError> {
-        let linked = link_source_with_options(source, entry, self.link_options.clone())
-            .map_err(CompilerError::Module)?;
-        self.compile_linked(&linked)
+        self.compile_linking(|package| match package {
+            Some(package) => {
+                link_source_with_package(source, entry, self.link_options.clone(), &package.modules)
+            }
+            None => link_source_with_options(source, entry, self.link_options.clone()),
+        })
     }
     /// Compile source without a module base, as used for standard input.
     pub fn compile_unlinked(&self, source: &str) -> Result<CompiledProgram, CompilerError> {
         let parsed = parse(source).map_err(CompilerError::Parse)?;
-        let linked = inject_prelude(parsed).map_err(CompilerError::Module)?;
-        self.compile_linked(&linked)
+        self.compile_linking(|package| match package {
+            Some(package) => inject_prelude_with_package(
+                parsed.clone(),
+                LinkOptions::default(),
+                &package.modules,
+            ),
+            None => inject_prelude(parsed.clone()),
+        })
     }
     /// Elaborate, check, verify, and ownership-verify an already linked
     /// statement set. Verification, ownership, artifact emission, and backend
@@ -313,12 +324,7 @@ impl Compiler {
     /// none of its names again: its bodies are not checked or lowered.
     pub fn compile_linked(&self, linked: &[Stmt]) -> Result<CompiledProgram, CompilerError> {
         let package = self
-            .std_package
-            .unwrap_or_else(|| {
-                std::env::var_os("MOJITO_STD_PACKAGE").is_none_or(|value| value != "0")
-            })
-            .then(crate::package::bundled_std_package)
-            .flatten()
+            .std_package()
             .filter(|package| imports_cleanly(linked, &package.interface));
         self.compile_importing(linked, package)
             .map(|(program, _)| program)
@@ -333,15 +339,54 @@ impl Compiler {
         self.compile_importing(linked, None)
     }
 
+    /// The bundled library's compiled package, when this compiler imports
+    /// it.
+    fn std_package(&self) -> Option<Arc<ImportedPackage>> {
+        self.std_package
+            .unwrap_or_else(|| {
+                std::env::var_os("MOJITO_STD_PACKAGE").is_none_or(|value| value != "0")
+            })
+            .then(crate::package::bundled_std_package)
+            .flatten()
+    }
+
+    /// Link with `link` and compile the result: importing the bundled
+    /// library's package when there is one, so the link reads each library
+    /// module from its record, and else, or when the program cannot import
+    /// it, linking every module from source.
+    fn compile_linking(
+        &self,
+        link: impl Fn(Option<&ImportedPackage>) -> Result<Vec<Stmt>, ModuleError>,
+    ) -> Result<CompiledProgram, CompilerError> {
+        if let Some(package) = self.std_package()
+            && let Ok(linked) = link(Some(&package))
+            && imports_cleanly(&linked, &package.interface)
+        {
+            return self
+                .compile_importing(&linked, Some(package))
+                .map(|(program, _)| program);
+        }
+        let linked = link(None).map_err(CompilerError::Module)?;
+        self.compile_importing(&linked, None)
+            .map(|(program, _)| program)
+    }
+
     fn compile_importing(
         &self,
         linked: &[Stmt],
         package: Option<Arc<ImportedPackage>>,
     ) -> Result<(CompiledProgram, PackageInterface), CompilerError> {
         let _compile = timing::span("compile");
+        // A package's bodies were checked and lowered when it was built, and
+        // its importer elaborates them below MIR: nothing above the waist
+        // reads one.
+        let mut linked = linked.to_vec();
+        if let Some(package) = &package {
+            crate::checker::strip_package_bodies(&mut linked, &package.interface);
+        }
         let prepared = {
             let _prepare = timing::span("prepare");
-            prepare(linked.to_vec()).map_err(CompilerError::Comptime)?
+            prepare(linked).map_err(CompilerError::Comptime)?
         };
         let mut context = CheckContext::new();
         if let Some(package) = &package {

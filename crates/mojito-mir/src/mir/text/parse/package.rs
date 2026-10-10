@@ -5,6 +5,7 @@
 use super::*;
 use mojito_checked::checked::{CallThroughArg, CallThroughCallee, CallThroughEffect};
 use mojito_checked::interface::PackageInterface;
+use mojito_types::origin::OriginParamId;
 
 /// The `files` table of a package's declarations, which every body's
 /// locations name.
@@ -95,6 +96,17 @@ impl Decoder {
                     .collect()
             },
         )?;
+        let parametric_origin_writes = self.summaries(
+            self.field(fields, "parametric_origin_writes").ok()?,
+            |decoder, origins| {
+                decoder
+                    .list(origins)
+                    .ok()?
+                    .iter()
+                    .map(|origin| decoder.uint32(origin).map(OriginParamId))
+                    .collect()
+            },
+        )?;
         self.unknown(
             fields,
             &[
@@ -103,6 +115,7 @@ impl Decoder {
                 "asked_traits",
                 "transfer_effects",
                 "call_through_effects",
+                "parametric_origin_writes",
             ],
         );
         Some(PackageInterface {
@@ -111,6 +124,7 @@ impl Decoder {
             transfer_effects,
             call_through_effects,
             asked_traits: asked_traits.into_iter().collect(),
+            parametric_origin_writes,
         })
     }
 

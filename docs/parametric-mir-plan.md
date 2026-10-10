@@ -825,9 +825,17 @@ into a cached `std` package (`src/package.rs`, `mir::text::package`); an
 importer checks and lowers none of its bodies, reads the package's effect
 summaries at its call sites (`checked::interface::PackageInterface`), links
 the package's MIR declarations (`mir::link`), and decodes a body on demand
-(`native::mono::specialize_importing`). Two gaps remain, each a `pmir`
-entry: the package holds CFG MIR where upstream's holds post-parse IR, and
-an importer still registers the library's declarations from its source.
+(`native::mono::specialize_importing`).
+
+The declaration half landed the same day (R545): the package records each
+library module's link (its loads, export tables, and declarations without
+bodies, as bytecode), and an importer's link reads those records, as
+upstream's `createBinaryPackageState` reads a package's module tree, so no
+library source is read and no package body reaches anything above the
+waist. Gaps remain, each a `pmir` entry: the package holds CFG MIR where
+upstream's holds post-parse IR (R546), and an importer still registers
+(R552), prepares and elaborates (R553), and eagerly decodes the MIR of
+(R554) the library's declarations, where upstream installs each resolved.
 
 ## Decisions for the owner
 

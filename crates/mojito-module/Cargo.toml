@@ -10,6 +10,8 @@ mojito-ast = { path = "../mojito-ast" }
 mojito-common = { path = "../mojito-common" }
 mojito-lexer = { path = "../mojito-lexer" }
 mojito-parser = { path = "../mojito-parser" }
+postcard = { workspace = true }
+serde = { workspace = true }
 
 [lints]
 workspace = true

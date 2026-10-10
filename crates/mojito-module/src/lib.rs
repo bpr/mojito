@@ -2,3 +2,4 @@
 //! standard-library root.
 
 pub mod module;
+pub mod package;

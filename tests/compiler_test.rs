@@ -3862,7 +3862,7 @@ fn the_bundled_library_is_imported_from_its_compiled_package() {
 }
 
 #[test]
-fn a_package_reads_back_to_the_text_it_was_written_as() {
+fn a_package_reads_back_to_the_bytes_it_was_written_as() {
     use mojito::mir::text::package::{PackageHeader, read_package, write_package};
     let compiled = Compiler::default()
         .with_std_package(false)
@@ -3875,8 +3875,10 @@ fn a_package_reads_back_to_the_text_it_was_written_as() {
         source: "0".to_string(),
     };
     let interface = mojito::interface::PackageInterface::default();
-    let text = write_package(&header, &interface, program).expect("write");
-    let package = read_package(text.clone()).expect("read");
+    let modules = vec![("/probe/module.mojo".to_string(), vec![0, 10, 255, 10])];
+    let bytes = write_package(&header, &interface, program, &modules).expect("write");
+    let package = read_package(bytes.clone()).expect("read");
+    assert_eq!(package.modules, modules);
     assert_eq!(package.header, header);
     assert_eq!(package.bodies.materialized(), 0, "bodies decode on demand");
     let again = mojito::mir::MirProgram {
@@ -3886,9 +3888,9 @@ fn a_package_reads_back_to_the_text_it_was_written_as() {
     };
     assert!(package.bodies.failures().is_empty());
     assert_eq!(
-        write_package(&header, &package.interface, &again).expect("rewrite"),
-        text
+        write_package(&header, &package.interface, &again, &package.modules).expect("rewrite"),
+        bytes
     );
-    let truncated = text[..text.len() - 4].to_string();
+    let truncated = bytes[..bytes.len() - 4].to_vec();
     assert!(read_package(truncated).is_err());
 }

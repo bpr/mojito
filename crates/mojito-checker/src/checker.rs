@@ -389,6 +389,19 @@ pub fn resolve_overload_targets(stmts: &[Stmt]) -> Result<HashMap<SourceSpan, St
     Ok(check_program(stmts)?.overload_targets().clone())
 }
 
+/// Empty the body of every declaration `package` compiled
+/// ([`mojito_ast::ast::clear_bodies`]): the package lowered its function,
+/// method, and trait default bodies already.
+pub fn strip_package_bodies(
+    program: &mut [Stmt],
+    package: &mojito_checked::interface::PackageInterface,
+) {
+    program
+        .iter_mut()
+        .filter(|statement| package.compiles(statement.module.as_deref()))
+        .for_each(mojito_ast::ast::clear_bodies);
+}
+
 /// A static type checker over the parsed AST.
 ///
 /// Top-level struct and trait declarations register order-independently
@@ -1013,6 +1026,23 @@ impl Checker {
                 .iter()
                 .filter(|(callable, _)| summarized(callable))
                 .map(|(callable, effects)| (callable.clone(), effects.clone()))
+                .collect(),
+            parametric_origin_writes: self
+                .structs
+                .iter()
+                .flat_map(|(owner, info)| {
+                    info.methods.iter().flat_map(move |(method, signatures)| {
+                        signatures
+                            .iter()
+                            .filter(|signature| !signature.parametric_origin_writes.is_empty())
+                            .map(move |signature| {
+                                (
+                                    signature.write_summary_key(owner, method),
+                                    signature.parametric_origin_writes.clone(),
+                                )
+                            })
+                    })
+                })
                 .collect(),
         }
     }
@@ -2306,6 +2336,12 @@ struct MethodSig {
 }
 
 impl MethodSig {
+    /// The key a package's summary of this signature's parametric origin
+    /// writes goes under: `Owner.method` and its overload qualifier.
+    fn write_summary_key(&self, owner: &str, method: &str) -> String {
+        format!("{owner}.{method}{}", self.overload.as_deref().unwrap_or(""))
+    }
+
     fn intrinsic(params: Vec<Ty>, ret: Ty) -> Self {
         let len = params.len();
         Self {
@@ -2434,28 +2470,6 @@ impl StructInfo {
                 TyArg::Ty(_) | TyArg::Val(_) => None,
             })
             .collect()
-    }
-}
-
-/// Empty the body of every declaration `package` compiled: its function and
-/// method bodies, which the package already lowered.
-fn strip_package_bodies(
-    program: &mut [Stmt],
-    package: &mojito_checked::interface::PackageInterface,
-) {
-    for statement in program {
-        if !package.compiles(statement.module.as_deref()) {
-            continue;
-        }
-        match &mut statement.kind {
-            StmtKind::Def { body, .. } => body.clear(),
-            StmtKind::Struct { methods, .. } => {
-                for method in methods {
-                    method.body.clear();
-                }
-            }
-            _ => {}
-        }
     }
 }
 

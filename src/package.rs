@@ -2,25 +2,29 @@
 //!
 //! The library's bodies are checked, lowered, and ownership-verified once
 //! per compiler build, into one `std` package file (`mir::text::package`).
-//! Every compilation after that imports it instead of checking the
-//! library's bodies again, as upstream imports its precompiled `std.mojoc`,
-//! and inserts a body's drops when its elaboration first reaches it. The
-//! package is written to a cache the first time a build needs it, keyed by
-//! the build's identity and a digest of the library's source.
+//! Every compilation after that imports it instead of reading the library
+//! again, as upstream imports its precompiled `std.mojoc`: its link reads
+//! each library module's record (`module::package`), and it inserts a
+//! body's drops when its elaboration first reaches it. The package is
+//! written to a cache the first time a build needs it, keyed by the
+//! build's identity and a digest of the library's source.
 
 use crate::compiler::{Compiler, CompilerError};
 use crate::interface::PackageInterface;
 use crate::mir::text::package::{PackageBodies, PackageHeader, read_package, write_package};
 use crate::mir::{MirDeclarations, MirProgram};
-use crate::module::{LinkOptions, bundled_root, link_source_with_options};
+use crate::module::{LinkOptions, bundled_root, link_source_recording};
+use crate::module_package::PackageModules;
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, OnceLock};
 
-/// An imported package: the interface its importer's check reads, the MIR
-/// declarations its importer's lowering links, and its bodies.
+/// An imported package: the module records its importer's link reads, the
+/// interface its importer's check reads, the MIR declarations its
+/// importer's lowering links, and its bodies.
 #[derive(Debug)]
 pub struct ImportedPackage {
+    pub modules: PackageModules,
     pub interface: Arc<PackageInterface>,
     pub declarations: MirDeclarations,
     pub bodies: PackageBodies,
@@ -70,8 +74,11 @@ fn load_or_build(root: &Path, header: &PackageHeader) -> Result<ImportedPackage,
     let path = cache.join(format!("{stem}.mojoc"));
     let lock = cache.join(format!(".{stem}.lock"));
     loop {
-        if let Ok(text) = std::fs::read_to_string(&path)
-            && let Ok(package) = import(text, header)
+        let read = crate::timing::span("package.read");
+        let bytes = std::fs::read(&path);
+        drop(read);
+        if let Ok(bytes) = bytes
+            && let Ok(package) = import(bytes, header)
         {
             return Ok(package);
         }
@@ -85,9 +92,9 @@ fn load_or_build(root: &Path, header: &PackageHeader) -> Result<ImportedPackage,
         {
             Ok(_) => {
                 let built = build(root, header).map_err(|error| error.to_string());
-                if let Ok(text) = &built {
+                if let Ok(bytes) = &built {
                     let partial = cache.join(format!(".{stem}.{}.partial", std::process::id()));
-                    if std::fs::write(&partial, text).is_ok()
+                    if std::fs::write(&partial, bytes).is_ok()
                         && std::fs::rename(&partial, &path).is_err()
                     {
                         let _ = std::fs::remove_file(&partial);
@@ -119,9 +126,9 @@ fn load_or_build(root: &Path, header: &PackageHeader) -> Result<ImportedPackage,
     )
 }
 
-/// Read `text` as the package `header` names.
-fn import(text: String, header: &PackageHeader) -> Result<ImportedPackage, String> {
-    let package = read_package(text).map_err(|error| error.to_string())?;
+/// Read `bytes` as the package `header` names.
+fn import(bytes: Vec<u8>, header: &PackageHeader) -> Result<ImportedPackage, String> {
+    let package = read_package(bytes).map_err(|error| error.to_string())?;
     if package.header != *header {
         return Err(format!(
             "the package was built by compiler `{}` from source `{}`, not this one",
@@ -129,6 +136,7 @@ fn import(text: String, header: &PackageHeader) -> Result<ImportedPackage, Strin
         ));
     }
     Ok(ImportedPackage {
+        modules: PackageModules::new(package.modules),
         interface: Arc::new(package.interface),
         declarations: package.declarations,
         bodies: package
@@ -138,10 +146,10 @@ fn import(text: String, header: &PackageHeader) -> Result<ImportedPackage, Strin
 }
 
 /// Build the package of the library under `root`: compile a program that
-/// imports every one of its modules, keep each module's checked effect
-/// summaries and the ownership-checked MIR of its declarations, before drop
-/// elaboration, and write them.
-fn build(root: &Path, header: &PackageHeader) -> Result<String, CompilerError> {
+/// imports every one of its modules, keep each module's link record, its
+/// checked effect summaries, and the ownership-checked MIR of its
+/// declarations, before drop elaboration, and write them.
+fn build(root: &Path, header: &PackageHeader) -> Result<Vec<u8>, CompilerError> {
     let modules = module_paths(&root.join("std"), "std");
     let mut source = String::new();
     for module in &modules {
@@ -152,8 +160,13 @@ fn build(root: &Path, header: &PackageHeader) -> Result<String, CompilerError> {
     // The entry sits where no `std` resolves beside it, so every import
     // resolves through the bundled root, as an importer's does.
     let entry = root.join(".package").join("std.mojo");
-    let linked = link_source_with_options(&source, &entry, LinkOptions::default())
+    let (linked, records) = link_source_recording(&source, &entry, LinkOptions::default())
         .map_err(CompilerError::Module)?;
+    let modules = records
+        .iter()
+        .map(|(path, record)| Ok((path.clone(), record.encode()?)))
+        .collect::<Result<Vec<_>, String>>()
+        .map_err(|error| CompilerError::Verify(vec![error]))?;
     let entry_module = entry.display().to_string();
     let packaged: Vec<_> = linked
         .iter()
@@ -191,7 +204,7 @@ fn build(root: &Path, header: &PackageHeader) -> Result<String, CompilerError> {
         }
         program.functions.push((name.clone(), function.clone()));
     }
-    write_package(header, &interface, &program)
+    write_package(header, &interface, &program, &modules)
         .map_err(|error| CompilerError::Verify(vec![error.to_string()]))
 }
 
@@ -353,6 +366,7 @@ mod tests {
                 declarations: MirDeclarations::default(),
                 invariant_errors: Vec::new(),
             },
+            &[],
         )
         .expect("write");
         assert!(import(text.clone(), &header).is_ok());
@@ -399,5 +413,32 @@ mod tests {
         assert!(!lifted_name_is_stable("$comptime$$7", &program));
         assert!(!lifted_name_is_stable("$comptime$L$12", &program));
         assert!(!lifted_name_is_stable("$comptime$__toplevel__$0", &program));
+    }
+
+    #[test]
+    fn a_package_links_what_its_source_links() {
+        use crate::module::{link_source_with_options, link_source_with_package};
+        let package = bundled_std_package().expect("the bundled library packages");
+        let root = bundled_root().expect("a bundled root").join("stdlib");
+        let mut source = String::new();
+        for module in module_paths(&root.join("std"), "std") {
+            source.push_str(&format!("import {module}\n"));
+        }
+        source.push_str("def main():\n    print(String(\"probe\"))\n");
+        let entry = Path::new("probe.mojo");
+        let mut from_source = link_source_with_options(&source, entry, LinkOptions::default())
+            .expect("links from source");
+        crate::checker::strip_package_bodies(&mut from_source, &package.interface);
+        let from_package =
+            link_source_with_package(&source, entry, LinkOptions::default(), &package.modules)
+                .expect("links from the package");
+        assert_eq!(from_source.len(), from_package.len());
+        for (source, packaged) in from_source.iter().zip(&from_package) {
+            assert_eq!(source, packaged);
+            assert_eq!(
+                (&source.module, source.span),
+                (&packaged.module, packaged.span)
+            );
+        }
     }
 }

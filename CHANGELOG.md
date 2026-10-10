@@ -16,6 +16,12 @@ to evolve under the `0.x` compatibility rules.
   inserts its drops, and verifies it when it first reaches it. Hello World
   now compiles and runs in 0.15 s release (from 0.93 s) and 0.5 s debug
   (from 4.8 s). `MOJITO_STD_PACKAGE=0` compiles the library from source.
+- A compilation reads none of the bundled library's source (R545): its link
+  reads each library module from the package's bytecode record of what
+  linking it produced, and no library body reaches the steps before
+  lowering. Hello World compiles and runs in 76 ms release, from 140 ms.
+  The package format is now `mojito-package 2`, a byte container whose
+  module records are bytecode.
 - A module under a search root is linked under its path there, whichever
   import reaches it first: `std/io/file.mojo` declares
   `__module$std$io$file$…`, not `__module$file$…`.

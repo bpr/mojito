@@ -847,12 +847,13 @@ artifact {
 
 ## Package Container
 
-A compiled package (`mir::text::package`) wraps MIR text in a line-framed
-container, one file per package. The bundled library's is the only producer
-today (`src/package.rs`). The format line is `mojito-package 1`.
+A compiled package (`mir::text::package`) wraps MIR text and module
+records in a line-framed container, one file per package. The bundled
+library's is the only producer today (`src/package.rs`). The format line is
+`mojito-package 2`.
 
 ```text
-mojito-package 1
+mojito-package 2
 package std
 compiler <build identity>
 source <source digest>
@@ -860,21 +861,35 @@ interface <bytes>
 <interface record>
 declarations <bytes>
 <a MIR artifact with an empty function list>
+module <bytes> <canonical source path>
+<one module record, as bytecode>
 function <bytes> <params> <ref mask> <name>
 <one function record>
 end
 ```
 
-- Each section's text is exactly its byte count, then a newline. A body is
+- Each section is exactly its byte count, then a newline. A body is
   located by its range and decoded on first use, against the declarations
   artifact's `files` table, which every body's locations name.
+- Every section but a module record is UTF-8 text. A module record is
+  opaque to the container: it is the linker's
+  (`module::package::PackageModule`), `postcard` bytecode of the module's
+  dotted name, the loads its link asked for, its export and namespace
+  tables, and its linked declarations with their bodies emptied, as the
+  AST's serde form, which omits every `SyntaxId` (a decoded node draws a
+  fresh one, as a parsed one does) and every module stamp (the importer
+  stamps the path it reached the module by). It decodes when the
+  importer's link reaches the module; one that does not decode, or names
+  another module, links from source.
 - The interface record is
   `interface { modules, names, asked_traits, transfer_effects,
-  call_through_effects }`. A summary is `summary { callable, effects }`; a
-  transfer effect is the `transfer` record of a function type, and a
-  call-through effect is
+  call_through_effects, parametric_origin_writes }`. A summary is
+  `summary { callable, effects }`; a transfer effect is the `transfer`
+  record of a function type, and a call-through effect is
   `call_through { callee: runtime_param(n) | value_param(name), args: [arg
   { place: option<sig origin>, carried: [sig origin...], local: bool }] }`.
+  A parametric origin write summary is `summary { callable: Owner.method
+  and its overload qualifier, effects: [origin parameter index...] }`.
 - A body is ownership-checked MIR before drop elaboration. The importer
   inserts its drops and verifies it as it is decoded.
 - `<params>` is the runtime parameter count and `<ref mask>` the

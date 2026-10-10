@@ -1347,6 +1347,7 @@ impl Checker {
         // constructed value has no unset fields. Path-sensitive DI (assign exactly
         // once, before any read, on every path) is left for a later refinement.
         if result.is_ok()
+            && !packaged
             && out_init
             && let Ty::Struct(sname, _) = self_ty
         {

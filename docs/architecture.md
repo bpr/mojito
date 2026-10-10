@@ -78,17 +78,20 @@ each named by its accessor and each computed once:
 
 ### The Bundled Library Is An Imported Package
 
-Mojo imports a precompiled package without checking its source again. The
+Mojo imports a precompiled package without reading its source again. The
 bundled library is imported the same way, as one compiled package per
 compiler build (`src/package.rs`):
 
 ```text
 build (once per compiler build, then cached):
-  every std module -> link -> elaborate -> check -> MIR -> ownership
-    -> std package: interface + MIR declarations + pre-drop bodies
+  every std module -> link (recording each module) -> elaborate -> check
+    -> MIR -> ownership
+    -> std package: interface + MIR declarations + module records
+       + pre-drop bodies
 
 import (every compilation that links the bundled library):
-  source -> link -> elaborate -> check (package bodies not checked)
+  source -> link (each library module from its record)
+    -> prepare -> elaborate -> check (package bodies empty, not checked)
     -> MIR of the program's own declarations, linked with the package's
        MIR declarations -> verify + ownership (own functions)
     -> drop elaboration (own functions)
@@ -99,18 +102,39 @@ import (every compilation that links the bundled library):
 - **The package file** (`mir::text::package`) holds a header (package,
   compiler build identity, source digest), the checker interface
   (`checked::interface::PackageInterface`), the package's MIR declarations,
-  and each function body as MIR text, before drop elaboration. Bodies decode
-  on demand: Hello World decodes three of about 875.
+  one record per library module, and each function body as MIR text, before
+  drop elaboration. Bodies decode on demand: Hello World decodes three of
+  about 875.
+- **A module record** (`module::package::PackageModule`) is what linking
+  the module from source produced, as upstream's `createBinaryPackageState`
+  reads a package's module tree: the modules its link asked to load, in
+  order, its export and namespace tables, and its linked declarations with
+  their bodies emptied (`ast::clear_bodies`). It is bytecode (`postcard`
+  over the AST's serde form), keyed by the module's canonical source path,
+  and decoded when a link reaches the module. The importer's link
+  (`module::link_*_with_package`) replays a record in place of reading,
+  parsing, and resolving the module, and stamps its declarations with the
+  path it reached the module by, so it links exactly what a source link
+  followed by `checker::strip_package_bodies` would; no library source is
+  read.
 - **The interface** is what an importer's check reads from the package's
   bodies: the modules the package compiled, their top-level names, each
-  module-level callable's transfer and call-through effect summaries, and
-  the traits the package's bodies ask a type's conformance to.
-- **The check** registers the package's declarations from their source as
-  for any module, takes the summaries as committed effects, and checks no
+  module-level callable's transfer and call-through effect summaries, each
+  struct method's parametric origin writes (`Owner.method` and its overload
+  qualifier), and the traits the package's bodies ask a type's conformance
+  to.
+- **Above the waist no package body is read.** The driver empties a
+  package declaration's bodies before `prepare` (a body the link took from
+  source too), so preparation and comptime elaboration walk headers only.
+  The check registers the package's declarations from those headers as for
+  any module, takes the summaries as committed effects, and checks no
   package body: a module-level `def` or method from a package module is a
-  carried site with nothing to copy (`Checker::in_package`). After the check
-  the package's bodies are emptied from the handoff, so the checked arena,
-  explicit destruction, and lowering see its declarations alone.
+  carried site with nothing to copy (`Checker::in_package`), and the
+  return, definite-initialization, and origin-write checks that read a body
+  skip it. A body `prepare` synthesizes for a package struct (`copy`,
+  `__hash__`) is emptied from the handoff after the check, so the checked
+  arena, explicit destruction, and lowering see the package's declarations
+  alone.
 - **Lowering** (`mir::lower_checked_program_importing`) skips the package's
   declarations and links its MIR declarations (`mir::link`) before closing
   and verifying the program's own functions. A package struct gains the
@@ -124,12 +148,13 @@ import (every compilation that links the bundled library):
   the compiler's sources) and the library's source digest key the cache
   (`target/mojito-cache` in the development tree). A program that declares
   one of the package's names again, as a second copy of a bundled module
-  would, compiles the library from source. So does `MOJITO_STD_PACKAGE=0`,
-  or `Compiler::with_std_package(false)`.
+  would, is linked again from source and compiles the library from source.
+  So does `MOJITO_STD_PACKAGE=0`, or `Compiler::with_std_package(false)`.
 - **Divergences.** Upstream's package holds post-parse IR, and its importer
-  registers the package's declarations from the package. Mojito's holds
-  lowered MIR and re-reads the declarations from the library's source
-  (`docs/roadmap.md`, `pmir` track).
+  installs the package's declarations resolved. Mojito's holds lowered MIR,
+  and its importer prepares, elaborates, and registers the declaration
+  headers its link reads from the package again (`docs/roadmap.md`, `pmir`
+  track: R546, R552, R553).
 
 `native::mono` is the one elaborator below the waist. `concrete_mir()` runs it
 from the program's entry roots and caches the graph, so the VM and the native
@@ -983,11 +1008,10 @@ second expression tree.
   signature-qualified symbol MIR names it by (`tally$ov$…`), so two overloads
   of one name never share a binder. An overloaded struct method is owned the
   same way, by the symbol its template lowers to (`Box.pick$ov$…`):
-  `symbol::MethodBinderOwners` computes it once per template and keys it by
-  the template struct and its body's range, inside which every clone's
-  first statement lies (a folded leading `comptime if` included), so a
-  clone whose substituted signature lowers differently still shares its
-  template's binders. The lowered symbol spells the method's own binders
+  `symbol::MethodBinderOwners` computes it once per struct and keys it by
+  the struct and the method's declaration (its name and the signature facts
+  its symbol spells), never by its body, which a packaged declaration does
+  not carry. The lowered symbol spells the method's own binders
   with their bounds (`First.pick$ov$T$Copyable$Int`), a callable bound
   (`F$Callable$def…`), and an existential `Some[Trait]` parameter
   (`Some$u5B$Writer$u5D$$Writer`) exactly as the checker's `Ty::Param`

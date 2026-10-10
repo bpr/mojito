@@ -102,7 +102,7 @@ pub fn canonical_destructor_name(name: &str) -> &str {
 /// arguments (`Pair[Int]`), and references to a type parameter.
 /// Function/closure and reference types are represented even though their
 /// runtime semantics are not yet supported.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum Type {
     Int,
     UInt,
@@ -198,7 +198,7 @@ pub enum Type {
 /// Unlike [`FnParam`], it has no default; its regular or keyword-variadic role
 /// and optional name are retained from spellings such as `def(mut writer:
 /// Writer)` and `def(var **options: Int)`.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct FunctionTypeParam {
     pub name: Option<String>,
     pub kind: ParamKind,
@@ -228,7 +228,7 @@ pub type SourceType = Type;
 /// `bounds` — a single entry naming a type means a value parameter; trait
 /// names mean a type parameter. The checker retains and validates the declared
 /// value type; runtime materialization is governed by `CtValue::materialize`.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct TypeParam {
     /// The source name. A leading `*` is retained for a variadic type pack.
     pub name: String,
@@ -307,7 +307,7 @@ impl TypeParam {
 /// leading type keyword / `Self` is a `Type`); a bare identifier or an
 /// arithmetic expression parses as `Value`, and the checker reinterprets a
 /// lone identifier as a type when the parameter is a type one.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum ParamArg {
     Type(Type),
     Value(Expr),
@@ -323,7 +323,7 @@ pub enum ParamArg {
 /// Mojito supports the index and fixed-width integers up to 64 bits,
 /// `float16`, `float32`, `float64`, and `bool`; upstream's other names are
 /// [`UPSTREAM_ONLY_DTYPE_NAMES`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum Dtype {
     /// Platform-sized signed integer, used by `Int = Scalar[DType.int]`.
     Int,
@@ -644,7 +644,7 @@ pub const UPSTREAM_ONLY_DTYPE_NAMES: [&str; 18] = [
 ];
 
 /// A typed struct field, e.g. `a: Int`. (Function parameters use `FnParam`.)
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Param {
     pub name: String,
     pub ty: Type,
@@ -655,7 +655,7 @@ pub struct Param {
 ///
 /// Defaults, variadics, and the supported conventions participate in checking
 /// and VM argument binding.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct FnParam {
     pub name: String,
     pub ty: Type,
@@ -683,7 +683,7 @@ pub fn named_result(params: &[FnParam]) -> Option<&FnParam> {
 }
 
 /// Whether a `FnParam` is a plain parameter or a variadic (`*args`/`**kwargs`).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum ParamKind {
     Regular,
     /// `*name: T` — a positional variadic parameter.
@@ -698,7 +698,7 @@ pub enum ParamKind {
 /// borrowed, the default), `mut`, `var`, `out`, and `ref` — a
 /// parametric-mutability reference). `imm`, `mut`, `var`, call-scoped `ref`,
 /// and a single named `out` result on a function or a method are modeled.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum ArgConvention {
     /// `imm` — the immutable convention. The legacy `read` spelling is a hard
     /// error (removed upstream 2026-08) with a targeted migration diagnostic.
@@ -715,7 +715,7 @@ pub enum ArgConvention {
 
 /// A keyword argument at a call site: `name=value`. Structural binding is owned
 /// by `crate::call`; the checker and VM interpret the matched argument slot.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct KwArg {
     pub name: String,
     pub value: Expr,
@@ -723,7 +723,7 @@ pub struct KwArg {
 
 /// One argument inside a multi-dimensional subscript. Slice arguments remain
 /// structured until checking selects their concrete descriptor type.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum SubscriptArg {
     Index(Expr),
     /// `name=value` — a keyword subscript argument (`s[byte=i]`), dispatched
@@ -771,7 +771,7 @@ impl KwArg {
 /// Parsed into the AST; only `@fieldwise_init` on a struct is acted on (it
 /// sets `Stmt::Struct.fieldwise_init`) — the rest are recorded but not modeled
 /// (syntax-first phase).
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Decorator {
     /// The dotted name parts, e.g. `["always_inline"]` or `["a", "b"]`.
     pub path: Vec<String>,
@@ -797,7 +797,7 @@ pub const TRAIT_DEFAULT_DECORATOR: &str = "$trait_default";
 
 /// A `def` method inside a `struct`. `self` (the implicit, untyped first
 /// parameter) is not stored in `params`.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Method {
     pub name: String,
     pub type_params: Vec<TypeParam>,
@@ -830,7 +830,7 @@ pub struct Method {
 }
 
 /// How a [`Method`] came to be declared.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
 pub enum MethodProvenance {
     /// Written in source.
     #[default]
@@ -853,7 +853,7 @@ pub enum MethodProvenance {
 ///
 /// Like `Method`, `self` is the implicit first parameter and is not stored in
 /// `params`.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct TraitMethod {
     pub name: String,
     pub type_params: Vec<TypeParam>,
@@ -881,7 +881,7 @@ pub struct TraitMethod {
 /// A `comptime NAME: Type` **member requirement** inside a `trait` body — a
 /// compile-time constant / associated alias a conforming struct must define
 /// (`comptime count: Int`, `comptime EltType: Copyable`).
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct TraitComptime {
     pub name: String,
     /// Parameter declarations of a parameterized associated type
@@ -895,7 +895,7 @@ pub struct TraitComptime {
 
 /// A `comptime NAME = expr` associated compile-time fact inside a `struct` body.
 /// These are declarations on the type, not runtime statements.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct StructComptime {
     pub name: String,
     /// Parameter declarations when this defines a parameterized associated type
@@ -910,7 +910,7 @@ pub struct StructComptime {
 }
 
 /// The names imported by a `from ... import ...` statement.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum ImportNames {
     /// `import *`
     Wildcard,
@@ -919,7 +919,7 @@ pub enum ImportNames {
 }
 
 /// One `name [as alias]` in a `from ... import` target list.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct ImportName {
     pub name: String,
     pub alias: Option<String>,
@@ -935,7 +935,7 @@ pub struct ImportName {
 /// y:`). The `as` target is a plain `NAME` — the parenthesized and
 /// tuple-target forms aren't in the Mojo docs, so (strict-subset) they aren't
 /// parsed.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct WithItem {
     pub context: Expr,
     pub var: Option<String>,
@@ -944,15 +944,20 @@ pub struct WithItem {
 /// A statement node: its [`StmtKind`] plus the source [`Span`] it was parsed from.
 /// Like [`Expr`], equality ignores the span (it is metadata), so AST-literal
 /// assertions stay span-agnostic.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct Stmt {
     pub kind: StmtKind,
     pub span: Span,
     /// Source module identity assigned by the linker. Parser-created statements
     /// use `None`; linked entry/import declarations carry their originating path.
+    /// A package's encoding leaves it out: its importer stamps the path it
+    /// reached the module by, as it stamps a module it parses.
+    #[serde(skip)]
     pub module: Option<String>,
     /// Concrete occurrence identity. It is deliberately ignored by structural
-    /// AST equality, like source spans and module provenance.
+    /// AST equality, like source spans and module provenance. A decoded
+    /// statement draws a fresh one, as a parsed one does.
+    #[serde(skip, default = "mojito_common::token::SyntaxId::fresh")]
     pub syntax_id: mojito_common::token::SyntaxId,
 }
 
@@ -993,7 +998,7 @@ impl From<StmtKind> for Stmt {
 /// The convention is independent of whether the iterable expression is
 /// transferred with `^`: an unadorned target is immutable, while `var` and
 /// contextual `ref` are explicit target conventions.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum LoopBindingMode {
     /// `for item in iterable`.
     Immutable,
@@ -1003,7 +1008,7 @@ pub enum LoopBindingMode {
     Ref,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 #[allow(clippy::large_enum_variant)]
 pub enum StmtKind {
     /// `var name[: Type] = value` — declares (and initializes) a new variable.
@@ -1216,7 +1221,7 @@ pub enum StmtKind {
 }
 
 /// The explicit environment of a nested closure.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct CaptureList {
     pub entries: Vec<Capture>,
     /// A bare convention (`imm`, `mut`, `ref`, `var`, or `var^`) applies to
@@ -1224,13 +1229,13 @@ pub struct CaptureList {
     pub default: Option<CaptureKind>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct Capture {
     pub name: String,
     pub kind: CaptureKind,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum CaptureKind {
     /// Immutable reference (`imm`; the legacy `read` spelling rejects).
     Imm,
@@ -1247,12 +1252,16 @@ pub enum CaptureKind {
 /// An expression node: its [`ExprKind`] plus the source [`Span`] it was parsed
 /// from. Equality ignores the span (see the module note), so `a == b` iff their
 /// kinds are structurally equal.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct Expr {
     pub kind: ExprKind,
     pub span: Span,
+    /// Stamped as [`Stmt::module`] is, and likewise left out of an encoding.
+    #[serde(skip)]
     pub source: Option<String>,
-    /// Concrete occurrence identity; ignored by structural AST equality.
+    /// Concrete occurrence identity; ignored by structural AST equality. A
+    /// decoded expression draws a fresh one.
+    #[serde(skip, default = "mojito_common::token::SyntaxId::fresh")]
     pub syntax_id: mojito_common::token::SyntaxId,
 }
 
@@ -1289,7 +1298,7 @@ impl PartialEq for Expr {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum ExprKind {
     Int(mojito_common::literal::IntLiteral),
     Float(mojito_common::literal::FloatLiteral),
@@ -1444,7 +1453,7 @@ pub enum ExprKind {
 }
 
 /// The result family selected by collection-display delimiters.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum CollectionKind {
     List,
     Set,
@@ -1452,7 +1461,7 @@ pub enum CollectionKind {
 }
 
 /// One left-to-right generator/filter clause in a collection comprehension.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum ComprehensionClause {
     For {
         var: String,
@@ -1463,13 +1472,13 @@ pub enum ComprehensionClause {
 }
 
 /// One piece of a t-string: literal text or an interpolated expression.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum TStringPart {
     Literal(String),
     Expr(Box<Expr>),
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum PrefixOp {
     /// Arithmetic negation, `-`.
     Neg,
@@ -1492,7 +1501,7 @@ impl PrefixOp {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum InfixOp {
     Add,
     Sub,
@@ -2428,6 +2437,32 @@ impl SyntaxOrigins {
         id.derivation().map_or(id, |(parent, ordinal)| {
             mojito_common::token::SyntaxId::derived(self.origin(parent), ordinal)
         })
+    }
+}
+
+/// Empty `statement`'s bodies, leaving its declaration.
+///
+/// A function's or method's body is emptied, and a trait default's, which
+/// keeps its (empty) body so its trait still declares a default. A compiled
+/// package's declarations travel so: their bodies are in the package
+/// already.
+pub fn clear_bodies(statement: &mut Stmt) {
+    match &mut statement.kind {
+        StmtKind::Def { body, .. } => body.clear(),
+        StmtKind::Struct { methods, .. } => {
+            for method in methods {
+                method.body.clear();
+            }
+        }
+        StmtKind::Trait { methods, .. } => {
+            for body in methods
+                .iter_mut()
+                .filter_map(|method| method.default_body.as_mut())
+            {
+                body.clear();
+            }
+        }
+        _ => {}
     }
 }
 

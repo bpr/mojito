@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R552**.
+Next free ID: **R555**.
 
 ## Ordered Work
 
@@ -50,24 +50,63 @@ Scope: what remains of the plan's stages, and what the pipeline order still
 leaves to close. A defect found on the way is filed by its kind; a
 divergence from the pin goes to a catch-up track, however small.
 
-- [ ] **R545 (P6) An importer still reads the bundled library's
-  declarations from source**
+- [ ] **R552 (P6) An importer's check registers the package's
+  declarations again from their headers**
 
-  Every compilation links, parses, elaborates, and registers each library
-  declaration again; only the library's bodies come from its package.
-  - Upstream registers a package's declarations from the package, and ships
-    no library source.
-  - That work is most of Hello World's 140 ms release
-    (`docs/performance.md` §P6): the prelude's link (33 ms), comptime
-    elaboration (26 ms), and most of the 37 ms check.
-  - The lever is a declaration interface in the package: the tables a user
-    check reads (`StructInfo`, `TraitInfo`, method signatures, aliases,
-    constants, overload sets, generic parameters, explicit-destroy facts,
-    the conformance oracle), named by linked names and installed instead of
-    checked.
-  - Default-argument and literal expressions are AST inside those tables.
-  - Depends on R544, since a conformer needs the source of every trait
-    default it inherits.
+  Every compilation's check runs its declaration phases and module walk
+  over each library declaration the link reached, where upstream installs
+  a package declaration already resolved.
+  - That is most of Hello World's 25 ms check, release
+    (`docs/performance.md` §P6): method signatures 7 ms, the module walk
+    9 ms, the checked arena 4 ms; the program's own body is one of them.
+  - Every transfer round builds a fresh `Checker` and registers them all
+    again.
+  - The lever is a declaration interface in each module record: the tables
+    a user check reads (`StructInfo`, `TraitInfo`, `MethodSig`, aliases,
+    constants, overload sets, generic parameters, each module `def`'s type
+    and origin facts), by linked name, installed per round instead of
+    checked, with no `OwnerId`, span-keyed fact, or `SyntaxId` in them.
+  - Default-argument expressions, conformance conditions, and source
+    parameter lists are AST in those tables; the records' bytecode already
+    carries AST.
+  - Package statements then leave the checked program, so the arena and
+    `explicit_destroy` see the program's own alone; lowering takes the
+    checker's `OverloadSets` and `MethodBinderOwners`.
+  - Depends on nothing.
+  - Model: Fable, Planned.
+
+- [ ] **R554 (P6) An importer decodes every package MIR declaration
+  eagerly, through the text grammar**
+
+  Reading the bundled package costs 22 ms of Hello World's 76 ms, release,
+  18 of them decoding the 0.9 MB `declarations` section.
+  - The MIR text decoder runs at about 50 MB/s; the module records beside
+    it are bytecode and decode in well under a millisecond.
+  - `read_package` also clones the decoded declarations whole for
+    `PackageBodies`.
+  - Upstream's importer reads bytecode, and resolves a declaration the
+    first time it is looked up.
+  - The lever is declarations as bytecode, per module or per declaration,
+    decoded when the importer's lowering or elaborator first names one.
+  - Depends on nothing.
+  - Model: Fable, Planned.
+
+- [ ] **R553 (P6) An importer prepares and elaborates the package's
+  declaration headers on every compilation**
+
+  `comptime::prepare` rewrites every library header, and the comptime
+  elaborator builds its conformance oracle and indexes over them, though
+  the package build did both already.
+  - That is about 11 ms of Hello World, release: `prepare` 1.6 ms and
+    `elaborate` 9.5 ms.
+  - Upstream's emitters read resolved declarations, not a re-prepared
+    tree.
+  - The lever: a module record holds its headers as the build's check
+    consumed them, and `prepare` and `elaborate_prepared` take them as
+    read-only context beside the program's own statements.
+  - The trait-default wrapper synthesis and `collect_structs` would still
+    read the headers until R551 makes a default a trait member.
+  - Depends on R552, which fixes what the check reads of a header.
   - Model: Fable, Planned.
 
 - [ ] **R547 A function the check lifts from a body is numbered per

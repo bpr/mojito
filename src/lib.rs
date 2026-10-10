@@ -22,6 +22,7 @@ pub mod mir {
     }
 }
 pub use mojito_module::module;
+pub use mojito_module::package as module_package;
 pub use mojito_native::native;
 pub use mojito_parser::parser;
 pub use mojito_symbol::symbol;

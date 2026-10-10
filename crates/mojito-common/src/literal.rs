@@ -23,7 +23,7 @@ use crate::float::f16;
 /// with up to one million decimal/binary exponent steps remain exact.
 pub const MAX_LITERAL_EXPONENT: u64 = 1_000_000;
 
-#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize)]
 pub struct IntLiteral(BigInt);
 
 impl IntLiteral {
@@ -207,7 +207,7 @@ impl fmt::Display for IntLiteral {
     }
 }
 
-#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize)]
 pub struct FloatLiteral {
     value: BigRational,
     negative_zero: bool,
