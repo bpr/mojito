@@ -13,8 +13,10 @@ impl ConformanceOracle {
     }
 
     /// The oracle of a program that imports the package declarations
-    /// `installed` holds: they are installed as the build's check resolved
-    /// them, and only `stmts`, the program's own, register from source.
+    /// `installed` holds: they are attached, so a lookup the program's own
+    /// entries miss resolves the build's declaration record on first use,
+    /// shared with every checker pass of the compilation, and only `stmts`,
+    /// the program's own, register from source.
     ///
     /// # Errors
     ///

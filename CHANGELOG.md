@@ -63,6 +63,9 @@ to evolve under the `0.x` compatibility rules.
   Mojo's importer resolves a package declaration on first lookup. Hello
   World compiles and runs in 14.1 ms release, from 17.0 ms. The package
   format is now `mojito-package 6`.
+  The elaborator's conformance oracle shares those records with every
+  checker pass, so a library declaration decodes once per compilation for
+  all of them (R558).
 - A module under a search root is linked under its path there, whichever
   import reaches it first: `std/io/file.mojo` declares
   `__module$std$io$file$…`, not `__module$file$…`.

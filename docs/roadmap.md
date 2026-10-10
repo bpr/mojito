@@ -50,21 +50,6 @@ Scope: what remains of the plan's stages, and what the pipeline order still
 leaves to close. A defect found on the way is filed by its kind; a
 divergence from the pin goes to a catch-up track, however small.
 
-- [ ] **R558 (P6) The elaborator's conformance oracle installs the
-  package's declaration interfaces once more per compilation**
-
-  `ConformanceOracle::importing` installs every reached module's interface
-  into its own `Checker`, beside the check's passes, which each install them
-  again.
-  - That is 1.4 ms of Hello World's 20 ms, release
-    (`elaborate.indexes.install_interfaces`).
-  - Upstream resolves a package declaration once, on first lookup, for
-    every client.
-  - The lever is R555's lookup-miss hook: the oracle then decodes only
-    what an own `conforms_to` asks.
-  - Depends on R555.
-  - Model: Opus, Planned.
-
 - [ ] **R556 (P6) An importer's check answers every package struct's
   conformances again**
 
@@ -141,6 +126,9 @@ divergence from the pin goes to a catch-up track, however small.
     constants, and its module-scope compile-time facts.
   - Each checker pass then clones the merged overload sets into its fresh
     `Checker`.
+  - The elaborator's conformance oracle (`ConformanceOracle::importing`)
+    makes the same copies through `Checker::attach_interfaces`, so the
+    lever removes them there too.
   - The overload sets cross into MIR through `CheckedProgram::overloads`,
     and `mojito-checked` and `mojito-mir` sit below the checker, so they
     cannot hold the checker's lookup handle.
