@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R584**.
+Next free ID: **R585**.
 
 ## Ordered Work
 
@@ -50,24 +50,24 @@ Scope: what remains of the plan's stages, and what the pipeline order still
 leaves to close. A defect found on the way is filed by its kind; a
 divergence from the pin goes to a catch-up track, however small.
 
-- [ ] **R582 (P6) An importer drop-elaborates and verifies a package body
-  each time a process decodes it**
+- [ ] **R584 (P6) Decoding a package body is a quarter of the cost of
+  materializing it**
 
-  The package holds each body before drop elaboration, so the elaborator's
-  first `get` of a library body runs `BodyFinish` (the driver's
-  `analysis::elaborate_drops_function`, then `verify_function_in`) on it.
-  - The site is `PackageBodies::get` (`mir/text/package.rs`), finished by
-    `src/package.rs::open` through `PackageBodies::finishing`.
-  - It is about 0.54 ms of Hello World's 1.5 ms `backend.prepare.elaborate`
-    (release; `_uint_digits_at` alone takes 268 µs to finish), and 9–11 ms
-    of method-heavy fixtures such as
-    `assign_interior_view_to_other_local`.
-  - The obvious lever is to store the finished body in the package, but
-    the package module docs say upstream runs its lifetime pass on each
-    package body in the importer. Whether upstream's package holds bodies
-    before or after destructor insertion was not verified; settle that
-    first, and follow upstream.
-  - Found while landing R580 (2026-10-10).
+  The elaborator's first `get` of a library body decodes its postcard record
+  into an owned `MirFunction` before finishing it, and that decode costs
+  half as much as the drop elaboration that follows.
+  - The site is `PackageBodies::decode`
+    (`crates/mojito-mir/src/mir/text/package.rs`).
+  - Decoding all 874 bundled bodies (`mojito --timings emit-mir
+    assets/ok/hello_world.mojo`, `package.body.decode`) takes about 31 ms
+    release, against about 62 ms to drop-elaborate them and 21 ms to verify.
+  - Cloning each location's source path is not the cost: decoding with no
+    path at all takes about 30.5 ms.
+  - A record spells every type, place type, and register type inline, so
+    the decode likely rebuilds each one as an owned tree; upstream's MLIR
+    bytecode instead holds each type and attribute once per file, in a
+    section its operations refer to by index. Profile before choosing.
+  - Found while landing R582 (2026-10-10).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

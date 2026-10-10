@@ -164,6 +164,16 @@ to evolve under the `0.x` compatibility rules.
   range of the package's by-name function table beside the program's own
   bodies, kept by name. Hello World's elaboration falls from 1.61 to
   1.48 ms release, and a method-heavy program's by about 9%.
+- Drop elaboration and the move-state check behind it run as worklist
+  dataflows over live state only (R582): register-loan states forget dead
+  registers, each block's deaths come from one backward walk instead of
+  per-instruction snapshots, and the move states, register loans, and drop
+  liveness visit blocks in reverse postorder instead of round-robin. An
+  importer still drop-elaborates each library body it decodes, as Mojo's
+  importer runs its lifetime pass on a package that holds bodies before
+  destructor insertion, but finishing all 874 bodies takes 62 ms release,
+  from 161 ms (`StringSpan._grapheme_class` 23.6 → 1.9 ms), and a
+  method-heavy program's elaboration falls from 14.0 to 10.9 ms.
 - A module under a search root is linked under its path there, whichever
   import reaches it first: `std/io/file.mojo` declares
   `__module$std$io$file$…`, not `__module$file$…`.

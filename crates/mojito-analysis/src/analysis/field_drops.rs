@@ -561,7 +561,8 @@ fn moved_fields(instr: &MirInstr, root: &DeinitRoot) -> FieldSet {
 /// a load or handle of a receiver field carries that field to every consumer
 /// (results of non-call instructions inherit it; a call result is a fresh
 /// value; a scalar load borrows for one hop only), mirroring
-/// [`transfer_register_loans`](super::register_loans::transfer_register_loans).
+/// the register-loan transfer of
+/// [`register_loan_uses_over`](super::register_loans::register_loan_uses_over).
 fn register_field_provenance(blocks: &[MirBlock], root: &DeinitRoot) -> Vec<Vec<FieldSet>> {
     type Carry = BTreeMap<u32, (FieldSet, FieldSet)>;
     fn join(mut left: Carry, right: &Carry) -> Carry {

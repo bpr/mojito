@@ -10,9 +10,10 @@
 //! phases looks one of its names up (as upstream's importer resolves a
 //! declaration from bytecode on first lookup), a module's link record when
 //! its link reaches the module, and a body only when the elaborator first
-//! reaches it, inserting that body's drops then, as upstream materializes a
-//! package's bodies on demand and runs its lifetime pass on each in the
-//! importer.
+//! reaches it, inserting that body's drops then. Upstream's precompiled
+//! package likewise holds each body as checked, before its lifetime pass
+//! inserts destructors, and its importer runs that pass on each body it
+//! materializes (`docs/notes/upstream-package-contents.md`).
 //!
 //! The container is a header followed by records:
 //!
@@ -40,6 +41,7 @@ use crate::mir::{MirDeclarations, MirFunction, MirProgram, SpanTable};
 use mojito_checked::interface::PackageInterface;
 pub use mojito_checked::package::{DeclarationRecords, PackageBytes, PackageDeclarations};
 use mojito_checked::package::{LoweredDeclaration, PackagedBody, Payload};
+use mojito_common::timing;
 use mojito_common::token::SourceSpan;
 use mojito_hir::hir::VarId;
 use mojito_types::origin::encoding_packaged_owners;
@@ -101,12 +103,19 @@ impl PackageBodies {
     /// The body of `name`, decoded on first use; `None` when the package
     /// has no such function or its record does not decode (a failure
     /// [`Self::failures`] reports).
+    ///
+    /// Its decode, finish, and verify report as the `package.body.*`
+    /// `--timings` spans of the thread that first asks for the body.
     pub fn get(&self, name: &str) -> Option<&MirFunction> {
         let row = self.package.body_row(name)?;
         self.decoded
             .get(row)?
             .get_or_init(|| {
-                let function = match self.decode(row) {
+                let decoded = {
+                    let _decode = timing::span("package.body.decode");
+                    self.decode(row)
+                };
+                let function = match decoded {
                     Ok(function) => function,
                     Err(error) => {
                         self.fail(format!("package body `{name}` does not decode: {error}"));
@@ -116,7 +125,11 @@ impl PackageBodies {
                 let Some(finish) = self.finish else {
                     return Some(function);
                 };
-                let function = finish(name, function, &self.declarations);
+                let function = {
+                    let _finish = timing::span("package.body.finish");
+                    finish(name, function, &self.declarations)
+                };
+                let _verify = timing::span("package.body.verify");
                 let findings =
                     crate::mir::verify::verify_function_in(name, &function, &self.declarations);
                 if !findings.is_empty() {

@@ -358,6 +358,98 @@ pub(super) fn successors(term: &MirTerm) -> Vec<usize> {
     }
 }
 
+/// Each block's predecessors within `blocks` (from terminator successors).
+pub(super) fn block_predecessors(blocks: &[MirBlock]) -> Vec<Vec<usize>> {
+    let mut predecessors = vec![Vec::new(); blocks.len()];
+    for (block, body) in blocks.iter().enumerate() {
+        for successor in successors(&body.term) {
+            if let Some(list) = predecessors.get_mut(successor) {
+                list.push(block);
+            }
+        }
+    }
+    predecessors
+}
+
+/// The blocks a dataflow over one mini-CFG still has to visit. A forward
+/// dataflow takes them in reverse postorder from block 0 (then any block
+/// unreachable from it, in index order), so each block is visited after its
+/// forward predecessors; a backward one takes them in the opposite order.
+pub(super) struct Worklist {
+    order: Vec<usize>,
+    /// Each block's position in `order`.
+    rank: Vec<usize>,
+    pending: BTreeSet<usize>,
+}
+
+impl Worklist {
+    /// A forward worklist holding every block.
+    pub(super) fn forward(blocks: &[MirBlock]) -> Self {
+        let nb = blocks.len();
+        let mut visited = vec![false; nb];
+        let mut order = Vec::with_capacity(nb);
+        if nb > 0 {
+            let mut stack = vec![(0, successors(&blocks[0].term), 0)];
+            visited[0] = true;
+            while let Some((block, block_successors, next)) = stack.last_mut() {
+                if let Some(successor) = block_successors.get(*next).copied() {
+                    *next += 1;
+                    if successor < nb && !visited[successor] {
+                        visited[successor] = true;
+                        stack.push((successor, successors(&blocks[successor].term), 0));
+                    }
+                } else {
+                    order.push(*block);
+                    stack.pop();
+                }
+            }
+        }
+        order.reverse();
+        order.extend((0..nb).filter(|block| !visited[*block]));
+        Self::over(order)
+    }
+
+    /// A backward worklist holding every block.
+    pub(super) fn backward(blocks: &[MirBlock]) -> Self {
+        let mut order = Self::forward(blocks).order;
+        order.reverse();
+        Self::over(order)
+    }
+
+    /// The pending block first in the worklist's order.
+    pub(super) fn pop(&mut self) -> Option<usize> {
+        self.pending
+            .pop_first()
+            .map(|position| self.order[position])
+    }
+
+    /// Revisit `block`.
+    pub(super) fn push(&mut self, block: usize) {
+        if let Some(rank) = self.rank.get(block) {
+            self.pending.insert(*rank);
+        }
+    }
+
+    /// Revisit the successors of a block whose outgoing state changed.
+    pub(super) fn push_successors(&mut self, term: &MirTerm) {
+        for successor in successors(term) {
+            self.push(successor);
+        }
+    }
+
+    fn over(order: Vec<usize>) -> Self {
+        let mut rank = vec![0; order.len()];
+        for (position, block) in order.iter().enumerate() {
+            rank[*block] = position;
+        }
+        Self {
+            pending: (0..order.len()).collect(),
+            order,
+            rank,
+        }
+    }
+}
+
 /// Each `MakeRef` handle naming a reference parameter's whole referent, by
 /// register: a `WriteRef` or `ReadRef` carries only the register, so the
 /// parameter it writes back or reads is recovered here.
@@ -865,42 +957,34 @@ fn region_in_states(
     refills: &Refills,
 ) -> Vec<Option<Vec<Node>>> {
     let nb = blocks.len();
-    let mut preds: Vec<Vec<usize>> = vec![Vec::new(); nb];
-    for (b, blk) in blocks.iter().enumerate() {
-        for s in successors(&blk.term) {
-            if s < nb {
-                preds[s].push(b);
-            }
-        }
-    }
+    let preds = block_predecessors(blocks);
     let mut in_states: Vec<Option<Vec<Node>>> = vec![None; nb];
     let mut out_states: Vec<Option<Vec<Node>>> = vec![None; nb];
-    let mut changed = true;
-    while changed {
-        changed = false;
-        #[allow(clippy::needless_range_loop)]
-        for b in 0..nb {
-            let new_in = if b == 0 || preds[b].is_empty() {
-                entry.to_vec()
-            } else {
-                let mut predecessors = preds[b]
-                    .iter()
-                    .filter_map(|predecessor| out_states[*predecessor].as_ref());
-                let Some(first) = predecessors.next() else {
-                    continue;
-                };
-                let mut acc = first.clone();
-                for predecessor in predecessors {
-                    acc = join_states(&acc, predecessor);
-                }
-                acc
+    let mut worklist = Worklist::forward(blocks);
+    while let Some(b) = worklist.pop() {
+        let new_in = if b == 0 || preds[b].is_empty() {
+            entry.to_vec()
+        } else {
+            let mut predecessors = preds[b]
+                .iter()
+                .filter_map(|predecessor| out_states[*predecessor].as_ref());
+            let Some(first) = predecessors.next() else {
+                continue;
             };
-            let new_out = transfer_block(new_in.clone(), &blocks[b].instrs, f, refills);
-            if in_states[b].as_ref() != Some(&new_in) || out_states[b] != new_out {
-                in_states[b] = Some(new_in);
-                out_states[b] = new_out;
-                changed = true;
+            let mut acc = first.clone();
+            for predecessor in predecessors {
+                acc = join_states(&acc, predecessor);
             }
+            acc
+        };
+        if in_states[b].as_ref() == Some(&new_in) {
+            continue;
+        }
+        let new_out = transfer_block(new_in.clone(), &blocks[b].instrs, f, refills);
+        in_states[b] = Some(new_in);
+        if out_states[b] != new_out {
+            out_states[b] = new_out;
+            worklist.push_successors(&blocks[b].term);
         }
     }
     in_states

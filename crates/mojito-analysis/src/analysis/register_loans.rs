@@ -59,215 +59,6 @@ pub(super) fn active_register_loan_roots(
     roots
 }
 
-/// Transfer transient owner provenance through one SSA instruction and return
-/// the roots the instruction consumes. The returned roots become ordinary drop
-/// liveness uses at this exact program point. Results inherit operand provenance
-/// until a terminal instruction such as `DefVar` consumes them, allowing
-/// `MakeRef -> ReadRef -> Call` to retain an owner through the outer call without
-/// extending the source reference's generation to function exit.
-pub(super) fn transfer_register_loans(
-    registers: &mut RegisterLoanState,
-    generations: &LoanGenerationState,
-    instruction: &MirInstr,
-    loan_roots: &BTreeMap<u32, DropLoanGeneration>,
-    register_types: &HashMap<u32, mojito_types::types::Ty>,
-) -> Vec<VarId> {
-    let mut owners = BTreeSet::new();
-    let mut single_hop_uses: BTreeSet<VarId> = BTreeSet::new();
-    let mut operands = Vec::new();
-    mojito_mir::mir::verify::instruction_operand_regs(instruction, &mut operands);
-    for operand in operands {
-        if let Some(provenance) = registers.owners.get(&operand.0) {
-            owners.extend(provenance);
-        }
-        if let Some(provenance) = registers.single_hop.get(&operand.0) {
-            single_hop_uses.extend(provenance);
-        }
-    }
-
-    owners.extend(active_register_loan_roots(
-        var_uses(instruction).into_iter().map(|(var, _)| var),
-        generations,
-        loan_roots,
-    ));
-
-    // `MakeRef` creates a transient handle directly into its place root.  That
-    // root is not necessarily an established reference generation itself (for
-    // example `box.value` where `box` merely *contains* a stored reference), so
-    // the generation closure above cannot discover it.  Retain the storage root
-    // through every SSA consumer of the handle; `through` additionally keeps a
-    // substituted reference binding alive when the place was reached via one.
-    //
-    // `LoadPlace` needs the same retention for a different reason: it reads the
-    // place shallowly, so a pointer-owning (lifecycle) result register aliases
-    // the root's storage until a `CopyValue` runs the copy lifecycle or a
-    // consuming call finishes. Dropping the root between the load and that
-    // consumer would free storage the pending register still references, so
-    // an aggregate (or unknown-typed) result retains through every consumer.
-    // A scalar read owns its bits, but the read is still a borrow of its
-    // owner that lasts through the instruction consuming the register (Mojo
-    // passes `t.n` to `print` as a reference to `t`, which therefore outlives
-    // the call): the root is retained for that single hop only.
-    let mut single_hop_place = None;
-    let retained_place = match instruction {
-        MirInstr::MakeRef { place, .. } => Some(place),
-        MirInstr::LoadPlace { dest, place } => {
-            if place
-                .ty
-                .as_ref()
-                .or_else(|| register_types.get(&dest.0))
-                .is_none_or(may_alias_owned_storage)
-            {
-                Some(place)
-            } else {
-                single_hop_place = Some((dest, place));
-                None
-            }
-        }
-        _ => None,
-    };
-    if let Some(place) = retained_place {
-        owners.insert(place.root);
-        if let Some(reference) = place.through {
-            owners.insert(reference);
-        }
-    }
-    if let Some((dest, place)) = single_hop_place {
-        let mut roots = BTreeSet::from([place.root]);
-        roots.extend(place.through);
-        registers.single_hop.insert(dest.0, roots);
-    }
-
-    // A nominal subscript returning `ref T` establishes a transient handle to
-    // its retained receiver place. Unlike `MakeRef`, the handle is produced by
-    // the callee, so no explicit loan generation exists at this instruction.
-    // Seed the destination register with the receiver root directly; subsequent
-    // `ReadRef`/call uses then keep that caller slot alive until the handle has
-    // actually been consumed.
-    let reference_subscript_place = match instruction {
-        MirInstr::Index {
-            dest,
-            base_place: Some(place),
-            ..
-        }
-        | MirInstr::Slice {
-            dest,
-            object_place: Some(place),
-            ..
-        }
-        | MirInstr::MultiIndex {
-            dest,
-            object_place: Some(place),
-            ..
-        } if matches!(
-            register_types.get(&dest.0),
-            Some(mojito_types::types::Ty::Ref(_))
-        ) =>
-        {
-            Some(place)
-        }
-        // A direct method call returning `ref T` (no adapter) is the same
-        // callee-produced transient handle as a reference subscript: the
-        // result register borrows the receiver's storage, which must outlive
-        // every consumer of the handle — not just the call instruction.
-        MirInstr::MethodCall {
-            reference_result: Some(_),
-            result_adapter: None,
-            recv_place: Some(place),
-            ..
-        } => Some(place),
-        // A method call returning a tracked pointer (`xs.unsafe_ptr()`, a
-        // `pointer_self`/`pointer_place` provenance) hands out a handle into
-        // the receiver's storage the same way: the receiver must outlive
-        // every consumer of the pointer register — a callee reading the
-        // pointee included. Untracked and unsafe-any results carry no loan.
-        MirInstr::MethodCall {
-            dest,
-            recv_place: Some(place),
-            ..
-        } if tracked_pointer_result(register_types, dest) => Some(place),
-        _ => None,
-    };
-    let mut reference_seeded = BTreeSet::new();
-    if let Some(place) = reference_subscript_place {
-        reference_seeded.insert(place.root);
-        if let Some(reference) = place.through {
-            reference_seeded.insert(reference);
-        }
-    }
-    // A free call returning a tracked pointer borrows through its retained
-    // argument places.
-    if let MirInstr::Call {
-        dest, arg_places, ..
-    } = instruction
-        && tracked_pointer_result(register_types, dest)
-    {
-        for place in arg_places.iter().flatten() {
-            reference_seeded.insert(place.root);
-            if let Some(reference) = place.through {
-                reference_seeded.insert(reference);
-            }
-        }
-    }
-    // An element read out of pack storage is the same shallow read as a
-    // `LoadPlace`: an aggregate element aliases the pack until its consumer
-    // finishes, and a scalar one borrows the pack for that consumer alone.
-    if let MirInstr::Index {
-        dest,
-        base_place: Some(place),
-        intrinsic:
-            Some(MirIntrinsicSubscript::TupleStorage | MirIntrinsicSubscript::VariadicStorage),
-        ..
-    } = instruction
-    {
-        let roots = std::iter::once(place.root).chain(place.through);
-        if register_types
-            .get(&dest.0)
-            .is_none_or(may_alias_owned_storage)
-        {
-            reference_seeded.extend(roots);
-        } else {
-            registers.single_hop.insert(dest.0, roots.collect());
-        }
-    }
-    owners.extend(reference_seeded.iter().copied());
-
-    // A call-family result is a fresh independent value — a return runs the
-    // copy/move lifecycle out of the callee frame — so operand provenance is
-    // consumed at the call (the roots are uses at this exact point) and does
-    // not flow into the result. Only the explicit reference-result seeding
-    // above (a callee-produced handle into caller storage) carries through.
-    let call_result = matches!(
-        instruction,
-        MirInstr::Call { .. }
-            | MirInstr::CallIndirect { .. }
-            | MirInstr::MethodCall { .. }
-            | MirInstr::Index { .. }
-            | MirInstr::Slice { .. }
-            | MirInstr::MultiIndex { .. }
-            | MirInstr::BinOp {
-                resolved: Some(_),
-                ..
-            }
-    );
-    let result_owners = if call_result {
-        &reference_seeded
-    } else {
-        &owners
-    };
-    let mut results = Vec::new();
-    mojito_mir::mir::verify::instruction_result_regs(instruction, &mut results);
-    for result in results {
-        if result_owners.is_empty() {
-            registers.owners.remove(&result.0);
-        } else {
-            registers.owners.insert(result.0, result_owners.clone());
-        }
-    }
-    owners.extend(single_hop_uses);
-    owners.into_iter().collect()
-}
-
 /// Whether a shallowly read value of this type can alias heap storage owned by
 /// its source place — an aggregate whose fields may hold owning pointers (the
 /// self-hosted `String`/`List` shape). Scalars and compile-time values own
@@ -287,9 +78,23 @@ pub(super) const fn may_alias_owned_storage(ty: &mojito_types::types::Ty) -> boo
     )
 }
 
-/// Per-instruction transient owner uses and per-block incoming register-loan
-/// states over an arbitrary block vector (a function body or a `try` region
-/// mini-CFG) with an explicit entry state.
+/// One function body's (or `try` region's) register-loan facts: the roots
+/// each instruction consumes, and the register-loan state entering each
+/// `try`, which seeds its body region.
+pub(super) struct RegisterLoans {
+    /// Per block, per instruction, the roots the instruction consumes.
+    pub(super) uses: Vec<Vec<Vec<VarId>>>,
+    /// The state entering each `try`, keyed by block and instruction index.
+    pub(super) before_try: HashMap<(usize, usize), RegisterLoanState>,
+}
+
+/// Per-instruction transient owner uses over an arbitrary block vector (a
+/// function body or a `try` region mini-CFG) with an explicit entry state.
+///
+/// A forward worklist dataflow in reverse postorder. Each state holds only
+/// the registers some later instruction still reads (deep through `try`
+/// regions), so joins and comparisons stay proportional to the registers
+/// live across an edge rather than to every register the body defines.
 pub(super) fn register_loan_uses_over(
     blocks: &[MirBlock],
     generation_entries: &[LoanGenerationState],
@@ -297,82 +102,82 @@ pub(super) fn register_loan_uses_over(
     loan_roots: &BTreeMap<u32, DropLoanGeneration>,
     generation_dests: &BTreeMap<u32, Option<MirInteriorOrigin>>,
     reg_types: &HashMap<u32, mojito_types::types::Ty>,
-) -> (Vec<Vec<Vec<VarId>>>, Vec<RegisterLoanState>) {
-    let mut predecessors: Vec<Vec<usize>> = vec![Vec::new(); blocks.len()];
-    for (block, body) in blocks.iter().enumerate() {
-        for successor in successors(&body.term) {
-            if successor < blocks.len() {
-                predecessors[successor].push(block);
-            }
-        }
-    }
-
-    let mut incoming: Vec<Option<RegisterLoanState>> = vec![None; blocks.len()];
-    let mut outgoing: Vec<Option<RegisterLoanState>> = vec![None; blocks.len()];
-    let mut changed = true;
-    while changed {
-        changed = false;
-        for block in 0..blocks.len() {
-            let new_in = if block == 0 || predecessors[block].is_empty() {
-                entry_registers.clone()
-            } else {
-                let mut states = predecessors[block]
-                    .iter()
-                    .filter_map(|predecessor| outgoing[*predecessor].as_ref());
-                let Some(first) = states.next() else {
-                    continue;
-                };
-                states.fold(first.clone(), join_register_loan_states)
-            };
-            let mut new_out = new_in.clone();
-            let mut generations = generation_entries[block].clone();
-            for instruction in &blocks[block].instrs {
-                transfer_register_loans(
-                    &mut new_out,
-                    &generations,
-                    instruction,
-                    loan_roots,
-                    reg_types,
-                );
-                transfer_loan_generation(&mut generations, instruction, generation_dests);
-            }
-            if incoming[block].as_ref() != Some(&new_in)
-                || outgoing[block].as_ref() != Some(&new_out)
-            {
-                incoming[block] = Some(new_in);
-                outgoing[block] = Some(new_out);
-                changed = true;
-            }
-        }
-    }
-
-    let entries: Vec<RegisterLoanState> = incoming
-        .into_iter()
-        .map(Option::unwrap_or_default)
-        .collect();
-    let uses = blocks
+) -> RegisterLoans {
+    let nb = blocks.len();
+    let steps: Vec<Vec<RegisterLoanStep>> = blocks
         .iter()
-        .enumerate()
-        .map(|(block, body)| {
-            let mut registers = entries[block].clone();
-            let mut generations = generation_entries[block].clone();
-            body.instrs
+        .zip(generation_entries)
+        .map(|(block, entry)| {
+            let mut generations = entry.clone();
+            block
+                .instrs
                 .iter()
                 .map(|instruction| {
-                    let uses = transfer_register_loans(
-                        &mut registers,
-                        &generations,
-                        instruction,
-                        loan_roots,
-                        reg_types,
-                    );
+                    let step =
+                        RegisterLoanStep::new(&generations, instruction, loan_roots, reg_types);
                     transfer_loan_generation(&mut generations, instruction, generation_dests);
+                    step
+                })
+                .collect()
+        })
+        .collect();
+    let predecessors = block_predecessors(blocks);
+    let liveness = RegisterLiveness::new(blocks, &steps, &predecessors);
+
+    let mut incoming: Vec<Option<RegisterLoanState>> = vec![None; nb];
+    let mut outgoing: Vec<Option<RegisterLoanState>> = vec![None; nb];
+    let mut worklist = Worklist::forward(blocks);
+    while let Some(block) = worklist.pop() {
+        let new_in = if block == 0 || predecessors[block].is_empty() {
+            entry_registers.clone()
+        } else {
+            let mut states = predecessors[block]
+                .iter()
+                .filter_map(|predecessor| outgoing[*predecessor].as_ref());
+            let Some(first) = states.next() else {
+                continue;
+            };
+            states.fold(first.clone(), join_register_loan_states)
+        };
+        let new_in = liveness.entering(block, new_in);
+        if incoming[block].as_ref() == Some(&new_in) {
+            continue;
+        }
+        let mut new_out = new_in.clone();
+        for (index, step) in steps[block].iter().enumerate() {
+            step.transfer(&mut new_out, false);
+            liveness.leaving(block, index, &mut new_out);
+        }
+        incoming[block] = Some(new_in);
+        if outgoing[block].as_ref() != Some(&new_out) {
+            outgoing[block] = Some(new_out);
+            worklist.push_successors(&blocks[block].term);
+        }
+    }
+
+    let mut before_try = HashMap::new();
+    let uses = blocks
+        .iter()
+        .zip(incoming)
+        .enumerate()
+        .map(|(block, (body, entry))| {
+            let mut registers = entry.unwrap_or_default();
+            body.instrs
+                .iter()
+                .zip(&steps[block])
+                .enumerate()
+                .map(|(index, (instruction, step))| {
+                    if matches!(instruction, MirInstr::Try { .. }) {
+                        before_try.insert((block, index), registers.clone());
+                    }
+                    let uses = step.transfer(&mut registers, true).into_iter().collect();
+                    liveness.leaving(block, index, &mut registers);
                     uses
                 })
                 .collect()
         })
         .collect();
-    (uses, entries)
+    RegisterLoans { uses, before_try }
 }
 
 /// Whether a call result register holds a pointer whose provenance designates
@@ -390,4 +195,383 @@ fn tracked_pointer_result(
         register_types.get(&dest.0),
         Some(mojito_types::types::Ty::Pointer { origin, .. }) if origin.as_origin().is_some()
     )
+}
+
+/// One SSA instruction's transfer of transient owner provenance, whose
+/// register-state-independent half is computed once per instruction rather
+/// than once per dataflow visit. Its transfer returns the roots the
+/// instruction consumes, which become ordinary drop liveness uses at this
+/// exact program point. Results inherit operand provenance until a terminal
+/// instruction such as `DefVar` consumes them, allowing `MakeRef -> ReadRef
+/// -> Call` to retain an owner through the outer call without extending the
+/// source reference's generation to function exit.
+struct RegisterLoanStep {
+    operands: Vec<Reg>,
+    results: Vec<Reg>,
+    /// The roots the instruction uses whatever its operands carry: the active
+    /// loan roots of the variables it reads, and the roots its place reads
+    /// retain or its callee-produced handle seeds.
+    owners: BTreeSet<VarId>,
+    /// The roots a callee-produced handle result carries.
+    seeded: BTreeSet<VarId>,
+    /// Whether the results are fresh values that inherit only `seeded`.
+    call_result: bool,
+    /// A scalar read's result register and the roots it borrows for one hop.
+    single_hop: Option<(u32, BTreeSet<VarId>)>,
+}
+
+impl RegisterLoanStep {
+    fn new(
+        generations: &LoanGenerationState,
+        instruction: &MirInstr,
+        loan_roots: &BTreeMap<u32, DropLoanGeneration>,
+        register_types: &HashMap<u32, mojito_types::types::Ty>,
+    ) -> Self {
+        let mut operands = Vec::new();
+        mojito_mir::mir::verify::instruction_operand_regs(instruction, &mut operands);
+        let mut owners = active_register_loan_roots(
+            var_uses(instruction).into_iter().map(|(var, _)| var),
+            generations,
+            loan_roots,
+        );
+        let mut single_hop = None;
+
+        // `MakeRef` creates a transient handle directly into its place root.  That
+        // root is not necessarily an established reference generation itself (for
+        // example `box.value` where `box` merely *contains* a stored reference), so
+        // the generation closure above cannot discover it.  Retain the storage root
+        // through every SSA consumer of the handle; `through` additionally keeps a
+        // substituted reference binding alive when the place was reached via one.
+        //
+        // `LoadPlace` needs the same retention for a different reason: it reads the
+        // place shallowly, so a pointer-owning (lifecycle) result register aliases
+        // the root's storage until a `CopyValue` runs the copy lifecycle or a
+        // consuming call finishes. Dropping the root between the load and that
+        // consumer would free storage the pending register still references, so
+        // an aggregate (or unknown-typed) result retains through every consumer.
+        // A scalar read owns its bits, but the read is still a borrow of its
+        // owner that lasts through the instruction consuming the register (Mojo
+        // passes `t.n` to `print` as a reference to `t`, which therefore outlives
+        // the call): the root is retained for that single hop only.
+        let retained_place = match instruction {
+            MirInstr::MakeRef { place, .. } => Some(place),
+            MirInstr::LoadPlace { dest, place } => {
+                if place
+                    .ty
+                    .as_ref()
+                    .or_else(|| register_types.get(&dest.0))
+                    .is_none_or(may_alias_owned_storage)
+                {
+                    Some(place)
+                } else {
+                    let roots = std::iter::once(place.root).chain(place.through);
+                    single_hop = Some((dest.0, roots.collect()));
+                    None
+                }
+            }
+            _ => None,
+        };
+        if let Some(place) = retained_place {
+            owners.insert(place.root);
+            owners.extend(place.through);
+        }
+
+        // A nominal subscript returning `ref T` establishes a transient handle to
+        // its retained receiver place. Unlike `MakeRef`, the handle is produced by
+        // the callee, so no explicit loan generation exists at this instruction.
+        // Seed the destination register with the receiver root directly; subsequent
+        // `ReadRef`/call uses then keep that caller slot alive until the handle has
+        // actually been consumed.
+        let reference_subscript_place = match instruction {
+            MirInstr::Index {
+                dest,
+                base_place: Some(place),
+                ..
+            }
+            | MirInstr::Slice {
+                dest,
+                object_place: Some(place),
+                ..
+            }
+            | MirInstr::MultiIndex {
+                dest,
+                object_place: Some(place),
+                ..
+            } if matches!(
+                register_types.get(&dest.0),
+                Some(mojito_types::types::Ty::Ref(_))
+            ) =>
+            {
+                Some(place)
+            }
+            // A direct method call returning `ref T` (no adapter) is the same
+            // callee-produced transient handle as a reference subscript: the
+            // result register borrows the receiver's storage, which must outlive
+            // every consumer of the handle — not just the call instruction.
+            MirInstr::MethodCall {
+                reference_result: Some(_),
+                result_adapter: None,
+                recv_place: Some(place),
+                ..
+            } => Some(place),
+            // A method call returning a tracked pointer (`xs.unsafe_ptr()`, a
+            // `pointer_self`/`pointer_place` provenance) hands out a handle into
+            // the receiver's storage the same way: the receiver must outlive
+            // every consumer of the pointer register — a callee reading the
+            // pointee included. Untracked and unsafe-any results carry no loan.
+            MirInstr::MethodCall {
+                dest,
+                recv_place: Some(place),
+                ..
+            } if tracked_pointer_result(register_types, dest) => Some(place),
+            _ => None,
+        };
+        let mut seeded = BTreeSet::new();
+        if let Some(place) = reference_subscript_place {
+            seeded.insert(place.root);
+            seeded.extend(place.through);
+        }
+        // A free call returning a tracked pointer borrows through its retained
+        // argument places.
+        if let MirInstr::Call {
+            dest, arg_places, ..
+        } = instruction
+            && tracked_pointer_result(register_types, dest)
+        {
+            for place in arg_places.iter().flatten() {
+                seeded.insert(place.root);
+                seeded.extend(place.through);
+            }
+        }
+        // An element read out of pack storage is the same shallow read as a
+        // `LoadPlace`: an aggregate element aliases the pack until its consumer
+        // finishes, and a scalar one borrows the pack for that consumer alone.
+        if let MirInstr::Index {
+            dest,
+            base_place: Some(place),
+            intrinsic:
+                Some(MirIntrinsicSubscript::TupleStorage | MirIntrinsicSubscript::VariadicStorage),
+            ..
+        } = instruction
+        {
+            let roots = std::iter::once(place.root).chain(place.through);
+            if register_types
+                .get(&dest.0)
+                .is_none_or(may_alias_owned_storage)
+            {
+                seeded.extend(roots);
+            } else {
+                single_hop = Some((dest.0, roots.collect()));
+            }
+        }
+        owners.extend(seeded.iter().copied());
+
+        // A call-family result is a fresh independent value — a return runs the
+        // copy/move lifecycle out of the callee frame — so operand provenance is
+        // consumed at the call (the roots are uses at this exact point) and does
+        // not flow into the result. Only the explicit reference-result seeding
+        // above (a callee-produced handle into caller storage) carries through.
+        let call_result = matches!(
+            instruction,
+            MirInstr::Call { .. }
+                | MirInstr::CallIndirect { .. }
+                | MirInstr::MethodCall { .. }
+                | MirInstr::Index { .. }
+                | MirInstr::Slice { .. }
+                | MirInstr::MultiIndex { .. }
+                | MirInstr::BinOp {
+                    resolved: Some(_),
+                    ..
+                }
+        );
+        let mut results = Vec::new();
+        mojito_mir::mir::verify::instruction_result_regs(instruction, &mut results);
+        Self {
+            operands,
+            results,
+            owners,
+            seeded,
+            call_result,
+            single_hop,
+        }
+    }
+
+    /// Advance `registers` past the instruction. With `uses`, also return the
+    /// roots it consumes; otherwise the returned set is meaningless.
+    fn transfer(&self, registers: &mut RegisterLoanState, uses: bool) -> BTreeSet<VarId> {
+        let inherits = !self.call_result && !self.results.is_empty();
+        let mut owners = BTreeSet::new();
+        let mut single_hop_uses: BTreeSet<VarId> = BTreeSet::new();
+        if uses || inherits {
+            owners.clone_from(&self.owners);
+            for operand in &self.operands {
+                if let Some(provenance) = registers.owners.get(&operand.0) {
+                    owners.extend(provenance);
+                }
+                if uses && let Some(provenance) = registers.single_hop.get(&operand.0) {
+                    single_hop_uses.extend(provenance);
+                }
+            }
+        }
+        if let Some((dest, roots)) = &self.single_hop {
+            registers.single_hop.insert(*dest, roots.clone());
+        }
+        let result_owners = if self.call_result {
+            &self.seeded
+        } else {
+            &owners
+        };
+        for result in &self.results {
+            if result_owners.is_empty() {
+                registers.owners.remove(&result.0);
+            } else {
+                registers.owners.insert(result.0, result_owners.clone());
+            }
+        }
+        owners.extend(single_hop_uses);
+        owners
+    }
+}
+
+/// Which registers a later instruction still reads, so a register-loan
+/// state can forget the rest: per block the registers live on entry, and per
+/// instruction the registers it reads or writes that are dead after it.
+struct RegisterLiveness {
+    live_in: Vec<DenseSet>,
+    /// Per block, the dead registers of every instruction in order, and the
+    /// end of each instruction's run of them.
+    dead_after: Vec<(Vec<u32>, Vec<usize>)>,
+}
+
+impl RegisterLiveness {
+    /// A `try` reads every register its regions read, since its body region
+    /// starts from the state entering it.
+    fn new(
+        blocks: &[MirBlock],
+        steps: &[Vec<RegisterLoanStep>],
+        predecessors: &[Vec<usize>],
+    ) -> Self {
+        // Per block, every instruction's reads in order, and the end of each
+        // instruction's run of them.
+        let block_reads: Vec<(Vec<u32>, Vec<usize>)> = blocks
+            .iter()
+            .zip(steps)
+            .map(|(body, steps)| {
+                let mut reads = Vec::new();
+                let mut ends = Vec::with_capacity(steps.len());
+                for (instruction, step) in body.instrs.iter().zip(steps) {
+                    reads.extend(step.operands.iter().map(|reg| reg.0));
+                    region_operand_regs(instruction, &mut reads);
+                    ends.push(reads.len());
+                }
+                (reads, ends)
+            })
+            .collect();
+        let reads = |block: usize, index: usize| {
+            let (reads, ends) = &block_reads[block];
+            let start = index.checked_sub(1).map_or(0, |previous| ends[previous]);
+            &reads[start..ends[index]]
+        };
+        let live_out = |live_in: &[DenseSet], block: usize| {
+            let mut out = DenseSet::default();
+            for successor in successors(&blocks[block].term) {
+                if let Some(live) = live_in.get(successor) {
+                    out.union(live);
+                }
+            }
+            out
+        };
+        let mut live_in = vec![DenseSet::default(); blocks.len()];
+        let mut worklist = Worklist::backward(blocks);
+        while let Some(block) = worklist.pop() {
+            let mut live = live_out(&live_in, block);
+            for (index, step) in steps[block].iter().enumerate().rev() {
+                for result in &step.results {
+                    live.remove(result.0);
+                }
+                live.extend(reads(block, index).iter().copied());
+            }
+            if live != live_in[block] {
+                live_in[block] = live;
+                for predecessor in &predecessors[block] {
+                    worklist.push(*predecessor);
+                }
+            }
+        }
+        let dead_after = (0..blocks.len())
+            .map(|block| {
+                let mut live = live_out(&live_in, block);
+                let mut runs: Vec<Vec<u32>> = vec![Vec::new(); steps[block].len()];
+                for (index, step) in steps[block].iter().enumerate().rev() {
+                    let read = reads(block, index);
+                    let touched = read.iter().copied().chain(step.results.iter().map(|r| r.0));
+                    runs[index].extend(touched.filter(|reg| !live.contains(*reg)));
+                    for result in &step.results {
+                        live.remove(result.0);
+                    }
+                    live.extend(read.iter().copied());
+                }
+                let mut ends = Vec::with_capacity(runs.len());
+                let mut dead = Vec::new();
+                for run in runs {
+                    dead.extend(run);
+                    ends.push(dead.len());
+                }
+                (dead, ends)
+            })
+            .collect();
+        Self {
+            live_in,
+            dead_after,
+        }
+    }
+
+    /// `state` restricted to the registers live entering `block`.
+    fn entering(&self, block: usize, mut state: RegisterLoanState) -> RegisterLoanState {
+        let live = &self.live_in[block];
+        state.owners.retain(|register, _| live.contains(*register));
+        state
+            .single_hop
+            .retain(|register, _| live.contains(*register));
+        state
+    }
+
+    /// Forget the registers dead after instruction `index` of `block`.
+    fn leaving(&self, block: usize, index: usize, state: &mut RegisterLoanState) {
+        let (dead, ends) = &self.dead_after[block];
+        let start = index.checked_sub(1).map_or(0, |previous| ends[previous]);
+        for register in &dead[start..ends[index]] {
+            state.owners.remove(register);
+            state.single_hop.remove(register);
+        }
+    }
+}
+
+/// Every register read anywhere in a `try`'s regions.
+fn region_operand_regs(instruction: &MirInstr, out: &mut Vec<u32>) {
+    let MirInstr::Try {
+        body,
+        handler,
+        orelse,
+        finalbody,
+        ..
+    } = instruction
+    else {
+        return;
+    };
+    let mut registers = Vec::new();
+    let mut visit = |instruction: &MirInstr| {
+        mojito_mir::mir::verify::instruction_operand_regs(instruction, &mut registers);
+    };
+    for_each_instr_deep(body, &mut visit);
+    if let Some((_, handler)) = handler {
+        for_each_instr_deep(handler, &mut visit);
+    }
+    if let Some(orelse) = orelse {
+        for_each_instr_deep(orelse, &mut visit);
+    }
+    if let Some(finalbody) = finalbody {
+        for_each_instr_deep(finalbody, &mut visit);
+    }
+    out.extend(registers.into_iter().map(|reg| reg.0));
 }

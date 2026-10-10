@@ -14,7 +14,11 @@ use super::*;
 /// through [`elaborate_try_interior`], leaving the region cleanup lists as
 /// raise-edge/scope-exit backstops.
 #[allow(clippy::too_many_lines, reason = "TODO: split this pass")]
-pub(super) fn elaborate_drops(f: &MirFunction, value_parameters: &HashSet<VarId>) -> MirFunction {
+pub(super) fn elaborate_drops(
+    function: MirFunction,
+    value_parameters: &HashSet<VarId>,
+) -> MirFunction {
+    let f = &function;
     let nb = f.blocks.len();
     // Function-wide `DefVar` counts (deep through `try` regions): the reference
     // that region-locality — and therefore every `try` cleanup — is judged
@@ -33,7 +37,10 @@ pub(super) fn elaborate_drops(f: &MirFunction, value_parameters: &HashSet<VarId>
         &LoanGenerationState::default(),
         &generation_dests,
     );
-    let (register_loan_uses, register_loan_entries) = register_loan_uses_over(
+    let RegisterLoans {
+        uses: register_loan_uses,
+        before_try: register_loan_before_try,
+    } = register_loan_uses_over(
         &f.blocks,
         &generation_entries,
         &RegisterLoanState::default(),
@@ -58,16 +65,16 @@ pub(super) fn elaborate_drops(f: &MirFunction, value_parameters: &HashSet<VarId>
     // the sets. Owner retention is generation-sensitive, so adding it here would
     // lose path correlation at CFG joins and make every historical owner of a
     // rebound aggregate appear live forever.
+    let predecessors = block_predecessors(&f.blocks);
     let mut live_in: Vec<HashSet<VarId>> = vec![HashSet::new(); nb];
-    let mut changed = true;
-    while changed {
-        changed = false;
-        for b in (0..nb).rev() {
-            let live_out = block_live_out(f, b, &live_in);
-            let new_in = transfer_drop_liveness(&f.blocks[b].instrs, live_out, &live_in);
-            if new_in != live_in[b] {
-                live_in[b] = new_in;
-                changed = true;
+    let mut worklist = Worklist::backward(&f.blocks);
+    while let Some(b) = worklist.pop() {
+        let live_out = block_live_out(f, b, &live_in);
+        let new_in = transfer_drop_liveness(&f.blocks[b].instrs, live_out, &live_in);
+        if new_in != live_in[b] {
+            live_in[b] = new_in;
+            for predecessor in &predecessors[b] {
+                worklist.push(*predecessor);
             }
         }
     }
@@ -79,6 +86,14 @@ pub(super) fn elaborate_drops(f: &MirFunction, value_parameters: &HashSet<VarId>
         .collect();
     let mut parameter_slots = comptime_binder_slots(&f.blocks);
     parameter_slots.extend(value_parameters);
+    // The replay moves each instruction into its elaborated block.
+    let mut function = function;
+    let block_instrs: Vec<Vec<MirInstr>> = function
+        .blocks
+        .iter_mut()
+        .map(|block| std::mem::take(&mut block.instrs))
+        .collect();
+    let f = &function;
     let droppable = |v: VarId| is_droppable_root(f, v) && !parameter_slots.contains(&v);
     let region_ctx = RegionDropCtx {
         f,
@@ -91,72 +106,26 @@ pub(super) fn elaborate_drops(f: &MirFunction, value_parameters: &HashSet<VarId>
     // (1) Block-internal drops: replay each block, tracking the live set after each
     // instruction, and drop the variables that die at their last use in-block.
     let mut blocks = Vec::with_capacity(nb);
-    for b in 0..nb {
-        let live_out = block_live_out(f, b, &live_in);
-        let instrs = &f.blocks[b].instrs;
-        let mut live = live_out.clone();
-        let mut ordinary_live_after = vec![HashSet::new(); instrs.len()];
-        let mut ordinary_live_before = vec![HashSet::new(); instrs.len()];
-        for i in (0..instrs.len()).rev() {
-            ordinary_live_after[i].clone_from(&live);
-            if let Some(d) = var_def(&instrs[i]) {
-                live.remove(&d);
-            }
-            for (u, _) in var_uses(&instrs[i]) {
-                live.insert(u);
-            }
-            live.extend(escape_live_in(&instrs[i], &live_in));
-            // Mirror `transfer_drop_liveness`: a pending `ConsumeVar` is the
-            // variable's teardown, so it stays live until then.
-            if let MirInstr::ConsumeVar { var } = &instrs[i] {
-                live.insert(*var);
-            }
-            live.extend(&register_loan_uses[b][i]);
-            ordinary_live_before[i].clone_from(&live);
-        }
-
-        let mut generation_state = generation_entries[b].clone();
-        let mut register_state = register_loan_entries[b].clone();
-        let mut generation_before = Vec::with_capacity(instrs.len());
-        let mut generation_after = Vec::with_capacity(instrs.len());
-        let mut register_before = Vec::with_capacity(instrs.len());
-        for instr in instrs {
-            generation_before.push(generation_state.clone());
-            register_before.push(register_state.clone());
-            transfer_register_loans(
-                &mut register_state,
-                &generation_state,
-                instr,
-                &loan_roots,
-                &f.reg_types,
-            );
-            transfer_loan_generation(&mut generation_state, instr, &generation_dests);
-            generation_after.push(generation_state.clone());
-        }
-
-        let mut live_before = Vec::with_capacity(instrs.len());
-        let mut live_after = Vec::with_capacity(instrs.len());
-        for i in 0..instrs.len() {
-            live_before.push(effective_drop_liveness(
-                ordinary_live_before[i].clone(),
-                &generation_before[i],
-                &loan_roots,
-            ));
-            live_after.push(effective_drop_liveness(
-                ordinary_live_after[i].clone(),
-                &generation_after[i],
-                &loan_roots,
-            ));
-        }
-
-        let mut new_instrs = Vec::with_capacity(instrs.len());
-        for (i, instr) in instrs.iter().enumerate() {
-            // For a `try`, fill its regions' escape-edge cleanups: the *outer*
-            // variables live entering the `try` that are dead at the escape target
-            // (so they die on the hidden `break`/`continue` edge), minus the `try`'s
-            // own body-locals and moved-out values.
-            let mut cloned = instr.clone();
-            if let MirInstr::Try { .. } = &cloned {
+    for (b, instrs) in block_instrs.into_iter().enumerate() {
+        let empty_exit = instrs.is_empty() && successors(&f.blocks[b].term).is_empty();
+        let replay = BlockReplay {
+            instrs,
+            register_uses: &register_loan_uses[b],
+            generation_entry: &generation_entries[b],
+            loan_roots: &loan_roots,
+            generation_dests: &generation_dests,
+        };
+        let mut new_instrs = replay.elaborate(
+            block_live_out(f, b, &live_in),
+            |instr, live| live.extend(escape_live_in(instr, &live_in)),
+            droppable,
+            |point, cloned| {
+                let instr = point.instr;
+                // Fill the regions' escape-edge cleanups: the *outer*
+                // variables live entering the `try` that are dead at the
+                // escape target (so they die on the hidden `break`/`continue`
+                // edge), minus the `try`'s own body-locals and moved-out
+                // values.
                 let (mut rdef, mut rmov) = (HashSet::new(), HashSet::new());
                 try_region_defs(instr, &function_defs, &mut rdef, &mut rmov);
                 // `finally` runs *after* every escape, so a variable it uses must
@@ -169,7 +138,8 @@ pub(super) fn elaborate_drops(f: &MirFunction, value_parameters: &HashSet<VarId>
                     } => region_uses(fb),
                     _ => HashSet::new(),
                 };
-                let base: HashSet<VarId> = live_before[i]
+                let base: HashSet<VarId> = point
+                    .live_before
                     .iter()
                     .copied()
                     .filter(|v| {
@@ -179,7 +149,7 @@ pub(super) fn elaborate_drops(f: &MirFunction, value_parameters: &HashSet<VarId>
                             && !fin_used.contains(v)
                     })
                     .collect();
-                fill_escape_cleanups(&mut cloned, &base, &effective_live_in);
+                fill_escape_cleanups(cloned, &base, &effective_live_in);
                 // Raise-edge backstop for rebound outer variables: the
                 // per-instruction region drops below place each rebind's death
                 // on the *normal* path, so a value rebound in the body and
@@ -196,7 +166,7 @@ pub(super) fn elaborate_drops(f: &MirFunction, value_parameters: &HashSet<VarId>
                     orelse,
                     finalbody,
                     cleanup,
-                } = &mut cloned
+                } = cloned
                 {
                     let mut counts = HashMap::new();
                     let (mut order, mut moved) = (Vec::new(), HashSet::new());
@@ -219,7 +189,7 @@ pub(super) fn elaborate_drops(f: &MirFunction, value_parameters: &HashSet<VarId>
                             counts.get(v) != function_defs.get(v)
                                 && droppable(*v)
                                 && !moved.contains(v)
-                                && !live_after[i].contains(v)
+                                && !point.live_after.contains(v)
                                 && !survivors.contains(v)
                                 && !escape_targets.iter().any(|t| {
                                     effective_live_in
@@ -233,50 +203,24 @@ pub(super) fn elaborate_drops(f: &MirFunction, value_parameters: &HashSet<VarId>
                 // seeded from this walk's liveness at the `try`.
                 let body_entry_live = elaborate_try_interior(
                     &region_ctx,
-                    &mut cloned,
-                    &ordinary_live_after[i],
+                    cloned,
+                    point.ordinary_after,
                     &HashSet::new(),
-                    &generation_before[i],
-                    &register_before[i],
+                    point.generation_before,
+                    &register_loan_before_try[&(b, point.index)],
                 );
                 // Entry-edge deaths: a value live into the `try` that no
                 // region path can observe (an unconditional silent rebind
                 // precedes every potential raise) dies immediately before it.
-                let entry_dead: Vec<VarId> = live_before[i]
+                point
+                    .live_before
                     .iter()
                     .copied()
                     .filter(|v| droppable(*v) && !rmov.contains(v) && !body_entry_live.contains(v))
-                    .collect();
-                append_drops(&mut new_instrs, entry_dead);
-            }
-            new_instrs.push(cloned);
-            let moved = vars_moved(instr);
-            let mut dying: Vec<VarId> = Vec::new();
-            let touched = var_uses(instr)
-                .into_iter()
-                .map(|(v, _)| v)
-                .chain(var_def(instr))
-                .chain(register_loan_uses[b][i].iter().copied());
-            let roots_before = active_drop_loan_roots(&generation_before[i], &loan_roots);
-            let roots_after = active_drop_loan_roots(&generation_after[i], &loan_roots);
-            let retired_roots = roots_before.difference(&roots_after).copied();
-            let deaths = live_before[i]
-                .difference(&live_after[i])
-                .copied()
-                .chain(touched)
-                .chain(retired_roots);
-            for v in deaths {
-                if droppable(v)
-                    && !moved.contains(&v)
-                    && !live_after[i].contains(&v)
-                    && !dying.contains(&v)
-                {
-                    dying.push(v);
-                }
-            }
-            append_drops(&mut new_instrs, dying);
-        }
-        if instrs.is_empty() && successors(&f.blocks[b].term).is_empty() {
+                    .collect()
+            },
+        );
+        if empty_exit {
             // A CFG may funnel live reference-bearing aggregates into an empty
             // return block. There is no final instruction to host the normal
             // before/after generation death, so retire those owners immediately
@@ -293,7 +237,6 @@ pub(super) fn elaborate_drops(f: &MirFunction, value_parameters: &HashSet<VarId>
             term: f.blocks[b].term.clone(),
         });
     }
-
     // (1b) Entry deaths: a consuming parameter the body never uses is dead on
     // arrival — Mojo destroys an unused `deinit self`'s fields before the
     // first statement runs — so it drops at the function's entry.
@@ -393,24 +336,8 @@ pub(super) fn elaborate_drops(f: &MirFunction, value_parameters: &HashSet<VarId>
         });
     }
 
-    MirFunction {
-        blocks,
-        n_regs: f.n_regs,
-        n_vars: f.n_vars,
-        var_names: f.var_names.clone(),
-        n_params: f.n_params,
-        param_types: f.param_types.clone(),
-        owned_params: f.owned_params.clone(),
-        deinit_params: f.deinit_params.clone(),
-        ref_params: f.ref_params.clone(),
-        returns_reference: f.returns_reference,
-        var_tys: f.var_tys.clone(),
-        ret_ty: f.ret_ty.clone(),
-        raises: f.raises,
-        error_ty: f.error_ty.clone(),
-        spans: SpanTable(f.spans.0.clone()),
-        reg_types: f.reg_types.clone(),
-    }
+    function.blocks = blocks;
+    function
 }
 
 /// Shared analysis inputs for elaborating drops inside `try` region mini-CFGs.
@@ -600,23 +527,26 @@ pub(super) fn elaborate_region_drops(
         return seeds.fall_off.clone();
     }
 
+    let predecessors = block_predecessors(blocks);
     let mut live_in: Vec<HashSet<VarId>> = vec![HashSet::new(); nb];
-    let mut changed = true;
-    while changed {
-        changed = false;
-        for b in (0..nb).rev() {
-            let live_out = region_block_live_out(blocks, b, &live_in, seeds);
-            let new_in = transfer_region_drop_liveness(&blocks[b].instrs, live_out, seeds);
-            if new_in != live_in[b] {
-                live_in[b] = new_in;
-                changed = true;
+    let mut worklist = Worklist::backward(blocks);
+    while let Some(b) = worklist.pop() {
+        let live_out = region_block_live_out(blocks, b, &live_in, seeds);
+        let new_in = transfer_region_drop_liveness(&blocks[b].instrs, live_out, seeds);
+        if new_in != live_in[b] {
+            live_in[b] = new_in;
+            for predecessor in &predecessors[b] {
+                worklist.push(*predecessor);
             }
         }
     }
 
     let generation_entries =
         loan_generation_entries_over(blocks, entry_generations, ctx.generation_dests);
-    let (register_uses, register_entries) = register_loan_uses_over(
+    let RegisterLoans {
+        uses: register_uses,
+        before_try: register_before_try,
+    } = register_loan_uses_over(
         blocks,
         &generation_entries,
         entry_registers,
@@ -643,112 +573,42 @@ pub(super) fn elaborate_region_drops(
     for b in 0..nb {
         let live_out = region_block_live_out(blocks, b, &live_in, seeds);
         let instrs = std::mem::take(&mut blocks[b].instrs);
-        let mut live = live_out;
-        let mut ordinary_live_after = vec![HashSet::new(); instrs.len()];
-        let mut ordinary_live_before = vec![HashSet::new(); instrs.len()];
-        for i in (0..instrs.len()).rev() {
-            ordinary_live_after[i].clone_from(&live);
-            if let Some(d) = var_def(&instrs[i]) {
-                live.remove(&d);
-            }
-            for (u, _) in var_uses(&instrs[i]) {
-                live.insert(u);
-            }
-            if let MirInstr::ConsumeVar { var } = &instrs[i] {
-                live.insert(*var);
-            }
-            live.extend(&register_uses[b][i]);
-            live.extend(escape_live_in(&instrs[i], seeds.effective_live_in));
-            if may_raise(&instrs[i]) {
-                live.extend(seeds.raise.iter().copied());
-            }
-            ordinary_live_before[i].clone_from(&live);
-        }
-
-        let mut generation_state = generation_entries[b].clone();
-        let mut register_state = register_entries[b].clone();
-        let mut generation_before = Vec::with_capacity(instrs.len());
-        let mut generation_after = Vec::with_capacity(instrs.len());
-        let mut register_before = Vec::with_capacity(instrs.len());
-        for instr in &instrs {
-            generation_before.push(generation_state.clone());
-            register_before.push(register_state.clone());
-            transfer_register_loans(
-                &mut register_state,
-                &generation_state,
-                instr,
-                ctx.loan_roots,
-                &f.reg_types,
-            );
-            transfer_loan_generation(&mut generation_state, instr, ctx.generation_dests);
-            generation_after.push(generation_state.clone());
-        }
-
-        let mut live_before = Vec::with_capacity(instrs.len());
-        let mut live_after = Vec::with_capacity(instrs.len());
-        for i in 0..instrs.len() {
-            live_before.push(effective_drop_liveness(
-                ordinary_live_before[i].clone(),
-                &generation_before[i],
-                ctx.loan_roots,
-            ));
-            live_after.push(effective_drop_liveness(
-                ordinary_live_after[i].clone(),
-                &generation_after[i],
-                ctx.loan_roots,
-            ));
-        }
-
-        let mut new_instrs = Vec::with_capacity(instrs.len());
-        for (i, instr) in instrs.iter().enumerate() {
-            let mut cloned = instr.clone();
-            if let MirInstr::Try { .. } = &cloned {
+        let replay = BlockReplay {
+            instrs,
+            register_uses: &register_uses[b],
+            generation_entry: &generation_entries[b],
+            loan_roots: ctx.loan_roots,
+            generation_dests: ctx.generation_dests,
+        };
+        blocks[b].instrs = replay.elaborate(
+            live_out,
+            |instr, live| {
+                live.extend(escape_live_in(instr, seeds.effective_live_in));
+                if may_raise(instr) {
+                    live.extend(seeds.raise.iter().copied());
+                }
+            },
+            |v| ctx.droppable(v),
+            |point, cloned| {
                 let nested_entry = elaborate_try_interior(
                     ctx,
-                    &mut cloned,
-                    &ordinary_live_after[i],
+                    cloned,
+                    point.ordinary_after,
                     seeds.raise,
-                    &generation_before[i],
-                    &register_before[i],
+                    point.generation_before,
+                    &register_before_try[&(b, point.index)],
                 );
-                let moved = try_moved_vars(instr);
-                let entry_dead: Vec<VarId> = live_before[i]
+                let moved = try_moved_vars(point.instr);
+                point
+                    .live_before
                     .iter()
                     .copied()
                     .filter(|v| {
                         ctx.droppable(*v) && !moved.contains(v) && !nested_entry.contains(v)
                     })
-                    .collect();
-                append_drops(&mut new_instrs, entry_dead);
-            }
-            new_instrs.push(cloned);
-            let moved = vars_moved(instr);
-            let mut dying: Vec<VarId> = Vec::new();
-            let touched = var_uses(instr)
-                .into_iter()
-                .map(|(v, _)| v)
-                .chain(var_def(instr))
-                .chain(register_uses[b][i].iter().copied());
-            let roots_before = active_drop_loan_roots(&generation_before[i], ctx.loan_roots);
-            let roots_after = active_drop_loan_roots(&generation_after[i], ctx.loan_roots);
-            let retired_roots = roots_before.difference(&roots_after).copied();
-            let deaths = live_before[i]
-                .difference(&live_after[i])
-                .copied()
-                .chain(touched)
-                .chain(retired_roots);
-            for v in deaths {
-                if ctx.droppable(v)
-                    && !moved.contains(&v)
-                    && !live_after[i].contains(&v)
-                    && !dying.contains(&v)
-                {
-                    dying.push(v);
-                }
-            }
-            append_drops(&mut new_instrs, dying);
-        }
-        blocks[b].instrs = new_instrs;
+                    .collect()
+            },
+        );
     }
 
     // Region-internal edge drops with critical-edge splitting. Exit
@@ -1368,3 +1228,191 @@ pub(super) fn transfer_liveness(instrs: &[MirInstr], mut live: HashSet<VarId>) -
 }
 
 // --- Interior-origin generation analysis ----------------------------------
+
+/// One block's instructions with the analysis facts their drop elaboration
+/// reads: the register-loan uses of each, and the loan generations entering
+/// the block.
+struct BlockReplay<'a> {
+    instrs: Vec<MirInstr>,
+    register_uses: &'a [Vec<VarId>],
+    generation_entry: &'a LoanGenerationState,
+    loan_roots: &'a BTreeMap<u32, DropLoanGeneration>,
+    generation_dests: &'a BTreeMap<u32, Option<MirInteriorOrigin>>,
+}
+
+/// What a `try`'s own elaboration reads at its position in a replayed block.
+struct TryPoint<'a> {
+    index: usize,
+    /// The `try` as the block holds it.
+    instr: &'a MirInstr,
+    /// Effective (loan-aware) liveness entering the `try`.
+    live_before: &'a HashSet<VarId>,
+    /// Effective liveness leaving it.
+    live_after: &'a HashSet<VarId>,
+    /// Ordinary liveness leaving it.
+    ordinary_after: &'a HashSet<VarId>,
+    generation_before: &'a LoanGenerationState,
+}
+
+impl BlockReplay<'_> {
+    /// The block's instructions with a `DropVar` after each one for every
+    /// variable that dies there, in one backward walk from `live_out`.
+    ///
+    /// A variable dies at an instruction when it is live (loan-aware) before
+    /// it, or the instruction touches it, or a loan generation keeping it
+    /// alive retires there, and it is dead after it. `seed` adds what else an
+    /// instruction keeps live (escape-edge and raise-edge observers), and
+    /// `at_try` elaborates a `try`'s regions in place, returning the
+    /// variables to drop just before it.
+    fn elaborate(
+        self,
+        live_out: HashSet<VarId>,
+        seed: impl Fn(&MirInstr, &mut Vec<VarId>),
+        droppable: impl Fn(VarId) -> bool,
+        mut at_try: impl FnMut(&TryPoint, &mut MirInstr) -> Vec<VarId>,
+    ) -> Vec<MirInstr> {
+        // The generation state before each instruction, as an index into the
+        // distinct states the block passes through: most instructions leave
+        // it unchanged.
+        let mut generations = vec![self.generation_entry.clone()];
+        let mut at = Vec::with_capacity(self.instrs.len() + 1);
+        at.push(0);
+        let mut state = self.generation_entry.clone();
+        for instr in &self.instrs {
+            transfer_loan_generation(&mut state, instr, self.generation_dests);
+            if generations.last() != Some(&state) {
+                generations.push(state.clone());
+            }
+            at.push(generations.len() - 1);
+        }
+
+        let mut live: DenseSet = live_out.into_iter().collect();
+        let mut entering = Vec::new();
+        let mut reversed = Vec::with_capacity(self.instrs.len());
+        for (i, instr) in self.instrs.into_iter().enumerate().rev() {
+            let generation_before = &generations[at[i]];
+            let generation_after = &generations[at[i + 1]];
+            let extra_after = loan_extras(&live, generation_after, self.loan_roots);
+            let try_after = matches!(instr, MirInstr::Try { .. }).then(|| {
+                let ordinary: HashSet<VarId> = live.iter().collect();
+                let mut effective = ordinary.clone();
+                effective.extend(extra_after.iter());
+                (ordinary, effective)
+            });
+
+            // The backward step, remembering which variables it made live.
+            let def = var_def(&instr);
+            let uses: Vec<VarId> = var_uses(&instr).into_iter().map(|(v, _)| v).collect();
+            let removed_def = def.is_some_and(|d| live.remove(d));
+            entering.clear();
+            entering.extend(&uses);
+            seed(&instr, &mut entering);
+            // A pending `ConsumeVar` is the variable's teardown, so it stays
+            // live until then.
+            if let MirInstr::ConsumeVar { var } = &instr {
+                entering.push(*var);
+            }
+            entering.extend(&self.register_uses[i]);
+            let mut added = Vec::new();
+            for v in &entering {
+                if live.insert(*v) && !(removed_def && def == Some(*v)) {
+                    added.push(*v);
+                }
+            }
+            let extra_before = loan_extras(&live, generation_before, self.loan_roots);
+            let live_after = |v: VarId| {
+                (live.contains(v) && !added.contains(&v))
+                    || (removed_def && def == Some(v))
+                    || extra_after.contains(v)
+            };
+
+            let mut cloned = None;
+            let entry_dead = match try_after {
+                Some((ordinary_after, live_after)) => {
+                    let mut live_before: HashSet<VarId> = live.iter().collect();
+                    live_before.extend(extra_before.iter());
+                    let elaborated = cloned.insert(instr.clone());
+                    let point = TryPoint {
+                        index: i,
+                        instr: &instr,
+                        live_before: &live_before,
+                        live_after: &live_after,
+                        ordinary_after: &ordinary_after,
+                        generation_before,
+                    };
+                    at_try(&point, elaborated)
+                }
+                None => Vec::new(),
+            };
+
+            let moved = vars_moved(&instr);
+            let retired: Vec<VarId> = if at[i] == at[i + 1] {
+                Vec::new()
+            } else {
+                let roots_after = active_drop_loan_roots(generation_after, self.loan_roots);
+                active_drop_loan_roots(generation_before, self.loan_roots)
+                    .difference(&roots_after)
+                    .copied()
+                    .collect()
+            };
+            let deaths = added
+                .iter()
+                .copied()
+                .chain(extra_before.iter())
+                .chain(uses)
+                .chain(def)
+                .chain(self.register_uses[i].iter().copied())
+                .chain(retired);
+            let mut dying: Vec<VarId> = Vec::new();
+            for v in deaths {
+                if droppable(v) && !moved.contains(&v) && !live_after(v) && !dying.contains(&v) {
+                    dying.push(v);
+                }
+            }
+            push_drops_reversed(&mut reversed, dying);
+            reversed.push(cloned.unwrap_or(instr));
+            push_drops_reversed(&mut reversed, entry_dead);
+        }
+        reversed.reverse();
+        reversed
+    }
+}
+
+/// The variables `live` keeps alive through the loan generations of `state`
+/// beyond itself: the owner roots of every generation a live reference (or a
+/// root kept alive this way) holds, as [`effective_drop_liveness`] closes
+/// them.
+fn loan_extras(
+    live: &DenseSet,
+    state: &LoanGenerationState,
+    roots_by_generation: &BTreeMap<u32, DropLoanGeneration>,
+) -> DenseSet {
+    let mut extras = DenseSet::default();
+    loop {
+        let mut changed = false;
+        for (reference, generations) in &state.active {
+            if !live.contains(*reference) && !extras.contains(*reference) {
+                continue;
+            }
+            for generation in generations {
+                let Some(generation) = roots_by_generation.get(generation) else {
+                    continue;
+                };
+                for root in &generation.roots {
+                    if !live.contains(*root) {
+                        changed |= extras.insert(*root);
+                    }
+                }
+            }
+        }
+        if !changed {
+            return extras;
+        }
+    }
+}
+
+/// [`append_drops`] for a block being built back to front.
+fn push_drops_reversed(reversed: &mut Vec<MirInstr>, mut vars: Vec<VarId>) {
+    vars.sort_unstable();
+    reversed.extend(vars.into_iter().map(|var| MirInstr::DropVar { var }));
+}

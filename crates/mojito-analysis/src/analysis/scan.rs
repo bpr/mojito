@@ -465,3 +465,91 @@ pub(super) const fn field_needs_drop(ty: &mojito_types::types::Ty) -> bool {
     use mojito_types::types::Ty;
     may_alias_owned_storage(ty) || matches!(ty, Ty::Func { .. } | Ty::Error)
 }
+
+/// A set of small dense indices (variables or registers) as a bit vector,
+/// growing to the largest member: the liveness sets the drop analyses update
+/// at every instruction.
+#[derive(Clone, Default)]
+pub(super) struct DenseSet(Vec<u64>);
+
+impl DenseSet {
+    /// Add `index`; whether it was absent.
+    pub(super) fn insert(&mut self, index: u32) -> bool {
+        let (word, bit) = Self::position(index);
+        if word >= self.0.len() {
+            self.0.resize(word + 1, 0);
+        }
+        let absent = self.0[word] & bit == 0;
+        self.0[word] |= bit;
+        absent
+    }
+
+    /// Remove `index`; whether it was present.
+    pub(super) fn remove(&mut self, index: u32) -> bool {
+        let (word, bit) = Self::position(index);
+        self.0.get_mut(word).is_some_and(|word| {
+            let present = *word & bit != 0;
+            *word &= !bit;
+            present
+        })
+    }
+
+    pub(super) fn contains(&self, index: u32) -> bool {
+        let (word, bit) = Self::position(index);
+        self.0.get(word).is_some_and(|word| word & bit != 0)
+    }
+
+    /// Add every member of `other`.
+    pub(super) fn union(&mut self, other: &Self) {
+        if other.0.len() > self.0.len() {
+            self.0.resize(other.0.len(), 0);
+        }
+        for (word, other) in self.0.iter_mut().zip(&other.0) {
+            *word |= other;
+        }
+    }
+
+    /// The members in increasing order.
+    pub(super) fn iter(&self) -> impl Iterator<Item = u32> + '_ {
+        self.0.iter().enumerate().flat_map(|(word, bits)| {
+            let base = word as u32 * 64;
+            (0..64)
+                .filter(move |bit| bits & (1 << bit) != 0)
+                .map(move |bit| base + bit)
+        })
+    }
+
+    const fn position(index: u32) -> (usize, u64) {
+        ((index / 64) as usize, 1 << (index % 64))
+    }
+}
+
+impl PartialEq for DenseSet {
+    /// Equal members, whatever trailing empty words either holds.
+    fn eq(&self, other: &Self) -> bool {
+        let (short, long) = if self.0.len() <= other.0.len() {
+            (&self.0, &other.0)
+        } else {
+            (&other.0, &self.0)
+        };
+        short == &long[..short.len()] && long[short.len()..].iter().all(|word| *word == 0)
+    }
+}
+
+impl Eq for DenseSet {}
+
+impl FromIterator<u32> for DenseSet {
+    fn from_iter<I: IntoIterator<Item = u32>>(members: I) -> Self {
+        let mut set = Self::default();
+        set.extend(members);
+        set
+    }
+}
+
+impl Extend<u32> for DenseSet {
+    fn extend<I: IntoIterator<Item = u32>>(&mut self, members: I) {
+        for member in members {
+            self.insert(member);
+        }
+    }
+}

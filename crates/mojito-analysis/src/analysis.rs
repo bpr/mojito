@@ -27,8 +27,8 @@ use mojito_common::timing;
 use mojito_hir::hir::VarId;
 use mojito_mir::mir::{
     MirBlock, MirCaptureMode, MirDeclarations, MirFunction, MirInstr, MirInteriorOrigin,
-    MirIntrinsicSubscript, MirPlace, MirProgram, MirTerm, Proj, Reg, SpanTable, UseMode,
-    binder_scope, materialized_parameter_slots,
+    MirIntrinsicSubscript, MirPlace, MirProgram, MirTerm, Proj, Reg, UseMode, binder_scope,
+    materialized_parameter_slots,
 };
 #[allow(clippy::wildcard_imports, reason = "pages of this split module")]
 use moves::*;
@@ -204,8 +204,8 @@ pub fn elaborate_drops_function(
 ) -> MirFunction {
     elaborate_store_drops(&mut function, name, declarations);
     let scope = binder_scope(name, |name| declarations.function(name));
-    let mut elaborated =
-        elaborate_drops(&function, &materialized_parameter_slots(&function, &scope));
+    let slots = materialized_parameter_slots(&function, &scope);
+    let mut elaborated = elaborate_drops(function, &slots);
     refine_deinit_fields(&mut elaborated, declarations);
     elaborated
 }
@@ -222,6 +222,7 @@ mod store_drops;
 #[cfg(test)]
 mod constant_tuple_place_tests {
     use super::*;
+    use mojito_mir::mir::SpanTable;
 
     fn place(projection: Proj) -> MirPlace {
         let mut place = MirPlace::root(0, None);
@@ -307,7 +308,7 @@ mod constant_tuple_place_tests {
 mod interior_origin_tests {
     use super::*;
     use mojito_common::token::SourceSpan;
-    use mojito_mir::mir::MirLoan;
+    use mojito_mir::mir::{MirLoan, SpanTable};
     use mojito_types::origin::OriginSeg;
     use mojito_types::types::Ty;
     use std::collections::HashMap;

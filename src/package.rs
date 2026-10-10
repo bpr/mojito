@@ -5,7 +5,9 @@
 //! Every compilation after that imports it instead of reading the library
 //! again, as upstream imports its precompiled `std.mojoc`: its link reads
 //! each library module's record (`module::package`), and it inserts a
-//! body's drops when its elaboration first reaches it. The package is
+//! body's drops when its elaboration first reaches it, as upstream's
+//! importer runs its lifetime pass on each body of a package that holds them
+//! before destructor insertion. The package is
 //! written to a cache the first time a build needs it, keyed by the
 //! build's identity, which covers the library's source, and the library's
 //! root: like upstream's, the importer reads no library source to find it.

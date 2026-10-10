@@ -283,8 +283,11 @@ import (every compilation that links the bundled library):
   asks it.
 - **The elaborator** (`native::mono::specialize_importing`) reads a callee
   the program does not define from the package. The body is drop-elaborated
-  and verified as it is decoded, as upstream materializes a package body
-  and runs its lifetime pass in the importer.
+  and verified as it is decoded. Upstream's precompiled package likewise
+  holds each body before its lifetime pass inserts destructors (the pass
+  checks at package build time but keeps no rewrite), and its importer runs
+  that pass on each body it materializes
+  (`docs/notes/upstream-package-contents.md`).
 - **Identity.** A package names its modules by stamped path and its
   declarations by linked name. The build id (`MOJITO_BUILD_ID`, a digest of
   the compiler's sources and the bundled library's source, stamped by the
