@@ -2787,6 +2787,11 @@ place type; it does not inspect a runtime `Value::Ref` to rediscover semantics.
 
 ### Important MIR Instructions
 
+An instruction is sized for its common variants: the optional places,
+subscript calls, and call-only types that only a few call variants carry sit
+behind boxes, and a compile-time assertion beside `MirInstr` pins its size.
+Boxing changes no encoding, since serde writes a box as its contents.
+
 Representative instructions:
 
 ```rust
@@ -3019,7 +3024,11 @@ declaration list against the callee register type, validates every value
 register, and rejects malformed raising and statically decidable
 reference-result metadata.
 
-`Ty::Func` and `Ty::GenericFunc` retain both the `raises` effect and its optional
+`Ty::Func` and `Ty::GenericFunc` hold their signature behind one box, a
+`FuncTy` (the generic form's `GenericFuncTy` adds its parameter declarations to
+one), so a `Ty` is sized for its common variants; a compile-time assertion
+beside `Ty` pins that size. `Ty::callable` reads either form's signature.
+The signature retains both the `raises` effect and its optional
 error type. A source function type also retains a `var **kwargs: T` parameter as
 the checked `kw_variadic` collector rather than flattening it into the ordinary
 parameter vector, so indirect calls preserve structural keyword binding.

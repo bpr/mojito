@@ -555,7 +555,8 @@ pub(super) fn place_uses(i: &MirInstr, refills: &Refills) -> Vec<(VarId, Vec<Key
             value,
             ..
         } => receiver_place
-            .iter()
+            .as_deref()
+            .into_iter()
             .map(|place| (place.root, place_path(place), Touch::Read, *value))
             .collect(),
         MirInstr::VariantSet { place, value, .. } => {

@@ -489,51 +489,8 @@ pub(super) fn check_interior_instruction_uses(
     Ok(())
 }
 
-pub(super) const fn interior_instruction_directly_raises(instr: &MirInstr) -> bool {
-    matches!(
-        instr,
-        MirInstr::Raise { .. }
-            | MirInstr::Call {
-                raises: Some(_),
-                ..
-            }
-            | MirInstr::CallIndirect {
-                raises: Some(_),
-                ..
-            }
-            | MirInstr::MethodCall {
-                raises: Some(_),
-                ..
-            }
-            | MirInstr::Index {
-                call: Some(mojito_mir::mir::MirSubscriptCall {
-                    raises: Some(_),
-                    ..
-                }),
-                ..
-            }
-            | MirInstr::Slice {
-                call: Some(mojito_mir::mir::MirSubscriptCall {
-                    raises: Some(_),
-                    ..
-                }),
-                ..
-            }
-            | MirInstr::MultiIndex {
-                call: Some(mojito_mir::mir::MirSubscriptCall {
-                    raises: Some(_),
-                    ..
-                }),
-                ..
-            }
-            | MirInstr::MultiSet {
-                call: mojito_mir::mir::MirSubscriptCall {
-                    raises: Some(_),
-                    ..
-                },
-                ..
-            }
-    )
+pub(super) fn interior_instruction_directly_raises(instr: &MirInstr) -> bool {
+    matches!(instr, MirInstr::Raise { .. }) || instr.call_error().is_some()
 }
 
 pub(super) fn summarize_interior_try(
@@ -805,15 +762,15 @@ pub(super) fn interior_reference_uses(instr: &MirInstr) -> Vec<(VarId, Reg)> {
         } => {
             let mut positional = arg_places.clone();
             let keyword = if *value_keyword {
-                vec![value_place.clone()]
+                vec![value_place.as_deref().cloned()]
             } else {
-                positional.push(value_place.clone());
+                positional.push(value_place.as_deref().cloned());
                 Vec::new()
             };
             add_subscript_call_places(
                 &mut uses,
                 call,
-                receiver_place.as_ref(),
+                receiver_place.as_deref(),
                 &positional,
                 &keyword,
                 *value,
@@ -828,8 +785,8 @@ pub(super) fn interior_reference_uses(instr: &MirInstr) -> Vec<(VarId, Reg)> {
         } => add_subscript_call_places(
             &mut uses,
             call,
-            base_place.as_ref(),
-            std::slice::from_ref(index_place),
+            base_place.as_deref(),
+            &[index_place.as_deref().cloned()],
             &[],
             *dest,
         ),
@@ -849,7 +806,7 @@ pub(super) fn interior_reference_uses(instr: &MirInstr) -> Vec<(VarId, Reg)> {
         } => add_subscript_call_places(
             &mut uses,
             call,
-            object_place.as_ref(),
+            object_place.as_deref(),
             arg_places,
             &[],
             *dest,

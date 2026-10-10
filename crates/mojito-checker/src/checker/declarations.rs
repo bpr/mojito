@@ -3,6 +3,7 @@
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 use mojito_ast::ast::DeclaredParam;
+use mojito_types::types::{FuncTy, GenericFuncTy};
 
 /// A method body as its check binds and walks it, whether the method was
 /// spelled or is a struct's wrapper of a trait default it inherits.
@@ -94,19 +95,19 @@ pub(super) fn unify_through_callable_bounds(
         // (`validate_callable_parameter_bounds`); solving reads only the
         // parameter and result shapes.
         if let (
-            Ty::Func {
+            Some(FuncTy {
                 params: bound_params,
                 ret: bound_ret,
                 error: bound_error,
                 ..
-            },
-            Ty::Func {
+            }),
+            Some(FuncTy {
                 params: actual_params,
                 ret: actual_ret,
                 error: actual_error,
                 ..
-            },
-        ) = (bound.as_ref(), &actual)
+            }),
+        ) = (bound.as_func(), actual.as_func())
         {
             for (pattern, actual) in bound_params.iter().zip(actual_params) {
                 unify(pattern, actual, subst)?;
@@ -853,7 +854,7 @@ impl Checker {
     /// so alpha-renamed binders retain their own identity while a signature may
     /// still depend on an outer type. Origin declarations stay in the source
     /// context used by reference/capture lowering, but are erased from the
-    /// ordinary `GenericFunc::decls` just like named defs.
+    /// ordinary `GenericFuncTy::decls` just like named defs.
     pub(super) fn lower_anonymous_callable_type(
         &mut self,
         callable: &SourceType,
@@ -922,46 +923,15 @@ impl Checker {
         if decls.is_empty() {
             return Ok(checked);
         }
-        let Ty::Func {
-            environment,
-            params,
-            names,
-            ret,
-            required,
-            variadic,
-            kw_variadic,
-            positional_only,
-            keyword_only,
-            raises,
-            error,
-            conventions,
-            ref_params,
-            ref_return,
-            transfers,
-        } = checked
-        else {
+        let Ty::Func(func) = checked else {
             return Err(TypeError::InvariantViolation(
                 "anonymous callable signature did not lower to a function type".to_string(),
             ));
         };
-        Ok(Ty::GenericFunc {
-            environment,
+        Ok(Ty::GenericFunc(Box::new(GenericFuncTy {
             decls,
-            params,
-            names,
-            ret,
-            required,
-            variadic,
-            kw_variadic,
-            positional_only,
-            keyword_only,
-            raises,
-            error,
-            conventions,
-            ref_params,
-            ref_return,
-            transfers,
-        })
+            func: *func,
+        })))
     }
 
     pub(super) fn type_default_from_expr(&self, value: &Expr) -> Result<Ty, TypeError> {
@@ -1667,7 +1637,7 @@ impl Checker {
                 .iter()
                 .filter_map(|decl| match decl {
                     ParamDecl::Value { name, ty, .. }
-                        if matches!(**ty, Ty::Func { .. } | Ty::GenericFunc { .. }) =>
+                        if matches!(**ty, Ty::Func(_) | Ty::GenericFunc(_)) =>
                     {
                         Some(name.trim_start_matches('*').to_string())
                     }
@@ -2864,7 +2834,7 @@ impl Checker {
             .map(|(argument, field)| {
                 if self.type_contains_reference(field) {
                     self.infer_storage_value(argument, field)
-                } else if matches!(field, Ty::Func { .. } | Ty::GenericFunc { .. }) {
+                } else if matches!(field, Ty::Func(_) | Ty::GenericFunc(_)) {
                     // Callable fields keep uncontextualized inference: the
                     // storage rule below must still see a capturing closure's
                     // full environment rather than an adapted contract.
@@ -2915,7 +2885,7 @@ impl Checker {
             let contextual;
             let aty = if !mojito_types::types::is_symbolic(fty)
                 || self.type_contains_reference(fty)
-                || matches!(fty, Ty::Func { .. } | Ty::GenericFunc { .. })
+                || matches!(fty, Ty::Func(_) | Ty::GenericFunc(_))
             {
                 aty
             } else {

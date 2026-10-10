@@ -360,12 +360,12 @@ impl Flatten<'_> {
                 recv,
                 method: "__getitem_param__".to_string(),
                 resolved: Some(contract.target),
-                raises: self.checked_raises(e),
-                reference_result: contract.reference_result,
+                raises: self.checked_raises(e).map(Box::new),
+                reference_result: contract.reference_result.map(Box::new),
                 result_adapter: contract.result_adapter,
                 args: Vec::new(),
                 kwargs: Vec::new(),
-                recv_place,
+                recv_place: recv_place.map(Box::new),
                 recv_writes: self.receiver_writes(e),
                 arg_places: Vec::new(),
                 kwarg_places: Vec::new(),
@@ -399,9 +399,9 @@ impl Flatten<'_> {
             dest: d,
             base,
             index: idx,
-            base_place,
-            index_place,
-            call,
+            base_place: base_place.map(Box::new),
+            index_place: index_place.map(Box::new),
+            call: call.map(Box::new),
             intrinsic,
         });
         d
@@ -449,9 +449,9 @@ impl Flatten<'_> {
             lower,
             upper,
             step,
-            object_place,
+            object_place: object_place.map(Box::new),
             arg_places: vec![None],
-            call,
+            call: call.map(Box::new),
             intrinsic,
         });
         d
@@ -494,8 +494,8 @@ impl Flatten<'_> {
                 dest: d,
                 base,
                 index: idx,
-                base_place,
-                index_place,
+                base_place: base_place.map(Box::new),
+                index_place: index_place.map(Box::new),
                 call: None,
                 intrinsic,
             });
@@ -585,11 +585,11 @@ impl Flatten<'_> {
             dest,
             object,
             args: lowered_args,
-            object_place,
+            object_place: object_place.map(Box::new),
             arg_places,
             kwargs,
             kwarg_places,
-            call,
+            call: call.map(Box::new),
         });
         dest
     }

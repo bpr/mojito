@@ -139,7 +139,8 @@ pub fn instruction_places(instruction: &MirInstr) -> Vec<&MirPlace> {
             kwarg_places,
             ..
         } => callee_place
-            .iter()
+            .as_deref()
+            .into_iter()
             .chain(arg_places.iter().flatten())
             .chain(kwarg_places.iter().flatten())
             .collect(),
@@ -149,7 +150,8 @@ pub fn instruction_places(instruction: &MirInstr) -> Vec<&MirPlace> {
             kwarg_places,
             ..
         } => recv_place
-            .iter()
+            .as_deref()
+            .into_iter()
             .chain(arg_places.iter().flatten())
             .chain(kwarg_places.iter().flatten())
             .collect(),
@@ -157,7 +159,11 @@ pub fn instruction_places(instruction: &MirInstr) -> Vec<&MirPlace> {
             base_place,
             index_place,
             ..
-        } => base_place.iter().chain(index_place.iter()).collect(),
+        } => base_place
+            .as_deref()
+            .into_iter()
+            .chain(index_place.as_deref())
+            .collect(),
         MirInstr::Slice {
             object_place,
             arg_places,
@@ -168,7 +174,8 @@ pub fn instruction_places(instruction: &MirInstr) -> Vec<&MirPlace> {
             arg_places,
             ..
         } => object_place
-            .iter()
+            .as_deref()
+            .into_iter()
             .chain(arg_places.iter().flatten())
             .collect(),
         MirInstr::MultiSet {
@@ -177,9 +184,10 @@ pub fn instruction_places(instruction: &MirInstr) -> Vec<&MirPlace> {
             value_place,
             ..
         } => receiver_place
-            .iter()
+            .as_deref()
+            .into_iter()
             .chain(arg_places.iter().flatten())
-            .chain(value_place.iter())
+            .chain(value_place.as_deref())
             .collect(),
         _ => Vec::new(),
     }
@@ -226,7 +234,8 @@ pub fn instruction_places_mut(instruction: &mut MirInstr) -> Vec<&mut MirPlace> 
             kwarg_places,
             ..
         } => callee_place
-            .iter_mut()
+            .as_deref_mut()
+            .into_iter()
             .chain(arg_places.iter_mut().flatten())
             .chain(kwarg_places.iter_mut().flatten())
             .collect(),
@@ -236,7 +245,8 @@ pub fn instruction_places_mut(instruction: &mut MirInstr) -> Vec<&mut MirPlace> 
             kwarg_places,
             ..
         } => recv_place
-            .iter_mut()
+            .as_deref_mut()
+            .into_iter()
             .chain(arg_places.iter_mut().flatten())
             .chain(kwarg_places.iter_mut().flatten())
             .collect(),
@@ -245,8 +255,9 @@ pub fn instruction_places_mut(instruction: &mut MirInstr) -> Vec<&mut MirPlace> 
             index_place,
             ..
         } => base_place
-            .iter_mut()
-            .chain(index_place.iter_mut())
+            .as_deref_mut()
+            .into_iter()
+            .chain(index_place.as_deref_mut())
             .collect(),
         MirInstr::Slice {
             object_place,
@@ -258,7 +269,8 @@ pub fn instruction_places_mut(instruction: &mut MirInstr) -> Vec<&mut MirPlace> 
             arg_places,
             ..
         } => object_place
-            .iter_mut()
+            .as_deref_mut()
+            .into_iter()
             .chain(arg_places.iter_mut().flatten())
             .collect(),
         MirInstr::MultiSet {
@@ -267,9 +279,10 @@ pub fn instruction_places_mut(instruction: &mut MirInstr) -> Vec<&mut MirPlace> 
             value_place,
             ..
         } => receiver_place
-            .iter_mut()
+            .as_deref_mut()
+            .into_iter()
             .chain(arg_places.iter_mut().flatten())
-            .chain(value_place.iter_mut())
+            .chain(value_place.as_deref_mut())
             .collect(),
         _ => Vec::new(),
     }

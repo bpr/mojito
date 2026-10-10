@@ -49,14 +49,14 @@ impl Flatten<'_> {
         self.emit(MirInstr::Call {
             dest,
             func: FuncRef::named(&contract.target),
-            raises: self.checked_raises(e),
+            raises: self.checked_raises(e).map(Box::new),
             args: regs,
             kwargs: kw,
             arg_places,
             kwarg_places,
             capture_accesses: self.checked_call_capture_accesses(e),
             param_arg_regs,
-            receiver,
+            receiver: receiver.map(Box::new),
             instantiated_args,
             spread: spread_position(args),
         });
@@ -116,16 +116,16 @@ impl Flatten<'_> {
             dest,
             callee,
             resolved,
-            raises,
+            raises: raises.map(Box::new),
             args: arg_regs,
             kwargs: kw_regs,
-            callee_place,
+            callee_place: callee_place.map(Box::new),
             arg_places,
             kwarg_places,
             capture_accesses,
             param_arg_regs,
             param_decls,
-            instantiated_contract,
+            instantiated_contract: instantiated_contract.map(Box::new),
             instantiated_args,
             spread: spread_position(args),
         });
@@ -182,9 +182,9 @@ impl Flatten<'_> {
                 dest: element,
                 base,
                 index: *index,
-                base_place,
-                index_place: index_places.pop().flatten(),
-                call,
+                base_place: base_place.map(Box::new),
+                index_place: index_places.pop().flatten().map(Box::new),
+                call: call.map(Box::new),
                 intrinsic: None,
             });
         } else {
@@ -192,11 +192,11 @@ impl Flatten<'_> {
                 dest: element,
                 object: base,
                 args: index_regs.into_iter().map(MirSubscriptArg::Index).collect(),
-                object_place: base_place,
+                object_place: base_place.map(Box::new),
                 arg_places: index_places,
                 kwargs: Vec::new(),
                 kwarg_places: Vec::new(),
-                call,
+                call: call.map(Box::new),
             });
         }
         let (callee, callee_place) = match reference_result {
@@ -316,7 +316,7 @@ impl Flatten<'_> {
             .or_else(|| {
                 let arguments = self.instantiated_args(e);
                 let contract = callable_ty.as_ref()?;
-                (!arguments.is_empty() && matches!(contract, Ty::GenericFunc { .. }))
+                (!arguments.is_empty() && matches!(contract, Ty::GenericFunc(_)))
                     .then(|| {
                         crate::mir::verify::instantiate_generic_callable_contract(
                             contract, &arguments,
@@ -337,16 +337,16 @@ impl Flatten<'_> {
             // attaching that abstract target here can disagree with an erased
             // variadic closure ABI even though execution never consults it.
             resolved: None,
-            raises: self.checked_raises(e),
+            raises: self.checked_raises(e).map(Box::new),
             args: arg_regs,
             kwargs: kw_regs,
-            callee_place,
+            callee_place: callee_place.map(Box::new),
             arg_places,
             kwarg_places,
             capture_accesses,
             param_arg_regs,
             param_decls,
-            instantiated_contract,
+            instantiated_contract: instantiated_contract.map(Box::new),
             instantiated_args,
             spread: spread_position(args),
         });

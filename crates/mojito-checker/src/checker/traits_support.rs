@@ -3,7 +3,7 @@
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
-use mojito_types::types::TransferSet;
+use mojito_types::types::{FuncTy, TransferSet};
 
 /// Compose inherited associated-member requirements. Type-valued members with
 /// the same name denote one associated type, so refinement accumulates their
@@ -174,7 +174,7 @@ pub(super) fn canonical_availability(method: &MethodSig) -> Vec<GenericConstrain
 }
 
 pub(super) fn method_callable_ty(method: &MethodSig) -> Ty {
-    Ty::Func {
+    Ty::Func(Box::new(FuncTy {
         environment: mojito_types::origin::CallableEnvironment::Default,
         params: method.params.clone(),
         names: method.names.clone(),
@@ -187,10 +187,10 @@ pub(super) fn method_callable_ty(method: &MethodSig) -> Ty {
         raises: method.raises,
         error: method.error.clone(),
         conventions: method.conventions.clone(),
-        ref_params: Box::new(method.ref_params.clone()),
+        ref_params: method.ref_params.clone(),
         ref_return: method.ref_return.clone().map(Box::new),
         transfers: TransferSet::default(),
-    }
+    }))
 }
 
 /// A method's contract with its own binders canonicalized to signature slots

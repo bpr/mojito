@@ -3,6 +3,7 @@
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
+use mojito_types::types::FuncTy;
 
 impl Checker {
     /// `binder`: the enclosing struct's origin binder the parameter's clause
@@ -106,12 +107,15 @@ impl Checker {
                 // loan-carrying type: origin bookkeeping stays conservative
                 // so generic bodies record transfer effects.
                 Ty::Param { .. } => true,
-                Ty::Func { environment, .. } => matches!(
-                    environment,
-                    CallableEnvironment::Capturing(
-                        CaptureOriginSet::Infer | CaptureOriginSet::Param(_)
+                Ty::Func(func) => {
+                    let FuncTy { environment, .. } = &**func;
+                    matches!(
+                        environment,
+                        CallableEnvironment::Capturing(
+                            CaptureOriginSet::Infer | CaptureOriginSet::Param(_)
+                        )
                     )
-                ),
+                }
                 Ty::Struct(_, arguments) => arguments.iter().any(|argument| match argument {
                     mojito_types::types::TyArg::Ty(ty) => contains_open_captures(ty),
                     _ => false,
@@ -182,16 +186,15 @@ impl Checker {
                         collect(checker, &substitute(field, &subst), out);
                     }
                 }
-                Ty::Func {
-                    environment:
-                        CallableEnvironment::Capturing(CaptureOriginSet::Concrete(captures)),
-                    ..
+                Ty::Func(_) | Ty::GenericFunc(_)
+                    if let Some(FuncTy {
+                        environment:
+                            CallableEnvironment::Capturing(CaptureOriginSet::Concrete(captures)),
+                        ..
+                    }) = ty.callable() =>
+                {
+                    out.extend(captures.iter().cloned());
                 }
-                | Ty::GenericFunc {
-                    environment:
-                        CallableEnvironment::Capturing(CaptureOriginSet::Concrete(captures)),
-                    ..
-                } => out.extend(captures.iter().cloned()),
                 _ => {}
             }
         }
@@ -293,26 +296,23 @@ impl Checker {
                     seen.remove(&key);
                     result
                 }
-                Ty::Func {
-                    environment:
-                        mojito_types::origin::CallableEnvironment::Capturing(
-                            mojito_types::origin::CaptureOriginSet::Concrete(captures),
-                        ),
-                    ..
+                Ty::Func(_) | Ty::GenericFunc(_)
+                    if let Some(FuncTy {
+                        environment:
+                            mojito_types::origin::CallableEnvironment::Capturing(
+                                mojito_types::origin::CaptureOriginSet::Concrete(captures),
+                            ),
+                        ..
+                    }) = ty.callable() =>
+                {
+                    captures.iter().any(|capture| {
+                        matches!(
+                            capture.origin,
+                            mojito_types::origin::Origin::Place(_)
+                                | mojito_types::origin::Origin::Param(_)
+                        )
+                    })
                 }
-                | Ty::GenericFunc {
-                    environment:
-                        mojito_types::origin::CallableEnvironment::Capturing(
-                            mojito_types::origin::CaptureOriginSet::Concrete(captures),
-                        ),
-                    ..
-                } => captures.iter().any(|capture| {
-                    matches!(
-                        capture.origin,
-                        mojito_types::origin::Origin::Place(_)
-                            | mojito_types::origin::Origin::Param(_)
-                    )
-                }),
                 _ => false,
             }
         }
@@ -408,7 +408,7 @@ impl Checker {
                         .as_origin()
                         .map(|origin| vec![origin])
                         .unwrap_or_default(),
-                    Some(ty @ (Ty::Func { .. } | Ty::GenericFunc { .. })) => self
+                    Some(ty @ (Ty::Func(_) | Ty::GenericFunc(_))) => self
                         .capture_origins_in_type(ty)
                         .into_iter()
                         .map(|capture| capture.origin)

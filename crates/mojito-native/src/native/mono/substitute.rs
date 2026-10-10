@@ -4,7 +4,7 @@
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 use mojito_mir::mir::Proj;
-use mojito_types::types::VariantIndex;
+use mojito_types::types::{FuncTy, VariantIndex};
 
 /// The declarations a parameter value's construction names: a struct
 /// value's fieldwise constructor, and an `Array`'s list-literal
@@ -591,10 +591,10 @@ pub(super) fn substitute_instruction(
             instantiated_args,
             ..
         } => {
-            sub_opt_ty(raises, bindings)?;
+            sub_opt_ty(raises.as_deref_mut(), bindings)?;
             sub_places(arg_places, bindings)?;
             sub_places(kwarg_places, bindings)?;
-            sub_opt_ty(receiver, bindings)?;
+            sub_opt_ty(receiver.as_deref_mut(), bindings)?;
             for arg in instantiated_args {
                 *arg = substitute_arg(arg, bindings)?;
             }
@@ -711,11 +711,11 @@ pub(super) fn substitute_instruction(
             instantiated_args,
             ..
         } => {
-            sub_opt_ty(raises, bindings)?;
-            sub_place_opt(callee_place, bindings)?;
+            sub_opt_ty(raises.as_deref_mut(), bindings)?;
+            sub_place_opt(callee_place.as_deref_mut(), bindings)?;
             sub_places(arg_places, bindings)?;
             sub_places(kwarg_places, bindings)?;
-            sub_opt_ty(instantiated_contract, bindings)?;
+            sub_opt_ty(instantiated_contract.as_deref_mut(), bindings)?;
             for arg in instantiated_args {
                 *arg = substitute_arg(arg, bindings)?;
             }
@@ -729,9 +729,9 @@ pub(super) fn substitute_instruction(
             instantiated_args,
             ..
         } => {
-            sub_opt_ty(raises, bindings)?;
-            sub_ref_opt(reference_result, bindings)?;
-            sub_place_opt(recv_place, bindings)?;
+            sub_opt_ty(raises.as_deref_mut(), bindings)?;
+            sub_ref_opt(reference_result.as_deref_mut(), bindings)?;
+            sub_place_opt(recv_place.as_deref_mut(), bindings)?;
             sub_places(arg_places, bindings)?;
             sub_places(kwarg_places, bindings)?;
             for arg in instantiated_args {
@@ -744,8 +744,8 @@ pub(super) fn substitute_instruction(
             call,
             ..
         } => {
-            sub_place_opt(base_place, bindings)?;
-            sub_place_opt(index_place, bindings)?;
+            sub_place_opt(base_place.as_deref_mut(), bindings)?;
+            sub_place_opt(index_place.as_deref_mut(), bindings)?;
             if let Some(call) = call {
                 substitute_subscript_call(call, bindings)?;
             }
@@ -762,7 +762,7 @@ pub(super) fn substitute_instruction(
             call,
             ..
         } => {
-            sub_place_opt(object_place, bindings)?;
+            sub_place_opt(object_place.as_deref_mut(), bindings)?;
             sub_places(arg_places, bindings)?;
             if let Some(call) = call {
                 substitute_subscript_call(call, bindings)?;
@@ -775,9 +775,9 @@ pub(super) fn substitute_instruction(
             call,
             ..
         } => {
-            sub_place_opt(receiver_place, bindings)?;
+            sub_place_opt(receiver_place.as_deref_mut(), bindings)?;
             sub_places(arg_places, bindings)?;
-            sub_place_opt(value_place, bindings)?;
+            sub_place_opt(value_place.as_deref_mut(), bindings)?;
             substitute_subscript_call(call, bindings)?;
         }
         MakeTuple {
@@ -821,7 +821,7 @@ pub(super) fn substitute_subscript_call(
     call: &mut mojito_mir::mir::MirSubscriptCall,
     bindings: &Bindings,
 ) -> Result<(), MonoError> {
-    sub_opt_ty(&mut call.raises, bindings)?;
+    sub_opt_ty(call.raises.as_mut(), bindings)?;
     call.result_ty = substitute_ty(&call.result_ty, bindings)?;
     // A parameter type closes under the caller's bindings when the checker
     // instantiated it at the call; one naming the callee's own binder stays
@@ -843,11 +843,11 @@ pub(super) fn substitute_subscript_call(
             argument.expr = Some(value);
         }
     }
-    sub_ref_opt(&mut call.reference_result, bindings)
+    sub_ref_opt(call.reference_result.as_mut(), bindings)
 }
 
 pub(super) fn substitute_place(place: &mut MirPlace, bindings: &Bindings) -> Result<(), MonoError> {
-    sub_opt_ty(&mut place.root_ty, bindings)?;
+    sub_opt_ty(place.root_ty.as_mut(), bindings)?;
     for ty in &mut place.projection_tys {
         *ty = substitute_ty(ty, bindings)?;
     }
@@ -856,7 +856,7 @@ pub(super) fn substitute_place(place: &mut MirPlace, bindings: &Bindings) -> Res
             close_variant_index(index, bindings)?;
         }
     }
-    sub_opt_ty(&mut place.ty, bindings)
+    sub_opt_ty(place.ty.as_mut(), bindings)
 }
 
 /// Close the alternatives a `Variant` operation selects.
@@ -932,12 +932,12 @@ pub(super) fn sub_places(
     bindings: &Bindings,
 ) -> Result<(), MonoError> {
     for place in places {
-        sub_place_opt(place, bindings)?;
+        sub_place_opt(place.as_mut(), bindings)?;
     }
     Ok(())
 }
 pub(super) fn sub_place_opt(
-    place: &mut Option<MirPlace>,
+    place: Option<&mut MirPlace>,
     bindings: &Bindings,
 ) -> Result<(), MonoError> {
     if let Some(place) = place {
@@ -945,14 +945,14 @@ pub(super) fn sub_place_opt(
     }
     Ok(())
 }
-pub(super) fn sub_opt_ty(ty: &mut Option<Ty>, bindings: &Bindings) -> Result<(), MonoError> {
+pub(super) fn sub_opt_ty(ty: Option<&mut Ty>, bindings: &Bindings) -> Result<(), MonoError> {
     if let Some(ty) = ty {
         *ty = substitute_ty(ty, bindings)?;
     }
     Ok(())
 }
 pub(super) fn sub_ref_opt(
-    ty: &mut Option<mojito_types::origin::RefTy>,
+    ty: Option<&mut mojito_types::origin::RefTy>,
     bindings: &Bindings,
 ) -> Result<(), MonoError> {
     if let Some(ty) = ty {
@@ -966,8 +966,8 @@ pub(super) fn substitute_iterator_call(
     bindings: &Bindings,
 ) -> Result<(), MonoError> {
     call.result_ty = substitute_ty(&call.result_ty, bindings)?;
-    sub_opt_ty(&mut call.raises, bindings)?;
-    sub_ref_opt(&mut call.reference_result, bindings)?;
+    sub_opt_ty(call.raises.as_mut(), bindings)?;
+    sub_ref_opt(call.reference_result.as_mut(), bindings)?;
     Ok(())
 }
 
@@ -1215,52 +1215,55 @@ pub(super) fn substitute_ty(ty: &Ty, bindings: &Bindings) -> Result<Ty, MonoErro
         // A generic callable remains as a transient storage type until its
         // statically named producer and dependent call sites are rewritten.
         // `ensure_concrete_function` rejects it if any executable use survives.
-        Ty::GenericFunc { .. } => ty.clone(),
+        Ty::GenericFunc(_) => ty.clone(),
         Ty::SelfType | Ty::Infer => {
             return Err(unsupported(format!("unresolved type `{ty}`")));
         }
-        Ty::Func {
-            environment,
-            params,
-            names,
-            ret,
-            required,
-            variadic,
-            kw_variadic,
-            positional_only,
-            keyword_only,
-            raises,
-            error,
-            conventions,
-            ref_params,
-            ref_return,
-            transfers,
-        } => Ty::Func {
-            environment: environment.clone(),
-            params: sub_types(params, bindings)?,
-            names: names.clone(),
-            ret: Box::new(substitute_ty(ret, bindings)?),
-            required: required.clone(),
-            variadic: variadic
-                .as_ref()
-                .map(|t| substitute_ty(t, bindings).map(Box::new))
-                .transpose()?,
-            kw_variadic: kw_variadic
-                .as_ref()
-                .map(|t| substitute_ty(t, bindings).map(Box::new))
-                .transpose()?,
-            positional_only: *positional_only,
-            keyword_only: *keyword_only,
-            raises: *raises,
-            error: error
-                .as_ref()
-                .map(|t| substitute_ty(t, bindings).map(Box::new))
-                .transpose()?,
-            conventions: conventions.clone(),
-            ref_params: ref_params.clone(),
-            ref_return: ref_return.clone(),
-            transfers: transfers.clone(),
-        },
+        Ty::Func(func) => {
+            let FuncTy {
+                environment,
+                params,
+                names,
+                ret,
+                required,
+                variadic,
+                kw_variadic,
+                positional_only,
+                keyword_only,
+                raises,
+                error,
+                conventions,
+                ref_params,
+                ref_return,
+                transfers,
+            } = &**func;
+            Ty::Func(Box::new(FuncTy {
+                environment: environment.clone(),
+                params: sub_types(params, bindings)?,
+                names: names.clone(),
+                ret: Box::new(substitute_ty(ret, bindings)?),
+                required: required.clone(),
+                variadic: variadic
+                    .as_ref()
+                    .map(|t| substitute_ty(t, bindings).map(Box::new))
+                    .transpose()?,
+                kw_variadic: kw_variadic
+                    .as_ref()
+                    .map(|t| substitute_ty(t, bindings).map(Box::new))
+                    .transpose()?,
+                positional_only: *positional_only,
+                keyword_only: *keyword_only,
+                raises: *raises,
+                error: error
+                    .as_ref()
+                    .map(|t| substitute_ty(t, bindings).map(Box::new))
+                    .transpose()?,
+                conventions: conventions.clone(),
+                ref_params: ref_params.clone(),
+                ref_return: ref_return.clone(),
+                transfers: transfers.clone(),
+            }))
+        }
         // A symbolic lane or width the bindings close — a layout application
         // the instance's oracle answers — becomes the known slot; one they do
         // not close stays as spelled, for the concreteness check to name.
@@ -1339,9 +1342,7 @@ pub(super) fn value_parameter_constant(value: &CtValue, slot_ty: Option<&Ty>) ->
         CtValue::Float(bits) => Some(Const::Float(f64::from_bits(*bits))),
         CtValue::Bool(value) => Some(Const::Bool(*value)),
         CtValue::Dtype(value) => Some(Const::Dtype(*value)),
-        CtValue::Str(value)
-            if matches!(slot_ty, Some(Ty::Func { .. } | Ty::GenericFunc { .. })) =>
-        {
+        CtValue::Str(value) if matches!(slot_ty, Some(Ty::Func(_) | Ty::GenericFunc(_))) => {
             Some(Const::Function(value.clone()))
         }
         CtValue::Str(value) => Some(Const::Str(value.clone())),

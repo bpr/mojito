@@ -315,7 +315,7 @@ impl VmBackend {
                         caller.id,
                         &caller.registers,
                         &caller.variables,
-                        callee_place.as_ref(),
+                        callee_place.as_deref(),
                         captures,
                     )?,
                 ),

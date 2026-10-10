@@ -1,6 +1,6 @@
 use super::*;
 use crate::origin::CallableEnvironment;
-use crate::types::{DependentType, TransferEffect, TransferSet, TyArg};
+use crate::types::{DependentType, FuncTy, TransferEffect, TransferSet, TyArg};
 use std::collections::hash_map::DefaultHasher;
 
 fn int_param(context: &ParamContext, owner: &str, slot: usize, name: &str) -> ParamExpr {
@@ -26,7 +26,7 @@ fn hash_of(value: &impl Hash) -> u64 {
 }
 
 fn callable(transfers: TransferSet) -> Ty {
-    Ty::Func {
+    Ty::Func(Box::new(FuncTy {
         environment: CallableEnvironment::default(),
         params: vec![Ty::Int],
         names: vec!["x".to_string()],
@@ -39,10 +39,10 @@ fn callable(transfers: TransferSet) -> Ty {
         raises: false,
         error: None,
         conventions: vec![None],
-        ref_params: Box::new(vec![None]),
+        ref_params: vec![None],
         ref_return: None,
         transfers,
-    }
+    }))
 }
 
 fn one_transfer() -> TransferSet {
@@ -292,7 +292,7 @@ fn equal_types_hash_equally_and_interning_keeps_decorations() {
     assert_eq!(first, second);
     let effects = |expr: &ParamExpr| match expr.as_constant() {
         Some(CtValue::Type(ty)) => match &**ty {
-            Ty::Func { transfers, .. } => transfers.0.len(),
+            Ty::Func(func) => func.transfers.0.len(),
             _ => unreachable!("a callable type"),
         },
         _ => unreachable!("a closed type constant"),

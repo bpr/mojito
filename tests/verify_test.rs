@@ -20,6 +20,7 @@ use mojito::mir::{
 use mojito::param_expr::{MetaTy, ParamContext, ParamId};
 use mojito::types::DependentType;
 use mojito::types::TransferSet;
+use mojito::types::{FuncTy, GenericFuncTy};
 use mojito::{CtValue, ParamDecl, Ty, TyArg};
 use std::collections::HashMap;
 
@@ -498,60 +499,64 @@ fn value_parameter(name: &str, ty: Ty) -> ParamDecl {
 }
 
 fn generic_callable(decls: Vec<ParamDecl>) -> Ty {
-    Ty::GenericFunc {
-        environment: mojito::CallableEnvironment::Thin,
+    Ty::GenericFunc(Box::new(GenericFuncTy {
         decls,
-        params: Vec::new(),
-        names: Vec::new(),
-        ret: Box::new(Ty::Int),
-        required: Vec::new(),
-        variadic: None,
-        kw_variadic: None,
-        positional_only: None,
-        keyword_only: None,
-        raises: false,
-        error: None,
-        conventions: Vec::new(),
-        ref_params: Box::new(Vec::new()),
-        ref_return: None,
-        transfers: TransferSet::default(),
-    }
+        func: FuncTy {
+            environment: mojito::CallableEnvironment::Thin,
+            params: Vec::new(),
+            names: Vec::new(),
+            ret: Box::new(Ty::Int),
+            required: Vec::new(),
+            variadic: None,
+            kw_variadic: None,
+            positional_only: None,
+            keyword_only: None,
+            raises: false,
+            error: None,
+            conventions: Vec::new(),
+            ref_params: Vec::new(),
+            ref_return: None,
+            transfers: TransferSet::default(),
+        },
+    }))
 }
 
 fn dependent_generic_callable(index: &str) -> Ty {
-    Ty::GenericFunc {
-        environment: mojito::CallableEnvironment::Thin,
+    Ty::GenericFunc(Box::new(GenericFuncTy {
         decls: vec![value_parameter("index", Ty::Int)],
-        params: vec![DependentType::resolve(
-            ParamContext::detached()
-                .select(
-                    vec![Ty::Int, Ty::StringLiteral],
-                    &ParamContext::detached().decl_ref(
-                        ParamId::new(&format!("$test:{index}"), 0),
-                        index,
-                        MetaTy::int(),
-                    ),
-                )
-                .expect("an Int index selects"),
-        )],
-        names: vec!["element".to_string()],
-        ret: Box::new(Ty::None),
-        required: vec![true],
-        variadic: None,
-        kw_variadic: None,
-        positional_only: None,
-        keyword_only: None,
-        raises: false,
-        error: None,
-        conventions: vec![None],
-        ref_params: Box::new(vec![None]),
-        ref_return: None,
-        transfers: TransferSet::default(),
-    }
+        func: FuncTy {
+            environment: mojito::CallableEnvironment::Thin,
+            params: vec![DependentType::resolve(
+                ParamContext::detached()
+                    .select(
+                        vec![Ty::Int, Ty::StringLiteral],
+                        &ParamContext::detached().decl_ref(
+                            ParamId::new(&format!("$test:{index}"), 0),
+                            index,
+                            MetaTy::int(),
+                        ),
+                    )
+                    .expect("an Int index selects"),
+            )],
+            names: vec!["element".to_string()],
+            ret: Box::new(Ty::None),
+            required: vec![true],
+            variadic: None,
+            kw_variadic: None,
+            positional_only: None,
+            keyword_only: None,
+            raises: false,
+            error: None,
+            conventions: vec![None],
+            ref_params: vec![None],
+            ref_return: None,
+            transfers: TransferSet::default(),
+        },
+    }))
 }
 
 fn concrete_callable(parameter: Ty) -> Ty {
-    Ty::Func {
+    Ty::Func(Box::new(FuncTy {
         environment: mojito::CallableEnvironment::Thin,
         params: vec![parameter],
         names: vec!["element".to_string()],
@@ -564,10 +569,10 @@ fn concrete_callable(parameter: Ty) -> Ty {
         raises: false,
         error: None,
         conventions: vec![None],
-        ref_params: Box::new(vec![None]),
+        ref_params: vec![None],
         ref_return: None,
         transfers: TransferSet::default(),
-    }
+    }))
 }
 
 #[test]
@@ -603,7 +608,7 @@ fn verifier_rejects_a_subscript_receiver_place_with_the_wrong_type() {
                     dest: Reg(2),
                     base: Reg(0),
                     index: Reg(1),
-                    base_place: Some(MirPlace::root(0, Some(Ty::StringLiteral))),
+                    base_place: Some(Box::new(MirPlace::root(0, Some(Ty::StringLiteral)))),
                     index_place: None,
                     call: None,
                     intrinsic: Some(MirIntrinsicSubscript::Pointer),
@@ -1369,7 +1374,7 @@ fn verifier_substitutes_retained_dependent_callable_arguments() {
                     expr: None,
                 }],
                 param_decls: declarations,
-                instantiated_contract: Some(concrete_callable(Ty::Int)),
+                instantiated_contract: Some(Box::new(concrete_callable(Ty::Int))),
                 instantiated_args: vec![TyArg::Val(CtValue::Int(0))],
                 spread: None,
             }],
@@ -1410,7 +1415,7 @@ fn verifier_rejects_corrupt_or_unbound_dependent_callable_indices() {
                     expr: None,
                 }],
                 param_decls: declarations,
-                instantiated_contract: Some(concrete_callable(Ty::Int)),
+                instantiated_contract: Some(Box::new(concrete_callable(Ty::Int))),
                 instantiated_args: vec![TyArg::Val(CtValue::Int(1))],
                 spread: None,
             }],
@@ -1452,7 +1457,7 @@ fn verifier_rejects_corrupt_or_unbound_dependent_callable_indices() {
 
 #[test]
 fn verifier_rejects_corrupt_indirect_effect_and_reference_result_metadata() {
-    let contract = Ty::Func {
+    let contract = Ty::Func(Box::new(FuncTy {
         environment: mojito::CallableEnvironment::Thin,
         params: Vec::new(),
         names: Vec::new(),
@@ -1465,13 +1470,13 @@ fn verifier_rejects_corrupt_indirect_effect_and_reference_result_metadata() {
         raises: true,
         error: Some(Box::new(Ty::StringLiteral)),
         conventions: Vec::new(),
-        ref_params: Box::new(Vec::new()),
+        ref_params: Vec::new(),
         ref_return: Some(Box::new(mojito::origin::RefSig {
             origin: mojito::origin::SigOrigin::Static,
             mutability: mojito::origin::SigMutability::Mutable,
         })),
         transfers: TransferSet::default(),
-    };
+    }));
     let result = Ty::Ref(mojito::RefTy {
         referent: Box::new(Ty::Int),
         origin: mojito::Origin::Untracked { mutable: false },
@@ -1551,13 +1556,13 @@ fn verifier_rejects_a_mismatched_iterator_exhaustion_contract() {
                 dest: Reg(0),
                 yielded: Reg(1),
                 iter: 0,
-                call: mojito::checked::CheckedIteratorCall {
+                call: Box::new(mojito::checked::CheckedIteratorCall {
                     target: "Iterator.__next__".to_string(),
                     result_ty: Ty::Int,
                     reference_result: None,
                     raises: Some(other_error.clone()),
                     result_adapter: None,
-                },
+                }),
                 exhaustion: other_error,
             }],
             MirTerm::Return(None),
@@ -1618,13 +1623,13 @@ fn verifier_rejects_an_iterator_reference_result_abi_mismatch() {
                 dest: Reg(0),
                 yielded: Reg(1),
                 iter: 0,
-                call: mojito::checked::CheckedIteratorCall {
+                call: Box::new(mojito::checked::CheckedIteratorCall {
                     target: "Iterator.__next__".to_string(),
                     result_ty: result_ty.clone(),
                     reference_result: Some(reference_result.clone()),
                     raises: Some(stop_iteration.clone()),
                     result_adapter: None,
-                },
+                }),
                 exhaustion: stop_iteration.clone(),
             }],
             MirTerm::Return(None),
@@ -1807,7 +1812,7 @@ fn verifier_distinguishes_method_result_abi_from_a_reference_shaped_value() {
 
     // A genuine abstract reference ABI carries its reference metadata and does
     // not use the value-result adapter.
-    let reference_abi = program(abstract_next(Some(reference.clone()), None));
+    let reference_abi = program(abstract_next(Some(Box::new(reference.clone())), None));
     assert_eq!(verify(&reference_abi), Vec::<String>::new());
 }
 
@@ -1849,7 +1854,7 @@ fn verifier_rejects_corrupt_concrete_method_result_abis() {
         })
         .expect("value-returning method call");
     *reference_result = match reference_ty(Ty::Int, mojito::Mutability::Immutable) {
-        Ty::Ref(reference) => Some(reference),
+        Ty::Ref(reference) => Some(Box::new(reference)),
         _ => unreachable!("reference_ty constructs Ty::Ref"),
     };
     expect_finding(
@@ -1889,9 +1894,9 @@ fn verifier_rejects_a_loan_destination_domain_with_a_foreign_root() {
 fn verifier_checks_stores_into_erased_instance_storage() {
     let with_environment = |environment| {
         let mut ty = concrete_callable(Ty::Int);
-        if let Ty::Func {
+        if let Some(FuncTy {
             environment: slot, ..
-        } = &mut ty
+        }) = ty.as_func_mut()
         {
             *slot = environment;
         }

@@ -161,8 +161,8 @@ impl CalleeOracle for super::Checker {
             || matches!(
                 self.lookup(name),
                 Some(
-                    mojito_types::types::Ty::Func { .. }
-                        | mojito_types::types::Ty::GenericFunc { .. }
+                    mojito_types::types::Ty::Func(_)
+                        | mojito_types::types::Ty::GenericFunc(_)
                         | mojito_types::types::Ty::Overload(_)
                 )
             );

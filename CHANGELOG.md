@@ -174,6 +174,15 @@ to evolve under the `0.x` compatibility rules.
   destructor insertion, but finishing all 874 bodies takes 62 ms release,
   from 161 ms (`StringSpan._grapheme_class` 23.6 → 1.9 ms), and a
   method-heavy program's elaboration falls from 14.0 to 10.9 ms.
+- A type and an instruction keep their large, rare payloads behind a box
+  (R584), as MLIR keeps an operation's storage proportional to what it
+  holds: a callable type's signature is one boxed `FuncTy`, shared by the
+  generic form, and an instruction's optional places, subscript calls, and
+  call-only types are boxed. `Ty` shrinks from 256 to 72 bytes and
+  `MirInstr` from 1904 to 296, each size asserted. Decoding all 874
+  bundled library bodies falls from 32 to 18 ms release, finishing them
+  from 64 to 47 ms, and `self_hosted_dict.mojo` runs in 51 ms from 64 ms.
+  The package format is now `mojito-package 16`.
 - A module under a search root is linked under its path there, whichever
   import reaches it first: `std/io/file.mojo` declares
   `__module$std$io$file$…`, not `__module$file$…`.

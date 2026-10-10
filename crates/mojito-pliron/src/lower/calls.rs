@@ -2,6 +2,7 @@
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
+use mojito_types::types::FuncTy;
 
 impl FnLowering<'_> {
     /// Lower a direct call: builtin scalar conversions intercept by name
@@ -814,7 +815,7 @@ impl FnLowering<'_> {
         contract: &Ty,
         dest: Reg,
     ) -> Result<ContractAbi, PlironError> {
-        let Ty::Func {
+        let Some(FuncTy {
             params,
             names,
             ret,
@@ -828,10 +829,10 @@ impl FnLowering<'_> {
             ref_params,
             ref_return,
             ..
-        } = contract
+        }) = contract.as_func()
         else {
             let construct = match contract {
-                Ty::GenericFunc { .. } => "generic callable value invocation".to_string(),
+                Ty::GenericFunc(_) => "generic callable value invocation".to_string(),
                 other => format!("indirect call through `{other}`"),
             };
             return Err(self.unsupported_reg(construct, dest));

@@ -351,7 +351,7 @@ pub(super) fn value_scope(decls: &[ParamDecl]) -> HashMap<String, ParamExpr> {
                 ty,
                 callable_default: None,
                 ..
-            } if !matches!(ty.as_ref(), Ty::Func { .. } | Ty::GenericFunc { .. }) => Some((
+            } if !matches!(ty.as_ref(), Ty::Func(_) | Ty::GenericFunc(_)) => Some((
                 name.trim_start_matches('*').to_string(),
                 value_parameter_expr(decl, ty),
             )),

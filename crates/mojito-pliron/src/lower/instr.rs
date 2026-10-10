@@ -379,7 +379,7 @@ impl FnLowering<'_> {
                     kwargs,
                     arg_places,
                     kwarg_places,
-                    recv_place.as_ref(),
+                    recv_place.as_deref(),
                 )?;
                 // `__next__` reached through the iterator contract yields its
                 // element by value. An implementation that returns `ref`
@@ -544,7 +544,7 @@ impl FnLowering<'_> {
                 let positional = if call.arguments.is_empty() {
                     Vec::new()
                 } else {
-                    vec![SubscriptActual::Reg(*index, index_place.as_ref())]
+                    vec![SubscriptActual::Reg(*index, index_place.as_deref())]
                 };
                 self.lower_subscript_call(
                     ctx,
@@ -552,7 +552,7 @@ impl FnLowering<'_> {
                     "__getitem__",
                     call,
                     *base,
-                    base_place.as_ref(),
+                    base_place.as_deref(),
                     &positional,
                     &[],
                 )
@@ -581,7 +581,7 @@ impl FnLowering<'_> {
                     "__getitem__",
                     call,
                     *object,
-                    object_place.as_ref(),
+                    object_place.as_deref(),
                     &[SubscriptActual::Descriptor(descriptor)],
                     &[],
                 )
@@ -613,7 +613,7 @@ impl FnLowering<'_> {
                     "__getitem__",
                     call,
                     *object,
-                    object_place.as_ref(),
+                    object_place.as_deref(),
                     &positional,
                     &keywords,
                 )
@@ -634,9 +634,12 @@ impl FnLowering<'_> {
                 let mut positional = self.subscript_actuals(ctx, scratch, args, arg_places)?;
                 let mut keywords = Vec::new();
                 if *value_keyword {
-                    keywords.push(("value", SubscriptActual::Reg(*value, value_place.as_ref())));
+                    keywords.push((
+                        "value",
+                        SubscriptActual::Reg(*value, value_place.as_deref()),
+                    ));
                 } else {
-                    positional.push(SubscriptActual::Reg(*value, value_place.as_ref()));
+                    positional.push(SubscriptActual::Reg(*value, value_place.as_deref()));
                 }
                 self.lower_subscript_call(
                     ctx,
@@ -644,7 +647,7 @@ impl FnLowering<'_> {
                     "__setitem__",
                     call,
                     *receiver,
-                    receiver_place.as_ref(),
+                    receiver_place.as_deref(),
                     &positional,
                     &keywords,
                 )
@@ -700,7 +703,7 @@ impl FnLowering<'_> {
                     kwargs,
                     arg_places,
                     kwarg_places,
-                    instantiated_contract.as_ref(),
+                    instantiated_contract.as_deref(),
                 )
             }
             MirInstr::MakeVariant {

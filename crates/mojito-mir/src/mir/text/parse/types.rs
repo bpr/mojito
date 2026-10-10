@@ -3,6 +3,7 @@
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
+use mojito_types::types::{FuncTy, GenericFuncTy};
 
 impl Decoder {
     pub(super) fn ty(&mut self, value: &Value) -> Option<Ty> {
@@ -168,8 +169,7 @@ impl Decoder {
             })?
             .map(Box::new);
         let conventions = self.req(value, fields, "conventions", |d, v| Some(d.conventions(v)))?;
-        let ref_params =
-            Box::new(self.req(value, fields, "ref_params", |d, v| Some(d.ref_sigs(v)))?);
+        let ref_params = self.req(value, fields, "ref_params", |d, v| Some(d.ref_sigs(v)))?;
         let ref_return = {
             let field = self.required(value, fields, "ref_return")?;
             self.option_value(Some(field))
@@ -199,30 +199,32 @@ impl Decoder {
             ],
         );
         if generic {
-            return Some(Ty::GenericFunc {
-                environment,
+            return Some(Ty::GenericFunc(Box::new(GenericFuncTy {
                 decls,
-                params,
-                names,
-                ret,
-                required,
-                variadic,
-                kw_variadic,
-                positional_only,
-                keyword_only,
-                raises,
-                error,
-                conventions,
-                ref_params,
-                ref_return,
-                transfers,
-            });
+                func: FuncTy {
+                    environment,
+                    params,
+                    names,
+                    ret,
+                    required,
+                    variadic,
+                    kw_variadic,
+                    positional_only,
+                    keyword_only,
+                    raises,
+                    error,
+                    conventions,
+                    ref_params,
+                    ref_return,
+                    transfers,
+                },
+            })));
         }
         if !decls.is_empty() {
             self.error(value.span, "`func` types take no param_decls");
             return None;
         }
-        Some(Ty::Func {
+        Some(Ty::Func(Box::new(FuncTy {
             environment,
             params,
             names,
@@ -238,7 +240,7 @@ impl Decoder {
             ref_params,
             ref_return,
             transfers,
-        })
+        })))
     }
 
     pub(super) fn transfer_set(&mut self, value: &Value) -> TransferSet {
@@ -1038,7 +1040,7 @@ impl Decoder {
                         && let (Ok(name), Ok(ty)) =
                             (scratch.field(fields, "name"), scratch.field(fields, "type"))
                         && let (Some(name), Some(ty)) = (scratch.symbol(name), scratch.ty(ty))
-                        && !matches!(ty, Ty::Func { .. } | Ty::GenericFunc { .. })
+                        && !matches!(ty, Ty::Func(_) | Ty::GenericFunc(_))
                     {
                         let metas = out
                             .entry(name.trim_start_matches('*').to_string())

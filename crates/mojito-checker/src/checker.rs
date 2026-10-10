@@ -31,7 +31,7 @@ use declarations::*;
 use generics::*;
 use mojito_checked::fact_store::{FactMap, FactSet, FactVec};
 use mojito_symbol::symbol::OverloadLookup;
-use mojito_types::types::{TransferSet, VariantIndex};
+use mojito_types::types::{FuncTy, GenericFuncTy, TransferSet, VariantIndex};
 #[allow(clippy::wildcard_imports, reason = "pages of this split module")]
 use operators::*;
 #[allow(clippy::wildcard_imports, reason = "pages of this split module")]
@@ -1258,18 +1258,15 @@ impl Checker {
             other => Some(other),
         };
         match callable {
-            Some(
-                Ty::Func {
+            Some(callable)
+                if let Some(FuncTy {
                     environment:
                         CallableEnvironment::Capturing(CaptureOriginSet::Concrete(captures)),
                     ..
-                }
-                | Ty::GenericFunc {
-                    environment:
-                        CallableEnvironment::Capturing(CaptureOriginSet::Concrete(captures)),
-                    ..
-                },
-            ) => captures.clone(),
+                }) = callable.callable() =>
+            {
+                captures.clone()
+            }
             _ => Vec::new(),
         }
     }
@@ -1583,12 +1580,12 @@ impl Checker {
         {
             return true;
         }
-        if matches!((from, to), (Ty::GenericFunc { .. }, Ty::GenericFunc { .. }))
+        if matches!((from, to), (Ty::GenericFunc(_), Ty::GenericFunc(_)))
             && callable_bound_accepts(from, to)
         {
             return true;
         }
-        if matches!((from, to), (Ty::GenericFunc { .. }, Ty::GenericFunc { .. })) {
+        if matches!((from, to), (Ty::GenericFunc(_), Ty::GenericFunc(_))) {
             return callable_bound_accepts(from, to);
         }
         if let Ty::Struct(name, _) = from
@@ -1600,34 +1597,18 @@ impl Checker {
             return coerces(callable, to);
         }
         let (
-            Ty::GenericFunc {
-                environment,
-                decls,
-                params,
-                ret,
-                required,
-                variadic,
-                kw_variadic,
-                positional_only,
-                keyword_only,
-                raises,
-                error,
-                conventions,
-                ref_params,
-                ref_return,
-                ..
-            },
-            Ty::Func {
+            Some(GenericFuncTy { decls, func }),
+            Some(FuncTy {
                 params: expected_params,
                 ret: expected_ret,
                 ..
-            },
-        ) = (from, to)
+            }),
+        ) = (from.as_generic_func(), to.as_func())
         else {
             return false;
         };
-        let mut patterns = params.clone();
-        patterns.push((**ret).clone());
+        let mut patterns = func.params.clone();
+        patterns.push((*func.ret).clone());
         let mut actuals = expected_params.clone();
         actuals.push((**expected_ret).clone());
         let Ok((subst, _)) =
@@ -1635,29 +1616,13 @@ impl Checker {
         else {
             return false;
         };
-        let instantiated = Ty::Func {
-            environment: environment.clone(),
-            params: params.iter().map(|ty| substitute(ty, &subst)).collect(),
-            names: (0..params.len())
+        let instantiated = Ty::Func(Box::new(FuncTy {
+            names: (0..func.params.len())
                 .map(|index| format!("arg{index}"))
                 .collect(),
-            ret: Box::new(substitute(ret, &subst)),
-            required: required.clone(),
-            variadic: variadic.as_ref().map(|ty| Box::new(substitute(ty, &subst))),
-            kw_variadic: kw_variadic
-                .as_ref()
-                .map(|ty| Box::new(substitute(ty, &subst))),
-            positional_only: *positional_only,
-            keyword_only: *keyword_only,
-            raises: *raises,
-            error: error
-                .as_ref()
-                .map(|error| Box::new(substitute(error, &subst))),
-            conventions: conventions.clone(),
-            ref_params: ref_params.clone(),
-            ref_return: ref_return.clone(),
             transfers: TransferSet::default(),
-        };
+            ..func.map_types(|ty| substitute(ty, &subst))
+        }));
         coerces(&instantiated, to)
     }
 
@@ -1680,7 +1645,7 @@ impl Checker {
     /// conformance; merely defining a shape-compatible `__call__` is not enough.
     fn declared_callable_contract(&self, actual: &Ty) -> Option<Ty> {
         match actual {
-            Ty::Func { .. } => Some(actual.clone()),
+            Ty::Func(_) => Some(actual.clone()),
             Ty::Param {
                 callable_bound: Some(bound),
                 ..
@@ -1693,7 +1658,7 @@ impl Checker {
             // A generic function has a callable identity only for a matching
             // generic anonymous contract. `callable_bound_accepts` rejects it
             // when the required contract is monomorphic.
-            Ty::GenericFunc { .. } => Some(actual.clone()),
+            Ty::GenericFunc(_) => Some(actual.clone()),
             // An overload set has no unique callable identity.
             Ty::Overload(_) => None,
             _ => None,
@@ -2961,7 +2926,7 @@ struct CallableOriginParam {
 }
 
 /// One source compile-time parameter in a callable declaration. `Origin`
-/// parameters are erased from `Ty::GenericFunc::decls`, so retaining this
+/// parameters are erased from `GenericFuncTy::decls`, so retaining this
 /// ordered layout is necessary to split a mixed specialization such as
 /// `borrow[Int, origin_of(value)]` without shifting the ordinary type argument.
 #[derive(Clone, serde::Serialize, serde::Deserialize)]
@@ -3143,8 +3108,7 @@ mod dependent_callable_signature_tests {
                     .expect("an Int is a constant"),
             )
             .expect("Int + Int builds");
-        Ty::GenericFunc {
-            environment: mojito_types::origin::CallableEnvironment::Thin,
+        Ty::GenericFunc(Box::new(GenericFuncTy {
             decls: vec![ParamDecl::Value {
                 id: ParamId::new(&format!("$contract:{binder}"), 0),
                 name: binder.to_string(),
@@ -3155,30 +3119,33 @@ mod dependent_callable_signature_tests {
                 variadic: false,
                 constraints: Vec::new(),
             }],
-            params: vec![DependentType::resolve(
-                context
-                    .select(vec![Ty::Int, Ty::StringLiteral], &index)
-                    .expect("an Int index selects"),
-            )],
-            names: vec!["element".to_string()],
-            ret: Box::new(Ty::None),
-            required: vec![true],
-            variadic: None,
-            kw_variadic: None,
-            positional_only: None,
-            keyword_only: None,
-            raises: false,
-            error: None,
-            conventions: vec![Some(ArgConvention::Var)],
-            ref_params: Box::new(vec![None]),
-            ref_return: None,
-            transfers: TransferSet::default(),
-        }
+            func: FuncTy {
+                environment: mojito_types::origin::CallableEnvironment::Thin,
+                params: vec![DependentType::resolve(
+                    context
+                        .select(vec![Ty::Int, Ty::StringLiteral], &index)
+                        .expect("an Int index selects"),
+                )],
+                names: vec!["element".to_string()],
+                ret: Box::new(Ty::None),
+                required: vec![true],
+                variadic: None,
+                kw_variadic: None,
+                positional_only: None,
+                keyword_only: None,
+                raises: false,
+                error: None,
+                conventions: vec![Some(ArgConvention::Var)],
+                ref_params: vec![None],
+                ref_return: None,
+                transfers: TransferSet::default(),
+            },
+        }))
     }
 
     fn callable_with_parameter_role(role: mojito_ast::ast::ParamKind) -> Ty {
         let mut callable = indexed_callable("index", 0);
-        let Ty::GenericFunc {
+        let Some(FuncTy {
             params,
             names,
             required,
@@ -3187,7 +3154,7 @@ mod dependent_callable_signature_tests {
             conventions,
             ref_params,
             ..
-        } = &mut callable
+        }) = callable.callable_mut()
         else {
             unreachable!("indexed_callable constructs a generic function")
         };

@@ -581,12 +581,18 @@ pub(super) fn loan_accesses(
         } => {
             let mut positional = arg_places.clone();
             let keyword = if *value_keyword {
-                vec![value_place.clone()]
+                vec![value_place.as_deref().cloned()]
             } else {
-                positional.push(value_place.clone());
+                positional.push(value_place.as_deref().cloned());
                 Vec::new()
             };
-            subscript_accesses(call, receiver_place.as_ref(), &positional, &keyword, *value)
+            subscript_accesses(
+                call,
+                receiver_place.as_deref(),
+                &positional,
+                &keyword,
+                *value,
+            )
         }
         MirInstr::Index {
             dest,
@@ -598,15 +604,16 @@ pub(super) fn loan_accesses(
             if let Some(call) = call {
                 subscript_accesses(
                     call,
-                    base_place.as_ref(),
-                    std::slice::from_ref(index_place),
+                    base_place.as_deref(),
+                    &[index_place.as_deref().cloned()],
                     &[],
                     *dest,
                 )
             } else {
                 base_place
-                    .iter()
-                    .chain(index_place.iter())
+                    .as_deref()
+                    .into_iter()
+                    .chain(index_place.as_deref())
                     .cloned()
                     .map(|place| (place, LoanAccess::Read, span_for(*dest)))
                     .collect()
@@ -627,10 +634,11 @@ pub(super) fn loan_accesses(
             ..
         } => {
             if let Some(call) = call {
-                subscript_accesses(call, object_place.as_ref(), arg_places, &[], *dest)
+                subscript_accesses(call, object_place.as_deref(), arg_places, &[], *dest)
             } else {
                 object_place
-                    .iter()
+                    .as_deref()
+                    .into_iter()
                     .chain(arg_places.iter().flatten())
                     .cloned()
                     .map(|place| (place, LoanAccess::Read, span_for(*dest)))
@@ -735,7 +743,8 @@ pub(super) fn loan_accesses(
             ..
         } => {
             let mut accesses = callee_place
-                .iter()
+                .as_deref()
+                .into_iter()
                 .chain(arg_places.iter().flatten())
                 .chain(kwarg_places.iter().flatten())
                 .cloned()
@@ -773,7 +782,8 @@ pub(super) fn loan_accesses(
                 None => LoanAccess::Write,
             };
             let mut accesses = recv_place
-                .iter()
+                .as_deref()
+                .into_iter()
                 .cloned()
                 .map(|place| (place, receiver_access, span_for(*dest)))
                 .chain(

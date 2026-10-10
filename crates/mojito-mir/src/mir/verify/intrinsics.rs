@@ -3,6 +3,7 @@
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
+use mojito_types::types::{FuncTy, GenericFuncTy};
 
 pub(super) fn verify_intrinsic_index(
     prefix: &str,
@@ -112,24 +113,27 @@ pub(in crate::mir) fn instantiate_generic_callable_contract(
     contract: &Ty,
     arguments: &[TyArg],
 ) -> Result<Ty, String> {
-    let Ty::GenericFunc {
-        environment,
+    let Some(GenericFuncTy {
         decls,
-        params,
-        names,
-        ret,
-        required,
-        variadic,
-        kw_variadic,
-        positional_only,
-        keyword_only,
-        raises,
-        error,
-        conventions,
-        ref_params,
-        ref_return,
-        transfers,
-    } = contract
+        func:
+            FuncTy {
+                environment,
+                params,
+                names,
+                ret,
+                required,
+                variadic,
+                kw_variadic,
+                positional_only,
+                keyword_only,
+                raises,
+                error,
+                conventions,
+                ref_params,
+                ref_return,
+                transfers,
+            },
+    }) = contract.as_generic_func()
     else {
         return Err("retained contract is not generic".to_string());
     };
@@ -165,7 +169,7 @@ pub(in crate::mir) fn instantiate_generic_callable_contract(
             &bound,
         )
     };
-    let instantiated = Ty::Func {
+    let instantiated = Ty::Func(Box::new(FuncTy {
         environment: environment.clone(),
         params: params
             .iter()
@@ -193,7 +197,7 @@ pub(in crate::mir) fn instantiate_generic_callable_contract(
         ref_params: ref_params.clone(),
         ref_return: ref_return.clone(),
         transfers: transfers.clone(),
-    };
+    }));
     validate_dependent_bindings(&instantiated)?;
     Ok(instantiated)
 }
@@ -249,14 +253,14 @@ pub(super) fn verify_callable_contract_call(
     prefix: &str,
     function: &MirFunction,
     contract: &Ty,
-    call_raises: &Option<Ty>,
+    call_raises: Option<&Ty>,
     dest: Reg,
     args: &[Reg],
     kwargs: &[(String, Reg)],
     arg_places: &[Option<MirPlace>],
     errors: &mut Vec<String>,
 ) {
-    let (Ty::Func {
+    let Some(FuncTy {
         params,
         ret,
         required,
@@ -267,19 +271,7 @@ pub(super) fn verify_callable_contract_call(
         raises,
         error,
         ..
-    }
-    | Ty::GenericFunc {
-        params,
-        ret,
-        required,
-        variadic,
-        kw_variadic,
-        conventions,
-        ref_return,
-        raises,
-        error,
-        ..
-    }) = contract
+    }) = contract.callable()
     else {
         return;
     };

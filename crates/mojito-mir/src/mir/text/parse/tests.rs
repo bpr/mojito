@@ -1,7 +1,7 @@
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 use crate::mir::text::write;
-use mojito_types::types::{LaneMask, VariantIndex};
+use mojito_types::types::{FuncTy, GenericFuncTy, LaneMask, VariantIndex};
 
 fn int_parameter(owner: &str, slot: usize, name: &str) -> ParamExpr {
     ParamContext::detached().decl_ref(ParamId::new(owner, slot), name, MetaTy::int())
@@ -107,7 +107,7 @@ fn type_families_reprint_byte_identically() {
             access: CaptureAccess::Read,
         },
     ]));
-    let func_ty = Ty::Func {
+    let func_ty = Ty::Func(Box::new(FuncTy {
         environment: capturing,
         params: vec![Ty::Int],
         names: vec!["value".into()],
@@ -120,13 +120,13 @@ fn type_families_reprint_byte_identically() {
         raises: true,
         error: Some(Box::new(Ty::Error)),
         conventions: vec![Some(mojito_ast::ast::ArgConvention::Mut)],
-        ref_params: Box::new(vec![Some(RefSig {
+        ref_params: vec![Some(RefSig {
             origin: SigOrigin::Projected(
                 Box::new(SigOrigin::Param(0)),
                 vec![OriginSeg::Interior("element".into())],
             ),
             mutability: SigMutability::BoolParam(1),
-        })]),
+        })],
         ref_return: Some(Box::new(RefSig {
             origin: SigOrigin::Union(vec![SigOrigin::Self_, SigOrigin::Static]),
             mutability: SigMutability::Infer,
@@ -137,9 +137,8 @@ fn type_families_reprint_byte_identically() {
             src_is_place: true,
             mutable: false,
         }]),
-    };
-    let generic_ty = Ty::GenericFunc {
-        environment: CallableEnvironment::Thin,
+    }));
+    let generic_ty = Ty::GenericFunc(Box::new(GenericFuncTy {
         decls: vec![
             ParamDecl::Type {
                 id: test_id("T"),
@@ -219,21 +218,24 @@ fn type_families_reprint_byte_identically() {
                 constraints: Vec::new(),
             },
         ],
-        params: Vec::new(),
-        names: Vec::new(),
-        ret: Box::new(Ty::None),
-        required: Vec::new(),
-        variadic: None,
-        kw_variadic: Some(Box::new(Ty::Int)),
-        positional_only: None,
-        keyword_only: Some(0),
-        raises: false,
-        error: None,
-        conventions: Vec::new(),
-        ref_params: Box::new(vec![None]),
-        ref_return: None,
-        transfers: TransferSet(Vec::new()),
-    };
+        func: FuncTy {
+            environment: CallableEnvironment::Thin,
+            params: Vec::new(),
+            names: Vec::new(),
+            ret: Box::new(Ty::None),
+            required: Vec::new(),
+            variadic: None,
+            kw_variadic: Some(Box::new(Ty::Int)),
+            positional_only: None,
+            keyword_only: Some(0),
+            raises: false,
+            error: None,
+            conventions: Vec::new(),
+            ref_params: vec![None],
+            ref_return: None,
+            transfers: TransferSet(Vec::new()),
+        },
+    }));
     let struct_ty = Ty::Struct(
         "Fancy".into(),
         vec![
@@ -821,7 +823,7 @@ fn instruction_families_reprint_byte_identically() {
         MirInstr::Call {
             dest: Reg(10),
             func: FuncRef("std::print".into()),
-            raises: Some(Ty::Error),
+            raises: Some(Box::new(Ty::Error)),
             args: vec![Reg(1), Reg(2)],
             kwargs: vec![("sep".into(), Reg(3))],
             arg_places: vec![None, Some(place(1))],
@@ -848,7 +850,7 @@ fn instruction_families_reprint_byte_identically() {
             raises: None,
             args: vec![Reg(1)],
             kwargs: Vec::new(),
-            callee_place: Some(place(3)),
+            callee_place: Some(Box::new(place(3))),
             arg_places: vec![None],
             kwarg_places: Vec::new(),
             capture_accesses: Vec::new(),
@@ -863,7 +865,7 @@ fn instruction_families_reprint_byte_identically() {
                 variadic: false,
                 constraints: Vec::new(),
             }],
-            instantiated_contract: Some(Ty::Func {
+            instantiated_contract: Some(Box::new(Ty::Func(Box::new(FuncTy {
                 environment: CallableEnvironment::Default,
                 params: vec![Ty::Int],
                 names: vec!["x".into()],
@@ -876,10 +878,10 @@ fn instruction_families_reprint_byte_identically() {
                 raises: false,
                 error: None,
                 conventions: vec![None],
-                ref_params: Box::new(vec![None]),
+                ref_params: vec![None],
                 ref_return: None,
                 transfers: TransferSet(Vec::new()),
-            }),
+            })))),
             instantiated_args: vec![TyArg::Ty(Ty::Int)],
             spread: None,
         },
@@ -889,15 +891,15 @@ fn instruction_families_reprint_byte_identically() {
             method: "append".into(),
             resolved: Some("List::append".into()),
             raises: None,
-            reference_result: Some(RefTy {
+            reference_result: Some(Box::new(RefTy {
                 referent: Box::new(Ty::Int),
                 origin: Origin::Static,
                 mutability: Mutability::Param(OriginParamId(0)),
-            }),
+            })),
             result_adapter: Some(CheckedResultAdapter::CopyIteratorReference),
             args: vec![Reg(4)],
             kwargs: vec![("count".into(), Reg(5))],
-            recv_place: Some(place(0)),
+            recv_place: Some(Box::new(place(0))),
             recv_writes: true,
             arg_places: vec![Some(place(1))],
             kwarg_places: vec![None],
@@ -946,9 +948,9 @@ fn instruction_families_reprint_byte_identically() {
             dest: Reg(20),
             base: Reg(0),
             index: Reg(1),
-            base_place: Some(place(0)),
+            base_place: Some(Box::new(place(0))),
             index_place: None,
-            call: Some(sample_subscript_call()),
+            call: Some(Box::new(sample_subscript_call())),
             intrinsic: None,
         },
         MirInstr::Index {
@@ -967,9 +969,9 @@ fn instruction_families_reprint_byte_identically() {
             lower: Some(Reg(1)),
             upper: None,
             step: Some(Reg(2)),
-            object_place: Some(place(0)),
+            object_place: Some(Box::new(place(0))),
             arg_places: vec![None, Some(place(1))],
-            call: Some(sample_subscript_call()),
+            call: Some(Box::new(sample_subscript_call())),
             intrinsic: Some(MirIntrinsicSubscript::Simd),
         },
         MirInstr::MultiIndex {
@@ -984,21 +986,21 @@ fn instruction_families_reprint_byte_identically() {
                     step: None,
                 },
             ],
-            object_place: Some(place(0)),
+            object_place: Some(Box::new(place(0))),
             arg_places: vec![None],
             kwargs: vec![("byte".into(), MirSubscriptArg::Index(Reg(4)))],
             kwarg_places: vec![Some(place(1))],
-            call: Some(sample_subscript_call()),
+            call: Some(Box::new(sample_subscript_call())),
         },
         MirInstr::MultiSet {
             receiver: Reg(0),
-            receiver_place: Some(place(0)),
+            receiver_place: Some(Box::new(place(0))),
             args: vec![MirSubscriptArg::Index(Reg(1))],
             arg_places: vec![None],
             value: Reg(2),
-            value_place: Some(place(2)),
+            value_place: Some(Box::new(place(2))),
             value_keyword: true,
-            call: sample_subscript_call(),
+            call: Box::new(sample_subscript_call()),
         },
         MirInstr::Store {
             place: place(0),
@@ -1151,7 +1153,7 @@ fn instruction_families_reprint_byte_identically() {
             dest: Reg(41),
             yielded: Reg(42),
             iter: 1,
-            call: sample_iterator_call(),
+            call: Box::new(sample_iterator_call()),
             exhaustion: Ty::Struct("StopIteration".into(), Vec::new().into()),
         },
     ];
@@ -1754,7 +1756,11 @@ fn param_expr_mir_round_trip() {
         "ct_expr(param_expr { op: add, type: meta_value(Int), operands: [param_constant(ct_int(1)), \
          param_decl_ref { owner: \"f\", slot: 0, name: n, type: meta_value(Int) }] })",
     ));
-    let Ty::GenericFunc { params, .. } = &reordered else {
+    let Some(GenericFuncTy {
+        func: FuncTy { params, .. },
+        ..
+    }) = reordered.as_generic_func()
+    else {
         panic!("a generic callable")
     };
     assert_eq!(
@@ -1766,7 +1772,11 @@ fn param_expr_mir_round_trip() {
     // and the old tree becomes the canonical graph (`1 + n` is `n + 1`).
     let legacy = |size: &str| only_register_type(&sized_callable_text("1.0", size));
     let translated = legacy("ct_param(n)");
-    let Ty::GenericFunc { params, .. } = &translated else {
+    let Some(GenericFuncTy {
+        func: FuncTy { params, .. },
+        ..
+    }) = translated.as_generic_func()
+    else {
         panic!("a generic callable")
     };
     let Ty::Struct(_, arguments) = &params[0] else {
@@ -1778,7 +1788,12 @@ fn param_expr_mir_round_trip() {
     assert_eq!(reference.meta(), &MetaTy::int());
     assert_eq!(reference.to_string(), "n");
     // A 1.0 name no value parameter declares was a deferred callable slot.
-    let Ty::GenericFunc { params, .. } = legacy("ct_param(callback)") else {
+    let callback = legacy("ct_param(callback)");
+    let Some(GenericFuncTy {
+        func: FuncTy { params, .. },
+        ..
+    }) = callback.as_generic_func()
+    else {
         panic!("a generic callable")
     };
     assert_eq!(
@@ -2165,7 +2180,7 @@ fn static_call_receivers_round_trip_and_read_from_older_artifacts() {
                     kwarg_places: Vec::new(),
                     capture_accesses: Vec::new(),
                     param_arg_regs: Vec::new(),
-                    receiver,
+                    receiver: receiver.map(Box::new),
                     instantiated_args: Vec::new(),
                     spread: None,
                 }],
@@ -2181,7 +2196,10 @@ fn static_call_receivers_round_trip_and_read_from_older_artifacts() {
     };
     let program = call(Some(receiver.clone()));
     assert_reprints(&program);
-    assert_eq!(recorded(&write::program(&program)), Some(receiver));
+    assert_eq!(
+        recorded(&write::program(&program)),
+        Some(Box::new(receiver))
+    );
 
     let older = write::program(&call(None))
         .replacen("mojito-mir 1.10", "mojito-mir 1.7", 1)
@@ -2195,8 +2213,7 @@ fn static_call_receivers_round_trip_and_read_from_older_artifacts() {
 /// which is the binder of that spelling in the declaring parameter list.
 #[test]
 fn constraint_binders_round_trip_and_read_from_older_artifacts() {
-    let generic = Ty::GenericFunc {
-        environment: CallableEnvironment::Thin,
+    let generic = Ty::GenericFunc(Box::new(GenericFuncTy {
         decls: vec![
             ParamDecl::Type {
                 id: test_id("T"),
@@ -2230,21 +2247,24 @@ fn constraint_binders_round_trip_and_read_from_older_artifacts() {
                 ],
             },
         ],
-        params: Vec::new(),
-        names: Vec::new(),
-        ret: Box::new(Ty::None),
-        required: Vec::new(),
-        variadic: None,
-        kw_variadic: None,
-        positional_only: None,
-        keyword_only: None,
-        raises: false,
-        error: None,
-        conventions: Vec::new(),
-        ref_params: Box::new(Vec::new()),
-        ref_return: None,
-        transfers: TransferSet(Vec::new()),
-    };
+        func: FuncTy {
+            environment: CallableEnvironment::Thin,
+            params: Vec::new(),
+            names: Vec::new(),
+            ret: Box::new(Ty::None),
+            required: Vec::new(),
+            variadic: None,
+            kw_variadic: None,
+            positional_only: None,
+            keyword_only: None,
+            raises: false,
+            error: None,
+            conventions: Vec::new(),
+            ref_params: Vec::new(),
+            ref_return: None,
+            transfers: TransferSet(Vec::new()),
+        },
+    }));
     let program = program_with(vec![(
         "main".into(),
         function_with(vec![generic], Vec::new()),
@@ -2254,7 +2274,7 @@ fn constraint_binders_round_trip_and_read_from_older_artifacts() {
     let read_decls = |text: &str| {
         let parsed = artifact(text.as_bytes(), "unit.mir".to_string()).expect("parse artifact");
         match &parsed.program.functions[0].1.reg_types[&0] {
-            Ty::GenericFunc { decls, .. } => decls.clone(),
+            Ty::GenericFunc(generic) => generic.decls.clone(),
             other => panic!("expected a generic function type, read {other}"),
         }
     };

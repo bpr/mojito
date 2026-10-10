@@ -124,7 +124,7 @@ impl LayoutCx<'_> {
             // A retained callable is the two-word `{ invoke: ptr, env: ptr }`
             // value; the environment record it points at is frame-local
             // storage of its creating `MakeClosure`, not part of the value.
-            Ty::Func { .. } => Ok(compose(&[self.pointer(), self.pointer()]).layout),
+            Ty::Func(_) => Ok(compose(&[self.pointer(), self.pointer()]).layout),
             Ty::Simd { dtype, width } => {
                 let (Some(dtype), Some(width)) = (dtype.known(), width.known()) else {
                     return Err(LayoutError::Symbolic(ty.to_string()));

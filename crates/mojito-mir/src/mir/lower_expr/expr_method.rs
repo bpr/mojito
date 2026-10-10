@@ -164,14 +164,14 @@ impl Flatten<'_> {
         self.emit(MirInstr::Call {
             dest,
             func: FuncRef::named(target),
-            raises: self.checked_raises(e),
+            raises: self.checked_raises(e).map(Box::new),
             args: regs,
             kwargs: kw,
             arg_places,
             kwarg_places,
             capture_accesses: self.checked_call_capture_accesses(e),
             param_arg_regs,
-            receiver,
+            receiver: receiver.map(Box::new),
             instantiated_args,
             spread: spread_position(args).map(|position| position + usize::from(leading.is_some())),
         });
@@ -291,7 +291,7 @@ impl Flatten<'_> {
                 result_adapter: None,
                 args: regs,
                 kwargs: Vec::new(),
-                recv_place,
+                recv_place: recv_place.map(Box::new),
                 recv_writes: true,
                 arg_places,
                 kwarg_places: Vec::new(),
@@ -344,7 +344,7 @@ impl Flatten<'_> {
                 result_adapter: None,
                 args: vec![repr],
                 kwargs: Vec::new(),
-                recv_place,
+                recv_place: recv_place.map(Box::new),
                 recv_writes: true,
                 arg_places: vec![None],
                 kwarg_places: Vec::new(),
@@ -797,10 +797,11 @@ impl Flatten<'_> {
             recv,
             method: method.to_owned(),
             resolved: self.resolved_callable(e),
-            raises: self.checked_raises(e),
-            reference_result: self
+            raises: self.checked_raises(e).map(Box::new),
+            reference_result: (self
                 .checked_call_contract(e)
-                .and_then(|contract| contract.reference_result),
+                .and_then(|contract| contract.reference_result))
+            .map(Box::new),
             result_adapter: self
                 .checked_call_contract(e)
                 .and_then(|contract| contract.result_adapter),
@@ -814,7 +815,7 @@ impl Flatten<'_> {
             recv_place: if implicitly_copied_receiver {
                 None
             } else {
-                recv_place
+                recv_place.map(Box::new)
             },
             recv_writes: self.receiver_writes(e),
             arg_places,

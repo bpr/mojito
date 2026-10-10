@@ -5,6 +5,7 @@
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 pub use mojito_types::types::canonical_generic_signature;
+use mojito_types::types::{FuncTy, GenericFuncTy};
 
 /// Whether control can leave the owned iterator before exhaustion. A `break`
 /// belongs to the nearest loop, while return/raise escape through every nested
@@ -231,8 +232,14 @@ pub(super) fn canonical_generic_parameter_shape(
 
 pub(super) const fn callable_parameter_count(ty: &Ty) -> Option<usize> {
     match ty {
-        Ty::Func { params, .. } => Some(params.len()),
-        Ty::GenericFunc { params, .. } => Some(params.len()),
+        Ty::Func(func) => Some(func.params.len()),
+        Ty::GenericFunc(generic) => {
+            let GenericFuncTy {
+                func: FuncTy { params, .. },
+                ..
+            } = &**generic;
+            Some(params.len())
+        }
         _ => None,
     }
 }
@@ -295,38 +302,23 @@ pub(super) fn same_callable_signature(a: &Ty, b: &Ty) -> bool {
             == mojito_symbol::symbol::VariadicKey::from_callable(b)
                 .map(|collector| collector.position())
         && match (a, b) {
-            (
-                Ty::Func {
-                    params: ap,
-                    variadic: av,
-                    kw_variadic: akw,
-                    ..
-                },
-                Ty::Func {
-                    params: bp,
-                    variadic: bv,
-                    kw_variadic: bkw,
-                    ..
-                },
-            ) => symbol_equivalent_params(ap, bp) && av == bv && akw == bkw,
-            (
-                Ty::GenericFunc {
-                    decls: ad,
-                    params: ap,
-                    variadic: av,
-                    kw_variadic: akw,
-                    ..
-                },
-                Ty::GenericFunc {
-                    decls: bd,
-                    params: bp,
-                    variadic: bv,
-                    kw_variadic: bkw,
-                    ..
-                },
-            ) => {
-                canonical_generic_parameter_shape(ad, ap, av.as_deref(), akw.as_deref())
-                    == canonical_generic_parameter_shape(bd, bp, bv.as_deref(), bkw.as_deref())
+            (Ty::Func(a), Ty::Func(b)) => {
+                symbol_equivalent_params(&a.params, &b.params)
+                    && a.variadic == b.variadic
+                    && a.kw_variadic == b.kw_variadic
+            }
+            (Ty::GenericFunc(a), Ty::GenericFunc(b)) => {
+                canonical_generic_parameter_shape(
+                    &a.decls,
+                    &a.params,
+                    a.variadic.as_deref(),
+                    a.kw_variadic.as_deref(),
+                ) == canonical_generic_parameter_shape(
+                    &b.decls,
+                    &b.params,
+                    b.variadic.as_deref(),
+                    b.kw_variadic.as_deref(),
+                )
             }
             _ => false,
         }
@@ -393,25 +385,14 @@ pub(super) fn place_has_index(expr: &Expr) -> bool {
 /// overloaded free-function call — formatted by the canonical symbol module so
 /// it names exactly the `MirFunction` the MIR emits for that definition.
 pub(super) fn callable_lowered_name(name: &str, ty: &Ty) -> Option<String> {
-    let (Ty::Func {
+    let FuncTy {
         params,
         names,
         variadic,
         kw_variadic,
         conventions,
         ..
-    }
-    | Ty::GenericFunc {
-        params,
-        names,
-        variadic,
-        kw_variadic,
-        conventions,
-        ..
-    }) = ty
-    else {
-        return None;
-    };
+    } = ty.callable()?;
     // Declaration order, as the definition side spells it: every regular
     // parameter after the collector is keyword-only.
     let collector_position = mojito_symbol::symbol::VariadicKey::from_callable(ty)
@@ -628,15 +609,12 @@ pub(super) fn with_transfer_effects(
     mut callable: Ty,
     effects: &[mojito_checked::checked::TransferEffect],
 ) -> Ty {
-    match &mut callable {
-        Ty::Func { transfers, .. } | Ty::GenericFunc { transfers, .. } => {
-            for effect in effects {
-                if !transfers.0.contains(effect) {
-                    transfers.0.push(effect.clone());
-                }
+    if let Some(FuncTy { transfers, .. }) = callable.callable_mut() {
+        for effect in effects {
+            if !transfers.0.contains(effect) {
+                transfers.0.push(effect.clone());
             }
         }
-        _ => {}
     }
     callable
 }
@@ -644,26 +622,17 @@ pub(super) fn with_transfer_effects(
 /// The transfer effects carried by a callable value's checked type (empty
 /// for non-callables and for contracts that never had effects baked).
 pub(super) fn contract_transfer_effects(ty: &Ty) -> &[mojito_checked::checked::TransferEffect] {
-    match callable_contract_ty(ty) {
-        Some(Ty::Func { transfers, .. } | Ty::GenericFunc { transfers, .. }) => &transfers.0,
-        _ => &[],
-    }
+    callable_contract_ty(ty)
+        .and_then(Ty::callable)
+        .map_or(&[], |func| &func.transfers.0)
 }
 
 pub(super) fn with_callable_environment(
     mut callable: Ty,
     environment: mojito_types::origin::CallableEnvironment,
 ) -> Ty {
-    match &mut callable {
-        Ty::Func {
-            environment: current,
-            ..
-        }
-        | Ty::GenericFunc {
-            environment: current,
-            ..
-        } => *current = environment,
-        _ => {}
+    if let Some(func) = callable.callable_mut() {
+        func.environment = environment;
     }
     callable
 }
@@ -893,13 +862,12 @@ pub(super) fn select_callable_overload(
 
 /// Whether each regular parameter of a callable is owned (`var`).
 pub(super) fn owned_parameters(ty: &Ty) -> Vec<bool> {
-    match ty {
-        Ty::Func { conventions, .. } | Ty::GenericFunc { conventions, .. } => conventions
+    ty.callable().map_or_else(Vec::new, |func| {
+        func.conventions
             .iter()
             .map(|convention| matches!(convention, Some(ArgConvention::Var)))
-            .collect(),
-        _ => Vec::new(),
-    }
+            .collect()
+    })
 }
 
 /// Per regular parameter of `callable`, whether the call's argument for it
@@ -911,7 +879,7 @@ pub(super) fn owned_arguments(
     args: &[Expr],
     kwargs: &[mojito_ast::ast::KwArg],
 ) -> Vec<bool> {
-    let (Ty::Func { names, .. } | Ty::GenericFunc { names, .. }) = callable else {
+    let Some(FuncTy { names, .. }) = callable.callable() else {
         return Vec::new();
     };
     names
@@ -986,9 +954,7 @@ pub(super) fn select_method_overload(
 pub(super) fn overload_candidates(existing: &Ty, new_ty: &Ty) -> Option<Vec<Ty>> {
     callable_parameter_count(new_ty)?;
     match existing {
-        Ty::Func { .. } | Ty::GenericFunc { .. }
-            if callable_parameter_count(existing).is_some() =>
-        {
+        Ty::Func(_) | Ty::GenericFunc(_) if callable_parameter_count(existing).is_some() => {
             Some(vec![existing.clone()])
         }
         Ty::Overload(candidates) => Some(candidates.clone()),

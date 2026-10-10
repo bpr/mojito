@@ -165,7 +165,8 @@ pub fn instruction_operand_regs(instruction: &MirInstr, out: &mut Vec<Reg>) {
             out.extend(kwargs.iter().map(|(_, register)| *register));
             out.extend(param_arg_regs.iter().filter_map(|argument| argument.value));
             for p in callee_place
-                .iter()
+                .as_deref()
+                .into_iter()
                 .chain(arg_places.iter().flatten())
                 .chain(kwarg_places.iter().flatten())
             {
@@ -187,7 +188,8 @@ pub fn instruction_operand_regs(instruction: &MirInstr, out: &mut Vec<Reg>) {
             out.extend(kwargs.iter().map(|(_, register)| *register));
             out.extend(param_arg_regs.iter().filter_map(|argument| argument.value));
             for p in recv_place
-                .iter()
+                .as_deref()
+                .into_iter()
                 .chain(arg_places.iter().flatten())
                 .chain(kwarg_places.iter().flatten())
             {

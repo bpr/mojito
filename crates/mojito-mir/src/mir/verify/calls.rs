@@ -2,6 +2,7 @@
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
+use mojito_types::types::{FuncTy, GenericFuncTy};
 
 pub(super) fn verify_blocks(
     name: &str,
@@ -114,7 +115,7 @@ pub(super) fn verify_call_instruction(
                 && method == "__next__"
                 && reference_result.is_none();
             if let Some(reference) = reference_result {
-                let expected = Ty::Ref(reference.clone());
+                let expected = Ty::Ref((**reference).clone());
                 if cx.function.reg_types.get(&dest.0) != Some(&expected) {
                     errors.push(format!(
                         "{prefix}: method-call reference ABI {expected} does not match its destination type"
@@ -327,7 +328,7 @@ pub(super) fn effective_call_convention_matches(
 
 pub(super) fn generic_callable_decls(ty: &Ty) -> Option<&[mojito_types::types::ParamDecl]> {
     match ty {
-        Ty::GenericFunc { decls, .. } => Some(decls),
+        Ty::GenericFunc(generic) => Some(&generic.decls),
         Ty::Param {
             callable_bound: Some(bound),
             ..
@@ -428,15 +429,20 @@ pub(super) fn validate_dependent_bindings_in(
                     walk(element, bound, frames)?;
                 }
             }
-            Ty::GenericFunc {
-                decls,
-                params,
-                ret,
-                variadic,
-                kw_variadic,
-                error,
-                ..
-            } => {
+            Ty::GenericFunc(generic) => {
+                let GenericFuncTy {
+                    decls,
+                    func:
+                        FuncTy {
+                            params,
+                            ret,
+                            variadic,
+                            kw_variadic,
+                            error,
+                            ..
+                        },
+                } = &**generic;
+
                 let mut signature_scope = bound.clone();
                 frames.push(
                     decls
@@ -486,14 +492,16 @@ pub(super) fn validate_dependent_bindings_in(
                 frames.pop();
                 checked?;
             }
-            Ty::Func {
-                params,
-                ret,
-                variadic,
-                kw_variadic,
-                error,
-                ..
-            } => {
+            Ty::Func(func) => {
+                let FuncTy {
+                    params,
+                    ret,
+                    variadic,
+                    kw_variadic,
+                    error,
+                    ..
+                } = &**func;
+
                 for parameter in params {
                     walk(parameter, bound, frames)?;
                 }
@@ -778,11 +786,11 @@ fn verify_indirect_call(cx: &InstrCx<'_>, instruction: &MirInstr, errors: &mut V
         .and_then(mojito_types::types::callable_contract_ty);
     let mut verified_instantiation = None;
     let contract = match stored_contract {
-        Some(symbolic @ Ty::GenericFunc { .. }) => {
+        Some(symbolic @ Ty::GenericFunc(_)) => {
             if let Some(found) = instantiated_contract {
                 match instantiate_generic_callable_contract(symbolic, instantiated_args) {
                     Ok(expected) => {
-                        if found != &expected {
+                        if **found != expected {
                             errors.push(format!(
                                         "{prefix}: checker-instantiated callable contract does not match its retained generic arguments"
                                     ));
@@ -837,7 +845,7 @@ fn verify_indirect_call(cx: &InstrCx<'_>, instruction: &MirInstr, errors: &mut V
             prefix,
             cx.function,
             contract,
-            raises,
+            raises.as_deref(),
             *dest,
             args,
             kwargs,

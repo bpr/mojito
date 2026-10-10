@@ -19,7 +19,8 @@ use crate::mir::Const;
 use mojito_types::ct::CtValue;
 use mojito_types::param_expr::{MetaTy, ParamExpr, ParamId, ParamKind};
 use mojito_types::types::{
-    ConstraintOperand, DependentType, GenericConstraint, SimdDtype, SimdWidth,
+    ConstraintOperand, DependentType, FuncTy, GenericConstraint, GenericFuncTy, SimdDtype,
+    SimdWidth,
 };
 
 /// The scope and kind findings of one function body.
@@ -96,8 +97,9 @@ pub fn instruction_named_types(instruction: &MirInstr) -> Vec<(&'static str, &Ty
         } => {
             types.extend(
                 raises
-                    .iter()
-                    .chain(receiver.iter())
+                    .as_deref()
+                    .into_iter()
+                    .chain(receiver.as_deref())
                     .map(|ty| ("instruction", ty)),
             );
             types.extend(
@@ -128,8 +130,9 @@ pub fn instruction_named_types(instruction: &MirInstr) -> Vec<(&'static str, &Ty
         } => {
             types.extend(
                 raises
-                    .iter()
-                    .chain(instantiated_contract.iter())
+                    .as_deref()
+                    .into_iter()
+                    .chain(instantiated_contract.as_deref())
                     .map(|ty| ("callable contract", ty)),
             );
             types.extend(
@@ -146,7 +149,7 @@ pub fn instruction_named_types(instruction: &MirInstr) -> Vec<(&'static str, &Ty
             instantiated_args,
             ..
         } => {
-            types.extend(raises.iter().map(|ty| ("error contract", ty)));
+            types.extend(raises.as_deref().map(|ty| ("error contract", ty)));
             types.extend(
                 instantiated_args
                     .iter()
@@ -499,15 +502,20 @@ impl ScopeCx<'_> {
                     .map(|declaration| &declaration.param_decls[..]);
                 self.arguments(role, declared, args, nested);
             }
-            Ty::GenericFunc {
-                decls,
-                params,
-                ret,
-                variadic,
-                kw_variadic,
-                error,
-                ..
-            } => {
+            Ty::GenericFunc(generic) => {
+                let GenericFuncTy {
+                    decls,
+                    func:
+                        FuncTy {
+                            params,
+                            ret,
+                            variadic,
+                            kw_variadic,
+                            error,
+                            ..
+                        },
+                } = &**generic;
+
                 let mark = nested.len();
                 nested.extend(
                     decls
@@ -539,14 +547,16 @@ impl ScopeCx<'_> {
                 }
                 nested.truncate(mark);
             }
-            Ty::Func {
-                params,
-                ret,
-                variadic,
-                kw_variadic,
-                error,
-                ..
-            } => {
+            Ty::Func(func) => {
+                let FuncTy {
+                    params,
+                    ret,
+                    variadic,
+                    kw_variadic,
+                    error,
+                    ..
+                } = &**func;
+
                 for ty in params
                     .iter()
                     .chain(std::iter::once(&**ret))

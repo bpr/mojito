@@ -1016,7 +1016,7 @@ struct MethodInvocation<'a> {
     result_adapter: Option<mojito_checked::checked::CheckedResultAdapter>,
     arguments: Vec<Value>,
     keyword_arguments: Vec<(String, Value)>,
-    receiver_place: &'a Option<MirPlace>,
+    receiver_place: Option<&'a MirPlace>,
     argument_places: &'a [Option<MirPlace>],
     keyword_argument_places: &'a [Option<MirPlace>],
 }

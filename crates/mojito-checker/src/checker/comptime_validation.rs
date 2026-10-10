@@ -1494,10 +1494,10 @@ impl Checker {
             })
             .transpose()?;
         if let ExprKind::Call { name, .. } = &value.kind
-            && matches!(
-                self.lookup(name),
-                Some(Ty::Func { raises: true, .. } | Ty::GenericFunc { raises: true, .. })
-            )
+            && self
+                .lookup(name)
+                .and_then(Ty::callable)
+                .is_some_and(|func| func.raises)
         {
             return Err(TypeError::Unsupported(
                 "cannot call raising function in comptime initializer".to_string(),
@@ -1731,7 +1731,7 @@ impl Checker {
                     ty,
                     callable_default: None,
                     ..
-                } if !matches!(ty.as_ref(), Ty::Func { .. } | Ty::GenericFunc { .. }) => {
+                } if !matches!(ty.as_ref(), Ty::Func(_) | Ty::GenericFunc(_)) => {
                     Some(super::annotations::value_parameter_expr(decl, ty))
                 }
                 ParamDecl::Value { .. } => None,

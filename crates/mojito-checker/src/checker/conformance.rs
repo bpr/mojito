@@ -353,7 +353,7 @@ impl ConformanceOracle {
     /// family.
     pub fn package_function_params(&self, name: &str) -> Option<&[ParamDecl]> {
         match &self.installed()?.binding(name)?.1.ty {
-            Ty::GenericFunc { decls, .. } => Some(decls),
+            Ty::GenericFunc(generic) => Some(&generic.decls),
             _ => None,
         }
     }

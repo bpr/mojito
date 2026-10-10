@@ -1029,7 +1029,7 @@ fn lower_struct_member<P: DeclaredParam>(
                 ty,
                 variadic: false,
                 ..
-            } if !matches!(ty.as_ref(), Ty::Func { .. } | Ty::GenericFunc { .. }) => {
+            } if !matches!(ty.as_ref(), Ty::Func(_) | Ty::GenericFunc(_)) => {
                 Some((name.clone(), (**ty).clone()))
             }
             _ => None,
@@ -1971,7 +1971,7 @@ fn value_parameter_locals(decls: &[ParamDecl]) -> Vec<(String, Ty)> {
         .filter_map(|decl| match decl {
             ParamDecl::Value {
                 name, ty, variadic, ..
-            } if matches!(ty.as_ref(), Ty::Func { .. } | Ty::GenericFunc { .. }) => Some((
+            } if matches!(ty.as_ref(), Ty::Func(_) | Ty::GenericFunc(_)) => Some((
                 name.trim_start_matches('*').to_string(),
                 if *variadic {
                     Ty::VariadicPack(ty.clone())
@@ -4020,7 +4020,7 @@ fn body_parameter_ty<P: DeclaredParam>(parameter: &P, ty: Ty) -> Ty {
 
 fn generic_callable_param_decls(callable: &Ty) -> Vec<ParamDecl> {
     match callable {
-        Ty::GenericFunc { decls, .. } => decls.clone(),
+        Ty::GenericFunc(generic) => generic.decls.clone(),
         Ty::Param {
             callable_bound: Some(bound),
             ..
@@ -4204,34 +4204,8 @@ fn region_error_type(blocks: &[MirBlock], reg_types: &HashMap<u32, Ty>) -> Optio
                         return Some(ty.clone());
                     }
                 }
-                MirInstr::Call {
-                    raises: Some(ty), ..
-                }
-                | MirInstr::CallIndirect {
-                    raises: Some(ty), ..
-                }
-                | MirInstr::MethodCall {
-                    raises: Some(ty), ..
-                } => {
+                instr if let Some(ty) = instr.call_error() => {
                     return Some(ty.clone());
-                }
-                MirInstr::Index {
-                    call: Some(call), ..
-                }
-                | MirInstr::Slice {
-                    call: Some(call), ..
-                }
-                | MirInstr::MultiIndex {
-                    call: Some(call), ..
-                } => {
-                    if let Some(ty) = &call.raises {
-                        return Some(ty.clone());
-                    }
-                }
-                MirInstr::MultiSet { call, .. } => {
-                    if let Some(ty) = &call.raises {
-                        return Some(ty.clone());
-                    }
                 }
                 MirInstr::Try {
                     body,
@@ -4463,7 +4437,7 @@ fn close_register_types(
                             .get(&callee.0)
                             .and_then(mojito_types::types::callable_contract_ty)
                             .and_then(|ty| match ty {
-                                Ty::Func { ret, .. } => Some((**ret).clone()),
+                                Ty::Func(func) => Some((*func.ret).clone()),
                                 _ => None,
                             }),
                     )),
@@ -4759,7 +4733,7 @@ impl EnclosingBinders {
                     variadic: false,
                     callable_default: None,
                     ..
-                } if !matches!(ty.as_ref(), Ty::Func { .. } | Ty::GenericFunc { .. }) => {
+                } if !matches!(ty.as_ref(), Ty::Func(_) | Ty::GenericFunc(_)) => {
                     binders.values.push((declaration.binder(), (**ty).clone()));
                 }
                 // A value pack has no frame local; a thunk reads it through
@@ -4769,7 +4743,7 @@ impl EnclosingBinders {
                     variadic: true,
                     callable_default: None,
                     ..
-                } if !matches!(ty.as_ref(), Ty::Func { .. } | Ty::GenericFunc { .. }) => {}
+                } if !matches!(ty.as_ref(), Ty::Func(_) | Ty::GenericFunc(_)) => {}
                 ParamDecl::Value { .. } => continue,
             }
             binders.declarations.push(declaration.clone());

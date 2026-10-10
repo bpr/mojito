@@ -22,6 +22,7 @@ use mojito_checked::package::{
     DeclarationRecord, DeclarationRecords, DeclaringModules, LoweredDeclaration,
     PackageDeclarations, PackagedModule,
 };
+use mojito_types::types::{FuncTy, GenericFuncTy};
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex, OnceLock};
 
@@ -1362,27 +1363,37 @@ impl ProjectedBinding {
     /// lowered declaration; `None` for any other type.
     fn of(name: &str, ty: &Ty) -> Option<Self> {
         let (generic, environment, ref_params, ref_return, transfers) = match ty {
-            Ty::Func {
-                environment,
-                ref_params,
-                ref_return,
-                transfers,
-                ..
-            } => (false, environment, ref_params, ref_return, transfers),
-            Ty::GenericFunc {
-                environment,
-                ref_params,
-                ref_return,
-                transfers,
-                ..
-            } => (true, environment, ref_params, ref_return, transfers),
+            Ty::Func(func) => {
+                let FuncTy {
+                    environment,
+                    ref_params,
+                    ref_return,
+                    transfers,
+                    ..
+                } = &**func;
+                (false, environment, ref_params, ref_return, transfers)
+            }
+            Ty::GenericFunc(generic) => {
+                let GenericFuncTy {
+                    func:
+                        FuncTy {
+                            environment,
+                            ref_params,
+                            ref_return,
+                            transfers,
+                            ..
+                        },
+                    ..
+                } = &**generic;
+                (true, environment, ref_params, ref_return, transfers)
+            }
             _ => return None,
         };
         Some(Self {
             name: name.to_string(),
             generic,
             environment: environment.clone(),
-            ref_params: ref_params.as_ref().clone(),
+            ref_params: ref_params.clone(),
             ref_return: ref_return.clone(),
             transfers: Some(transfers.clone()),
         })
@@ -1408,26 +1419,28 @@ impl ProjectedBinding {
         let error = declaration.error_ty.clone().map(Box::new);
         let conventions = declaration.param_conventions.clone();
         if self.generic {
-            Ty::GenericFunc {
-                environment: self.environment,
+            Ty::GenericFunc(Box::new(GenericFuncTy {
                 decls: declaration.param_decls.clone(),
-                params,
-                names,
-                ret,
-                required,
-                variadic,
-                kw_variadic,
-                positional_only: declaration.positional_only,
-                keyword_only: declaration.keyword_only,
-                raises: declaration.raises,
-                error,
-                conventions,
-                ref_params: Box::new(self.ref_params),
-                ref_return: self.ref_return,
-                transfers,
-            }
+                func: FuncTy {
+                    environment: self.environment,
+                    params,
+                    names,
+                    ret,
+                    required,
+                    variadic,
+                    kw_variadic,
+                    positional_only: declaration.positional_only,
+                    keyword_only: declaration.keyword_only,
+                    raises: declaration.raises,
+                    error,
+                    conventions,
+                    ref_params: self.ref_params,
+                    ref_return: self.ref_return,
+                    transfers,
+                },
+            }))
         } else {
-            Ty::Func {
+            Ty::Func(Box::new(FuncTy {
                 environment: self.environment,
                 params,
                 names,
@@ -1440,10 +1453,10 @@ impl ProjectedBinding {
                 raises: declaration.raises,
                 error,
                 conventions,
-                ref_params: Box::new(self.ref_params),
+                ref_params: self.ref_params,
                 ref_return: self.ref_return,
                 transfers,
-            }
+            }))
         }
     }
 }

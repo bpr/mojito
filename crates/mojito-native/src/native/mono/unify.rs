@@ -3,7 +3,7 @@
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
-use mojito_types::types::CallableDefault;
+use mojito_types::types::{CallableDefault, FuncTy};
 
 /// A `Some[Trait]` sugar parameter is infer-only and absent from the
 /// declaration's `param_decls`, yet each binding selects a different body
@@ -507,56 +507,61 @@ pub(super) fn unify(pattern: &Ty, actual: &Ty, bindings: &mut Bindings) -> Resul
         // Callable contracts unify on their runtime structure — parameters,
         // return, raising — never on the environment (`thin` vs
         // `capturing[...]`) or origin spellings, which erase from the ABI.
-        Ty::Func {
-            params: p_params,
-            ret: p_ret,
-            required: p_required,
-            variadic: p_variadic,
-            kw_variadic: p_kw_variadic,
-            positional_only: p_positional_only,
-            keyword_only: p_keyword_only,
-            raises: p_raises,
-            error: p_error,
-            ..
-        } => match actual {
-            Ty::Func {
-                params: a_params,
-                ret: a_ret,
-                required: a_required,
-                variadic: a_variadic,
-                kw_variadic: a_kw_variadic,
-                positional_only: a_positional_only,
-                keyword_only: a_keyword_only,
-                raises: a_raises,
-                error: a_error,
+        Ty::Func(func) => {
+            let FuncTy {
+                params: p_params,
+                ret: p_ret,
+                required: p_required,
+                variadic: p_variadic,
+                kw_variadic: p_kw_variadic,
+                positional_only: p_positional_only,
+                keyword_only: p_keyword_only,
+                raises: p_raises,
+                error: p_error,
                 ..
-            } if p_params.len() == a_params.len()
-                && p_required == a_required
-                && p_positional_only == a_positional_only
-                && p_keyword_only == a_keyword_only
-                && p_raises == a_raises =>
-            {
-                let unify_option = |p: &Option<Box<Ty>>,
-                                    a: &Option<Box<Ty>>,
-                                    bindings: &mut Bindings|
-                 -> Result<(), String> {
-                    match (p, a) {
-                        (Some(p), Some(a)) => unify(p, a, bindings),
-                        (None, None) => Ok(()),
-                        _ => Err(format!("expected `{pattern}`, found `{actual}`")),
-                    }
-                };
-                p_params
-                    .iter()
-                    .zip(a_params)
-                    .try_for_each(|(p, a)| unify(p, a, bindings))?;
-                unify(p_ret, a_ret, bindings)?;
-                unify_option(p_variadic, a_variadic, bindings)?;
-                unify_option(p_kw_variadic, a_kw_variadic, bindings)?;
-                unify_option(p_error, a_error, bindings)
+            } = &**func;
+            match actual {
+                Ty::Func(func)
+                    if let FuncTy {
+                        params: a_params,
+                        ret: a_ret,
+                        required: a_required,
+                        variadic: a_variadic,
+                        kw_variadic: a_kw_variadic,
+                        positional_only: a_positional_only,
+                        keyword_only: a_keyword_only,
+                        raises: a_raises,
+                        error: a_error,
+                        ..
+                    } = &**func
+                        && p_params.len() == a_params.len()
+                        && p_required == a_required
+                        && p_positional_only == a_positional_only
+                        && p_keyword_only == a_keyword_only
+                        && p_raises == a_raises =>
+                {
+                    let unify_option = |p: &Option<Box<Ty>>,
+                                        a: &Option<Box<Ty>>,
+                                        bindings: &mut Bindings|
+                     -> Result<(), String> {
+                        match (p, a) {
+                            (Some(p), Some(a)) => unify(p, a, bindings),
+                            (None, None) => Ok(()),
+                            _ => Err(format!("expected `{pattern}`, found `{actual}`")),
+                        }
+                    };
+                    p_params
+                        .iter()
+                        .zip(a_params)
+                        .try_for_each(|(p, a)| unify(p, a, bindings))?;
+                    unify(p_ret, a_ret, bindings)?;
+                    unify_option(p_variadic, a_variadic, bindings)?;
+                    unify_option(p_kw_variadic, a_kw_variadic, bindings)?;
+                    unify_option(p_error, a_error, bindings)
+                }
+                _ => Err(format!("expected `{pattern}`, found `{actual}`")),
             }
-            _ => Err(format!("expected `{pattern}`, found `{actual}`")),
-        },
+        }
         _ if pattern == actual => Ok(()),
         // A type computed from parameters (`Ts[index]`) solves nothing: it
         // closes once the parameters it reads are bound.

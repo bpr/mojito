@@ -281,7 +281,7 @@ impl Flatten<'_> {
                     dest: element,
                     yielded: has_element,
                     iter: *iter,
-                    call: call.clone(),
+                    call: Box::new(call.clone()),
                     exhaustion: exhaustion.clone(),
                 });
                 self.emit(MirInstr::DefVar {
@@ -723,12 +723,12 @@ impl Flatten<'_> {
                 .expect("augmented in-place operator has an in-place dunder")
                 .to_string(),
             resolved: Some(contract.target.clone()),
-            raises: contract.raises.clone(),
-            reference_result: contract.reference_result.clone(),
+            raises: contract.raises.clone().map(Box::new),
+            reference_result: contract.reference_result.clone().map(Box::new),
             result_adapter: contract.result_adapter,
             args: vec![rhs],
             kwargs: Vec::new(),
-            recv_place: Some(MirPlace::root(tmp, Some(operand_ty.clone()))),
+            recv_place: Some(Box::new(MirPlace::root(tmp, Some(operand_ty.clone())))),
             recv_writes: true,
             arg_places: vec![None],
             kwarg_places: Vec::new(),
@@ -785,12 +785,12 @@ impl Flatten<'_> {
             recv,
             method,
             resolved: Some(contract.target.clone()),
-            raises: contract.raises.clone(),
-            reference_result: contract.reference_result.clone(),
+            raises: contract.raises.clone().map(Box::new),
+            reference_result: contract.reference_result.clone().map(Box::new),
             result_adapter: contract.result_adapter,
             args,
             kwargs: Vec::new(),
-            recv_place,
+            recv_place: recv_place.map(Box::new),
             recv_writes: true,
             arg_places,
             kwarg_places: Vec::new(),
@@ -839,9 +839,14 @@ impl Flatten<'_> {
             dest: handle,
             base: receiver,
             index: getter_index,
-            base_place: receiver_place,
-            index_place: Self::checked_call_source_place(&plan.getter, index_source, &index_place),
-            call: Some(getter_call),
+            base_place: receiver_place.map(Box::new),
+            index_place: (Self::checked_call_source_place(
+                &plan.getter,
+                index_source,
+                &index_place,
+            ))
+            .map(Box::new),
+            call: Some(Box::new(getter_call)),
             intrinsic: None,
         });
         let handle = self.peel_reference_handle_to(handle, &plan.operand_ty, &target.source_span());
@@ -908,13 +913,14 @@ impl Flatten<'_> {
                         dest: handle,
                         base: receiver,
                         index: getter_index,
-                        base_place: receiver_place,
-                        index_place: Self::checked_call_source_place(
+                        base_place: receiver_place.map(Box::new),
+                        index_place: (Self::checked_call_source_place(
                             &plan.getter,
                             index_source,
                             &index_place,
-                        ),
-                        call: Some(getter_call),
+                        ))
+                        .map(Box::new),
+                        call: Some(Box::new(getter_call)),
                         intrinsic: None,
                     });
                     let handle = self.peel_reference_handle_to(
@@ -978,13 +984,14 @@ impl Flatten<'_> {
                     dest: current,
                     base: receiver,
                     index: getter_index,
-                    base_place: receiver_place.clone(),
-                    index_place: Self::checked_call_source_place(
+                    base_place: receiver_place.clone().map(Box::new),
+                    index_place: (Self::checked_call_source_place(
                         &plan.getter,
                         index_source,
                         &index_place,
-                    ),
-                    call: Some(getter_call),
+                    ))
+                    .map(Box::new),
+                    call: Some(Box::new(getter_call)),
                     intrinsic: None,
                 });
                 let result = if let Some(inplace) = &plan.inplace {
@@ -1063,7 +1070,7 @@ impl Flatten<'_> {
                 self.emit_checked_call_boundary(setter, &target.source_span());
                 self.emit(MirInstr::MultiSet {
                     receiver: setter_receiver,
-                    receiver_place,
+                    receiver_place: receiver_place.map(Box::new),
                     args: vec![MirSubscriptArg::Index(setter_index)],
                     arg_places: vec![Self::checked_call_source_place(
                         setter,
@@ -1073,7 +1080,7 @@ impl Flatten<'_> {
                     value,
                     value_place: None,
                     value_keyword,
-                    call: setter_call,
+                    call: Box::new(setter_call),
                 });
                 true
             }
@@ -1105,9 +1112,9 @@ impl Flatten<'_> {
                         lower: lower_reg,
                         upper: upper_reg,
                         step: step_reg,
-                        object_place: receiver_place,
+                        object_place: receiver_place.map(Box::new),
                         arg_places: vec![None],
-                        call: Some(getter_call),
+                        call: Some(Box::new(getter_call)),
                         intrinsic: None,
                     });
                     let handle = self.peel_reference_handle_to(
@@ -1162,9 +1169,9 @@ impl Flatten<'_> {
                     lower: lower_reg,
                     upper: upper_reg,
                     step: step_reg,
-                    object_place: receiver_place.clone(),
+                    object_place: receiver_place.clone().map(Box::new),
                     arg_places: vec![None],
-                    call: Some(getter_call),
+                    call: Some(Box::new(getter_call)),
                     intrinsic: None,
                 });
                 let result = if let Some(inplace) = &plan.inplace {
@@ -1229,7 +1236,7 @@ impl Flatten<'_> {
                 self.emit_checked_call_boundary(setter, &target.source_span());
                 self.emit(MirInstr::MultiSet {
                     receiver: setter_receiver,
-                    receiver_place,
+                    receiver_place: receiver_place.map(Box::new),
                     args: vec![MirSubscriptArg::Slice {
                         kind,
                         lower: lower_reg,
@@ -1240,7 +1247,7 @@ impl Flatten<'_> {
                     value,
                     value_place: None,
                     value_keyword,
-                    call: setter_call,
+                    call: Box::new(setter_call),
                 });
                 true
             }
@@ -1353,11 +1360,11 @@ impl Flatten<'_> {
                         dest: handle,
                         object: receiver,
                         args: getter_args,
-                        object_place: receiver_place,
+                        object_place: receiver_place.map(Box::new),
                         arg_places: getter_places,
                         kwargs: Vec::new(),
                         kwarg_places: Vec::new(),
-                        call: Some(getter_call),
+                        call: Some(Box::new(getter_call)),
                     });
                     let handle = self.peel_reference_handle_to(
                         handle,
@@ -1408,11 +1415,11 @@ impl Flatten<'_> {
                     dest: current,
                     object: receiver,
                     args: getter_args,
-                    object_place: receiver_place.clone(),
+                    object_place: receiver_place.clone().map(Box::new),
                     arg_places: getter_places,
                     kwargs: Vec::new(),
                     kwarg_places: Vec::new(),
-                    call: Some(getter_call),
+                    call: Some(Box::new(getter_call)),
                 });
                 let result = if let Some(inplace) = &plan.inplace {
                     self.emit_augmented_inplace(
@@ -1528,13 +1535,13 @@ impl Flatten<'_> {
                 self.emit_checked_call_boundary(setter, &target.source_span());
                 self.emit(MirInstr::MultiSet {
                     receiver: setter_receiver,
-                    receiver_place,
+                    receiver_place: receiver_place.map(Box::new),
                     args: setter_args,
                     arg_places: setter_places,
                     value,
                     value_place: None,
                     value_keyword,
-                    call: setter_call,
+                    call: Box::new(setter_call),
                 });
                 true
             }
@@ -1580,13 +1587,13 @@ impl Flatten<'_> {
             self.emit_interior_invalidations(target, None);
             self.emit(MirInstr::MultiSet {
                 receiver,
-                receiver_place,
+                receiver_place: receiver_place.map(Box::new),
                 args: vec![argument],
                 arg_places: vec![argument_place],
                 value,
-                value_place,
+                value_place: value_place.map(Box::new),
                 value_keyword,
-                call,
+                call: Box::new(call),
             });
             return true;
         }
@@ -1683,13 +1690,13 @@ impl Flatten<'_> {
         self.emit_interior_invalidations(target, None);
         self.emit(MirInstr::MultiSet {
             receiver,
-            receiver_place,
+            receiver_place: receiver_place.map(Box::new),
             args,
             arg_places,
             value,
-            value_place,
+            value_place: value_place.map(Box::new),
             value_keyword,
-            call,
+            call: Box::new(call),
         });
         true
     }
@@ -2714,9 +2721,9 @@ impl Flatten<'_> {
                         dest: raw,
                         base: tuple,
                         index: idx,
-                        base_place: base_place.clone(),
+                        base_place: base_place.clone().map(Box::new),
                         index_place: None,
-                        call,
+                        call: call.map(Box::new),
                         intrinsic,
                     });
                     let elem = if extraction.reference.is_some() {

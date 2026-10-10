@@ -309,7 +309,8 @@ impl Decoder {
             "call" => Some(MirInstr::Call {
                 dest: self.req(value, fields, "dest", Self::reg)?,
                 func: FuncRef(self.req(value, fields, "func", Self::symbol)?),
-                raises: self.req(value, fields, "raises", |d, v| Some(d.option_ty(Some(v))))?,
+                raises: (self.req(value, fields, "raises", |d, v| Some(d.option_ty(Some(v))))?)
+                    .map(Box::new),
                 args: self.req(value, fields, "args", |d, v| Some(d.regs(v)))?,
                 kwargs: self.req(value, fields, "kwargs", |d, v| Some(d.kwargs(v)))?,
                 arg_places: self
@@ -325,10 +326,11 @@ impl Decoder {
                 })?,
                 // Schema 1.8 records the spelled receiver of a static call; an
                 // older artifact carries none.
-                receiver: self
+                receiver: (self
                     .field(fields, "receiver")
                     .ok()
-                    .and_then(|found| self.option_ty(Some(found))),
+                    .and_then(|found| self.option_ty(Some(found))))
+                .map(Box::new),
                 // Schema 1.13 records the solved arguments of a generic
                 // `def` call; an older artifact carries none.
                 instantiated_args: self
@@ -348,12 +350,14 @@ impl Decoder {
                 dest: self.req(value, fields, "dest", Self::reg)?,
                 callee: self.req(value, fields, "callee", Self::reg)?,
                 resolved: self.req(value, fields, "resolved", |d, v| Some(d.option_symbol(v)))?,
-                raises: self.req(value, fields, "raises", |d, v| Some(d.option_ty(Some(v))))?,
+                raises: (self.req(value, fields, "raises", |d, v| Some(d.option_ty(Some(v))))?)
+                    .map(Box::new),
                 args: self.req(value, fields, "args", |d, v| Some(d.regs(v)))?,
                 kwargs: self.req(value, fields, "kwargs", |d, v| Some(d.kwargs(v)))?,
-                callee_place: self.req(value, fields, "callee_place", |d, v| {
+                callee_place: (self.req(value, fields, "callee_place", |d, v| {
                     Some(d.option_place(v))
-                })?,
+                })?)
+                .map(Box::new),
                 arg_places: self
                     .req(value, fields, "arg_places", |d, v| Some(d.places_option(v)))?,
                 kwarg_places: self.req(value, fields, "kwarg_places", |d, v| {
@@ -367,12 +371,13 @@ impl Decoder {
                 })?,
                 param_decls: self
                     .req(value, fields, "param_decls", |d, v| Some(d.param_decls(v)))?,
-                instantiated_contract: self.req(
+                instantiated_contract: (self.req(
                     value,
                     fields,
                     "instantiated_contract",
                     |d, v| Some(d.option_ty(Some(v))),
-                )?,
+                )?)
+                .map(Box::new),
                 instantiated_args: self.req(value, fields, "instantiated_args", |d, v| {
                     Some(d.ty_args(v))
                 })?,
@@ -389,17 +394,20 @@ impl Decoder {
                 recv: self.req(value, fields, "recv", Self::reg)?,
                 method: self.req(value, fields, "method", Self::symbol)?,
                 resolved: self.req(value, fields, "resolved", |d, v| Some(d.option_symbol(v)))?,
-                raises: self.req(value, fields, "raises", |d, v| Some(d.option_ty(Some(v))))?,
-                reference_result: self.req(value, fields, "reference_result", |d, v| {
+                raises: (self.req(value, fields, "raises", |d, v| Some(d.option_ty(Some(v))))?)
+                    .map(Box::new),
+                reference_result: (self.req(value, fields, "reference_result", |d, v| {
                     Some(d.option_value(Some(v)).and_then(|v| d.ref_ty(v)))
-                })?,
+                })?)
+                .map(Box::new),
                 result_adapter: self.req(value, fields, "result_adapter", |d, v| {
                     Some(d.option_value(Some(v)).and_then(|v| d.result_adapter(v)))
                 })?,
                 args: self.req(value, fields, "args", |d, v| Some(d.regs(v)))?,
                 kwargs: self.req(value, fields, "kwargs", |d, v| Some(d.kwargs(v)))?,
-                recv_place: self
-                    .req(value, fields, "recv_place", |d, v| Some(d.option_place(v)))?,
+                recv_place: (self
+                    .req(value, fields, "recv_place", |d, v| Some(d.option_place(v)))?)
+                .map(Box::new),
                 recv_writes: self.req(value, fields, "recv_writes", Self::boolean)?,
                 arg_places: self
                     .req(value, fields, "arg_places", |d, v| Some(d.places_option(v)))?,
@@ -481,13 +489,16 @@ impl Decoder {
                 dest: self.req(value, fields, "dest", Self::reg)?,
                 base: self.req(value, fields, "base", Self::reg)?,
                 index: self.req(value, fields, "index", Self::reg)?,
-                base_place: self
-                    .req(value, fields, "base_place", |d, v| Some(d.option_place(v)))?,
-                index_place: self
-                    .req(value, fields, "index_place", |d, v| Some(d.option_place(v)))?,
-                call: self.req(value, fields, "call", |d, v| {
+                base_place: (self
+                    .req(value, fields, "base_place", |d, v| Some(d.option_place(v)))?)
+                .map(Box::new),
+                index_place: (self
+                    .req(value, fields, "index_place", |d, v| Some(d.option_place(v)))?)
+                .map(Box::new),
+                call: (self.req(value, fields, "call", |d, v| {
                     Some(d.option_value(Some(v)).and_then(|v| d.subscript_call(v)))
-                })?,
+                })?)
+                .map(Box::new),
                 intrinsic: self.req(value, fields, "intrinsic", |d, v| {
                     Some(
                         d.option_value(Some(v))
@@ -502,14 +513,16 @@ impl Decoder {
                 lower: self.req(value, fields, "lower", |d, v| Some(d.option_reg(v)))?,
                 upper: self.req(value, fields, "upper", |d, v| Some(d.option_reg(v)))?,
                 step: self.req(value, fields, "step", |d, v| Some(d.option_reg(v)))?,
-                object_place: self.req(value, fields, "object_place", |d, v| {
+                object_place: (self.req(value, fields, "object_place", |d, v| {
                     Some(d.option_place(v))
-                })?,
+                })?)
+                .map(Box::new),
                 arg_places: self
                     .req(value, fields, "arg_places", |d, v| Some(d.places_option(v)))?,
-                call: self.req(value, fields, "call", |d, v| {
+                call: (self.req(value, fields, "call", |d, v| {
                     Some(d.option_value(Some(v)).and_then(|v| d.subscript_call(v)))
-                })?,
+                })?)
+                .map(Box::new),
                 intrinsic: self.req(value, fields, "intrinsic", |d, v| {
                     Some(
                         d.option_value(Some(v))
@@ -521,32 +534,36 @@ impl Decoder {
                 dest: self.req(value, fields, "dest", Self::reg)?,
                 object: self.req(value, fields, "object", Self::reg)?,
                 args: self.req(value, fields, "args", |d, v| Some(d.subscript_args(v)))?,
-                object_place: self.req(value, fields, "object_place", |d, v| {
+                object_place: (self.req(value, fields, "object_place", |d, v| {
                     Some(d.option_place(v))
-                })?,
+                })?)
+                .map(Box::new),
                 arg_places: self
                     .req(value, fields, "arg_places", |d, v| Some(d.places_option(v)))?,
                 kwargs: self.req(value, fields, "kwargs", |d, v| Some(d.subscript_kwargs(v)))?,
                 kwarg_places: self.req(value, fields, "kwarg_places", |d, v| {
                     Some(d.places_option(v))
                 })?,
-                call: self.req(value, fields, "call", |d, v| {
+                call: (self.req(value, fields, "call", |d, v| {
                     Some(d.option_value(Some(v)).and_then(|v| d.subscript_call(v)))
-                })?,
+                })?)
+                .map(Box::new),
             }),
             "index.multi_set" => Some(MirInstr::MultiSet {
                 receiver: self.req(value, fields, "receiver", Self::reg)?,
-                receiver_place: self.req(value, fields, "receiver_place", |d, v| {
+                receiver_place: (self.req(value, fields, "receiver_place", |d, v| {
                     Some(d.option_place(v))
-                })?,
+                })?)
+                .map(Box::new),
                 args: self.req(value, fields, "args", |d, v| Some(d.subscript_args(v)))?,
                 arg_places: self
                     .req(value, fields, "arg_places", |d, v| Some(d.places_option(v)))?,
                 value: self.req(value, fields, "value", Self::reg)?,
-                value_place: self
-                    .req(value, fields, "value_place", |d, v| Some(d.option_place(v)))?,
+                value_place: (self
+                    .req(value, fields, "value_place", |d, v| Some(d.option_place(v)))?)
+                .map(Box::new),
                 value_keyword: self.req(value, fields, "value_keyword", Self::boolean)?,
-                call: self.req(value, fields, "call", Self::subscript_call)?,
+                call: Box::new(self.req(value, fields, "call", Self::subscript_call)?),
             }),
             "place.store" => Some(MirInstr::Store {
                 place: self.req(value, fields, "place", Self::place)?,
@@ -735,7 +752,7 @@ impl Decoder {
                 dest: self.req(value, fields, "dest", Self::reg)?,
                 yielded: self.req(value, fields, "yielded", Self::reg)?,
                 iter: self.req(value, fields, "iter", Self::var)?,
-                call: self.req(value, fields, "call", Self::iterator_call)?,
+                call: Box::new(self.req(value, fields, "call", Self::iterator_call)?),
                 exhaustion: self.req(value, fields, "exhaustion", Self::ty)?,
             }),
             other => {

@@ -446,7 +446,7 @@ impl FnLowering<'_> {
             // after running, so drops of aliasing two-word copies are
             // idempotent per record — the VM's deep-copying closure clones
             // are a recorded divergence.
-            Ty::Func { .. } => {
+            Ty::Func(_) => {
                 let handle = ScalarTy::Ptr.handle(ctx);
                 let env_address = self.gep_byte_unspanned(ctx, ptr, 8);
                 let env = LoadOp::new(ctx, env_address, handle);
@@ -551,7 +551,7 @@ impl FnLowering<'_> {
     /// (its environment record may carry owned droppable captures — a
     /// null-guarded header dispatch, free when there are none).
     pub(super) fn needs_drop(&self, ty: &Ty) -> bool {
-        matches!(ty, Ty::Error | Ty::Func { .. })
+        matches!(ty, Ty::Error | Ty::Func(_))
             || self.has_lifecycle_method(ty, "__deinit__")
             || self.fields_need_drop(ty)
     }

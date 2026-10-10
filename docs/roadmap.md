@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R585**.
+Next free ID: **R588**.
 
 ## Ordered Work
 
@@ -49,27 +49,6 @@ belongs to is named in its title.
 Scope: what remains of the plan's stages, and what the pipeline order still
 leaves to close. A defect found on the way is filed by its kind; a
 divergence from the pin goes to a catch-up track, however small.
-
-- [ ] **R584 (P6) Decoding a package body is a quarter of the cost of
-  materializing it**
-
-  The elaborator's first `get` of a library body decodes its postcard record
-  into an owned `MirFunction` before finishing it, and that decode costs
-  half as much as the drop elaboration that follows.
-  - The site is `PackageBodies::decode`
-    (`crates/mojito-mir/src/mir/text/package.rs`).
-  - Decoding all 874 bundled bodies (`mojito --timings emit-mir
-    assets/ok/hello_world.mojo`, `package.body.decode`) takes about 31 ms
-    release, against about 62 ms to drop-elaborate them and 21 ms to verify.
-  - Cloning each location's source path is not the cost: decoding with no
-    path at all takes about 30.5 ms.
-  - A record spells every type, place type, and register type inline, so
-    the decode likely rebuilds each one as an owned tree; upstream's MLIR
-    bytecode instead holds each type and attribute once per file, in a
-    section its operations refer to by index. Profile before choosing.
-  - Found while landing R582 (2026-10-10).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
 
 - [ ] **R574 (P6) A library callable's parameter defaults are recorded
   twice: as checker syntax and as MIR defaults**
@@ -4727,6 +4706,42 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
+- [ ] **R585 A type is an owned tree, not a uniqued handle**
+
+  Every `Ty` is cloned per use, so each instruction, place, and register
+  type owns its own copy, while MLIR's `Type` is a pointer to storage its
+  context uniques once.
+  - `Ty` is 72 bytes, `MirPlace` 208 (two inline `Option<Ty>`), and
+    `MirInstr` 296; the size assertions beside each pin them.
+  - The bundled package's register, variable, and parameter type tables
+    hold 19,204 types, of which 672 are distinct.
+  - Decoding all 874 bundled bodies still takes about 18 ms release
+    (`mojito --timings emit-mir assets/ok/hello_world.mojo`,
+    `package.body.decode`), most of it building and first-touching those
+    owned trees.
+  - The first stage interns `Ty` per compilation, as
+    `mojito_types::param_expr::ParamContext` already interns parameter
+    expressions.
+  - The second gives the package a type section that body records refer to
+    by index, as MLIR bytecode holds each type once per file.
+  - Found while landing R584 (2026-10-10).
+  - Depends on nothing.
+  - Model: Fable, Planned.
+
+- [ ] **R586 A register's type is a hash-map entry, not a register-indexed slot**
+
+  `MirFunction::reg_types` and `var_tys` (`crates/mojito-mir/src/mir/ir.rs`)
+  are hash maps keyed by register and variable number, while MLIR attaches
+  a value's type to the value itself.
+  - Decoding the bundled bodies' `reg_types` maps is 21% of the hot body
+    decode (1.6 of 7.7 ms, measured outside the repository by decoding
+    each field separately).
+  - A `Vec<Option<Ty>>` sized by `n_regs` is the value-attached shape.
+  - Every MIR consumer reads the maps, so the change is its own task.
+  - Found while landing R584 (2026-10-10).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
 - [ ] **R523 A local implicitly-copyable compile-time binding materializes at its declaration**
 
   A local `comptime s = label(3)` stores one runtime slot where Mojo materializes each read.
@@ -5907,6 +5922,21 @@ Track: `tooling`.
     expectation is wrong is not yet known.
   - Found on `da941aee` while `comptime_test` was run for the struct-method
     templates (2026-10-01).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R587 `--timings` drops every span the elaborator thread records**
+
+  `mojito --timings run` reports no `package.body.*` span, and no other
+  span recorded while elaborating, because the elaborator runs on its own
+  thread and timing events are per-thread.
+  - Timing events are `thread_local!` (`crates/mojito-common/src/timing.rs`).
+  - `native::mono` elaborates on a scoped thread named `elaborator`
+    (`crates/mojito-native/src/native/mono.rs`).
+  - Only counts recorded afterwards on the main thread survive, such as
+    `package_bodies_decoded`.
+  - `emit-mir` shows the spans because it decodes on the main thread.
+  - Found while landing R584 (2026-10-10).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

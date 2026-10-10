@@ -21,7 +21,12 @@ pub(super) fn verify_subscript_instruction(
             intrinsic,
             ..
         } => {
-            verify_subscript_receiver_place(prefix, cx.reg_ty(*base), base_place.as_ref(), errors);
+            verify_subscript_receiver_place(
+                prefix,
+                cx.reg_ty(*base),
+                base_place.as_deref(),
+                errors,
+            );
             if call.is_some() == intrinsic.is_some() {
                 errors.push(format!(
                     "{prefix}: index operation must carry exactly one checked-call or intrinsic dispatch"
@@ -32,10 +37,11 @@ pub(super) fn verify_subscript_instruction(
                 // compile-time value argument; it has no ordinary runtime
                 // positional argument. The empty checked argument list is the
                 // explicit ABI discriminator used by lowering and execution.
+                let index_places = [index_place.as_deref().cloned()];
                 let positional_places = if call.arguments.is_empty() {
                     &[][..]
                 } else {
-                    std::slice::from_ref(index_place)
+                    &index_places[..]
                 };
                 let positional_types = if call.arguments.is_empty() {
                     Vec::new()
@@ -50,7 +56,7 @@ pub(super) fn verify_subscript_instruction(
                     SubscriptSources {
                         receiver_ty: cx.reg_ty(*base),
                         method: "__getitem__",
-                        receiver_place: base_place.as_ref(),
+                        receiver_place: base_place.as_deref(),
                         positional_places,
                         keyword_places: &[],
                         positional_types: &positional_types,
@@ -83,7 +89,7 @@ pub(super) fn verify_subscript_instruction(
             verify_subscript_receiver_place(
                 prefix,
                 cx.reg_ty(*object),
-                object_place.as_ref(),
+                object_place.as_deref(),
                 errors,
             );
             if arg_places.len() != 1 {
@@ -105,7 +111,7 @@ pub(super) fn verify_subscript_instruction(
                     SubscriptSources {
                         receiver_ty: cx.reg_ty(*object),
                         method: "__getitem__",
-                        receiver_place: object_place.as_ref(),
+                        receiver_place: object_place.as_deref(),
                         positional_places: arg_places,
                         keyword_places: &[],
                         positional_types: &[Some(slice_descriptor_ty(*kind))],
@@ -137,7 +143,7 @@ pub(super) fn verify_subscript_instruction(
             verify_subscript_receiver_place(
                 prefix,
                 cx.reg_ty(*object),
-                object_place.as_ref(),
+                object_place.as_deref(),
                 errors,
             );
             if arg_places.len() != args.len() || kwarg_places.len() != kwargs.len() {
@@ -162,7 +168,7 @@ pub(super) fn verify_subscript_instruction(
                     SubscriptSources {
                         receiver_ty: cx.reg_ty(*object),
                         method: "__getitem__",
-                        receiver_place: object_place.as_ref(),
+                        receiver_place: object_place.as_deref(),
                         positional_places: arg_places,
                         keyword_places: kwarg_places,
                         positional_types: &positional_types,
@@ -191,7 +197,7 @@ pub(super) fn verify_subscript_instruction(
             verify_subscript_receiver_place(
                 prefix,
                 cx.reg_ty(*receiver),
-                receiver_place.as_ref(),
+                receiver_place.as_deref(),
                 errors,
             );
             if arg_places.len() != args.len() {
@@ -205,9 +211,9 @@ pub(super) fn verify_subscript_instruction(
                 .map(|argument| subscript_argument_ty(cx.function, argument))
                 .collect::<Vec<_>>();
             let keyword = if *value_keyword {
-                vec![value_place.clone()]
+                vec![value_place.as_deref().cloned()]
             } else {
-                positional.push(value_place.clone());
+                positional.push(value_place.as_deref().cloned());
                 positional_types.push(cx.reg_ty(*value).cloned());
                 Vec::new()
             };
@@ -224,7 +230,7 @@ pub(super) fn verify_subscript_instruction(
                 SubscriptSources {
                     receiver_ty: cx.reg_ty(*receiver),
                     method: "__setitem__",
-                    receiver_place: receiver_place.as_ref(),
+                    receiver_place: receiver_place.as_deref(),
                     positional_places: &positional,
                     keyword_places: &keyword,
                     positional_types: &positional_types,
@@ -793,7 +799,7 @@ pub(super) fn verify_param_arguments(
                         Some(Ty::VariadicPack(element)) if types_compatible(element, ty));
                 if let Some(found) = function.reg_types.get(&register.0)
                     && !spread
-                    && !(matches!(ty.as_ref(), Ty::Func { .. } | Ty::GenericFunc { .. })
+                    && !(matches!(ty.as_ref(), Ty::Func(_) | Ty::GenericFunc(_))
                         && mojito_types::types::callable_bound_accepts(found, ty))
                     && !types_compatible(found, ty)
                 {

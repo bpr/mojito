@@ -711,15 +711,10 @@ fn materialize_named_result_return(function: &mut MirFunction, result: &str) {
 /// register, so erase that declaration-only discriminator to the Tuple storage
 /// actually carried by the lifted function's single collector slot.
 fn mir_nested_callable_ty(mut ty: Ty) -> Ty {
-    match &mut ty {
-        Ty::Func { variadic, .. } | Ty::GenericFunc { variadic, .. } => {
-            if let Some(element) = variadic
-                && let Ty::RuntimePack(elements) = &mut **element
-            {
-                **element = Ty::Tuple(std::mem::take(elements));
-            }
-        }
-        _ => {}
+    if let Some(element) = ty.callable_mut().and_then(|func| func.variadic.as_mut())
+        && let Ty::RuntimePack(elements) = &mut **element
+    {
+        **element = Ty::Tuple(std::mem::take(elements));
     }
     ty
 }

@@ -469,8 +469,8 @@ impl<'a> Specializer<'a> {
                 continue;
             };
             let generic = match peel_refs(ty) {
-                Ty::GenericFunc { .. } => true,
-                Ty::Func { .. } => false,
+                Ty::GenericFunc(_) => true,
+                Ty::Func(_) => false,
                 _ => continue,
             };
             let Some((callee, false)) = self.callable_targets.get(&reg.0) else {
@@ -2317,7 +2317,7 @@ impl<'a> Specializer<'a> {
                             function.reg_types.get(&callee.0).is_some_and(|ty| {
                                 matches!(
                                     peel_refs(ty),
-                                    Ty::GenericFunc { .. }
+                                    Ty::GenericFunc(_)
                                         | Ty::Param {
                                             callable_bound: Some(_),
                                             ..
@@ -2481,7 +2481,7 @@ impl<'a> Specializer<'a> {
                             method: "__call__".to_string(),
                             resolved: Some(concrete),
                             raises: raises.clone(),
-                            reference_result,
+                            reference_result: reference_result.map(Box::new),
                             result_adapter: None,
                             args: std::mem::take(args),
                             kwargs: std::mem::take(kwargs),

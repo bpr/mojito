@@ -5,7 +5,7 @@
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 use mojito_common::timing;
-use mojito_types::types::TransferSet;
+use mojito_types::types::{FuncTy, GenericFuncTy, TransferSet};
 
 impl Checker {
     pub fn check_program(&mut self, stmts: &[Stmt]) -> Result<(), TypeError> {
@@ -866,8 +866,8 @@ impl Checker {
                         // specialization from local-storage context; only an
                         // explicit specialization (`f[...]`) materializes a
                         // generic function as a stored callable value.
-                        if matches!(found, Ty::GenericFunc { .. })
-                            && matches!(expected, Ty::Func { .. })
+                        if matches!(found, Ty::GenericFunc(_))
+                            && matches!(expected, Ty::Func(_))
                             && matches!(value.kind, ExprKind::Identifier(_))
                         {
                             return Err(TypeError::Unsupported(format!(
@@ -1125,7 +1125,7 @@ impl Checker {
                         // value captures nothing. A named generic or
                         // overloaded callable is not a first-class value here
                         // whatever its environment, as at `return`.
-                        if matches!(found, Ty::GenericFunc { .. } | Ty::Overload(_))
+                        if matches!(found, Ty::GenericFunc(_) | Ty::Overload(_))
                             || holds_closure(&found)
                         {
                             return Err(TypeError::ClosureEscape);
@@ -2318,10 +2318,8 @@ impl Checker {
                 // indexed accessor exposes a function element while the Tuple
                 // owner remains live.
                 if !returning_reference
-                    && (matches!(
-                        found,
-                        Ty::Func { .. } | Ty::GenericFunc { .. } | Ty::Overload(_)
-                    ) || holds_closure(&found))
+                    && (matches!(found, Ty::Func(_) | Ty::GenericFunc(_) | Ty::Overload(_))
+                        || holds_closure(&found))
                 {
                     return Err(TypeError::ClosureEscape);
                 }
@@ -2651,7 +2649,7 @@ impl Checker {
                 })
                 .map(|(_, ty)| ty.clone())
                 .collect();
-            Ty::Func {
+            Ty::Func(Box::new(FuncTy {
                 environment: initial_environment,
                 params: regular_tys,
                 names: caller_regular.iter().map(|p| p.name.clone()).collect(),
@@ -2664,10 +2662,10 @@ impl Checker {
                 raises: effect_raises,
                 error: declared_error.clone().map(Box::new),
                 conventions: caller_regular.iter().map(|p| p.convention).collect(),
-                ref_params: Box::new(ref_params),
+                ref_params,
                 ref_return: ref_return.clone().map(Box::new),
                 transfers: TransferSet::default(),
-            }
+            }))
         } else {
             let regular_tys: Vec<Ty> = params
                 .iter()
@@ -2678,24 +2676,26 @@ impl Checker {
                 })
                 .map(|(_, ty)| ty.clone())
                 .collect();
-            Ty::GenericFunc {
-                environment: initial_environment,
+            Ty::GenericFunc(Box::new(GenericFuncTy {
                 decls: decls.clone(),
-                params: regular_tys,
-                names: caller_regular.iter().map(|p| p.name.clone()).collect(),
-                ret: Box::new(ret_ty.clone()),
-                required,
-                variadic: variadic_idx.map(|vi| Box::new(param_tys[vi].clone())),
-                kw_variadic: kw_variadic_idx.map(|index| Box::new(param_tys[index].clone())),
-                positional_only: pos_only,
-                keyword_only: kw_only,
-                raises: effect_raises,
-                error: declared_error.clone().map(Box::new),
-                conventions: caller_regular.iter().map(|p| p.convention).collect(),
-                ref_params: Box::new(ref_params),
-                ref_return: ref_return.clone().map(Box::new),
-                transfers: TransferSet::default(),
-            }
+                func: FuncTy {
+                    environment: initial_environment,
+                    params: regular_tys,
+                    names: caller_regular.iter().map(|p| p.name.clone()).collect(),
+                    ret: Box::new(ret_ty.clone()),
+                    required,
+                    variadic: variadic_idx.map(|vi| Box::new(param_tys[vi].clone())),
+                    kw_variadic: kw_variadic_idx.map(|index| Box::new(param_tys[index].clone())),
+                    positional_only: pos_only,
+                    keyword_only: kw_only,
+                    raises: effect_raises,
+                    error: declared_error.clone().map(Box::new),
+                    conventions: caller_regular.iter().map(|p| p.convention).collect(),
+                    ref_params,
+                    ref_return: ref_return.clone().map(Box::new),
+                    transfers: TransferSet::default(),
+                },
+            }))
         };
         self.declaration_types.borrow_mut().insert(
             mojito_checked::checked::AnnotationSite::FunctionType {
@@ -3017,7 +3017,7 @@ impl Checker {
                         .iter()
                         .filter_map(|decl| match decl {
                             ParamDecl::Value { name, ty, .. }
-                                if matches!(**ty, Ty::Func { .. } | Ty::GenericFunc { .. }) =>
+                                if matches!(**ty, Ty::Func(_) | Ty::GenericFunc(_)) =>
                             {
                                 Some(name.trim_start_matches('*').to_string())
                             }
@@ -3231,10 +3231,7 @@ impl Checker {
         names.0.into_iter().find(|name| {
             self.binding_scope(name).is_some_and(|scope| scope > 0)
                 && self.lookup(name).is_some_and(|ty| {
-                    !matches!(
-                        ty,
-                        Ty::Func { .. } | Ty::GenericFunc { .. } | Ty::Overload(_)
-                    )
+                    !matches!(ty, Ty::Func(_) | Ty::GenericFunc(_) | Ty::Overload(_))
                 })
                 && !self.is_compile_time_binding(name)
                 && !self
@@ -3391,9 +3388,12 @@ const RESERVED_FUNCTION_NAMES: &[&str] = &["class", "del", "match", "yield"];
 /// rule, spelled at each site.
 fn holds_closure(ty: &Ty) -> bool {
     match ty {
-        Ty::Func { environment, .. } | Ty::GenericFunc { environment, .. } => {
-            !matches!(environment, mojito_types::origin::CallableEnvironment::Thin)
-        }
+        Ty::Func(_) | Ty::GenericFunc(_) => ty.callable().is_some_and(|func| {
+            !matches!(
+                func.environment,
+                mojito_types::origin::CallableEnvironment::Thin
+            )
+        }),
         Ty::Overload(_) => true,
         Ty::Struct(_, arguments) => arguments.iter().any(|argument| {
             matches!(argument, mojito_types::types::TyArg::Ty(element) if holds_closure(element))

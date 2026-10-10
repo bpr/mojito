@@ -503,7 +503,7 @@ impl VmBackend {
                             frame_id,
                             regs,
                             vars,
-                            callee_place.as_ref(),
+                            callee_place.as_deref(),
                             captures,
                         )?,
                     ),
@@ -690,7 +690,7 @@ impl VmBackend {
                             result_adapter: *result_adapter,
                             arguments: argv,
                             keyword_arguments: kw,
-                            receiver_place: recv_place,
+                            receiver_place: recv_place.as_deref(),
                             argument_places: arg_places,
                             keyword_argument_places: kwarg_places,
                         },
@@ -845,7 +845,7 @@ impl VmBackend {
                     let argument_places = if parameterless {
                         Vec::new()
                     } else {
-                        vec![index_place.clone()]
+                        vec![index_place.as_deref().cloned()]
                     };
                     let result = self.method_call(
                         prog,
@@ -856,7 +856,7 @@ impl VmBackend {
                             result_adapter: None,
                             arguments,
                             keyword_arguments: Vec::new(),
-                            receiver_place: base_place,
+                            receiver_place: base_place.as_deref(),
                             argument_places: &argument_places,
                             keyword_argument_places: &[],
                         },
@@ -972,7 +972,7 @@ impl VmBackend {
                             result_adapter: None,
                             arguments: vec![slice],
                             keyword_arguments: Vec::new(),
-                            receiver_place: object_place,
+                            receiver_place: object_place.as_deref(),
                             argument_places: arg_places,
                             keyword_argument_places: &[],
                         },
@@ -1053,7 +1053,7 @@ impl VmBackend {
                         result_adapter: None,
                         arguments,
                         keyword_arguments,
-                        receiver_place: object_place,
+                        receiver_place: object_place.as_deref(),
                         argument_places: arg_places,
                         keyword_argument_places: kwarg_places,
                     },
@@ -1107,9 +1107,9 @@ impl VmBackend {
                 };
                 let mut argument_places = arg_places.clone();
                 let keyword_argument_places = if *value_keyword {
-                    vec![value_place.clone()]
+                    vec![value_place.as_deref().cloned()]
                 } else {
-                    argument_places.push(value_place.clone());
+                    argument_places.push(value_place.as_deref().cloned());
                     Vec::new()
                 };
                 let _ = self.method_call(
@@ -1121,7 +1121,7 @@ impl VmBackend {
                         result_adapter: None,
                         arguments,
                         keyword_arguments,
-                        receiver_place,
+                        receiver_place: receiver_place.as_deref(),
                         argument_places: &argument_places,
                         keyword_argument_places: &keyword_argument_places,
                     },

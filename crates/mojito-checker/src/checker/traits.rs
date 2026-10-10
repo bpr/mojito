@@ -518,7 +518,7 @@ impl Checker {
         ) = resolved?;
         if callable_conformance
             .as_ref()
-            .is_some_and(|ty| !matches!(ty, Ty::Func { .. }))
+            .is_some_and(|ty| !matches!(ty, Ty::Func(_)))
         {
             return Err(TypeError::Unsupported(
                 "callable conformance must be a def(...) function type".to_string(),
@@ -1731,7 +1731,7 @@ impl Checker {
                     }
                     Ty::Struct(name, args) => self.struct_conformance_applies(name, args, tr),
                     Ty::Param { bounds, .. } => bounds.iter().any(|bound| bound == tr),
-                    Ty::Func { .. } | Ty::GenericFunc { .. } | Ty::Overload(_) => false,
+                    Ty::Func(_) | Ty::GenericFunc(_) | Ty::Overload(_) => false,
                     _ => true,
                 },
                 "Hasher" => match ty {

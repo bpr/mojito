@@ -5,6 +5,7 @@
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
+use mojito_types::types::FuncTy;
 
 impl Checker {
     /// Check a comprehension in its own lexical scope and cache its result type
@@ -245,10 +246,7 @@ impl Checker {
                 .cloned()
             else {
                 let names_function = self.lookup(name).is_some_and(|ty| {
-                    matches!(
-                        ty,
-                        Ty::Func { .. } | Ty::GenericFunc { .. } | Ty::Overload(_)
-                    )
+                    matches!(ty, Ty::Func(_) | Ty::GenericFunc(_) | Ty::Overload(_))
                 });
                 return Err(if names_function {
                     TypeError::ImmutableBinding(name.clone())
@@ -744,16 +742,14 @@ impl Checker {
             // value's capture origins would silently leave loan tracking.
             // Call-position downward funargs deliberately keep the erasing
             // coercion; only storage rejects it.
-            (
-                Ty::Func {
-                    environment: mojito_types::origin::CallableEnvironment::Capturing(_),
-                    ..
-                },
-                Ty::Func {
-                    environment: mojito_types::origin::CallableEnvironment::Default,
-                    ..
-                },
-            ) => false,
+            (Ty::Func(from), Ty::Func(to))
+                if matches!(
+                    from.environment,
+                    mojito_types::origin::CallableEnvironment::Capturing(_)
+                ) && to.environment == mojito_types::origin::CallableEnvironment::Default =>
+            {
+                false
+            }
             _ => coerces(from, to),
         }
     }
@@ -1292,8 +1288,7 @@ impl Checker {
                 for (value, ty) in elems.iter().zip(&tys) {
                     // A generic `def` is no runtime value until specialized,
                     // as the pin reports for a display element.
-                    if let (ExprKind::Identifier(name), Ty::GenericFunc { .. }) = (&value.kind, ty)
-                    {
+                    if let (ExprKind::Identifier(name), Ty::GenericFunc(_)) = (&value.kind, ty) {
                         return Err(TypeError::Unsupported(format!(
                             "cannot use parametric function '{name}' as a runtime closure; \
                              specialize it explicitly"
@@ -1812,13 +1807,17 @@ impl Checker {
             other => other,
         };
         match contract {
-            Ty::Func {
-                params,
-                conventions,
-                raises: false,
-                ret,
-                ..
-            } if params.len() == 1 && **ret == Ty::None => {
+            Ty::Func(func)
+                if let FuncTy {
+                    params,
+                    conventions,
+                    raises: false,
+                    ret,
+                    ..
+                } = &**func
+                    && params.len() == 1
+                    && **ret == Ty::None =>
+            {
                 if !matches!(
                     conventions.first(),
                     Some(Some(
@@ -1947,7 +1946,7 @@ impl Checker {
             return Ok(ty);
         }
         if let ExprKind::TypeApply { name, args } = &expression.kind
-            && matches!(expected, Ty::Func { .. })
+            && matches!(expected, Ty::Func(_))
             && let Some(specialized) = self.infer_specialized_callable_value(
                 expression.source_span(),
                 name,
@@ -1981,7 +1980,7 @@ impl Checker {
         // its environment into plain `def(...)` element storage.
         if let ExprKind::ListLit(values) = &expression.kind
             && let Some(element) = list_element(expected)
-            && matches!(element, Ty::Func { .. } | Ty::GenericFunc { .. })
+            && matches!(element, Ty::Func(_) | Ty::GenericFunc(_))
         {
             for (index, value) in values.iter().enumerate() {
                 let actual = self.infer_with_expected(value, element, record)?;
@@ -2792,7 +2791,7 @@ impl Checker {
         elems: &[Expr],
         element: &Ty,
     ) -> Result<(), TypeError> {
-        let Ty::Func { environment, .. } = element else {
+        let Some(FuncTy { environment, .. }) = element.as_func() else {
             return super::type_resolution::reject_stored_callable_type(
                 element,
                 "a collection display element",
@@ -2959,12 +2958,17 @@ fn placement_factory_result(factory: &Ty) -> Option<&Ty> {
         other => other,
     };
     match callable {
-        Ty::Func {
-            params,
-            raises: false,
-            ret,
-            ..
-        } if params.is_empty() => Some(ret.as_ref()),
+        Ty::Func(func)
+            if let FuncTy {
+                params,
+                raises: false,
+                ret,
+                ..
+            } = &**func
+                && params.is_empty() =>
+        {
+            Some(ret.as_ref())
+        }
         _ => None,
     }
 }

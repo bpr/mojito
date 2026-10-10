@@ -4,6 +4,7 @@
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
+use mojito_types::types::FuncTy;
 
 impl Checker {
     /// Allocate a stable identity for a source binding's storage (or for a
@@ -278,13 +279,15 @@ impl Checker {
     )]
     pub(super) fn inferred_binding_ty(&self, value_ty: &Ty, _name: &str) -> Result<Ty, TypeError> {
         match value_ty {
-            Ty::Func {
-                environment: mojito_types::origin::CallableEnvironment::Thin,
-                ..
-            } => Ok(value_ty.clone()),
-            Ty::Func { .. } | Ty::GenericFunc { .. } | Ty::Overload(_) => {
-                Err(TypeError::ClosureEscape)
+            Ty::Func(func)
+                if let FuncTy {
+                    environment: mojito_types::origin::CallableEnvironment::Thin,
+                    ..
+                } = &**func =>
+            {
+                Ok(value_ty.clone())
             }
+            Ty::Func(_) | Ty::GenericFunc(_) | Ty::Overload(_) => Err(TypeError::ClosureEscape),
             other => Ok(default_literal(other)),
         }
     }

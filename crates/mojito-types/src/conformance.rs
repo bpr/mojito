@@ -167,10 +167,7 @@ pub fn leaf_conforms(
             _ => true,
         },
         "Hashable" => builtin_hashable_ty(ty),
-        "Writable" => !matches!(
-            ty,
-            Ty::Func { .. } | Ty::GenericFunc { .. } | Ty::Overload(_)
-        ),
+        "Writable" => !matches!(ty, Ty::Func(_) | Ty::GenericFunc(_) | Ty::Overload(_)),
         "Writer" | "Hasher" => false,
         "Defaultable" => match ty {
             Ty::Int

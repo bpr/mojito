@@ -1294,9 +1294,9 @@ fn bounded_trait_calls_carry_the_requirement_error_contract_into_mir() {
                 instruction,
                 MirInstr::MethodCall {
                     method,
-                    raises: Some(mojito::Ty::Error),
+                    raises: Some(raises),
                     ..
-                } if method == "run"
+                } if method == "run" && **raises == mojito::Ty::Error
             ))
     );
 }
@@ -2907,7 +2907,7 @@ fn forwarded_sibling_capture_parameter_keeps_its_callable_type() {
         .expect("forwarded helper slot") as u32;
     assert!(matches!(
         middle.var_tys.get(&helper_slot),
-        Some(mojito::Ty::Func { .. })
+        Some(mojito::Ty::Func(_))
     ));
     let capture = middle
         .blocks
@@ -2923,7 +2923,7 @@ fn forwarded_sibling_capture_parameter_keeps_its_callable_type() {
     assert_eq!(capture.place.root, helper_slot);
     assert!(matches!(
         capture.place.root_ty.as_ref(),
-        Some(mojito::Ty::Func { .. })
+        Some(mojito::Ty::Func(_))
     ));
 }
 
@@ -3052,7 +3052,7 @@ fn explicit_origin_selection_erases_semantic_arguments_and_types_function_consta
         .expect("selected function constant");
     assert!(matches!(
         main.reg_types.get(&function_register.0),
-        Some(mojito::Ty::Func { .. })
+        Some(mojito::Ty::Func(_))
     ));
 }
 
@@ -3094,11 +3094,11 @@ fn callable_type_bound_is_retained_and_verifies_indirect_calls() {
     else {
         panic!("callee register must retain its bounded type parameter")
     };
-    assert!(matches!(
-        contract.as_ref(),
-        mojito::Ty::Func { params, ret, .. }
-            if params == &[mojito::Ty::Int] && **ret == mojito::Ty::Int
-    ));
+    assert!(
+        contract
+            .as_func()
+            .is_some_and(|func| func.params == [mojito::Ty::Int] && *func.ret == mojito::Ty::Int)
+    );
     assert!(
         target
             .as_deref()
@@ -3231,16 +3231,15 @@ fn nested_origin_specialization_loads_materialized_closure_with_bound_type() {
             _ => None,
         })
         .expect("TypeApply loads the nested closure slot");
-    assert!(matches!(
-        specialized,
-        mojito::Ty::Func {
-            ref_return: Some(signature),
-            ..
-        } if matches!(
-            signature.origin,
-            SigOrigin::Bound(Origin::Place(_))
-        )
-    ));
+    assert!(
+        specialized
+            .as_func()
+            .and_then(|func| func.ref_return.as_deref())
+            .is_some_and(|signature| matches!(
+                signature.origin,
+                SigOrigin::Bound(Origin::Place(_))
+            ))
+    );
     assert!(
         main.blocks
             .iter()

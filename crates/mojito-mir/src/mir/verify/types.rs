@@ -4,7 +4,7 @@
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 use mojito_types::param_expr::{ParamBindings, ParamContext};
-use mojito_types::types::TySubst;
+use mojito_types::types::{FuncTy, TySubst};
 
 /// Compatibility for verification purposes: either direction of the checker's
 /// coercion predicate. Lowering emits checker-approved conversions before
@@ -13,13 +13,10 @@ use mojito_types::types::TySubst;
 /// mentioning an unsubstituted parameter is not compared — instantiation is
 /// the checker's domain and the verifier never re-derives it.
 pub(super) fn types_compatible(found: &Ty, expected: &Ty) -> bool {
-    pub(super) const fn callable_environment(
+    pub(super) fn callable_environment(
         ty: &Ty,
     ) -> Option<&mojito_types::origin::CallableEnvironment> {
-        match ty {
-            Ty::Func { environment, .. } | Ty::GenericFunc { environment, .. } => Some(environment),
-            _ => None,
-        }
+        ty.callable().map(|func| &func.environment)
     }
     // Some semantic-only sum types (notably unresolved overload sets) are not
     // ordinary value-coercion sources or destinations. Identity is still the
@@ -50,8 +47,8 @@ pub(super) fn types_compatible(found: &Ty, expected: &Ty) -> bool {
         && found_environment != expected_environment
     {
         let mut respelled = found.clone();
-        if let Ty::Func { environment, .. } | Ty::GenericFunc { environment, .. } = &mut respelled {
-            *environment = expected_environment.clone();
+        if let Some(func) = respelled.callable_mut() {
+            func.environment = expected_environment.clone();
         }
         return types_compatible(&respelled, expected);
     }
@@ -93,7 +90,7 @@ pub(super) fn types_compatible(found: &Ty, expected: &Ty) -> bool {
     // So do a callable's signature origins: a function value specialized at
     // a caller's origin (`borrow[origin_of(x)]`) and one relative to its
     // argument slots are one runtime value.
-    if let (Ty::Func { .. }, Ty::Func { .. }) = (found, expected)
+    if let (Ty::Func(_), Ty::Func(_)) = (found, expected)
         && signature_origins_erased(found) == signature_origins_erased(expected)
     {
         return true;
@@ -141,7 +138,7 @@ pub(super) fn types_compatible(found: &Ty, expected: &Ty) -> bool {
     // A struct may nominally conform to a `def(...)` callable trait; the
     // conformance is checker-verified and not yet recorded in MIR
     // declarations, so the verifier does not re-check it here.
-    if matches!(found, Ty::Struct(..)) && matches!(expected, Ty::Func { .. }) {
+    if matches!(found, Ty::Struct(..)) && matches!(expected, Ty::Func(_)) {
         return true;
     }
     mojito_types::types::value_coerces(found, expected)
@@ -249,28 +246,9 @@ pub(super) fn contains_runtime_pack(ty: &Ty) -> bool {
             mojito_types::types::TyArg::Val(_) | mojito_types::types::TyArg::Origin(_) => false,
         }),
         Ty::Assoc { base, .. } => contains_runtime_pack(base),
-        Ty::Func {
-            params,
-            ret,
-            variadic,
-            kw_variadic,
-            error,
-            ..
-        }
-        | Ty::GenericFunc {
-            params,
-            ret,
-            variadic,
-            kw_variadic,
-            error,
-            ..
-        } => {
-            params.iter().any(contains_runtime_pack)
-                || contains_runtime_pack(ret)
-                || variadic.as_deref().is_some_and(contains_runtime_pack)
-                || kw_variadic.as_deref().is_some_and(contains_runtime_pack)
-                || error.as_deref().is_some_and(contains_runtime_pack)
-        }
+        Ty::Func(_) | Ty::GenericFunc(_) => ty
+            .callable()
+            .is_some_and(|func| func.types().any(contains_runtime_pack)),
         _ => false,
     }
 }
@@ -454,71 +432,74 @@ pub(super) fn instantiate_checked_type(
                 })
                 .collect::<Result<Vec<_>, _>>()?,
         ),
-        Ty::Func {
-            environment,
-            params,
-            names,
-            ret,
-            required,
-            variadic,
-            kw_variadic,
-            positional_only,
-            keyword_only,
-            raises,
-            error,
-            conventions,
-            ref_params,
-            ref_return,
-            transfers,
-        } => Ty::Func {
-            environment: environment.clone(),
-            params: params
-                .iter()
-                .map(|ty| {
-                    instantiate_checked_type(ty, type_arguments, value_arguments, bound_values)
-                })
-                .collect::<Result<Vec<_>, _>>()?,
-            names: names.clone(),
-            ret: Box::new(instantiate_checked_type(
+        Ty::Func(func) => {
+            let FuncTy {
+                environment,
+                params,
+                names,
                 ret,
-                type_arguments,
-                value_arguments,
-                bound_values,
-            )?),
-            required: required.clone(),
-            variadic: variadic
-                .as_ref()
-                .map(|ty| {
-                    instantiate_checked_type(ty, type_arguments, value_arguments, bound_values)
-                        .map(Box::new)
-                })
-                .transpose()?,
-            kw_variadic: kw_variadic
-                .as_ref()
-                .map(|ty| {
-                    instantiate_checked_type(ty, type_arguments, value_arguments, bound_values)
-                        .map(Box::new)
-                })
-                .transpose()?,
-            positional_only: *positional_only,
-            keyword_only: *keyword_only,
-            raises: *raises,
-            error: error
-                .as_ref()
-                .map(|ty| {
-                    instantiate_checked_type(ty, type_arguments, value_arguments, bound_values)
-                        .map(Box::new)
-                })
-                .transpose()?,
-            conventions: conventions.clone(),
-            ref_params: ref_params.clone(),
-            ref_return: ref_return.clone(),
-            transfers: transfers.clone(),
-        },
+                required,
+                variadic,
+                kw_variadic,
+                positional_only,
+                keyword_only,
+                raises,
+                error,
+                conventions,
+                ref_params,
+                ref_return,
+                transfers,
+            } = &**func;
+            Ty::Func(Box::new(FuncTy {
+                environment: environment.clone(),
+                params: params
+                    .iter()
+                    .map(|ty| {
+                        instantiate_checked_type(ty, type_arguments, value_arguments, bound_values)
+                    })
+                    .collect::<Result<Vec<_>, _>>()?,
+                names: names.clone(),
+                ret: Box::new(instantiate_checked_type(
+                    ret,
+                    type_arguments,
+                    value_arguments,
+                    bound_values,
+                )?),
+                required: required.clone(),
+                variadic: variadic
+                    .as_ref()
+                    .map(|ty| {
+                        instantiate_checked_type(ty, type_arguments, value_arguments, bound_values)
+                            .map(Box::new)
+                    })
+                    .transpose()?,
+                kw_variadic: kw_variadic
+                    .as_ref()
+                    .map(|ty| {
+                        instantiate_checked_type(ty, type_arguments, value_arguments, bound_values)
+                            .map(Box::new)
+                    })
+                    .transpose()?,
+                positional_only: *positional_only,
+                keyword_only: *keyword_only,
+                raises: *raises,
+                error: error
+                    .as_ref()
+                    .map(|ty| {
+                        instantiate_checked_type(ty, type_arguments, value_arguments, bound_values)
+                            .map(Box::new)
+                    })
+                    .transpose()?,
+                conventions: conventions.clone(),
+                ref_params: ref_params.clone(),
+                ref_return: ref_return.clone(),
+                transfers: transfers.clone(),
+            }))
+        }
         // Nested generic callable contracts own their own binder scope. The
         // outer verifier validates that scope recursively; retaining it is
         // sound and avoids capturing same-spelled outer substitution names.
-        Ty::GenericFunc { .. } => ty.clone(),
+        Ty::GenericFunc(_) => ty.clone(),
         _ => ty.clone(),
     })
 }
@@ -579,28 +560,9 @@ pub(super) fn contains_type_param(ty: &Ty) -> bool {
             }
             mojito_types::types::TyArg::Origin(_) => false,
         }),
-        Ty::Func {
-            params,
-            ret,
-            variadic,
-            kw_variadic,
-            error,
-            ..
-        }
-        | Ty::GenericFunc {
-            params,
-            ret,
-            variadic,
-            kw_variadic,
-            error,
-            ..
-        } => {
-            params.iter().any(contains_type_param)
-                || contains_type_param(ret)
-                || variadic.as_deref().is_some_and(contains_type_param)
-                || kw_variadic.as_deref().is_some_and(contains_type_param)
-                || error.as_deref().is_some_and(contains_type_param)
-        }
+        Ty::Func(_) | Ty::GenericFunc(_) => ty
+            .callable()
+            .is_some_and(|func| func.types().any(contains_type_param)),
         _ => false,
     }
 }
@@ -609,11 +571,11 @@ pub(super) fn contains_type_param(ty: &Ty) -> bool {
 /// keeping each reference's mutability.
 fn signature_origins_erased(ty: &Ty) -> Ty {
     let mut erased = ty.clone();
-    if let Ty::Func {
+    if let Some(FuncTy {
         ref_params,
         ref_return,
         ..
-    } = &mut erased
+    }) = erased.as_func_mut()
     {
         for signature in ref_params
             .iter_mut()

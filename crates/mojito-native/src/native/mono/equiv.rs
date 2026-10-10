@@ -3,6 +3,7 @@
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
+use mojito_types::types::FuncTy;
 
 /// Field-list equivalence for name-colliding struct instances: strict
 /// structural equality except that pointer types collapse (one opaque
@@ -273,8 +274,8 @@ pub(super) fn ty_equal_modulo_origins(a: &Ty, b: &Ty) -> bool {
         // parameter-name/convention spellings erase from the runtime ABI:
         // one two-word value shape serves every `def(...)` contract with the
         // same parameter/return/raising structure.
-        (
-            Ty::Func {
+        (Ty::Func(a_func), Ty::Func(b_func)) => {
+            let FuncTy {
                 params: a_params,
                 ret: a_ret,
                 required: a_required,
@@ -285,8 +286,8 @@ pub(super) fn ty_equal_modulo_origins(a: &Ty, b: &Ty) -> bool {
                 raises: a_raises,
                 error: a_error,
                 ..
-            },
-            Ty::Func {
+            } = &**a_func;
+            let FuncTy {
                 params: b_params,
                 ret: b_ret,
                 required: b_required,
@@ -297,8 +298,7 @@ pub(super) fn ty_equal_modulo_origins(a: &Ty, b: &Ty) -> bool {
                 raises: b_raises,
                 error: b_error,
                 ..
-            },
-        ) => {
+            } = &**b_func;
             let option_eq = |a: &Option<Box<Ty>>, b: &Option<Box<Ty>>| match (a, b) {
                 (Some(a), Some(b)) => ty_equal_modulo_origins(a, b),
                 (None, None) => true,
@@ -368,15 +368,17 @@ pub(super) fn canonicalize_callable(ty: &Ty) -> Ty {
 
 pub(super) fn erase_callable_environments(ty: &mut Ty) {
     match ty {
-        Ty::Func {
-            environment,
-            params,
-            ret,
-            variadic,
-            kw_variadic,
-            error,
-            ..
-        } => {
+        Ty::Func(func) => {
+            let FuncTy {
+                environment,
+                params,
+                ret,
+                variadic,
+                kw_variadic,
+                error,
+                ..
+            } = &mut **func;
+
             *environment = mojito_types::origin::CallableEnvironment::Default;
             for param in params {
                 erase_callable_environments(param);

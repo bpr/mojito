@@ -464,7 +464,7 @@ impl Flatten<'_> {
             result_adapter: None,
             args: args.clone(),
             kwargs: Vec::new(),
-            recv_place: Some(MirPlace::root(collection, Some(target.clone()))),
+            recv_place: Some(Box::new(MirPlace::root(collection, Some(target.clone())))),
             recv_writes: true,
             arg_places: vec![None; args.len()],
             kwarg_places: Vec::new(),
@@ -638,10 +638,12 @@ impl Flatten<'_> {
                         dest: element_value,
                         yielded: has_next,
                         iter: iterator_object,
-                        call: *protocol
-                            .next
-                            .clone()
-                            .expect("raising iterator has checked __next__ contract"),
+                        call: Box::new(
+                            *protocol
+                                .next
+                                .clone()
+                                .expect("raising iterator has checked __next__ contract"),
+                        ),
                         exhaustion,
                     });
                 } else {

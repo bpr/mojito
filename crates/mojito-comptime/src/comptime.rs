@@ -711,7 +711,7 @@ fn source_type_from_ty_with_origins(
         Ty::None => Type::None,
         Ty::Dtype => Type::Named("DType".to_string(), Vec::new()),
         // A callable has no source spelling a clone could carry.
-        Ty::Func { .. } | Ty::GenericFunc { .. } => return None,
+        Ty::Func(_) | Ty::GenericFunc(_) => return None,
         Ty::ComptimeList(element) => Type::Named(
             "List".to_string(),
             vec![ParamArg::Type(source_type_from_ty_with_origins(

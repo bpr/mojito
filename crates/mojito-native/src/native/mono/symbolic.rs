@@ -3,6 +3,7 @@
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 use mojito_types::param_expr::{ParamError, ReflectQuery};
+use mojito_types::types::FuncTy;
 
 /// The constant a parameter expression denotes under the mono environment:
 /// the shared replacement, every reflection query the instance's types
@@ -123,7 +124,7 @@ pub(super) fn is_symbolic(ty: &Ty) -> bool {
         | Ty::Assoc { .. }
         | Ty::Dependent(_)
         | Ty::SelfType
-        | Ty::GenericFunc { .. } => true,
+        | Ty::GenericFunc(_) => true,
         Ty::Struct(_, args) => !args.is_closed() && args.iter().any(arg_has_symbolic),
         Ty::Tuple(v) | Ty::RuntimePack(v) | Ty::Variant(v) | Ty::Overload(v) => {
             v.iter().any(is_symbolic)
@@ -133,14 +134,16 @@ pub(super) fn is_symbolic(ty: &Ty) -> bool {
         }
         Ty::Ref(v) => is_symbolic(&v.referent),
         Ty::Simd { dtype, width } => dtype.is_symbolic() || width.is_symbolic(),
-        Ty::Func {
-            params,
-            ret,
-            variadic,
-            kw_variadic,
-            error,
-            ..
-        } => {
+        Ty::Func(func) => {
+            let FuncTy {
+                params,
+                ret,
+                variadic,
+                kw_variadic,
+                error,
+                ..
+            } = &**func;
+
             params.iter().any(is_symbolic)
                 || is_symbolic(ret)
                 || variadic.as_deref().is_some_and(is_symbolic)
@@ -224,12 +227,12 @@ pub(super) fn erase_specialized_generic_callable_storage(function: &mut MirFunct
     let generic_regs = function
         .reg_types
         .iter()
-        .filter_map(|(reg, ty)| matches!(ty, Ty::GenericFunc { .. }).then_some(*reg))
+        .filter_map(|(reg, ty)| matches!(ty, Ty::GenericFunc(_)).then_some(*reg))
         .collect::<HashSet<_>>();
     let generic_vars = function
         .var_tys
         .iter()
-        .filter_map(|(var, ty)| matches!(ty, Ty::GenericFunc { .. }).then_some(*var))
+        .filter_map(|(var, ty)| matches!(ty, Ty::GenericFunc(_)).then_some(*var))
         .collect::<HashSet<_>>();
     erase(&mut function.blocks, &generic_regs, &generic_vars);
     for reg in generic_regs {
@@ -246,7 +249,7 @@ pub(super) fn erase_specialized_generic_callable_storage(function: &mut MirFunct
 /// ([`erase_specialized_generic_callable_storage`]).
 pub(super) fn erase_generic_callable_parameters(types: &mut [Ty]) {
     for ty in types {
-        if matches!(ty, Ty::GenericFunc { .. }) {
+        if matches!(ty, Ty::GenericFunc(_)) {
             *ty = Ty::Int;
         }
     }

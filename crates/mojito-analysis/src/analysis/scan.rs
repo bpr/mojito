@@ -33,9 +33,10 @@ pub(super) fn var_uses(i: &MirInstr) -> Vec<(VarId, Reg)> {
             ..
         } => {
             let mut uses = receiver_place
-                .iter()
+                .as_deref()
+                .into_iter()
                 .chain(arg_places.iter().flatten())
-                .chain(value_place.iter())
+                .chain(value_place.as_deref())
                 .flat_map(|place| place_loan_uses(place, *value))
                 .collect::<Vec<_>>();
             uses.extend(
@@ -93,7 +94,8 @@ pub(super) fn var_uses(i: &MirInstr) -> Vec<(VarId, Reg)> {
             ..
         } => {
             let mut uses = callee_place
-                .iter()
+                .as_deref()
+                .into_iter()
                 .chain(arg_places.iter().flatten())
                 .chain(kwarg_places.iter().flatten())
                 .flat_map(|place| place_loan_uses(place, *dest))
@@ -110,7 +112,8 @@ pub(super) fn var_uses(i: &MirInstr) -> Vec<(VarId, Reg)> {
             ..
         } => {
             let mut uses = recv_place
-                .iter()
+                .as_deref()
+                .into_iter()
                 .chain(arg_places.iter().flatten())
                 .chain(kwarg_places.iter().flatten())
                 .flat_map(|place| place_loan_uses(place, *dest))
@@ -126,8 +129,9 @@ pub(super) fn var_uses(i: &MirInstr) -> Vec<(VarId, Reg)> {
             ..
         } => {
             let mut uses = base_place
-                .iter()
-                .chain(index_place.iter())
+                .as_deref()
+                .into_iter()
+                .chain(index_place.as_deref())
                 .flat_map(|place| place_loan_uses(place, *dest))
                 .collect::<Vec<_>>();
             if let Some(call) = call {
@@ -154,7 +158,8 @@ pub(super) fn var_uses(i: &MirInstr) -> Vec<(VarId, Reg)> {
             ..
         } => {
             let mut uses = base_place
-                .iter()
+                .as_deref()
+                .into_iter()
                 .chain(index_place.iter().flatten())
                 .flat_map(|place| place_loan_uses(place, *dest))
                 .collect::<Vec<_>>();
@@ -463,7 +468,7 @@ pub(super) fn comptime_binder_slots(blocks: &[MirBlock]) -> HashSet<VarId> {
 /// silently, so they need no instruction.
 pub(super) const fn field_needs_drop(ty: &mojito_types::types::Ty) -> bool {
     use mojito_types::types::Ty;
-    may_alias_owned_storage(ty) || matches!(ty, Ty::Func { .. } | Ty::Error)
+    may_alias_owned_storage(ty) || matches!(ty, Ty::Func(_) | Ty::Error)
 }
 
 /// A set of small dense indices (variables or registers) as a bit vector,

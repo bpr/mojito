@@ -3,6 +3,7 @@
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 pub(super) use mojito_symbol::symbol::materialized_instantiation_argument;
+use mojito_types::types::{FuncTy, GenericFuncTy};
 pub use mojito_types::types::{map_tyargs, substitute};
 
 pub(super) fn unify(pattern: &Ty, actual: &Ty, subst: &mut TySubst) -> Result<(), TypeError> {
@@ -85,20 +86,22 @@ pub(super) fn unify(pattern: &Ty, actual: &Ty, subst: &mut TySubst) -> Result<()
             }
             Ok(())
         }
-        Ty::Func {
-            environment: pattern_environment,
-            params: pattern_params,
-            ret: pattern_ret,
-            error: pattern_error,
-            ..
-        } => {
-            if let Ty::Func {
+        Ty::Func(func) => {
+            let FuncTy {
+                environment: pattern_environment,
+                params: pattern_params,
+                ret: pattern_ret,
+                error: pattern_error,
+                ..
+            } = &**func;
+
+            if let Some(FuncTy {
                 environment: actual_environment,
                 params: actual_params,
                 ret: actual_ret,
                 error: actual_error,
                 ..
-            } = actual
+            }) = actual.as_func()
             {
                 if !callable_environment_coerces(actual_environment, pattern_environment) {
                     return Ok(());
@@ -504,48 +507,51 @@ pub(super) fn substitute_self(ty: &Ty, replacement: &Ty) -> Ty {
             name: name.clone(),
             args: map_tyargs(args, |t| substitute_self(t, replacement)),
         },
-        Ty::Func {
-            environment,
-            params,
-            names,
-            ret,
-            required,
-            variadic,
-            kw_variadic,
-            positional_only,
-            keyword_only,
-            raises,
-            error,
-            conventions,
-            ref_params,
-            ref_return,
-            transfers,
-        } => Ty::Func {
-            environment: environment.clone(),
-            params: params
-                .iter()
-                .map(|p| substitute_self(p, replacement))
-                .collect(),
-            names: names.clone(),
-            ret: Box::new(substitute_self(ret, replacement)),
-            required: required.clone(),
-            variadic: variadic
-                .as_ref()
-                .map(|v| Box::new(substitute_self(v, replacement))),
-            kw_variadic: kw_variadic
-                .as_ref()
-                .map(|v| Box::new(substitute_self(v, replacement))),
-            positional_only: *positional_only,
-            keyword_only: *keyword_only,
-            raises: *raises,
-            error: error
-                .as_ref()
-                .map(|error| Box::new(substitute_self(error, replacement))),
-            conventions: conventions.clone(),
-            ref_params: ref_params.clone(),
-            ref_return: ref_return.clone(),
-            transfers: transfers.clone(),
-        },
+        Ty::Func(func) => {
+            let FuncTy {
+                environment,
+                params,
+                names,
+                ret,
+                required,
+                variadic,
+                kw_variadic,
+                positional_only,
+                keyword_only,
+                raises,
+                error,
+                conventions,
+                ref_params,
+                ref_return,
+                transfers,
+            } = &**func;
+            Ty::Func(Box::new(FuncTy {
+                environment: environment.clone(),
+                params: params
+                    .iter()
+                    .map(|p| substitute_self(p, replacement))
+                    .collect(),
+                names: names.clone(),
+                ret: Box::new(substitute_self(ret, replacement)),
+                required: required.clone(),
+                variadic: variadic
+                    .as_ref()
+                    .map(|v| Box::new(substitute_self(v, replacement))),
+                kw_variadic: kw_variadic
+                    .as_ref()
+                    .map(|v| Box::new(substitute_self(v, replacement))),
+                positional_only: *positional_only,
+                keyword_only: *keyword_only,
+                raises: *raises,
+                error: error
+                    .as_ref()
+                    .map(|error| Box::new(substitute_self(error, replacement))),
+                conventions: conventions.clone(),
+                ref_params: ref_params.clone(),
+                ref_return: ref_return.clone(),
+                transfers: transfers.clone(),
+            }))
+        }
         Ty::Overload(candidates) => Ty::Overload(
             candidates
                 .iter()
@@ -848,16 +854,11 @@ impl Checker {
         mut callable: Ty,
         bindings: &[(Vec<usize>, mojito_types::origin::Origin)],
     ) -> Ty {
-        let (Ty::Func {
+        let Some(FuncTy {
             ref_params,
             ref_return,
             ..
-        }
-        | Ty::GenericFunc {
-            ref_params,
-            ref_return,
-            ..
-        }) = &mut callable
+        }) = callable.callable_mut()
         else {
             return callable;
         };
@@ -896,27 +897,10 @@ impl Checker {
         callable: Ty,
         arguments: &[mojito_ast::ast::ParamArg],
     ) -> Result<(Ty, Vec<TyArg>), TypeError> {
-        let Ty::GenericFunc {
-            environment,
-            decls,
-            params,
-            names,
-            ret,
-            required,
-            variadic,
-            kw_variadic,
-            positional_only,
-            keyword_only,
-            raises,
-            error,
-            conventions,
-            ref_params,
-            ref_return,
-            transfers,
-        } = callable
-        else {
+        let Ty::GenericFunc(generic) = callable else {
             return Ok((callable, Vec::new()));
         };
+        let GenericFuncTy { decls, func } = *generic;
         let (subst, tyargs) = self.resolve_use_params(name, &decls, arguments, &[], &[])?;
         let values = Self::value_argument_environment(&decls, &tyargs);
         let resolve = |ty: &Ty| {
@@ -924,32 +908,7 @@ impl Checker {
             let substituted = self.resolve_assoc_ty(&substitute(&expanded, &subst));
             self.resolve_dependent_ty(&substituted, &values)
         };
-        let contract = Ty::Func {
-            environment,
-            params: params.iter().map(resolve).collect::<Result<Vec<_>, _>>()?,
-            names,
-            ret: Box::new(resolve(&ret)?),
-            required,
-            variadic: variadic
-                .as_ref()
-                .map(|parameter| resolve(parameter).map(Box::new))
-                .transpose()?,
-            kw_variadic: kw_variadic
-                .as_ref()
-                .map(|parameter| resolve(parameter).map(Box::new))
-                .transpose()?,
-            positional_only,
-            keyword_only,
-            raises,
-            error: error
-                .as_ref()
-                .map(|error| resolve(error).map(Box::new))
-                .transpose()?,
-            conventions,
-            ref_params,
-            ref_return,
-            transfers,
-        };
+        let contract = Ty::Func(Box::new(func.try_map_types(resolve)?));
         Ok((contract, tyargs))
     }
 
@@ -966,7 +925,7 @@ impl Checker {
         // stateless nested function as a value but rejects materializing one
         // that has a capture environment.
         if !arguments.is_empty()
-            && let Ty::Func { environment, .. } | Ty::GenericFunc { environment, .. } = &callable
+            && let Some(FuncTy { environment, .. }) = callable.callable()
             && matches!(
                 environment,
                 mojito_types::origin::CallableEnvironment::Capturing(_)
@@ -978,11 +937,11 @@ impl Checker {
             )));
         }
         match callable {
-            callable @ Ty::GenericFunc { .. } => self
+            callable @ Ty::GenericFunc(_) => self
                 .instantiate_generic_callable_value(name, callable, &ordinary)
                 .map(|(contract, _)| contract),
-            callable @ Ty::Func { .. } if ordinary.is_empty() => Ok(callable),
-            Ty::Func { .. } => Err(TypeError::WrongTypeArgCount {
+            callable @ Ty::Func(_) if ordinary.is_empty() => Ok(callable),
+            Ty::Func(_) => Err(TypeError::WrongTypeArgCount {
                 name: name.to_string(),
                 expected: 0,
                 got: ordinary.len(),
@@ -1005,10 +964,7 @@ impl Checker {
         let Some(callable) = self.lookup(name).cloned() else {
             return Ok(None);
         };
-        if !matches!(
-            callable,
-            Ty::Func { .. } | Ty::GenericFunc { .. } | Ty::Overload(_)
-        ) {
+        if !matches!(callable, Ty::Func(_) | Ty::GenericFunc(_) | Ty::Overload(_)) {
             return Ok(None);
         }
         self.check_capture_access(name, false)?;
@@ -1595,20 +1551,13 @@ fn bind_callable_origin_tails(
     if tails.is_empty() {
         return callable;
     }
-    let (Ty::Func {
+    let Some(FuncTy {
         params,
         variadic,
         kw_variadic,
         ret,
         ..
-    }
-    | Ty::GenericFunc {
-        params,
-        variadic,
-        kw_variadic,
-        ret,
-        ..
-    }) = &mut callable
+    }) = callable.callable_mut()
     else {
         return callable;
     };

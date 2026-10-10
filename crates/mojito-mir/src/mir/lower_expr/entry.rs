@@ -263,7 +263,7 @@ impl Flatten<'_> {
             self.emit(MirInstr::Call {
                 dest,
                 func: FuncRef::named(&target),
-                raises,
+                raises: raises.map(Box::new),
                 args: vec![argument],
                 kwargs: Vec::new(),
                 arg_places: vec![source_place.clone()],

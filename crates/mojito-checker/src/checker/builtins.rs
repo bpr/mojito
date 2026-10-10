@@ -2,6 +2,7 @@
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
+use mojito_types::types::FuncTy;
 pub use mojito_types::types::{
     builtin_copy_is_value_read, callable_environment_coerces, callable_environment_value_coerces,
     coerces,
@@ -371,15 +372,15 @@ pub(super) fn is_printable(ty: &Ty) -> bool {
 /// deserves the "spell `capturing[...]`" migration hint.
 pub(super) fn callable_mismatch_is_environment_only(from: &Ty, to: &Ty) -> bool {
     let (
-        Ty::Func {
+        Some(FuncTy {
             environment: from_environment,
             ..
-        },
-        Ty::Func {
+        }),
+        Some(FuncTy {
             environment: to_environment,
             ..
-        },
-    ) = (from, to)
+        }),
+    ) = (from.as_func(), to.as_func())
     else {
         return false;
     };
@@ -389,7 +390,7 @@ pub(super) fn callable_mismatch_is_environment_only(from: &Ty, to: &Ty) -> bool 
         return false;
     }
     let mut aligned = from.clone();
-    if let Ty::Func { environment, .. } = &mut aligned {
+    if let Some(FuncTy { environment, .. }) = aligned.as_func_mut() {
         *environment = to_environment.clone();
     }
     coerces(&aligned, to)

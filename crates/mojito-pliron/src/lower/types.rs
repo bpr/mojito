@@ -159,7 +159,7 @@ pub fn lower_ty(
         | Ty::Variant(_)
         | Ty::Simd { .. }
         | Ty::StringLiteral
-        | Ty::Func { .. } => match layout.layout_of(ty) {
+        | Ty::Func(_) => match layout.layout_of(ty) {
             Ok(computed) => Ok(LowerTy::Aggregate {
                 ty: Box::new(ty.clone()),
                 layout: computed,

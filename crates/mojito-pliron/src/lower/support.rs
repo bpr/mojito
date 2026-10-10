@@ -198,7 +198,7 @@ pub fn collect_aliased_load_regs(
             function
                 .reg_types
                 .get(reg)
-                .is_some_and(|ty| is_aggregate_ty(ty) && !matches!(ty, Ty::Func { .. }))
+                .is_some_and(|ty| is_aggregate_ty(ty) && !matches!(ty, Ty::Func(_)))
         })
         .collect()
 }
@@ -268,7 +268,7 @@ pub fn simd_dims(ty: &Ty) -> Option<(Dtype, i64)> {
 pub const fn is_aggregate_ty(ty: &Ty) -> bool {
     matches!(
         ty,
-        Ty::Struct(..) | Ty::Tuple(..) | Ty::RuntimePack(..) | Ty::Variant(..) | Ty::Func { .. }
+        Ty::Struct(..) | Ty::Tuple(..) | Ty::RuntimePack(..) | Ty::Variant(..) | Ty::Func(_)
     )
 }
 

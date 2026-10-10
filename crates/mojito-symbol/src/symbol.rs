@@ -29,7 +29,7 @@ use mojito_ast::ast::{
 };
 use mojito_common::literal::{FloatLiteral, IntLiteral};
 use mojito_types::ct::{CtLane, CtValue};
-use mojito_types::types::{Ty, TyArg, canonical_simd_ty, default_literal};
+use mojito_types::types::{FuncTy, Ty, TyArg, canonical_simd_ty, default_literal};
 use sha2::{Digest, Sha256};
 
 /// The lowered symbol of `std._intrinsics._pow_int`.
@@ -476,23 +476,10 @@ impl VariadicKey {
     /// parameter after a collector is keyword-only, so the callable's
     /// keyword-only index is the collector's position.
     pub fn from_callable(ty: &Ty) -> Option<Self> {
-        let (Ty::Func {
-            params,
-            variadic: Some(element),
-            keyword_only,
-            ..
-        }
-        | Ty::GenericFunc {
-            params,
-            variadic: Some(element),
-            keyword_only,
-            ..
-        }) = ty
-        else {
-            return None;
-        };
+        let func = ty.callable()?;
+        let element = func.variadic.as_deref()?;
         Some(Self {
-            position: keyword_only.unwrap_or(params.len()),
+            position: func.keyword_only.unwrap_or(func.params.len()),
             element: TypeKey::from_ty(element),
         })
     }
@@ -1826,10 +1813,10 @@ fn sanitize(raw: &str) -> String {
 fn erase_capture_environment(ty: &Ty) -> Ty {
     use mojito_types::origin::CallableEnvironment;
     let mut erased = ty.clone();
-    if let Ty::Func {
+    if let Some(FuncTy {
         environment: environment @ CallableEnvironment::Capturing(_),
         ..
-    } = &mut erased
+    }) = erased.as_func_mut()
     {
         *environment = CallableEnvironment::Default;
     }
@@ -2167,15 +2154,12 @@ fn is_mojo_copy_constructor(m: &Method) -> bool {
 /// parameter type.
 pub fn callable_contract_target(ty: &Ty) -> Option<String> {
     let contract = mojito_types::types::callable_contract_ty(ty)?;
-    let Ty::Func {
+    let FuncTy {
         params,
         variadic,
         kw_variadic,
         ..
-    } = contract
-    else {
-        return None;
-    };
+    } = contract.as_func()?;
     let signature_types = params.iter().chain(variadic.iter().map(Box::as_ref));
     let signature =
         SignatureKey::from_tys(signature_types).with_kw_variadic(kw_variadic.as_deref());

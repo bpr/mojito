@@ -3374,11 +3374,9 @@ const fn is_scalar_domain(ty: &Ty) -> bool {
     )
 }
 
-const fn carries_transfers(ty: &Ty) -> bool {
-    matches!(
-        ty,
-        Ty::Func { transfers, .. } | Ty::GenericFunc { transfers, .. } if !transfers.0.is_empty()
-    )
+fn carries_transfers(ty: &Ty) -> bool {
+    ty.callable()
+        .is_some_and(|func| !func.transfers.0.is_empty())
 }
 
 fn ordered(left: ParamExpr, right: ParamExpr) -> (ParamExpr, ParamExpr) {

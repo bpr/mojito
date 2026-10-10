@@ -239,7 +239,7 @@ pub fn instruction_regs_mut(instruction: &mut MirInstr) -> Vec<&mut Reg> {
         } => {
             out.extend([dest, callee]);
             out.extend(args.iter_mut());
-            places_regs_mut(callee_place.iter_mut(), &mut out);
+            places_regs_mut(callee_place.as_deref_mut(), &mut out);
             places_regs_mut(arg_places.iter_mut().flatten(), &mut out);
             keyword_regs_mut(kwargs, kwarg_places, &mut out);
             param_args(param_arg_regs, &mut out);
@@ -257,7 +257,7 @@ pub fn instruction_regs_mut(instruction: &mut MirInstr) -> Vec<&mut Reg> {
         } => {
             out.extend([dest, recv]);
             out.extend(args.iter_mut());
-            places_regs_mut(recv_place.iter_mut(), &mut out);
+            places_regs_mut(recv_place.as_deref_mut(), &mut out);
             places_regs_mut(arg_places.iter_mut().flatten(), &mut out);
             keyword_regs_mut(kwargs, kwarg_places, &mut out);
             param_args(param_arg_regs, &mut out);
@@ -291,8 +291,8 @@ pub fn instruction_regs_mut(instruction: &mut MirInstr) -> Vec<&mut Reg> {
             ..
         } => {
             out.extend([dest, base, index]);
-            places_regs_mut(base_place.iter_mut(), &mut out);
-            places_regs_mut(index_place.iter_mut(), &mut out);
+            places_regs_mut(base_place.as_deref_mut(), &mut out);
+            places_regs_mut(index_place.as_deref_mut(), &mut out);
             if let Some(call) = call {
                 subscript_call(call, &mut out);
             }
@@ -310,7 +310,7 @@ pub fn instruction_regs_mut(instruction: &mut MirInstr) -> Vec<&mut Reg> {
         } => {
             out.extend([dest, object]);
             out.extend([lower, upper, step].into_iter().flatten());
-            places_regs_mut(object_place.iter_mut(), &mut out);
+            places_regs_mut(object_place.as_deref_mut(), &mut out);
             places_regs_mut(arg_places.iter_mut().flatten(), &mut out);
             if let Some(call) = call {
                 subscript_call(call, &mut out);
@@ -330,7 +330,7 @@ pub fn instruction_regs_mut(instruction: &mut MirInstr) -> Vec<&mut Reg> {
             for arg in args.iter_mut().chain(kwargs.iter_mut().map(|(_, arg)| arg)) {
                 subscript_arg(arg, &mut out);
             }
-            places_regs_mut(object_place.iter_mut(), &mut out);
+            places_regs_mut(object_place.as_deref_mut(), &mut out);
             places_regs_mut(arg_places.iter_mut().flatten(), &mut out);
             places_regs_mut(kwarg_places.iter_mut().flatten(), &mut out);
             if let Some(call) = call {
@@ -351,9 +351,9 @@ pub fn instruction_regs_mut(instruction: &mut MirInstr) -> Vec<&mut Reg> {
             for arg in args {
                 subscript_arg(arg, &mut out);
             }
-            places_regs_mut(receiver_place.iter_mut(), &mut out);
+            places_regs_mut(receiver_place.as_deref_mut(), &mut out);
             places_regs_mut(arg_places.iter_mut().flatten(), &mut out);
-            places_regs_mut(value_place.iter_mut(), &mut out);
+            places_regs_mut(value_place.as_deref_mut(), &mut out);
             subscript_call(call, &mut out);
         }
         MirInstr::Store { place: target, src } => {
@@ -908,7 +908,6 @@ pub struct MirSubscriptCall {
 /// A single three-address instruction. Each value-producing instruction writes a
 /// fresh `dest` register; control flow lives in the block's [`MirTerm`].
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-#[allow(clippy::large_enum_variant)]
 pub enum MirInstr {
     /// Establish one fresh generation containing every owner loan carried by a
     /// reference or aggregate binding. Grouping the loans makes rebinding reset
@@ -1102,7 +1101,7 @@ pub enum MirInstr {
         dest: Reg,
         func: FuncRef,
         /// Checker-selected error contract for this call, if it may raise.
-        raises: Option<Ty>,
+        raises: Option<Box<Ty>>,
         args: Vec<Reg>,
         kwargs: Vec<(String, Reg)>,
         arg_places: Vec<Option<MirPlace>>,
@@ -1123,7 +1122,7 @@ pub enum MirInstr {
         /// (`Pair[Self.U].count()`), in the caller's binder scope. No runtime
         /// argument need carry the struct's parameters, so the elaborator
         /// binds them from this type; a resolved call keeps none.
-        receiver: Option<Ty>,
+        receiver: Option<Box<Ty>>,
         /// The compile-time arguments the checker solved for a call of a
         /// generic `def`, in declaration order and in the caller's binder
         /// scope. A type argument no runtime parameter or result spells
@@ -1148,12 +1147,12 @@ pub enum MirInstr {
         /// consults this only when `callee` is a nominal callable struct.
         resolved: Option<String>,
         /// Checker-selected error contract of the callable value.
-        raises: Option<Ty>,
+        raises: Option<Box<Ty>>,
         args: Vec<Reg>,
         kwargs: Vec<(String, Reg)>,
         /// The callable value's caller place, when it has one. This is needed
         /// for a callable struct whose `__call__` receiver is `mut`/`ref`.
-        callee_place: Option<MirPlace>,
+        callee_place: Option<Box<MirPlace>>,
         /// Like `Call::arg_places`: the retained caller place for each
         /// positional argument selected for a `mut`/`ref` parameter.
         arg_places: Vec<Option<MirPlace>>,
@@ -1171,7 +1170,7 @@ pub enum MirInstr {
         /// explicit compile-time arguments resolve dependent parameter/result
         /// types. Generic callable storage may remain symbolic; executable
         /// operand verification uses this concrete view.
-        instantiated_contract: Option<Ty>,
+        instantiated_contract: Option<Box<Ty>>,
         /// Complete checker-resolved generic arguments in declaration order.
         /// This semantic-only substitution witness lets verification validate
         /// `instantiated_contract` without inspecting the instructions which
@@ -1196,18 +1195,18 @@ pub enum MirInstr {
         method: String,
         resolved: Option<String>,
         /// Checker-selected concrete or trait-requirement error contract.
-        raises: Option<Ty>,
+        raises: Option<Box<Ty>>,
         /// Reference-return ABI retained independently from the destination
         /// value type. A value-returning method may itself produce a
         /// reference-valued element, so the verifier must not infer ABI from
         /// `reg_types[dest]`.
-        reference_result: Option<mojito_types::origin::RefTy>,
+        reference_result: Option<Box<mojito_types::origin::RefTy>>,
         /// Checker-proven adaptation from a concrete implementation ABI to the
         /// abstract result promised at this call site.
         result_adapter: Option<mojito_checked::checked::CheckedResultAdapter>,
         args: Vec<Reg>,
         kwargs: Vec<(String, Reg)>,
-        recv_place: Option<MirPlace>,
+        recv_place: Option<Box<MirPlace>>,
         /// Whether the call may write through `recv_place`: a `mut` or
         /// mutable `ref` receiver, or a consuming one. A borrowed `self`
         /// receiver only reads its place, so a live shared loan on that place
@@ -1300,9 +1299,9 @@ pub enum MirInstr {
         /// Stable receiver storage retained by checking/lowering. Nominal
         /// `__getitem__` dispatch uses this for a `ref self` handle and for any
         /// reference returned into the caller's frame.
-        base_place: Option<MirPlace>,
-        index_place: Option<MirPlace>,
-        call: Option<MirSubscriptCall>,
+        base_place: Option<Box<MirPlace>>,
+        index_place: Option<Box<MirPlace>>,
+        call: Option<Box<MirSubscriptCall>>,
         intrinsic: Option<MirIntrinsicSubscript>,
     },
     /// Slice `object[lower:upper:step]` → a new value. Each bound is
@@ -1314,9 +1313,9 @@ pub enum MirInstr {
         lower: Option<Reg>,
         upper: Option<Reg>,
         step: Option<Reg>,
-        object_place: Option<MirPlace>,
+        object_place: Option<Box<MirPlace>>,
         arg_places: Vec<Option<MirPlace>>,
-        call: Option<MirSubscriptCall>,
+        call: Option<Box<MirSubscriptCall>>,
         intrinsic: Option<MirIntrinsicSubscript>,
     },
     /// `object[a, b:c]`: variadic `__getitem__` dispatch with every slice
@@ -1325,7 +1324,7 @@ pub enum MirInstr {
         dest: Reg,
         object: Reg,
         args: Vec<MirSubscriptArg>,
-        object_place: Option<MirPlace>,
+        object_place: Option<Box<MirPlace>>,
         arg_places: Vec<Option<MirPlace>>,
         /// Keyword subscript actuals — index values (`s[byte=i]`) or slice
         /// descriptors (`s[byte=a:b]`) — bound to keyword-only `__getitem__`
@@ -1333,7 +1332,7 @@ pub enum MirInstr {
         /// parallel to `kwarg_places`.
         kwargs: Vec<(String, MirSubscriptArg)>,
         kwarg_places: Vec<Option<MirPlace>>,
-        call: Option<MirSubscriptCall>,
+        call: Option<Box<MirSubscriptCall>>,
     },
     /// `object[a, b:c] = value`: checked `__setitem__` dispatch. The receiver
     /// place is retained so a `mut self` implementation is written back after
@@ -1341,13 +1340,13 @@ pub enum MirInstr {
     /// slot; fixed-arity methods receive it as the last positional argument.
     MultiSet {
         receiver: Reg,
-        receiver_place: Option<MirPlace>,
+        receiver_place: Option<Box<MirPlace>>,
         args: Vec<MirSubscriptArg>,
         arg_places: Vec<Option<MirPlace>>,
         value: Reg,
-        value_place: Option<MirPlace>,
+        value_place: Option<Box<MirPlace>>,
         value_keyword: bool,
-        call: MirSubscriptCall,
+        call: Box<MirSubscriptCall>,
     },
     /// `place = src` — a write through a place (`p.x = e`, `xs[i] = e`, nested).
     Store {
@@ -1590,9 +1589,29 @@ pub enum MirInstr {
         yielded: Reg,
         iter: VarId,
         /// Exact selected target, reference/value ABI, and raising effect.
-        call: mojito_checked::checked::CheckedIteratorCall,
+        call: Box<mojito_checked::checked::CheckedIteratorCall>,
         exhaustion: Ty,
     },
+}
+
+/// An instruction is sized for its common variants: the places, subscript
+/// calls, and types only a few call variants carry sit behind boxes.
+const _: () = assert!(std::mem::size_of::<MirInstr>() <= 296);
+
+impl MirInstr {
+    /// The checked error type a call instruction raises, if it raises.
+    pub fn call_error(&self) -> Option<&Ty> {
+        match self {
+            Self::Call { raises, .. }
+            | Self::CallIndirect { raises, .. }
+            | Self::MethodCall { raises, .. } => raises.as_deref(),
+            Self::Index { call, .. } | Self::Slice { call, .. } | Self::MultiIndex { call, .. } => {
+                call.as_ref().and_then(|call| call.raises.as_ref())
+            }
+            Self::MultiSet { call, .. } => call.raises.as_ref(),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]

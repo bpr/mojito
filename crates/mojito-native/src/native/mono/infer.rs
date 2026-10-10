@@ -290,7 +290,7 @@ impl Specializer<'_> {
                 // statically traceable closure as such would discard captures.
                 if matches!(
                     peel_refs(&declaration.param_types[index]),
-                    Ty::GenericFunc { .. }
+                    Ty::GenericFunc(_)
                         | Ty::Param {
                             callable_bound: Some(_),
                             ..

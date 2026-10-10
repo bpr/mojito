@@ -160,42 +160,7 @@ fn verify_effect_instruction(cx: &InstrCx<'_>, instruction: &MirInstr, errors: &
         _ => {}
     }
     // A call carrying a checked error contract raises unless handled.
-    if let MirInstr::Call {
-        raises: Some(_), ..
-    }
-    | MirInstr::CallIndirect {
-        raises: Some(_), ..
-    }
-    | MirInstr::MethodCall {
-        raises: Some(_), ..
-    }
-    | MirInstr::Index {
-        call: Some(crate::mir::MirSubscriptCall {
-            raises: Some(_), ..
-        }),
-        ..
-    }
-    | MirInstr::Slice {
-        call: Some(crate::mir::MirSubscriptCall {
-            raises: Some(_), ..
-        }),
-        ..
-    }
-    | MirInstr::MultiIndex {
-        call: Some(crate::mir::MirSubscriptCall {
-            raises: Some(_), ..
-        }),
-        ..
-    }
-    | MirInstr::MultiSet {
-        call: crate::mir::MirSubscriptCall {
-            raises: Some(_), ..
-        },
-        ..
-    } = instruction
-        && !cx.function.raises
-        && !cx.context.protected
-    {
+    if instruction.call_error().is_some() && !cx.function.raises && !cx.context.protected {
         errors.push(format!(
             "{prefix}: unprotected raising call in nonraising function"
         ));
@@ -588,7 +553,7 @@ fn verify_value_instruction(cx: &InstrCx<'_>, instruction: &MirInstr, errors: &m
                 }
             }
             if let Some(found) = cx.reg_ty(*dest)
-                && !matches!(found, Ty::Func { .. } | Ty::GenericFunc { .. })
+                && !matches!(found, Ty::Func(_) | Ty::GenericFunc(_))
             {
                 errors.push(format!(
                     "{prefix}: closure result has non-callable type {found}"

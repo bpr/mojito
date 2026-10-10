@@ -5,13 +5,13 @@
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
-use mojito_types::types::TransferSet;
+use mojito_types::types::{FuncTy, GenericFuncTy, TransferSet};
 
 /// Current Mojo treats a bare `def(...)` in a general type position (struct
 /// field, collection element) as a trait, not a storable callable-value type;
 /// callable values are limited to parameters and local bindings.
 pub(super) fn reject_stored_callable_type(ty: &Ty, position: &str) -> Result<(), TypeError> {
-    if matches!(ty, Ty::Func { .. } | Ty::GenericFunc { .. }) {
+    if matches!(ty, Ty::Func(_) | Ty::GenericFunc(_)) {
         return Err(TypeError::Unsupported(format!(
             "a 'def(...)' type names a trait in {position} in current Mojo, not a storable \
              callable value; callable values are limited to parameters and 'def(...) thin' \
@@ -170,7 +170,7 @@ impl Checker {
                     ),
                     return_type => (self.resolve_ty_from_anno(return_type)?, None),
                 };
-                Ty::Func {
+                Ty::Func(Box::new(FuncTy {
                     environment,
                     params: parameter_types,
                     names: function_params
@@ -198,12 +198,10 @@ impl Checker {
                         .filter(|parameter| parameter.kind == mojito_ast::ast::ParamKind::Regular)
                         .map(|parameter| parameter.convention)
                         .collect(),
-                    ref_params: Box::new(
-                        self.lower_callable_ref_param_sigs(type_params, &regular)?,
-                    ),
+                    ref_params: self.lower_callable_ref_param_sigs(type_params, &regular)?,
                     ref_return,
                     transfers: TransferSet::default(),
-                }
+                }))
             }
             SourceType::Ref { referent, origin } => {
                 let spec = origin.as_ref().ok_or_else(|| {
@@ -1311,58 +1309,61 @@ impl Checker {
             }),
             // A nested generic callable owns its own value-binder scope. Leave
             // that scope structural here; its own invocation resolves it.
-            Ty::GenericFunc { .. } => ty.clone(),
-            Ty::Func {
-                environment,
-                params,
-                names,
-                ret,
-                required,
-                variadic,
-                kw_variadic,
-                positional_only,
-                keyword_only,
-                raises,
-                error,
-                conventions,
-                ref_params,
-                ref_return,
-                transfers,
-            } => Ty::Func {
-                environment: environment.clone(),
-                params: params
-                    .iter()
-                    .map(|parameter| self.resolve_dependent_ty(parameter, parameters))
-                    .collect::<Result<Vec<_>, _>>()?,
-                names: names.clone(),
-                ret: Box::new(self.resolve_dependent_ty(ret, parameters)?),
-                required: required.clone(),
-                variadic: variadic
-                    .as_ref()
-                    .map(|parameter| {
-                        self.resolve_dependent_ty(parameter, parameters)
-                            .map(Box::new)
-                    })
-                    .transpose()?,
-                kw_variadic: kw_variadic
-                    .as_ref()
-                    .map(|parameter| {
-                        self.resolve_dependent_ty(parameter, parameters)
-                            .map(Box::new)
-                    })
-                    .transpose()?,
-                positional_only: *positional_only,
-                keyword_only: *keyword_only,
-                raises: *raises,
-                error: error
-                    .as_ref()
-                    .map(|error| self.resolve_dependent_ty(error, parameters).map(Box::new))
-                    .transpose()?,
-                conventions: conventions.clone(),
-                ref_params: ref_params.clone(),
-                ref_return: ref_return.clone(),
-                transfers: transfers.clone(),
-            },
+            Ty::GenericFunc(_) => ty.clone(),
+            Ty::Func(func) => {
+                let FuncTy {
+                    environment,
+                    params,
+                    names,
+                    ret,
+                    required,
+                    variadic,
+                    kw_variadic,
+                    positional_only,
+                    keyword_only,
+                    raises,
+                    error,
+                    conventions,
+                    ref_params,
+                    ref_return,
+                    transfers,
+                } = &**func;
+                Ty::Func(Box::new(FuncTy {
+                    environment: environment.clone(),
+                    params: params
+                        .iter()
+                        .map(|parameter| self.resolve_dependent_ty(parameter, parameters))
+                        .collect::<Result<Vec<_>, _>>()?,
+                    names: names.clone(),
+                    ret: Box::new(self.resolve_dependent_ty(ret, parameters)?),
+                    required: required.clone(),
+                    variadic: variadic
+                        .as_ref()
+                        .map(|parameter| {
+                            self.resolve_dependent_ty(parameter, parameters)
+                                .map(Box::new)
+                        })
+                        .transpose()?,
+                    kw_variadic: kw_variadic
+                        .as_ref()
+                        .map(|parameter| {
+                            self.resolve_dependent_ty(parameter, parameters)
+                                .map(Box::new)
+                        })
+                        .transpose()?,
+                    positional_only: *positional_only,
+                    keyword_only: *keyword_only,
+                    raises: *raises,
+                    error: error
+                        .as_ref()
+                        .map(|error| self.resolve_dependent_ty(error, parameters).map(Box::new))
+                        .transpose()?,
+                    conventions: conventions.clone(),
+                    ref_params: ref_params.clone(),
+                    ref_return: ref_return.clone(),
+                    transfers: transfers.clone(),
+                }))
+            }
             Ty::Overload(candidates) => Ty::Overload(
                 candidates
                     .iter()
@@ -1673,86 +1674,97 @@ impl Checker {
                 element: Box::new(self.resolve_assoc_ty(element)),
                 origin: origin.clone(),
             },
-            Ty::Func {
-                environment,
-                params,
-                names,
-                ret,
-                required,
-                variadic,
-                kw_variadic,
-                positional_only,
-                keyword_only,
-                raises,
-                error,
-                conventions,
-                ref_params,
-                ref_return,
-                transfers,
-            } => Ty::Func {
-                environment: environment.clone(),
-                params: params.iter().map(|p| self.resolve_assoc_ty(p)).collect(),
-                names: names.clone(),
-                ret: Box::new(self.resolve_assoc_ty(ret)),
-                required: required.clone(),
-                variadic: variadic
-                    .as_ref()
-                    .map(|v| Box::new(self.resolve_assoc_ty(v))),
-                kw_variadic: kw_variadic
-                    .as_ref()
-                    .map(|v| Box::new(self.resolve_assoc_ty(v))),
-                positional_only: *positional_only,
-                keyword_only: *keyword_only,
-                raises: *raises,
-                error: error
-                    .as_ref()
-                    .map(|error| Box::new(self.resolve_assoc_ty(error))),
-                conventions: conventions.clone(),
-                ref_params: ref_params.clone(),
-                ref_return: ref_return.clone(),
-                transfers: transfers.clone(),
-            },
-            Ty::GenericFunc {
-                environment,
-                decls,
-                params,
-                names,
-                ret,
-                required,
-                variadic,
-                kw_variadic,
-                positional_only,
-                keyword_only,
-                raises,
-                error,
-                conventions,
-                ref_params,
-                ref_return,
-                transfers,
-            } => Ty::GenericFunc {
-                environment: environment.clone(),
-                decls: decls.clone(),
-                params: params.iter().map(|p| self.resolve_assoc_ty(p)).collect(),
-                names: names.clone(),
-                ret: Box::new(self.resolve_assoc_ty(ret)),
-                required: required.clone(),
-                variadic: variadic
-                    .as_ref()
-                    .map(|v| Box::new(self.resolve_assoc_ty(v))),
-                kw_variadic: kw_variadic
-                    .as_ref()
-                    .map(|v| Box::new(self.resolve_assoc_ty(v))),
-                positional_only: *positional_only,
-                keyword_only: *keyword_only,
-                raises: *raises,
-                error: error
-                    .as_ref()
-                    .map(|error| Box::new(self.resolve_assoc_ty(error))),
-                conventions: conventions.clone(),
-                ref_params: ref_params.clone(),
-                ref_return: ref_return.clone(),
-                transfers: transfers.clone(),
-            },
+            Ty::Func(func) => {
+                let FuncTy {
+                    environment,
+                    params,
+                    names,
+                    ret,
+                    required,
+                    variadic,
+                    kw_variadic,
+                    positional_only,
+                    keyword_only,
+                    raises,
+                    error,
+                    conventions,
+                    ref_params,
+                    ref_return,
+                    transfers,
+                } = &**func;
+                Ty::Func(Box::new(FuncTy {
+                    environment: environment.clone(),
+                    params: params.iter().map(|p| self.resolve_assoc_ty(p)).collect(),
+                    names: names.clone(),
+                    ret: Box::new(self.resolve_assoc_ty(ret)),
+                    required: required.clone(),
+                    variadic: variadic
+                        .as_ref()
+                        .map(|v| Box::new(self.resolve_assoc_ty(v))),
+                    kw_variadic: kw_variadic
+                        .as_ref()
+                        .map(|v| Box::new(self.resolve_assoc_ty(v))),
+                    positional_only: *positional_only,
+                    keyword_only: *keyword_only,
+                    raises: *raises,
+                    error: error
+                        .as_ref()
+                        .map(|error| Box::new(self.resolve_assoc_ty(error))),
+                    conventions: conventions.clone(),
+                    ref_params: ref_params.clone(),
+                    ref_return: ref_return.clone(),
+                    transfers: transfers.clone(),
+                }))
+            }
+            Ty::GenericFunc(generic) => {
+                let GenericFuncTy {
+                    decls,
+                    func:
+                        FuncTy {
+                            environment,
+                            params,
+                            names,
+                            ret,
+                            required,
+                            variadic,
+                            kw_variadic,
+                            positional_only,
+                            keyword_only,
+                            raises,
+                            error,
+                            conventions,
+                            ref_params,
+                            ref_return,
+                            transfers,
+                        },
+                } = &**generic;
+                Ty::GenericFunc(Box::new(GenericFuncTy {
+                    decls: decls.clone(),
+                    func: FuncTy {
+                        environment: environment.clone(),
+                        params: params.iter().map(|p| self.resolve_assoc_ty(p)).collect(),
+                        names: names.clone(),
+                        ret: Box::new(self.resolve_assoc_ty(ret)),
+                        required: required.clone(),
+                        variadic: variadic
+                            .as_ref()
+                            .map(|v| Box::new(self.resolve_assoc_ty(v))),
+                        kw_variadic: kw_variadic
+                            .as_ref()
+                            .map(|v| Box::new(self.resolve_assoc_ty(v))),
+                        positional_only: *positional_only,
+                        keyword_only: *keyword_only,
+                        raises: *raises,
+                        error: error
+                            .as_ref()
+                            .map(|error| Box::new(self.resolve_assoc_ty(error))),
+                        conventions: conventions.clone(),
+                        ref_params: ref_params.clone(),
+                        ref_return: ref_return.clone(),
+                        transfers: transfers.clone(),
+                    },
+                }))
+            }
             Ty::Overload(candidates) => Ty::Overload(
                 candidates
                     .iter()
@@ -1862,7 +1874,7 @@ impl Checker {
                     // evaluates the parameter argument into a register and the
                     // call frame reifies it under `name`. `CtValue::Deferred` is only
                     // the erased generic-identity marker used by this resolver.
-                    if matches!(ty.as_ref(), Ty::Func { .. } | Ty::GenericFunc { .. }) {
+                    if matches!(ty.as_ref(), Ty::Func(_) | Ty::GenericFunc(_)) {
                         let actual = self.infer(expr)?;
                         if !self.value_coerces(&actual, ty) {
                             return Err(TypeError::TypeMismatch {
@@ -3005,28 +3017,9 @@ fn type_is_symbolic(ty: &Ty) -> bool {
         | Ty::FloatLiteral
         | Ty::Dtype
         | Ty::Error => false,
-        Ty::Func {
-            params,
-            ret,
-            variadic,
-            kw_variadic,
-            error,
-            ..
-        }
-        | Ty::GenericFunc {
-            params,
-            ret,
-            variadic,
-            kw_variadic,
-            error,
-            ..
-        } => {
-            params.iter().any(type_is_symbolic)
-                || type_is_symbolic(ret)
-                || variadic.as_deref().is_some_and(type_is_symbolic)
-                || kw_variadic.as_deref().is_some_and(type_is_symbolic)
-                || error.as_deref().is_some_and(type_is_symbolic)
-        }
+        Ty::Func(_) | Ty::GenericFunc(_) => ty
+            .callable()
+            .is_some_and(|func| func.types().any(type_is_symbolic)),
         Ty::Overload(types) | Ty::Tuple(types) | Ty::RuntimePack(types) | Ty::Variant(types) => {
             types.iter().any(type_is_symbolic)
         }

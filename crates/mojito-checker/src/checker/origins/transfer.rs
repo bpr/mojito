@@ -86,10 +86,10 @@ impl Checker {
     /// same union the name-keyed call path already applies.
     pub(in crate::checker) fn bake_value_transfer_effects(&self, name: &str, ty: Ty) -> Ty {
         let bakeable = match &ty {
-            Ty::Func { .. } | Ty::GenericFunc { .. } => true,
+            Ty::Func(_) | Ty::GenericFunc(_) => true,
             Ty::Overload(members) => members
                 .iter()
-                .any(|member| matches!(member, Ty::Func { .. } | Ty::GenericFunc { .. })),
+                .any(|member| matches!(member, Ty::Func(_) | Ty::GenericFunc(_))),
             _ => false,
         };
         if !bakeable {

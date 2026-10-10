@@ -7,7 +7,7 @@
 
 use std::collections::HashMap;
 use std::fmt;
-use std::ops::Deref;
+use std::ops::{Deref, DerefMut};
 use std::sync::Arc;
 
 use crate::ct::CtValue;
@@ -141,6 +141,7 @@ impl DependentType {
 
     /// Rebuild this type with `f` applied to each candidate of a finite
     /// selection. Any other expression holds no candidate types.
+    #[must_use]
     pub fn map_types(&self, f: impl FnMut(&Ty) -> Ty) -> Ty {
         match self.selection() {
             Some((elements, index)) => ParamContext::detached()
@@ -463,54 +464,11 @@ pub enum Ty {
     /// runtime value inhabits it; specialization folds every use to a
     /// concrete `DType.<dt>` spelling before checking.
     Dtype,
-    /// A non-generic function. `params`/`names` describe the regular parameters;
-    /// `required[i]` is true when regular parameter `i` has no default. The
-    /// marker fields are indexes into this regular-parameter list.
-    Func {
-        /// Checked callable-environment contract. This is semantic type
-        /// information even though the VM erases it at execution.
-        environment: crate::origin::CallableEnvironment,
-        params: Vec<Self>,
-        names: Vec<String>,
-        ret: Box<Self>,
-        required: Vec<bool>,
-        variadic: Option<Box<Self>>,
-        /// Homogeneous element type collected by `**kwargs`, when present.
-        kw_variadic: Option<Box<Self>>,
-        positional_only: Option<usize>,
-        keyword_only: Option<usize>,
-        raises: bool,
-        error: Option<Box<Self>>,
-        /// The argument convention of each regular parameter.
-        conventions: Vec<Option<ArgConvention>>,
-        ref_params: Box<Vec<Option<crate::origin::RefSig>>>,
-        ref_return: Option<Box<crate::origin::RefSig>>,
-        /// Identity-transparent inferred transfer effects; see
-        /// [`TransferSet`].
-        transfers: TransferSet,
-    },
+    /// A non-generic function, synthesized from a `def` signature or lowered
+    /// from a function-type annotation.
+    Func(Box<FuncTy>),
     /// A generic function synthesized from a `def` with a `[params]` list.
-    GenericFunc {
-        environment: crate::origin::CallableEnvironment,
-        decls: Vec<ParamDecl>,
-        params: Vec<Self>,
-        names: Vec<String>,
-        ret: Box<Self>,
-        required: Vec<bool>,
-        variadic: Option<Box<Self>>,
-        /// Homogeneous element type collected by `**kwargs`, when present.
-        kw_variadic: Option<Box<Self>>,
-        positional_only: Option<usize>,
-        keyword_only: Option<usize>,
-        raises: bool,
-        error: Option<Box<Self>>,
-        conventions: Vec<Option<ArgConvention>>,
-        ref_params: Box<Vec<Option<crate::origin::RefSig>>>,
-        ref_return: Option<Box<crate::origin::RefSig>>,
-        /// Identity-transparent inferred transfer effects; see
-        /// [`TransferSet`].
-        transfers: TransferSet,
-    },
+    GenericFunc(Box<GenericFuncTy>),
     /// A source name that denotes multiple callable signatures. The checker
     /// resolves an overload set at each call site. The first implementation
     /// supports distinct call shapes/arity; keeping this as a first-class type
@@ -591,6 +549,158 @@ pub enum Ty {
     /// A reference value. Origins and permissions are checked statically; its
     /// runtime representation is introduced only after loan checking exists.
     Ref(crate::origin::RefTy),
+}
+
+/// A `Ty` is sized for its common variants: the callable payloads, the
+/// largest, sit behind a box.
+const _: () = assert!(std::mem::size_of::<Ty>() <= 72);
+
+impl Ty {
+    /// The signature of a callable type, generic or not.
+    pub fn callable(&self) -> Option<&FuncTy> {
+        match self {
+            Self::Func(func) => Some(func),
+            Self::GenericFunc(generic) => Some(&generic.func),
+            _ => None,
+        }
+    }
+
+    /// The signature of a non-generic function type.
+    pub fn as_func(&self) -> Option<&FuncTy> {
+        match self {
+            Self::Func(func) => Some(func),
+            _ => None,
+        }
+    }
+
+    /// The signature of a non-generic function type, for rewriting.
+    pub fn as_func_mut(&mut self) -> Option<&mut FuncTy> {
+        match self {
+            Self::Func(func) => Some(func),
+            _ => None,
+        }
+    }
+
+    /// The signature of a generic function type.
+    pub fn as_generic_func(&self) -> Option<&GenericFuncTy> {
+        match self {
+            Self::GenericFunc(generic) => Some(generic),
+            _ => None,
+        }
+    }
+
+    /// The signature of a generic function type, for rewriting.
+    pub fn as_generic_func_mut(&mut self) -> Option<&mut GenericFuncTy> {
+        match self {
+            Self::GenericFunc(generic) => Some(generic),
+            _ => None,
+        }
+    }
+
+    /// The signature of a callable type, generic or not, for rewriting.
+    pub fn callable_mut(&mut self) -> Option<&mut FuncTy> {
+        match self {
+            Self::Func(func) => Some(func),
+            Self::GenericFunc(generic) => Some(&mut generic.func),
+            _ => None,
+        }
+    }
+}
+
+/// A function signature. `params`/`names` describe the regular parameters;
+/// `required[i]` is true when regular parameter `i` has no default. The
+/// marker fields are indexes into this regular-parameter list.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+pub struct FuncTy {
+    /// Checked callable-environment contract. This is semantic type
+    /// information even though the VM erases it at execution.
+    pub environment: crate::origin::CallableEnvironment,
+    pub params: Vec<Ty>,
+    pub names: Vec<String>,
+    pub ret: Box<Ty>,
+    pub required: Vec<bool>,
+    pub variadic: Option<Box<Ty>>,
+    /// Homogeneous element type collected by `**kwargs`, when present.
+    pub kw_variadic: Option<Box<Ty>>,
+    pub positional_only: Option<usize>,
+    pub keyword_only: Option<usize>,
+    pub raises: bool,
+    pub error: Option<Box<Ty>>,
+    /// The argument convention of each regular parameter.
+    pub conventions: Vec<Option<ArgConvention>>,
+    pub ref_params: Vec<Option<crate::origin::RefSig>>,
+    pub ref_return: Option<Box<crate::origin::RefSig>>,
+    /// Identity-transparent inferred transfer effects; see
+    /// [`TransferSet`].
+    pub transfers: TransferSet,
+}
+
+impl FuncTy {
+    /// Every parameter, result, variadic, and error type, in that order.
+    pub fn types(&self) -> impl Iterator<Item = &Ty> {
+        self.params
+            .iter()
+            .chain(std::iter::once(&*self.ret))
+            .chain(self.variadic.as_deref())
+            .chain(self.kw_variadic.as_deref())
+            .chain(self.error.as_deref())
+    }
+
+    /// This signature with every parameter, result, variadic, and error type
+    /// rewritten by `f`, in that order.
+    #[must_use]
+    pub fn map_types(&self, mut f: impl FnMut(&Ty) -> Ty) -> Self {
+        let Ok(func) = self.try_map_types(|ty| Ok::<_, std::convert::Infallible>(f(ty)));
+        func
+    }
+
+    /// [`FuncTy::map_types`] with a rewrite that may fail.
+    pub fn try_map_types<E>(&self, mut f: impl FnMut(&Ty) -> Result<Ty, E>) -> Result<Self, E> {
+        let params = self.params.iter().map(&mut f).collect::<Result<_, _>>()?;
+        let ret = Box::new(f(&self.ret)?);
+        let variadic = self.variadic.as_deref().map(&mut f).transpose()?;
+        let kw_variadic = self.kw_variadic.as_deref().map(&mut f).transpose()?;
+        let error = self.error.as_deref().map(&mut f).transpose()?;
+        Ok(Self {
+            params,
+            ret,
+            variadic: variadic.map(Box::new),
+            kw_variadic: kw_variadic.map(Box::new),
+            error: error.map(Box::new),
+            environment: self.environment.clone(),
+            names: self.names.clone(),
+            required: self.required.clone(),
+            positional_only: self.positional_only,
+            keyword_only: self.keyword_only,
+            raises: self.raises,
+            conventions: self.conventions.clone(),
+            ref_params: self.ref_params.clone(),
+            ref_return: self.ref_return.clone(),
+            transfers: self.transfers.clone(),
+        })
+    }
+}
+
+/// A generic function's signature: its declared parameters over the
+/// signature they bind.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+pub struct GenericFuncTy {
+    pub decls: Vec<ParamDecl>,
+    pub func: FuncTy,
+}
+
+impl Deref for GenericFuncTy {
+    type Target = FuncTy;
+
+    fn deref(&self) -> &FuncTy {
+        &self.func
+    }
+}
+
+impl DerefMut for GenericFuncTy {
+    fn deref_mut(&mut self) -> &mut FuncTy {
+        &mut self.func
+    }
 }
 
 pub const ARRAY_TYPE_NAME: &str = "Array";
@@ -1801,111 +1911,8 @@ impl fmt::Display for Ty {
             Self::Dtype => write!(f, "DType"),
             Self::None => write!(f, "None"),
             Self::Never => write!(f, "Never"),
-            Self::Func {
-                environment,
-                params,
-                ret,
-                raises,
-                ..
-            }
-            | Self::GenericFunc {
-                environment,
-                params,
-                ret,
-                raises,
-                ..
-            } => {
-                // A generic contract renders its binders and trailing `where`
-                // constraints so a constrained-vs-unconstrained mismatch is
-                // visible in diagnostics.
-                if let Self::GenericFunc { decls, .. } = self {
-                    write!(f, "def[")?;
-                    for (index, decl) in decls.iter().enumerate() {
-                        if index > 0 {
-                            write!(f, ", ")?;
-                        }
-                        match decl {
-                            ParamDecl::Type { name, bounds, .. } => {
-                                write!(f, "{name}")?;
-                                if !bounds.is_empty() {
-                                    write!(f, ": {}", bounds.join(" & "))?;
-                                }
-                            }
-                            ParamDecl::Value { name, ty, .. } => write!(f, "{name}: {ty}")?,
-                        }
-                    }
-                    write!(f, "](")?;
-                } else {
-                    write!(f, "def(")?;
-                }
-                for (i, p) in params.iter().enumerate() {
-                    if i > 0 {
-                        write!(f, ", ")?;
-                    }
-                    write!(f, "{p}")?;
-                }
-                write!(f, ")")?;
-                match environment {
-                    crate::origin::CallableEnvironment::Default => {}
-                    crate::origin::CallableEnvironment::Thin => write!(f, " thin")?,
-                    crate::origin::CallableEnvironment::Capturing(origins) => {
-                        write!(f, " capturing[")?;
-                        match origins {
-                            crate::origin::CaptureOriginSet::Infer => write!(f, "_")?,
-                            crate::origin::CaptureOriginSet::Param(id) => {
-                                write!(f, "origin_set#{}", id.0)?;
-                            }
-                            crate::origin::CaptureOriginSet::Concrete(members) => {
-                                for (index, capture) in members.iter().enumerate() {
-                                    if index > 0 {
-                                        write!(f, ", ")?;
-                                    }
-                                    if capture.access == crate::origin::CaptureAccess::Write {
-                                        write!(f, "mut ")?;
-                                    }
-                                    match &capture.origin {
-                                        crate::origin::Origin::Param(id) => {
-                                            write!(f, "origin#{}", id.0)?;
-                                        }
-                                        crate::origin::Origin::Place(place) => {
-                                            write!(f, "origin@{}", place.root.0)?;
-                                        }
-                                        crate::origin::Origin::SelfParam => {
-                                            write!(f, "origin_of(self)")?;
-                                        }
-                                        crate::origin::Origin::Static => write!(f, "static")?,
-                                        crate::origin::Origin::Untracked { mutable: true } => {
-                                            write!(f, "mut-untracked")?;
-                                        }
-                                        crate::origin::Origin::Untracked { mutable: false } => {
-                                            write!(f, "immut-untracked")?;
-                                        }
-                                        crate::origin::Origin::Union(_) => {
-                                            write!(f, "origin-union")?;
-                                        }
-                                        crate::origin::Origin::Unbound => write!(f, "_")?,
-                                    }
-                                }
-                            }
-                        }
-                        write!(f, "]")?;
-                    }
-                }
-                if *raises {
-                    write!(f, " raises")?;
-                }
-                write!(f, " -> {ret}")?;
-                if let Self::GenericFunc { decls, .. } = self {
-                    for decl in decls {
-                        let (ParamDecl::Type { constraints, .. }
-                        | ParamDecl::Value { constraints, .. }) = decl;
-                        for constraint in constraints {
-                            write!(f, " where {constraint}")?;
-                        }
-                    }
-                }
-                Ok(())
-            }
+            Self::Func(func) => write_callable(f, None, func),
+            Self::GenericFunc(generic) => write_callable(f, Some(&generic.decls), generic),
             Self::Overload(candidates) => {
                 write!(f, "overload(")?;
                 for (i, candidate) in candidates.iter().enumerate() {
@@ -2363,8 +2370,8 @@ pub fn coerces(from: &Ty, to: &Ty) -> bool {
                 origin: bo,
             },
         ) => coerces(a, b) && ao.coerces_to(bo),
-        (
-            Ty::Func {
+        (Ty::Func(from), Ty::Func(to)) => {
+            let FuncTy {
                 environment: from_environment,
                 params: from_params,
                 ret: from_ret,
@@ -2376,8 +2383,8 @@ pub fn coerces(from: &Ty, to: &Ty) -> bool {
                 ref_params: from_ref_params,
                 ref_return: from_ref_return,
                 ..
-            },
-            Ty::Func {
+            } = &**from;
+            let FuncTy {
                 environment: to_environment,
                 params: to_params,
                 ret: to_ret,
@@ -2389,8 +2396,7 @@ pub fn coerces(from: &Ty, to: &Ty) -> bool {
                 ref_params: to_ref_params,
                 ref_return: to_ref_return,
                 ..
-            },
-        ) => {
+            } = &**to;
             callable_environment_value_coerces(from_environment, to_environment)
                 && required == to_required
                 && variadic.is_none()
@@ -2583,8 +2589,8 @@ pub const fn builtin_copy_is_value_read(ty: &Ty) -> bool {
             | Ty::Dependent(_)
             | Ty::Ref(_)
             | Ty::SelfType
-            | Ty::Func { .. }
-            | Ty::GenericFunc { .. }
+            | Ty::Func(_)
+            | Ty::GenericFunc(_)
             | Ty::Overload(_)
             | Ty::Error
     )
@@ -2594,7 +2600,7 @@ pub const fn builtin_copy_is_value_read(ty: &Ty) -> bool {
 /// by a function type or indirectly by a callable-bounded type parameter.
 pub fn callable_contract_ty(ty: &Ty) -> Option<&Ty> {
     match ty {
-        Ty::Func { .. } | Ty::GenericFunc { .. } => Some(ty),
+        Ty::Func(_) | Ty::GenericFunc(_) => Some(ty),
         Ty::Param {
             callable_bound: Some(bound),
             ..
@@ -2614,7 +2620,7 @@ pub fn callable_contract_ty(ty: &Ty) -> Option<&Ty> {
 /// precondition — while an unconstrained implementation may serve a
 /// constrained contract.
 pub fn callable_bound_accepts(actual: &Ty, contract: &Ty) -> bool {
-    if matches!(actual, Ty::GenericFunc { .. }) || matches!(contract, Ty::GenericFunc { .. }) {
+    if matches!(actual, Ty::GenericFunc(_)) || matches!(contract, Ty::GenericFunc(_)) {
         let (Some((actual_decls, actual)), Some((contract_decls, contract))) = (
             erase_generic_callable_binders(actual),
             erase_generic_callable_binders(contract),
@@ -2655,43 +2661,41 @@ pub fn callable_bound_accepts(actual: &Ty, contract: &Ty) -> bool {
         return structural && constraints_declared && callable_bound_accepts(&actual, &contract);
     }
 
-    let (
-        Ty::Func {
-            environment: actual_environment,
-            params: actual_params,
-            ret: actual_ret,
-            required: actual_required,
-            variadic: actual_variadic,
-            kw_variadic: actual_kw_variadic,
-            positional_only: actual_positional_only,
-            keyword_only: actual_keyword_only,
-            raises: actual_raises,
-            error: actual_error,
-            conventions: actual_conventions,
-            ref_params: actual_ref_params,
-            ref_return: actual_ref_return,
-            ..
-        },
-        Ty::Func {
-            environment: contract_environment,
-            params: contract_params,
-            ret: contract_ret,
-            required: contract_required,
-            variadic: contract_variadic,
-            kw_variadic: contract_kw_variadic,
-            positional_only: contract_positional_only,
-            keyword_only: contract_keyword_only,
-            raises: contract_raises,
-            error: contract_error,
-            conventions: contract_conventions,
-            ref_params: contract_ref_params,
-            ref_return: contract_ref_return,
-            ..
-        },
-    ) = (actual, contract)
-    else {
+    let (Ty::Func(actual_func), Ty::Func(contract_func)) = (actual, contract) else {
         return false;
     };
+    let FuncTy {
+        environment: actual_environment,
+        params: actual_params,
+        ret: actual_ret,
+        required: actual_required,
+        variadic: actual_variadic,
+        kw_variadic: actual_kw_variadic,
+        positional_only: actual_positional_only,
+        keyword_only: actual_keyword_only,
+        raises: actual_raises,
+        error: actual_error,
+        conventions: actual_conventions,
+        ref_params: actual_ref_params,
+        ref_return: actual_ref_return,
+        ..
+    } = &**actual_func;
+    let FuncTy {
+        environment: contract_environment,
+        params: contract_params,
+        ret: contract_ret,
+        required: contract_required,
+        variadic: contract_variadic,
+        kw_variadic: contract_kw_variadic,
+        positional_only: contract_positional_only,
+        keyword_only: contract_keyword_only,
+        raises: contract_raises,
+        error: contract_error,
+        conventions: contract_conventions,
+        ref_params: contract_ref_params,
+        ref_return: contract_ref_return,
+        ..
+    } = &**contract_func;
 
     callable_environment_coerces(actual_environment, contract_environment)
         && actual_params.len() == contract_params.len()
@@ -2735,27 +2739,30 @@ pub fn callable_bound_accepts(actual: &Ty, contract: &Ty) -> bool {
 /// callable-contract rules without making source binder spelling part of the
 /// type identity.
 pub fn erase_generic_callable_binders(callable: &Ty) -> Option<(Vec<ParamDecl>, Ty)> {
-    let Ty::GenericFunc {
-        environment,
-        decls,
-        params,
-        names,
-        ret,
-        required,
-        variadic,
-        kw_variadic,
-        positional_only,
-        keyword_only,
-        raises,
-        error,
-        conventions,
-        ref_params,
-        ref_return,
-        transfers,
-    } = callable
-    else {
+    let Ty::GenericFunc(generic) = callable else {
         return None;
     };
+    let GenericFuncTy {
+        decls,
+        func:
+            FuncTy {
+                environment,
+                params,
+                names,
+                ret,
+                required,
+                variadic,
+                kw_variadic,
+                positional_only,
+                keyword_only,
+                raises,
+                error,
+                conventions,
+                ref_params,
+                ref_return,
+                transfers,
+            },
+    } = &**generic;
 
     let mut signature = params.clone();
     let variadic_index = variadic.as_ref().map(|parameter| {
@@ -2779,7 +2786,7 @@ pub fn erase_generic_callable_binders(callable: &Ty) -> Option<(Vec<ParamDecl>, 
 
     Some((
         decls,
-        Ty::Func {
+        Ty::Func(Box::new(FuncTy {
             environment: environment.clone(),
             params: signature[..params.len()].to_vec(),
             names: names.clone(),
@@ -2795,7 +2802,7 @@ pub fn erase_generic_callable_binders(callable: &Ty) -> Option<(Vec<ParamDecl>, 
             ref_params: ref_params.clone(),
             ref_return: ref_return.clone(),
             transfers: transfers.clone(),
-        },
+        })),
     ))
 }
 
@@ -3122,59 +3129,9 @@ pub fn substitute(ty: &Ty, subst: &TySubst) -> Ty {
             name: name.clone(),
             args: map_tyargs(args, |t| substitute(t, subst)),
         },
-        Ty::Func {
-            environment,
-            params,
-            names,
-            ret,
-            required,
-            variadic,
-            kw_variadic,
-            positional_only,
-            keyword_only,
-            raises,
-            error,
-            conventions,
-            ref_params,
-            ref_return,
-            transfers,
-        } => Ty::Func {
-            environment: environment.clone(),
-            params: params.iter().map(|p| substitute(p, subst)).collect(),
-            names: names.clone(),
-            ret: Box::new(substitute(ret, subst)),
-            required: required.clone(),
-            variadic: variadic.as_ref().map(|v| Box::new(substitute(v, subst))),
-            kw_variadic: kw_variadic.as_ref().map(|v| Box::new(substitute(v, subst))),
-            positional_only: *positional_only,
-            keyword_only: *keyword_only,
-            raises: *raises,
-            error: error
-                .as_ref()
-                .map(|error| Box::new(substitute(error, subst))),
-            conventions: conventions.clone(),
-            ref_params: ref_params.clone(),
-            ref_return: ref_return.clone(),
-            transfers: transfers.clone(),
-        },
-        Ty::GenericFunc {
-            environment,
-            decls,
-            params,
-            names,
-            ret,
-            required,
-            variadic,
-            kw_variadic,
-            positional_only,
-            keyword_only,
-            raises,
-            error,
-            conventions,
-            ref_params,
-            ref_return,
-            transfers,
-        } => {
+        Ty::Func(func) => Ty::Func(Box::new(func.map_types(|ty| substitute(ty, subst)))),
+        Ty::GenericFunc(generic) => {
+            let decls = &generic.decls;
             // An anonymous callable's own binders shadow names from the
             // surrounding substitution. Outer parameters may still occur in
             // its bounds and signature, so substitute with only those shadowed
@@ -3230,33 +3187,10 @@ pub fn substitute(ty: &Ty, subst: &TySubst) -> Ty {
                     },
                 })
                 .collect();
-            Ty::GenericFunc {
-                environment: environment.clone(),
+            Ty::GenericFunc(Box::new(GenericFuncTy {
                 decls,
-                params: params
-                    .iter()
-                    .map(|parameter| substitute(parameter, &nested))
-                    .collect(),
-                names: names.clone(),
-                ret: Box::new(substitute(ret, &nested)),
-                required: required.clone(),
-                variadic: variadic
-                    .as_ref()
-                    .map(|parameter| Box::new(substitute(parameter, &nested))),
-                kw_variadic: kw_variadic
-                    .as_ref()
-                    .map(|parameter| Box::new(substitute(parameter, &nested))),
-                positional_only: *positional_only,
-                keyword_only: *keyword_only,
-                raises: *raises,
-                error: error
-                    .as_ref()
-                    .map(|error| Box::new(substitute(error, &nested))),
-                conventions: conventions.clone(),
-                ref_params: ref_params.clone(),
-                ref_return: ref_return.clone(),
-                transfers: transfers.clone(),
-            }
+                func: generic.map_types(|ty| substitute(ty, &nested)),
+            }))
         }
         Ty::Overload(candidates) => Ty::Overload(
             candidates
@@ -3372,80 +3306,18 @@ pub fn rewrite_ty(ty: &Ty, rewrite: &mut dyn TyRewrite) -> Result<Ty, ParamError
             name: name.clone(),
             args: rewrite_tyargs(args, rewrite)?,
         },
-        Ty::Func {
-            environment,
-            params,
-            names,
-            ret,
-            required,
-            variadic,
-            kw_variadic,
-            positional_only,
-            keyword_only,
-            raises,
-            error,
-            conventions,
-            ref_params,
-            ref_return,
-            transfers,
-        } => Ty::Func {
-            environment: environment.clone(),
-            params: all(params, rewrite)?,
-            names: names.clone(),
-            ret: Box::new(rewrite_ty(ret, rewrite)?),
-            required: required.clone(),
-            variadic: boxed(variadic, rewrite)?,
-            kw_variadic: boxed(kw_variadic, rewrite)?,
-            positional_only: *positional_only,
-            keyword_only: *keyword_only,
-            raises: *raises,
-            error: boxed(error, rewrite)?,
-            conventions: conventions.clone(),
-            ref_params: ref_params.clone(),
-            ref_return: ref_return.clone(),
-            transfers: transfers.clone(),
-        },
-        Ty::GenericFunc {
-            environment,
-            decls,
-            params,
-            names,
-            ret,
-            required,
-            variadic,
-            kw_variadic,
-            positional_only,
-            keyword_only,
-            raises,
-            error,
-            conventions,
-            ref_params,
-            ref_return,
-            transfers,
-        } => {
-            rewrite.enter_signature(decls);
+        Ty::Func(func) => Ty::Func(Box::new(func.try_map_types(|ty| rewrite_ty(ty, rewrite))?)),
+        Ty::GenericFunc(generic) => {
+            rewrite.enter_signature(&generic.decls);
             let rebuilt = (|| {
-                Ok(Ty::GenericFunc {
-                    environment: environment.clone(),
-                    decls: decls
+                Ok(Ty::GenericFunc(Box::new(GenericFuncTy {
+                    decls: generic
+                        .decls
                         .iter()
                         .map(|decl| rewrite_decl(decl, rewrite))
                         .collect::<Result<_, _>>()?,
-                    params: all(params, rewrite)?,
-                    names: names.clone(),
-                    ret: Box::new(rewrite_ty(ret, rewrite)?),
-                    required: required.clone(),
-                    variadic: boxed(variadic, rewrite)?,
-                    kw_variadic: boxed(kw_variadic, rewrite)?,
-                    positional_only: *positional_only,
-                    keyword_only: *keyword_only,
-                    raises: *raises,
-                    error: boxed(error, rewrite)?,
-                    conventions: conventions.clone(),
-                    ref_params: ref_params.clone(),
-                    ref_return: ref_return.clone(),
-                    transfers: transfers.clone(),
-                })
+                    func: generic.try_map_types(|ty| rewrite_ty(ty, rewrite))?,
+                })))
             })();
             rewrite.exit_signature();
             rebuilt?
@@ -3837,28 +3709,9 @@ pub fn is_symbolic(ty: &Ty) -> bool {
             TyArg::Val(value) => ct_value_is_symbolic(value),
             TyArg::Origin(_) => false,
         }),
-        Ty::Func {
-            params,
-            ret,
-            variadic,
-            kw_variadic,
-            error,
-            ..
-        }
-        | Ty::GenericFunc {
-            params,
-            ret,
-            variadic,
-            kw_variadic,
-            error,
-            ..
-        } => {
-            params.iter().any(is_symbolic)
-                || is_symbolic(ret)
-                || variadic.as_deref().is_some_and(is_symbolic)
-                || kw_variadic.as_deref().is_some_and(is_symbolic)
-                || error.as_deref().is_some_and(is_symbolic)
-        }
+        Ty::Func(_) | Ty::GenericFunc(_) => ty
+            .callable()
+            .is_some_and(|func| func.types().any(is_symbolic)),
         Ty::Overload(types) | Ty::Tuple(types) | Ty::RuntimePack(types) | Ty::Variant(types) => {
             types.iter().any(is_symbolic)
         }
@@ -3890,10 +3743,10 @@ pub fn is_symbolic(ty: &Ty) -> bool {
 /// occurs inside it. A binder nested below another's signature is left to
 /// [`is_symbolic`]'s conservative answer.
 pub fn has_free_parameters(ty: &Ty) -> bool {
-    let Ty::GenericFunc { decls, .. } = ty else {
+    let Ty::GenericFunc(generic) = ty else {
         return is_symbolic(ty);
     };
-    let bound: Vec<&ParamId> = decls.iter().map(ParamDecl::id).collect();
+    let bound: Vec<&ParamId> = generic.decls.iter().map(ParamDecl::id).collect();
     mentions_open(ty, &|inner| match inner {
         Ty::Param { binder, .. } => !bound.contains(&&binder.id),
         Ty::Infer | Ty::Assoc { .. } | Ty::Dependent(_) | Ty::SelfType => true,
@@ -4039,20 +3892,14 @@ fn mentions_below(ty: &Ty, predicate: &dyn Fn(&Ty) -> bool, skip_closed: bool) -
         Ty::Assoc { base, args, .. } => {
             mentions(base, predicate) || args.iter().any(argument_mentions)
         }
-        Ty::Func {
-            params,
-            ret,
-            variadic,
-            kw_variadic,
-            ..
-        }
-        | Ty::GenericFunc {
-            params,
-            ret,
-            variadic,
-            kw_variadic,
-            ..
-        } => {
+        Ty::Func(_) | Ty::GenericFunc(_) if let Some(func) = ty.callable() => {
+            let FuncTy {
+                params,
+                ret,
+                variadic,
+                kw_variadic,
+                ..
+            } = func;
             params.iter().any(|param| mentions(param, predicate))
                 || mentions(ret, predicate)
                 || variadic
@@ -4319,6 +4166,109 @@ fn expr_mentions(expr: &ParamExpr, predicate: &dyn Fn(&Ty) -> bool) -> bool {
     found
 }
 
+/// Render a callable signature; a generic contract (`decls`) renders its
+/// binders and trailing `where` constraints so a constrained-vs-unconstrained
+/// mismatch is visible in diagnostics.
+fn write_callable(
+    f: &mut fmt::Formatter<'_>,
+    decls: Option<&[ParamDecl]>,
+    func: &FuncTy,
+) -> fmt::Result {
+    let FuncTy {
+        environment,
+        params,
+        ret,
+        raises,
+        ..
+    } = func;
+    if let Some(decls) = decls {
+        write!(f, "def[")?;
+        for (index, decl) in decls.iter().enumerate() {
+            if index > 0 {
+                write!(f, ", ")?;
+            }
+            match decl {
+                ParamDecl::Type { name, bounds, .. } => {
+                    write!(f, "{name}")?;
+                    if !bounds.is_empty() {
+                        write!(f, ": {}", bounds.join(" & "))?;
+                    }
+                }
+                ParamDecl::Value { name, ty, .. } => write!(f, "{name}: {ty}")?,
+            }
+        }
+        write!(f, "](")?;
+    } else {
+        write!(f, "def(")?;
+    }
+    for (i, p) in params.iter().enumerate() {
+        if i > 0 {
+            write!(f, ", ")?;
+        }
+        write!(f, "{p}")?;
+    }
+    write!(f, ")")?;
+    match environment {
+        crate::origin::CallableEnvironment::Default => {}
+        crate::origin::CallableEnvironment::Thin => write!(f, " thin")?,
+        crate::origin::CallableEnvironment::Capturing(origins) => {
+            write!(f, " capturing[")?;
+            match origins {
+                crate::origin::CaptureOriginSet::Infer => write!(f, "_")?,
+                crate::origin::CaptureOriginSet::Param(id) => {
+                    write!(f, "origin_set#{}", id.0)?;
+                }
+                crate::origin::CaptureOriginSet::Concrete(members) => {
+                    for (index, capture) in members.iter().enumerate() {
+                        if index > 0 {
+                            write!(f, ", ")?;
+                        }
+                        if capture.access == crate::origin::CaptureAccess::Write {
+                            write!(f, "mut ")?;
+                        }
+                        match &capture.origin {
+                            crate::origin::Origin::Param(id) => {
+                                write!(f, "origin#{}", id.0)?;
+                            }
+                            crate::origin::Origin::Place(place) => {
+                                write!(f, "origin@{}", place.root.0)?;
+                            }
+                            crate::origin::Origin::SelfParam => {
+                                write!(f, "origin_of(self)")?;
+                            }
+                            crate::origin::Origin::Static => write!(f, "static")?,
+                            crate::origin::Origin::Untracked { mutable: true } => {
+                                write!(f, "mut-untracked")?;
+                            }
+                            crate::origin::Origin::Untracked { mutable: false } => {
+                                write!(f, "immut-untracked")?;
+                            }
+                            crate::origin::Origin::Union(_) => {
+                                write!(f, "origin-union")?;
+                            }
+                            crate::origin::Origin::Unbound => write!(f, "_")?,
+                        }
+                    }
+                }
+            }
+            write!(f, "]")?;
+        }
+    }
+    if *raises {
+        write!(f, " raises")?;
+    }
+    write!(f, " -> {ret}")?;
+    if let Some(decls) = decls {
+        for decl in decls {
+            let (ParamDecl::Type { constraints, .. } | ParamDecl::Value { constraints, .. }) = decl;
+            for constraint in constraints {
+                write!(f, " where {constraint}")?;
+            }
+        }
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod simd_slot_tests {
     use super::*;
@@ -4560,27 +4510,29 @@ mod encoding_tests {
             "Array".to_string(),
             vec![TyArg::Ty(Ty::Int), TyArg::Val(CtValue::Expr(doubled))].into(),
         );
-        let function = Ty::GenericFunc {
-            environment: crate::origin::CallableEnvironment::Default,
+        let function = Ty::GenericFunc(Box::new(GenericFuncTy {
             decls,
-            params: vec![array.clone()],
-            names: vec!["xs".to_string()],
-            ret: Box::new(array),
-            required: vec![true],
-            variadic: None,
-            kw_variadic: None,
-            positional_only: None,
-            keyword_only: None,
-            raises: false,
-            error: None,
-            conventions: vec![None],
-            ref_params: Box::new(vec![Some(RefSig {
-                origin: SigOrigin::Bound(Origin::Param(crate::origin::OriginParamId(0))),
-                mutability: SigMutability::Immutable,
-            })]),
-            ref_return: None,
-            transfers: TransferSet::default(),
-        };
+            func: FuncTy {
+                environment: crate::origin::CallableEnvironment::Default,
+                params: vec![array.clone()],
+                names: vec!["xs".to_string()],
+                ret: Box::new(array),
+                required: vec![true],
+                variadic: None,
+                kw_variadic: None,
+                positional_only: None,
+                keyword_only: None,
+                raises: false,
+                error: None,
+                conventions: vec![None],
+                ref_params: vec![Some(RefSig {
+                    origin: SigOrigin::Bound(Origin::Param(crate::origin::OriginParamId(0))),
+                    mutability: SigMutability::Immutable,
+                })],
+                ref_return: None,
+                transfers: TransferSet::default(),
+            },
+        }));
         let decoded = round_trip(&function);
         assert_eq!(decoded, function);
         assert_eq!(hash_of(&decoded), hash_of(&function));

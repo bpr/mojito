@@ -5,6 +5,7 @@
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 use mojito_symbol::symbol::TypeKey;
+use mojito_types::types::{FuncTy, GenericFuncTy};
 
 /// A call typed against one callable: its result, rank, error type, the
 /// erased-origin bindings, and how many arguments with a lane it binds to a
@@ -721,7 +722,9 @@ impl Checker {
                             // predicates so only an otherwise call-compatible shape
                             // can contribute a retained diagnostic.
                             let mut unconstrained = prepared;
-                            if let Ty::GenericFunc { decls, .. } = &mut unconstrained {
+                            if let Some(GenericFuncTy { decls, .. }) =
+                                unconstrained.as_generic_func_mut()
+                            {
                                 for decl in decls {
                                     match decl {
                                         ParamDecl::Type { constraints, .. }
@@ -820,7 +823,7 @@ impl Checker {
                         self.record_call_through(name, &prepared, args);
                         self.record_call_parameter_names(&span, &prepared);
                         let callee_decls = match &prepared {
-                            Ty::GenericFunc { decls, .. } => decls.as_slice(),
+                            Ty::GenericFunc(generic) => generic.decls.as_slice(),
                             _ => &[],
                         };
                         self.apply_call_through_effects(
@@ -856,17 +859,13 @@ impl Checker {
                     if name == "range"
                         && param_args.is_empty()
                         && kwargs.is_empty()
-                        && candidates.iter().any(|candidate| {
+                        && candidates.iter().filter_map(Ty::as_func).any(|func| {
                             matches!(
-                                candidate,
-                                Ty::Func { ret, .. }
-                                    if matches!(
-                                        ret.as_ref(),
-                                        Ty::Struct(target, _)
-                                            if mojito_types::types::SCALAR_RANGE_FAMILY
-                                                .iter()
-                                                .any(|family| target.contains(family))
-                                    )
+                                func.ret.as_ref(),
+                                Ty::Struct(target, _)
+                                    if mojito_types::types::SCALAR_RANGE_FAMILY
+                                        .iter()
+                                        .any(|family| target.contains(family))
                             )
                         })
                         && let Some(ty) = self.infer_scalar_range(&span, args)?
@@ -935,7 +934,7 @@ impl Checker {
             }
             _ => None,
         };
-        if indirect_target.is_some() && matches!(ty, Ty::GenericFunc { .. }) {
+        if indirect_target.is_some() && matches!(ty, Ty::GenericFunc(_)) {
             let (contract, arguments) =
                 self.instantiate_generic_callable_value(name, ty.clone(), &ordinary_param_args)?;
             self.operation_adjustments.borrow_mut().insert(
@@ -960,7 +959,7 @@ impl Checker {
         // concrete callables this call supplies.
         self.record_call_through(name, &ty, args);
         let callee_decls = match &ty {
-            Ty::GenericFunc { decls, .. } => decls.as_slice(),
+            Ty::GenericFunc(generic) => generic.decls.as_slice(),
             _ => &[],
         };
         self.apply_call_through_effects(name, callee_decls, None, param_args, args, &span)?;
@@ -1066,18 +1065,12 @@ impl Checker {
     }
 
     pub(super) fn record_call_parameter_names(&self, span: &SourceSpan, callee: &Ty) {
-        if let Ty::Func {
+        if let Some(FuncTy {
             names,
             params,
             conventions,
             ..
-        }
-        | Ty::GenericFunc {
-            names,
-            params,
-            conventions,
-            ..
-        } = callee
+        }) = callee.callable()
         {
             self.call_parameters.borrow_mut().insert(
                 span.clone(),
@@ -1133,7 +1126,7 @@ impl Checker {
         else {
             return;
         };
-        let (Ty::Func {
+        let Some(FuncTy {
             names,
             required,
             variadic,
@@ -1141,16 +1134,7 @@ impl Checker {
             positional_only,
             keyword_only,
             ..
-        }
-        | Ty::GenericFunc {
-            names,
-            required,
-            variadic,
-            kw_variadic,
-            positional_only,
-            keyword_only,
-            ..
-        }) = callee
+        }) = callee.callable()
         else {
             return;
         };
@@ -1331,22 +1315,24 @@ impl Checker {
                 return self.infer_callable_ty(span, name, callable, param_args, args, kwargs);
             }
             // A non-generic function takes no compile-time parameters.
-            Ty::Func {
-                params,
-                names,
-                ret,
-                required,
-                variadic,
-                kw_variadic,
-                positional_only,
-                keyword_only,
-                raises,
-                error,
-                conventions,
-                ref_params,
-                ref_return,
-                ..
-            } => {
+            Ty::Func(func) => {
+                let FuncTy {
+                    params,
+                    names,
+                    ret,
+                    required,
+                    variadic,
+                    kw_variadic,
+                    positional_only,
+                    keyword_only,
+                    raises,
+                    error,
+                    conventions,
+                    ref_params,
+                    ref_return,
+                    ..
+                } = *func;
+
                 if !param_args.is_empty() {
                     return Err(TypeError::WrongTypeArgCount {
                         name: name.to_string(),
@@ -1372,7 +1358,7 @@ impl Checker {
             }
             // Bind ordinary arguments first, then infer or apply the generic
             // function's compile-time parameters from the occupied slots.
-            generic @ Ty::GenericFunc { .. } => {
+            generic @ Ty::GenericFunc(_) => {
                 return self.infer_generic_call(span, name, &generic, param_args, args, kwargs);
             }
             other => {
@@ -1615,23 +1601,26 @@ impl Checker {
         args: &[Expr],
         kwargs: &[mojito_ast::ast::KwArg],
     ) -> Result<InferredCall, TypeError> {
-        let Ty::GenericFunc {
+        let Some(GenericFuncTy {
             decls,
-            params,
-            names,
-            ret,
-            required,
-            variadic,
-            kw_variadic,
-            positional_only,
-            keyword_only,
-            raises: _,
-            error,
-            conventions,
-            ref_params,
-            ref_return,
-            ..
-        } = generic
+            func:
+                FuncTy {
+                    params,
+                    names,
+                    ret,
+                    required,
+                    variadic,
+                    kw_variadic,
+                    positional_only,
+                    keyword_only,
+                    raises: _,
+                    error,
+                    conventions,
+                    ref_params,
+                    ref_return,
+                    ..
+                },
+        }) = generic.as_generic_func()
         else {
             return Err(TypeError::InvariantViolation(format!(
                 "generic call inference received non-generic callee '{name}'"
@@ -1963,7 +1952,7 @@ impl Checker {
             return None;
         }
         let clone = mojito_symbol::symbol::mangle(name, &values).ok()?;
-        matches!(self.lookup(&clone), Some(Ty::Func { .. })).then_some(clone)
+        matches!(self.lookup(&clone), Some(Ty::Func(_))).then_some(clone)
     }
 
     pub(super) fn forwarded_kwargs_element(
@@ -2405,8 +2394,8 @@ fn reject_generic_function_value(
     found: &Ty,
     expected: &Ty,
 ) -> Result<(), TypeError> {
-    if matches!(found, Ty::GenericFunc { .. })
-        && matches!(expected, Ty::Func { .. })
+    if matches!(found, Ty::GenericFunc(_))
+        && matches!(expected, Ty::Func(_))
         && matches!(argument.kind, ExprKind::Identifier(_))
     {
         return Err(TypeError::BadCall {
