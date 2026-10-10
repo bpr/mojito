@@ -138,6 +138,9 @@ pub struct CheckContext {
     record_interfaces: bool,
     /// The interfaces the last check exported, by module path.
     interfaces: Option<Result<std::collections::BTreeMap<String, Vec<u8>>, String>>,
+    /// The module constants the program's comptime elaboration resolved,
+    /// which an exported interface carries.
+    elaborated: ElaboratedConstants,
 }
 
 impl CheckContext {
@@ -151,6 +154,7 @@ impl CheckContext {
             installed: None,
             record_interfaces: false,
             interfaces: None,
+            elaborated: Vec::new(),
         }
     }
 
@@ -164,6 +168,12 @@ impl CheckContext {
     /// ends ([`Self::take_interfaces`]).
     pub const fn record_interfaces(&mut self) {
         self.record_interfaces = true;
+    }
+
+    /// Export `elaborated`, the module constants the program's comptime
+    /// elaboration resolved, each in its declaring module's interface.
+    pub fn record_elaborated(&mut self, elaborated: ElaboratedConstants) {
+        self.elaborated = elaborated;
     }
 
     /// The interfaces the last check exported, by module path.
@@ -268,7 +278,7 @@ fn check_program_carrying(
 
     let mut expanded = {
         let _expand = timing::span("trait_default_wrappers");
-        synthesize_trait_default_wrappers(stmts)?
+        synthesize_trait_default_wrappers(stmts, &[])?
     };
     // Source locations survive elaboration clones and therefore cannot identify
     // semantic occurrences. Re-key the final checked tree after the last
@@ -363,7 +373,7 @@ fn check_program_carrying(
     };
     if context.record_interfaces {
         let _export = timing::span("export_interfaces");
-        context.interfaces = Some(checker.export_interfaces(&expanded));
+        context.interfaces = Some(checker.export_interfaces(&expanded, &context.elaborated));
     }
     // Context managers are desugared by the checker; later phases see only
     // the ordinary statements it checked.
@@ -409,7 +419,7 @@ pub struct ConformanceFailure {
 mod body_carry;
 mod conformance;
 mod interface;
-pub use interface::InstalledInterfaces;
+pub use interface::{ElaboratedConstant, ElaboratedConstants, InstalledInterfaces};
 mod overload_support;
 pub use body_carry::PassCarry;
 pub use overload_support::is_bundled_module_source;
@@ -424,19 +434,6 @@ pub use trait_defaults::synthesize_trait_default_wrappers;
 /// a signature-specific function even when overloads share the same arity.
 pub fn resolve_overload_targets(stmts: &[Stmt]) -> Result<HashMap<SourceSpan, String>, TypeError> {
     Ok(check_program(stmts)?.overload_targets().clone())
-}
-
-/// Empty the body of every declaration `package` compiled
-/// ([`mojito_ast::ast::clear_bodies`]): the package lowered its function,
-/// method, and trait default bodies already.
-pub fn strip_package_bodies(
-    program: &mut [Stmt],
-    package: &mojito_checked::interface::PackageInterface,
-) {
-    program
-        .iter_mut()
-        .filter(|statement| package.compiles(statement.module.as_deref()))
-        .for_each(mojito_ast::ast::clear_bodies);
 }
 
 /// A static type checker over the parsed AST.

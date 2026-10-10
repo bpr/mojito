@@ -12,7 +12,7 @@
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
-use mojito_ast::ast::StmtKind;
+use mojito_ast::ast::{StmtKind, TypeParam};
 use std::collections::BTreeMap;
 
 /// The interfaces of the package modules a compilation's link reached,
@@ -46,7 +46,34 @@ impl InstalledInterfaces {
             .collect::<Result<Vec<_>, _>>()
             .map(|interfaces| Self(std::sync::Arc::new(interfaces)))
     }
+
+    /// Every module constant of the installed modules, as the build's
+    /// comptime elaboration left it.
+    pub fn elaborated(&self) -> impl Iterator<Item = (&str, &ElaboratedConstant)> {
+        self.0.iter().flat_map(|interface| {
+            interface
+                .elaborated
+                .iter()
+                .map(|(name, constant)| (name.as_str(), constant))
+        })
+    }
 }
+
+/// A module `comptime` declaration as the build's comptime elaboration
+/// resolved it, which an importer's elaboration reads instead of folding the
+/// declaration again.
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+pub enum ElaboratedConstant {
+    /// A closed constant's folded value, or the marker of one the check
+    /// binds.
+    Value(CtValue),
+    /// A generic alias: its parameters and body.
+    Alias(Vec<TypeParam>, Expr),
+}
+
+/// The elaborated module constants of a package's program, each beside its
+/// name and the module declaring it.
+pub type ElaboratedConstants = Vec<(String, String, ElaboratedConstant)>;
 
 /// One library module's declarations, as the build's check resolved them.
 /// Every table is sorted by name.
@@ -75,6 +102,9 @@ pub(super) struct ModuleInterface {
     applied_module_constants: Vec<String>,
     nested_origins_read_only_functions: Vec<String>,
     simd_length_binders: Vec<ParamId>,
+    /// The module's constants as the build's comptime elaboration resolved
+    /// them.
+    elaborated: Vec<(String, ElaboratedConstant)>,
 }
 
 impl ModuleInterface {
@@ -97,6 +127,7 @@ impl ModuleInterface {
         by_name(&mut self.def_results);
         by_name(&mut self.owned_collectors);
         by_name(&mut self.collector_names);
+        by_name(&mut self.elaborated);
         self.bindings
             .sort_by(|left, right| left.name.cmp(&right.name));
         self.declared_structs.sort();
@@ -109,7 +140,8 @@ impl ModuleInterface {
 impl Checker {
     /// The interface of every library module `program` declares something
     /// in, encoded, by module path, from this checker's tables after it
-    /// checked `program` whole.
+    /// checked `program` whole, with the module constants `elaborated`
+    /// places in each.
     ///
     /// # Errors
     ///
@@ -118,6 +150,7 @@ impl Checker {
     pub(super) fn export_interfaces(
         &self,
         program: &[Stmt],
+        elaborated: &[(String, String, ElaboratedConstant)],
     ) -> Result<BTreeMap<String, Vec<u8>>, String> {
         let modules = DeclaringModules::of(program)?;
         let builtin = Self::new();
@@ -261,6 +294,13 @@ impl Checker {
                     compile_time: compile_time.contains(name),
                 });
             }
+        }
+        for (module, name, constant) in elaborated {
+            interfaces
+                .entry(module.clone())
+                .or_default()
+                .elaborated
+                .push((name.clone(), constant.clone()));
         }
         for (module, interface) in &mut interfaces {
             interface.overloads = self

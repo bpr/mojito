@@ -4,8 +4,9 @@
 //! registers each module's declarations from the package, never reading
 //! the library's source. A package records, for every module it compiled,
 //! what linking that module from source would have produced: the modules
-//! its link loaded, in order, its export tables, and its linked
-//! declarations, whose bodies are in the package already. An importer's
+//! its link loaded, in order, its export tables, and its declarations as
+//! the package's build prepared them, whose bodies are in the package
+//! already. An importer's
 //! link replays the record in place of reading, parsing, and resolving the
 //! module.
 //!
@@ -74,12 +75,24 @@ pub struct PackageModule {
     /// The namespaces it exposes, by relative qualified path, and the
     /// declarations visible through each.
     pub(crate) namespaces: BTreeMap<String, BTreeMap<String, String>>,
-    /// Its linked declarations, in order, bodies emptied
-    /// ([`mojito_ast::ast::clear_bodies`]).
+    /// Its declarations, as the package build's `prepare` left them, in
+    /// order, bodies emptied ([`mojito_ast::ast::clear_bodies`]). The link
+    /// records them as linked; the build replaces them
+    /// ([`Self::replace_declarations`]).
     pub(crate) declarations: Vec<Stmt>,
 }
 
 impl PackageModule {
+    /// Record `declarations`, the module's declarations as the package
+    /// build prepared them, in place of its linked ones; their bodies are
+    /// emptied.
+    pub fn replace_declarations(&mut self, mut declarations: Vec<Stmt>) {
+        declarations
+            .iter_mut()
+            .for_each(mojito_ast::ast::clear_bodies);
+        self.declarations = declarations;
+    }
+
     /// This record as bytecode.
     pub fn encode(&self) -> Result<Vec<u8>, String> {
         postcard::to_stdvec(self).map_err(|error| format!("module `{}`: {error}", self.name))

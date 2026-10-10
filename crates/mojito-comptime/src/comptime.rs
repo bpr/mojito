@@ -33,6 +33,7 @@ use mojito_ast::ast::{
 };
 pub use mojito_symbol::symbol::mangle;
 
+use mojito_checker::checker::{ElaboratedConstant, ElaboratedConstants, InstalledInterfaces};
 use mojito_common::token::Span;
 use mojito_types::ct::{CtMarker, CtValue};
 use mojito_types::param_expr::{ParamContext, ParamError, ParamExpr};
@@ -246,6 +247,19 @@ pub fn elaborate(program: Vec<Stmt>) -> Result<Vec<Stmt>, ComptimeError> {
     elaborate_prepared(&prepared)
 }
 
+/// What an importing program's front end reads of the package it imports,
+/// beside its own statements. The default is a program that imports none.
+#[derive(Clone, Copy, Default)]
+pub struct ImportedScope<'a> {
+    /// The package's declarations the program's link reached, each as the
+    /// package's build prepared it, bodiless: read, never rewritten again.
+    pub headers: &'a [&'a Stmt],
+    /// The declaration interfaces of the modules the link reached: the
+    /// package's resolved declarations, and its module constants as the
+    /// build's elaboration folded them.
+    pub installed: Option<&'a InstalledInterfaces>,
+}
+
 /// Prepare a linked program for source validation and elaboration.
 ///
 /// Qualify struct packs, synthesize the derived `copy`/`__hash__` methods,
@@ -256,16 +270,29 @@ pub fn elaborate(program: Vec<Stmt>) -> Result<Vec<Stmt>, ComptimeError> {
 /// These rewrites normalize declarations without selecting a `comptime if`
 /// arm or unrolling a loop, so the result still carries every source body
 /// the check must see.
-pub fn prepare(mut program: Vec<Stmt>) -> Result<Vec<Stmt>, ComptimeError> {
-    pack_qualification::qualify_struct_packs(&mut program)?;
-    synthesize_copyable_copy(&mut program);
-    synthesize_hashable_hash(&mut program);
-    let mut program = mojito_checker::checker::synthesize_trait_default_wrappers(&program)
+pub fn prepare(program: Vec<Stmt>) -> Result<Vec<Stmt>, ComptimeError> {
+    prepare_importing(program, &[])
+}
+
+/// [`prepare`] a program's own statements, `own`, beside `imported`.
+///
+/// `imported` are the declarations of the package it imports, as its build
+/// prepared them: a conformer inherits from an imported trait, and an
+/// imported SIMD alias bounds an own parameter, but no imported declaration
+/// is rewritten again.
+pub fn prepare_importing(
+    mut own: Vec<Stmt>,
+    imported: &[&Stmt],
+) -> Result<Vec<Stmt>, ComptimeError> {
+    pack_qualification::qualify_struct_packs(&mut own)?;
+    synthesize_copyable_copy(&mut own);
+    synthesize_hashable_hash(&mut own);
+    let mut own = mojito_checker::checker::synthesize_trait_default_wrappers(&own, imported)
         .map_err(ComptimeError::Type)?;
-    desugar_simd_wildcard_parameters(&mut program);
-    fold_simd_alias_bounds(&mut program);
-    read_materialize_self_operands(&mut program);
-    Ok(program)
+    desugar_simd_wildcard_parameters(&mut own);
+    fold_simd_alias_bounds(&mut own, imported);
+    read_materialize_self_operands(&mut own);
+    Ok(own)
 }
 
 /// Elaborate a [`prepare`]d program.
@@ -273,19 +300,81 @@ pub fn prepare(mut program: Vec<Stmt>) -> Result<Vec<Stmt>, ComptimeError> {
 /// Ordinary callers use [`elaborate`]; the compiler, which prepares once,
 /// enters here.
 pub fn elaborate_prepared(program: &[Stmt]) -> Result<Vec<Stmt>, ComptimeError> {
+    elaborate_importing(program, ImportedScope::default())
+}
+
+/// Elaborate a program's own [`prepare_importing`]d statements, `own`,
+/// beside the package `imported` holds.
+///
+/// The package's module constants are read as its build folded them, and
+/// its declarations as context, so only `own` is elaborated and returned,
+/// as upstream's importer takes a package declaration already resolved.
+pub fn elaborate_importing(
+    own: &[Stmt],
+    imported: ImportedScope<'_>,
+) -> Result<Vec<Stmt>, ComptimeError> {
+    elaborate_in(own, imported).map(|(elaborated, _)| elaborated)
+}
+
+/// Elaborate a [`prepare`]d program as [`elaborate_prepared`] does, and
+/// export the module constants it resolved, each beside the module whose
+/// `comptime` declaration names it, for a package built from it.
+pub fn elaborate_exporting(
+    program: &[Stmt],
+) -> Result<(Vec<Stmt>, ElaboratedConstants), ComptimeError> {
+    let (elaborated, elab) = elaborate_in(program, ImportedScope::default())?;
+    let values = elab.top_consts.into_inner();
+    let aliases = elab.generic_aliases.into_inner();
+    let mut constants = Vec::new();
+    for statement in program {
+        let (StmtKind::Comptime { name, .. }, Some(module)) = (&statement.kind, &statement.module)
+        else {
+            continue;
+        };
+        let constant = match (values.get(name), aliases.get(name)) {
+            (Some(value), _) => ElaboratedConstant::Value(value.clone()),
+            (None, Some((parameters, body))) => {
+                ElaboratedConstant::Alias(parameters.clone(), body.clone())
+            }
+            (None, None) => continue,
+        };
+        constants.push((module.clone(), name.clone(), constant));
+    }
+    Ok((elaborated, constants))
+}
+
+mod crossing;
+mod elab;
+mod pack_qualification;
+mod params;
+mod synth;
+
+#[allow(clippy::wildcard_imports, reason = "pages of this split module")]
+use params::*;
+#[allow(clippy::wildcard_imports, reason = "pages of this split module")]
+use synth::*;
+
+/// Elaborate `program` beside `imported`, returning the elaboration and the
+/// engine that ran it, whose module environment a package build exports.
+fn elaborate_in<'a>(
+    program: &'a [Stmt],
+    imported: ImportedScope<'a>,
+) -> Result<(Vec<Stmt>, Elab<'a>), ComptimeError> {
     let indexes = mojito_common::timing::span("indexes");
     let conformance =
-        mojito_checker::checker::ConformanceOracle::from_program(program).map_err(|error| {
-            ComptimeError::NotComptime(format!(
-                "could not build the specialization conformance oracle: {error}"
-            ))
-        })?;
+        mojito_checker::checker::ConformanceOracle::importing(program, imported.installed)
+            .map_err(|error| {
+                ComptimeError::NotComptime(format!(
+                    "could not build the specialization conformance oracle: {error}"
+                ))
+            })?;
+    let declarations = || imported.headers.iter().copied().chain(program);
     let elab = Elab {
         program,
-        fns: collect_fns(program),
-        structs: collect_structs(program),
-        struct_names: program
-            .iter()
+        headers: imported.headers,
+        fns: collect_fns(declarations()),
+        structs: collect_structs(declarations()),
+        struct_names: declarations()
             .filter_map(|statement| match &statement.kind {
                 StmtKind::Struct { name, .. } => Some(name.clone()),
                 _ => None,
@@ -299,7 +388,28 @@ pub fn elaborate_prepared(program: &[Stmt]) -> Result<Vec<Stmt>, ComptimeError> 
     };
     drop(indexes);
     let mut env = HashMap::new();
-    let mut elaborated = elab.block(program, &mut env, false)?;
+    let mut aliases = elab::TypeAliases::default();
+    for (name, constant) in imported
+        .installed
+        .into_iter()
+        .flat_map(InstalledInterfaces::elaborated)
+    {
+        match constant {
+            ElaboratedConstant::Value(value) => {
+                elab.top_consts
+                    .borrow_mut()
+                    .insert(name.to_string(), value.clone());
+                env.insert(name.to_string(), value.clone());
+                aliases.bind(name, value);
+            }
+            ElaboratedConstant::Alias(parameters, body) => {
+                elab.generic_aliases
+                    .borrow_mut()
+                    .insert(name.to_string(), (parameters.clone(), body.clone()));
+            }
+        }
+    }
+    let mut elaborated = elab.block_statements(program, &mut env, false, aliases)?;
     // A module constant declared after its use crosses here.
     let consts = elab.top_consts.borrow().clone();
     elab.fold_runtime_crossings(&mut elaborated, &consts)?;
@@ -312,19 +422,8 @@ pub fn elaborate_prepared(program: &[Stmt]) -> Result<Vec<Stmt>, ComptimeError> 
             mojito_ast::ast::stamp_source(std::slice::from_mut(statement), &source);
         }
     }
-    Ok(result)
+    Ok((result, elab))
 }
-
-mod crossing;
-mod elab;
-mod pack_qualification;
-mod params;
-mod synth;
-
-#[allow(clippy::wildcard_imports, reason = "pages of this split module")]
-use params::*;
-#[allow(clippy::wildcard_imports, reason = "pages of this split module")]
-use synth::*;
 
 /// A statement elaboration rebuilt from `source` with new contents. It keeps
 /// the source's syntax identity: that is the occurrence-level expansion trace
@@ -732,6 +831,8 @@ struct CtStruct<'a> {
 /// fuel budget. `top_consts` captures module-level constants for materialization.
 struct Elab<'a> {
     program: &'a [Stmt],
+    /// The imported package's prepared declarations, read beside `program`.
+    headers: &'a [&'a Stmt],
     fns: HashSet<String>,
     structs: HashMap<String, CtStruct<'a>>,
     /// Every declared struct name, for materialization's projection rewrite.
@@ -808,9 +909,8 @@ fn scalar_type_name(name: &str) -> Option<Ty> {
 }
 
 /// The names of the module's `def`s, which an application names.
-fn collect_fns(program: &[Stmt]) -> HashSet<String> {
+fn collect_fns<'a>(program: impl Iterator<Item = &'a Stmt>) -> HashSet<String> {
     program
-        .iter()
         .filter_map(|s| match &s.kind {
             StmtKind::Def { name, .. } => Some(name.clone()),
             _ => None,
@@ -818,7 +918,7 @@ fn collect_fns(program: &[Stmt]) -> HashSet<String> {
         .collect()
 }
 
-fn collect_structs(program: &[Stmt]) -> HashMap<String, CtStruct<'_>> {
+fn collect_structs<'a>(program: impl Iterator<Item = &'a Stmt>) -> HashMap<String, CtStruct<'a>> {
     let mut structs = HashMap::new();
     for s in program {
         if let StmtKind::Struct {

@@ -3,7 +3,9 @@
 use crate::backend::BackendKind;
 use crate::checked::CheckedProgram;
 use crate::checker::{CheckContext, InstalledInterfaces};
-use crate::comptime::{ComptimeError, elaborate_prepared, prepare};
+use crate::comptime::{
+    ComptimeError, ImportedScope, elaborate_exporting, elaborate_importing, prepare_importing,
+};
 use crate::error::{OwnershipError, ParseError, TypeError};
 use crate::mir::MirProgram;
 use crate::mir::text::{DisassembleError, disassemble};
@@ -343,15 +345,12 @@ impl Compiler {
     /// statement set. Verification, ownership, artifact emission, and backend
     /// execution all consume the one cached `MirProgram` lowered here.
     ///
-    /// The bundled library's declarations are imported from its compiled
-    /// package when the program links the bundled library and declares
-    /// none of its names again: its bodies are not checked or lowered.
+    /// `linked` is a source link, whose library declarations are as their
+    /// source spells them, so the program compiles with the library from
+    /// source: only a link that read the package's module records
+    /// ([`Self::compile_path`] and its siblings) imports it.
     pub fn compile_linked(&self, linked: &[Stmt]) -> Result<CompiledProgram, CompilerError> {
-        let package = self
-            .std_package()
-            .filter(|package| imports_cleanly(linked, &package.interface))
-            .and_then(|package| importing(package, linked));
-        self.compile_importing(linked, package, &mut CheckContext::new())
+        self.compile_importing(linked, None, &mut CheckContext::new(), None)
     }
 
     /// Compile `linked` from source, with what a package built from it
@@ -362,7 +361,8 @@ impl Compiler {
     ) -> Result<(CompiledProgram, PackageExports), CompilerError> {
         let mut context = CheckContext::new();
         context.record_interfaces();
-        let program = self.compile_importing(linked, None, &mut context)?;
+        let mut prepared = Vec::new();
+        let program = self.compile_importing(linked, None, &mut context, Some(&mut prepared))?;
         let interfaces = context
             .take_interfaces()
             .map_err(|error| CompilerError::Verify(vec![error]))?;
@@ -371,6 +371,7 @@ impl Compiler {
             PackageExports {
                 summaries: context.take_summaries(),
                 interfaces: interfaces.into_iter().collect(),
+                prepared,
             },
         ))
     }
@@ -399,32 +400,48 @@ impl Compiler {
             && imports_cleanly(&linked, &package.interface)
             && let Some(importing) = importing(package, &linked)
         {
-            return self.compile_importing(&linked, Some(importing), &mut CheckContext::new());
+            return self.compile_importing(
+                &linked,
+                Some(importing),
+                &mut CheckContext::new(),
+                None,
+            );
         }
         let linked = link(None).map_err(CompilerError::Module)?;
-        self.compile_importing(&linked, None, &mut CheckContext::new())
+        self.compile_importing(&linked, None, &mut CheckContext::new(), None)
     }
 
+    /// Compile `linked`, importing `package` when there is one: the
+    /// package's declarations, which its link read from their records as
+    /// the package's build prepared them, are read beside the program's own
+    /// statements, and only the program's own are prepared, elaborated, and
+    /// checked. A package build (`exports`) records its prepared program
+    /// there, and its check exports its module constants as its
+    /// elaboration resolved them.
     fn compile_importing(
         &self,
         linked: &[Stmt],
         package: Option<(Arc<ImportedPackage>, InstalledInterfaces)>,
         context: &mut CheckContext,
+        exports: Option<&mut Vec<Stmt>>,
     ) -> Result<CompiledProgram, CompilerError> {
         let _compile = timing::span("compile");
-        // A package's bodies were checked and lowered when it was built, and
-        // its importer elaborates them below MIR: nothing above the waist
-        // reads one.
-        let mut linked = linked.to_vec();
-        let package = package.map(|(package, installed)| {
-            crate::checker::strip_package_bodies(&mut linked, &package.interface);
+        let (headers, own): (Vec<&Stmt>, Vec<Stmt>) = match &package {
+            Some((package, _)) => {
+                let (headers, own): (Vec<&Stmt>, Vec<&Stmt>) = linked
+                    .iter()
+                    .partition(|statement| package.interface.compiles(statement.module.as_deref()));
+                (headers, own.into_iter().cloned().collect())
+            }
+            None => (Vec::new(), linked.to_vec()),
+        };
+        if let Some((package, installed)) = &package {
             context.import_package(Arc::clone(&package.interface));
-            context.install(installed);
-            package
-        });
+            context.install(installed.clone());
+        }
         let prepared = {
             let _prepare = timing::span("prepare");
-            prepare(linked).map_err(CompilerError::Comptime)?
+            prepare_importing(own, &headers).map_err(CompilerError::Comptime)?
         };
         context.set_body_fact_reuse(self.body_fact_reuse.unwrap_or_else(|| {
             std::env::var_os("MOJITO_BODY_FACT_REUSE").is_none_or(|value| value != "0")
@@ -433,22 +450,30 @@ impl Compiler {
         // every `comptime if` arm and `comptime for` body open and its
         // binders symbolic, and the elaborator below MIR decides, unrolls,
         // and finds the instances the entries reach.
-        let elaborated = {
+        let own = {
             let _elaborate = timing::span("elaborate");
-            elaborate_prepared(&prepared).map_err(CompilerError::Comptime)?
+            match exports {
+                Some(exports) => {
+                    let (elaborated, constants) =
+                        elaborate_exporting(&prepared).map_err(CompilerError::Comptime)?;
+                    context.record_elaborated(constants);
+                    *exports = prepared;
+                    elaborated
+                }
+                None => elaborate_importing(
+                    &prepared,
+                    ImportedScope {
+                        headers: &headers,
+                        installed: package.as_ref().map(|(_, installed)| installed),
+                    },
+                )
+                .map_err(CompilerError::Comptime)?,
+            }
         };
         if !self.allow_executable_module_scope {
-            validate_module_scope(&elaborated).map_err(CompilerError::Type)?;
+            validate_module_scope(&own).map_err(CompilerError::Type)?;
         }
-        // The check installs the package's declarations from their
-        // interfaces and checks the program's own statements alone.
-        let own: Vec<Stmt> = match &package {
-            Some(package) => elaborated
-                .into_iter()
-                .filter(|statement| !package.interface.compiles(statement.module.as_deref()))
-                .collect(),
-            None => elaborated,
-        };
+        let package = package.map(|(package, _)| package);
         let checked = {
             let _check = timing::span("check");
             crate::checker::check_program_in(&own, context).map_err(CompilerError::Type)?
@@ -538,12 +563,14 @@ impl Compiler {
     }
 }
 
-/// What the check of a package's program exports: the effect summaries of
-/// its module-level callables, and each module's encoded declaration
-/// interface, by module path.
+/// What the compilation of a package's program exports: the effect
+/// summaries of its module-level callables, each module's encoded
+/// declaration interface, by module path, and the program as its `prepare`
+/// left it.
 pub(crate) struct PackageExports {
     pub summaries: PackageInterface,
     pub interfaces: Vec<(String, Vec<u8>)>,
+    pub prepared: Vec<Stmt>,
 }
 
 /// `package` with the declaration interfaces of the modules `linked`

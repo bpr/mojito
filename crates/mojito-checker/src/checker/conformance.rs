@@ -9,12 +9,36 @@ impl ConformanceOracle {
     /// Panics if a trait recorded during collection is missing when its
     /// conformances are resolved.
     pub fn from_program(stmts: &[Stmt]) -> Result<Self, TypeError> {
+        Self::importing(stmts, None)
+    }
+
+    /// The oracle of a program that imports the package declarations
+    /// `installed` holds: they are installed as the build's check resolved
+    /// them, and only `stmts`, the program's own, register from source.
+    ///
+    /// # Errors
+    ///
+    /// A declaration of `stmts` the registry cannot classify, or a name
+    /// `installed` declares twice.
+    ///
+    /// # Panics
+    ///
+    /// As [`Self::from_program`].
+    pub fn importing(
+        stmts: &[Stmt],
+        installed: Option<&InstalledInterfaces>,
+    ) -> Result<Self, TypeError> {
         let mut checker = Checker::new();
+        if let Some(installed) = installed {
+            checker.install_interfaces(installed)?;
+        }
         // A field type may apply a module function to a parameter.
-        checker.applicable_functions = super::comptime_validation::applicable_functions(
-            stmts,
-            &mojito_symbol::symbol::OverloadSets::scan(stmts),
-        );
+        checker
+            .applicable_functions
+            .extend(super::comptime_validation::applicable_functions(
+                stmts,
+                &mojito_symbol::symbol::OverloadSets::scan(stmts),
+            ));
 
         // Refinement is the only trait fact needed by `conforms_to`. Register
         // every name first so the oracle is independent of body checking and

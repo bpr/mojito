@@ -311,9 +311,13 @@ fn is_simd_wildcard_type(ty: &Type) -> bool {
 /// parser gives `[key: SIMD[DType.uint64, 4]]` — a value parameter of the
 /// vector type — before the specialization registry classifies it. Uses in
 /// annotations and constructions fold through the ordinary alias machinery.
-pub(super) fn fold_simd_alias_bounds(program: &mut [Stmt]) {
-    let aliases: HashMap<String, Vec<ParamArg>> = program
+/// An imported package's aliases, `imported`, bound `program`'s parameters
+/// too.
+pub(super) fn fold_simd_alias_bounds(program: &mut [Stmt], imported: &[&Stmt]) {
+    let aliases: HashMap<String, Vec<ParamArg>> = imported
         .iter()
+        .copied()
+        .chain(program.iter())
         .filter_map(|statement| match &statement.kind {
             StmtKind::Comptime {
                 name,

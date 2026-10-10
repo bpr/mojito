@@ -31,11 +31,21 @@ use mojito_symbol::symbol::SignatureKey;
 /// declared ahead of the first conformer that calls it, and otherwise at the
 /// end of the program, where its body sees every declaration.
 ///
+/// `imported` are an imported package's prepared declarations: their
+/// traits and functions are read, as the declarations a conformer in
+/// `stmts` may inherit from, and are not rewritten again. Only `stmts`,
+/// and the defaults of its own traits, are returned.
+///
 /// `comptime::prepare` runs this before elaboration; the checker's own call
 /// finds every function and wrapper in place on prepared source.
-pub fn synthesize_trait_default_wrappers(stmts: &[Stmt]) -> Result<Vec<Stmt>, TypeError> {
-    let traits: HashMap<&str, (&[String], &[TraitMethod])> = stmts
+pub fn synthesize_trait_default_wrappers(
+    stmts: &[Stmt],
+    imported: &[&Stmt],
+) -> Result<Vec<Stmt>, TypeError> {
+    let traits: HashMap<&str, (&[String], &[TraitMethod])> = imported
         .iter()
+        .copied()
+        .chain(stmts)
         .filter_map(|stmt| match &stmt.kind {
             StmtKind::Trait {
                 name,
@@ -46,8 +56,10 @@ pub fn synthesize_trait_default_wrappers(stmts: &[Stmt]) -> Result<Vec<Stmt>, Ty
             _ => None,
         })
         .collect();
-    let functions: HashSet<&str> = stmts
+    let functions: HashSet<&str> = imported
         .iter()
+        .copied()
+        .chain(stmts)
         .filter_map(|stmt| match &stmt.kind {
             StmtKind::Def { name, .. } => Some(name.as_str()),
             _ => None,

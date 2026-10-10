@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R558**.
+Next free ID: **R561**.
 
 ## Ordered Work
 
@@ -49,24 +49,6 @@ belongs to is named in its title.
 Scope: what remains of the plan's stages, and what the pipeline order still
 leaves to close. A defect found on the way is filed by its kind; a
 divergence from the pin goes to a catch-up track, however small.
-
-- [ ] **R553 (P6) An importer prepares and elaborates the package's
-  declaration headers on every compilation**
-
-  `comptime::prepare` rewrites every library header, and the comptime
-  elaborator builds its conformance oracle and indexes over them, though
-  the package build did both already.
-  - That is about 11 ms of Hello World, release: `prepare` 1.6 ms and
-    `elaborate` 9.5 ms.
-  - Upstream's emitters read resolved declarations, not a re-prepared
-    tree.
-  - The lever: a module record holds its headers as the build's check
-    consumed them, and `prepare` and `elaborate_prepared` take them as
-    read-only context beside the program's own statements.
-  - The trait-default wrapper synthesis and `collect_structs` would still
-    read the headers until R551 makes a default a trait member.
-  - Depends on R552, which fixes what the check reads of a header.
-  - Model: Fable, Planned.
 
 - [ ] **R557 (P6) An importer reads the whole package file, and its
   bodies and interface are MIR text**
@@ -99,6 +81,21 @@ divergence from the pin goes to a catch-up track, however small.
   - Depends on nothing.
   - Model: Fable, Planned.
 
+- [ ] **R558 (P6) The elaborator's conformance oracle installs the
+  package's declaration interfaces once more per compilation**
+
+  `ConformanceOracle::importing` installs every reached module's interface
+  into its own `Checker`, beside the check's passes, which each install them
+  again.
+  - That is 1.4 ms of Hello World's 20 ms, release
+    (`elaborate.indexes.install_interfaces`).
+  - Upstream resolves a package declaration once, on first lookup, for
+    every client.
+  - The lever is R555's lookup-miss hook: the oracle then decodes only
+    what an own `conforms_to` asks.
+  - Depends on R555.
+  - Model: Opus, Planned.
+
 - [ ] **R556 (P6) An importer's check answers every package struct's
   conformances again**
 
@@ -116,6 +113,38 @@ divergence from the pin goes to a catch-up track, however small.
     structs or its own asked traits add.
   - Depends on nothing.
   - Model: Opus, Planned.
+
+- [ ] **R559 (P6) An importer's front end reads the package's struct,
+  trait, and function declarations as AST**
+
+  `prepare_importing` and `elaborate_importing` index the package's
+  prepared declarations, which the link replays from each module record,
+  though the installed interfaces hold the same declarations resolved.
+  - The readers are the trait-default wrapper synthesis (each trait's
+    methods and defaults), `collect_structs` (parameters, associated
+    members, fields), `collect_fns`, and a `def`'s parameters in
+    `freeze_struct_value_arguments`.
+  - Upstream's emitters read a package declaration resolved, never its
+    syntax.
+  - The lever: read `StructInfo`, `TraitInfo`, and the module bindings from
+    the installed interfaces, so the link record need carry no declaration.
+  - R551 changes the trait half, since a default then becomes a trait
+    member.
+  - Depends on nothing.
+  - Model: Fable, Not Planned.
+
+- [ ] **R560 (P6) A package records each library declaration three times,
+  once per phase**
+
+  A module's declarations sit in its link record as prepared AST, in its
+  declaration interface as checked tables, and in the package's MIR
+  declarations.
+  - Upstream's module record holds each resolved declaration once, which
+    every phase of an importer reads.
+  - The link record keeps them only for R559's readers; the interface and
+    the MIR declarations would still be two encodings of one declaration.
+  - Depends on R559.
+  - Model: Fable, Not Planned.
 
 - [ ] **R547 A function the check lifts from a body is numbered per
   compilation, so the bundled library cannot contain one**

@@ -5,6 +5,24 @@ use super::*;
 use mojito_ast::ast::Method;
 use mojito_ast::visit::{MutVisitor, walk_block_mut};
 
+/// The type handles a block's `comptime T = ...` statements bound so far:
+/// each handle, and its source spelling.
+#[derive(Default)]
+pub(super) struct TypeAliases {
+    values: HashMap<String, CtValue>,
+    sources: HashMap<String, Type>,
+}
+
+impl TypeAliases {
+    /// Bind `name` when `value` is a type handle with a source spelling.
+    pub(super) fn bind(&mut self, name: &str, value: &CtValue) {
+        if let Some((value, source)) = type_alias(value) {
+            self.values.insert(name.to_string(), value);
+            self.sources.insert(name.to_string(), source);
+        }
+    }
+}
+
 impl Elab<'_> {
     /// Elaborate a block, resolving `comptime` constructs. `in_fn` is true inside a
     /// function/method body (so a comptime constant there is *not* module-level).
@@ -18,19 +36,23 @@ impl Elab<'_> {
         // block alone ([`Self::keep_template_comptime_binding`]).
         let binders = self.template_binders.borrow().last().cloned();
         let Some(binders) = binders else {
-            return self.block_statements(stmts, env, in_fn);
+            return self.block_statements(stmts, env, in_fn, TypeAliases::default());
         };
         self.template_binders.borrow_mut().push(binders);
-        let block = self.block_statements(stmts, env, in_fn);
+        let block = self.block_statements(stmts, env, in_fn, TypeAliases::default());
         self.template_binders.borrow_mut().pop();
         block
     }
 
-    fn block_statements(
+    /// Elaborate the statements of a block, whose type handles `aliases`
+    /// holds already: an importing program's module block starts with its
+    /// package's.
+    pub(super) fn block_statements(
         &self,
         stmts: &[Stmt],
         env: &mut HashMap<String, CtValue>,
         in_fn: bool,
+        aliases: TypeAliases,
     ) -> Result<Vec<Stmt>, ComptimeError> {
         let mut out = Vec::new();
         // Type handles bound by `comptime T = ...` in this block have no
@@ -38,8 +60,10 @@ impl Elab<'_> {
         // materializes its uses of the alias — `isa[T]()`, `x: T`, `T()` —
         // as the bound type (an unrolled `comptime for` body is its own block,
         // so each iteration's `comptime T = Self.Ts[i]` binds separately).
-        let mut type_aliases: HashMap<String, CtValue> = HashMap::new();
-        let mut source_aliases: HashMap<String, Type> = HashMap::new();
+        let TypeAliases {
+            values: mut type_aliases,
+            sources: mut source_aliases,
+        } = aliases;
         // The pack elements the template's aliases denote, as written.
         let mut element_aliases: HashMap<String, Expr> = HashMap::new();
         for stmt in stmts {
@@ -79,10 +103,9 @@ impl Elab<'_> {
                 name, type_params, ..
             } = &stmt.kind
                 && type_params.is_empty()
-                && let Some(value @ CtValue::Type(ty)) = env.get(name)
-                && let Some(source) = source_type_from_ty(ty)
+                && let Some((value, source)) = env.get(name).and_then(type_alias)
             {
-                type_aliases.insert(name.clone(), value.clone());
+                type_aliases.insert(name.clone(), value);
                 source_aliases.insert(name.clone(), source);
             }
             if let Some(source) = stmt.module.as_deref() {
@@ -1332,17 +1355,19 @@ impl Elab<'_> {
         let type_params = if let Some(info) = self.structs.get(name) {
             info.source_params
         } else {
-            let mut defs = self
-                .program
-                .iter()
-                .filter_map(|statement| match &statement.kind {
-                    StmtKind::Def {
-                        name: declared,
-                        type_params,
-                        ..
-                    } if declared == name => Some(type_params.as_slice()),
-                    _ => None,
-                });
+            let mut defs =
+                self.headers
+                    .iter()
+                    .copied()
+                    .chain(self.program)
+                    .filter_map(|statement| match &statement.kind {
+                        StmtKind::Def {
+                            name: declared,
+                            type_params,
+                            ..
+                        } if declared == name => Some(type_params.as_slice()),
+                        _ => None,
+                    });
             match (defs.next(), defs.next()) {
                 (Some(type_params), None) => type_params,
                 _ => return,
@@ -1385,6 +1410,15 @@ impl Elab<'_> {
             }
         }
     }
+}
+
+/// The type alias a `comptime` binding to `value` is: the handle, and its
+/// source spelling, when `value` is a type that has one.
+fn type_alias(value: &CtValue) -> Option<(CtValue, Type)> {
+    let CtValue::Type(ty) = value else {
+        return None;
+    };
+    Some((value.clone(), source_type_from_ty(ty)?))
 }
 
 /// The body of a method of `owner` whose elaboration failed with `error`:

@@ -38,6 +38,15 @@ to evolve under the `0.x` compatibility rules.
   resolves a package declaration on first lookup. Hello World decodes 3
   of 942 declarations and compiles and runs in 33 ms release, from 51 ms.
   The package format is now `mojito-package 4`.
+- An importer no longer prepares and elaborates the bundled library's
+  declarations again (R553): each module record holds its declarations as
+  the package build prepared them, each declaration interface holds its
+  module's constants as the build's comptime elaboration resolved them,
+  and an importer prepares and elaborates only the program's own
+  statements beside them, as Mojo's importer takes a package declaration
+  already resolved. Hello World compiles and runs in 20 ms release, from
+  33 ms. `Compiler::compile_linked`, given a source link, now compiles the
+  library from source.
 - A module under a search root is linked under its path there, whichever
   import reaches it first: `std/io/file.mojo` declares
   `__module$std$io$file$…`, not `__module$file$…`.

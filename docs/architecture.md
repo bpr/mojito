@@ -84,15 +84,19 @@ compiler build (`src/package.rs`):
 
 ```text
 build (once per compiler build, then cached):
-  every std module -> link (recording each module) -> elaborate -> check
-    (exporting each module's declaration interface) -> MIR -> ownership
+  every std module -> link (recording each module) -> prepare (each
+    module record keeps its prepared declarations) -> elaborate (exporting
+    the module constants it folded) -> check (exporting each module's
+    declaration interface) -> MIR -> ownership
     -> std package: interface + MIR declarations + module records
        + declaration interfaces + pre-drop bodies
 
 import (every compilation that links the bundled library):
   source -> link (each library module from its record)
-    -> prepare -> elaborate -> check (the reached modules' declaration
-       interfaces installed; the program's own statements checked)
+    -> prepare -> elaborate (the program's own statements, the reached
+       modules' prepared declarations and module constants as context)
+    -> check (the reached modules' declaration interfaces installed; the
+       program's own statements checked)
     -> MIR of the program's own declarations, with the package's MIR
        declarations attached (each decoded on first lookup)
     -> verify + ownership (own functions)
@@ -121,15 +125,17 @@ import (every compilation that links the bundled library):
 - **A module record** (`module::package::PackageModule`) is what linking
   the module from source produced, as upstream's `createBinaryPackageState`
   reads a package's module tree: the modules its link asked to load, in
-  order, its export and namespace tables, and its linked declarations with
-  their bodies emptied (`ast::clear_bodies`). It is bytecode (`postcard`
-  over the AST's serde form), keyed by the module's canonical source path,
-  and decoded when a link reaches the module. The importer's link
+  order, its export and namespace tables, and its declarations as the
+  build's `prepare` left them (trait-default functions and wrappers,
+  derived `copy`/`__hash__`, qualified packs, folded SIMD bounds), with
+  their bodies emptied (`ast::clear_bodies`,
+  `PackageModule::replace_declarations`). It is bytecode (`postcard` over
+  the AST's serde form), keyed by the module's canonical source path, and
+  decoded when a link reaches the module. The importer's link
   (`module::link_*_with_package`) replays a record in place of reading,
   parsing, and resolving the module, and stamps its declarations with the
-  path it reached the module by, so it links exactly what a source link
-  followed by `checker::strip_package_bodies` would; no library source is
-  read.
+  path it reached the module by, so each module links exactly what
+  preparing a source link gives it, bodiless; no library source is read.
 - **The interface** is what an importer's check reads from the package's
   bodies: the modules the package compiled, their top-level names, each
   module-level callable's transfer and call-through effect summaries, and
@@ -141,7 +147,11 @@ import (every compilation that links the bundled library):
   a method's parametric origin writes included), its aliases and module
   constants, each module-scope binding's type and callable origin facts,
   its overload sets, and the applicable functions and declared results a
-  compile-time call reads, by linked name. The build's check exports one
+  compile-time call reads, by linked name. It also holds the module's
+  constants as the build's comptime elaboration resolved them
+  (`checker::ElaboratedConstant`: a folded value or `Applied` marker, or a
+  generic alias's parameters and body; `comptime::elaborate_exporting`,
+  `CheckContext::record_elaborated`). The build's check exports one
   per module once the whole library is checked
   (`Checker::export_interfaces`); it holds no binding owner, span-keyed
   fact, syntax identity, or parameter hole, and encoding a table that holds
@@ -149,10 +159,18 @@ import (every compilation that links the bundled library):
   bytecode (`postcard`), keyed by module path; a default argument or a
   conformance condition in it stays AST, stamped on decoding with the path
   the importer reached the module by (`ast::decoding_from`).
-- **Above the waist no package body or declaration is checked.** The
-  driver empties a package declaration's bodies before `prepare` (a body
-  the link took from source too), so preparation and comptime elaboration
-  walk headers only. The check is given the program's own statements
+- **Above the waist no package body or declaration is prepared,
+  elaborated, or checked again.** The driver partitions the link into the
+  package's declarations, borrowed, and the program's own statements
+  (`Compiler::compile_importing`). `comptime::prepare_importing` rewrites
+  the own statements alone, reading the package's traits, functions, and
+  SIMD aliases as context. `comptime::elaborate_importing` elaborates them
+  alone (`comptime::ImportedScope`): its module environment, generic
+  aliases, and module type aliases start from the installed interfaces'
+  module constants, its struct and function indexes read the package's
+  prepared declarations, and its conformance oracle installs the
+  interfaces and registers the own statements over them
+  (`ConformanceOracle::importing`). The check is given the program's own statements
   alone: each transfer pass installs the declaration interfaces of the
   modules the link reached into its fresh `Checker`
   (`Checker::install_interfaces`), then scans and checks the own
@@ -564,7 +582,10 @@ Entry points:
 
 ```rust
 comptime::prepare(program: Vec<Stmt>) -> Result<Vec<Stmt>, ComptimeError>
-comptime::elaborate_prepared(prepared: &[Stmt]) -> Result<Elaborated, ComptimeError>
+comptime::prepare_importing(own: Vec<Stmt>, imported: &[&Stmt]) -> Result<Vec<Stmt>, ComptimeError>
+comptime::elaborate_prepared(prepared: &[Stmt]) -> Result<Vec<Stmt>, ComptimeError>
+comptime::elaborate_importing(own: &[Stmt], imported: ImportedScope) -> Result<Vec<Stmt>, ComptimeError>
+comptime::elaborate_exporting(prepared: &[Stmt]) -> Result<(Vec<Stmt>, ElaboratedConstants), ComptimeError>
 comptime::elaborate(program: Vec<Stmt>) -> Result<Vec<Stmt>, ComptimeError>
 ```
 

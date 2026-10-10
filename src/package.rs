@@ -167,19 +167,43 @@ fn build(root: &Path, header: &PackageHeader) -> Result<Vec<u8>, CompilerError> 
     // The entry sits where no `std` resolves beside it, so every import
     // resolves through the bundled root, as an importer's does.
     let entry = root.join(".package").join("std.mojo");
-    let (linked, records) = link_source_recording(&source, &entry, LinkOptions::default())
+    let (linked, mut records) = link_source_recording(&source, &entry, LinkOptions::default())
         .map_err(CompilerError::Module)?;
+    let (compiled, exports) = Compiler::default().compile_for_package(&linked)?;
+    // A record holds its module's declarations as the build prepared them,
+    // which is what an importer reads beside its own statements.
+    let entry_module = entry.display().to_string();
+    let packaged: Vec<_> = exports
+        .prepared
+        .iter()
+        .filter(|statement| statement.module.as_deref() != Some(entry_module.as_str()))
+        .collect();
+    let mut prepared: HashMap<String, Vec<crate::ast::Stmt>> = HashMap::new();
+    for statement in &packaged {
+        let Some(module) = &statement.module else {
+            continue;
+        };
+        let canonical = Path::new(module)
+            .canonicalize()
+            .map_or_else(|_| module.clone(), |path| path.display().to_string());
+        prepared
+            .entry(canonical)
+            .or_default()
+            .push((*statement).clone());
+    }
+    for (path, record) in &mut records {
+        record.replace_declarations(prepared.remove(path).unwrap_or_default());
+    }
+    if let Some(path) = prepared.keys().next() {
+        return Err(CompilerError::Verify(vec![format!(
+            "the prepared library declares in `{path}`, which its link recorded no module for"
+        )]));
+    }
     let modules = records
         .iter()
         .map(|(path, record)| Ok((path.clone(), record.encode()?)))
         .collect::<Result<Vec<_>, String>>()
         .map_err(|error| CompilerError::Verify(vec![error]))?;
-    let entry_module = entry.display().to_string();
-    let packaged: Vec<_> = linked
-        .iter()
-        .filter(|statement| statement.module.as_deref() != Some(entry_module.as_str()))
-        .collect();
-    let (compiled, exports) = Compiler::default().compile_for_package(&linked)?;
     let mut interface = exports.summaries;
     interface.modules = packaged
         .iter()
@@ -438,19 +462,44 @@ mod tests {
         }
         source.push_str("def main():\n    print(String(\"probe\"))\n");
         let entry = Path::new("probe.mojo");
-        let mut from_source = link_source_with_options(&source, entry, LinkOptions::default())
+        let from_source = link_source_with_options(&source, entry, LinkOptions::default())
             .expect("links from source");
-        crate::checker::strip_package_bodies(&mut from_source, &package.interface);
+        let prepared = crate::comptime::prepare(from_source.clone()).expect("prepares");
         let from_package =
             link_source_with_package(&source, entry, LinkOptions::default(), &package.modules)
                 .expect("links from the package");
-        assert_eq!(from_source.len(), from_package.len());
-        for (source, packaged) in from_source.iter().zip(&from_package) {
-            assert_eq!(source, packaged);
-            assert_eq!(
-                (&source.module, source.span),
-                (&packaged.module, packaged.span)
-            );
+        let packaged =
+            |statement: &&crate::ast::Stmt| package.interface.compiles(statement.module.as_deref());
+        // The program's own statements link as their source spells them.
+        assert!(
+            from_source
+                .iter()
+                .filter(|statement| !packaged(statement))
+                .eq(from_package.iter().filter(|statement| !packaged(statement)))
+        );
+        // A package module's statements are, in order, what preparing the
+        // source link gives that module, bodiless.
+        for module in &package.interface.modules {
+            let in_module =
+                |statement: &&crate::ast::Stmt| statement.module.as_ref() == Some(module);
+            let expected: Vec<_> = prepared
+                .iter()
+                .filter(in_module)
+                .cloned()
+                .map(|mut statement| {
+                    crate::ast::clear_bodies(&mut statement);
+                    statement
+                })
+                .collect();
+            let linked: Vec<_> = from_package.iter().filter(in_module).collect();
+            assert_eq!(expected.len(), linked.len(), "{module}");
+            for (source, packaged) in expected.iter().zip(linked) {
+                assert_eq!(source, packaged);
+                assert_eq!(
+                    (&source.module, source.span),
+                    (&packaged.module, packaged.span)
+                );
+            }
         }
     }
 
