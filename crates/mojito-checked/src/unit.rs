@@ -7,18 +7,14 @@
 //! constant) and every function lifted from it.
 
 use crate::checked::{
-    AnnotationSite, CheckedCallContract, CheckedCallTransfer, CheckedCapture,
-    CheckedComprehensionBinding, CheckedDefaultWrapper, CheckedProgram, CheckedTraitMember,
-    CheckedTupleUnpackElement, ConformanceFacts, DeclarationEffect, DiscoveryResult, EffectFacts,
-    GenericInstantiation, GenericSite, InteriorInvalidation, IterationProtocol,
-    MethodInstantiation, RebindAssertion, SemanticAdjustment,
+    AnnotationSite, CheckedDefaultWrapper, CheckedProgram, CheckedTraitMember, ConformanceFacts,
+    DeclarationEffect, DiscoveryResult, GenericSite, NodeFacts,
 };
-use crate::fact_store::{FactMap, FactSet, FactVec};
 use crate::package::{LibraryRoot, ProgramConstants, ProgramOverloads};
 use mojito_ast::ast::{Expr, Method, Stmt, StmtKind};
 use mojito_common::token::{SourceSpan, Span, SyntaxId};
-use mojito_types::origin::{OriginPlace, OwnerId, encoding_packaged_owners};
-use mojito_types::types::{ParamDecl, SimdDtype, SimdWidth, SliceKind, Ty};
+use mojito_types::origin::encoding_packaged_owners;
+use mojito_types::types::{ParamDecl, Ty};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
@@ -186,54 +182,24 @@ impl CheckedUnit {
         };
         let mut discovery = DiscoveryResult {
             statements: self.statements,
-            overload_targets: FactMap::default(),
-            contextual_bases: FactMap::default(),
-            generic_instantiations: FactMap::default(),
-            method_instantiations: FactMap::default(),
-            struct_instantiations: FactVec::default(),
-            call_transfers: FactMap::default(),
-            implicit_conversions: FactMap::default(),
-            implicit_conversion_types: FactMap::default(),
-            conversion_source_borrows: FactMap::default(),
-            conversion_raises: FactMap::default(),
-            checked_types: FactMap::default(),
-            generic_parameters: FactMap::default(),
-            expression_types: FactMap::default(),
-            expression_bindings: FactMap::default(),
-            statement_bindings: FactMap::default(),
-            declaration_captures: FactMap::default(),
-            comprehension_bindings: FactMap::default(),
-            expression_place_types: FactMap::default(),
-            binding_types: FactMap::default(),
-            expression_effects: FactMap::default(),
-            selected_calls: FactMap::default(),
-            subscript_descriptors: FactMap::default(),
-            iteration_protocols: FactMap::default(),
-            simd_constructions: FactMap::default(),
-            operation_adjustments: FactMap::default(),
-            parameterized_method_calls: FactMap::default(),
-            tuple_unpack_plans: FactMap::default(),
-            interior_references: FactMap::default(),
-            interior_invalidations: FactMap::default(),
+            node_facts: HashMap::with_capacity(self.facts.nodes.len()),
+            struct_instantiations: Vec::new(),
+            checked_types: self.facts.sites.checked_types.into_iter().collect(),
+            generic_parameters: self.facts.sites.generic_parameters.into_iter().collect(),
+            declaration_effects: self.facts.sites.declaration_effects.into_iter().collect(),
             explicit_destroy_types: HashMap::new(),
             struct_destructors: HashMap::new(),
             conformances: ConformanceFacts::default(),
-            explicit_destroy_calls: FactSet::default(),
-            reference_value_uses: FactMap::default(),
-            copy_place_value_uses: FactSet::default(),
-            call_place_uses: FactSet::default(),
-            borrowed_read_call_places: FactSet::default(),
-            read_temporary_arguments: FactSet::default(),
-            implicitly_copied_consuming_receivers: FactSet::default(),
-            truthiness_conditions: FactSet::default(),
-            rebind_assertions: FactMap::default(),
-            declaration_effects: FactMap::default(),
             overloads,
             constants,
             default_wrappers: self.default_wrappers,
             trait_members: Vec::new(),
         };
-        self.facts.install(&locations, &mut discovery)?;
+        for record in self.facts.nodes {
+            discovery
+                .node_facts
+                .insert(record.key(&locations)?, record.facts);
+        }
         if let Some((site, parameters)) = structure {
             discovery.generic_parameters.insert(site, parameters);
         }
@@ -420,10 +386,32 @@ impl DiscoveryResult {
                 checked
             })
             .collect();
-        let mut facts: Vec<UnitFacts> = sliced.iter().map(|_| UnitFacts::default()).collect();
-        UnitFacts::distribute(self, &owners, &syntax, &mut facts);
-        for (unit, facts) in sliced.iter_mut().zip(facts) {
-            unit.facts = facts;
+        let mut nodes: Vec<HashMap<SourceSpan, NodeFacts>> =
+            sliced.iter().map(|_| HashMap::new()).collect();
+        for (key, facts) in &self.node_facts {
+            for unit in key.units(&owners) {
+                nodes[*unit].insert(key.clone(), facts.clone());
+            }
+        }
+        let checked_types = shares(&self.checked_types, &owners, &syntax);
+        let generic_parameters = shares(&self.generic_parameters, &owners, &syntax);
+        let declaration_effects = shares(&self.declaration_effects, &owners, &syntax);
+        for ((((unit, nodes), syntax), checked_types), (generic_parameters, declaration_effects)) in
+            sliced
+                .iter_mut()
+                .zip(nodes)
+                .zip(&syntax)
+                .zip(checked_types)
+                .zip(generic_parameters.into_iter().zip(declaration_effects))
+        {
+            unit.facts = UnitFacts {
+                nodes: NodeRecord::ordered(nodes, syntax),
+                sites: SiteFacts {
+                    checked_types,
+                    generic_parameters,
+                    declaration_effects,
+                },
+            };
         }
         sliced
     }
@@ -521,6 +509,15 @@ struct UnitFacts {
     sites: SiteFacts,
 }
 
+/// A unit's share of each of the check's tables keyed by a declaration
+/// site, as a declaration's op holds its attributes.
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+struct SiteFacts {
+    checked_types: Vec<(AnnotationSite, Ty)>,
+    generic_parameters: Vec<(GenericSite, Vec<ParamDecl>)>,
+    declaration_effects: Vec<(AnnotationSite, DeclarationEffect)>,
+}
+
 /// Every fact the check recorded at one occurrence of a unit's syntax.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 struct NodeRecord {
@@ -529,7 +526,7 @@ struct NodeRecord {
     /// occurrence's node in the unit's syntax: a derived occurrence's, or
     /// one the check gave a node it spelled at another node's location.
     location: Option<SourceSpan>,
-    facts: Vec<NodeFact>,
+    facts: NodeFacts,
 }
 
 impl NodeRecord {
@@ -549,7 +546,7 @@ impl NodeRecord {
 
     /// One record per key of `nodes`, in an order that does not depend on
     /// hashing, each naming its location only when `syntax` does not.
-    fn ordered(nodes: HashMap<SourceSpan, Vec<NodeFact>>, syntax: &UnitSyntax) -> Vec<Self> {
+    fn ordered(nodes: HashMap<SourceSpan, NodeFacts>, syntax: &UnitSyntax) -> Vec<Self> {
         let mut keyed: Vec<_> = nodes
             .into_iter()
             .filter_map(|(key, facts)| {
@@ -708,6 +705,26 @@ fn ordered_sites<K: SiteKey, V>(
         .collect()
 }
 
+/// Each unit's share of the site table `table`, in an order that does not
+/// depend on hashing.
+fn shares<K: SiteKey + Clone, V: Clone>(
+    table: &HashMap<K, V>,
+    owners: &Owners,
+    syntax: &[UnitSyntax],
+) -> Vec<Vec<(K, V)>> {
+    let mut shares: Vec<Vec<(K, V)>> = syntax.iter().map(|_| Vec::new()).collect();
+    for (key, value) in table {
+        for unit in key.units(owners) {
+            shares[*unit].push((key.clone(), value.clone()));
+        }
+    }
+    shares
+        .into_iter()
+        .zip(syntax)
+        .map(|(share, syntax)| ordered_sites(share, &syntax.ranks))
+        .collect()
+}
+
 /// Every syntax occurrence a walk reaches.
 #[derive(Default)]
 struct Occurrences(Vec<SyntaxId>);
@@ -748,189 +765,6 @@ fn member_of(structure: &Stmt, method: Option<&Method>) -> Stmt {
         span: structure.span,
         module: structure.module.clone(),
         syntax_id: structure.syntax_id,
-    }
-}
-
-macro_rules! unit_facts {
-    (
-        nodes { $($map:ident => $variant:ident($value:ty),)* }
-        flags { $($set:ident => $flag:ident,)* }
-        sites { $($site:ident: $key:ty => $site_value:ty,)* }
-    ) => {
-        /// One fact the check recorded at an occurrence: an entry of the
-        /// check's table of that name.
-        #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-        enum NodeFact {
-            $($variant($value),)*
-            $($flag,)*
-        }
-
-        /// A unit's share of each of the check's tables keyed by a
-        /// declaration site.
-        #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
-        struct SiteFacts {
-            $($site: Vec<($key, $site_value)>,)*
-        }
-
-        impl UnitFacts {
-            /// Give each unit, whose syntax `syntax` describes, its share
-            /// of `discovery`'s facts.
-            fn distribute(
-                discovery: &DiscoveryResult,
-                owners: &Owners,
-                syntax: &[UnitSyntax],
-                facts: &mut [Self],
-            ) {
-                let mut nodes: Vec<HashMap<SourceSpan, Vec<NodeFact>>> =
-                    facts.iter().map(|_| HashMap::new()).collect();
-                $(
-                    for (key, value) in discovery.$map.iter() {
-                        for unit in key.units(owners) {
-                            nodes[*unit]
-                                .entry(key.clone())
-                                .or_default()
-                                .push(NodeFact::$variant(value.clone()));
-                        }
-                    }
-                )*
-                $(
-                    for key in discovery.$set.iter() {
-                        for unit in key.units(owners) {
-                            nodes[*unit].entry(key.clone()).or_default().push(NodeFact::$flag);
-                        }
-                    }
-                )*
-                $(
-                    let mut shares: Vec<Vec<($key, $site_value)>> =
-                        facts.iter().map(|_| Vec::new()).collect();
-                    for (key, value) in discovery.$site.iter() {
-                        for unit in key.units(owners) {
-                            shares[*unit].push((key.clone(), value.clone()));
-                        }
-                    }
-                    for ((unit, share), syntax) in facts.iter_mut().zip(shares).zip(syntax) {
-                        unit.sites.$site = ordered_sites(share, &syntax.ranks);
-                    }
-                )*
-                for ((unit, nodes), syntax) in facts.iter_mut().zip(nodes).zip(syntax) {
-                    unit.nodes = NodeRecord::ordered(nodes, syntax);
-                }
-            }
-
-            /// Install the unit's facts, its syntax at `locations`, in its
-            /// `discovery`.
-            fn install(
-                self,
-                locations: &Locations<'_>,
-                discovery: &mut DiscoveryResult,
-            ) -> Result<(), String> {
-                /// The tables being filled.
-                struct Tables {
-                    $($map: HashMap<SourceSpan, $value>,)*
-                    $($set: HashSet<SourceSpan>,)*
-                }
-
-                impl Tables {
-                    /// Tables sized for `records`' facts.
-                    fn for_records(records: &[NodeRecord]) -> Self {
-                        #[derive(Default)]
-                        struct Counts {
-                            $($map: usize,)*
-                            $($set: usize,)*
-                        }
-                        let mut counts = Counts::default();
-                        for fact in records.iter().flat_map(|record| &record.facts) {
-                            match fact {
-                                $(NodeFact::$variant(_) => counts.$map += 1,)*
-                                $(NodeFact::$flag => counts.$set += 1,)*
-                            }
-                        }
-                        Self {
-                            $($map: HashMap::with_capacity(counts.$map),)*
-                            $($set: HashSet::with_capacity(counts.$set),)*
-                        }
-                    }
-
-                    fn put(&mut self, key: SourceSpan, fact: NodeFact) {
-                        match fact {
-                            $(NodeFact::$variant(value) => {
-                                self.$map.insert(key, value);
-                            })*
-                            $(NodeFact::$flag => {
-                                self.$set.insert(key);
-                            })*
-                        }
-                    }
-                }
-
-                let mut tables = Tables::for_records(&self.nodes);
-                for mut record in self.nodes {
-                    let key = record.key(locations)?;
-                    let Some(last) = record.facts.pop() else {
-                        continue;
-                    };
-                    for fact in record.facts {
-                        tables.put(key.clone(), fact);
-                    }
-                    tables.put(key, last);
-                }
-                $(discovery.$map = FactMap::from(tables.$map);)*
-                $(discovery.$set = FactSet::from(tables.$set);)*
-                $(
-                    discovery.$site = FactMap::from(
-                        self.sites.$site.into_iter().collect::<HashMap<_, _>>(),
-                    );
-                )*
-                Ok(())
-            }
-        }
-    };
-}
-
-unit_facts! {
-    nodes {
-        overload_targets => OverloadTarget(String),
-        contextual_bases => ContextualBase(String),
-        generic_instantiations => GenericInstantiation(GenericInstantiation),
-        method_instantiations => MethodInstantiation(MethodInstantiation),
-        call_transfers => CallTransfers(Vec<CheckedCallTransfer>),
-        implicit_conversions => ImplicitConversion(String),
-        implicit_conversion_types => ImplicitConversionType(Ty),
-        conversion_source_borrows => ConversionSourceBorrow(bool),
-        conversion_raises => ConversionRaises(Ty),
-        expression_types => Type(Ty),
-        expression_bindings => Binding(OwnerId),
-        statement_bindings => StatementBinding(OwnerId),
-        declaration_captures => Captures(Vec<CheckedCapture>),
-        comprehension_bindings => ComprehensionBindings(Vec<CheckedComprehensionBinding>),
-        expression_place_types => PlaceType(Ty),
-        binding_types => BindingType(Ty),
-        expression_effects => Effects(EffectFacts),
-        selected_calls => SelectedCall(CheckedCallContract),
-        subscript_descriptors => SubscriptDescriptor((Vec<Option<SliceKind>>, bool)),
-        iteration_protocols => IterationProtocol(IterationProtocol),
-        simd_constructions => SimdConstruction((SimdDtype, SimdWidth)),
-        operation_adjustments => Adjustment(SemanticAdjustment),
-        parameterized_method_calls => ParameterizedMethodCall(Vec<ParamDecl>),
-        tuple_unpack_plans => TupleUnpackPlan(Vec<CheckedTupleUnpackElement>),
-        interior_references => InteriorReference(OriginPlace),
-        interior_invalidations => InteriorInvalidations(Vec<InteriorInvalidation>),
-        reference_value_uses => ReferenceValueUse(bool),
-        rebind_assertions => RebindAssertion(RebindAssertion),
-    }
-    flags {
-        explicit_destroy_calls => ExplicitDestroyCall,
-        copy_place_value_uses => CopyPlaceValueUse,
-        call_place_uses => CallPlaceUse,
-        borrowed_read_call_places => BorrowedReadCallPlace,
-        read_temporary_arguments => ReadTemporaryArgument,
-        implicitly_copied_consuming_receivers => ImplicitlyCopiedConsumingReceiver,
-        truthiness_conditions => TruthinessCondition,
-    }
-    sites {
-        checked_types: AnnotationSite => Ty,
-        generic_parameters: GenericSite => Vec<ParamDecl>,
-        declaration_effects: AnnotationSite => DeclarationEffect,
     }
 }
 

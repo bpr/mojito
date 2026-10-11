@@ -8,6 +8,17 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- The check hands its facts over as one record per occurrence (R604, the
+  handoff's half of its next stage): `DiscoveryResult` holds a `NodeFacts`
+  per occurrence where it held 35 span-keyed tables, `CheckedProgram::new`
+  takes it whole instead of 47 arguments, and the checked arena reads a
+  node's facts from its occurrence's record. A package unit's records are
+  these records, so an importer installs them as they decode instead of
+  refilling one table per fact. The checker's own working stores stay one
+  logged table per fact, since an overload probe saves and restores single
+  tables per candidate (R612). The package's bytes are unchanged, and no
+  program's output changes.
+
 - A package unit holds the check's facts as one record per occurrence,
   as an op holds its own attributes (R604, first slices): the record names
   the occurrence once, numbered densely within the unit, gives a location

@@ -1,12 +1,10 @@
 //! Checked semantic handoff between the frontend and lowering.
 
-use crate::fact_store::{FactMap, FactSet, FactVec};
 use mojito_ast::ast::Stmt;
 use mojito_ast::ast::{Expr, ExprKind, PrefixOp};
 use mojito_common::token::{SourceSpan, Span};
 use mojito_types::types::{SimdDtype, SimdWidth, Ty};
 use std::collections::HashMap;
-use std::collections::HashSet;
 use std::sync::Arc;
 
 /// Stable identity within one checked program. Unlike a source span this remains
@@ -1420,56 +1418,23 @@ impl mojito_ast::ast::DeclaredParam for SignatureParam {
 /// converges pays for [`Self::finalize`]. This is not an executable program
 /// and never reaches HIR or MIR.
 ///
-/// The fields are [`CheckedProgram::new`]'s inputs, owned.
+/// It is [`CheckedProgram::new`]'s input: the check's facts, one record per
+/// occurrence ([`NodeFacts`]), beside its declaration-site tables.
 #[derive(Debug, Clone)]
 pub struct DiscoveryResult {
     pub statements: Vec<Stmt>,
-    pub overload_targets: FactMap<SourceSpan, String>,
-    pub contextual_bases: FactMap<SourceSpan, String>,
-    pub generic_instantiations: FactMap<SourceSpan, GenericInstantiation>,
-    pub method_instantiations: FactMap<SourceSpan, MethodInstantiation>,
-    pub struct_instantiations: FactVec<StructInstantiation>,
-    pub call_transfers: FactMap<SourceSpan, Vec<CheckedCallTransfer>>,
-    pub implicit_conversions: FactMap<SourceSpan, String>,
-    pub implicit_conversion_types: FactMap<SourceSpan, Ty>,
-    pub conversion_source_borrows: FactMap<SourceSpan, bool>,
-    pub conversion_raises: FactMap<SourceSpan, Ty>,
-    pub checked_types: FactMap<AnnotationSite, Ty>,
-    pub generic_parameters: FactMap<GenericSite, Vec<mojito_types::types::ParamDecl>>,
-    pub expression_types: FactMap<SourceSpan, Ty>,
-    pub expression_bindings: FactMap<SourceSpan, mojito_types::origin::OwnerId>,
-    pub statement_bindings: FactMap<SourceSpan, mojito_types::origin::OwnerId>,
-    pub declaration_captures: FactMap<SourceSpan, Vec<CheckedCapture>>,
-    pub comprehension_bindings: FactMap<SourceSpan, Vec<CheckedComprehensionBinding>>,
-    pub expression_place_types: FactMap<SourceSpan, Ty>,
-    pub binding_types: FactMap<SourceSpan, Ty>,
-    pub expression_effects: FactMap<SourceSpan, EffectFacts>,
-    pub selected_calls: FactMap<SourceSpan, CheckedCallContract>,
-    pub subscript_descriptors:
-        FactMap<SourceSpan, (Vec<Option<mojito_types::types::SliceKind>>, bool)>,
-    pub iteration_protocols: FactMap<SourceSpan, IterationProtocol>,
-    pub simd_constructions: FactMap<SourceSpan, (SimdDtype, SimdWidth)>,
-    pub operation_adjustments: FactMap<SourceSpan, SemanticAdjustment>,
-    pub parameterized_method_calls: FactMap<SourceSpan, Vec<mojito_types::types::ParamDecl>>,
-    pub tuple_unpack_plans: FactMap<SourceSpan, Vec<CheckedTupleUnpackElement>>,
-    pub interior_references: FactMap<SourceSpan, mojito_types::origin::OriginPlace>,
-    pub interior_invalidations: FactMap<SourceSpan, Vec<InteriorInvalidation>>,
+    /// Every fact the check recorded at an occurrence, one record per
+    /// occurrence.
+    pub node_facts: HashMap<SourceSpan, NodeFacts>,
+    pub struct_instantiations: Vec<StructInstantiation>,
+    pub checked_types: HashMap<AnnotationSite, Ty>,
+    pub generic_parameters: HashMap<GenericSite, Vec<mojito_types::types::ParamDecl>>,
+    pub declaration_effects: HashMap<AnnotationSite, DeclarationEffect>,
     pub explicit_destroy_types: HashMap<String, ExplicitDestroyInfo>,
     /// Each struct's named destructors (`deinit self` methods), by struct,
     /// beside whether each raises; a struct declaring none has no entry.
     pub struct_destructors: HashMap<String, HashMap<String, bool>>,
     pub conformances: ConformanceFacts,
-    pub explicit_destroy_calls: FactSet<SourceSpan>,
-    pub reference_value_uses: FactMap<SourceSpan, bool>,
-    pub copy_place_value_uses: FactSet<SourceSpan>,
-    pub call_place_uses: FactSet<SourceSpan>,
-    pub borrowed_read_call_places: FactSet<SourceSpan>,
-    pub read_temporary_arguments: FactSet<SourceSpan>,
-    pub implicitly_copied_consuming_receivers: FactSet<SourceSpan>,
-    pub truthiness_conditions: FactSet<SourceSpan>,
-    /// Each erased `rebind` the check judged, at its operand.
-    pub rebind_assertions: FactMap<SourceSpan, RebindAssertion>,
-    pub declaration_effects: FactMap<AnnotationSite, DeclarationEffect>,
     /// The overload sets of every declaration the check knew: its own,
     /// and an imported package's, answered from the package's declarations.
     pub overloads: Arc<crate::package::ProgramOverloads>,
@@ -1486,55 +1451,7 @@ impl DiscoveryResult {
     /// Assemble the executable handoff. Nothing is inferred again: the arena
     /// and its indexes are built from the facts this result already holds.
     pub fn finalize(self) -> CheckedProgram {
-        CheckedProgram::new(
-            self.statements,
-            self.overload_targets.into_inner(),
-            &self.contextual_bases,
-            self.generic_instantiations.into_inner(),
-            self.method_instantiations.into_inner(),
-            self.struct_instantiations.into_inner(),
-            self.call_transfers.into_inner(),
-            self.implicit_conversions.into_inner(),
-            self.implicit_conversion_types.into_inner(),
-            &self.conversion_source_borrows,
-            &self.conversion_raises,
-            self.checked_types.into_inner(),
-            self.generic_parameters.into_inner(),
-            &self.expression_types,
-            &self.expression_bindings,
-            &self.statement_bindings,
-            &self.declaration_captures,
-            &self.comprehension_bindings,
-            &self.expression_place_types,
-            &self.binding_types,
-            &self.expression_effects,
-            &self.selected_calls,
-            &self.subscript_descriptors,
-            &self.iteration_protocols,
-            &self.simd_constructions,
-            &self.operation_adjustments,
-            &self.parameterized_method_calls,
-            &self.tuple_unpack_plans,
-            &self.interior_references,
-            &self.interior_invalidations,
-            self.explicit_destroy_types,
-            self.struct_destructors,
-            self.conformances,
-            &self.explicit_destroy_calls,
-            &self.reference_value_uses,
-            &self.copy_place_value_uses,
-            &self.call_place_uses,
-            &self.borrowed_read_call_places,
-            &self.read_temporary_arguments,
-            &self.implicitly_copied_consuming_receivers,
-            &self.truthiness_conditions,
-            &self.rebind_assertions,
-            self.declaration_effects.into_inner(),
-            self.overloads,
-            self.constants,
-            self.default_wrappers,
-            self.trait_members,
-        )
+        CheckedProgram::new(self)
     }
 
     /// Visit every expression the checked arena would hold a node for, in the
@@ -1544,49 +1461,24 @@ impl DiscoveryResult {
     pub fn scan_expressions(&self, visit: &mut dyn FnMut(&Expr)) {
         build_checked_expressions(
             &self.statements,
-            &self.contextual_bases,
-            &self.expression_types,
-            &self.expression_bindings,
-            &self.comprehension_bindings,
-            &self.expression_place_types,
-            &self.binding_types,
-            &self.expression_effects,
-            &self.selected_calls,
-            &self.subscript_descriptors,
-            &self.iteration_protocols,
-            &self.simd_constructions,
-            &self.operation_adjustments,
-            &self.parameterized_method_calls,
-            &self.tuple_unpack_plans,
-            &self.interior_references,
-            &self.interior_invalidations,
-            &self.overload_targets,
-            &self.implicit_conversions,
-            &self.implicit_conversion_types,
-            &self.conversion_source_borrows,
-            &self.conversion_raises,
-            &self.explicit_destroy_calls,
-            &self.reference_value_uses,
-            &self.copy_place_value_uses,
-            &self.call_place_uses,
-            &self.borrowed_read_call_places,
-            &self.read_temporary_arguments,
-            &self.implicitly_copied_consuming_receivers,
-            &self.truthiness_conditions,
-            &self.rebind_assertions,
-            &self.generic_instantiations,
-            &self.method_instantiations,
+            &self.node_facts,
             &self.default_wrappers,
             Some(visit),
         );
     }
 
-    pub fn generic_instantiations(&self) -> &HashMap<SourceSpan, GenericInstantiation> {
-        &self.generic_instantiations
+    /// The generic instantiation recorded at each call.
+    pub fn generic_instantiations(&self) -> HashMap<SourceSpan, GenericInstantiation> {
+        fact_index(&self.node_facts, |facts| {
+            facts.generic_instantiation.as_ref()
+        })
     }
 
-    pub fn method_instantiations(&self) -> &HashMap<SourceSpan, MethodInstantiation> {
-        &self.method_instantiations
+    /// The method instantiation recorded at each call.
+    pub fn method_instantiations(&self) -> HashMap<SourceSpan, MethodInstantiation> {
+        fact_index(&self.node_facts, |facts| {
+            facts.method_instantiation.as_ref()
+        })
     }
 
     pub fn struct_instantiations(&self) -> &[StructInstantiation] {
@@ -1594,15 +1486,15 @@ impl DiscoveryResult {
     }
 
     pub fn expression_type(&self, expression: &Expr) -> Option<&Ty> {
-        self.expression_types.get(&expression.source_span())
+        self.facts_of(expression)?.ty.as_ref()
     }
 
     pub fn expression_place_type(&self, expression: &Expr) -> Option<&Ty> {
-        self.expression_place_types.get(&expression.source_span())
+        self.facts_of(expression)?.place_ty.as_ref()
     }
 
     pub fn expression_binding_type(&self, expression: &Expr) -> Option<&Ty> {
-        self.binding_types.get(&expression.source_span())
+        self.facts_of(expression)?.binding_ty.as_ref()
     }
 
     /// The checked type of every declaration the arena would hold.
@@ -1611,9 +1503,7 @@ impl DiscoveryResult {
             &self.statements,
             &self.trait_members,
             &self.checked_types,
-            &self.statement_bindings,
-            &self.declaration_captures,
-            &self.binding_types,
+            &self.node_facts,
         )
         .into_iter()
         .filter_map(|declaration| declaration.ty)
@@ -1628,43 +1518,11 @@ impl DiscoveryResult {
         wrappers: &[CheckedDefaultWrapper],
         visit: &mut dyn FnMut(&Expr),
     ) {
-        build_checked_expressions(
-            statements,
-            &self.contextual_bases,
-            &self.expression_types,
-            &self.expression_bindings,
-            &self.comprehension_bindings,
-            &self.expression_place_types,
-            &self.binding_types,
-            &self.expression_effects,
-            &self.selected_calls,
-            &self.subscript_descriptors,
-            &self.iteration_protocols,
-            &self.simd_constructions,
-            &self.operation_adjustments,
-            &self.parameterized_method_calls,
-            &self.tuple_unpack_plans,
-            &self.interior_references,
-            &self.interior_invalidations,
-            &self.overload_targets,
-            &self.implicit_conversions,
-            &self.implicit_conversion_types,
-            &self.conversion_source_borrows,
-            &self.conversion_raises,
-            &self.explicit_destroy_calls,
-            &self.reference_value_uses,
-            &self.copy_place_value_uses,
-            &self.call_place_uses,
-            &self.borrowed_read_call_places,
-            &self.read_temporary_arguments,
-            &self.implicitly_copied_consuming_receivers,
-            &self.truthiness_conditions,
-            &self.rebind_assertions,
-            &self.generic_instantiations,
-            &self.method_instantiations,
-            wrappers,
-            Some(visit),
-        );
+        build_checked_expressions(statements, &self.node_facts, wrappers, Some(visit));
+    }
+
+    fn facts_of(&self, expression: &Expr) -> Option<&NodeFacts> {
+        self.node_facts.get(&expression.source_span())
     }
 }
 
@@ -2012,118 +1870,50 @@ impl CheckedConst {
 }
 
 impl CheckedProgram {
-    // This is the single checker-to-checked-boundary assembly point. Keeping the
-    // phase-owned fact tables explicit makes accidental omission visible.
-    #[allow(clippy::too_many_arguments)]
-    pub fn new(
-        statements: Vec<Stmt>,
-        overload_targets: HashMap<SourceSpan, String>,
-        contextual_bases: &HashMap<SourceSpan, String>,
-        generic_instantiations: HashMap<SourceSpan, GenericInstantiation>,
-        method_instantiations: HashMap<SourceSpan, MethodInstantiation>,
-        struct_instantiations: Vec<StructInstantiation>,
-        call_transfers: HashMap<SourceSpan, Vec<CheckedCallTransfer>>,
-        implicit_conversions: HashMap<SourceSpan, String>,
-        implicit_conversion_types: HashMap<SourceSpan, Ty>,
-        conversion_source_borrows: &HashMap<SourceSpan, bool>,
-        conversion_raises: &HashMap<SourceSpan, Ty>,
-        checked_types: HashMap<AnnotationSite, Ty>,
-        generic_parameters: HashMap<GenericSite, Vec<mojito_types::types::ParamDecl>>,
-        expression_types: &HashMap<SourceSpan, Ty>,
-        expression_bindings: &HashMap<SourceSpan, mojito_types::origin::OwnerId>,
-        statement_bindings: &HashMap<SourceSpan, mojito_types::origin::OwnerId>,
-        declaration_captures: &HashMap<SourceSpan, Vec<CheckedCapture>>,
-        comprehension_bindings: &HashMap<SourceSpan, Vec<CheckedComprehensionBinding>>,
-        expression_place_types: &HashMap<SourceSpan, Ty>,
-        binding_types: &HashMap<SourceSpan, Ty>,
-        expression_effects: &HashMap<SourceSpan, EffectFacts>,
-        selected_calls: &HashMap<SourceSpan, CheckedCallContract>,
-        subscript_descriptors: &HashMap<
-            SourceSpan,
-            (Vec<Option<mojito_types::types::SliceKind>>, bool),
-        >,
-        iteration_protocols: &HashMap<SourceSpan, IterationProtocol>,
-        simd_constructions: &HashMap<SourceSpan, (SimdDtype, SimdWidth)>,
-        operation_adjustments: &HashMap<SourceSpan, SemanticAdjustment>,
-        parameterized_method_calls: &HashMap<SourceSpan, Vec<mojito_types::types::ParamDecl>>,
-        tuple_unpack_plans: &HashMap<SourceSpan, Vec<CheckedTupleUnpackElement>>,
-        interior_references: &HashMap<SourceSpan, mojito_types::origin::OriginPlace>,
-        interior_invalidations: &HashMap<SourceSpan, Vec<InteriorInvalidation>>,
-        explicit_destroy_types: HashMap<String, ExplicitDestroyInfo>,
-        struct_destructors: HashMap<String, HashMap<String, bool>>,
-        conformances: ConformanceFacts,
-        explicit_destroy_calls: &HashSet<SourceSpan>,
-        reference_value_uses: &HashMap<SourceSpan, bool>,
-        copy_place_value_uses: &HashSet<SourceSpan>,
-        call_place_uses: &HashSet<SourceSpan>,
-        borrowed_read_call_places: &HashSet<SourceSpan>,
-        read_temporary_arguments: &HashSet<SourceSpan>,
-        implicitly_copied_consuming_receivers: &HashSet<SourceSpan>,
-        truthiness_conditions: &HashSet<SourceSpan>,
-        rebind_assertions: &HashMap<SourceSpan, RebindAssertion>,
-        declaration_effects: HashMap<AnnotationSite, DeclarationEffect>,
-        overloads: Arc<crate::package::ProgramOverloads>,
-        constants: Arc<crate::package::ProgramConstants>,
-        default_wrappers: Vec<CheckedDefaultWrapper>,
-        trait_members: Vec<CheckedTraitMember>,
-    ) -> Self {
+    /// The single checker-to-checked-boundary assembly point: the arena
+    /// and the program's indexes, built from what `discovery` recorded.
+    pub fn new(discovery: DiscoveryResult) -> Self {
+        let DiscoveryResult {
+            statements,
+            node_facts,
+            struct_instantiations,
+            checked_types,
+            generic_parameters,
+            declaration_effects,
+            explicit_destroy_types,
+            struct_destructors,
+            conformances,
+            overloads,
+            constants,
+            default_wrappers,
+            trait_members,
+        } = discovery;
         let expressions_span = mojito_common::timing::span("expressions");
-        let (expressions, expression_index) = build_checked_expressions(
-            &statements,
-            contextual_bases,
-            expression_types,
-            expression_bindings,
-            comprehension_bindings,
-            expression_place_types,
-            binding_types,
-            expression_effects,
-            selected_calls,
-            subscript_descriptors,
-            iteration_protocols,
-            simd_constructions,
-            operation_adjustments,
-            parameterized_method_calls,
-            tuple_unpack_plans,
-            interior_references,
-            interior_invalidations,
-            &overload_targets,
-            &implicit_conversions,
-            &implicit_conversion_types,
-            conversion_source_borrows,
-            conversion_raises,
-            explicit_destroy_calls,
-            reference_value_uses,
-            copy_place_value_uses,
-            call_place_uses,
-            borrowed_read_call_places,
-            read_temporary_arguments,
-            implicitly_copied_consuming_receivers,
-            truthiness_conditions,
-            rebind_assertions,
-            &generic_instantiations,
-            &method_instantiations,
-            &default_wrappers,
-            None,
-        );
+        let (expressions, expression_index) =
+            build_checked_expressions(&statements, &node_facts, &default_wrappers, None);
         drop(expressions_span);
         let _declarations = mojito_common::timing::span("declarations");
-        let declarations = build_checked_declarations(
-            &statements,
-            &trait_members,
-            &checked_types,
-            statement_bindings,
-            declaration_captures,
-            binding_types,
-        );
+        let declarations =
+            build_checked_declarations(&statements, &trait_members, &checked_types, &node_facts);
         Self {
             statements,
-            compatibility_overload_targets: overload_targets,
-            generic_instantiations,
-            method_instantiations,
+            compatibility_overload_targets: fact_index(&node_facts, |facts| {
+                facts.overload_target.as_ref()
+            }),
+            generic_instantiations: fact_index(&node_facts, |facts| {
+                facts.generic_instantiation.as_ref()
+            }),
+            method_instantiations: fact_index(&node_facts, |facts| {
+                facts.method_instantiation.as_ref()
+            }),
             struct_instantiations,
-            call_transfers,
-            compatibility_implicit_conversions: implicit_conversions,
-            implicit_conversion_types,
+            call_transfers: fact_index(&node_facts, |facts| facts.call_transfers.as_ref()),
+            compatibility_implicit_conversions: fact_index(&node_facts, |facts| {
+                facts.implicit_conversion.as_ref()
+            }),
+            implicit_conversion_types: fact_index(&node_facts, |facts| {
+                facts.implicit_conversion_type.as_ref()
+            }),
             checked_types,
             generic_parameters,
             tables: Arc::new(CheckedTables::new(
@@ -2284,766 +2074,21 @@ impl CheckedProgram {
     }
 }
 
-// Mirrors `CheckedProgram::new` while the fact tables are folded into stable
-// checked nodes. A named input record can replace this once the old maps retire.
-#[allow(
-    clippy::too_many_arguments,
-    clippy::too_many_lines,
-    reason = "TODO: split this pass"
-)]
+/// The checked arena of `statements` and of `default_wrappers`' bodies, each
+/// node holding the facts `facts` recorded at its occurrence, and the nodes
+/// at each location; with `scan`, the traversal alone, each expression
+/// reported instead of built.
 fn build_checked_expressions(
     statements: &[Stmt],
-    contextual_bases: &HashMap<SourceSpan, String>,
-    types: &HashMap<SourceSpan, Ty>,
-    bindings: &HashMap<SourceSpan, mojito_types::origin::OwnerId>,
-    comprehension_bindings: &HashMap<SourceSpan, Vec<CheckedComprehensionBinding>>,
-    place_types: &HashMap<SourceSpan, Ty>,
-    binding_types: &HashMap<SourceSpan, Ty>,
-    effects: &HashMap<SourceSpan, EffectFacts>,
-    selected_calls: &HashMap<SourceSpan, CheckedCallContract>,
-    subscript_descriptors: &HashMap<
-        SourceSpan,
-        (Vec<Option<mojito_types::types::SliceKind>>, bool),
-    >,
-    iteration_protocols: &HashMap<SourceSpan, IterationProtocol>,
-    simd_constructions: &HashMap<SourceSpan, (SimdDtype, SimdWidth)>,
-    operation_adjustments: &HashMap<SourceSpan, SemanticAdjustment>,
-    parameterized_method_calls: &HashMap<SourceSpan, Vec<mojito_types::types::ParamDecl>>,
-    tuple_unpack_plans: &HashMap<SourceSpan, Vec<CheckedTupleUnpackElement>>,
-    interior_references: &HashMap<SourceSpan, mojito_types::origin::OriginPlace>,
-    interior_invalidations: &HashMap<SourceSpan, Vec<InteriorInvalidation>>,
-    calls: &HashMap<SourceSpan, String>,
-    conversions: &HashMap<SourceSpan, String>,
-    conversion_types: &HashMap<SourceSpan, Ty>,
-    conversion_source_borrows: &HashMap<SourceSpan, bool>,
-    conversion_raises: &HashMap<SourceSpan, Ty>,
-    explicit_destroy: &HashSet<SourceSpan>,
-    reference_value_uses: &HashMap<SourceSpan, bool>,
-    copy_place_value_uses: &HashSet<SourceSpan>,
-    call_place_uses: &HashSet<SourceSpan>,
-    borrowed_read_call_places: &HashSet<SourceSpan>,
-    read_temporary_arguments: &HashSet<SourceSpan>,
-    implicitly_copied_consuming_receivers: &HashSet<SourceSpan>,
-    truthiness_conditions: &HashSet<SourceSpan>,
-    rebind_assertions: &HashMap<SourceSpan, RebindAssertion>,
-    generic_instantiations: &HashMap<SourceSpan, GenericInstantiation>,
-    method_instantiations: &HashMap<SourceSpan, MethodInstantiation>,
+    facts: &HashMap<SourceSpan, NodeFacts>,
     default_wrappers: &[CheckedDefaultWrapper],
     scan: Option<&mut dyn FnMut(&Expr)>,
 ) -> (Vec<CheckedExpr>, HashMap<SourceSpan, Vec<CheckedNodeId>>) {
-    struct Builder<'a, 's> {
-        /// Report each expression instead of building its node: the
-        /// traversal alone, for [`DiscoveryResult::scan_expressions`].
-        scan: Option<&'s mut dyn FnMut(&Expr)>,
-        nodes: Vec<CheckedExpr>,
-        index: HashMap<SourceSpan, Vec<CheckedNodeId>>,
-        contextual_bases: &'a HashMap<SourceSpan, String>,
-        types: &'a HashMap<SourceSpan, Ty>,
-        bindings: &'a HashMap<SourceSpan, mojito_types::origin::OwnerId>,
-        comprehension_bindings: &'a HashMap<SourceSpan, Vec<CheckedComprehensionBinding>>,
-        place_types: &'a HashMap<SourceSpan, Ty>,
-        binding_types: &'a HashMap<SourceSpan, Ty>,
-        effects: &'a HashMap<SourceSpan, EffectFacts>,
-        selected_calls: &'a HashMap<SourceSpan, CheckedCallContract>,
-        subscript_descriptors:
-            &'a HashMap<SourceSpan, (Vec<Option<mojito_types::types::SliceKind>>, bool)>,
-        iteration_protocols: &'a HashMap<SourceSpan, IterationProtocol>,
-        simd_constructions: &'a HashMap<SourceSpan, (SimdDtype, SimdWidth)>,
-        operation_adjustments: &'a HashMap<SourceSpan, SemanticAdjustment>,
-        parameterized_method_calls: &'a HashMap<SourceSpan, Vec<mojito_types::types::ParamDecl>>,
-        tuple_unpack_plans: &'a HashMap<SourceSpan, Vec<CheckedTupleUnpackElement>>,
-        interior_references: &'a HashMap<SourceSpan, mojito_types::origin::OriginPlace>,
-        interior_invalidations: &'a HashMap<SourceSpan, Vec<InteriorInvalidation>>,
-        calls: &'a HashMap<SourceSpan, String>,
-        conversions: &'a HashMap<SourceSpan, String>,
-        conversion_types: &'a HashMap<SourceSpan, Ty>,
-        conversion_source_borrows: &'a HashMap<SourceSpan, bool>,
-        conversion_raises: &'a HashMap<SourceSpan, Ty>,
-        explicit_destroy: &'a HashSet<SourceSpan>,
-        reference_value_uses: &'a HashMap<SourceSpan, bool>,
-        copy_place_value_uses: &'a HashSet<SourceSpan>,
-        call_place_uses: &'a HashSet<SourceSpan>,
-        borrowed_read_call_places: &'a HashSet<SourceSpan>,
-        read_temporary_arguments: &'a HashSet<SourceSpan>,
-        implicitly_copied_consuming_receivers: &'a HashSet<SourceSpan>,
-        truthiness_conditions: &'a HashSet<SourceSpan>,
-        rebind_assertions: &'a HashMap<SourceSpan, RebindAssertion>,
-        generic_instantiations: &'a HashMap<SourceSpan, GenericInstantiation>,
-        method_instantiations: &'a HashMap<SourceSpan, MethodInstantiation>,
-    }
-    impl Builder<'_, '_> {
-        #[allow(
-            clippy::cognitive_complexity,
-            clippy::too_many_lines,
-            reason = "TODO: split this pass"
-        )]
-        fn expr(&mut self, expression: &Expr) -> CheckedNodeId {
-            use ExprKind::{
-                Bool, BraceLit, Call, Compare, Comprehension, EmptySubscript, Float, Identifier,
-                IfExpr, Index, Infix, Int, Invoke, Lambda, ListLit, Member, MethodCall, MultiIndex,
-                Named, None, Prefix, Slice, Spread, Str, TString, Transfer, TupleLit, TypeApply,
-                TypeValue, Uninitialized,
-            };
-            let mut children = Vec::new();
-            let mut add = |this: &mut Self, child: &Expr| children.push(this.expr(child));
-            match &expression.kind {
-                // A spelled sugar is its construction: the node built for
-                // the construction answers at the sugar's location too, so
-                // HIR lowers the construction where the sugar was written (an
-                // initializer list, a t-string, a value pack read as its
-                // `ParameterList`, a scalar `range` call).
-                BraceLit(_) | TString { .. } | Identifier(_) | Member { .. } | Call { .. }
-                    if let Some(SemanticAdjustment::SpelledConstruction { construction }) =
-                        self.operation_adjustments.get(&expression.source_span()) =>
-                {
-                    let node = self.expr(&construction.0);
-                    if self.scan.is_none() {
-                        self.index
-                            .entry(expression.source_span())
-                            .or_default()
-                            .push(node);
-                        // A `for` loop iterates the construction it spells.
-                        if let Some(protocol) =
-                            self.iteration_protocols.get(&expression.source_span())
-                        {
-                            self.nodes[node.0 as usize]
-                                .adjustments
-                                .push(SemanticAdjustment::Iterate(protocol.clone()));
-                        }
-                    }
-                    return node;
-                }
-                Prefix(_, value) | Transfer(value) | Spread(value) | Named { value, .. } => {
-                    add(self, value);
-                }
-                Infix(_, left, right)
-                | Index {
-                    object: left,
-                    index: right,
-                } => {
-                    add(self, left);
-                    add(self, right);
-                }
-                Call {
-                    param_args,
-                    args,
-                    kwargs,
-                    ..
-                } => {
-                    for argument in param_args {
-                        match argument {
-                            mojito_ast::ast::ParamArg::Value(value) => add(self, value),
-                            mojito_ast::ast::ParamArg::Named { value, .. } => match &**value {
-                                mojito_ast::ast::ParamArg::Value(value) => add(self, value),
-                                mojito_ast::ast::ParamArg::Type(ty) => self.type_applications(ty),
-                                mojito_ast::ast::ParamArg::Named { .. } => {}
-                            },
-                            mojito_ast::ast::ParamArg::Type(ty) => self.type_applications(ty),
-                        }
-                    }
-                    for value in args {
-                        add(self, value);
-                    }
-                    for value in kwargs {
-                        add(self, &value.value);
-                    }
-                }
-                Invoke {
-                    callee,
-                    param_args,
-                    args,
-                    kwargs,
-                } => {
-                    add(self, callee);
-                    for argument in param_args {
-                        match argument {
-                            mojito_ast::ast::ParamArg::Value(value) => add(self, value),
-                            mojito_ast::ast::ParamArg::Named { value, .. } => match &**value {
-                                mojito_ast::ast::ParamArg::Value(value) => add(self, value),
-                                mojito_ast::ast::ParamArg::Type(ty) => self.type_applications(ty),
-                                mojito_ast::ast::ParamArg::Named { .. } => {}
-                            },
-                            mojito_ast::ast::ParamArg::Type(ty) => self.type_applications(ty),
-                        }
-                    }
-                    for value in args {
-                        add(self, value);
-                    }
-                    for value in kwargs {
-                        add(self, &value.value);
-                    }
-                }
-                Member { object, .. } => add(self, object),
-                MethodCall {
-                    object,
-                    args,
-                    kwargs,
-                    ..
-                } => {
-                    add(self, object);
-                    for value in args {
-                        add(self, value);
-                    }
-                    for value in kwargs {
-                        add(self, &value.value);
-                    }
-                }
-                ListLit(values) | TupleLit(values) => {
-                    for value in values {
-                        add(self, value);
-                    }
-                }
-                BraceLit(values) => {
-                    for (key, value) in values {
-                        add(self, key);
-                        if let Some(value) = value {
-                            add(self, value);
-                        }
-                    }
-                }
-                Comprehension {
-                    key,
-                    value,
-                    clauses,
-                    ..
-                } => {
-                    for clause in clauses {
-                        match clause {
-                            mojito_ast::ast::ComprehensionClause::For { iter, .. } => {
-                                add(self, iter);
-                            }
-                            mojito_ast::ast::ComprehensionClause::If(condition) => {
-                                add(self, condition);
-                            }
-                        }
-                    }
-                    if let Some(key) = key {
-                        add(self, key);
-                    }
-                    add(self, value);
-                }
-                IfExpr {
-                    cond,
-                    then_branch,
-                    else_branch,
-                } => {
-                    add(self, cond);
-                    add(self, then_branch);
-                    add(self, else_branch);
-                }
-                Compare { first, rest } => {
-                    add(self, first);
-                    for (_, value) in rest {
-                        add(self, value);
-                    }
-                }
-                Slice {
-                    object,
-                    lower,
-                    upper,
-                    step,
-                    ..
-                } => {
-                    add(self, object);
-                    for value in [lower, upper, step].into_iter().flatten() {
-                        add(self, value);
-                    }
-                }
-                MultiIndex { object, args } => {
-                    add(self, object);
-                    for argument in args {
-                        match argument {
-                            mojito_ast::ast::SubscriptArg::Index(value)
-                            | mojito_ast::ast::SubscriptArg::Keyword { value, .. } => {
-                                add(self, value);
-                            }
-                            mojito_ast::ast::SubscriptArg::Slice {
-                                lower, upper, step, ..
-                            }
-                            | mojito_ast::ast::SubscriptArg::KeywordSlice {
-                                lower,
-                                upper,
-                                step,
-                                ..
-                            } => {
-                                for value in [lower, upper, step].into_iter().flatten() {
-                                    add(self, value);
-                                }
-                            }
-                        }
-                    }
-                }
-                TString { parts, .. } => {
-                    for part in parts {
-                        if let mojito_ast::ast::TStringPart::Expr(value) = part {
-                            add(self, value);
-                        }
-                    }
-                }
-                // A lambda expression is a leaf here: its hidden definition's
-                // body belongs to that definition's own checked declaration,
-                // not to the enclosing expression tree.
-                Int(_) | Float(_) | Bool(_) | Str(_) | None | Uninitialized | EmptySubscript
-                | Identifier(_) => {}
-                TypeValue(ty) => self.type_applications(ty),
-                // A lambda expression node has no expression children of its
-                // own, but its hidden definition's body must be built exactly
-                // like a nested `def` statement's body so the body's checked
-                // facts become checked nodes.
-                Lambda { def } => self.block(std::slice::from_ref(def)),
-                TypeApply { args, .. } => {
-                    for argument in args {
-                        match argument {
-                            mojito_ast::ast::ParamArg::Value(value) => add(self, value),
-                            mojito_ast::ast::ParamArg::Named { value, .. } => match &**value {
-                                mojito_ast::ast::ParamArg::Value(value) => add(self, value),
-                                mojito_ast::ast::ParamArg::Type(ty) => self.type_applications(ty),
-                                mojito_ast::ast::ParamArg::Named { .. } => {}
-                            },
-                            mojito_ast::ast::ParamArg::Type(ty) => self.type_applications(ty),
-                        }
-                    }
-                }
-            }
-            if let Some(scan) = self.scan.as_mut() {
-                scan(expression);
-                return CheckedNodeId(0);
-            }
-            let span = expression.source_span();
-            let mut adjustments = Vec::new();
-            if let Some(target) = self.calls.get(&span) {
-                adjustments.push(SemanticAdjustment::ResolveCallable(target.clone()));
-            }
-            if let Some(call) = self.selected_calls.get(&span) {
-                adjustments.push(SemanticAdjustment::SelectedCall(Box::new(call.clone())));
-            }
-            if let Some((descriptors, set_value_keyword)) = self.subscript_descriptors.get(&span) {
-                adjustments.push(SemanticAdjustment::SliceDescriptors {
-                    descriptors: descriptors.clone(),
-                    set_value_keyword: *set_value_keyword,
-                });
-            }
-            if let Some(target) = self.conversions.get(&span) {
-                if mojito_symbol::symbol::is_index_normalization_symbol(target) {
-                    adjustments.push(SemanticAdjustment::IndexNormalization {
-                        target: target.clone(),
-                    });
-                } else if target == mojito_symbol::symbol::SCALAR_SPLAT_CONVERSION {
-                    adjustments.extend(
-                        self.conversion_types
-                            .get(&span)
-                            .cloned()
-                            .map(SemanticAdjustment::SplatScalar),
-                    );
-                } else {
-                    adjustments.push(SemanticAdjustment::ImplicitConversion(target.clone()));
-                    if let Some(ty) = self.conversion_types.get(&span) {
-                        adjustments.push(SemanticAdjustment::ConversionResultType(ty.clone()));
-                    }
-                    if let Some(error) = self.conversion_raises.get(&span) {
-                        adjustments.push(SemanticAdjustment::ConversionRaises(error.clone()));
-                    }
-                    if let Some(mutable) = self.conversion_source_borrows.get(&span) {
-                        adjustments
-                            .push(SemanticAdjustment::BorrowConversionSource { mutable: *mutable });
-                    }
-                }
-            }
-            // A `^` the checker bound to a read parameter or receiver lends
-            // its place and does not move it.
-            if matches!(expression.kind, Transfer(_))
-                && !self.borrowed_read_call_places.contains(&span)
-            {
-                adjustments.push(SemanticAdjustment::Move);
-            }
-            if self.explicit_destroy.contains(&span) {
-                adjustments.push(SemanticAdjustment::ExplicitDestroy);
-            }
-            if let Some(protocol) = self.iteration_protocols.get(&span) {
-                adjustments.push(SemanticAdjustment::Iterate(protocol.clone()));
-            }
-            if let Some(writable) = self.reference_value_uses.get(&span) {
-                adjustments.push(if *writable {
-                    SemanticAdjustment::BorrowMutable
-                } else {
-                    SemanticAdjustment::BorrowShared
-                });
-            }
-            if self.copy_place_value_uses.contains(&span) {
-                adjustments.push(SemanticAdjustment::CopyPlaceValue);
-            }
-            if self.call_place_uses.contains(&span) {
-                adjustments.push(SemanticAdjustment::RetainCallPlace);
-            }
-            if self.borrowed_read_call_places.contains(&span) {
-                adjustments.push(SemanticAdjustment::BorrowReadArgument);
-            }
-            if self.read_temporary_arguments.contains(&span) {
-                adjustments.push(SemanticAdjustment::ReadTemporaryArgument);
-            }
-            if self.implicitly_copied_consuming_receivers.contains(&span) {
-                adjustments.push(SemanticAdjustment::ImplicitlyCopyConsumingReceiver);
-            }
-            if self.truthiness_conditions.contains(&span) {
-                adjustments.push(SemanticAdjustment::Truthiness);
-            }
-            if let Some(assertion) = self.rebind_assertions.get(&span)
-                && assertion.operand != assertion.dest
-            {
-                adjustments.push(SemanticAdjustment::Rebind {
-                    operand: assertion.operand.clone(),
-                    dest: assertion.dest.clone(),
-                });
-            }
-            if let Some((dtype, width)) = self.simd_constructions.get(&span) {
-                adjustments.push(SemanticAdjustment::ConstructSimd {
-                    dtype: dtype.clone(),
-                    width: width.clone(),
-                });
-            }
-            if let Some(operation) = self.operation_adjustments.get(&span) {
-                adjustments.push(operation.clone());
-                if let SemanticAdjustment::ReceiverFromFirstArgument { inner: Some(inner) }
-                | SemanticAdjustment::ComptimeApplication {
-                    operation: Some(inner),
-                    ..
-                } = operation
-                {
-                    adjustments.push((**inner).clone());
-                }
-            }
-            // Kept apart from the single per-span operation record: a
-            // parameterized method invoke that yields a reference carries
-            // both this and the `ReferenceResult` operation.
-            if let Some(param_decls) = self.parameterized_method_calls.get(&span) {
-                adjustments.push(SemanticAdjustment::ParameterizedMethodCall {
-                    param_decls: param_decls.clone(),
-                });
-            }
-            if let Some(instantiation) = self.generic_instantiations.get(&span) {
-                adjustments.push(SemanticAdjustment::InstantiatedArguments(
-                    instantiation.arguments.clone(),
-                ));
-                if !instantiation.folded_arguments.is_empty() {
-                    adjustments.push(SemanticAdjustment::FoldedParameterArguments(
-                        instantiation.folded_arguments.clone(),
-                    ));
-                }
-            } else if let Some(instantiation) = self.method_instantiations.get(&span) {
-                adjustments.push(SemanticAdjustment::InstantiatedArguments(
-                    instantiation.arguments.clone(),
-                ));
-                if !instantiation.folded_arguments.is_empty() {
-                    adjustments.push(SemanticAdjustment::FoldedParameterArguments(
-                        instantiation.folded_arguments.clone(),
-                    ));
-                }
-            }
-            if let Some(elements) = self.tuple_unpack_plans.get(&span) {
-                adjustments.push(SemanticAdjustment::TupleUnpack {
-                    elements: elements.clone(),
-                });
-            }
-            if let Some(origin) = self.interior_references.get(&span) {
-                adjustments.push(SemanticAdjustment::InteriorReference {
-                    origin: origin.clone(),
-                });
-            }
-            if let Some(invalidations) = self.interior_invalidations.get(&span) {
-                adjustments.push(SemanticAdjustment::InvalidateInteriors {
-                    invalidations: invalidations.clone(),
-                });
-            }
-            let variant_projection =
-                self.operation_adjustments
-                    .get(&span)
-                    .is_some_and(|operation| {
-                        matches!(operation, SemanticAdjustment::VariantProject { .. })
-                    });
-            let resolved_callable_value = self.calls.contains_key(&span);
-            let ty = self.types.get(&span).cloned();
-            let place_ty = self.place_types.get(&span).cloned();
-            let binding_ty = self.binding_types.get(&span).cloned();
-            let binding = self.bindings.get(&span).copied();
-            let category = match expression.kind {
-                TypeApply { .. } if variant_projection => ValueCategory::Place,
-                TypeApply { .. } if resolved_callable_value => ValueCategory::Value,
-                TypeApply { .. } | TypeValue(_) => ValueCategory::Type,
-                // Expressions retained only inside constraints, reflection, and
-                // other erased parameter metadata are deliberately absent from
-                // the runtime type/place maps. They still cross the checked
-                // boundary as explicit compile-time nodes rather than being
-                // mislabeled as untyped runtime places.
-                _ if ty.is_none() && place_ty.is_none() && binding.is_none() => {
-                    ValueCategory::CompileTime
-                }
-                Identifier(_) | Member { .. } | Index { .. } => ValueCategory::Place,
-                _ => ValueCategory::Value,
-            };
-            let id = CheckedNodeId(self.nodes.len() as u32);
-            self.nodes.push(CheckedExpr {
-                id,
-                syntax: expression.clone(),
-                ty,
-                place_ty,
-                binding_ty,
-                category,
-                binding,
-                contextual_base: self.contextual_bases.get(&span).cloned(),
-                effects: self.effects.get(&span).cloned().unwrap_or_default(),
-                adjustments,
-                children,
-                comprehension_bindings: self
-                    .comprehension_bindings
-                    .get(&span)
-                    .cloned()
-                    .unwrap_or_default(),
-            });
-            self.index.entry(span).or_default().push(id);
-            id
-        }
-
-        /// Build the node of each expression inside `ty` the check named a
-        /// lifted function for ([`SemanticAdjustment::ComptimeApplication`]):
-        /// MIR lowers it in that function, away from the annotation that
-        /// spells it. Any other expression of an annotation has no node.
-        fn type_applications(&mut self, ty: &mojito_ast::ast::Type) {
-            struct Applied<'a> {
-                operations: &'a HashMap<SourceSpan, SemanticAdjustment>,
-                found: Vec<Expr>,
-            }
-            impl mojito_ast::visit::Visitor for Applied<'_> {
-                fn visit_expr(&mut self, expression: &Expr) {
-                    let nested = self.found.last().is_some_and(|outer| {
-                        outer.span.0 <= expression.span.0 && expression.span.1 <= outer.span.1
-                    });
-                    if !nested
-                        && matches!(
-                            self.operations.get(&expression.source_span()),
-                            Some(SemanticAdjustment::ComptimeApplication { .. })
-                        )
-                    {
-                        self.found.push(expression.clone());
-                    }
-                }
-            }
-            let mut applied = Applied {
-                operations: self.operation_adjustments,
-                found: Vec::new(),
-            };
-            mojito_ast::visit::walk_type(&mut applied, ty);
-            for expression in &applied.found {
-                self.expr(expression);
-            }
-        }
-
-        fn block(&mut self, statements: &[Stmt]) {
-            use mojito_ast::ast::StmtKind::{
-                Assign, AugAssign, Break, Comptime, ComptimeFor, ComptimeIf, Continue, Def, Expr,
-                For, FromImport, If, Import, Pass, Raise, RefDecl, Return, Scope, SetPlace, Struct,
-                Trait, Try, Unpack, VarDecl, While, With,
-            };
-            for statement in statements {
-                match &statement.kind {
-                    VarDecl { ty, value, .. } => {
-                        if let Some(ty) = ty {
-                            self.type_applications(ty);
-                        }
-                        self.expr(value);
-                    }
-                    RefDecl { value, .. } | Assign { value, .. } | Raise(value) | Expr(value) => {
-                        self.expr(value);
-                    }
-                    Comptime {
-                        where_clauses,
-                        value,
-                        ..
-                    } => {
-                        for constraint in where_clauses {
-                            self.expr(constraint);
-                        }
-                        self.expr(value);
-                    }
-                    AugAssign { place, value, .. } | SetPlace { place, value } => {
-                        self.expr(place);
-                        self.expr(value);
-                    }
-                    Unpack { targets, value, .. } => {
-                        for target in targets {
-                            self.expr(target);
-                        }
-                        self.expr(value);
-                    }
-                    Def {
-                        params,
-                        where_clauses,
-                        body,
-                        ..
-                    } => {
-                        for param in params {
-                            if let Some(value) = &param.default {
-                                self.expr(value);
-                            }
-                        }
-                        for value in where_clauses {
-                            self.expr(value);
-                        }
-                        self.block(body);
-                    }
-                    Struct {
-                        conformance_conditions,
-                        where_clauses,
-                        associated,
-                        methods,
-                        ..
-                    } => {
-                        for (_, value) in conformance_conditions {
-                            self.expr(value);
-                        }
-                        for value in where_clauses {
-                            self.expr(value);
-                        }
-                        for value in associated {
-                            for constraint in &value.where_clauses {
-                                self.expr(constraint);
-                            }
-                            self.expr(&value.value);
-                        }
-                        for method in methods {
-                            for param in &method.params {
-                                if let Some(value) = &param.default {
-                                    self.expr(value);
-                                }
-                            }
-                            for value in &method.where_clauses {
-                                self.expr(value);
-                            }
-                            self.block(&method.body);
-                        }
-                    }
-                    Trait {
-                        methods,
-                        comptime_members,
-                        ..
-                    } => {
-                        for method in methods {
-                            for param in &method.params {
-                                if let Some(value) = &param.default {
-                                    self.expr(value);
-                                }
-                            }
-                            for value in &method.where_clauses {
-                                self.expr(value);
-                            }
-                            if let Some(body) = &method.default_body {
-                                self.block(body);
-                            }
-                        }
-                        for member in comptime_members {
-                            for constraint in &member.where_clauses {
-                                self.expr(constraint);
-                            }
-                        }
-                    }
-                    ComptimeIf { branches, orelse } | If { branches, orelse } => {
-                        for (condition, body) in branches {
-                            self.expr(condition);
-                            self.block(body);
-                        }
-                        if let Some(body) = orelse {
-                            self.block(body);
-                        }
-                    }
-                    ComptimeFor { iter, body, .. } => {
-                        self.expr(iter);
-                        self.block(body);
-                    }
-                    Scope(body) => self.block(body),
-                    While { cond, body, orelse } => {
-                        self.expr(cond);
-                        self.block(body);
-                        if let Some(body) = orelse {
-                            self.block(body);
-                        }
-                    }
-                    For {
-                        iter, body, orelse, ..
-                    } => {
-                        self.expr(iter);
-                        self.block(body);
-                        if let Some(body) = orelse {
-                            self.block(body);
-                        }
-                    }
-                    Return(value) => {
-                        if let Some(value) = value {
-                            self.expr(value);
-                        }
-                    }
-                    With { items, body } => {
-                        for item in items {
-                            self.expr(&item.context);
-                        }
-                        self.block(body);
-                    }
-                    Try {
-                        body,
-                        except,
-                        orelse,
-                        finalbody,
-                    } => {
-                        self.block(body);
-                        if let Some((_, body)) = except {
-                            self.block(body);
-                        }
-                        if let Some(body) = orelse {
-                            self.block(body);
-                        }
-                        if let Some(body) = finalbody {
-                            self.block(body);
-                        }
-                    }
-                    Import { .. } | FromImport { .. } | Pass | Break | Continue => {}
-                }
-            }
-        }
-    }
-    let mut builder = Builder {
+    let mut builder = ArenaBuilder {
         scan,
         nodes: Vec::new(),
         index: HashMap::new(),
-        contextual_bases,
-        types,
-        bindings,
-        comprehension_bindings,
-        place_types,
-        binding_types,
-        effects,
-        selected_calls,
-        subscript_descriptors,
-        iteration_protocols,
-        simd_constructions,
-        operation_adjustments,
-        parameterized_method_calls,
-        tuple_unpack_plans,
-        interior_references,
-        interior_invalidations,
-        calls,
-        conversions,
-        conversion_types,
-        conversion_source_borrows,
-        conversion_raises,
-        explicit_destroy,
-        reference_value_uses,
-        copy_place_value_uses,
-        call_place_uses,
-        borrowed_read_call_places,
-        read_temporary_arguments,
-        implicitly_copied_consuming_receivers,
-        truthiness_conditions,
-        rebind_assertions,
-        generic_instantiations,
-        method_instantiations,
+        facts,
     };
     builder.block(statements);
     for wrapper in default_wrappers {
@@ -3052,22 +2097,686 @@ fn build_checked_expressions(
     (builder.nodes, builder.index)
 }
 
+/// The checked arena under construction.
+struct ArenaBuilder<'a, 's> {
+    /// Report each expression instead of building its node: the
+    /// traversal alone, for [`DiscoveryResult::scan_expressions`].
+    scan: Option<&'s mut dyn FnMut(&Expr)>,
+    nodes: Vec<CheckedExpr>,
+    index: HashMap<SourceSpan, Vec<CheckedNodeId>>,
+    facts: &'a HashMap<SourceSpan, NodeFacts>,
+}
+
+impl<'a> ArenaBuilder<'a, '_> {
+    fn facts(&self, span: &SourceSpan) -> &'a NodeFacts {
+        self.facts.get(span).unwrap_or(&NodeFacts::EMPTY)
+    }
+
+    fn expr(&mut self, expression: &Expr) -> CheckedNodeId {
+        use ExprKind::{Identifier, Index, Member, TypeApply, TypeValue};
+        if let Some(node) = self.spelled_construction(expression) {
+            return node;
+        }
+        let children = self.children(expression);
+        if let Some(scan) = self.scan.as_mut() {
+            scan(expression);
+            return CheckedNodeId(0);
+        }
+        let span = expression.source_span();
+        let facts = self.facts(&span);
+        let adjustments = node_adjustments(facts, expression);
+        let variant_projection = matches!(
+            facts.adjustment.as_deref(),
+            Some(SemanticAdjustment::VariantProject { .. })
+        );
+        let resolved_callable_value = facts.overload_target.is_some();
+        let ty = facts.ty.clone();
+        let place_ty = facts.place_ty.clone();
+        let binding_ty = facts.binding_ty.clone();
+        let binding = facts.binding;
+        let category = match expression.kind {
+            TypeApply { .. } if variant_projection => ValueCategory::Place,
+            TypeApply { .. } if resolved_callable_value => ValueCategory::Value,
+            TypeApply { .. } | TypeValue(_) => ValueCategory::Type,
+            // Expressions retained only inside constraints, reflection, and
+            // other erased parameter metadata are deliberately absent from
+            // the runtime type/place maps. They still cross the checked
+            // boundary as explicit compile-time nodes rather than being
+            // mislabeled as untyped runtime places.
+            _ if ty.is_none() && place_ty.is_none() && binding.is_none() => {
+                ValueCategory::CompileTime
+            }
+            Identifier(_) | Member { .. } | Index { .. } => ValueCategory::Place,
+            _ => ValueCategory::Value,
+        };
+        let id = CheckedNodeId(self.nodes.len() as u32);
+        self.nodes.push(CheckedExpr {
+            id,
+            syntax: expression.clone(),
+            ty,
+            place_ty,
+            binding_ty,
+            category,
+            binding,
+            contextual_base: facts.contextual_base.clone(),
+            effects: facts.effects.clone().unwrap_or_default(),
+            adjustments,
+            children,
+            comprehension_bindings: facts.comprehension_bindings.clone().unwrap_or_default(),
+        });
+        self.index.entry(span).or_default().push(id);
+        id
+    }
+
+    /// The node of the construction the check spelled for `expression`, if
+    /// it is a spelled sugar: the node answers at the sugar's location too,
+    /// so HIR lowers the construction where the sugar was written (an
+    /// initializer list, a t-string, a value pack read as its
+    /// `ParameterList`, a scalar `range` call).
+    fn spelled_construction(&mut self, expression: &Expr) -> Option<CheckedNodeId> {
+        if !matches!(
+            expression.kind,
+            ExprKind::BraceLit(_)
+                | ExprKind::TString { .. }
+                | ExprKind::Identifier(_)
+                | ExprKind::Member { .. }
+                | ExprKind::Call { .. }
+        ) {
+            return None;
+        }
+        let SemanticAdjustment::SpelledConstruction { construction } = self
+            .facts(&expression.source_span())
+            .adjustment
+            .as_deref()?
+        else {
+            return None;
+        };
+        let node = self.expr(&construction.0);
+        if self.scan.is_none() {
+            self.index
+                .entry(expression.source_span())
+                .or_default()
+                .push(node);
+            // A `for` loop iterates the construction it spells.
+            if let Some(protocol) = &self.facts(&expression.source_span()).iteration_protocol {
+                self.nodes[node.0 as usize]
+                    .adjustments
+                    .push(SemanticAdjustment::Iterate((**protocol).clone()));
+            }
+        }
+        Some(node)
+    }
+
+    /// The nodes of `expression`'s operands, in their structural order.
+    fn children(&mut self, expression: &Expr) -> Vec<CheckedNodeId> {
+        use ExprKind::{
+            Bool, BraceLit, Call, Compare, Comprehension, EmptySubscript, Float, Identifier,
+            IfExpr, Index, Infix, Int, Invoke, Lambda, ListLit, Member, MethodCall, MultiIndex,
+            Named, None, Prefix, Slice, Spread, Str, TString, Transfer, TupleLit, TypeApply,
+            TypeValue, Uninitialized,
+        };
+        let mut children = Vec::new();
+        let mut add = |this: &mut Self, child: &Expr| children.push(this.expr(child));
+        match &expression.kind {
+            Prefix(_, value) | Transfer(value) | Spread(value) | Named { value, .. } => {
+                add(self, value);
+            }
+            Infix(_, left, right)
+            | Index {
+                object: left,
+                index: right,
+            } => {
+                add(self, left);
+                add(self, right);
+            }
+            Call {
+                param_args,
+                args,
+                kwargs,
+                ..
+            } => {
+                for argument in param_args {
+                    match argument {
+                        mojito_ast::ast::ParamArg::Value(value) => add(self, value),
+                        mojito_ast::ast::ParamArg::Named { value, .. } => match &**value {
+                            mojito_ast::ast::ParamArg::Value(value) => add(self, value),
+                            mojito_ast::ast::ParamArg::Type(ty) => self.type_applications(ty),
+                            mojito_ast::ast::ParamArg::Named { .. } => {}
+                        },
+                        mojito_ast::ast::ParamArg::Type(ty) => self.type_applications(ty),
+                    }
+                }
+                for value in args {
+                    add(self, value);
+                }
+                for value in kwargs {
+                    add(self, &value.value);
+                }
+            }
+            Invoke {
+                callee,
+                param_args,
+                args,
+                kwargs,
+            } => {
+                add(self, callee);
+                for argument in param_args {
+                    match argument {
+                        mojito_ast::ast::ParamArg::Value(value) => add(self, value),
+                        mojito_ast::ast::ParamArg::Named { value, .. } => match &**value {
+                            mojito_ast::ast::ParamArg::Value(value) => add(self, value),
+                            mojito_ast::ast::ParamArg::Type(ty) => self.type_applications(ty),
+                            mojito_ast::ast::ParamArg::Named { .. } => {}
+                        },
+                        mojito_ast::ast::ParamArg::Type(ty) => self.type_applications(ty),
+                    }
+                }
+                for value in args {
+                    add(self, value);
+                }
+                for value in kwargs {
+                    add(self, &value.value);
+                }
+            }
+            Member { object, .. } => add(self, object),
+            MethodCall {
+                object,
+                args,
+                kwargs,
+                ..
+            } => {
+                add(self, object);
+                for value in args {
+                    add(self, value);
+                }
+                for value in kwargs {
+                    add(self, &value.value);
+                }
+            }
+            ListLit(values) | TupleLit(values) => {
+                for value in values {
+                    add(self, value);
+                }
+            }
+            BraceLit(values) => {
+                for (key, value) in values {
+                    add(self, key);
+                    if let Some(value) = value {
+                        add(self, value);
+                    }
+                }
+            }
+            Comprehension {
+                key,
+                value,
+                clauses,
+                ..
+            } => {
+                for clause in clauses {
+                    match clause {
+                        mojito_ast::ast::ComprehensionClause::For { iter, .. } => {
+                            add(self, iter);
+                        }
+                        mojito_ast::ast::ComprehensionClause::If(condition) => {
+                            add(self, condition);
+                        }
+                    }
+                }
+                if let Some(key) = key {
+                    add(self, key);
+                }
+                add(self, value);
+            }
+            IfExpr {
+                cond,
+                then_branch,
+                else_branch,
+            } => {
+                add(self, cond);
+                add(self, then_branch);
+                add(self, else_branch);
+            }
+            Compare { first, rest } => {
+                add(self, first);
+                for (_, value) in rest {
+                    add(self, value);
+                }
+            }
+            Slice {
+                object,
+                lower,
+                upper,
+                step,
+                ..
+            } => {
+                add(self, object);
+                for value in [lower, upper, step].into_iter().flatten() {
+                    add(self, value);
+                }
+            }
+            MultiIndex { object, args } => {
+                add(self, object);
+                for argument in args {
+                    match argument {
+                        mojito_ast::ast::SubscriptArg::Index(value)
+                        | mojito_ast::ast::SubscriptArg::Keyword { value, .. } => {
+                            add(self, value);
+                        }
+                        mojito_ast::ast::SubscriptArg::Slice {
+                            lower, upper, step, ..
+                        }
+                        | mojito_ast::ast::SubscriptArg::KeywordSlice {
+                            lower, upper, step, ..
+                        } => {
+                            for value in [lower, upper, step].into_iter().flatten() {
+                                add(self, value);
+                            }
+                        }
+                    }
+                }
+            }
+            TString { parts, .. } => {
+                for part in parts {
+                    if let mojito_ast::ast::TStringPart::Expr(value) = part {
+                        add(self, value);
+                    }
+                }
+            }
+            // A lambda expression is a leaf here: its hidden definition's
+            // body belongs to that definition's own checked declaration,
+            // not to the enclosing expression tree.
+            Int(_) | Float(_) | Bool(_) | Str(_) | None | Uninitialized | EmptySubscript
+            | Identifier(_) => {}
+            TypeValue(ty) => self.type_applications(ty),
+            // A lambda expression node has no expression children of its
+            // own, but its hidden definition's body must be built exactly
+            // like a nested `def` statement's body so the body's checked
+            // facts become checked nodes.
+            Lambda { def } => self.block(std::slice::from_ref(def)),
+            TypeApply { args, .. } => {
+                for argument in args {
+                    match argument {
+                        mojito_ast::ast::ParamArg::Value(value) => add(self, value),
+                        mojito_ast::ast::ParamArg::Named { value, .. } => match &**value {
+                            mojito_ast::ast::ParamArg::Value(value) => add(self, value),
+                            mojito_ast::ast::ParamArg::Type(ty) => self.type_applications(ty),
+                            mojito_ast::ast::ParamArg::Named { .. } => {}
+                        },
+                        mojito_ast::ast::ParamArg::Type(ty) => self.type_applications(ty),
+                    }
+                }
+            }
+        }
+        children
+    }
+
+    /// Build the node of each expression inside `ty` the check named a
+    /// lifted function for ([`SemanticAdjustment::ComptimeApplication`]):
+    /// MIR lowers it in that function, away from the annotation that
+    /// spells it. Any other expression of an annotation has no node.
+    fn type_applications(&mut self, ty: &mojito_ast::ast::Type) {
+        struct Applied<'a> {
+            facts: &'a HashMap<SourceSpan, NodeFacts>,
+            found: Vec<Expr>,
+        }
+        impl mojito_ast::visit::Visitor for Applied<'_> {
+            fn visit_expr(&mut self, expression: &Expr) {
+                let nested = self.found.last().is_some_and(|outer| {
+                    outer.span.0 <= expression.span.0 && expression.span.1 <= outer.span.1
+                });
+                if !nested
+                    && matches!(
+                        self.facts
+                            .get(&expression.source_span())
+                            .and_then(|facts| facts.adjustment.as_deref()),
+                        Some(SemanticAdjustment::ComptimeApplication { .. })
+                    )
+                {
+                    self.found.push(expression.clone());
+                }
+            }
+        }
+        let mut applied = Applied {
+            facts: self.facts,
+            found: Vec::new(),
+        };
+        mojito_ast::visit::walk_type(&mut applied, ty);
+        for expression in &applied.found {
+            self.expr(expression);
+        }
+    }
+
+    fn block(&mut self, statements: &[Stmt]) {
+        use mojito_ast::ast::StmtKind::{
+            Assign, AugAssign, Break, Comptime, ComptimeFor, ComptimeIf, Continue, Def, Expr, For,
+            FromImport, If, Import, Pass, Raise, RefDecl, Return, Scope, SetPlace, Struct, Trait,
+            Try, Unpack, VarDecl, While, With,
+        };
+        for statement in statements {
+            match &statement.kind {
+                VarDecl { ty, value, .. } => {
+                    if let Some(ty) = ty {
+                        self.type_applications(ty);
+                    }
+                    self.expr(value);
+                }
+                RefDecl { value, .. } | Assign { value, .. } | Raise(value) | Expr(value) => {
+                    self.expr(value);
+                }
+                Comptime {
+                    where_clauses,
+                    value,
+                    ..
+                } => {
+                    for constraint in where_clauses {
+                        self.expr(constraint);
+                    }
+                    self.expr(value);
+                }
+                AugAssign { place, value, .. } | SetPlace { place, value } => {
+                    self.expr(place);
+                    self.expr(value);
+                }
+                Unpack { targets, value, .. } => {
+                    for target in targets {
+                        self.expr(target);
+                    }
+                    self.expr(value);
+                }
+                Def {
+                    params,
+                    where_clauses,
+                    body,
+                    ..
+                } => {
+                    for param in params {
+                        if let Some(value) = &param.default {
+                            self.expr(value);
+                        }
+                    }
+                    for value in where_clauses {
+                        self.expr(value);
+                    }
+                    self.block(body);
+                }
+                Struct {
+                    conformance_conditions,
+                    where_clauses,
+                    associated,
+                    methods,
+                    ..
+                } => {
+                    for (_, value) in conformance_conditions {
+                        self.expr(value);
+                    }
+                    for value in where_clauses {
+                        self.expr(value);
+                    }
+                    for value in associated {
+                        for constraint in &value.where_clauses {
+                            self.expr(constraint);
+                        }
+                        self.expr(&value.value);
+                    }
+                    for method in methods {
+                        for param in &method.params {
+                            if let Some(value) = &param.default {
+                                self.expr(value);
+                            }
+                        }
+                        for value in &method.where_clauses {
+                            self.expr(value);
+                        }
+                        self.block(&method.body);
+                    }
+                }
+                Trait {
+                    methods,
+                    comptime_members,
+                    ..
+                } => {
+                    for method in methods {
+                        for param in &method.params {
+                            if let Some(value) = &param.default {
+                                self.expr(value);
+                            }
+                        }
+                        for value in &method.where_clauses {
+                            self.expr(value);
+                        }
+                        if let Some(body) = &method.default_body {
+                            self.block(body);
+                        }
+                    }
+                    for member in comptime_members {
+                        for constraint in &member.where_clauses {
+                            self.expr(constraint);
+                        }
+                    }
+                }
+                ComptimeIf { branches, orelse } | If { branches, orelse } => {
+                    for (condition, body) in branches {
+                        self.expr(condition);
+                        self.block(body);
+                    }
+                    if let Some(body) = orelse {
+                        self.block(body);
+                    }
+                }
+                ComptimeFor { iter, body, .. } => {
+                    self.expr(iter);
+                    self.block(body);
+                }
+                Scope(body) => self.block(body),
+                While { cond, body, orelse } => {
+                    self.expr(cond);
+                    self.block(body);
+                    if let Some(body) = orelse {
+                        self.block(body);
+                    }
+                }
+                For {
+                    iter, body, orelse, ..
+                } => {
+                    self.expr(iter);
+                    self.block(body);
+                    if let Some(body) = orelse {
+                        self.block(body);
+                    }
+                }
+                Return(value) => {
+                    if let Some(value) = value {
+                        self.expr(value);
+                    }
+                }
+                With { items, body } => {
+                    for item in items {
+                        self.expr(&item.context);
+                    }
+                    self.block(body);
+                }
+                Try {
+                    body,
+                    except,
+                    orelse,
+                    finalbody,
+                } => {
+                    self.block(body);
+                    if let Some((_, body)) = except {
+                        self.block(body);
+                    }
+                    if let Some(body) = orelse {
+                        self.block(body);
+                    }
+                    if let Some(body) = finalbody {
+                        self.block(body);
+                    }
+                }
+                Import { .. } | FromImport { .. } | Pass | Break | Continue => {}
+            }
+        }
+    }
+}
+
+/// The adjustments the check's `facts` at `expression` record, in the
+/// order lowering applies them.
+fn node_adjustments(facts: &NodeFacts, expression: &Expr) -> Vec<SemanticAdjustment> {
+    let mut adjustments = Vec::new();
+    if let Some(target) = &facts.overload_target {
+        adjustments.push(SemanticAdjustment::ResolveCallable(target.clone()));
+    }
+    if let Some(call) = &facts.selected_call {
+        adjustments.push(SemanticAdjustment::SelectedCall(call.clone()));
+    }
+    if let Some((descriptors, set_value_keyword)) = &facts.subscript_descriptor {
+        adjustments.push(SemanticAdjustment::SliceDescriptors {
+            descriptors: descriptors.clone(),
+            set_value_keyword: *set_value_keyword,
+        });
+    }
+    if let Some(target) = &facts.implicit_conversion {
+        if mojito_symbol::symbol::is_index_normalization_symbol(target) {
+            adjustments.push(SemanticAdjustment::IndexNormalization {
+                target: target.clone(),
+            });
+        } else if target == mojito_symbol::symbol::SCALAR_SPLAT_CONVERSION {
+            adjustments.extend(
+                facts
+                    .implicit_conversion_type
+                    .clone()
+                    .map(SemanticAdjustment::SplatScalar),
+            );
+        } else {
+            adjustments.push(SemanticAdjustment::ImplicitConversion(target.clone()));
+            if let Some(ty) = &facts.implicit_conversion_type {
+                adjustments.push(SemanticAdjustment::ConversionResultType(ty.clone()));
+            }
+            if let Some(error) = &facts.conversion_raises {
+                adjustments.push(SemanticAdjustment::ConversionRaises(error.clone()));
+            }
+            if let Some(mutable) = &facts.conversion_source_borrow {
+                adjustments.push(SemanticAdjustment::BorrowConversionSource { mutable: *mutable });
+            }
+        }
+    }
+    // A `^` the checker bound to a read parameter or receiver lends
+    // its place and does not move it.
+    if matches!(expression.kind, ExprKind::Transfer(_)) && !facts.borrowed_read_call_place {
+        adjustments.push(SemanticAdjustment::Move);
+    }
+    if facts.explicit_destroy_call {
+        adjustments.push(SemanticAdjustment::ExplicitDestroy);
+    }
+    if let Some(protocol) = &facts.iteration_protocol {
+        adjustments.push(SemanticAdjustment::Iterate((**protocol).clone()));
+    }
+    if let Some(writable) = &facts.reference_value_use {
+        adjustments.push(if *writable {
+            SemanticAdjustment::BorrowMutable
+        } else {
+            SemanticAdjustment::BorrowShared
+        });
+    }
+    if facts.copy_place_value_use {
+        adjustments.push(SemanticAdjustment::CopyPlaceValue);
+    }
+    if facts.call_place_use {
+        adjustments.push(SemanticAdjustment::RetainCallPlace);
+    }
+    if facts.borrowed_read_call_place {
+        adjustments.push(SemanticAdjustment::BorrowReadArgument);
+    }
+    if facts.read_temporary_argument {
+        adjustments.push(SemanticAdjustment::ReadTemporaryArgument);
+    }
+    if facts.implicitly_copied_consuming_receiver {
+        adjustments.push(SemanticAdjustment::ImplicitlyCopyConsumingReceiver);
+    }
+    if facts.truthiness_condition {
+        adjustments.push(SemanticAdjustment::Truthiness);
+    }
+    if let Some(assertion) = &facts.rebind_assertion
+        && assertion.operand != assertion.dest
+    {
+        adjustments.push(SemanticAdjustment::Rebind {
+            operand: assertion.operand.clone(),
+            dest: assertion.dest.clone(),
+        });
+    }
+    if let Some((dtype, width)) = &facts.simd_construction {
+        adjustments.push(SemanticAdjustment::ConstructSimd {
+            dtype: dtype.clone(),
+            width: width.clone(),
+        });
+    }
+    if let Some(operation) = facts.adjustment.as_deref() {
+        adjustments.push(operation.clone());
+        if let SemanticAdjustment::ReceiverFromFirstArgument { inner: Some(inner) }
+        | SemanticAdjustment::ComptimeApplication {
+            operation: Some(inner),
+            ..
+        } = operation
+        {
+            adjustments.push((**inner).clone());
+        }
+    }
+    // Kept apart from the single per-span operation record: a
+    // parameterized method invoke that yields a reference carries
+    // both this and the `ReferenceResult` operation.
+    if let Some(param_decls) = &facts.parameterized_method_call {
+        adjustments.push(SemanticAdjustment::ParameterizedMethodCall {
+            param_decls: param_decls.clone(),
+        });
+    }
+    if let Some(instantiation) = &facts.generic_instantiation {
+        adjustments.push(SemanticAdjustment::InstantiatedArguments(
+            instantiation.arguments.clone(),
+        ));
+        if !instantiation.folded_arguments.is_empty() {
+            adjustments.push(SemanticAdjustment::FoldedParameterArguments(
+                instantiation.folded_arguments.clone(),
+            ));
+        }
+    } else if let Some(instantiation) = &facts.method_instantiation {
+        adjustments.push(SemanticAdjustment::InstantiatedArguments(
+            instantiation.arguments.clone(),
+        ));
+        if !instantiation.folded_arguments.is_empty() {
+            adjustments.push(SemanticAdjustment::FoldedParameterArguments(
+                instantiation.folded_arguments.clone(),
+            ));
+        }
+    }
+    if let Some(elements) = &facts.tuple_unpack_plan {
+        adjustments.push(SemanticAdjustment::TupleUnpack {
+            elements: elements.clone(),
+        });
+    }
+    if let Some(origin) = &facts.interior_reference {
+        adjustments.push(SemanticAdjustment::InteriorReference {
+            origin: origin.clone(),
+        });
+    }
+    if let Some(invalidations) = &facts.interior_invalidations {
+        adjustments.push(SemanticAdjustment::InvalidateInteriors {
+            invalidations: invalidations.clone(),
+        });
+    }
+    adjustments
+}
+
 /// The declarations of `statements`, then of each trait member's.
 fn build_checked_declarations(
     statements: &[Stmt],
     trait_members: &[CheckedTraitMember],
     annotation_types: &HashMap<AnnotationSite, Ty>,
-    statement_bindings: &HashMap<SourceSpan, mojito_types::origin::OwnerId>,
-    declaration_captures: &HashMap<SourceSpan, Vec<CheckedCapture>>,
-    binding_types: &HashMap<SourceSpan, Ty>,
+    facts: &HashMap<SourceSpan, NodeFacts>,
 ) -> Vec<CheckedDeclaration> {
     fn block(
         statements: &[Stmt],
         out: &mut Vec<CheckedDeclaration>,
         annotation_types: &HashMap<AnnotationSite, Ty>,
-        statement_bindings: &HashMap<SourceSpan, mojito_types::origin::OwnerId>,
-        declaration_captures: &HashMap<SourceSpan, Vec<CheckedCapture>>,
-        binding_types: &HashMap<SourceSpan, Ty>,
+        facts: &HashMap<SourceSpan, NodeFacts>,
     ) -> Vec<CheckedDeclId> {
         use mojito_ast::ast::StmtKind;
         let mut ids = Vec::new();
@@ -3094,10 +2803,12 @@ fn build_checked_declarations(
                     id,
                     kind: CheckedDeclKind::Function,
                     name: name.clone(),
-                    binding: statement_bindings.get(&location).copied(),
-                    captures: declaration_captures
+                    binding: facts
                         .get(&location)
-                        .cloned()
+                        .and_then(|facts| facts.statement_binding),
+                    captures: facts
+                        .get(&location)
+                        .and_then(|facts| facts.captures.clone())
                         .unwrap_or_default(),
                     location,
                     ty: annotation_types
@@ -3109,14 +2820,7 @@ fn build_checked_declarations(
                         .cloned(),
                     children: Vec::new(),
                 });
-                let children = block(
-                    def_body,
-                    out,
-                    annotation_types,
-                    statement_bindings,
-                    declaration_captures,
-                    binding_types,
-                );
+                let children = block(def_body, out, annotation_types, facts);
                 out[id.0 as usize].children = children;
                 ids.push(id);
             }
@@ -3163,14 +2867,7 @@ fn build_checked_declarations(
                         _ => Vec::new(),
                     };
                     for body in nested {
-                        ids.extend(block(
-                            body,
-                            out,
-                            annotation_types,
-                            statement_bindings,
-                            declaration_captures,
-                            binding_types,
-                        ));
+                        ids.extend(block(body, out, annotation_types, facts));
                     }
                     continue;
                 }
@@ -3185,66 +2882,40 @@ fn build_checked_declarations(
                         syntax: statement.syntax_id,
                     })
                     .cloned(),
-                CheckedDeclKind::Binding | CheckedDeclKind::CompileTime => {
-                    binding_types.get(&location).cloned()
-                }
+                CheckedDeclKind::Binding | CheckedDeclKind::CompileTime => facts
+                    .get(&location)
+                    .and_then(|facts| facts.binding_ty.clone()),
                 CheckedDeclKind::Struct | CheckedDeclKind::Trait => None,
             };
             out.push(CheckedDeclaration {
                 id,
                 kind,
                 name,
-                binding: statement_bindings.get(&location).copied(),
-                captures: declaration_captures
+                binding: facts
                     .get(&location)
-                    .cloned()
+                    .and_then(|facts| facts.statement_binding),
+                captures: facts
+                    .get(&location)
+                    .and_then(|facts| facts.captures.clone())
                     .unwrap_or_default(),
                 location,
                 ty,
                 children: Vec::new(),
             });
             let children = match &statement.kind {
-                StmtKind::Def { body, .. } => block(
-                    body,
-                    out,
-                    annotation_types,
-                    statement_bindings,
-                    declaration_captures,
-                    binding_types,
-                ),
+                StmtKind::Def { body, .. } => block(body, out, annotation_types, facts),
                 StmtKind::Struct { methods, .. } => methods
                     .iter()
-                    .flat_map(|method| {
-                        block(
-                            &method.body,
-                            out,
-                            annotation_types,
-                            statement_bindings,
-                            declaration_captures,
-                            binding_types,
-                        )
-                    })
+                    .flat_map(|method| block(&method.body, out, annotation_types, facts))
                     .collect(),
-                StmtKind::For { body, orelse, .. } => block(
-                    body,
-                    out,
-                    annotation_types,
-                    statement_bindings,
-                    declaration_captures,
-                    binding_types,
-                )
-                .into_iter()
-                .chain(orelse.iter().flat_map(|body| {
-                    block(
-                        body,
-                        out,
-                        annotation_types,
-                        statement_bindings,
-                        declaration_captures,
-                        binding_types,
+                StmtKind::For { body, orelse, .. } => block(body, out, annotation_types, facts)
+                    .into_iter()
+                    .chain(
+                        orelse
+                            .iter()
+                            .flat_map(|body| block(body, out, annotation_types, facts)),
                     )
-                }))
-                .collect(),
+                    .collect(),
                 StmtKind::Try {
                     body,
                     except,
@@ -3254,25 +2925,9 @@ fn build_checked_declarations(
                     .chain(except.iter().map(|(_, body)| body.as_slice()))
                     .chain(orelse.iter().map(Vec::as_slice))
                     .chain(finalbody.iter().map(Vec::as_slice))
-                    .flat_map(|body| {
-                        block(
-                            body,
-                            out,
-                            annotation_types,
-                            statement_bindings,
-                            declaration_captures,
-                            binding_types,
-                        )
-                    })
+                    .flat_map(|body| block(body, out, annotation_types, facts))
                     .collect(),
-                StmtKind::ComptimeFor { body, .. } => block(
-                    body,
-                    out,
-                    annotation_types,
-                    statement_bindings,
-                    declaration_captures,
-                    binding_types,
-                ),
+                StmtKind::ComptimeFor { body, .. } => block(body, out, annotation_types, facts),
                 _ => Vec::new(),
             };
             out[id.0 as usize].children = children;
@@ -3281,26 +2936,12 @@ fn build_checked_declarations(
         ids
     }
     let mut declarations = Vec::new();
-    let _ = block(
-        statements,
-        &mut declarations,
-        annotation_types,
-        statement_bindings,
-        declaration_captures,
-        binding_types,
-    );
+    let _ = block(statements, &mut declarations, annotation_types, facts);
     let members: Vec<Stmt> = trait_members
         .iter()
         .map(|member| member.declaration.clone())
         .collect();
-    let _ = block(
-        &members,
-        &mut declarations,
-        annotation_types,
-        statement_bindings,
-        declaration_captures,
-        binding_types,
-    );
+    let _ = block(&members, &mut declarations, annotation_types, facts);
     declarations
 }
 
@@ -3374,6 +3015,17 @@ pub fn materialized_borrow_owner(
     })
 }
 
+/// One fact of every occurrence that holds it, by occurrence.
+fn fact_index<V: Clone>(
+    node_facts: &HashMap<SourceSpan, NodeFacts>,
+    fact: impl Fn(&NodeFacts) -> Option<&V>,
+) -> HashMap<SourceSpan, V> {
+    node_facts
+        .iter()
+        .filter_map(|(span, facts)| Some((span.clone(), fact(facts)?.clone())))
+        .collect()
+}
+
 /// Write `map` sorted by key, so a record encodes the same bytes in every
 /// build.
 fn sorted<V: serde::Serialize, S: serde::Serializer>(
@@ -3384,6 +3036,118 @@ fn sorted<V: serde::Serialize, S: serde::Serializer>(
         &map.iter().collect::<std::collections::BTreeMap<_, _>>(),
         serializer,
     )
+}
+
+macro_rules! node_facts {
+    (
+        facts { $($(#[$doc:meta])* $field:ident: $value:ty => $variant:ident,)* }
+        flags { $($(#[$flag_doc:meta])* $flag:ident => $flag_variant:ident,)* }
+    ) => {
+        /// Every fact the check recorded at one occurrence, as an op holds
+        /// its own attributes.
+        ///
+        /// It encodes as the list of the facts present, so an occurrence
+        /// holding one fact costs that fact alone.
+        #[derive(Debug, Clone, Default)]
+        pub struct NodeFacts {
+            $($(#[$doc])* pub $field: Option<$value>,)*
+            $($(#[$flag_doc])* pub $flag: bool,)*
+        }
+
+        impl NodeFacts {
+            /// An occurrence the check recorded nothing at.
+            pub const EMPTY: Self = Self {
+                $($field: None,)*
+                $($flag: false,)*
+            };
+        }
+
+        /// One fact of a [`NodeFacts`], as it encodes.
+        #[derive(serde::Serialize)]
+        enum NodeFactRef<'a> {
+            $($variant(&'a $value),)*
+            $($flag_variant,)*
+        }
+
+        /// One fact of a [`NodeFacts`], as it decodes.
+        #[derive(serde::Deserialize)]
+        enum NodeFact {
+            $($variant($value),)*
+            $($flag_variant,)*
+        }
+
+        impl serde::Serialize for NodeFacts {
+            fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+                let facts = std::iter::empty()
+                    $(.chain(self.$field.as_ref().map(NodeFactRef::$variant)))*
+                    $(.chain(self.$flag.then_some(NodeFactRef::$flag_variant)))*;
+                serializer.collect_seq(facts.collect::<Vec<_>>())
+            }
+        }
+
+        impl<'de> serde::Deserialize<'de> for NodeFacts {
+            fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+                let mut facts = Self::default();
+                for fact in <Vec<NodeFact> as serde::Deserialize>::deserialize(deserializer)? {
+                    match fact {
+                        $(NodeFact::$variant(value) => facts.$field = Some(value),)*
+                        $(NodeFact::$flag_variant => facts.$flag = true,)*
+                    }
+                }
+                Ok(facts)
+            }
+        }
+    };
+}
+
+node_facts! {
+    facts {
+        /// The callable a call or name resolved to.
+        overload_target: String => OverloadTarget,
+        /// The base type a `$contextual` leading-dot sentinel resolved to.
+        contextual_base: String => ContextualBase,
+        generic_instantiation: GenericInstantiation => GenericInstantiation,
+        method_instantiation: MethodInstantiation => MethodInstantiation,
+        /// Caller-substituted loan transfers of a call.
+        call_transfers: Vec<CheckedCallTransfer> => CallTransfers,
+        implicit_conversion: String => ImplicitConversion,
+        /// The converted-to type of an implicit conversion.
+        implicit_conversion_type: Ty => ImplicitConversionType,
+        conversion_source_borrow: bool => ConversionSourceBorrow,
+        conversion_raises: Ty => ConversionRaises,
+        ty: Ty => Type,
+        binding: mojito_types::origin::OwnerId => Binding,
+        /// The binding a declaring statement introduces.
+        statement_binding: mojito_types::origin::OwnerId => StatementBinding,
+        /// A nested declaration's explicit captures.
+        captures: Vec<CheckedCapture> => Captures,
+        comprehension_bindings: Vec<CheckedComprehensionBinding> => ComprehensionBindings,
+        place_ty: Ty => PlaceType,
+        binding_ty: Ty => BindingType,
+        effects: EffectFacts => Effects,
+        selected_call: Box<CheckedCallContract> => SelectedCall,
+        subscript_descriptor: (Vec<Option<mojito_types::types::SliceKind>>, bool) => SubscriptDescriptor,
+        iteration_protocol: Box<IterationProtocol> => IterationProtocol,
+        simd_construction: (SimdDtype, SimdWidth) => SimdConstruction,
+        /// The one operation record of the occurrence.
+        adjustment: Box<SemanticAdjustment> => Adjustment,
+        parameterized_method_call: Vec<mojito_types::types::ParamDecl> => ParameterizedMethodCall,
+        tuple_unpack_plan: Vec<CheckedTupleUnpackElement> => TupleUnpackPlan,
+        interior_reference: mojito_types::origin::OriginPlace => InteriorReference,
+        interior_invalidations: Vec<InteriorInvalidation> => InteriorInvalidations,
+        /// A reference read as a value: whether it is writable.
+        reference_value_use: bool => ReferenceValueUse,
+        rebind_assertion: RebindAssertion => RebindAssertion,
+    }
+    flags {
+        explicit_destroy_call => ExplicitDestroyCall,
+        copy_place_value_use => CopyPlaceValueUse,
+        call_place_use => CallPlaceUse,
+        borrowed_read_call_place => BorrowedReadCallPlace,
+        read_temporary_argument => ReadTemporaryArgument,
+        implicitly_copied_consuming_receiver => ImplicitlyCopiedConsumingReceiver,
+        truthiness_condition => TruthinessCondition,
+    }
 }
 
 #[cfg(test)]

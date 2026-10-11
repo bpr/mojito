@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R612**.
+Next free ID: **R613**.
 
 ## Ordered Work
 
@@ -4718,32 +4718,63 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
+- [ ] **R612 An overload probe records each candidate's facts and rolls
+  them back by cloning whole tables**
+
+  Checking a call to an overload set checks every candidate in turn into
+  the checker's shared fact stores, so a losing candidate's facts must be
+  undone afterwards.
+  - `call_inference.rs` (the `TyKind::Overload` loop) clones eight whole
+    tables before each candidate and assigns them back after it: a cost
+    that grows with the whole program, per candidate of every overloaded
+    call.
+  - The other tables are not restored: a loser's types and operation
+    records stay until the winner's re-run overwrites them, and a loser's
+    generic instantiation is removed by hand.
+  - It keeps the checker's stores one table per fact: merged into one
+    record per occurrence, as the handoff's are (R604), a probe would
+    clone every record.
+  - Upstream's checked IR holds the chosen call's ops alone; recording a
+    loser's facts into shared stores and undoing them is Mojito's own
+    arrangement.
+  - The lever: probe a candidate into a scratch layer over the stores and
+    commit only the winner's layer.
+  - Found while landing R604's handoff record (2026-10-11).
+  - Depends on nothing.
+  - Model: Fable, Not Planned.
+
 - [ ] **R604 A package's checked body is syntax beside per-occurrence
   fact records, where upstream's is typed `lit` ops**
 
   The bundled package keeps each body as its elaborated AST plus one
   record of the check's facts per occurrence, while upstream's `.mojoc`
   keeps each body as `lit` ops that carry their own types and attributes.
-  - A unit record (`checked_unit::CheckedUnit`) holds the unit's syntax
-    and its facts; the importer decodes the syntax, rebuilds the check's
-    `DiscoveryResult` tables from the records (`UnitFacts::install`), and
-    runs `finalize` to build the checked arena before it lowers.
+  - The check's handoff already holds its facts as one `NodeFacts` record
+    per occurrence (`DiscoveryResult::node_facts`). A unit record
+    (`checked_unit::CheckedUnit`) holds the unit's syntax and its share of
+    those records, which the importer installs as they decode before
+    `finalize` builds the checked arena.
   - What remains is the checked handoff's own shape:
-    - the check records some 30 span-keyed tables rather than one record
-      per node;
+    - the checker's working stores are still one logged table per fact,
+      gathered into records at the handoff (`HandoffStores::into_discovery`),
+      since an overload probe saves and restores single tables (R612);
     - a checked node clones its whole `Expr` subtree, and a statement has
       no checked node;
     - HIR and MIR lower from that syntax, not from checked nodes.
-  - The stages, each closer to `lit`: the check's facts become one record
-    per occurrence; a checked node holds its own operation with its
-    children as node ids, statements included; HIR and MIR lower from
-    those nodes; the check emits them. Then a unit holds nodes, no syntax.
+  - The stages, each closer to `lit`: a checked node holds its own
+    operation with its children as node ids, statements included; HIR
+    and MIR lower from those nodes; the check emits them, writing each
+    record onto its node. Then a unit holds nodes, no syntax.
+  - Not one session's work: MIR lowering reads AST syntax through
+    `HirExpr`'s `Deref` to `Expr` across about 20k lines, and a node
+    rebuilt from its operation must keep the sugar a spelled construction
+    replaces, which HIR's `checked_expr` hands MIR today.
   - A member's unit still holds its struct's `type_params` syntax, which
     MIR reads for `lowered_def_name` and `origin_binder_names`; it goes
     once a member names its struct's checked declaration.
   - `docs/pliron-future.md` assesses the checker's half.
   - Found while landing R546 (2026-10-10).
-  - Depends on nothing.
+  - Depends on R612.
   - Model: Fable, Not Planned.
 
 - [ ] **R611 A package unit's facts name the package check's binding

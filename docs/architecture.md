@@ -162,7 +162,7 @@ import (every compilation that links the bundled library):
   decoding draws a fresh identity per number, keeping each derivation
   (`token::{encoding_occurrences, decoding_occurrences}`). A package body
   enters the pipeline at HIR: the importer rebuilds the unit's checked
-  arena from its facts (`CheckedUnit::program`, over the package's own
+  arena from its records (`CheckedUnit::program`, over the package's own
   overload sets and constants), lowers it (`mir::lower_package_unit`), and
   then inserts drops, as upstream's importer lowers its semantic control
   flow and runs its lifetime pass on a body it materializes.
@@ -1680,7 +1680,10 @@ the requirement defaults bound at calls through a bound), which runs every
 rejecting check — the transfer-effect fixpoint, reference-result reads,
 context-manager splicing, explicit destruction — and then assembles the
 checked arena. `check_program_for_discovery` stops before the arena: a
-`DiscoveryResult` is `CheckedProgram::new`'s inputs, owned, with
+`DiscoveryResult` is `CheckedProgram::new`'s input, the check's facts as
+one `NodeFacts` record per occurrence, as an op holds its attributes,
+beside its declaration-site tables (annotation types, generic parameters,
+declaration effects) and its struct instantiations, with
 `DiscoveryResult::scan_expressions`, the arena builder's own traversal with
 node construction switched off, for a client that wants exactly the
 expressions the arena would hold without building it, and
@@ -1688,7 +1691,11 @@ expressions the arena would hold without building it, and
 executable and never reaches HIR or MIR.
 
 The passes of one check hand each other a `PassCarry`: the pass's fact
-stores, one record per body site, and its binding-identity watermark. Every
+stores, one record per body site, and its binding-identity watermark. The
+checker's own stores stay one table per fact, logged as a body writes
+them, since an overload probe saves and restores single tables per
+candidate; the handoff gathers them into the per-occurrence records once
+(`body_carry.rs`'s `HandoffStores::into_discovery`). Every
 fact store the checker writes during a body is a logged store
 (`mojito-checked`'s `fact_store.rs`: a map, set, or vector plus the log of
 keys written), so a site — a module-level `def` or a struct method —

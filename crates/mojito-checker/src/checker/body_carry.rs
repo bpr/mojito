@@ -22,21 +22,28 @@ use super::Checker;
 use crate::explicit_destroy::CheckedDeletability;
 use mojito_ast::ast::Stmt;
 use mojito_checked::checked::{
-    CallThroughEffect, DiscoveryResult, ExplicitDestroyInfo, TransferEffect,
+    AnnotationSite, CallThroughEffect, CheckedCallContract, CheckedCallTransfer, CheckedCapture,
+    CheckedComprehensionBinding, CheckedDefaultWrapper, CheckedTraitMember,
+    CheckedTupleUnpackElement, ConformanceFacts, DeclarationEffect, DiscoveryResult, EffectFacts,
+    ExplicitDestroyInfo, GenericInstantiation, GenericSite, InteriorInvalidation,
+    IterationProtocol, MethodInstantiation, NodeFacts, RebindAssertion, SemanticAdjustment,
+    StructInstantiation, TransferEffect,
 };
-use mojito_checked::fact_store::{FactMap, FactSet};
+use mojito_checked::fact_store::{FactMap, FactSet, FactVec};
 use mojito_common::timing;
 use mojito_common::token::SourceSpan;
-use mojito_types::origin::OwnerId;
+use mojito_types::origin::{OriginPlace, OwnerId};
+use mojito_types::types::{ParamDecl, SimdDtype, SimdWidth, SliceKind, Ty};
 use std::collections::{HashMap, HashSet};
 use std::hash::Hash;
 use std::ops::Range;
+use std::sync::Arc;
 
 /// What one checker pass leaves for the next: its fact stores, one record
 /// per body site, and the owner-id watermark.
 #[derive(Debug)]
 pub struct PassCarry {
-    result: DiscoveryResult,
+    result: HandoffStores,
     internal: InternalStores,
     records: HashMap<SourceSpan, BodyRecord>,
     /// The start of every identity range a record holds, sorted, for the
@@ -47,7 +54,7 @@ pub struct PassCarry {
 
 impl PassCarry {
     pub fn into_result(self) -> DiscoveryResult {
-        self.result
+        self.result.into_discovery()
     }
 
     /// The committed effect maps, the next pass's seeds.
@@ -147,6 +154,201 @@ pub struct InternalStores {
     unconsumed_temporaries: FactSet<SourceSpan>,
     linear_temporaries: FactSet<SourceSpan>,
     deletability: CheckedDeletability,
+}
+
+/// The fact stores the checked handoff is assembled from, each logged as a
+/// body writes it, and what the pass established beside them.
+#[derive(Debug)]
+pub struct HandoffStores {
+    statements: Vec<Stmt>,
+    overload_targets: FactMap<SourceSpan, String>,
+    contextual_bases: FactMap<SourceSpan, String>,
+    generic_instantiations: FactMap<SourceSpan, GenericInstantiation>,
+    method_instantiations: FactMap<SourceSpan, MethodInstantiation>,
+    struct_instantiations: FactVec<StructInstantiation>,
+    call_transfers: FactMap<SourceSpan, Vec<CheckedCallTransfer>>,
+    implicit_conversions: FactMap<SourceSpan, String>,
+    implicit_conversion_types: FactMap<SourceSpan, Ty>,
+    conversion_source_borrows: FactMap<SourceSpan, bool>,
+    conversion_raises: FactMap<SourceSpan, Ty>,
+    checked_types: FactMap<AnnotationSite, Ty>,
+    generic_parameters: FactMap<GenericSite, Vec<ParamDecl>>,
+    expression_types: FactMap<SourceSpan, Ty>,
+    expression_bindings: FactMap<SourceSpan, OwnerId>,
+    statement_bindings: FactMap<SourceSpan, OwnerId>,
+    declaration_captures: FactMap<SourceSpan, Vec<CheckedCapture>>,
+    comprehension_bindings: FactMap<SourceSpan, Vec<CheckedComprehensionBinding>>,
+    expression_place_types: FactMap<SourceSpan, Ty>,
+    binding_types: FactMap<SourceSpan, Ty>,
+    expression_effects: FactMap<SourceSpan, EffectFacts>,
+    selected_calls: FactMap<SourceSpan, CheckedCallContract>,
+    subscript_descriptors: FactMap<SourceSpan, (Vec<Option<SliceKind>>, bool)>,
+    iteration_protocols: FactMap<SourceSpan, IterationProtocol>,
+    simd_constructions: FactMap<SourceSpan, (SimdDtype, SimdWidth)>,
+    operation_adjustments: FactMap<SourceSpan, SemanticAdjustment>,
+    parameterized_method_calls: FactMap<SourceSpan, Vec<ParamDecl>>,
+    tuple_unpack_plans: FactMap<SourceSpan, Vec<CheckedTupleUnpackElement>>,
+    interior_references: FactMap<SourceSpan, OriginPlace>,
+    interior_invalidations: FactMap<SourceSpan, Vec<InteriorInvalidation>>,
+    explicit_destroy_calls: FactSet<SourceSpan>,
+    reference_value_uses: FactMap<SourceSpan, bool>,
+    copy_place_value_uses: FactSet<SourceSpan>,
+    call_place_uses: FactSet<SourceSpan>,
+    borrowed_read_call_places: FactSet<SourceSpan>,
+    read_temporary_arguments: FactSet<SourceSpan>,
+    implicitly_copied_consuming_receivers: FactSet<SourceSpan>,
+    truthiness_conditions: FactSet<SourceSpan>,
+    rebind_assertions: FactMap<SourceSpan, RebindAssertion>,
+    declaration_effects: FactMap<AnnotationSite, DeclarationEffect>,
+    explicit_destroy_types: HashMap<String, ExplicitDestroyInfo>,
+    struct_destructors: HashMap<String, HashMap<String, bool>>,
+    conformances: ConformanceFacts,
+    overloads: Arc<mojito_checked::package::ProgramOverloads>,
+    constants: Arc<mojito_checked::package::ProgramConstants>,
+    default_wrappers: Vec<CheckedDefaultWrapper>,
+    trait_members: Vec<CheckedTraitMember>,
+}
+
+impl HandoffStores {
+    /// The checked handoff: each occurrence's facts gathered into its one
+    /// record.
+    fn into_discovery(self) -> DiscoveryResult {
+        let mut nodes: HashMap<SourceSpan, NodeFacts> = HashMap::new();
+        gather(&mut nodes, self.overload_targets, |facts, value| {
+            facts.overload_target = Some(value);
+        });
+        gather(&mut nodes, self.contextual_bases, |facts, value| {
+            facts.contextual_base = Some(value);
+        });
+        gather(&mut nodes, self.generic_instantiations, |facts, value| {
+            facts.generic_instantiation = Some(value);
+        });
+        gather(&mut nodes, self.method_instantiations, |facts, value| {
+            facts.method_instantiation = Some(value);
+        });
+        gather(&mut nodes, self.call_transfers, |facts, value| {
+            facts.call_transfers = Some(value);
+        });
+        gather(&mut nodes, self.implicit_conversions, |facts, value| {
+            facts.implicit_conversion = Some(value);
+        });
+        gather(
+            &mut nodes,
+            self.implicit_conversion_types,
+            |facts, value| {
+                facts.implicit_conversion_type = Some(value);
+            },
+        );
+        gather(
+            &mut nodes,
+            self.conversion_source_borrows,
+            |facts, value| {
+                facts.conversion_source_borrow = Some(value);
+            },
+        );
+        gather(&mut nodes, self.conversion_raises, |facts, value| {
+            facts.conversion_raises = Some(value);
+        });
+        gather(&mut nodes, self.expression_types, |facts, value| {
+            facts.ty = Some(value);
+        });
+        gather(&mut nodes, self.expression_bindings, |facts, value| {
+            facts.binding = Some(value);
+        });
+        gather(&mut nodes, self.statement_bindings, |facts, value| {
+            facts.statement_binding = Some(value);
+        });
+        gather(&mut nodes, self.declaration_captures, |facts, value| {
+            facts.captures = Some(value);
+        });
+        gather(&mut nodes, self.comprehension_bindings, |facts, value| {
+            facts.comprehension_bindings = Some(value);
+        });
+        gather(&mut nodes, self.expression_place_types, |facts, value| {
+            facts.place_ty = Some(value);
+        });
+        gather(&mut nodes, self.binding_types, |facts, value| {
+            facts.binding_ty = Some(value);
+        });
+        gather(&mut nodes, self.expression_effects, |facts, value| {
+            facts.effects = Some(value);
+        });
+        gather(&mut nodes, self.selected_calls, |facts, value| {
+            facts.selected_call = Some(Box::new(value));
+        });
+        gather(&mut nodes, self.subscript_descriptors, |facts, value| {
+            facts.subscript_descriptor = Some(value);
+        });
+        gather(&mut nodes, self.iteration_protocols, |facts, value| {
+            facts.iteration_protocol = Some(Box::new(value));
+        });
+        gather(&mut nodes, self.simd_constructions, |facts, value| {
+            facts.simd_construction = Some(value);
+        });
+        gather(&mut nodes, self.operation_adjustments, |facts, value| {
+            facts.adjustment = Some(Box::new(value));
+        });
+        gather(
+            &mut nodes,
+            self.parameterized_method_calls,
+            |facts, value| {
+                facts.parameterized_method_call = Some(value);
+            },
+        );
+        gather(&mut nodes, self.tuple_unpack_plans, |facts, value| {
+            facts.tuple_unpack_plan = Some(value);
+        });
+        gather(&mut nodes, self.interior_references, |facts, value| {
+            facts.interior_reference = Some(value);
+        });
+        gather(&mut nodes, self.interior_invalidations, |facts, value| {
+            facts.interior_invalidations = Some(value);
+        });
+        gather(&mut nodes, self.reference_value_uses, |facts, value| {
+            facts.reference_value_use = Some(value);
+        });
+        gather(&mut nodes, self.rebind_assertions, |facts, value| {
+            facts.rebind_assertion = Some(value);
+        });
+        gather_flags(&mut nodes, self.explicit_destroy_calls, |facts| {
+            facts.explicit_destroy_call = true;
+        });
+        gather_flags(&mut nodes, self.copy_place_value_uses, |facts| {
+            facts.copy_place_value_use = true;
+        });
+        gather_flags(&mut nodes, self.call_place_uses, |facts| {
+            facts.call_place_use = true;
+        });
+        gather_flags(&mut nodes, self.borrowed_read_call_places, |facts| {
+            facts.borrowed_read_call_place = true;
+        });
+        gather_flags(&mut nodes, self.read_temporary_arguments, |facts| {
+            facts.read_temporary_argument = true;
+        });
+        gather_flags(
+            &mut nodes,
+            self.implicitly_copied_consuming_receivers,
+            |facts| facts.implicitly_copied_consuming_receiver = true,
+        );
+        gather_flags(&mut nodes, self.truthiness_conditions, |facts| {
+            facts.truthiness_condition = true;
+        });
+        DiscoveryResult {
+            statements: self.statements,
+            node_facts: nodes,
+            struct_instantiations: self.struct_instantiations.into_inner(),
+            checked_types: self.checked_types.into_inner(),
+            generic_parameters: self.generic_parameters.into_inner(),
+            declaration_effects: self.declaration_effects.into_inner(),
+            explicit_destroy_types: self.explicit_destroy_types,
+            struct_destructors: self.struct_destructors,
+            conformances: self.conformances,
+            overloads: self.overloads,
+            constants: self.constants,
+            default_wrappers: self.default_wrappers,
+            trait_members: self.trait_members,
+        }
+    }
 }
 
 /// Every store a body site is measured and copied over: where the carry
@@ -341,7 +543,7 @@ macro_rules! define_carry_ops {
             ) -> PassCarry {
                 self.record_lifted_applications();
                 let trait_members = self.checked_trait_members(&statements);
-                let result = DiscoveryResult {
+                let result = HandoffStores {
                     statements,
                     trait_members,
                     explicit_destroy_types,
@@ -532,8 +734,8 @@ impl Checker {
 
 /// The checked-handoff fields of a checker, moved out; the two the carry
 /// sets itself are defaulted here and overwritten by the caller.
-fn carried_result(checker: &Checker) -> DiscoveryResult {
-    DiscoveryResult {
+fn carried_result(checker: &Checker) -> HandoffStores {
+    HandoffStores {
         statements: Vec::new(),
         explicit_destroy_types: HashMap::new(),
         struct_destructors: checker
@@ -603,6 +805,28 @@ fn uniqued<K: Eq + Hash + Clone>(
         true
     });
     types
+}
+
+/// Put each of `store`'s facts in its occurrence's record.
+fn gather<V>(
+    nodes: &mut HashMap<SourceSpan, NodeFacts>,
+    store: FactMap<SourceSpan, V>,
+    place: impl Fn(&mut NodeFacts, V),
+) {
+    for (span, value) in store.into_inner() {
+        place(nodes.entry(span).or_default(), value);
+    }
+}
+
+/// Mark each of `store`'s occurrences in its record.
+fn gather_flags(
+    nodes: &mut HashMap<SourceSpan, NodeFacts>,
+    store: FactSet<SourceSpan>,
+    mark: impl Fn(&mut NodeFacts),
+) {
+    for span in store.into_inner() {
+        mark(nodes.entry(span).or_default());
+    }
 }
 
 fn copy_map<K: Eq + Hash + Clone, V: Clone>(
