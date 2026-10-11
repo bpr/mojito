@@ -446,8 +446,8 @@ fn implicitly_copied_tuple_transform_receivers_do_not_retain_a_consuming_place()
         .iter()
         .filter(|expression| {
             matches!(
-                &expression.syntax.kind,
-                mojito::ast::ExprKind::MethodCall { method, .. }
+                &expression.op,
+                mojito::checked::CheckedOp::MethodCall { method, .. }
                     if matches!(method.as_str(), "reverse" | "concat")
             )
         })

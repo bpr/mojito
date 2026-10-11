@@ -1722,8 +1722,10 @@ same MIR as one without (`MOJITO_BODY_FACT_REUSE=0`), up to identity
 numbering.
 
 The checked handoff owns the elaborated AST for diagnostics and
-an explicit semantic arena. Every checked expression has a `CheckedNodeId`, child
-edges, resolved runtime type, value/place/type category, stable owner identity for
+an explicit semantic arena. Every checked expression has a `CheckedNodeId`, its
+own operation (`CheckedOp`: the node's `ExprKind` with each child expression
+replaced by the child's node, so its operands are its child edges and a type
+operand stays its annotation), its occurrence, resolved runtime type, value/place/type category, stable owner identity for
 binding uses, extensible effect facts, and a list of semantic adjustments. Checked
 declarations have independent `CheckedDeclId` identities. Source spans index
 diagnostics and associate a checker-approved compile-time value argument with
@@ -1733,7 +1735,9 @@ re-resolve a type, overload, effect, or origin decision.
 Call targets, implicit conversions, moves, explicit-destruction decisions, and
 reference-handle preservation are stored canonically as `SemanticAdjustment`
 values on checked nodes. `HirExpr` recursively retains those checked children in
-AST structural order. MIR pairs the active HIR syntax tree with that recursive
+AST structural order; its syntax is rebuilt from the ops by the transitional
+`CheckedTables::syntax_of`, which yields the construction the check spelled
+where a sugar was written. MIR pairs the active HIR syntax tree with that recursive
 semantic tree by node identity. One narrow association remains span-keyed:
 source-ordered compile-time value arguments reuse registers already evaluated
 for the corresponding checked subscript operand. This is a register handoff,

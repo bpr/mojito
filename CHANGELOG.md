@@ -8,6 +8,15 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A checked expression holds its own operation (R614), as an upstream op
+  does: `CheckedOp` is the node's `ExprKind` with each child expression
+  replaced by the child's node, so the arena no longer copies every
+  node's whole syntax subtree and its operands are its child edges. HIR
+  rebuilds the syntax it still lowers through the transitional
+  `CheckedTables::syntax_of`. Every program's output and MIR are
+  unchanged; building the library's arena from source takes 17.7 ms, from
+  20.5 ms. A type operand is still its annotation syntax (R628).
+
 - The checker writes each fact straight into its occurrence's one record
   (R613), as upstream sets a decided fact as an attribute on the
   occurrence's op: its 35 per-fact tables are one logged store of

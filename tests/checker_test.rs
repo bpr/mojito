@@ -108,8 +108,8 @@ fn checked_declarations_preserve_shadowed_function_and_unused_capture_identities
     let call_bindings: Vec<_> = checked
         .expressions()
         .iter()
-        .filter_map(|expression| match &expression.syntax.kind {
-            mojito::ast::ExprKind::Call { name, .. } if name == "choose" => expression.binding,
+        .filter_map(|expression| match &expression.op {
+            mojito::checked::CheckedOp::Call { name, .. } if name == "choose" => expression.binding,
             _ => None,
         })
         .collect();
@@ -187,7 +187,7 @@ fn checked_boundary_keys_template_source_provenance_by_occurrence() {
 
     for expression in checked.expressions() {
         assert_eq!(
-            checked.expression_ids_at(&expression.syntax.source_span()),
+            checked.expression_ids_at(&expression.location()),
             &[expression.id],
             "one checked syntax occurrence must resolve to exactly one node"
         );
@@ -3040,13 +3040,10 @@ fn checked_calls_mark_ordinary_and_parameterized_implicit_receiver_copies() {
         .collect::<Vec<_>>();
     assert_eq!(copied_calls.len(), 2, "{copied_calls:#?}");
     assert!(copied_calls.iter().any(|expression| {
-        matches!(
-            expression.syntax.kind,
-            mojito::ast::ExprKind::MethodCall { .. }
-        )
+        matches!(expression.op, mojito::checked::CheckedOp::MethodCall { .. })
     }));
     assert!(copied_calls.iter().any(|expression| {
-        matches!(expression.syntax.kind, mojito::ast::ExprKind::Invoke { .. })
+        matches!(expression.op, mojito::checked::CheckedOp::Invoke { .. })
             && expression.adjustments.iter().any(|adjustment| {
                 matches!(
                     adjustment,
@@ -3068,7 +3065,7 @@ fn display_argument_to_generic_constructor_constructs_its_parameter() {
     let display = checked
         .expressions()
         .iter()
-        .find(|expression| matches!(expression.syntax.kind, mojito::ast::ExprKind::ListLit(_)))
+        .find(|expression| matches!(expression.op, mojito::checked::CheckedOp::ListLit(_)))
         .expect("the display argument is checked");
     assert!(
         display.adjustments.iter().any(|adjustment| matches!(
@@ -3095,7 +3092,7 @@ fn losing_overload_probe_leaves_no_compile_time_argument_fact() {
     let checked = check_program(&parse(source).expect("parse")).expect("check");
     let erased = |name: &str| {
         checked.expressions().iter().any(|expression| {
-            matches!(&expression.syntax.kind, mojito::ast::ExprKind::Identifier(id) if id == name)
+            matches!(&expression.op, mojito::checked::CheckedOp::Identifier(id) if id == name)
                 && expression.adjustments.iter().any(|adjustment| {
                     matches!(adjustment, SemanticAdjustment::EraseCompileTimeArgument)
                 })
@@ -5090,7 +5087,7 @@ fn checked_subscript_retains_the_selected_call_contract() {
         .expressions()
         .iter()
         .find_map(|expression| {
-            matches!(expression.syntax.kind, mojito::ast::ExprKind::Index { .. }).then(|| {
+            matches!(expression.op, mojito::checked::CheckedOp::Index { .. }).then(|| {
                 expression
                     .adjustments
                     .iter()
@@ -6841,8 +6838,8 @@ fn bare_element_calls_record_the_element_invocation_plan() {
         panic!("expected exactly one element-invocation plan: {plans:#?}");
     };
     assert!(matches!(
-        expression.syntax.kind,
-        mojito::ast::ExprKind::Call { .. }
+        expression.op,
+        mojito::checked::CheckedOp::Call { .. }
     ));
     assert_eq!(plan.getter.target, "Container.__getitem__");
     assert_eq!(plan.target.as_deref(), Some("Doubler.__call__"));
@@ -6877,11 +6874,11 @@ fn member_base_and_multi_index_element_calls_record_plans() {
         .collect::<Vec<_>>();
     assert_eq!(plans.len(), 2, "{plans:#?}");
     assert!(plans.iter().any(|(expression, plan)| {
-        matches!(expression.syntax.kind, mojito::ast::ExprKind::Invoke { .. })
+        matches!(expression.op, mojito::checked::CheckedOp::Invoke { .. })
             && plan.getter.target == "Container.__getitem__"
     }));
     assert!(plans.iter().any(|(expression, plan)| {
-        matches!(expression.syntax.kind, mojito::ast::ExprKind::Call { .. })
+        matches!(expression.op, mojito::checked::CheckedOp::Call { .. })
             && plan.getter.target == "Grid.__getitem__"
     }));
 }
@@ -7011,7 +7008,7 @@ fn rejected_overload_candidates_leave_no_place_copy_marks() {
     let source = "@fieldwise_init\nstruct P(ImplicitlyCopyable):\n    var x: Int\n\ndef f(var value: P, extra: Int) -> Int:\n    return extra\n\ndef f(value: P) -> Int:\n    return value.x\n\ndef main():\n    var p = P(1)\n    print(f(p))\n";
     let checked = check_program(&parse(source).expect("parse")).expect("check");
     let marked = checked.expressions().iter().any(|expression| {
-        matches!(&expression.syntax.kind, mojito::ast::ExprKind::Identifier(name) if name == "p")
+        matches!(&expression.op, mojito::checked::CheckedOp::Identifier(name) if name == "p")
             && expression
                 .adjustments
                 .iter()
@@ -7614,7 +7611,7 @@ fn value_parameter_field_read_is_a_parameter_value() {
             .expressions()
             .iter()
             .filter(|expression| expression.adjustments.iter().any(predicate))
-            .map(|expression| expression.syntax.kind.clone())
+            .map(|expression| expression.op.clone())
             .collect::<Vec<_>>()
     };
     let field_reads = reads(&|adjustment| {
@@ -7628,7 +7625,7 @@ fn value_parameter_field_read_is_a_parameter_value() {
     });
     assert!(
         field_reads.iter().any(
-            |kind| matches!(kind, mojito::ast::ExprKind::Member { field, .. } if field == "a")
+            |kind| matches!(kind, mojito::checked::CheckedOp::Member { field, .. } if field == "a")
         ),
         "{field_reads:#?}"
     );

@@ -1,8 +1,12 @@
 //! Checked semantic handoff between the frontend and lowering.
 
 use mojito_ast::ast::Stmt;
-use mojito_ast::ast::{Expr, ExprKind, PrefixOp};
-use mojito_common::token::{SourceSpan, Span};
+use mojito_ast::ast::{
+    CollectionKind, ComprehensionClause, Expr, ExprKind, InfixOp, KwArg, LoopBindingMode, ParamArg,
+    PrefixOp, SubscriptArg, TStringPart, Type,
+};
+use mojito_common::literal::{FloatLiteral, IntLiteral};
+use mojito_common::token::{SourceSpan, Span, SyntaxId};
 use mojito_types::types::{SimdDtype, SimdWidth, Ty};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -1158,13 +1162,16 @@ pub struct CheckedTupleUnpackElement {
 
 /// One expression in the typed semantic arena.
 ///
-/// `syntax` is retained for diagnostics and incremental migration only;
-/// identity, type, category, edges, and adjustments no longer have to be
-/// reconstructed from it.
+/// A node holds its own operation, as an upstream op does: its opcode and
+/// attributes, with each operand the node of a child expression, never a
+/// copy of the child's syntax. Its location is its own occurrence.
 #[derive(Debug, Clone)]
 pub struct CheckedExpr {
     pub id: CheckedNodeId,
-    pub syntax: Expr,
+    pub op: CheckedOp,
+    pub span: Span,
+    pub source: Option<String>,
+    pub syntax_id: SyntaxId,
     pub ty: Option<Ty>,
     /// Type physically stored at this place. For a reference-valued field this
     /// is `TyKind::Ref`, while `ty` is the referent produced by an ordinary read.
@@ -1179,12 +1186,305 @@ pub struct CheckedExpr {
     pub contextual_base: Option<String>,
     pub effects: EffectFacts,
     pub adjustments: Vec<SemanticAdjustment>,
-    pub children: Vec<CheckedNodeId>,
     /// Stable identities and storage types for generator binders introduced by
     /// a collection comprehension. Entries are in source `for`-clause order.
     /// Keeping these on the checked node prevents MIR from accidentally
     /// interning a binder by its spelling and aliasing an outer local.
     pub comprehension_bindings: Vec<CheckedComprehensionBinding>,
+}
+
+impl CheckedExpr {
+    /// The occurrence this node was checked at.
+    pub fn location(&self) -> SourceSpan {
+        SourceSpan::syntax(self.source.clone(), self.span, self.syntax_id)
+    }
+}
+
+/// A checked expression's own operation.
+///
+/// It is the node's [`ExprKind`], with each child expression replaced by
+/// the child's node. A type operand stays the annotation as written, and a lambda names nothing: the node's `binding`
+/// is its hidden function's identity.
+#[derive(Debug, Clone)]
+pub enum CheckedOp {
+    Int(IntLiteral),
+    Float(FloatLiteral),
+    Bool(bool),
+    Str(String),
+    None,
+    Uninitialized,
+    EmptySubscript,
+    Identifier(String),
+    TypeValue(Type),
+    Prefix(PrefixOp, CheckedNodeId),
+    Infix(InfixOp, CheckedNodeId, CheckedNodeId),
+    Call {
+        name: String,
+        param_args: Vec<CheckedParamArg>,
+        args: Vec<CheckedNodeId>,
+        kwargs: Vec<CheckedKwArg>,
+    },
+    Invoke {
+        callee: CheckedNodeId,
+        param_args: Vec<CheckedParamArg>,
+        args: Vec<CheckedNodeId>,
+        kwargs: Vec<CheckedKwArg>,
+    },
+    Member {
+        object: CheckedNodeId,
+        field: String,
+    },
+    MethodCall {
+        object: CheckedNodeId,
+        method: String,
+        args: Vec<CheckedNodeId>,
+        kwargs: Vec<CheckedKwArg>,
+    },
+    Index {
+        object: CheckedNodeId,
+        index: CheckedNodeId,
+    },
+    TypeApply {
+        name: String,
+        args: Vec<CheckedParamArg>,
+    },
+    Spread(CheckedNodeId),
+    Transfer(CheckedNodeId),
+    ListLit(Vec<CheckedNodeId>),
+    BraceLit(Vec<(CheckedNodeId, Option<CheckedNodeId>)>),
+    Comprehension {
+        kind: CollectionKind,
+        key: Option<CheckedNodeId>,
+        value: CheckedNodeId,
+        clauses: Vec<CheckedComprehensionClause>,
+    },
+    Lambda,
+    TupleLit(Vec<CheckedNodeId>),
+    Named {
+        name: String,
+        value: CheckedNodeId,
+    },
+    IfExpr {
+        cond: CheckedNodeId,
+        then_branch: CheckedNodeId,
+        else_branch: CheckedNodeId,
+    },
+    Compare {
+        first: CheckedNodeId,
+        rest: Vec<(InfixOp, CheckedNodeId)>,
+    },
+    Slice {
+        object: CheckedNodeId,
+        lower: Option<CheckedNodeId>,
+        upper: Option<CheckedNodeId>,
+        step: Option<CheckedNodeId>,
+        explicit_step: bool,
+    },
+    MultiIndex {
+        object: CheckedNodeId,
+        args: Vec<CheckedSubscriptArg>,
+    },
+    TString {
+        parts: Vec<CheckedTStringPart>,
+        raw: bool,
+    },
+}
+
+impl CheckedOp {
+    /// The operand nodes, in evaluation order: a comprehension's clauses
+    /// before its key and value, a call's callee before its compile-time
+    /// value arguments, its arguments, and its keyword arguments.
+    pub fn operands(&self) -> Vec<CheckedNodeId> {
+        let mut operands = Vec::new();
+        let kwargs = |operands: &mut Vec<CheckedNodeId>, kwargs: &[CheckedKwArg]| {
+            operands.extend(kwargs.iter().map(|kwarg| kwarg.value));
+        };
+        match self {
+            Self::Int(_)
+            | Self::Float(_)
+            | Self::Bool(_)
+            | Self::Str(_)
+            | Self::None
+            | Self::Uninitialized
+            | Self::EmptySubscript
+            | Self::Identifier(_)
+            | Self::TypeValue(_)
+            | Self::Lambda => {}
+            Self::Prefix(_, value)
+            | Self::Transfer(value)
+            | Self::Spread(value)
+            | Self::Named { value, .. }
+            | Self::Member { object: value, .. } => operands.push(*value),
+            Self::Infix(_, left, right)
+            | Self::Index {
+                object: left,
+                index: right,
+            } => operands.extend([*left, *right]),
+            Self::Call {
+                param_args,
+                args,
+                kwargs: keywords,
+                ..
+            } => {
+                for argument in param_args {
+                    argument.operands(&mut operands);
+                }
+                operands.extend(args);
+                kwargs(&mut operands, keywords);
+            }
+            Self::Invoke {
+                callee,
+                param_args,
+                args,
+                kwargs: keywords,
+            } => {
+                operands.push(*callee);
+                for argument in param_args {
+                    argument.operands(&mut operands);
+                }
+                operands.extend(args);
+                kwargs(&mut operands, keywords);
+            }
+            Self::MethodCall {
+                object,
+                args,
+                kwargs: keywords,
+                ..
+            } => {
+                operands.push(*object);
+                operands.extend(args);
+                kwargs(&mut operands, keywords);
+            }
+            Self::TypeApply { args, .. } => {
+                for argument in args {
+                    argument.operands(&mut operands);
+                }
+            }
+            Self::ListLit(values) | Self::TupleLit(values) => operands.extend(values),
+            Self::BraceLit(entries) => {
+                for (key, value) in entries {
+                    operands.push(*key);
+                    operands.extend(value);
+                }
+            }
+            Self::Comprehension {
+                key,
+                value,
+                clauses,
+                ..
+            } => {
+                operands.extend(clauses.iter().map(|clause| match clause {
+                    CheckedComprehensionClause::For { iter, .. } => *iter,
+                    CheckedComprehensionClause::If(condition) => *condition,
+                }));
+                operands.extend(key);
+                operands.push(*value);
+            }
+            Self::IfExpr {
+                cond,
+                then_branch,
+                else_branch,
+            } => operands.extend([*cond, *then_branch, *else_branch]),
+            Self::Compare { first, rest } => {
+                operands.push(*first);
+                operands.extend(rest.iter().map(|(_, value)| *value));
+            }
+            Self::Slice {
+                object,
+                lower,
+                upper,
+                step,
+                ..
+            } => {
+                operands.push(*object);
+                operands.extend([lower, upper, step].into_iter().flatten());
+            }
+            Self::MultiIndex { object, args } => {
+                operands.push(*object);
+                for argument in args {
+                    match argument {
+                        CheckedSubscriptArg::Index(value)
+                        | CheckedSubscriptArg::Keyword { value, .. } => operands.push(*value),
+                        CheckedSubscriptArg::Slice {
+                            lower, upper, step, ..
+                        }
+                        | CheckedSubscriptArg::KeywordSlice {
+                            lower, upper, step, ..
+                        } => operands.extend([lower, upper, step].into_iter().flatten()),
+                    }
+                }
+            }
+            Self::TString { parts, .. } => {
+                operands.extend(parts.iter().filter_map(|part| match part {
+                    CheckedTStringPart::Expr(value) => Some(*value),
+                    CheckedTStringPart::Literal(_) => None,
+                }));
+            }
+        }
+        operands
+    }
+}
+
+/// A compile-time parameter argument of a checked call or type application.
+#[derive(Debug, Clone)]
+pub enum CheckedParamArg {
+    Type(Type),
+    Value(CheckedNodeId),
+    Named { name: String, value: Box<Self> },
+}
+
+impl CheckedParamArg {
+    fn operands(&self, operands: &mut Vec<CheckedNodeId>) {
+        match self {
+            Self::Type(_) => {}
+            Self::Value(value) => operands.push(*value),
+            Self::Named { value, .. } => value.operands(operands),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct CheckedKwArg {
+    pub name: String,
+    pub value: CheckedNodeId,
+}
+
+#[derive(Debug, Clone)]
+pub enum CheckedSubscriptArg {
+    Index(CheckedNodeId),
+    Keyword {
+        name: String,
+        value: CheckedNodeId,
+    },
+    Slice {
+        lower: Option<CheckedNodeId>,
+        upper: Option<CheckedNodeId>,
+        step: Option<CheckedNodeId>,
+        explicit_step: bool,
+    },
+    KeywordSlice {
+        name: String,
+        lower: Option<CheckedNodeId>,
+        upper: Option<CheckedNodeId>,
+        step: Option<CheckedNodeId>,
+        explicit_step: bool,
+    },
+}
+
+#[derive(Debug, Clone)]
+pub enum CheckedComprehensionClause {
+    For {
+        var: String,
+        binding: LoopBindingMode,
+        iter: CheckedNodeId,
+    },
+    If(CheckedNodeId),
+}
+
+#[derive(Debug, Clone)]
+pub enum CheckedTStringPart {
+    Literal(String),
+    Expr(CheckedNodeId),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -1260,6 +1560,9 @@ pub struct CheckedTables {
     expressions_by_span: HashMap<SourceSpan, Vec<CheckedNodeId>>,
     /// The last declaration recorded at a source location.
     declarations_by_span: HashMap<SourceSpan, usize>,
+    /// Each lambda node's hidden `def`, which [`Self::syntax_of`] rebuilds
+    /// the lambda's syntax around.
+    lambda_definitions: HashMap<CheckedNodeId, Stmt>,
 }
 
 impl CheckedTables {
@@ -1270,6 +1573,7 @@ impl CheckedTables {
         expressions: Vec<CheckedExpr>,
         declarations: Vec<CheckedDeclaration>,
         expressions_by_span: HashMap<SourceSpan, Vec<CheckedNodeId>>,
+        lambda_definitions: HashMap<CheckedNodeId, Stmt>,
     ) -> Self {
         let declarations_by_span = declarations
             .iter()
@@ -1281,11 +1585,237 @@ impl CheckedTables {
             declarations,
             expressions_by_span,
             declarations_by_span,
+            lambda_definitions,
         }
     }
 
     pub fn expression(&self, id: CheckedNodeId) -> Option<&CheckedExpr> {
         self.expressions.get(id.0 as usize)
+    }
+
+    /// The syntax of node `id` and its operands, rebuilt from their ops: a
+    /// spelled sugar's place holds the construction the check spelled for
+    /// it. Transitional, for HIR, which still lowers syntax; R623 lowers
+    /// from the ops and deletes it.
+    pub fn syntax_of(&self, id: CheckedNodeId) -> Option<Expr> {
+        let node = self.expression(id)?;
+        let child = |id: &CheckedNodeId| self.syntax_of(*id);
+        let boxed = |id: &CheckedNodeId| child(id).map(Box::new);
+        let optional =
+            |id: &Option<CheckedNodeId>| id.as_ref().map_or(Some(None), |id| boxed(id).map(Some));
+        let values = |ids: &[CheckedNodeId]| ids.iter().map(child).collect::<Option<Vec<_>>>();
+        let kwargs = |kwargs: &[CheckedKwArg]| {
+            kwargs
+                .iter()
+                .map(|kwarg| {
+                    Some(KwArg {
+                        name: kwarg.name.clone(),
+                        value: child(&kwarg.value)?,
+                    })
+                })
+                .collect::<Option<Vec<_>>>()
+        };
+        let param_args = |arguments: &[CheckedParamArg]| {
+            arguments
+                .iter()
+                .map(|argument| self.param_arg_syntax(argument))
+                .collect::<Option<Vec<_>>>()
+        };
+        let kind = match &node.op {
+            CheckedOp::Int(value) => ExprKind::Int(value.clone()),
+            CheckedOp::Float(value) => ExprKind::Float(value.clone()),
+            CheckedOp::Bool(value) => ExprKind::Bool(*value),
+            CheckedOp::Str(value) => ExprKind::Str(value.clone()),
+            CheckedOp::None => ExprKind::None,
+            CheckedOp::Uninitialized => ExprKind::Uninitialized,
+            CheckedOp::EmptySubscript => ExprKind::EmptySubscript,
+            CheckedOp::Identifier(name) => ExprKind::Identifier(name.clone()),
+            CheckedOp::TypeValue(ty) => ExprKind::TypeValue(ty.clone()),
+            CheckedOp::Prefix(op, value) => ExprKind::Prefix(*op, boxed(value)?),
+            CheckedOp::Infix(op, left, right) => ExprKind::Infix(*op, boxed(left)?, boxed(right)?),
+            CheckedOp::Call {
+                name,
+                param_args: parameters,
+                args,
+                kwargs: keywords,
+            } => ExprKind::Call {
+                name: name.clone(),
+                param_args: param_args(parameters)?,
+                args: values(args)?,
+                kwargs: kwargs(keywords)?,
+            },
+            CheckedOp::Invoke {
+                callee,
+                param_args: parameters,
+                args,
+                kwargs: keywords,
+            } => ExprKind::Invoke {
+                callee: boxed(callee)?,
+                param_args: param_args(parameters)?,
+                args: values(args)?,
+                kwargs: kwargs(keywords)?,
+            },
+            CheckedOp::Member { object, field } => ExprKind::Member {
+                object: boxed(object)?,
+                field: field.clone(),
+            },
+            CheckedOp::MethodCall {
+                object,
+                method,
+                args,
+                kwargs: keywords,
+            } => ExprKind::MethodCall {
+                object: boxed(object)?,
+                method: method.clone(),
+                args: values(args)?,
+                kwargs: kwargs(keywords)?,
+            },
+            CheckedOp::Index { object, index } => ExprKind::Index {
+                object: boxed(object)?,
+                index: boxed(index)?,
+            },
+            CheckedOp::TypeApply { name, args } => ExprKind::TypeApply {
+                name: name.clone(),
+                args: param_args(args)?,
+            },
+            CheckedOp::Spread(value) => ExprKind::Spread(boxed(value)?),
+            CheckedOp::Transfer(value) => ExprKind::Transfer(boxed(value)?),
+            CheckedOp::ListLit(items) => ExprKind::ListLit(values(items)?),
+            CheckedOp::TupleLit(items) => ExprKind::TupleLit(values(items)?),
+            CheckedOp::BraceLit(entries) => ExprKind::BraceLit(
+                entries
+                    .iter()
+                    .map(|(key, value)| {
+                        Some((
+                            child(key)?,
+                            value
+                                .as_ref()
+                                .map_or(Some(None), |id| child(id).map(Some))?,
+                        ))
+                    })
+                    .collect::<Option<_>>()?,
+            ),
+            CheckedOp::Comprehension {
+                kind,
+                key,
+                value,
+                clauses,
+            } => ExprKind::Comprehension {
+                kind: *kind,
+                key: optional(key)?,
+                value: boxed(value)?,
+                clauses: clauses
+                    .iter()
+                    .map(|clause| {
+                        Some(match clause {
+                            CheckedComprehensionClause::For { var, binding, iter } => {
+                                ComprehensionClause::For {
+                                    var: var.clone(),
+                                    binding: *binding,
+                                    iter: boxed(iter)?,
+                                }
+                            }
+                            CheckedComprehensionClause::If(condition) => {
+                                ComprehensionClause::If(boxed(condition)?)
+                            }
+                        })
+                    })
+                    .collect::<Option<_>>()?,
+            },
+            CheckedOp::Lambda => ExprKind::Lambda {
+                def: Box::new(self.lambda_definitions.get(&id)?.clone()),
+            },
+            CheckedOp::Named { name, value } => ExprKind::Named {
+                name: name.clone(),
+                value: boxed(value)?,
+            },
+            CheckedOp::IfExpr {
+                cond,
+                then_branch,
+                else_branch,
+            } => ExprKind::IfExpr {
+                cond: boxed(cond)?,
+                then_branch: boxed(then_branch)?,
+                else_branch: boxed(else_branch)?,
+            },
+            CheckedOp::Compare { first, rest } => ExprKind::Compare {
+                first: boxed(first)?,
+                rest: rest
+                    .iter()
+                    .map(|(op, value)| Some((*op, child(value)?)))
+                    .collect::<Option<_>>()?,
+            },
+            CheckedOp::Slice {
+                object,
+                lower,
+                upper,
+                step,
+                explicit_step,
+            } => ExprKind::Slice {
+                object: boxed(object)?,
+                lower: optional(lower)?,
+                upper: optional(upper)?,
+                step: optional(step)?,
+                explicit_step: *explicit_step,
+            },
+            CheckedOp::MultiIndex { object, args } => ExprKind::MultiIndex {
+                object: boxed(object)?,
+                args: args
+                    .iter()
+                    .map(|argument| {
+                        Some(match argument {
+                            CheckedSubscriptArg::Index(value) => SubscriptArg::Index(child(value)?),
+                            CheckedSubscriptArg::Keyword { name, value } => SubscriptArg::Keyword {
+                                name: name.clone(),
+                                value: child(value)?,
+                            },
+                            CheckedSubscriptArg::Slice {
+                                lower,
+                                upper,
+                                step,
+                                explicit_step,
+                            } => SubscriptArg::Slice {
+                                lower: optional(lower)?,
+                                upper: optional(upper)?,
+                                step: optional(step)?,
+                                explicit_step: *explicit_step,
+                            },
+                            CheckedSubscriptArg::KeywordSlice {
+                                name,
+                                lower,
+                                upper,
+                                step,
+                                explicit_step,
+                            } => SubscriptArg::KeywordSlice {
+                                name: name.clone(),
+                                lower: optional(lower)?,
+                                upper: optional(upper)?,
+                                step: optional(step)?,
+                                explicit_step: *explicit_step,
+                            },
+                        })
+                    })
+                    .collect::<Option<_>>()?,
+            },
+            CheckedOp::TString { parts, raw } => ExprKind::TString {
+                parts: parts
+                    .iter()
+                    .map(|part| {
+                        Some(match part {
+                            CheckedTStringPart::Literal(text) => TStringPart::Literal(text.clone()),
+                            CheckedTStringPart::Expr(value) => TStringPart::Expr(boxed(value)?),
+                        })
+                    })
+                    .collect::<Option<_>>()?,
+                raw: *raw,
+            },
+        };
+        Some(Expr {
+            kind,
+            span: node.span,
+            source: node.source.clone(),
+            syntax_id: node.syntax_id,
+        })
     }
 
     /// Nodes whose syntax sits at `span`, in checked order. Several nodes may
@@ -1305,6 +1835,17 @@ impl CheckedTables {
         self.declarations_by_span
             .get(span)
             .and_then(|&index| self.declarations.get(index))
+    }
+
+    fn param_arg_syntax(&self, argument: &CheckedParamArg) -> Option<ParamArg> {
+        Some(match argument {
+            CheckedParamArg::Type(ty) => ParamArg::Type(ty.clone()),
+            CheckedParamArg::Value(value) => ParamArg::Value(self.syntax_of(*value)?),
+            CheckedParamArg::Named { name, value } => ParamArg::Named {
+                name: name.clone(),
+                value: Box::new(self.param_arg_syntax(value)?),
+            },
+        })
     }
 }
 
@@ -1889,8 +2430,11 @@ impl CheckedProgram {
             trait_members,
         } = discovery;
         let expressions_span = mojito_common::timing::span("expressions");
-        let (expressions, expression_index) =
-            build_checked_expressions(&statements, &node_facts, &default_wrappers, None);
+        let CheckedArena {
+            nodes: expressions,
+            index: expression_index,
+            lambda_definitions,
+        } = build_checked_expressions(&statements, &node_facts, &default_wrappers, None);
         drop(expressions_span);
         let _declarations = mojito_common::timing::span("declarations");
         let declarations =
@@ -1920,6 +2464,7 @@ impl CheckedProgram {
                 expressions,
                 declarations,
                 expression_index.clone(),
+                lambda_definitions,
             )),
             expression_index,
             explicit_destroy_types,
@@ -2083,18 +2628,30 @@ fn build_checked_expressions(
     facts: &HashMap<SourceSpan, NodeFacts>,
     default_wrappers: &[CheckedDefaultWrapper],
     scan: Option<&mut dyn FnMut(&Expr)>,
-) -> (Vec<CheckedExpr>, HashMap<SourceSpan, Vec<CheckedNodeId>>) {
+) -> CheckedArena {
     let mut builder = ArenaBuilder {
         scan,
         nodes: Vec::new(),
         index: HashMap::new(),
+        lambda_definitions: HashMap::new(),
         facts,
     };
     builder.block(statements);
     for wrapper in default_wrappers {
         builder.block(&wrapper.body);
     }
-    (builder.nodes, builder.index)
+    CheckedArena {
+        nodes: builder.nodes,
+        index: builder.index,
+        lambda_definitions: builder.lambda_definitions,
+    }
+}
+
+/// What [`build_checked_expressions`] builds.
+struct CheckedArena {
+    nodes: Vec<CheckedExpr>,
+    index: HashMap<SourceSpan, Vec<CheckedNodeId>>,
+    lambda_definitions: HashMap<CheckedNodeId, Stmt>,
 }
 
 /// The checked arena under construction.
@@ -2104,6 +2661,7 @@ struct ArenaBuilder<'a, 's> {
     scan: Option<&'s mut dyn FnMut(&Expr)>,
     nodes: Vec<CheckedExpr>,
     index: HashMap<SourceSpan, Vec<CheckedNodeId>>,
+    lambda_definitions: HashMap<CheckedNodeId, Stmt>,
     facts: &'a HashMap<SourceSpan, NodeFacts>,
 }
 
@@ -2117,7 +2675,7 @@ impl<'a> ArenaBuilder<'a, '_> {
         if let Some(node) = self.spelled_construction(expression) {
             return node;
         }
-        let children = self.children(expression);
+        let op = self.op(expression);
         if let Some(scan) = self.scan.as_mut() {
             scan(expression);
             return CheckedNodeId(0);
@@ -2150,9 +2708,15 @@ impl<'a> ArenaBuilder<'a, '_> {
             _ => ValueCategory::Value,
         };
         let id = CheckedNodeId(self.nodes.len() as u32);
+        if let ExprKind::Lambda { def } = &expression.kind {
+            self.lambda_definitions.insert(id, (**def).clone());
+        }
         self.nodes.push(CheckedExpr {
             id,
-            syntax: expression.clone(),
+            op,
+            span: expression.span,
+            source: expression.source.clone(),
+            syntax_id: expression.syntax_id,
             ty,
             place_ty,
             binding_ty,
@@ -2161,7 +2725,6 @@ impl<'a> ArenaBuilder<'a, '_> {
             contextual_base: facts.contextual_base.clone(),
             effects: facts.effects.clone().unwrap_or_default(),
             adjustments,
-            children,
             comprehension_bindings: facts.comprehension_bindings.clone().unwrap_or_default(),
         });
         self.index.entry(span).or_default().push(id);
@@ -2207,207 +2770,242 @@ impl<'a> ArenaBuilder<'a, '_> {
         Some(node)
     }
 
-    /// The nodes of `expression`'s operands, in their structural order.
-    fn children(&mut self, expression: &Expr) -> Vec<CheckedNodeId> {
-        use ExprKind::{
-            Bool, BraceLit, Call, Compare, Comprehension, EmptySubscript, Float, Identifier,
-            IfExpr, Index, Infix, Int, Invoke, Lambda, ListLit, Member, MethodCall, MultiIndex,
-            Named, None, Prefix, Slice, Spread, Str, TString, Transfer, TupleLit, TypeApply,
-            TypeValue, Uninitialized,
+    /// `expression`'s own operation, its operands' nodes built in their
+    /// structural order.
+    fn op(&mut self, expression: &Expr) -> CheckedOp {
+        let values = |this: &mut Self, values: &[Expr]| {
+            values
+                .iter()
+                .map(|value| this.expr(value))
+                .collect::<Vec<_>>()
         };
-        let mut children = Vec::new();
-        let mut add = |this: &mut Self, child: &Expr| children.push(this.expr(child));
         match &expression.kind {
-            Prefix(_, value) | Transfer(value) | Spread(value) | Named { value, .. } => {
-                add(self, value);
+            ExprKind::Int(value) => CheckedOp::Int(value.clone()),
+            ExprKind::Float(value) => CheckedOp::Float(value.clone()),
+            ExprKind::Bool(value) => CheckedOp::Bool(*value),
+            ExprKind::Str(value) => CheckedOp::Str(value.clone()),
+            ExprKind::None => CheckedOp::None,
+            ExprKind::Uninitialized => CheckedOp::Uninitialized,
+            ExprKind::EmptySubscript => CheckedOp::EmptySubscript,
+            ExprKind::Identifier(name) => CheckedOp::Identifier(name.clone()),
+            ExprKind::TypeValue(ty) => {
+                self.type_applications(ty);
+                CheckedOp::TypeValue(ty.clone())
             }
-            Infix(_, left, right)
-            | Index {
-                object: left,
-                index: right,
-            } => {
-                add(self, left);
-                add(self, right);
+            ExprKind::Prefix(op, value) => CheckedOp::Prefix(*op, self.expr(value)),
+            ExprKind::Transfer(value) => CheckedOp::Transfer(self.expr(value)),
+            ExprKind::Spread(value) => CheckedOp::Spread(self.expr(value)),
+            ExprKind::Named { name, value } => CheckedOp::Named {
+                name: name.clone(),
+                value: self.expr(value),
+            },
+            ExprKind::Infix(op, left, right) => {
+                let left = self.expr(left);
+                CheckedOp::Infix(*op, left, self.expr(right))
             }
-            Call {
+            ExprKind::Index { object, index } => CheckedOp::Index {
+                object: self.expr(object),
+                index: self.expr(index),
+            },
+            ExprKind::Call {
+                name,
                 param_args,
                 args,
                 kwargs,
-                ..
-            } => {
-                for argument in param_args {
-                    match argument {
-                        mojito_ast::ast::ParamArg::Value(value) => add(self, value),
-                        mojito_ast::ast::ParamArg::Named { value, .. } => match &**value {
-                            mojito_ast::ast::ParamArg::Value(value) => add(self, value),
-                            mojito_ast::ast::ParamArg::Type(ty) => self.type_applications(ty),
-                            mojito_ast::ast::ParamArg::Named { .. } => {}
-                        },
-                        mojito_ast::ast::ParamArg::Type(ty) => self.type_applications(ty),
-                    }
-                }
-                for value in args {
-                    add(self, value);
-                }
-                for value in kwargs {
-                    add(self, &value.value);
-                }
-            }
-            Invoke {
+            } => CheckedOp::Call {
+                name: name.clone(),
+                param_args: self.param_args(param_args),
+                args: values(self, args),
+                kwargs: self.kwargs(kwargs),
+            },
+            ExprKind::Invoke {
                 callee,
                 param_args,
                 args,
                 kwargs,
-            } => {
-                add(self, callee);
-                for argument in param_args {
-                    match argument {
-                        mojito_ast::ast::ParamArg::Value(value) => add(self, value),
-                        mojito_ast::ast::ParamArg::Named { value, .. } => match &**value {
-                            mojito_ast::ast::ParamArg::Value(value) => add(self, value),
-                            mojito_ast::ast::ParamArg::Type(ty) => self.type_applications(ty),
-                            mojito_ast::ast::ParamArg::Named { .. } => {}
-                        },
-                        mojito_ast::ast::ParamArg::Type(ty) => self.type_applications(ty),
-                    }
-                }
-                for value in args {
-                    add(self, value);
-                }
-                for value in kwargs {
-                    add(self, &value.value);
-                }
-            }
-            Member { object, .. } => add(self, object),
-            MethodCall {
+            } => CheckedOp::Invoke {
+                callee: self.expr(callee),
+                param_args: self.param_args(param_args),
+                args: values(self, args),
+                kwargs: self.kwargs(kwargs),
+            },
+            ExprKind::Member { object, field } => CheckedOp::Member {
+                object: self.expr(object),
+                field: field.clone(),
+            },
+            ExprKind::MethodCall {
                 object,
+                method,
                 args,
                 kwargs,
-                ..
-            } => {
-                add(self, object);
-                for value in args {
-                    add(self, value);
-                }
-                for value in kwargs {
-                    add(self, &value.value);
-                }
-            }
-            ListLit(values) | TupleLit(values) => {
-                for value in values {
-                    add(self, value);
-                }
-            }
-            BraceLit(values) => {
-                for (key, value) in values {
-                    add(self, key);
-                    if let Some(value) = value {
-                        add(self, value);
-                    }
-                }
-            }
-            Comprehension {
+            } => CheckedOp::MethodCall {
+                object: self.expr(object),
+                method: method.clone(),
+                args: values(self, args),
+                kwargs: self.kwargs(kwargs),
+            },
+            ExprKind::TypeApply { name, args } => CheckedOp::TypeApply {
+                name: name.clone(),
+                args: self.param_args(args),
+            },
+            ExprKind::ListLit(items) => CheckedOp::ListLit(values(self, items)),
+            ExprKind::TupleLit(items) => CheckedOp::TupleLit(values(self, items)),
+            ExprKind::BraceLit(entries) => CheckedOp::BraceLit(
+                entries
+                    .iter()
+                    .map(|(key, value)| {
+                        (self.expr(key), value.as_ref().map(|value| self.expr(value)))
+                    })
+                    .collect(),
+            ),
+            ExprKind::Comprehension {
+                kind,
                 key,
                 value,
                 clauses,
-                ..
             } => {
-                for clause in clauses {
-                    match clause {
-                        mojito_ast::ast::ComprehensionClause::For { iter, .. } => {
-                            add(self, iter);
+                let clauses = clauses
+                    .iter()
+                    .map(|clause| match clause {
+                        ComprehensionClause::For { var, binding, iter } => {
+                            CheckedComprehensionClause::For {
+                                var: var.clone(),
+                                binding: *binding,
+                                iter: self.expr(iter),
+                            }
                         }
-                        mojito_ast::ast::ComprehensionClause::If(condition) => {
-                            add(self, condition);
+                        ComprehensionClause::If(condition) => {
+                            CheckedComprehensionClause::If(self.expr(condition))
                         }
-                    }
+                    })
+                    .collect();
+                CheckedOp::Comprehension {
+                    kind: *kind,
+                    key: key.as_ref().map(|key| self.expr(key)),
+                    value: self.expr(value),
+                    clauses,
                 }
-                if let Some(key) = key {
-                    add(self, key);
-                }
-                add(self, value);
             }
-            IfExpr {
+            ExprKind::IfExpr {
                 cond,
                 then_branch,
                 else_branch,
-            } => {
-                add(self, cond);
-                add(self, then_branch);
-                add(self, else_branch);
-            }
-            Compare { first, rest } => {
-                add(self, first);
-                for (_, value) in rest {
-                    add(self, value);
-                }
-            }
-            Slice {
+            } => CheckedOp::IfExpr {
+                cond: self.expr(cond),
+                then_branch: self.expr(then_branch),
+                else_branch: self.expr(else_branch),
+            },
+            ExprKind::Compare { first, rest } => CheckedOp::Compare {
+                first: self.expr(first),
+                rest: rest
+                    .iter()
+                    .map(|(op, value)| (*op, self.expr(value)))
+                    .collect(),
+            },
+            ExprKind::Slice {
                 object,
                 lower,
                 upper,
                 step,
-                ..
-            } => {
-                add(self, object);
-                for value in [lower, upper, step].into_iter().flatten() {
-                    add(self, value);
-                }
-            }
-            MultiIndex { object, args } => {
-                add(self, object);
-                for argument in args {
-                    match argument {
-                        mojito_ast::ast::SubscriptArg::Index(value)
-                        | mojito_ast::ast::SubscriptArg::Keyword { value, .. } => {
-                            add(self, value);
-                        }
-                        mojito_ast::ast::SubscriptArg::Slice {
-                            lower, upper, step, ..
-                        }
-                        | mojito_ast::ast::SubscriptArg::KeywordSlice {
-                            lower, upper, step, ..
-                        } => {
-                            for value in [lower, upper, step].into_iter().flatten() {
-                                add(self, value);
-                            }
-                        }
-                    }
-                }
-            }
-            TString { parts, .. } => {
-                for part in parts {
-                    if let mojito_ast::ast::TStringPart::Expr(value) = part {
-                        add(self, value);
-                    }
-                }
-            }
-            // A lambda expression is a leaf here: its hidden definition's
-            // body belongs to that definition's own checked declaration,
-            // not to the enclosing expression tree.
-            Int(_) | Float(_) | Bool(_) | Str(_) | None | Uninitialized | EmptySubscript
-            | Identifier(_) => {}
-            TypeValue(ty) => self.type_applications(ty),
-            // A lambda expression node has no expression children of its
-            // own, but its hidden definition's body must be built exactly
-            // like a nested `def` statement's body so the body's checked
-            // facts become checked nodes.
-            Lambda { def } => self.block(std::slice::from_ref(def)),
-            TypeApply { args, .. } => {
-                for argument in args {
-                    match argument {
-                        mojito_ast::ast::ParamArg::Value(value) => add(self, value),
-                        mojito_ast::ast::ParamArg::Named { value, .. } => match &**value {
-                            mojito_ast::ast::ParamArg::Value(value) => add(self, value),
-                            mojito_ast::ast::ParamArg::Type(ty) => self.type_applications(ty),
-                            mojito_ast::ast::ParamArg::Named { .. } => {}
+                explicit_step,
+            } => CheckedOp::Slice {
+                object: self.expr(object),
+                lower: self.optional(lower.as_deref()),
+                upper: self.optional(upper.as_deref()),
+                step: self.optional(step.as_deref()),
+                explicit_step: *explicit_step,
+            },
+            ExprKind::MultiIndex { object, args } => CheckedOp::MultiIndex {
+                object: self.expr(object),
+                args: args
+                    .iter()
+                    .map(|argument| match argument {
+                        SubscriptArg::Index(value) => CheckedSubscriptArg::Index(self.expr(value)),
+                        SubscriptArg::Keyword { name, value } => CheckedSubscriptArg::Keyword {
+                            name: name.clone(),
+                            value: self.expr(value),
                         },
-                        mojito_ast::ast::ParamArg::Type(ty) => self.type_applications(ty),
-                    }
-                }
+                        SubscriptArg::Slice {
+                            lower,
+                            upper,
+                            step,
+                            explicit_step,
+                        } => CheckedSubscriptArg::Slice {
+                            lower: self.optional(lower.as_deref()),
+                            upper: self.optional(upper.as_deref()),
+                            step: self.optional(step.as_deref()),
+                            explicit_step: *explicit_step,
+                        },
+                        SubscriptArg::KeywordSlice {
+                            name,
+                            lower,
+                            upper,
+                            step,
+                            explicit_step,
+                        } => CheckedSubscriptArg::KeywordSlice {
+                            name: name.clone(),
+                            lower: self.optional(lower.as_deref()),
+                            upper: self.optional(upper.as_deref()),
+                            step: self.optional(step.as_deref()),
+                            explicit_step: *explicit_step,
+                        },
+                    })
+                    .collect(),
+            },
+            ExprKind::TString { parts, raw } => CheckedOp::TString {
+                parts: parts
+                    .iter()
+                    .map(|part| match part {
+                        TStringPart::Literal(text) => CheckedTStringPart::Literal(text.clone()),
+                        TStringPart::Expr(value) => CheckedTStringPart::Expr(self.expr(value)),
+                    })
+                    .collect(),
+                raw: *raw,
+            },
+            // A lambda node has no operands, but its hidden definition's
+            // body is built exactly like a nested `def` statement's body so
+            // the body's checked facts become checked nodes.
+            ExprKind::Lambda { def } => {
+                self.block(std::slice::from_ref(def));
+                CheckedOp::Lambda
             }
         }
-        children
+    }
+
+    fn optional(&mut self, expression: Option<&Expr>) -> Option<CheckedNodeId> {
+        expression.map(|expression| self.expr(expression))
+    }
+
+    fn kwargs(&mut self, kwargs: &[KwArg]) -> Vec<CheckedKwArg> {
+        kwargs
+            .iter()
+            .map(|kwarg| CheckedKwArg {
+                name: kwarg.name.clone(),
+                value: self.expr(&kwarg.value),
+            })
+            .collect()
+    }
+
+    /// A type argument builds the nodes of its lifted applications only.
+    fn param_args(&mut self, arguments: &[ParamArg]) -> Vec<CheckedParamArg> {
+        arguments
+            .iter()
+            .map(|argument| self.param_arg(argument))
+            .collect()
+    }
+
+    fn param_arg(&mut self, argument: &ParamArg) -> CheckedParamArg {
+        match argument {
+            ParamArg::Type(ty) => {
+                self.type_applications(ty);
+                CheckedParamArg::Type(ty.clone())
+            }
+            ParamArg::Value(value) => CheckedParamArg::Value(self.expr(value)),
+            ParamArg::Named { name, value } => CheckedParamArg::Named {
+                name: name.clone(),
+                value: Box::new(self.param_arg(value)),
+            },
+        }
     }
 
     /// Build the node of each expression inside `ty` the check named a

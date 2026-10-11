@@ -12,7 +12,7 @@ fn compiler_driver_runs_the_authoritative_pipeline() {
     // A module constant is a parameter expression, not a module binding:
     // its read in `main` is the parameter value the check bound.
     assert!(program.checked().expressions().iter().any(|expression| {
-        matches!(&expression.syntax.kind, mojito::ast::ExprKind::Identifier(name) if name == "n")
+        matches!(&expression.op, mojito::checked::CheckedOp::Identifier(name) if name == "n")
             && expression
                 .adjustments
                 .iter()
@@ -95,7 +95,7 @@ fn checked_boundary_carries_types_categories_edges_and_adjustments() {
     assert!(
         expressions
             .iter()
-            .flat_map(|node| &node.children)
+            .flat_map(|node| node.op.operands())
             .all(|child| (child.0 as usize) < expressions.len())
     );
 }
@@ -110,8 +110,8 @@ fn checked_hir_and_mir_retain_selected_trait_call_effects() {
 
     let checked_call = program.checked().expressions().iter().find(|expression| {
         matches!(
-            &expression.syntax.kind,
-            mojito::ast::ExprKind::MethodCall { method, .. } if method == "run"
+            &expression.op,
+            mojito::checked::CheckedOp::MethodCall { method, .. } if method == "run"
         )
     });
     assert_eq!(
@@ -2198,7 +2198,7 @@ fn discovery_scan_matches_the_checked_arena() {
             .iter()
             .map(|node| {
                 (
-                    node.syntax.source_span(),
+                    node.location(),
                     node.ty.clone(),
                     node.place_ty.clone(),
                     node.binding_ty.clone(),

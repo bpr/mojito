@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R628**.
+Next free ID: **R629**.
 
 ## Ordered Work
 
@@ -4759,22 +4759,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R614 A checked expression clones its whole syntax subtree, where an
-  upstream op holds only itself**
-
-  `CheckedExpr::syntax` is a full clone of the node's `Expr`, so the
-  checked arena grows quadratically with nesting depth.
-  - The lever: `CheckedOp`, the node's own `ExprKind` with each child
-    expression replaced by its `CheckedNodeId`; it mirrors `ExprKind`'s
-    variants and invents none.
-  - HIR and MIR keep reading syntax through a transitional
-    `CheckedTables::syntax_of(CheckedNodeId) -> Expr` until R623.
-  - Done when `CheckedExpr` holds no `Expr` and the probe fixtures and
-    Hello World run.
-  - Plan: `R604-a-package-s-checked-body-is-plan.md`, slice 5.
-  - Depends on nothing.
-  - Model: Fable, Not Planned.
-
 - [ ] **R615 A statement has no checked node, where upstream's is an op**
 
   The checked arena holds expressions only, so a statement's binding,
@@ -4886,6 +4870,18 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     `--backend pliron`.
   - Plan: `R604-a-package-s-checked-body-is-plan.md`, slice 6.
   - Depends on R616, R618, R619, R620, R621, R622.
+  - Model: Opus, Not Planned.
+
+- [ ] **R628 A checked op's type operand is annotation syntax, where
+  upstream's is a resolved type attribute**
+
+  `CheckedOp::TypeValue` and `CheckedParamArg::Type` hold the `ast::Type`
+  as written, which can itself hold `Expr`s.
+  - The lever: the op holds the checked `Ty` or `ParamValue`, with an
+    annotation's `ComptimeApplication` nodes as its operands rather than
+    nodes MIR finds by span.
+  - Done when no `CheckedOp` variant holds an `ast::Type`.
+  - Depends on R623.
   - Model: Opus, Not Planned.
 
 - [ ] **R624 The check writes fact records for a later pass to gather into

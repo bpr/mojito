@@ -12,8 +12,8 @@
 
 use mojito_ast::ast::{Expr, ExprKind, Stmt, StmtKind};
 use mojito_checked::checked::{
-    CheckedDeclId, CheckedExpr, CheckedNodeId, CheckedProgram, CheckedTables, EffectFacts,
-    SemanticAdjustment, ValueCategory,
+    CheckedDeclId, CheckedExpr, CheckedNodeId, CheckedOp, CheckedProgram, CheckedTables,
+    EffectFacts, SemanticAdjustment, ValueCategory,
 };
 use mojito_common::token::DUMMY_SPAN;
 use mojito_types::types::Ty;
@@ -856,15 +856,15 @@ struct Lower {
 
 impl Lower {
     fn checked_place(&self, node: &CheckedExpr) -> Option<HirPlace> {
-        match &node.syntax.kind {
-            ExprKind::Identifier(_) => Some(HirPlace {
+        match &node.op {
+            CheckedOp::Identifier(_) => Some(HirPlace {
                 owner: node.binding?,
                 root_ty: node.place_ty.clone()?,
                 projections: Vec::new(),
                 ty: node.place_ty.clone()?,
             }),
-            ExprKind::Member { field, .. } => {
-                let base = self.checked.expression(*node.children.first()?)?;
+            CheckedOp::Member { object, field } => {
+                let base = self.checked.expression(*object)?;
                 let mut place = self.checked_place(base)?;
                 let ty = node.place_ty.clone()?;
                 let base_ty = place.ty.clone();
@@ -876,8 +876,8 @@ impl Lower {
                 place.ty = ty;
                 Some(place)
             }
-            ExprKind::Index { .. } => {
-                let base = self.checked.expression(*node.children.first()?)?;
+            CheckedOp::Index { object, index } => {
+                let base = self.checked.expression(*object)?;
                 let mut place = self.checked_place(base)?;
                 let ty = node.place_ty.clone()?;
                 let base_ty = place.ty.clone();
@@ -892,7 +892,7 @@ impl Lower {
                         });
                 let kind = match variant_index {
                     Some(index) => HirPlaceProjectionKind::Variant(index),
-                    None => HirPlaceProjectionKind::Index(*node.children.get(1)?),
+                    None => HirPlaceProjectionKind::Index(*index),
                 };
                 place.projections.push(HirPlaceProjection {
                     kind,
@@ -902,7 +902,7 @@ impl Lower {
                 place.ty = ty;
                 Some(place)
             }
-            ExprKind::TypeApply { .. } => {
+            CheckedOp::TypeApply { .. } => {
                 let (alternatives, index) =
                     node.adjustments
                         .iter()
@@ -1051,12 +1051,7 @@ impl Lower {
                 binding: node.binding,
                 effects: node.effects.clone(),
                 adjustments: node.adjustments.clone(),
-                children: node
-                    .children
-                    .iter()
-                    .filter_map(|id| self.checked.expression(*id))
-                    .map(|child| self.checked_expr(child))
-                    .collect(),
+                children: self.checked_children(node),
                 place: self.checked_place(node),
                 comprehension_bindings: node.comprehension_bindings.clone(),
             }
@@ -1093,8 +1088,8 @@ impl Lower {
                     .expression_ids_at(&expr.source_span())
                     .first()
                     .and_then(|id| self.checked.expression(*id))
-                    .filter(|node| node.syntax.syntax_id != expr.syntax_id)
-                    .map(|node| node.syntax.clone())
+                    .filter(|node| node.syntax_id != expr.syntax_id)
+                    .and_then(|node| self.checked.syntax_of(node.id))
                 else {
                     return;
                 };
@@ -1111,24 +1106,27 @@ impl Lower {
         );
     }
 
-    fn checked_expr(&self, node: &CheckedExpr) -> HirExpr {
-        HirExpr {
-            syntax: node.syntax.clone(),
+    fn checked_children(&self, node: &CheckedExpr) -> Vec<HirExpr> {
+        node.op
+            .operands()
+            .into_iter()
+            .filter_map(|id| self.checked_expr(self.checked.expression(id)?))
+            .collect()
+    }
+
+    fn checked_expr(&self, node: &CheckedExpr) -> Option<HirExpr> {
+        Some(HirExpr {
+            syntax: self.checked.syntax_of(node.id)?,
             checked: Some(node.id),
             ty: node.ty.clone(),
             category: node.category,
             binding: node.binding,
             effects: node.effects.clone(),
             adjustments: node.adjustments.clone(),
-            children: node
-                .children
-                .iter()
-                .filter_map(|id| self.checked.expression(*id))
-                .map(|child| self.checked_expr(child))
-                .collect(),
+            children: self.checked_children(node),
             place: self.checked_place(node),
             comprehension_bindings: node.comprehension_bindings.clone(),
-        }
+        })
     }
 
     fn statement(&self, mut syntax: Stmt) -> HirStmt {
@@ -1608,8 +1606,8 @@ fn checked_var_types(vars: &[String], nodes: &[CheckedExpr]) -> HashMap<VarId, T
         .enumerate()
         .filter_map(|(slot, runtime_name)| {
             let source_name = runtime_name.split("$shadow").next().unwrap_or(runtime_name);
-            let ty = nodes.iter().find_map(|node| match &node.syntax.kind {
-                ExprKind::Identifier(name) if name == source_name => {
+            let ty = nodes.iter().find_map(|node| match &node.op {
+                CheckedOp::Identifier(name) if name == source_name => {
                     node.place_ty.clone().or_else(|| node.ty.clone())
                 }
                 _ => None,
