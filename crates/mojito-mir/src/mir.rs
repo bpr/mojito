@@ -31,7 +31,6 @@ pub use mojito_checked::declaration::{
     FunctionDeclaration as MirFunctionDeclaration, StructDeclaration as MirStructDeclaration,
     TraitDeclaration, TraitRequirement,
 };
-use mojito_checked::interface::PackageInterface;
 use mojito_checked::unit::LoweringUnit;
 use mojito_common::timing;
 use mojito_common::token::{DUMMY_SPAN, SourceSpan};
@@ -406,10 +405,7 @@ pub fn lower_checked_program(checked: &CheckedProgram) -> MirProgram {
 /// As [`lower_checked_program`].
 pub fn lower_checked_program_importing(
     checked: &CheckedProgram,
-    package: Option<(
-        &PackageInterface,
-        &std::sync::Arc<text::package::PackageDeclarations>,
-    )>,
+    package: Option<&std::sync::Arc<text::package::PackageDeclarations>>,
 ) -> MirProgram {
     lower_program(checked, package).0
 }
@@ -594,10 +590,7 @@ pub fn lower_package_unit(
 
 fn lower_program(
     checked: &CheckedProgram,
-    package: Option<(
-        &PackageInterface,
-        &std::sync::Arc<text::package::PackageDeclarations>,
-    )>,
+    package: Option<&std::sync::Arc<text::package::PackageDeclarations>>,
 ) -> (MirProgram, Vec<std::ops::Range<usize>>) {
     let mut functions = Vec::new();
     let mut declarations = MirDeclarations {
@@ -676,7 +669,7 @@ fn lower_program(
     // The synthetic module initializer returns nothing and never raises.
     toplevel_fn.ret_ty = Some(Ty::None);
     functions.push(("__toplevel__".to_string(), toplevel_fn));
-    if let Some((_, compiled)) = package {
+    if let Some(compiled) = package {
         link::link_declarations(&mut declarations, compiled);
     }
     adopt_member_defaults(checked, &mut declarations, &mut invariant_errors);

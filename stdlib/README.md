@@ -18,11 +18,8 @@ from std.collections.optional import Optional
 from std.math import floor, ceil
 ```
 
-The older flat files (`stdlib/list.mojo`, `stdlib/dict.mojo`, and friends) are
-thin public re-export facades, so legacy examples such as `from list import
-List` still work when `stdlib/` is on the search path without maintaining a
-second implementation. Underscore-prefixed implementation types are available
-only from their authoritative `std` modules.
+A program always imports the library as `std`, wherever its search roots
+point, as upstream's toolchain does.
 
 - `std/collections/array.mojo` — a fixed-size `Array[T: AnyType, length: Int]`
   backed by an `UnsafePointer[T]`, with conditional

@@ -893,10 +893,10 @@ lowering unit, one record per library declaration, and one module table
 holding each module's link record, one file per package. The bundled library's is the
 only producer today (`src/package.rs`). No part of a package is MIR text:
 it is a header followed by bytecode records, as upstream's package is
-MLIR bytecode throughout. The format line is `mojito-package 27`.
+MLIR bytecode throughout. The format line is `mojito-package 28`.
 
 ```text
-mojito-package 27
+mojito-package 28
 <the header's length, 8 bytes little-endian>
 <the header, as bytecode>
 <the payload: every record, as bytecode>
@@ -906,7 +906,7 @@ mojito-package 27
   (`package`, `compiler`; no library root, since the package names each
   file relative to its library's root and the reader joins its own,
   `mojito_checked::package::LibraryRoot`), the payload's length, and the payload
-  range of the interface and of the declaration directory. A reader refuses a header whose ranges leave the payload or
+  range of the declaration directory. A reader refuses a header whose range leaves the payload or
   whose payload length differs.
 - The declaration directory (`mojito_checked::package::DeclarationDirectory`)
   is read in place. Every name it holds is written once, in one string
@@ -1000,15 +1000,13 @@ mojito-package 27
   `ComptimeValues`, `TypeAliases`, and `SimdLengthBinders`, the last keyed
   by the binders' owner); no module has a checker record of its own.
 - The importer maps the file (`PackageBytes`, `memmap2`) and decodes only
-  the header and the interface eagerly. A cached package is written to
+  the header eagerly. A cached package is written to
   a private partial file and renamed over its path, and removed only by
   unlinking, so a mapping's bytes never change under it. Link records are
   copied out of the mapping, once per process, since the linker that
-  reads them sits below the package's declarations. Whether a statement
-  comes from a module the package compiled is the module table's answer
-  (`PackageDeclarations::compiles`).
-- The interface is `postcard` of `PackageInterface`: the names of the
-  declarations the package's modules make.
+  reads them sits below the package's declarations. The package holds
+  no interface of its own: every program imports it (format 28 dropped
+  the list of its top-level names a program once had to avoid).
 - A unit's record is `postcard` of its file table (each file id's optional
   path, relative to the library's root; every statement's module, every
   expression's source, and every checked site's and default wrapper's

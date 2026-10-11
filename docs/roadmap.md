@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R606**.
+Next free ID: **R609**.
 
 ## Ordered Work
 
@@ -49,21 +49,6 @@ belongs to is named in its title.
 Scope: what remains of the plan's stages, and what the pipeline order still
 leaves to close. A defect found on the way is filed by its kind; a
 divergence from the pin goes to a catch-up track, however small.
-
-- [ ] **R605 (P6) A program that redeclares a library name compiles the
-  library from source**
-
-  Problem: when a program's link replays a library module, or its own
-  statements reuse a name the package declares, Mojito drops the package
-  and compiles the whole library from source, where the pin imports its
-  `std.mojoc` regardless and never compiles `std`.
-  - `compiler.rs::imports_cleanly` decides the fallback.
-  - This fallback and `MOJITO_STD_PACKAGE=0` are why the installed bundle
-    still ships `share/mojito/stdlib`; upstream's toolchain ships no `std`
-    source.
-  - Found while landing R566 (2026-10-10).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
 
 ### Native Backend
 
@@ -3712,6 +3697,22 @@ for it, and an entry that waits on another names it. Five divergences are
 retained on purpose and re-probed rather than fixed; they are listed in
 [`docs/non-goals.md`](non-goals.md).
 
+- [ ] **R606 A diagnostic names an entry declaration by its linked name**
+
+  Problem: an error about the entry's own `struct List` says
+  `'__module$$$main$$$List'`, where the pin says `'List'`.
+  - The entry's declaration of a name the library links bare, a builtin
+    identity, or a prelude name takes the entry module's linked name
+    (`module::entry_item_name`), and the checker prints a struct's linked
+    name as it is.
+  - Library types leak the same way (`__module$list$List`, and R68's
+    `__module$hasher$default_hasher`).
+  - The lever: diagnostics spell a type through `unqualified_type_name`,
+    as runtime type names already do.
+  - Found while landing R605 (2026-10-10).
+  - Depends on nothing.
+  - Model: Fable, Not Planned.
+
 - [ ] **R577 A struct conforms to a compiler-known trait it never
   declares, such as `Boolable` or `Sized`**
 
@@ -4618,6 +4619,28 @@ below is a candidate port toward Mojo's shape, and a port is preferred over any
 new bridge (2026-09-07 direction). The ports are independent of each other, and
 an entry that waits on another names it. Four runtime services are
 deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
+
+- [ ] **R607 The bundled publics keep bare linked names the compiler
+  recognizes by spelling**
+
+  The library's `List`, `range`, `Writer`, `Slice`, and their kin link
+  under their bare names, and the checker finds them by that spelling,
+  while upstream names every declaration by its module
+  (`std.collections.list.List`).
+  - `implicit_public_identity` and `builtin_module_exports`
+    (`crates/mojito-module/src/module.rs`) keep the names bare; checker
+    sites match `"List"`, `"String"`, `"Slice"`, and others directly.
+  - The entry's own declaration of such a name is qualified instead
+    (`module::entry_item_name`, R605), so a program can shadow one, but no
+    other module's declarations are.
+  - Running a library file as the entry fails for the same reason:
+    `mojito run stdlib/std/collections/optional.mojo` reports an origin
+    error, and `list.mojo`, `string.mojo`, and `dict.mojo` fail their
+    checks, since the file's declarations are renamed while the checker
+    still recognizes them by spelling.
+  - Found while landing R605 (2026-10-10).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
 
 - [ ] **R594 A trait member's `Self` is respelled `_Self` in its syntax**
 

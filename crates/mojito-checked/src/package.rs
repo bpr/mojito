@@ -966,12 +966,6 @@ impl PackageDeclarations {
         Some(self.directory.payload.get(&module.link))
     }
 
-    /// Whether a declaration stamped with `module` comes from one of the
-    /// package's modules, so its body is in the package.
-    pub fn compiles(&self, module: Option<&str>) -> bool {
-        module.is_some_and(|module| self.modules.iter().any(|(_, path)| path == module))
-    }
-
     /// The lowered part of the declaration at `entry`, decoded on first
     /// use.
     pub fn lowered(&self, entry: usize) -> Option<&LoweredDeclaration> {

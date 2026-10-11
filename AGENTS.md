@@ -215,8 +215,8 @@ verification happens. In-session verification must take seconds, not hours:
   heavy lane, days later; `scripts/check-parity-manifest` now catches them in
   the default gate, so run it after hand-editing either manifest.
 - CLI: `cargo run -- <lex|parse|check|own|run> [FILE]`
-- Module roots: repeat `--module-path PATH` / `-I PATH`; use `--stdlib PATH`
-  to replace the bundled standard-library root.
+- Module roots: repeat `--module-path PATH` / `-I PATH`; `--stdlib PATH` is
+  another search root. `std` always comes from the bundled library.
 
 The memory-heavy corpus sweeps are their own lane
 (`scripts/check-pliron-heavy`, `tests/heavy/`): never run them beside the

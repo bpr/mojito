@@ -962,3 +962,68 @@ fn a_rooted_module_is_named_by_its_path_whichever_import_reaches_it() {
         .unwrap();
     assert_eq!(execution.output, "42\n");
 }
+
+#[test]
+fn an_entry_declaration_of_a_bare_library_name_is_the_entry_modules_own() {
+    // The prelude links `List` and `range` bare; the entry's declarations of
+    // those names take the entry module's qualified name, so the library's
+    // stay in the program beside them, as Mojo keeps every declaration in
+    // its module's namespace.
+    let d = TempDir::new();
+    let main = d.write(
+        "main.mojo",
+        "struct List:\n    var x: Int\n    def __init__(out self, x: Int):\n        self.x = x\n\n\
+         def range(n: Int) -> Int:\n    return n * 2\n\n\
+         def main():\n    var values = [1, 2]\n    print(List(3).x, range(4), len(values))\n",
+    );
+    let program = link(&main).expect("link");
+    let own_list = mojito::module::entry_item_name("List");
+    let own_range = mojito::module::entry_item_name("range");
+    assert_eq!(declaration_count(&program, &own_list), 1);
+    assert_eq!(declaration_count(&program, "List"), 1);
+    assert_eq!(declaration_count(&program, &own_range), 1);
+    assert!(declaration_count(&program, "range") > 0);
+    assert_eq!(run(&main).unwrap(), "3 8 2\n");
+}
+
+#[test]
+fn an_entry_cannot_declare_a_name_it_imports_explicitly() {
+    let d = TempDir::new();
+    let main = d.write(
+        "main.mojo",
+        "from std.collections.list import List\n\n\
+         struct List:\n    var x: Int\n    def __init__(out self, x: Int):\n        self.x = x\n\n\
+         def main():\n    print(List(3).x)\n",
+    );
+    let error = link(&main).expect_err("a redefinition");
+    assert!(
+        matches!(&error, ModuleError::Redefinition { name } if name == "List"),
+        "unexpected error: {error}"
+    );
+}
+
+#[test]
+fn std_resolves_at_the_bundled_library_whatever_the_roots_hold() {
+    // A `std` beside the entry or under a search root never replaces the
+    // bundled library, as `mojo` always reads `std` from its own package.
+    let d = TempDir::new();
+    d.write("src/std/__init__.mojo", "");
+    d.write("src/std/bit.mojo", "def special() -> Int:\n    return 7\n");
+    d.write("lib/std/__init__.mojo", "");
+    d.write("lib/std/bit.mojo", "def special() -> Int:\n    return 7\n");
+    let main = d.write(
+        "src/main.mojo",
+        "from std.bit import special\n\ndef main():\n    print(special())\n",
+    );
+    let error = mojito::link_with_options(
+        &main,
+        LinkOptions {
+            search_roots: vec![d.0.join("lib")],
+        },
+    )
+    .expect_err("the bundled std.bit has no `special`");
+    assert!(
+        matches!(&error, ModuleError::NameNotFound { module, name } if module == "std.bit" && name == "special"),
+        "unexpected error: {error}"
+    );
+}

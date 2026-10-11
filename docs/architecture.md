@@ -119,8 +119,7 @@ import (every compilation that links the bundled library):
 - **The package file** (`mir::text::package`) is a header followed by
   bytecode records, as upstream's package is bytecode throughout. The
   header holds the package's identity (package, compiler build identity,
-  library root) and the byte range of the checker interface
-  (`checked::interface::PackageInterface`) and of the
+  library root) and the byte range of the
   declaration directory (`checked::package::DeclarationDirectory`). That
   directory holds every name once, in one string section, and places each
   library module once, by dotted name, with its link record, one record
@@ -128,7 +127,7 @@ import (every compilation that links the bundled library):
   and holds its signature masks and the range of the unit it lowers
   from, as an MLIR function op names its symbol once and holds its
   region. The importer maps the
-  file (`PackageBytes`), decodes its header and interface, and reads the
+  file (`PackageBytes`), decodes its header, and reads the
   directory in place, looking a name up by binary search over the mapped
   rows; declarations and units decode from their own ranges on demand:
   Hello World decodes three of 251 declaration records and lowers three
@@ -200,11 +199,10 @@ import (every compilation that links the bundled library):
   position in the search order (`Linker::find_at_root`), as upstream's
   importer finds a module in a package: no library file is probed,
   canonicalized, or read.
-- **The interface** is what an importer reads of the package as a whole:
-  the top-level names of the package's modules, from which, with the
-  module table (`PackageDeclarations::compiles`), the driver decides that a
-  program can import the package (no statement of the program comes from
-  one of the package's modules or redeclares one of those names). The check reads none of it. A callable's
+- **Every program imports the package.** The driver links once, against
+  the package (`Compiler::compile_linking`); a program that cannot link
+  against it is an error, never a compile of the library's source, as
+  upstream's importer always reads `std.mojoc`. A callable's
   transfer and call-through effect summaries ride in its declaration's
   record; the check reads one the first time a call names the callable and
   keeps it in the pass's effect map (`Checker::callee_transfer_effects`),
@@ -254,7 +252,8 @@ import (every compilation that links the bundled library):
   module by path, and each declaration's record with every table key it
   holds and, for a struct, every method it declares. A residue holds no binding owner, span-keyed
   fact, syntax identity, or parameter hole, and encoding a table that
-  holds one fails the build, which then compiles the library from source.
+  holds one fails the build; a development build then compiles the library
+  from source, after one warning.
   It is bytecode (`postcard`); a default argument or a conformance
   condition in it stays AST, stamped on decoding with the path the
   importer reached the module by (`ast::decoding_from`).
@@ -343,10 +342,14 @@ import (every compilation that links the bundled library):
   writes its package to `target/mojito-cache` the first time it needs it,
   as upstream's build system builds `std.mojoc`. Editing the library takes a compiler rebuild,
   which every `cargo` command does, as an upstream toolchain keeps its
-  package until the library is rebuilt. A program that declares
-  one of the package's names again, as a second copy of a bundled module
-  would, is linked again from source and compiles the library from source.
-  So does `MOJITO_STD_PACKAGE=0`, or `Compiler::with_std_package(false)`.
+  package until the library is rebuilt. An installed bundle ships the
+  package and no library source, as upstream's ships no `std` source:
+  `module::installed_prefix` finds the bundle by its `share/mojito/`
+  directory, and its library root names where the package's files are,
+  not a directory that exists. `MOJITO_STD_PACKAGE=0` and
+  `Compiler::with_std_package(false)` compile the library from source in a
+  development build only; an installed compiler refuses them, and refuses
+  to `precompile`.
 - **Divergences.** Upstream's package holds each body as typed `lit` ops;
   Mojito's holds the body's syntax beside the check's facts keyed by
   occurrence, its checked handoff's own shape (`docs/roadmap.md`,
@@ -688,6 +691,24 @@ package needs. Import bindings are rewritten to those names, so two modules can 
 the same source name without merging declarations or overload sets. A module
 exports top-level `def`, `struct`, `trait`, and `comptime` declarations except
 `main`; wildcard imports omit underscore-prefixed names.
+
+The entry module's declarations keep their source names, except that one
+whose name a loaded module links bare (the bundled publics
+`implicit_public_identity` keeps unqualified, such as `List` or `range`),
+a compiler builtin identity (`builtin_module_exports`, such as `Slice`), or
+a prelude name (such as `String`) takes the entry module's qualified name
+(`module::entry_item_name`, module `__main__`), as every Mojo declaration
+lives in its module's namespace: the entry's `struct List` shadows the
+prelude's in the entry and never meets the library's, nor a spelling the
+compiler recognizes the library's by. An
+imported module named `__main__` would share that prefix; nothing rejects
+it. A name the entry imports explicitly cannot be declared again
+(`ModuleError::Redefinition`), as the pin rejects it.
+
+An absolute import of `std.*` resolves at the bundled library's root alone
+(the package's module table, or a development build's library source),
+never beside the importer or under a search root, as upstream's toolchain
+always reads `std` from the package it ships.
 
 Each lexical import scope separately records names established by explicit
 imports. Repeating the same target is idempotent and an explicit import may

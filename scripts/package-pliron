@@ -38,12 +38,13 @@ cp target/release/libmojito_runtime.a "${OUT}/lib/libmojito_runtime.a"
 # standard library from `<exe>/../lib/mojito/std.mojoc`, which it refuses to
 # compile without, as upstream ships `lib/mojo/std.mojoc` built by `mojo
 # precompile`. The package names its files relative to the library's root,
-# so it reads wherever the bundle is unpacked. The library's source still
-# ships: a program that redeclares a library name compiles it from source.
-cp -r stdlib "${OUT}/share/mojito/stdlib"
+# so it reads wherever the bundle is unpacked, and the bundle ships no
+# library source, as upstream's ships no `std` source. The same release
+# binary, run from this tree, precompiles it, so the package carries the
+# bundled compiler's build identity.
 echo "==> precompiling the standard library"
-env -u MOJITO_STD_PACKAGE -u MOJITO_CACHE_DIR "${OUT}/bin/mojito" precompile \
-    "${OUT}/share/mojito/stdlib/std" -o "${OUT}/lib/mojito/std.mojoc"
+env -u MOJITO_STD_PACKAGE -u MOJITO_CACHE_DIR target/release/mojito precompile \
+    stdlib/std -o "${OUT}/lib/mojito/std.mojoc"
 cp LICENSE "${OUT}/share/doc/LICENSE"
 cat > "${OUT}/share/doc/COMPAT.md" <<EOF
 # Toolchain compatibility

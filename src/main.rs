@@ -1,30 +1,10 @@
 use mojito::{
-    BackendKind, Compiler, CompilerError, LinkOptions, ModuleError, ParseError, Stmt, lex, parse,
+    BackendKind, Compiler, CompilerError, LinkOptions, ModuleError, ParseError, lex,
     parse_diagnostics,
 };
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
-
-/// Obtain the program to check/run: when a real file path is given, **link** it
-/// with its imported modules (`from module import …`); for stdin (or `-`), parse
-/// the source alone (imports left unresolved — there is no base directory). Either
-/// way, **compile-time elaboration** resolves `comptime if`/`comptime for` before
-/// the program is handed to the checker.
-fn load_program(file: Option<&str>, link_options: &LinkOptions) -> Result<Vec<Stmt>, String> {
-    let program = match file {
-        Some(path) if path != "-" => {
-            let source = read_source(file).map_err(|e| format!("cannot read input: {e}"))?;
-            mojito::link_source_with_options(&source, Path::new(path), link_options.clone())
-                .map_err(|e| format_module_error(&e, path, &source))?
-        }
-        _ => {
-            let source = read_source(file).map_err(|e| format!("cannot read input: {e}"))?;
-            parse(&source).map_err(|e| format_parse_error(file.unwrap_or("-"), &source, &e))?
-        }
-    };
-    mojito::elaborate(program).map_err(|e| e.to_string())
-}
 
 /// mojito doubles as a small **syntax-analysis tool**. With no arguments it
 /// runs the built-in demo; otherwise the first argument selects a pipeline stage
@@ -33,7 +13,7 @@ fn load_program(file: Option<&str>, link_options: &LinkOptions) -> Result<Vec<St
 /// ```text
 /// mojito lex   [FILE]   # the token stream, one per line
 /// mojito parse [FILE]   # the parsed AST (pretty-printed)
-/// mojito check [FILE]   # lex + parse + type-check; report ok / the error
+/// mojito check [FILE]   # compile through ownership; report ok / the error
 /// mojito run   [FILE]   # the full pipeline; print output + final bindings
 /// mojito emit-mir [FILE] # compile and print executable textual MIR
 /// mojito exec  [FILE]   # execute a verified textual MIR artifact
@@ -105,8 +85,8 @@ fn run_command(command: Option<&str>, file: Option<&str>, cli: &CliArgs) -> Exit
         None => ExitCode::SUCCESS,
         Some("lex") => stage("lex", file, run_lex),
         Some("parse") => stage_parse(file),
-        Some("check") => program_stage("check", file, &cli.link_options, run_check),
-        Some("own") => program_stage("own", file, &cli.link_options, run_own),
+        Some("check") => stage_check("check", file, &cli.link_options, CompilerError::to_string),
+        Some("own") => stage_check("own", file, &cli.link_options, describe_ownership),
         Some("run") => stage_run(file, cli),
         Some("emit-mir") => stage_emit_mir(file, &cli.link_options),
         Some("compile") => stage_compile(file, cli),
@@ -271,26 +251,38 @@ fn format_module_error(err: &ModuleError, entry_path: &str, entry_source: &str) 
 
 /// Run a stage that operates on the **linked program** (so `from module import …`
 /// is resolved when a file path is given). Used by `check`/`own`.
-fn program_stage(
+/// `check` and `own`: compile the program as `run` does, through ownership
+/// analysis and drop elaboration, importing the bundled library's package,
+/// and report `ok` or the first error, described by `describe`.
+fn stage_check(
     name: &str,
     file: Option<&str>,
     link_options: &LinkOptions,
-    f: fn(&[Stmt]) -> Result<(), String>,
+    describe: fn(&CompilerError) -> String,
 ) -> ExitCode {
+    let compiler = Compiler::new(link_options.clone(), BackendKind::Vm);
     let _frontend = mojito::timing::span("frontend");
-    let program = match load_program(file, link_options) {
-        Ok(p) => p,
-        Err(e) => {
-            eprintln!("{name} error: {e}");
-            return ExitCode::FAILURE;
+    match compile_input_describing(&compiler, file, describe) {
+        Ok(_) => {
+            println!("ok");
+            ExitCode::SUCCESS
         }
-    };
-    match f(&program) {
-        Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
             eprintln!("{name} error: {e}");
             ExitCode::FAILURE
         }
+    }
+}
+
+/// `own`'s description of an error: an ownership violation names its source
+/// byte range.
+fn describe_ownership(error: &CompilerError) -> String {
+    match error {
+        CompilerError::Ownership(error) => {
+            let (start, end) = error.span();
+            format!("{error} (bytes {start}..{end})")
+        }
+        error => error.to_string(),
     }
 }
 
@@ -671,6 +663,16 @@ fn compile_input(
     compiler: &Compiler,
     file: Option<&str>,
 ) -> Result<mojito::CompiledProgram, String> {
+    compile_input_describing(compiler, file, CompilerError::to_string)
+}
+
+/// [`compile_input`], describing a failure other than a module error by
+/// `describe`.
+fn compile_input_describing(
+    compiler: &Compiler,
+    file: Option<&str>,
+    describe: fn(&CompilerError) -> String,
+) -> Result<mojito::CompiledProgram, String> {
     let source = {
         let _read = mojito::timing::span("input.read");
         read_source(file).map_err(|e| format!("cannot read input: {e}"))?
@@ -681,7 +683,7 @@ fn compile_input(
     }
     .map_err(|error| match &error {
         CompilerError::Module(module) => format_module_error(module, file.unwrap_or("-"), &source),
-        _ => error.to_string(),
+        _ => describe(&error),
     })
 }
 
@@ -775,7 +777,7 @@ fn print_usage() {
          commands:\n\
          \x20 lex   [FILE]   print the token stream (one per line)\n\
          \x20 parse [FILE]   print the parsed AST\n\
-         \x20 check [FILE]   type-check and report ok or the first error\n\
+         \x20 check [FILE]   compile and report ok or the first error\n\
          \x20 run   [FILE]   evaluate and print output + final bindings\n\
          \x20 emit-mir [FILE] compile and print executable textual MIR\n\
          \x20 compile [FILE] native-compile via --backend pliron\n\
@@ -885,59 +887,6 @@ fn run_lex(source: &str) -> Result<(), String> {
 /// `check`: type-check the linked program; report success or the first error.
 /// Runs the whole static pipeline once — checking, typed-MIR verification, and
 /// ownership all consume the same checked program.
-fn run_check(program: &[Stmt]) -> Result<(), String> {
-    mojito::validate_module_scope(program).map_err(|e| e.to_string())?;
-    let checked = {
-        let _check = mojito::timing::span("check");
-        mojito::check_program(program).map_err(|e| e.to_string())?
-    };
-    let mir = {
-        let _lower = mojito::timing::span("mir.lower");
-        mojito::mir::lower_checked_program(&checked)
-    };
-    if !mir.invariant_errors.is_empty() {
-        return Err(format!(
-            "invalid checked program: {}",
-            mir.invariant_errors.join("; ")
-        ));
-    }
-    // The ownership analysis is part of a full check.
-    let _ownership = mojito::timing::span("ownership");
-    mojito::check_ownership_program(&mir).map_err(|e| e.to_string())?;
-    println!("ok");
-    Ok(())
-}
-
-/// `own` — type-check, then run the ownership (move) analysis over verified
-/// MIR. Reports `ok`, or the first move violation with its source byte range.
-fn run_own(program: &[Stmt]) -> Result<(), String> {
-    mojito::validate_module_scope(program).map_err(|e| e.to_string())?;
-    let checked = {
-        let _check = mojito::timing::span("check");
-        mojito::check_program(program).map_err(|e| e.to_string())?
-    };
-    let mir = {
-        let _lower = mojito::timing::span("mir.lower");
-        mojito::mir::lower_checked_program(&checked)
-    };
-    if !mir.invariant_errors.is_empty() {
-        return Err(format!(
-            "invalid checked program: {}",
-            mir.invariant_errors.join("; ")
-        ));
-    }
-    let _ownership = mojito::timing::span("ownership");
-    match mojito::check_ownership_program(&mir) {
-        Ok(()) => {
-            println!("ok");
-            Ok(())
-        }
-        Err(e) => {
-            let (start, end) = e.span();
-            Err(format!("{e} (bytes {start}..{end})"))
-        }
-    }
-}
 
 #[cfg(test)]
 mod cli_tests {

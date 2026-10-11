@@ -1,13 +1,11 @@
 //! The compiled package container, one file per package.
 //!
-//! It holds the package's checker interface, its one module table, which
-//! holds the record its importer's link reads for each of its source
+//! It holds its one module table, which holds the record its importer's link reads for each of its source
 //! modules, one record per library declaration (both
 //! `mojito_checked::package`), and each of its bodies as the check left
 //! it: one record per lowering unit (`mojito_checked::unit::CheckedUnit`),
 //! a declaration's checked syntax and the facts the check recorded for it.
-//! An importer maps the file and decodes its header and interface eagerly;
-//! it reads the declaration directory in place, a declaration's record the
+//! An importer maps the file and decodes its header eagerly; it reads the declaration directory in place, a declaration's record the
 //! first time one of its phases looks one of its names up (as upstream's
 //! importer resolves a declaration from bytecode on first lookup), a
 //! module's link record when its link reaches the module, and a unit only
@@ -21,14 +19,14 @@
 //! The container is a header followed by records:
 //!
 //! ```text
-//! mojito-package 27
+//! mojito-package 28
 //! <the header's length, 8 bytes little-endian>
 //! <the header, as bytecode>
 //! <the payload: every record, as bytecode>
 //! ```
 //!
 //! The header names the package and the compiler that built it, and holds
-//! the payload range of the interface and of the declaration directory
+//! the payload range of the declaration directory
 //! (`mojito_checked::package::DeclarationDirectory`). That directory holds
 //! every name once, in one string section, and places every module's link
 //! record, every declaration's record, and every function's unit: one row
@@ -41,7 +39,6 @@
 //! package is MIR.
 
 use crate::mir::{MirDeclarations, MirFunction, MirProgram};
-use mojito_checked::interface::PackageInterface;
 pub use mojito_checked::package::{
     DeclarationRecords, LibraryRoot, PackageBytes, PackageDeclarations,
 };
@@ -56,7 +53,7 @@ use std::ops::Range;
 use std::sync::{Arc, Mutex, OnceLock};
 
 /// The container format this compiler writes and reads.
-pub const PACKAGE_FORMAT: &str = "mojito-package 27";
+pub const PACKAGE_FORMAT: &str = "mojito-package 28";
 
 /// Who built a package from what: an importer refuses a package another
 /// compiler built, whose identity covers the library's sources.
@@ -71,12 +68,11 @@ pub struct PackageHeader {
     pub compiler: String,
 }
 
-/// A read package: its header, its checker interface, and its modules,
+/// A read package: its header, and its modules,
 /// declarations, and bodies, each decoded on demand.
 #[derive(Debug)]
 pub struct Package {
     pub header: PackageHeader,
-    pub interface: PackageInterface,
     /// Its module table and declaration records.
     pub declarations: Arc<PackageDeclarations>,
     pub bodies: PackageBodies,
@@ -281,7 +277,7 @@ impl std::error::Error for PackageError {}
 /// the checked `units` it was lowered from, naming every file relative to
 /// the library `root`.
 ///
-/// The package holds its interface, its declaration `records`, which hold
+/// The package holds its declaration `records`, which hold
 /// its module table and every struct and function declaration of
 /// `program`, and each of `units` with the names of the functions it
 /// places: every function of `program`, each once.
@@ -290,7 +286,6 @@ impl std::error::Error for PackageError {}
 pub fn write_package(
     header: &PackageHeader,
     root: &LibraryRoot,
-    interface: &PackageInterface,
     program: &MirProgram,
     units: &[(CheckedUnit, Vec<String>)],
     records: DeclarationRecords,
@@ -367,7 +362,6 @@ pub fn write_package(
         payload.extend_from_slice(bytes);
         start..payload.len()
     };
-    let interface = record(&bytecode(interface)?);
     let functions: HashMap<&str, &MirFunction> = program
         .functions
         .iter()
@@ -409,7 +403,6 @@ pub fn write_package(
         .map_err(PackageError)?;
     let directory = bytecode(&PackageDirectory {
         header: header.clone(),
-        interface,
         declarations,
         payload: payload.len(),
     })?;
@@ -426,7 +419,7 @@ pub fn same_body(left: &MirFunction, right: &MirFunction) -> bool {
     body_key(left) == body_key(right)
 }
 
-/// Read a package: its header and interface now, and its directory of
+/// Read a package: its header now, and its directory of
 /// modules, declarations, and bodies, which decode on demand, every file
 /// it names under the library `root`.
 pub fn read_package(bytes: PackageBytes, root: &LibraryRoot) -> Result<Package, PackageError> {
@@ -453,9 +446,6 @@ pub fn read_package(bytes: PackageBytes, root: &LibraryRoot) -> Result<Package, 
     directory.validate()?;
     drop(reading);
     let payload = Payload::new(bytes, start);
-    let decoding = mojito_common::timing::span("package.interface");
-    let interface = from_bytecode(payload.get(&directory.interface), "interface")?;
-    drop(decoding);
     let declarations = Arc::new(
         PackageDeclarations::read(payload.clone(), &directory.declarations, Some(root))
             .map_err(PackageError)?,
@@ -468,7 +458,6 @@ pub fn read_package(bytes: PackageBytes, root: &LibraryRoot) -> Result<Package, 
     );
     Ok(Package {
         header: directory.header,
-        interface,
         declarations: Arc::clone(&declarations),
         bodies: PackageBodies {
             payload,
@@ -494,7 +483,6 @@ type LoweredUnit = Result<Vec<(String, MirFunction)>, String>;
 #[derive(serde::Serialize, serde::Deserialize)]
 struct PackageDirectory {
     header: PackageHeader,
-    interface: Range<usize>,
     /// The declaration directory, which places every declaration record and
     /// every unit.
     declarations: Range<usize>,
@@ -503,13 +491,12 @@ struct PackageDirectory {
 }
 
 impl PackageDirectory {
-    /// Refuse a directory whose ranges leave the payload (the declaration
-    /// directory's rows are checked as they are read).
+    /// Refuse a directory whose declaration directory leaves the payload
+    /// (the declaration directory's rows are checked as they are read).
     fn validate(&self) -> Result<(), PackageError> {
-        for range in [&self.interface, &self.declarations] {
-            if range.start > range.end || !(..=self.payload).contains(&range.end) {
-                return Err(PackageError("a record overruns the payload".to_string()));
-            }
+        let range = &self.declarations;
+        if range.start > range.end || !(..=self.payload).contains(&range.end) {
+            return Err(PackageError("a record overruns the payload".to_string()));
         }
         Ok(())
     }

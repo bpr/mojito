@@ -188,6 +188,7 @@ assets/ok/dunder_index.mojo	main	exe-differential	sanitized
 assets/ok/dunder_setitem.mojo	main	exe-differential	sanitized
 assets/ok/dunder_vec2.mojo	main	exe-differential	sanitized
 assets/ok/element_store_from_same_list.mojo	main	exe-differential	sanitized
+assets/ok/entry_redeclares_library_names.mojo	main	exe-differential	sanitized
 assets/ok/env_roundtrip.mojo	main	exe-differential	sanitized
 assets/ok/errno_strerror.mojo	main	exe-differential	sanitized
 assets/ok/evaluated_default_argument.mojo	main	exe-differential	sanitized

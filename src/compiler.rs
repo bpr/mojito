@@ -225,7 +225,8 @@ pub struct Compiler {
     target: Option<crate::native::target::NativeTarget>,
     /// Import the bundled library's compiled package instead of checking
     /// its bodies again. `None` defers to the `MOJITO_STD_PACKAGE`
-    /// environment variable (`0` compiles the library from source).
+    /// environment variable (`0` compiles the library from source, a
+    /// development build's seam an installed compiler refuses).
     std_package: Option<bool>,
 }
 /// Reject runtime statements at module scope, matching Mojo's source rules.
@@ -297,7 +298,8 @@ impl Compiler {
         self
     }
     /// Import the bundled library's compiled package, or compile the
-    /// library from source, whatever the environment says.
+    /// library from source, whatever the environment says; an installed
+    /// compiler, which has no library source, refuses the second.
     #[must_use]
     pub const fn with_std_package(mut self, import: bool) -> Self {
         self.std_package = Some(import);
@@ -355,7 +357,7 @@ impl Compiler {
     /// source: only a link that read the package's module records
     /// ([`Self::compile_path`] and its siblings) imports it.
     pub fn compile_linked(&self, linked: &[Stmt]) -> Result<CompiledProgram, CompilerError> {
-        self.compile_importing(linked, None, &mut CheckContext::new(), None)
+        self.compile_importing(linked, None, &mut CheckContext::new(), false)
     }
 
     /// Compile `linked` from source, with what a package built from it
@@ -366,72 +368,66 @@ impl Compiler {
     ) -> Result<(CompiledProgram, PackageExports), CompilerError> {
         let mut context = CheckContext::new();
         context.record_interfaces();
-        let mut prepared = Vec::new();
-        let program = self.compile_importing(linked, None, &mut context, Some(&mut prepared))?;
+        let program = self.compile_importing(linked, None, &mut context, true)?;
         let interfaces = context
             .take_interfaces()
             .map_err(|error| CompilerError::Verify(vec![error]))?;
         let facts = context
             .take_facts()
             .map_err(|error| CompilerError::Verify(vec![error]))?;
-        Ok((
-            program,
-            PackageExports {
-                interfaces,
-                prepared,
-                facts,
-            },
-        ))
+        Ok((program, PackageExports { interfaces, facts }))
     }
 
     /// The bundled library's compiled package, when this compiler imports
     /// it; an installed compiler's missing or unreadable package is an
-    /// error.
+    /// error, as is an installed compiler told not to import it.
     fn std_package(&self) -> Result<Option<Arc<ImportedPackage>>, CompilerError> {
         let imports = self.std_package.unwrap_or_else(|| {
             std::env::var_os("MOJITO_STD_PACKAGE").is_none_or(|value| value != "0")
         });
         if !imports {
-            return Ok(None);
+            return match crate::module::installed_prefix() {
+                Some(prefix) => Err(CompilerError::Module(ModuleError::InstalledPackage {
+                    path: crate::package::installed_package(&prefix),
+                    reason: crate::package::NO_LIBRARY_SOURCE.to_string(),
+                })),
+                None => Ok(None),
+            };
         }
         crate::package::bundled_std_package().map_err(CompilerError::Module)
     }
 
-    /// Link with `link` and compile the result: importing the bundled
+    /// Link with `link` and compile the result, importing the bundled
     /// library's package when there is one, so the link reads each library
-    /// module from its record, and else, or when the program cannot import
-    /// it, linking every module from source.
+    /// module from its record, as upstream's importer reads `std.mojoc`: a
+    /// program that cannot link against the package is an error, never a
+    /// compile of the library's source.
     fn compile_linking(
         &self,
         link: impl Fn(Option<&ImportedPackage>) -> Result<LinkedProgram, ModuleError>,
     ) -> Result<CompiledProgram, CompilerError> {
-        if let Some(package) = self.std_package()?
-            && let Ok(linked) = link(Some(&package))
-            && imports_cleanly(&linked.statements, &package)
-        {
-            return self.compile_importing(
-                &linked.statements,
-                Some(importing(package, &linked.packaged)),
-                &mut CheckContext::new(),
-                None,
-            );
-        }
-        let linked = link(None).map_err(CompilerError::Module)?;
-        self.compile_importing(&linked.statements, None, &mut CheckContext::new(), None)
+        let package = self.std_package()?;
+        let linked = link(package.as_deref()).map_err(CompilerError::Module)?;
+        self.compile_importing(
+            &linked.statements,
+            package.map(|package| importing(package, &linked.packaged)),
+            &mut CheckContext::new(),
+            false,
+        )
     }
 
     /// Compile `linked`, importing `package` when there is one: the
     /// package's installed declaration interfaces are read beside the
     /// program's own statements, which are all `linked` holds, and only the
-    /// program's own are prepared, elaborated, and checked. A package build
-    /// (`exports`) records its prepared program there, and its check exports
-    /// its module constants as its elaboration resolved them.
+    /// program's own are prepared, elaborated, and checked. A package build's
+    /// (`exporting`) check exports its module constants as its elaboration
+    /// resolved them.
     fn compile_importing(
         &self,
         linked: &[Stmt],
         package: Option<(Arc<ImportedPackage>, InstalledInterfaces)>,
         context: &mut CheckContext,
-        exports: Option<&mut Vec<Stmt>>,
+        exporting: bool,
     ) -> Result<CompiledProgram, CompilerError> {
         let _compile = timing::span("compile");
         if let Some((_, installed)) = &package {
@@ -454,21 +450,19 @@ impl Compiler {
         // and finds the instances the entries reach.
         let own = {
             let _elaborate = timing::span("elaborate");
-            match exports {
-                Some(exports) => {
-                    let (elaborated, constants) =
-                        elaborate_exporting(&prepared).map_err(CompilerError::Comptime)?;
-                    context.record_elaborated(constants);
-                    *exports = prepared;
-                    elaborated
-                }
-                None => elaborate_importing(
+            if exporting {
+                let (elaborated, constants) =
+                    elaborate_exporting(&prepared).map_err(CompilerError::Comptime)?;
+                context.record_elaborated(constants);
+                elaborated
+            } else {
+                elaborate_importing(
                     &prepared,
                     ImportedScope {
                         installed: package.as_ref().map(|(_, installed)| installed),
                     },
                 )
-                .map_err(CompilerError::Comptime)?,
+                .map_err(CompilerError::Comptime)?
             }
         };
         if !self.allow_executable_module_scope {
@@ -493,9 +487,7 @@ impl Compiler {
             let _lower = timing::span("mir.lower");
             crate::mir::lower_checked_program_importing(
                 &checked,
-                package
-                    .as_deref()
-                    .map(|package| (&*package.interface, &package.declarations)),
+                package.as_deref().map(|package| &package.declarations),
             )
         };
         timing::count("mir_functions", mir.functions.len() as u64);
@@ -569,11 +561,9 @@ impl Compiler {
 }
 
 /// What the compilation of a package's program exports: what its check
-/// recorded of it as a whole, its check's library interface, and the
-/// program as its `prepare` left it.
+/// recorded of it as a whole and its check's library interface.
 pub(crate) struct PackageExports {
     pub interfaces: crate::checker::InterfaceExport,
-    pub prepared: Vec<Stmt>,
     /// What its check recorded, before the checked arena was built.
     pub facts: crate::checked::DiscoveryResult,
 }
@@ -596,23 +586,6 @@ fn importing(
     let _decode = timing::span("package.interfaces");
     let installed = InstalledInterfaces::reaching(&package.checked, packaged.iter().copied());
     (package, installed)
-}
-
-/// Whether `linked` can import `package`: the link replays no declaration
-/// of the package's modules, so no statement comes from one, and none of
-/// the program's own reuses a name the package declares, as a second copy
-/// of a packaged module, or an entry file inside the library, would.
-fn imports_cleanly(linked: &[Stmt], package: &ImportedPackage) -> bool {
-    linked.iter().all(|statement| {
-        let declared = match &statement.kind {
-            StmtKind::Def { name, .. }
-            | StmtKind::Struct { name, .. }
-            | StmtKind::Trait { name, .. }
-            | StmtKind::Comptime { name, .. } => package.interface.names.contains(name),
-            _ => false,
-        };
-        !declared && !package.declarations.compiles(statement.module.as_deref())
-    })
 }
 
 impl Default for Compiler {

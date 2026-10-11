@@ -1430,7 +1430,7 @@ fn contiguous_list_slice_bounds_abort() {
 fn abort_is_not_catchable() {
     // `os.abort` is an uncatchable trap: `try`/`except` observes only raised
     // errors, so the abort propagates to the top.
-    let src = "from os import abort\n\ndef main():\n    try:\n        abort(\"boom\")\n        print(\"unreachable\")\n    except e:\n        print(\"caught\", e)\n";
+    let src = "from std.os import abort\n\ndef main():\n    try:\n        abort(\"boom\")\n        print(\"unreachable\")\n    except e:\n        print(\"caught\", e)\n";
     let err = run_compiled(src).expect_err("abort escapes try/except");
     assert!(err.contains("abort: boom"), "unexpected error: {err}");
 }

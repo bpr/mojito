@@ -3921,10 +3921,12 @@ fn a_package_reads_back_to_the_bytes_it_was_written_as() {
             std::path::Path::new("/probe/main.mojo"),
         )
         .expect("compile");
-    // A package holds no module initializer, as the library build drops
-    // it: every body is a declared function's.
+    // A package's bodies are its units, which only a package build makes
+    // (`package::packaged_units`): this one holds its struct and trait
+    // declarations and its module table alone.
     let mut program = compiled.drop_elaborated_mir().clone();
-    program.functions.retain(|(name, _)| name != "__toplevel__");
+    program.functions.clear();
+    program.declarations.functions.clear();
     let program = &program;
     // Every declaration's record, opened as a package build's check opens
     // it: under its declaring module, holding the traits it declares. Each
@@ -3984,9 +3986,8 @@ fn a_package_reads_back_to_the_bytes_it_was_written_as() {
         stamped: String::new(),
         canonical: String::new(),
     };
-    let interface = mojito::interface::PackageInterface::default();
     let modules = records().modules;
-    let bytes = write_package(&header, &root, &interface, program, records()).expect("write");
+    let bytes = write_package(&header, &root, program, &[], records()).expect("write");
     let package = read_package(PackageBytes::Owned(bytes.clone()), &root).expect("read");
     assert!(!modules.is_empty());
     assert_eq!(package.declarations.modules().len(), modules.len());
@@ -4018,7 +4019,7 @@ fn a_package_reads_back_to_the_bytes_it_was_written_as() {
     assert!(package.bodies.failures().is_empty());
     assert!(package.declarations.failures().is_empty());
     assert_eq!(
-        write_package(&header, &root, &package.interface, &again, records()).expect("rewrite"),
+        write_package(&header, &root, &again, &[], records()).expect("rewrite"),
         bytes
     );
     let truncated = bytes[..bytes.len() - 4].to_vec();

@@ -21,7 +21,6 @@
 
 use crate::checked_package::PackagedModule;
 use crate::compiler::{Compiler, CompilerError};
-use crate::interface::PackageInterface;
 use crate::mir::MirProgram;
 use crate::mir::text::package::{
     LibraryRoot, PackageBodies, PackageBytes, PackageDeclarations, PackageHeader, read_package,
@@ -37,19 +36,24 @@ use std::sync::{Arc, OnceLock};
 
 /// An imported package, read once per process.
 ///
-/// It holds the module records its importer's link reads, the interface its
-/// importer's check reads, the declarations every phase of its importer
-/// reads (the check through its index of them), and its bodies.
+/// It holds the module records its importer's link reads, the declarations
+/// every phase of its importer reads (the check through its index of them),
+/// and its bodies.
 #[derive(Debug)]
 pub struct ImportedPackage {
     pub modules: PackageModules,
-    pub interface: Arc<PackageInterface>,
     /// The check's index of its declarations, each declaration's residue
     /// decoded on first lookup by each compilation.
     pub checked: Arc<crate::checker::DeclarationInterfaces>,
     pub declarations: Arc<PackageDeclarations>,
     pub bodies: PackageBodies,
 }
+
+/// Why an installed compiler neither compiles nor packages the library from
+/// source: its bundle ships the package alone, as upstream's toolchain
+/// ships `std.mojoc` and no `std` source.
+pub const NO_LIBRARY_SOURCE: &str =
+    "an installed compiler has no standard library source; it imports its package";
 
 /// The identity of this compiler build, which a package it reads must
 /// carry.
@@ -105,17 +109,21 @@ pub fn bundled_std_package() -> Result<Option<Arc<ImportedPackage>>, ModuleError
 /// Write the package of the library directory `directory` to `output`, as
 /// `mojo precompile <directory> -o <output>` writes upstream's.
 ///
-/// Only the bundled library precompiles: `directory` must be its `std`,
-/// and `output` must name a `std.mojoc` or `std.mojopkg`, since the file's
+/// Only a development build's bundled library precompiles: `directory`
+/// must be its `std`, and `output` must name a `std.mojoc` or `std.mojopkg`, since the file's
 /// stem is the package's name.
 ///
 /// # Errors
 ///
-/// Any other directory or output name, a library that does not package,
-/// or an output that cannot be written.
+/// An installed compiler, which has no library source; any other directory
+/// or output name, a library that does not package, or an output that
+/// cannot be written.
 pub fn precompile(directory: &Path, output: &Path) -> Result<(), String> {
     const UNSUPPORTED: &str =
         "precompiling a package other than the bundled `std` is not supported";
+    if installed_prefix().is_some() {
+        return Err(NO_LIBRARY_SOURCE.to_string());
+    }
     let root = bundled_root()
         .map(|root| root.join("stdlib"))
         .ok_or("there is no bundled standard library")?;
@@ -261,7 +269,6 @@ fn import(
         });
     Ok(ImportedPackage {
         modules: PackageModules::new(&root.stamped, modules),
-        interface: Arc::new(package.interface),
         checked: Arc::new(crate::checker::DeclarationInterfaces::new(Arc::clone(
             &package.declarations,
         ))),
@@ -295,15 +302,6 @@ fn build(root: &Path, header: &PackageHeader) -> Result<Vec<u8>, CompilerError> 
     let (linked, records) = link_source_recording(&source, &entry, LinkOptions::default())
         .map_err(CompilerError::Module)?;
     let (compiled, exports) = Compiler::default().compile_for_package(&linked)?;
-    // An importer reads every library declaration from the declaration
-    // interfaces, so a record holds none: each declaring module needs only
-    // its record.
-    let entry_module = entry.display().to_string();
-    let packaged: Vec<_> = exports
-        .prepared
-        .iter()
-        .filter(|statement| statement.module.as_deref() != Some(entry_module.as_str()))
-        .collect();
     // A declaration of a module the link recorded no row for is refused
     // when the records encode.
     let modules = records
@@ -321,12 +319,6 @@ fn build(root: &Path, header: &PackageHeader) -> Result<Vec<u8>, CompilerError> 
         })
         .collect::<Result<Vec<_>, String>>()
         .map_err(|error| CompilerError::Verify(vec![error]))?;
-    let interface = PackageInterface {
-        names: packaged
-            .iter()
-            .filter_map(|statement| declared_name(statement))
-            .collect(),
-    };
     let lowered = compiled.mir();
     let mut program = MirProgram {
         functions: Vec::new(),
@@ -360,7 +352,7 @@ fn build(root: &Path, header: &PackageHeader) -> Result<Vec<u8>, CompilerError> 
             program.declarations.traits.clone(),
         )
         .map_err(|error| CompilerError::Verify(vec![error]))?;
-    let bytes = write_package(header, &library, &interface, &program, &units, records)
+    let bytes = write_package(header, &library, &program, &units, records)
         .map_err(|error| CompilerError::Verify(vec![error.to_string()]))?;
     refuse_install_paths(&bytes, &library)?;
     refuse_unequal_units(&bytes, &program, &library)?;
@@ -522,17 +514,6 @@ fn prune(cache: &Path, current: &Path) {
     }
 }
 
-fn declared_name(statement: &crate::ast::Stmt) -> Option<String> {
-    use crate::ast::StmtKind;
-    match &statement.kind {
-        StmtKind::Def { name, .. }
-        | StmtKind::Struct { name, .. }
-        | StmtKind::Trait { name, .. }
-        | StmtKind::Comptime { name, .. } => Some(name.clone()),
-        _ => None,
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -545,7 +526,6 @@ mod tests {
         write_package(
             header,
             &library("/a/stdlib"),
-            &PackageInterface::default(),
             &MirProgram {
                 functions: Vec::new(),
                 declarations: MirDeclarations::default(),
@@ -595,8 +575,6 @@ mod tests {
         let module = package.declarations.modules().next().expect("one module");
         assert_eq!(module.path, "/b/stdlib/std/x.mojo");
         assert_eq!(module.canonical, "/b/stdlib/std/x.mojo");
-        assert!(package.declarations.compiles(Some("/b/stdlib/std/x.mojo")));
-        assert!(!package.declarations.compiles(Some("/a/stdlib/std/x.mojo")));
     }
 
     #[test]
@@ -737,7 +715,10 @@ mod tests {
                 .expect("links from the package")
                 .statements;
         let packaged = |statement: &&crate::ast::Stmt| {
-            package.declarations.compiles(statement.module.as_deref())
+            package
+                .declarations
+                .modules()
+                .any(|module| Some(module.path) == statement.module.as_deref())
         };
         // The program's own statements link as their source spells them.
         assert!(

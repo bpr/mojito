@@ -36,8 +36,8 @@ Commands:
 | ------- | ------------ |
 | `lex` | print the token stream, one token per line |
 | `parse` | print the parsed AST |
-| `check` | parse and type-check |
-| `own` | parse, type-check, and run ownership analysis |
+| `check` | compile as `run` does, through ownership analysis, and report `ok` or the first error |
+| `own` | `check`, naming an ownership error's source byte range |
 | `run` | compile and execute on the register VM |
 | `emit-mir` | compile and print canonical executable MIR |
 | `compile` | native-compile via the supported Pliron backend (requires the `backend-pliron` feature and LLVM 23.1) |
@@ -89,7 +89,9 @@ target/debug/mojito compile pure.mojo --backend pliron --emit exe -o pure
 `--module-path PATH` (or `-I PATH`) and explicit standard-library roots with
 `--stdlib PATH`; either spelling also accepts `--option=PATH`. Resolution checks
 the importing file's directory first, then CLI roots in their command-line order,
-then mojito's bundled `stdlib/` fallback:
+then mojito's bundled `stdlib/` fallback. An import of `std.*` resolves at the
+bundled library alone, as `mojo` always reads `std` from its own package: no
+directory or root can replace it.
 
 ```sh
 cargo run -- run -I vendor --module-path ../shared --stdlib ~/mojo/stdlib main.mojo

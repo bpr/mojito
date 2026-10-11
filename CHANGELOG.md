@@ -8,6 +8,22 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- Every program imports the standard library's package (R605), as the pin
+  always imports its `std.mojoc`: a program that declares a library name
+  again, such as `struct List`, `def range`, `struct Slice`, or `struct
+  String`, no longer drops the package and compiles the library from
+  source. The entry's declaration takes the entry module's own linked name
+  and shadows the library's there, so those programs now run as at the
+  pin; declaring a name the program imports explicitly is the link's
+  "invalid redefinition" error. `std.*` always resolves at the bundled
+  library, never at a `std/` beside the entry or under a search root, and
+  the flat `stdlib/` facades (`from list import List`, `from math import
+  floor`), which the pin rejects, are gone. `check` and `own` compile
+  through the driver, so they import the package too. An installed bundle
+  ships the package and no library source; there `MOJITO_STD_PACKAGE=0`
+  and `precompile` are errors. The package format is `mojito-package 28`,
+  without the list of library names a program had to avoid.
+
 - An installed compiler reads the standard library's package its bundle
   ships at `<prefix>/lib/mojito/std.mojoc` (R566), as upstream's toolchain
   ships `lib/mojo/std.mojoc`, and refuses to compile when it is missing or
@@ -18,8 +34,7 @@ to evolve under the `0.x` compatibility rules.
   longer records the root, so it reads wherever it is installed, and the
   build refuses one that names its root; it is keyed by the build id
   alone. The package format is `mojito-package 27`, and the package is
-  2.5 MB, from 3.0 MB. A program that redeclares a library name still
-  compiles the library from source (R605).
+  2.5 MB, from 3.0 MB.
 
 - The bundled library's package holds each body as checked (R546), as
   upstream's `.mojoc` holds each body's IR as its checks validated it: one

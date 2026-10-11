@@ -32,6 +32,8 @@ pub enum ModuleError {
     SelfImport { module: String },
     /// An empty module path used with a form other than named sibling imports.
     EmptyModulePath,
+    /// The entry module declares a name an explicit import already binds.
+    Redefinition { name: String },
     /// An installed compiler's standard-library package is missing, or is
     /// not one this compiler can read.
     InstalledPackage { path: PathBuf, reason: String },
@@ -93,6 +95,10 @@ impl std::fmt::Display for ModuleError {
                     "an empty relative module path requires named sibling imports"
                 )
             }
+            Self::Redefinition { name } => write!(
+                f,
+                "invalid redefinition of '{name}': an import already binds this name"
+            ),
             Self::InstalledPackage { path, reason } => write!(
                 f,
                 "cannot import the standard library package '{}': {reason}",
@@ -248,6 +254,12 @@ pub fn inject_prelude_with_options(
 /// can reach or shadow it.
 pub fn linked_item_name(module: &str, name: &str) -> String {
     implicit_public_identity(module, name).map_or_else(|| qualified(module, name), str::to_string)
+}
+
+/// The linked name of the entry module's top-level item `name`, for an item
+/// whose bare name a loaded module also links.
+pub fn entry_item_name(name: &str) -> String {
+    qualified(ENTRY_MODULE, name)
 }
 
 fn rewrite_expr(
@@ -603,59 +615,13 @@ fn remove_bound_names(body: &[Stmt], names: &mut HashMap<String, String>) {
 /// source declaration, so the module files export them through this table
 /// (mirroring the audited upstream export surface). The table is additive, so
 /// a module with real declarations — `std.math` — keeps them. Matched by
-/// canonical-path suffix so a replaced `--stdlib` root keeps the contract.
+/// canonical-path suffix, wherever the library is installed.
 fn builtin_module_exports(canon: &Path) -> Option<&'static [&'static str]> {
-    const TRAITS: &[&str] = &[
-        "AnyType",
-        "Movable",
-        "IsTriviallyMovable",
-        "Copyable",
-        "ImplicitlyCopyable",
-        "IsTriviallyCopyable",
-        "Deinitable",
-        "IsTriviallyDeinitable",
-    ];
-    const ORIGIN: &[&str] = &[
-        "Origin",
-        "OriginSet",
-        "ImmOrigin",
-        "MutOrigin",
-        "ImmStaticOrigin",
-        "UntrackedOrigin",
-        "MutUntrackedOrigin",
-        "ImmUntrackedOrigin",
-        "MutUnsafeAnyOrigin",
-        "ImmUnsafeAnyOrigin",
-    ];
-    const HASHABLE: &[&str] = &["Hashable"];
-    const HASHER: &[&str] = &["Hasher"];
-    const SLICE: &[&str] = &["Slice", "ContiguousSlice", "StridedSlice", "slice"];
-    const REFLECTION: &[&str] = &["_unqualified_type_name"];
-    const FFI: &[&str] = &["external_call"];
-    const SYS: &[&str] = &["size_of"];
-    const MATH: &[&str] = &["DivModable"];
     let normalized = canon.to_string_lossy().replace('\\', "/");
-    if normalized.ends_with("std/traits.mojo") {
-        Some(TRAITS)
-    } else if normalized.ends_with("std/origin.mojo") {
-        Some(ORIGIN)
-    } else if normalized.ends_with("std/hashlib/hash.mojo") {
-        Some(HASHABLE)
-    } else if normalized.ends_with("std/hashlib/hasher.mojo") {
-        Some(HASHER)
-    } else if normalized.ends_with("std/builtin/builtin_slice.mojo") {
-        Some(SLICE)
-    } else if normalized.ends_with("std/reflection/type_info.mojo") {
-        Some(REFLECTION)
-    } else if normalized.ends_with("std/ffi/__init__.mojo") {
-        Some(FFI)
-    } else if normalized.ends_with("std/sys/__init__.mojo") {
-        Some(SYS)
-    } else if normalized.ends_with("std/math.mojo") {
-        Some(MATH)
-    } else {
-        None
-    }
+    BUILTIN_MODULE_EXPORTS
+        .iter()
+        .find(|(suffix, _)| normalized.ends_with(suffix))
+        .map(|(_, names)| *names)
 }
 
 fn canonical(path: &Path) -> PathBuf {
@@ -902,13 +868,43 @@ impl<'p> Linker<'p> {
         }
         // The entry module's own top-level declarations shadow implicit prelude
         // names throughout the module, as `load_module` lets an imported
-        // module's locals do; an explicitly imported name stays a redeclaration.
+        // module's locals do; an explicitly imported name cannot be declared
+        // again.
         for name in body.iter().filter_map(declared_name) {
-            if !explicit_imports.contains(name) {
-                bindings.remove(name);
+            if explicit_imports.contains(name) {
+                return Err(ModuleError::Redefinition {
+                    name: name.to_string(),
+                });
             }
+            bindings.remove(name);
         }
         self.resolve_scoped_imports(&mut body, dir, importer, &bindings, &namespaces)?;
+        // A declaration lives in its module's namespace: one whose name a
+        // loaded module links bare, a compiler builtin identity, or a
+        // prelude name takes the entry module's qualified name, so it never
+        // meets the library's, whatever spelling the compiler knows it by.
+        let bare: HashSet<&str> = self
+            .exports
+            .values()
+            .flat_map(HashMap::values)
+            .map(String::as_str)
+            .filter(|target| !target.starts_with("__module$"))
+            .chain(
+                BUILTIN_MODULE_EXPORTS
+                    .iter()
+                    .flat_map(|(_, names)| names.iter().copied()),
+            )
+            .chain(PRELUDE_EXPORTS.iter().copied())
+            .collect();
+        let own: HashMap<String, String> = body
+            .iter()
+            .filter_map(declared_name)
+            .filter(|name| *name != "main" && bare.contains(name))
+            .map(|name| (name.to_string(), entry_item_name(name)))
+            .collect();
+        if !own.is_empty() {
+            rewrite_program(&mut body, &own, &HashMap::new());
+        }
         Ok(body)
     }
 
@@ -1459,7 +1455,8 @@ impl<'p> Linker<'p> {
     }
 
     /// Resolve an import's module. `level` is the leading-dot count (0 =
-    /// absolute: the importing file's directory, then each search root; 1 =
+    /// absolute: the importing file's directory, then each search root, or
+    /// the bundled root alone for `std`; 1 =
     /// same package, i.e. `from_dir`; each extra level climbs one
     /// directory). An absolute module found nowhere resolves to its missing
     /// file beside the importer, whose load reports it.
@@ -1480,13 +1477,24 @@ impl<'p> Linker<'p> {
             return Ok(self.filesystem_module(module_path_under(base, path), path));
         }
         Ok(self.find_module(from_dir, path).unwrap_or_else(|| {
-            self.filesystem_module(module_path_under(from_dir.to_path_buf(), path), path)
+            let base = path
+                .first()
+                .filter(|first| *first == STD_PACKAGE)
+                .and_then(|_| bundled_path("stdlib"))
+                .unwrap_or_else(|| from_dir.to_path_buf());
+            self.filesystem_module(module_path_under(base, path), path)
         }))
     }
 
     /// The absolute module `path` in the importing file's directory
-    /// `from_dir`, else under the first search root holding it.
+    /// `from_dir`, else under the first search root holding it. The
+    /// bundled library's `std` is found only at the bundled root, as
+    /// upstream's toolchain always reads `std` from the package it ships:
+    /// no directory or search root can replace it.
     fn find_module(&self, from_dir: &Path, path: &[String]) -> Option<ResolvedModule> {
+        if path.first().is_some_and(|first| first == STD_PACKAGE) {
+            return self.find_at_root(&bundled_path("stdlib")?, path);
+        }
         let local = module_path_under(from_dir.to_path_buf(), path);
         if local.exists() {
             return Some(self.filesystem_module(local, path));
@@ -1639,6 +1647,55 @@ fn module_path_under(mut base: PathBuf, path: &[String]) -> PathBuf {
     }
 }
 
+/// Each canonical module home's builtin exports, by path suffix
+/// ([`builtin_module_exports`]).
+const BUILTIN_MODULE_EXPORTS: &[(&str, &[&str])] = &[
+    (
+        "std/traits.mojo",
+        &[
+            "AnyType",
+            "Movable",
+            "IsTriviallyMovable",
+            "Copyable",
+            "ImplicitlyCopyable",
+            "IsTriviallyCopyable",
+            "Deinitable",
+            "IsTriviallyDeinitable",
+        ],
+    ),
+    (
+        "std/origin.mojo",
+        &[
+            "Origin",
+            "OriginSet",
+            "ImmOrigin",
+            "MutOrigin",
+            "ImmStaticOrigin",
+            "UntrackedOrigin",
+            "MutUntrackedOrigin",
+            "ImmUntrackedOrigin",
+            "MutUnsafeAnyOrigin",
+            "ImmUnsafeAnyOrigin",
+        ],
+    ),
+    ("std/hashlib/hash.mojo", &["Hashable"]),
+    ("std/hashlib/hasher.mojo", &["Hasher"]),
+    (
+        "std/builtin/builtin_slice.mojo",
+        &["Slice", "ContiguousSlice", "StridedSlice", "slice"],
+    ),
+    ("std/reflection/type_info.mojo", &["_unqualified_type_name"]),
+    ("std/ffi/__init__.mojo", &["external_call"]),
+    ("std/sys/__init__.mojo", &["size_of"]),
+    ("std/math.mojo", &["DivModable"]),
+];
+
+/// The module name the entry file's colliding declarations are qualified by.
+const ENTRY_MODULE: &str = "__main__";
+
+/// The bundled library's top-level package.
+const STD_PACKAGE: &str = "std";
+
 const PRELUDE_MODULE: &str = "std.prelude";
 
 const PRELUDE_EXPORTS: &[&str] = &[
@@ -1684,8 +1741,9 @@ fn bundled_path(relative: &str) -> Option<PathBuf> {
 /// Resolved once per process.
 pub fn bundled_root() -> Option<PathBuf> {
     static ROOT: std::sync::OnceLock<Option<PathBuf>> = std::sync::OnceLock::new();
-    // The prelude is the existence probe: a root without it cannot serve
-    // the bundled stdlib, whatever directories it has.
+    // In a development tree the prelude is the existence probe: a root
+    // without it cannot serve the bundled stdlib, whatever directories it
+    // has.
     ROOT.get_or_init(|| {
         if let Some(prefix) = installed_prefix() {
             return Some(installed_share(&prefix));
@@ -1707,8 +1765,12 @@ pub fn bundled_root() -> Option<PathBuf> {
 }
 
 /// The installation prefix of the running executable: `<exe>/..` when
-/// `<exe>/../share/mojito/` holds the bundled library, as an installed
-/// bundle lays it out (`bin/`, `lib/`, `share/mojito/stdlib/`).
+/// `<exe>/../share/mojito/` exists.
+///
+/// An installed bundle lays itself out as `bin/`, `lib/mojito/std.mojoc`,
+/// and `share/mojito/`, and ships the library's package and none of its
+/// source, as upstream's toolchain ships `std.mojoc` and no `std`: its
+/// library root names where the package's files are, not a directory.
 ///
 /// Resolved once per process.
 pub fn installed_prefix() -> Option<PathBuf> {
@@ -1717,10 +1779,7 @@ pub fn installed_prefix() -> Option<PathBuf> {
         .get_or_init(|| {
             let exe = std::env::current_exe().ok()?;
             let prefix = exe.parent()?.parent()?.to_path_buf();
-            installed_share(&prefix)
-                .join(PRELUDE_PATH)
-                .is_file()
-                .then_some(prefix)
+            installed_share(&prefix).is_dir().then_some(prefix)
         })
         .clone()
 }
