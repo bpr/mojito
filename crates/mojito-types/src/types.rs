@@ -3784,7 +3784,19 @@ pub fn is_stdlib_file_descriptor_struct(name: &str) -> bool {
 ///
 /// Defined here (below the checked handoff) so symbol mangling can spell
 /// declaration-qualified names without depending on the handoff crate.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    Default,
+    PartialEq,
+    Eq,
+    Hash,
+    PartialOrd,
+    Ord,
+    serde::Serialize,
+    serde::Deserialize,
+)]
 pub struct CheckedDeclId(pub u32);
 
 /// Whether `ty` still mentions something only an instantiation can resolve.

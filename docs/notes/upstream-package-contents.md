@@ -60,12 +60,13 @@ materialized body's control flow as well as running its lifetime pass.
 
 Mojito matches it: `src/package.rs::build` runs the check and the ownership
 check, and writes each body as the check left it, one record per lowering
-unit (its syntax and the check's facts for it,
-`mojito_checked::unit::CheckedUnit`); `PackageBodies::get` lowers a body's
-unit (checked arena, HIR CFG, MIR) and inserts its drops when the
-elaborator first reaches it. What remains is representation: Mojito's
-checked body is syntax beside side tables, upstream's typed `lit` ops
-(R616).
+unit (its checked nodes, each carrying its own type and attributes, and
+its declaration-site facts, `mojito_checked::unit::CheckedUnit`);
+`PackageBodies::get` installs a body's unit as its checked program, lowers
+it (HIR CFG, MIR), and inserts its drops when the elaborator first reaches
+it. What remains is representation: a node's annotation operands and a
+declaration's signature are still syntax (R628, R630), and the importer
+still rebuilds statement syntax from the nodes for HIR and MIR (R623).
 
 ## Finding: the package names no install path
 

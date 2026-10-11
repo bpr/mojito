@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R631**.
+Next free ID: **R633**.
 
 ## Ordered Work
 
@@ -4759,27 +4759,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R616 A package's checked body is syntax beside per-occurrence
-  fact records, where upstream's is typed `lit` ops**
-
-  A unit record (`checked_unit::CheckedUnit`) holds the unit's AST and
-  its share of the check's `NodeFacts` records, while upstream's `.mojoc`
-  holds each body as ops that carry their own types and attributes.
-  - The lever: a unit holds its checked statement and expression nodes
-    and its site facts, and `CheckedUnit::program` installs
-    `CheckedTables` directly, with no `DiscoveryResult` and no `finalize`.
-  - A member's unit still holds its struct's `type_params` syntax, which
-    MIR reads for `lowered_def_name` and `origin_binder_names`; it names
-    its struct's declaration instead.
-  - Bumps `PACKAGE_FORMAT`; `docs/mir-text-format.md`'s unit section is
-    rewritten.
-  - Done when no `Expr` or `Stmt` is encoded in a unit and unit decode
-    plus lower time is no worse.
-  - Plan: `R604-a-package-s-checked-body-is-plan.md`, slice 5.
-  - Found while landing R546 (2026-10-10).
-  - Depends on R615.
-  - Model: Fable, Not Planned.
-
 - [ ] **R617 HIR lowers from syntax, where upstream lowers checked ops**
 
   `hir::lower` walks the AST and reaches each node's facts through it.
@@ -4899,6 +4878,38 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Done when no `CheckedStmtOp` payload holds an `ast::Type`.
   - Found while landing R615 (2026-10-11).
   - Depends on R628.
+  - Model: Opus, Not Planned.
+
+- [ ] **R631 A struct's origin parameters are a name list beside its
+  parameter list, where upstream's parameter list holds them**
+
+  The checker leaves `Origin` and `OriginSet` parameters out of a
+  struct's `ParamDecl`s, so `CheckedProgram::origin_parameters_at` answers
+  them as names read from the struct's `type_params` syntax, and a
+  member's package unit repeats them.
+  - MIR tests type-shaped bracket arguments against those names
+    (`names_enclosing_origin_parameter`).
+  - The lever: an origin parameter is a `ParamDecl` in the struct's list,
+    and the checker marks an erased bracket argument on its op (R628 gives
+    the argument a node).
+  - Done when `origin_parameter_names` and the unit's
+    `origin_parameters` are deleted.
+  - Found while landing R616 (2026-10-11).
+  - Depends on R628.
+  - Model: Fable, Not Planned.
+
+- [ ] **R632 A package unit's node encodes every attribute slot, where
+  upstream's op encodes only the attributes it has**
+
+  Each `CheckedExpr` writes all its attribute fields, empty or not, so
+  the std package's units are 1.04 MB, from 0.88 MB when a unit wrote
+  only the facts present.
+  - The lever: a node encodes its attributes as the list of those
+    present, as `NodeFacts` does.
+  - Done when the units are no larger than 0.88 MB and decoding all of
+    them is no slower.
+  - Found while landing R616 (2026-10-11).
+  - Depends on nothing.
   - Model: Opus, Not Planned.
 
 - [ ] **R624 The check writes fact records for a later pass to gather into

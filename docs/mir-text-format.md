@@ -893,10 +893,10 @@ lowering unit, one record per library declaration, and one module table
 holding each module's link record, one file per package. The bundled library's is the
 only producer today (`src/package.rs`). No part of a package is MIR text:
 it is a header followed by bytecode records, as upstream's package is
-MLIR bytecode throughout. The format line is `mojito-package 30`.
+MLIR bytecode throughout. The format line is `mojito-package 31`.
 
 ```text
-mojito-package 30
+mojito-package 31
 <the header's length, 8 bytes little-endian>
 <the header, as bytecode>
 <the payload: every record, as bytecode, then the type section>
@@ -1019,38 +1019,43 @@ mojito-package 30
   no interface of its own: every program imports it (format 28 dropped
   the list of its top-level names a program once had to avoid).
 - A unit's record is `postcard` of its file table (each file id's optional
-  path, relative to the library's root; every statement's module, every
-  expression's source, and every checked site's and default wrapper's
-  module is a file id) and of its `checked_unit::CheckedUnit`: the lowering unit's kind,
-  its syntax (a module `def`, a trait default's declaration, a module
-  constant, or a struct holding only its name, its compile-time
-  parameters, and the one method, or for a wrapper none, beside the
-  wrapper), and its facts. Those are one record per occurrence the check
-  recorded any fact at, as an op holds its own attributes: the
-  occurrence, its location only when that is not its node's own in the
-  unit's syntax (a derived occurrence, or one the check spelled at
-  another node's location), and the list of its facts, each named by the
-  check's table it belongs to. Records are ordered by where their
-  occurrence sits in the unit's walk. The facts of declaration sites
-  (checked annotation types, compile-time parameter lists, declaration
-  effects) are written as site-keyed rows beside them; a struct's own
-  sites are left to its declaration record, and the importer gives a
-  member's unit its struct's parameter list from there (format 30). It
-  is written under `token::encoding_occurrences`, where a `SyntaxId`
+  path, relative to the library's root; every node's module or source,
+  and every checked site's and default wrapper's module, is a file id)
+  and of its `checked_unit::CheckedUnit`. That holds the lowering unit's
+  kind (a struct method's with its position and the symbol it lowers
+  to), a member's struct's `Origin`/`OriginSet` parameter names, a
+  wrapper's or trait default's declaration less its body, and the unit's
+  `CheckedTables` (format 31): its checked expression and statement
+  nodes and its declarations, each node holding its own op, type, and
+  attributes as the check left them, as upstream's body is typed ops; its
+  root statements and a wrapper's; and each location a spelled sugar was
+  written at, beside the node of the construction the check spelled for
+  it. The nodes are a module `def`, a trait default's declaration, a
+  module constant, or a struct shell holding only its name and the one
+  method (none for a wrapper). A node's identity is its position, and
+  the location indexes are rebuilt on decode. No statement is encoded
+  as syntax; an expression is encoded only inside an annotation's type,
+  compile-time parameter, or decorator syntax (R628, R630). The facts of
+  declaration sites (checked annotation types, compile-time parameter
+  lists, declaration effects) are written as site-keyed rows beside
+  them; a struct's own sites are left to its declaration record, and the
+  importer gives a member's unit its struct's parameter list from there.
+  It is written under `token::encoding_occurrences`, where a `SyntaxId`
   encodes as a number dense within the unit, in the order the encoding
   first meets it, or as its derivation, and a source path as its file
-  id, so a fact keeps the occurrence it is keyed by; it is read under
+  id, so a site row keeps the occurrence it is keyed by; it is read under
   `token::decoding_occurrences`, which draws one fresh identity per number
   and derives a derived one from its decoded parent. Outside those scopes
   an AST node encodes no identity or path, as a link record's and a
   residue's do, and a `SourceSpan` does not encode. The package build's
-  binding owners the facts name are carried as bare numbers, under
+  binding owners the nodes name are carried as bare numbers, under
   `origin::encoding_packaged_owners` (R561, R611). The importer lowers a
   unit once per process when the elaborator first reaches one of its
-  functions (`PackageBodies`): it rebuilds the unit's checked arena over
-  the package's own overload sets and constants, lowers it to MIR, closes
-  its register types against the package's declarations, then inserts the
-  reached body's drops and verifies it. The build refuses a package whose
+  functions (`PackageBodies`): it installs the unit's tables as its
+  checked program over the package's own overload sets and constants
+  (`CheckedProgram::installed`, with no arena rebuilt), lowers it to MIR,
+  closes its register types against the package's declarations, then
+  inserts the reached body's drops and verifies it. The build refuses a package whose
   units, read back and lowered alone, give any function other than the
   library's whole-program lowering.
 - A link module record is opaque to the container: it is the linker's

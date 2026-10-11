@@ -26,7 +26,7 @@ use mojito_ast::ast::{
 };
 use mojito_ast::call::{effective_keyword_only_index, regular_marker_index};
 use mojito_checked::checked::{AnnotationSite, GenericSite};
-use mojito_checked::checked::{CheckedConst, CheckedProgram};
+use mojito_checked::checked::{CheckedConst, CheckedProgram, origin_parameter_names};
 pub use mojito_checked::declaration::{
     FunctionDeclaration as MirFunctionDeclaration, StructDeclaration as MirStructDeclaration,
     TraitDeclaration, TraitRequirement,
@@ -451,30 +451,18 @@ pub fn lower_unit(
             structure: s,
             method: m,
             index,
+            lowered,
         } => {
             let _struct = timing::span("struct");
-            let Some((name, type_params)) = struct_name(s) else {
+            let Some(structure) = StructLowering::of(checked, s) else {
                 return;
             };
-            let method_name = mojito_symbol::symbol::lifecycle_method_name(m);
             lower_struct_member(
-                &StructLowering {
-                    checked,
-                    overloads,
-                    module: &s.module,
-                    name,
-                    type_params,
-                },
+                &structure,
                 StructMember {
                     index,
-                    name: method_name,
-                    lowered: mojito_symbol::symbol::lowered_method_name(
-                        &format!("{name}.{method_name}"),
-                        type_params,
-                        mojito_symbol::symbol::MethodShape::of(m),
-                        &**overloads,
-                        &|name| checked.constants().get(name),
-                    ),
+                    name: mojito_symbol::symbol::lifecycle_method_name(m),
+                    lowered,
                     params: &m.params,
                     has_self: m.has_self,
                     self_convention: m.self_convention,
@@ -493,17 +481,11 @@ pub fn lower_unit(
             wrapper,
         } => {
             let _struct = timing::span("struct");
-            let Some((name, type_params)) = struct_name(s) else {
+            let Some(structure) = StructLowering::of(checked, s) else {
                 return;
             };
             lower_struct_member(
-                &StructLowering {
-                    checked,
-                    overloads,
-                    module: &s.module,
-                    name,
-                    type_params,
-                },
+                &structure,
                 StructMember {
                     index: wrapper.method_index,
                     name: &wrapper.method,
@@ -618,7 +600,7 @@ fn lower_program(
         .unwrap_or(units.len());
     for unit in &units[..constants] {
         lowered(
-            *unit,
+            unit.clone(),
             &mut functions,
             &mut declarations,
             &mut invariant_errors,
@@ -661,7 +643,7 @@ fn lower_program(
     };
     for unit in &units[constants..] {
         lowered(
-            *unit,
+            unit.clone(),
             &mut functions,
             &mut declarations,
             &mut invariant_errors,
@@ -825,17 +807,6 @@ fn struct_declaration(
             .cloned()
             .unwrap_or_default(),
     })
-}
-
-/// The name and compile-time parameters of the struct `statement`
-/// declares.
-const fn struct_name(statement: &Stmt) -> Option<(&String, &[mojito_ast::ast::TypeParam])> {
-    match &statement.kind {
-        StmtKind::Struct {
-            name, type_params, ..
-        } => Some((name, type_params.as_slice())),
-        _ => None,
-    }
 }
 
 /// An expression's source span, stamped by the parser (`ast::Expr.span`). Fed
@@ -1084,7 +1055,7 @@ fn lower_function(
             value_parameter_locals,
             receiver_value_parameters: Vec::new(),
             static_receiver: None,
-            enclosing_origin_parameters: origin_binder_names(type_params),
+            enclosing_origin_parameters: origin_parameter_names(type_params),
             enclosing_binders,
             owned_parameters: owned,
             deinit_parameters: deinit,
@@ -1116,7 +1087,7 @@ fn lower_struct_member<P: DeclaredParam>(
         overloads,
         module,
         name,
-        type_params,
+        origin_parameters,
     } = *structure;
     let method_index = m.index;
     let method_name = m.name;
@@ -1393,9 +1364,11 @@ fn lower_struct_member<P: DeclaredParam>(
             value_parameter_locals,
             receiver_value_parameters,
             static_receiver,
-            enclosing_origin_parameters: origin_binder_names(
-                type_params.iter().chain(m.type_params),
-            ),
+            enclosing_origin_parameters: origin_parameters
+                .iter()
+                .cloned()
+                .chain(origin_parameter_names(m.type_params))
+                .collect(),
             enclosing_binders,
             owned_parameters: owned,
             deinit_parameters: deinit,
@@ -1420,7 +1393,27 @@ struct StructLowering<'a> {
     overloads: &'a std::sync::Arc<mojito_checked::package::ProgramOverloads>,
     module: &'a Option<String>,
     name: &'a str,
-    type_params: &'a [mojito_ast::ast::TypeParam],
+    /// The struct's `Origin` and `OriginSet` parameters.
+    origin_parameters: &'a [String],
+}
+
+impl<'a> StructLowering<'a> {
+    /// The struct `statement` declares, as `checked` lowers its members.
+    fn of(checked: &'a CheckedProgram, statement: &'a Stmt) -> Option<Self> {
+        let StmtKind::Struct { name, .. } = &statement.kind else {
+            return None;
+        };
+        Some(Self {
+            checked,
+            overloads: checked.overloads(),
+            module: &statement.module,
+            name,
+            origin_parameters: checked.origin_parameters_at(&GenericSite::Struct {
+                module: statement.module.clone(),
+                declaration: name.clone(),
+            }),
+        })
+    }
 }
 
 /// A struct member as MIR lowers it: a method the struct spells, or the
@@ -5032,18 +5025,6 @@ impl EnclosingBinders {
             mojito_types::param_expr::MetaTy::value(ty.clone()),
         ))
     }
-}
-
-fn origin_binder_names<'a>(
-    parameters: impl IntoIterator<Item = &'a mojito_ast::ast::TypeParam>,
-) -> Vec<String> {
-    parameters
-        .into_iter()
-        .filter(|parameter| {
-            matches!(parameter.bounds.as_slice(), [only] if only == "Origin" || only == "OriginSet")
-        })
-        .map(|parameter| parameter.name.clone())
-        .collect()
 }
 
 mod nested;

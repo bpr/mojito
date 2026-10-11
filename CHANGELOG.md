@@ -8,6 +8,18 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A package unit holds its checked nodes (R616), as upstream's package
+  holds each body as typed `lit` ops: its expression and statement nodes,
+  each carrying its own op, type, and attributes, and its declarations,
+  rather than its syntax beside one fact record per occurrence. The
+  importer installs them as the unit's checked program and rebuilds no
+  arena. A struct member's unit records the symbol it lowers to and its
+  struct's origin parameter names, and no longer holds the struct's
+  parameter syntax. Decoding, installing, and lowering all 876 library
+  units takes 123 ms release, from 160; the package is 1.32 MB, from
+  1.16. The package format is `mojito-package 31`. No program's output
+  changes.
+
 - A statement is a checked node (R615), as upstream's is an op: a
   `CheckedStmt` holds its own `CheckedStmtOp`, its `StmtKind` with each
   expression a node and each body a list of statement nodes, so control

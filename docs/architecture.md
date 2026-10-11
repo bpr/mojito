@@ -96,8 +96,8 @@ build (once per compiler build, then cached):
     -> std package: interface + one record per library declaration
        (its MIR declarations and effect summaries, then the checker
        rows they do not say) + module table (each module's link
-       record) + one checked record per lowering unit (its syntax and
-       the check's facts for it; the build refuses a unit that, lowered
+       record) + one checked record per lowering unit (its checked
+       nodes and site facts; the build refuses a unit that, lowered
        alone, gives any function other than the library's MIR)
 
 import (every compilation that links the bundled library):
@@ -149,23 +149,26 @@ import (every compilation that links the bundled library):
   the check left it, as upstream's package holds each body's IR as its
   parser wrote it and its checks validated it, structured control flow
   included. A lowering unit (`CheckedProgram::lowering_units`) is a module
-  `def`, one struct method (with its struct's name and compile-time
-  parameters), an inherited default's wrapper, a trait default, or a
-  module constant's lifted applications; its record holds its syntax and
-  its share of the check's facts (`DiscoveryResult::units`): one record
-  per occurrence the check recorded facts at, as an op holds its own
-  attributes, naming the occurrence, its location only when that is not
-  its node's own, and its facts, beside the facts of the unit's own
-  declaration sites. A member's struct's parameter list is not in its
-  record: the importer gives it from the struct's declaration record. The
+  `def`, one struct method (with its struct's name and the symbol it
+  lowers to), an inherited default's wrapper, a trait default, or a
+  module constant's lifted applications; its record holds its checked
+  tables (`DiscoveryResult::units`, which builds each unit's nodes from
+  the check's facts as the whole program's are): its expression and
+  statement nodes, each carrying its own op, type, and attributes as
+  upstream's ops do, and its declarations, beside the facts of the unit's
+  own declaration sites. A member's struct's parameter list is not in its
+  record: the importer gives it from the struct's declaration record; the
+  struct's origin parameter names ride in the member's record. The
   encoding numbers each occurrence densely within the unit and the
   decoding draws a fresh identity per number, keeping each derivation
   (`token::{encoding_occurrences, decoding_occurrences}`). A package body
-  enters the pipeline at HIR: the importer rebuilds the unit's checked
-  arena from its records (`CheckedUnit::program`, over the package's own
-  overload sets and constants), lowers it (`mir::lower_package_unit`), and
-  then inserts drops, as upstream's importer lowers its semantic control
-  flow and runs its lifetime pass on a body it materializes.
+  enters the pipeline at HIR: the importer installs the unit's tables as
+  its checked program (`CheckedUnit::program`, `CheckedProgram::installed`,
+  over the package's own overload sets and constants, rebuilding no
+  arena; the syntax HIR and MIR still walk is rebuilt from the nodes until
+  R623), lowers it (`mir::lower_package_unit`), and then inserts drops, as
+  upstream's importer lowers its semantic control flow and runs its
+  lifetime pass on a body it materializes.
 - **A declaration's record** (`checked::package`) holds the declaration
   once, as upstream's package holds it in one op every phase of its
   importer reads. Its lowered part (`LoweredDeclaration`) is every MIR

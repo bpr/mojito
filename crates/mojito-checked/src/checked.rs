@@ -14,7 +14,19 @@ use std::sync::Arc;
 
 /// Stable identity within one checked program. Unlike a source span this remains
 /// unique for synthesized nodes and for multiple semantic nodes at one location.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    Default,
+    PartialEq,
+    Eq,
+    Hash,
+    PartialOrd,
+    Ord,
+    serde::Serialize,
+    serde::Deserialize,
+)]
 pub struct CheckedNodeId(pub u32);
 
 /// How an expression participates in evaluation.
@@ -1166,12 +1178,16 @@ pub struct CheckedTupleUnpackElement {
 /// A node holds its own operation, as an upstream op does: its opcode and
 /// attributes, with each operand the node of a child expression, never a
 /// copy of the child's syntax. Its location is its own occurrence.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct CheckedExpr {
+    /// Its index in its tables, which an encoding leaves to its position.
+    #[serde(skip)]
     pub id: CheckedNodeId,
     pub op: CheckedOp,
     pub span: Span,
+    #[serde(with = "mojito_ast::ast::statement_module")]
     pub source: Option<String>,
+    #[serde(with = "mojito_common::token::node_syntax")]
     pub syntax_id: SyntaxId,
     pub ty: Option<Ty>,
     /// Type physically stored at this place. For a reference-valued field this
@@ -1192,6 +1208,8 @@ pub struct CheckedExpr {
     /// Keeping these on the checked node prevents MIR from accidentally
     /// interning a binder by its spelling and aliasing an outer local.
     pub comprehension_bindings: Vec<CheckedComprehensionBinding>,
+    /// The caller-substituted loan transfers of the call this node is.
+    pub call_transfers: Vec<CheckedCallTransfer>,
 }
 
 impl CheckedExpr {
@@ -1208,7 +1226,7 @@ impl CheckedExpr {
 /// lambda names its hidden `def`'s statement node, as upstream's closure
 /// names the function it closes over; the node's `binding` is that
 /// function's identity.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub enum CheckedOp {
     Int(IntLiteral),
     Float(FloatLiteral),
@@ -1431,7 +1449,7 @@ impl CheckedOp {
 }
 
 /// A compile-time parameter argument of a checked call or type application.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub enum CheckedParamArg {
     Type(Type),
     Value(CheckedNodeId),
@@ -1448,13 +1466,13 @@ impl CheckedParamArg {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct CheckedKwArg {
     pub name: String,
     pub value: CheckedNodeId,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub enum CheckedSubscriptArg {
     Index(CheckedNodeId),
     Keyword {
@@ -1476,7 +1494,7 @@ pub enum CheckedSubscriptArg {
     },
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub enum CheckedComprehensionClause {
     For {
         var: String,
@@ -1486,7 +1504,7 @@ pub enum CheckedComprehensionClause {
     If(CheckedNodeId),
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub enum CheckedTStringPart {
     Literal(String),
     Expr(CheckedNodeId),
@@ -1498,12 +1516,16 @@ pub enum CheckedTStringPart {
 /// expression its node and each body a list of statement nodes, so control
 /// flow stays structured as upstream's `hlcf` keeps it. Its location is its
 /// own occurrence.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct CheckedStmt {
+    /// Its index in its tables, which an encoding leaves to its position.
+    #[serde(skip)]
     pub id: CheckedStmtId,
     pub op: CheckedStmtOp,
     pub span: Span,
+    #[serde(with = "mojito_ast::ast::statement_module")]
     pub module: Option<String>,
+    #[serde(with = "mojito_common::token::node_syntax")]
     pub syntax_id: SyntaxId,
     /// The binding the statement introduces.
     pub binding: Option<mojito_types::origin::OwnerId>,
@@ -1521,7 +1543,19 @@ impl CheckedStmt {
 }
 
 /// Stable identity of a statement within one checked program.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    Default,
+    PartialEq,
+    Eq,
+    Hash,
+    PartialOrd,
+    Ord,
+    serde::Serialize,
+    serde::Deserialize,
+)]
 pub struct CheckedStmtId(pub u32);
 
 /// A checked statement's own operation.
@@ -1530,7 +1564,7 @@ pub struct CheckedStmtId(pub u32);
 /// child expression replaced by its node and each child statement list by
 /// its statements' nodes. A signature (parameter and return types, type
 /// parameters, decorators, fields) stays the syntax as written.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub enum CheckedStmtOp {
     VarDecl {
         name: String,
@@ -1702,7 +1736,7 @@ impl CheckedStmtOp {
 
 /// A checked `def`: its signature as written, its parameter defaults and
 /// constraints as nodes, and its body.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct CheckedDef {
     pub name: String,
     pub decorators: Vec<Decorator>,
@@ -1719,7 +1753,7 @@ pub struct CheckedDef {
 }
 
 /// A function parameter whose default is a node.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct CheckedFnParam {
     pub name: String,
     pub ty: Type,
@@ -1731,7 +1765,7 @@ pub struct CheckedFnParam {
 
 /// A checked `struct`: its members, with their bodies and constraints as
 /// nodes.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct CheckedStruct {
     pub name: String,
     pub decorators: Vec<Decorator>,
@@ -1747,7 +1781,7 @@ pub struct CheckedStruct {
 }
 
 /// A struct's associated `comptime` member.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct CheckedStructComptime {
     pub name: String,
     pub params: Vec<TypeParam>,
@@ -1757,7 +1791,7 @@ pub struct CheckedStructComptime {
 }
 
 /// A struct method, with its body as statement nodes.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct CheckedMethod {
     pub name: String,
     pub type_params: Vec<TypeParam>,
@@ -1778,7 +1812,7 @@ pub struct CheckedMethod {
 
 /// A checked `trait`: its requirements, a default's body as statement
 /// nodes.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct CheckedTrait {
     pub name: String,
     pub refines: Vec<String>,
@@ -1787,7 +1821,7 @@ pub struct CheckedTrait {
 }
 
 /// A trait method requirement, and its default's body when it has one.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct CheckedTraitMethod {
     pub name: String,
     pub type_params: Vec<TypeParam>,
@@ -1804,7 +1838,7 @@ pub struct CheckedTraitMethod {
 }
 
 /// A trait's `comptime` member requirement.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct CheckedTraitComptime {
     pub name: String,
     pub params: Vec<TypeParam>,
@@ -1813,7 +1847,7 @@ pub struct CheckedTraitComptime {
 }
 
 /// One `with` item: its context as a node.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct CheckedWithItem {
     pub context: CheckedNodeId,
     pub var: Option<String>,
@@ -1838,7 +1872,7 @@ pub use mojito_types::types::CheckedDeclId;
 /// Future classes, pattern binders, coroutine state declarations, and
 /// generated declarations can add variants without changing consumers of the
 /// common metadata.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[non_exhaustive]
 pub enum CheckedDeclKind {
     Function,
@@ -1848,8 +1882,10 @@ pub enum CheckedDeclKind {
     CompileTime,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct CheckedDeclaration {
+    /// Its index in its tables, which an encoding leaves to its position.
+    #[serde(skip)]
     pub id: CheckedDeclId,
     pub kind: CheckedDeclKind,
     pub name: String,
@@ -1883,8 +1919,10 @@ pub struct CheckedCapture {
 /// declarations.
 ///
 /// Every function's HIR and MIR lowering shares them through one `Arc`:
-/// lowering a function never copies program-wide tables.
-#[derive(Debug, Default)]
+/// lowering a function never copies program-wide tables. A package unit
+/// encodes its own, less the location indexes, which
+/// [`Self::reindexed`] rebuilds from the nodes.
+#[derive(Debug, Default, serde::Serialize, serde::Deserialize)]
 pub struct CheckedTables {
     /// Indexed by `CheckedNodeId`.
     pub expressions: Vec<CheckedExpr>,
@@ -1898,9 +1936,14 @@ pub struct CheckedTables {
     /// Each default wrapper's root statements, parallel to
     /// [`CheckedProgram::default_wrappers`].
     wrapper_roots: Vec<Vec<CheckedStmtId>>,
+    /// Each location a spelled sugar was written at, beside the node of
+    /// the construction the check spelled for it, which answers there too.
+    aliases: Vec<(SourceSpan, CheckedNodeId)>,
     /// Nodes whose syntax sits at a source location (several may share one).
+    #[serde(skip)]
     expressions_by_span: HashMap<SourceSpan, Vec<CheckedNodeId>>,
     /// The last statement node at a source location.
+    #[serde(skip)]
     statements_by_span: HashMap<SourceSpan, CheckedStmtId>,
 }
 
@@ -2460,6 +2503,7 @@ impl CheckedTables {
             mut statements,
             roots,
             wrapper_roots,
+            aliases,
             statements_by_span,
         } = arena;
         let declared: HashMap<&SourceSpan, CheckedDeclId> = declarations
@@ -2476,9 +2520,45 @@ impl CheckedTables {
             declarations,
             roots,
             wrapper_roots,
+            aliases,
             expressions_by_span,
             statements_by_span,
         }
+    }
+
+    /// The tables with each node's identity its position, and their
+    /// location indexes rebuilt from the nodes as the arena builder fills
+    /// them: each node at its own location in build order, then each
+    /// alias.
+    fn reindexed(mut self) -> Self {
+        for (index, node) in self.expressions.iter_mut().enumerate() {
+            node.id = CheckedNodeId(index as u32);
+        }
+        for (index, statement) in self.statements.iter_mut().enumerate() {
+            statement.id = CheckedStmtId(index as u32);
+        }
+        for (index, declaration) in self.declarations.iter_mut().enumerate() {
+            declaration.id = CheckedDeclId(index as u32);
+        }
+        self.expressions_by_span.clear();
+        for node in &self.expressions {
+            self.expressions_by_span
+                .entry(node.location())
+                .or_default()
+                .push(node.id);
+        }
+        for (location, node) in &self.aliases {
+            self.expressions_by_span
+                .entry(location.clone())
+                .or_default()
+                .push(*node);
+        }
+        self.statements_by_span = self
+            .statements
+            .iter()
+            .map(|statement| (statement.location(), statement.id))
+            .collect();
+        self
     }
 
     fn param_arg_syntax(&self, argument: &CheckedParamArg) -> Option<ParamArg> {
@@ -2540,6 +2620,9 @@ pub struct CheckedDefaultWrapper {
     pub self_convention: Option<mojito_ast::ast::ArgConvention>,
     /// Every declared parameter but the receiver, in order.
     pub params: Vec<SignatureParam>,
+    /// A package unit holds the body as its checked nodes, and
+    /// [`CheckedProgram::installed`] rebuilds it from them.
+    #[serde(skip)]
     pub body: Vec<Stmt>,
 }
 
@@ -2560,7 +2643,10 @@ pub struct CheckedTraitMember {
     /// Its position among its trait's methods.
     pub method_index: usize,
     /// A `def` named by the member symbol, over `[_Self, ...]` and
-    /// `(self: _Self, ...)`, whose body is the default's.
+    /// `(self: _Self, ...)`, whose body is the default's. A package unit
+    /// holds it as its checked nodes, and [`CheckedProgram::installed`]
+    /// rebuilds it from them.
+    #[serde(skip, default = "unrebuilt_declaration")]
     pub declaration: Stmt,
 }
 
@@ -2728,6 +2814,9 @@ pub struct CheckedProgram {
     implicit_conversion_types: HashMap<SourceSpan, Ty>,
     checked_types: HashMap<AnnotationSite, Ty>,
     generic_parameters: HashMap<GenericSite, Vec<mojito_types::types::ParamDecl>>,
+    /// Each struct's `Origin` and `OriginSet` parameters, by name in
+    /// declaration order, which its `generic_parameters` leave out.
+    origin_parameters: HashMap<GenericSite, Vec<String>>,
     tables: Arc<CheckedTables>,
     expression_index: HashMap<SourceSpan, Vec<CheckedNodeId>>,
     explicit_destroy_types: HashMap<String, ExplicitDestroyInfo>,
@@ -3080,6 +3169,21 @@ impl CheckedProgram {
         let _declarations = mojito_common::timing::span("declarations");
         let declarations =
             build_checked_declarations(&statements, &trait_members, &checked_types, &node_facts);
+        let origin_parameters = statements
+            .iter()
+            .filter_map(|statement| match &statement.kind {
+                mojito_ast::ast::StmtKind::Struct {
+                    name, type_params, ..
+                } => Some((
+                    GenericSite::Struct {
+                        module: statement.module.clone(),
+                        declaration: name.clone(),
+                    },
+                    origin_parameter_names(type_params),
+                )),
+                _ => None,
+            })
+            .collect();
         Self {
             statements,
             compatibility_overload_targets: fact_index(&node_facts, |facts| {
@@ -3101,6 +3205,7 @@ impl CheckedProgram {
             }),
             checked_types,
             generic_parameters,
+            origin_parameters,
             tables: Arc::new(CheckedTables::new(arena, declarations)),
             expression_index,
             explicit_destroy_types,
@@ -3112,6 +3217,108 @@ impl CheckedProgram {
             default_wrappers,
             trait_members,
         }
+    }
+
+    /// The program of one package unit: its checked `tables` as the
+    /// package holds them, its declaration-site facts `sites`, and
+    /// `wrapper` or `trait_member` when it is one.
+    ///
+    /// Its statements, and the wrapper's body and the member's declaration,
+    /// are rebuilt from the nodes, which HIR and MIR still walk as syntax.
+    /// The location maps unit lowering reads are built from the nodes'
+    /// attributes; the instantiation tables, which only whole-program
+    /// passes read, are empty.
+    ///
+    /// # Errors
+    ///
+    /// When a root names no statement node.
+    pub fn installed(
+        tables: CheckedTables,
+        sites: InstalledSites,
+        overloads: Arc<crate::package::ProgramOverloads>,
+        constants: Arc<crate::package::ProgramConstants>,
+        mut wrapper: Option<CheckedDefaultWrapper>,
+        mut trait_member: Option<CheckedTraitMember>,
+    ) -> Result<Self, String> {
+        let tables = tables.reindexed();
+        let rebuilt = |roots: &[CheckedStmtId]| {
+            roots
+                .iter()
+                .map(|root| tables.statement_syntax_of(*root))
+                .collect::<Option<Vec<_>>>()
+                .ok_or("a unit's root names no statement node")
+        };
+        let statements = rebuilt(tables.roots())?;
+        if let Some(wrapper) = &mut wrapper {
+            wrapper.body = rebuilt(tables.wrapper_roots(0))?;
+        }
+        if let Some(member) = &mut trait_member {
+            member.declaration = statements
+                .first()
+                .cloned()
+                .ok_or("a trait member's unit has no declaration")?;
+        }
+        let mut overload_targets = HashMap::new();
+        let mut call_transfers = HashMap::new();
+        let mut implicit_conversions = HashMap::new();
+        let mut implicit_conversion_types = HashMap::new();
+        for node in &tables.expressions {
+            let location = node.location();
+            if !node.call_transfers.is_empty() {
+                call_transfers.insert(location.clone(), node.call_transfers.clone());
+            }
+            for adjustment in &node.adjustments {
+                match adjustment {
+                    SemanticAdjustment::ResolveCallable(target) => {
+                        overload_targets.insert(location.clone(), target.clone());
+                    }
+                    SemanticAdjustment::ImplicitConversion(target)
+                    | SemanticAdjustment::IndexNormalization { target } => {
+                        implicit_conversions.insert(location.clone(), target.clone());
+                    }
+                    SemanticAdjustment::SplatScalar(ty) => {
+                        implicit_conversions.insert(
+                            location.clone(),
+                            mojito_symbol::symbol::SCALAR_SPLAT_CONVERSION.to_string(),
+                        );
+                        implicit_conversion_types.insert(location.clone(), ty.clone());
+                    }
+                    SemanticAdjustment::ConversionResultType(ty) => {
+                        implicit_conversion_types.insert(location.clone(), ty.clone());
+                    }
+                    _ => {}
+                }
+            }
+        }
+        let InstalledSites {
+            checked_types,
+            generic_parameters,
+            declaration_effects,
+            origin_parameters,
+        } = sites;
+        Ok(Self {
+            statements,
+            compatibility_overload_targets: overload_targets,
+            generic_instantiations: HashMap::new(),
+            method_instantiations: HashMap::new(),
+            struct_instantiations: Vec::new(),
+            call_transfers,
+            compatibility_implicit_conversions: implicit_conversions,
+            implicit_conversion_types,
+            checked_types,
+            generic_parameters,
+            origin_parameters,
+            expression_index: tables.expressions_by_span.clone(),
+            tables: Arc::new(tables),
+            explicit_destroy_types: HashMap::new(),
+            struct_destructors: HashMap::new(),
+            conformances: ConformanceFacts::default(),
+            declaration_effects,
+            overloads,
+            constants,
+            default_wrappers: wrapper.into_iter().collect(),
+            trait_members: trait_member.into_iter().collect(),
+        })
     }
 
     /// Elaborated statements accepted by semantic checking.
@@ -3199,6 +3406,14 @@ impl CheckedProgram {
         self.generic_parameters.get(site).map(Vec::as_slice)
     }
 
+    /// The `Origin` and `OriginSet` parameters of the struct `site`
+    /// names, in declaration order.
+    pub fn origin_parameters_at(&self, site: &GenericSite) -> &[String] {
+        self.origin_parameters
+            .get(site)
+            .map_or(&[][..], Vec::as_slice)
+    }
+
     /// Checked raising contract and reference-return fact for a callable
     /// declaration site.
     pub fn declaration_effect_at(&self, site: &AnnotationSite) -> Option<&DeclarationEffect> {
@@ -3255,6 +3470,44 @@ impl CheckedProgram {
     }
 }
 
+/// The declaration-site facts a package unit's program is installed with
+/// ([`CheckedProgram::installed`]).
+#[derive(Debug, Default)]
+pub struct InstalledSites {
+    pub checked_types: HashMap<AnnotationSite, Ty>,
+    pub generic_parameters: HashMap<GenericSite, Vec<mojito_types::types::ParamDecl>>,
+    pub declaration_effects: HashMap<AnnotationSite, DeclarationEffect>,
+    pub origin_parameters: HashMap<GenericSite, Vec<String>>,
+}
+
+/// The names of the `Origin` and `OriginSet` parameters among
+/// `parameters`, in order.
+pub fn origin_parameter_names<'a>(
+    parameters: impl IntoIterator<Item = &'a TypeParam>,
+) -> Vec<String> {
+    parameters
+        .into_iter()
+        .filter(|parameter| {
+            matches!(parameter.bounds.as_slice(), [only] if only == "Origin" || only == "OriginSet")
+        })
+        .map(|parameter| parameter.name.clone())
+        .collect()
+}
+
+/// The checked tables of one package unit, `statements` and `wrappers`'
+/// bodies, built from the check's `facts` and `checked_types` as the whole
+/// program's are.
+pub(crate) fn unit_tables(
+    statements: &[Stmt],
+    wrappers: &[CheckedDefaultWrapper],
+    facts: &HashMap<SourceSpan, NodeFacts>,
+    checked_types: &HashMap<AnnotationSite, Ty>,
+) -> CheckedTables {
+    let arena = build_checked_expressions(statements, facts, wrappers, None);
+    let declarations = build_checked_declarations(statements, &[], checked_types, facts);
+    CheckedTables::new(arena, declarations)
+}
+
 /// The checked arena of `statements` and of `default_wrappers`' bodies, each
 /// node holding the facts `facts` recorded at its occurrence, and the nodes
 /// at each location; with `scan`, the traversal alone, each expression
@@ -3270,6 +3523,7 @@ fn build_checked_expressions(
         nodes: Vec::new(),
         index: HashMap::new(),
         statements: Vec::new(),
+        aliases: Vec::new(),
         statements_by_span: HashMap::new(),
         facts,
     };
@@ -3284,6 +3538,7 @@ fn build_checked_expressions(
         statements: builder.statements,
         roots,
         wrapper_roots,
+        aliases: builder.aliases,
         statements_by_span: builder.statements_by_span,
     }
 }
@@ -3295,6 +3550,7 @@ struct CheckedArena {
     statements: Vec<CheckedStmt>,
     roots: Vec<CheckedStmtId>,
     wrapper_roots: Vec<Vec<CheckedStmtId>>,
+    aliases: Vec<(SourceSpan, CheckedNodeId)>,
     statements_by_span: HashMap<SourceSpan, CheckedStmtId>,
 }
 
@@ -3306,6 +3562,7 @@ struct ArenaBuilder<'a, 's> {
     nodes: Vec<CheckedExpr>,
     index: HashMap<SourceSpan, Vec<CheckedNodeId>>,
     statements: Vec<CheckedStmt>,
+    aliases: Vec<(SourceSpan, CheckedNodeId)>,
     statements_by_span: HashMap<SourceSpan, CheckedStmtId>,
     facts: &'a HashMap<SourceSpan, NodeFacts>,
 }
@@ -3368,6 +3625,7 @@ impl<'a> ArenaBuilder<'a, '_> {
             effects: facts.effects.clone().unwrap_or_default(),
             adjustments,
             comprehension_bindings: facts.comprehension_bindings.clone().unwrap_or_default(),
+            call_transfers: facts.call_transfers.clone().unwrap_or_default(),
         });
         self.index.entry(span).or_default().push(id);
         id
@@ -3402,6 +3660,7 @@ impl<'a> ArenaBuilder<'a, '_> {
                 .entry(expression.source_span())
                 .or_default()
                 .push(node);
+            self.aliases.push((expression.source_span(), node));
             // A `for` loop iterates the construction it spells.
             if let Some(protocol) = &self.facts(&expression.source_span()).iteration_protocol {
                 self.nodes[node.0 as usize]
@@ -4400,6 +4659,15 @@ pub fn materialized_borrow_owner(
         } => Some(*owner),
         _ => None,
     })
+}
+
+/// The declaration of a decoded trait member before
+/// [`CheckedProgram::installed`] rebuilds it.
+fn unrebuilt_declaration() -> Stmt {
+    Stmt::new(
+        mojito_ast::ast::StmtKind::Pass,
+        mojito_common::token::DUMMY_SPAN,
+    )
 }
 
 /// One fact of every occurrence that holds it, by occurrence.
