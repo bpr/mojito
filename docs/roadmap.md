@@ -50,23 +50,6 @@ Scope: what remains of the plan's stages, and what the pipeline order still
 leaves to close. A defect found on the way is filed by its kind; a
 divergence from the pin goes to a catch-up track, however small.
 
-- [ ] **R598 (P6) A package record's method residues, constants, and effect
-  summaries are keyed by names the directory holds**
-
-  A projected struct's method residues are keyed by method name, which the
-  directory's `Methods` index already holds, and `LoweredDeclaration`'s
-  `constants`, `transfer_effects`, and `call_through_effects` are keyed by
-  the declaration's or its functions' names.
-  - Together about 7.5 KB of the bundled package.
-  - Upstream names every symbol once, through the string section.
-  - The lever: key a method residue by its function's directory row (or
-    group the `Methods` index per declaration), and an effect summary by
-    its function's index in the record, as the record's functions already
-    are.
-  - Found while landing R581 (2026-10-10).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R597 (P6) A library trait's overloaded requirement with no default
   would keep the bundled library from being packaged**
 

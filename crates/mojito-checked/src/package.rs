@@ -15,7 +15,9 @@
 //! of a declaration.
 //!
 //! The lowered part also holds the one exact value of the declaration's
-//! integer constant, which the residue does not repeat. It holds no overload set: as upstream does, an importer finds
+//! own integer constant, which the residue does not repeat, and names each
+//! effect summary's callable by its function's index in the record. It
+//! holds no overload set: as upstream does, an importer finds
 //! a name's overload set by looking up the declarations under the name,
 //! after its program's own sets miss ([`ProgramOverloads`]), and the build
 //! refuses a library whose lowered declarations say other than its check's
@@ -183,15 +185,17 @@ impl InterfaceTable {
 /// The lowered part of a declaration's record.
 ///
 /// Every struct and function declaration it lowers to — its own, its
-/// methods, and the functions nested in or lifted from it — and the effect
-/// summaries of its callables. [`DeclarationRecords`] keeps every list
-/// sorted.
+/// methods, and the functions nested in or lifted from it — the effect
+/// summaries of its callables, and its constant's value.
+/// [`DeclarationRecords`] keeps every list sorted.
 ///
 /// Encoded, it names nothing the directory holds, as an MLIR bytecode op
 /// names its symbol by an index into the one string section: each function
 /// by its row in the function table, its struct and trait by the
 /// declaration's own row, and each reference mask is its conventions'
-/// ([`FunctionDeclaration::conventions_mask`]). Decoding joins them back.
+/// ([`FunctionDeclaration::conventions_mask`]), each effect summary is its
+/// function's by index, and its constant is the declaration's own.
+/// Decoding joins them back.
 #[derive(Debug, Default, serde::Serialize, serde::Deserialize)]
 pub struct LoweredDeclaration {
     /// Its own struct, when it declares one.
@@ -204,30 +208,42 @@ pub struct LoweredDeclaration {
     /// Its own trait, with the traits it refines, when it declares one.
     pub traits: Vec<TraitDeclaration>,
     /// The transfer effects the package's bodies record for each callable
-    /// it declares, by callable identity, sorted.
-    pub transfer_effects: Vec<(String, Vec<TransferEffect>)>,
+    /// it declares, by its function's index in `functions`, sorted.
+    pub transfer_effects: Vec<(u32, Vec<TransferEffect>)>,
     /// The call-through effects of each callable it declares, likewise.
-    pub call_through_effects: Vec<(String, Vec<CallThroughEffect>)>,
-    /// The exact value of its module integer constant, by name, sorted:
-    /// the constant's one value, which the check's integer row and the
-    /// elaboration's value join back from.
-    pub constants: Vec<(String, IntLiteral)>,
+    pub call_through_effects: Vec<(u32, Vec<CallThroughEffect>)>,
+    /// The exact value of the declaration's own module integer constant,
+    /// when it is one: the constant's one value, which the check's integer
+    /// row and the elaboration's value join back from.
+    pub constant: Option<IntLiteral>,
+    /// The declaration's name, restored from its row.
+    #[serde(skip)]
+    pub name: String,
 }
 
 impl LoweredDeclaration {
+    /// The index of the function `name` in `functions`, which are sorted.
+    pub fn function_index(&self, name: &str) -> Option<usize> {
+        self.functions
+            .binary_search_by(|declaration| {
+                declaration.lowered_name.as_bytes().cmp(name.as_bytes())
+            })
+            .ok()
+    }
+
     /// The transfer effects of the callable `name`.
     pub fn transfer_effects(&self, name: &str) -> Option<&Vec<TransferEffect>> {
-        sorted_get(&self.transfer_effects, name)
+        indexed_get(&self.transfer_effects, self.function_index(name)?)
     }
 
     /// The call-through effects of the callable `name`.
     pub fn call_through_effects(&self, name: &str) -> Option<&Vec<CallThroughEffect>> {
-        sorted_get(&self.call_through_effects, name)
+        indexed_get(&self.call_through_effects, self.function_index(name)?)
     }
 
     /// The exact value of the module integer constant `name`.
     pub fn constant(&self, name: &str) -> Option<&IntLiteral> {
-        sorted_get(&self.constants, name)
+        self.constant.as_ref().filter(|_| name == self.name)
     }
 
     /// Refuse a record of the declaration `name` whose names and masks
@@ -268,7 +284,8 @@ impl LoweredDeclaration {
     /// Restore what the encoded record of the declaration at `entry` (named
     /// `name`) leaves to `directory`: each function's name from its row,
     /// which must place it back at its index in this record, its reference
-    /// mask from its conventions, and its struct's and trait's names.
+    /// mask from its conventions, and its own name, which names its struct,
+    /// trait, and constant.
     fn join(
         &mut self,
         directory: &DeclarationDirectory,
@@ -291,11 +308,12 @@ impl LoweredDeclaration {
             function.lowered_name = directory.string(word(0)).to_string();
             function.ref_params = function.conventions_mask();
         }
+        name.clone_into(&mut self.name);
         for declaration in &mut self.structs {
-            declaration.name = name.to_string();
+            declaration.name.clone_from(&self.name);
         }
         for declaration in &mut self.traits {
-            declaration.name = name.to_string();
+            declaration.name.clone_from(&self.name);
         }
         Ok(())
     }
@@ -1193,11 +1211,22 @@ impl DeclarationRecords {
 
     /// Put `declaration` in the record of the declaration it belongs to.
     ///
+    /// A record's effect summaries name its functions by index, so every
+    /// function is placed before any summary.
+    ///
     /// # Errors
     ///
-    /// No library declaration owns its lowered name.
+    /// No library declaration owns its lowered name, or its record already
+    /// holds an effect summary.
     pub fn place_function(&mut self, declaration: FunctionDeclaration) -> Result<(), String> {
-        let functions = &mut self.record_of(&declaration.lowered_name)?.lowered.functions;
+        let lowered = &mut self.record_of(&declaration.lowered_name)?.lowered;
+        if !lowered.transfer_effects.is_empty() || !lowered.call_through_effects.is_empty() {
+            return Err(format!(
+                "function `{}` is placed after its record's effect summaries",
+                declaration.lowered_name
+            ));
+        }
+        let functions = &mut lowered.functions;
         let position = functions
             .binary_search_by(|placed| {
                 placed
@@ -1227,46 +1256,56 @@ impl DeclarationRecords {
     }
 
     /// Put the transfer effects of the callable `name` in the record of the
-    /// declaration it belongs to.
+    /// declaration it belongs to, under its function's index there.
     ///
     /// # Errors
     ///
-    /// No library declaration owns `name`.
+    /// No library declaration owns `name`, or no function of its record is
+    /// `name`.
     pub fn place_transfer_effects(
         &mut self,
-        name: String,
+        name: &str,
         effects: Vec<TransferEffect>,
     ) -> Result<(), String> {
-        let record = self.record_of(&name)?;
-        sorted_insert(&mut record.lowered.transfer_effects, name, effects);
+        let lowered = &mut self.record_of(name)?.lowered;
+        let index = summarized_function(lowered, name)?;
+        indexed_insert(&mut lowered.transfer_effects, index, effects);
         Ok(())
     }
 
     /// Put the call-through effects of the callable `name` in the record of
-    /// the declaration it belongs to.
+    /// the declaration it belongs to, likewise.
     ///
     /// # Errors
     ///
-    /// No library declaration owns `name`.
+    /// No library declaration owns `name`, or no function of its record is
+    /// `name`.
     pub fn place_call_through_effects(
         &mut self,
-        name: String,
+        name: &str,
         effects: Vec<CallThroughEffect>,
     ) -> Result<(), String> {
-        let record = self.record_of(&name)?;
-        sorted_insert(&mut record.lowered.call_through_effects, name, effects);
+        let lowered = &mut self.record_of(name)?.lowered;
+        let index = summarized_function(lowered, name)?;
+        indexed_insert(&mut lowered.call_through_effects, index, effects);
         Ok(())
     }
 
     /// Put the exact value of the module integer constant `name`, as the
-    /// check folds it, in the record of the declaration it belongs to.
+    /// check folds it, in the record of the declaration it is.
     ///
     /// # Errors
     ///
-    /// No library declaration owns `name`.
-    pub fn place_constant(&mut self, name: String, value: IntLiteral) -> Result<(), String> {
-        let record = self.record_of(&name)?;
-        sorted_insert(&mut record.lowered.constants, name, value);
+    /// No library declaration owns `name`, the declaration owning it is
+    /// not `name` itself, or its record already holds a constant.
+    pub fn place_constant(&mut self, name: &str, value: IntLiteral) -> Result<(), String> {
+        let lowered = &mut self.record_of(name)?.lowered;
+        if lowered.name != name {
+            return Err(format!("constant `{name}` is not its declaration's own"));
+        }
+        if lowered.constant.replace(value).is_some() {
+            return Err(format!("constant `{name}` is placed twice"));
+        }
         Ok(())
     }
 
@@ -1491,13 +1530,15 @@ impl DeclarationRecords {
             .ok_or_else(|| format!("no library declaration owns `{name}`"))?
             .to_string();
         let module = self.declaring.names[&declaration].clone();
-        Ok(self
+        let record = self
             .declarations
-            .entry(declaration)
+            .entry(declaration.clone())
             .or_insert_with(|| DeclarationRecord {
                 module,
                 ..DeclarationRecord::default()
-            }))
+            });
+        record.lowered.name = declaration;
+        Ok(record)
     }
 }
 
@@ -1612,20 +1653,31 @@ fn declaration_candidates(name: &str) -> impl Iterator<Item = &str> {
     })
 }
 
-/// The value of `name` in `entries`, which are sorted by name.
-fn sorted_get<'a, V>(entries: &'a [(String, V)], name: &str) -> Option<&'a V> {
+/// The value at the function index `index` in `entries`, which are sorted
+/// by index.
+fn indexed_get<V>(entries: &[(u32, V)], index: usize) -> Option<&V> {
+    let index = u32::try_from(index).ok()?;
     entries
-        .binary_search_by(|(entry, _)| entry.as_str().cmp(name))
+        .binary_search_by_key(&index, |(entry, _)| *entry)
         .ok()
         .map(|position| &entries[position].1)
 }
 
-/// Insert `value` under `name` in `entries`, kept sorted by name.
-fn sorted_insert<V>(entries: &mut Vec<(String, V)>, name: String, value: V) {
-    match entries.binary_search_by(|(entry, _)| entry.as_str().cmp(&name)) {
+/// Insert `value` at the function index `index` in `entries`, kept sorted
+/// by index.
+fn indexed_insert<V>(entries: &mut Vec<(u32, V)>, index: u32, value: V) {
+    match entries.binary_search_by_key(&index, |(entry, _)| *entry) {
         Ok(position) => entries[position].1 = value,
-        Err(position) => entries.insert(position, (name, value)),
+        Err(position) => entries.insert(position, (index, value)),
     }
+}
+
+/// The index in `lowered` of the function `name` an effect summary is of.
+fn summarized_function(lowered: &LoweredDeclaration, name: &str) -> Result<u32, String> {
+    lowered
+        .function_index(name)
+        .and_then(|index| u32::try_from(index).ok())
+        .ok_or_else(|| format!("the effect summary of `{name}` names no function of its record"))
 }
 /// A table of a package's declaration directory.
 #[derive(Debug, Clone, Copy)]

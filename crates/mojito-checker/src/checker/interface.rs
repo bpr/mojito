@@ -133,23 +133,25 @@ impl InterfaceExport {
                 .into_iter()
                 .filter_map(|declaration| records.place_trait(declaration).err()),
         );
+        // An effect summary names its function by its index in the record,
+        // so every function is placed first.
         unplaced.extend(
             self.transfer_effects
                 .into_iter()
                 .filter_map(|(callable, effects)| {
-                    records.place_transfer_effects(callable, effects).err()
+                    records.place_transfer_effects(&callable, effects).err()
                 }),
         );
         unplaced.extend(
             constants
                 .into_iter()
-                .filter_map(|(name, value)| records.place_constant(name, value).err()),
+                .filter_map(|(name, value)| records.place_constant(&name, value).err()),
         );
         unplaced.extend(
             self.call_through_effects
                 .into_iter()
                 .filter_map(|(callable, effects)| {
-                    records.place_call_through_effects(callable, effects).err()
+                    records.place_call_through_effects(&callable, effects).err()
                 }),
         );
         if !unplaced.is_empty() {
@@ -179,6 +181,7 @@ impl InterfaceExport {
                         module,
                         ..DeclarationRecord::default()
                     });
+            record.lowered.name.clone_from(&name);
             interface.project(&record.lowered)?;
             interface.refuse_unrestorable(&name, &keys, &record.lowered)?;
             record.residue = postcard::to_stdvec(&interface).map_err(|error| {
@@ -558,19 +561,20 @@ struct ProjectedStruct {
     /// declaration.
     #[serde(skip)]
     name: String,
-    /// When a function lowers each of its methods, every method's residue
-    /// by name, sorted, one per overload in the row's order; its row then
-    /// holds no method, each signature being its function's declaration
-    /// and the residue.
-    methods: Option<MethodResidues>,
+    /// When a function lowers each of its methods, every method's residue,
+    /// by method name, each method's overloads in the row's order; its row
+    /// then holds no method, each signature being its function's
+    /// declaration and the residue.
+    methods: Option<Vec<MethodResidue>>,
 }
 
-/// Each method's residue by name, sorted, one per overload.
-type MethodResidues = Vec<(String, Vec<MethodResidue>)>;
-
 /// What a method's signature says that its lowered declaration does not.
+///
+/// It names its method by its function's index in the record, whose
+/// lowered name spells the method's name and overload qualifier.
 #[derive(serde::Serialize, serde::Deserialize)]
 struct MethodResidue {
+    function: u32,
     variadic_name: Option<String>,
     ret_mlir_index: bool,
     ref_params: Vec<Option<mojito_types::origin::RefSig>>,
@@ -582,7 +586,6 @@ struct MethodResidue {
     origin_binders: Vec<Option<mojito_types::origin::PointerOrigin>>,
     synthesized_default: bool,
     nested_origins: NestedOrigins,
-    overload: Option<String>,
 }
 
 /// One name bound at module scope.
@@ -1200,23 +1203,24 @@ impl DeclarationInterface {
                     obligation.declared.then(|| obligation.message.clone());
                 self.explicit_destroy.push((name.clone(), obligation));
             }
-            for (method, residues) in projected.methods.into_iter().flatten() {
-                let overloads = residues
-                    .into_iter()
-                    .map(|residue| {
-                        let lowered_name = mojito_symbol::symbol::qualified_method_symbol(
-                            &name,
-                            &method,
-                            residue.overload.as_deref(),
-                        );
-                        lowered_function(lowered, &lowered_name)
-                            .map(|function| residue.sig(&method, info.decls.len(), function))
-                            .ok_or_else(|| {
-                                format!("method `{lowered_name}` has no lowered declaration")
-                            })
-                    })
-                    .collect::<Result<_, _>>()?;
-                info.methods.insert(method, overloads);
+            for residue in projected.methods.into_iter().flatten() {
+                let function = lowered
+                    .functions
+                    .get(residue.function as usize)
+                    .ok_or_else(|| format!("a method residue of `{name}` names no function"))?;
+                let (method, qualifier) =
+                    mojito_symbol::symbol::method_of_symbol(&name, &function.lowered_name)
+                        .ok_or_else(|| {
+                            format!(
+                                "function `{}` is no method of `{name}`",
+                                function.lowered_name
+                            )
+                        })?;
+                let sig = residue.sig(method, qualifier, info.decls.len(), function);
+                info.methods
+                    .entry(method.to_string())
+                    .or_default()
+                    .push(sig);
             }
         }
         by_name(&mut self.explicit_destroy);
@@ -1534,41 +1538,53 @@ fn default_declared_alike(
 ///
 /// # Errors
 ///
-/// A method whose lowered declaration says other than its signature.
+/// A method whose lowered declaration says other than its signature, or
+/// whose function's name would not split back into its name and overload
+/// qualifier.
 fn project_methods(
     owner: &str,
     info: &StructInfo,
     lowered: &LoweredDeclaration,
-) -> Result<Option<MethodResidues>, String> {
-    let mut methods: MethodResidues = Vec::new();
-    for (method, overloads) in &info.methods {
-        let mut residues = Vec::new();
+) -> Result<Option<Vec<MethodResidue>>, String> {
+    let mut methods: Vec<(&String, &Vec<MethodSig>)> = info.methods.iter().collect();
+    methods.sort_by_key(|(method, _)| *method);
+    let mut residues = Vec::new();
+    for (method, overloads) in methods {
         for sig in overloads {
             let lowered_name = mojito_symbol::symbol::qualified_method_symbol(
                 owner,
                 method,
                 sig.overload.as_deref(),
             );
-            let Some(declaration) = lowered_function(lowered, &lowered_name) else {
+            let Some(function) = lowered.function_index(&lowered_name) else {
                 return Ok(None);
             };
+            let declaration = &lowered.functions[function];
             if let Some(fact) = method_projection_differs(method, &info.decls, sig, declaration) {
                 return Err(format!(
                     "the lowered declaration of method `{lowered_name}` says other than its \
                      check of its {fact}"
                 ));
             }
-            residues.push(MethodResidue::of(sig));
+            if mojito_symbol::symbol::method_of_symbol(owner, &lowered_name)
+                != Some((method.as_str(), sig.overload.as_deref()))
+            {
+                return Err(format!(
+                    "method `{lowered_name}` would not join back from its function"
+                ));
+            }
+            let function = u32::try_from(function)
+                .map_err(|_| format!("method `{lowered_name}` has no function index"))?;
+            residues.push(MethodResidue::of(sig, function));
         }
-        methods.push((method.clone(), residues));
     }
-    by_name(&mut methods);
-    Ok(Some(methods))
+    Ok(Some(residues))
 }
 
 impl MethodResidue {
-    fn of(sig: &MethodSig) -> Self {
+    fn of(sig: &MethodSig, function: u32) -> Self {
         Self {
+            function,
             variadic_name: sig.variadic_name.clone(),
             ret_mlir_index: sig.ret_mlir_index,
             ref_params: sig.ref_params.clone(),
@@ -1580,13 +1596,19 @@ impl MethodResidue {
             origin_binders: sig.origin_binders.clone(),
             synthesized_default: sig.synthesized_default,
             nested_origins: sig.nested_origins,
-            overload: sig.overload.clone(),
         }
     }
 
-    /// The signature of `method`, on a struct of `owner_decls` parameters,
-    /// whose lowered declaration is `declaration`.
-    fn sig(self, method: &str, owner_decls: usize, declaration: &FunctionDeclaration) -> MethodSig {
+    /// The signature of `method`, whose overload qualifier is `qualifier`,
+    /// on a struct of `owner_decls` parameters, whose lowered declaration is
+    /// `declaration`.
+    fn sig(
+        self,
+        method: &str,
+        qualifier: Option<&str>,
+        owner_decls: usize,
+        declaration: &FunctionDeclaration,
+    ) -> MethodSig {
         MethodSig {
             decls: own_decls(method, owner_decls, declaration)
                 .unwrap_or_default()
@@ -1624,7 +1646,7 @@ impl MethodResidue {
             origin_binders: self.origin_binders,
             synthesized_default: self.synthesized_default,
             nested_origins: self.nested_origins,
-            overload: self.overload,
+            overload: qualifier.map(str::to_string),
         }
     }
 }
@@ -1759,15 +1781,13 @@ fn own_decls<'a>(
     }
 }
 
-/// The function declaration `name` among `lowered`'s, which are sorted.
+/// The function declaration `name` among `lowered`'s.
 fn lowered_function<'a>(
     lowered: &'a LoweredDeclaration,
     name: &str,
 ) -> Option<&'a FunctionDeclaration> {
     lowered
-        .functions
-        .binary_search_by(|declaration| declaration.lowered_name.as_bytes().cmp(name.as_bytes()))
-        .ok()
+        .function_index(name)
         .map(|position| &lowered.functions[position])
 }
 
@@ -1894,7 +1914,8 @@ mod tests {
 
     fn constant_n(value: i64) -> LoweredDeclaration {
         LoweredDeclaration {
-            constants: vec![("N".to_string(), IntLiteral::from(value))],
+            constant: Some(IntLiteral::from(value)),
+            name: "N".to_string(),
             ..LoweredDeclaration::default()
         }
     }
@@ -1911,6 +1932,167 @@ mod tests {
     }
 
     const KEYS: [(Table, &str); 2] = [(Table::Comptimes, "N"), (Table::Elaborated, "N")];
+
+    fn method_function(lowered_name: &str) -> FunctionDeclaration {
+        FunctionDeclaration {
+            lowered_name: lowered_name.to_string(),
+            param_names: Vec::new(),
+            param_types: Vec::new(),
+            defaults: Vec::new(),
+            required: Vec::new(),
+            variadic: None,
+            variadic_convention: None,
+            variadic_index: None,
+            kw_variadic: None,
+            kw_variadic_convention: None,
+            kw_variadic_index: None,
+            positional_only: None,
+            keyword_only: None,
+            param_decls: Vec::new(),
+            has_receiver: true,
+            receiver_convention: None,
+            param_conventions: Vec::new(),
+            ret_ty: Ty::None,
+            returns_reference: false,
+            raises: false,
+            error_ty: None,
+            ref_params: Vec::new(),
+            param_writes: Vec::new(),
+            availability: Vec::new(),
+            enclosing: None,
+            region_binders: Vec::new(),
+        }
+    }
+
+    /// The signature of `S.{method}{qualifier}` whose lowered declaration
+    /// is `function`.
+    fn method_sig(
+        method: &str,
+        qualifier: Option<&str>,
+        function: &FunctionDeclaration,
+    ) -> MethodSig {
+        MethodResidue {
+            function: 0,
+            variadic_name: None,
+            ret_mlir_index: false,
+            ref_params: Vec::new(),
+            ref_return: None,
+            view_return_interior: Vec::new(),
+            view_return: Vec::new(),
+            implicit: false,
+            parametric_origin_writes: Vec::new(),
+            origin_binders: Vec::new(),
+            synthesized_default: false,
+            nested_origins: NestedOrigins::AsDeclared,
+        }
+        .sig(method, qualifier, 0, function)
+    }
+
+    /// Struct `S`'s row, with `methods`, and its lowered part, with a
+    /// function of each method's lowered name.
+    fn struct_s(methods: &[(&str, Option<&str>)]) -> (DeclarationInterface, LoweredDeclaration) {
+        let mut functions: Vec<FunctionDeclaration> = methods
+            .iter()
+            .map(|(method, qualifier)| {
+                method_function(&mojito_symbol::symbol::qualified_method_symbol(
+                    "S", method, *qualifier,
+                ))
+            })
+            .collect();
+        let mut rows: HashMap<String, Vec<MethodSig>> = HashMap::new();
+        for ((method, qualifier), function) in methods.iter().zip(&functions) {
+            rows.entry((*method).to_string())
+                .or_default()
+                .push(method_sig(method, *qualifier, function));
+        }
+        functions.sort_by(|left, right| left.lowered_name.cmp(&right.lowered_name));
+        let info = StructInfo {
+            decls: Vec::new(),
+            source_params: Vec::new(),
+            conforms: Vec::new(),
+            callable_conformance: None,
+            callable_target: None,
+            conformance_conditions: HashMap::new(),
+            fields: Vec::new(),
+            declared_field_names: Vec::new(),
+            field_origin_arguments: HashMap::new(),
+            associated: HashMap::new(),
+            associated_constraints: HashMap::new(),
+            parameterized_associated: HashMap::new(),
+            methods: rows,
+            fieldwise_init: false,
+            explicit_destroy_message: None,
+            explicit_destructors: HashMap::new(),
+        };
+        let declaration = StructDeclaration {
+            name: "S".to_string(),
+            fields: Vec::new(),
+            mut_self_methods: HashSet::new(),
+            fieldwise_init: false,
+            param_decls: Vec::new(),
+            explicit_destructors: HashMap::new(),
+            explicit_destroy: None,
+            conformances: Vec::new(),
+            declared: Vec::new(),
+            associated_types: Vec::new(),
+            associated_values: Vec::new(),
+        };
+        (
+            DeclarationInterface {
+                structs: vec![("S".to_string(), info)],
+                ..DeclarationInterface::default()
+            },
+            LoweredDeclaration {
+                structs: vec![declaration],
+                functions,
+                name: "S".to_string(),
+                ..LoweredDeclaration::default()
+            },
+        )
+    }
+
+    /// The overload qualifiers of each of `interface`'s struct's methods,
+    /// by name, in row order.
+    fn qualifiers(interface: &DeclarationInterface) -> BTreeMap<String, Vec<Option<String>>> {
+        interface.structs[0]
+            .1
+            .methods
+            .iter()
+            .map(|(method, sigs)| {
+                let qualifiers = sigs.iter().map(|sig| sig.overload.clone()).collect();
+                (method.clone(), qualifiers)
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_method_residue_names_its_function_and_joins_back_its_name_and_qualifier() {
+        let methods = [
+            ("f", Some("$ov$b")),
+            ("f", Some("$ov$a")),
+            ("pop", Some("$ov$")),
+            ("g", None),
+        ];
+        let (mut residue, lowered) = struct_s(&methods);
+        let expected = qualifiers(&residue);
+        residue.project(&lowered).expect("the rows agree");
+        assert!(residue.structs[0].1.methods.is_empty());
+        let bytes = postcard::to_stdvec(&residue).expect("encodes");
+        let mut decoded: DeclarationInterface = postcard::from_bytes(&bytes).expect("decodes");
+        decoded
+            .join(&[(Table::Structs, "S")], &lowered)
+            .expect("joins");
+        assert_eq!(qualifiers(&decoded), expected);
+    }
+
+    #[test]
+    fn a_method_whose_function_would_not_split_back_is_refused() {
+        let (mut residue, lowered) = struct_s(&[("f", Some("x"))]);
+        let error = residue
+            .project(&lowered)
+            .expect_err("`S.fx` splits as method `fx`");
+        assert!(error.contains("would not join back"), "{error}");
+    }
 
     #[test]
     fn a_constant_value_is_held_once_and_joined_back() {

@@ -1215,6 +1215,19 @@ pub fn qualified_method_symbol(type_name: &str, method: &str, qualifier: Option<
     format!("{type_name}.{method}{}", qualifier.unwrap_or_default())
 }
 
+/// The method name and overload qualifier of `type_name`'s method whose
+/// lowered symbol is `symbol` ([`qualified_method_symbol`]'s inverse), or
+/// `None` when `symbol` is not one of `type_name`'s methods.
+pub fn method_of_symbol<'s>(
+    type_name: &str,
+    symbol: &'s str,
+) -> Option<(&'s str, Option<&'s str>)> {
+    let rest = symbol.strip_prefix(type_name)?.strip_prefix('.')?;
+    let qualifier = overload_qualifier(rest);
+    let method = &rest[..rest.len() - qualifier.map_or(0, str::len)];
+    (!method.is_empty() && !method.contains('.')).then_some((method, qualifier))
+}
+
 /// Whether an overload symbol's signature qualifier is exactly the `NoneType`
 /// parameter spelling (`…$ov$None`).
 ///
@@ -2789,5 +2802,25 @@ impl OverloadDeclaration {
             && self.keyword_only == m.keyword_only
             && self.params == m.params
             && self.type_params == m.type_params
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_method_symbol_splits_back_into_its_method_and_qualifier() {
+        for (method, qualifier) in [
+            ("pop", None),
+            ("pop", Some("$ov$")),
+            ("__init__", Some("$ov$dtype$DType.float32")),
+        ] {
+            let symbol = qualified_method_symbol("List", method, qualifier);
+            assert_eq!(method_of_symbol("List", &symbol), Some((method, qualifier)));
+        }
+        assert_eq!(method_of_symbol("Lis", "List.pop"), None);
+        assert_eq!(method_of_symbol("Dict", "List.pop$ov$"), None);
+        assert_eq!(method_of_symbol("List", "List."), None);
     }
 }

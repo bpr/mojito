@@ -772,7 +772,7 @@ fn program_overloads_ask_the_own_sets_then_the_owning_package_declaration() {
         }
     }
     records
-        .place_constant("N".to_string(), mojito::IntLiteral::from(2_i64))
+        .place_constant("N", mojito::IntLiteral::from(2_i64))
         .expect("a library declaration");
     let package = Arc::new(PackageDeclarations::of_records(records).expect("the records encode"));
     let scope = PackageScope::new(Arc::clone(&package), Arc::from([true, false]));
@@ -794,6 +794,75 @@ fn program_overloads_ask_the_own_sets_then_the_owning_package_declaration() {
     assert!(overloads.function_is_overloaded("pick", 1));
     assert!(!overloads.is_function("solo"), "its module was not reached");
     assert!(!overloads.is_function("absent"));
+}
+
+#[test]
+fn a_package_record_keys_its_constant_and_effect_summaries_by_its_directory() {
+    // A record's constant is its declaration's own, and an effect summary
+    // names its function by its index in the record, so a build refuses a
+    // constant of another declaration, a summary of no function of its
+    // record, and a function placed after a summary would shift the
+    // indexes.
+    use mojito::checked_package::{
+        DeclarationRecords, DeclaringModules, PackageDeclarations, PackagedModule,
+    };
+    let mut library = parse(
+        "comptime N = 2\n\
+         def pick() -> Int:\n    return 0\n\
+         def pick(x: Int) -> Int:\n    return x\n\
+         struct S:\n    var x: Int\n    def get(self) -> Int:\n        return self.x\n",
+    )
+    .expect("parse error");
+    mojito::ast::stamp_source(&mut library, "/library/a.mojo");
+    let mut records = DeclarationRecords {
+        modules: vec![PackagedModule {
+            name: "a".to_string(),
+            canonical: "/library/a.mojo".to_string(),
+            path: "/library/a.mojo".to_string(),
+            link: Vec::new(),
+        }],
+        declaring: DeclaringModules::of(&library).expect("one module per name"),
+        ..DeclarationRecords::default()
+    };
+    let program = lower_program(&library).expect("type error");
+    let mut functions: Vec<_> = program
+        .declarations
+        .functions
+        .into_iter()
+        .filter(|declaration| declaration.lowered_name.starts_with("pick"))
+        .collect();
+    let last = functions.pop().expect("two overloads");
+    let picked = functions[0].lowered_name.clone();
+    for declaration in functions {
+        records.place_function(declaration).expect("placed");
+    }
+    let one = mojito::IntLiteral::from(1_i64);
+    assert!(records.place_constant("S.get", one.clone()).is_err());
+    records.place_constant("N", one.clone()).expect("its own");
+    assert!(
+        records.place_constant("N", one).is_err(),
+        "a second constant"
+    );
+    assert!(records.place_transfer_effects("N", Vec::new()).is_err());
+    assert!(
+        records
+            .place_call_through_effects("pick", Vec::new())
+            .is_err()
+    );
+    records
+        .place_transfer_effects(&picked, Vec::new())
+        .expect("a function of its record");
+    assert!(records.place_function(last).is_err(), "after a summary");
+    let package = PackageDeclarations::of_records(records).expect("the records encode");
+    let lowered = package.lowered_owning(&picked).expect("a record");
+    assert!(lowered.transfer_effects(&picked).is_some());
+    assert!(lowered.call_through_effects(&picked).is_none());
+    let constant = package.lowered_owning("N").expect("a record");
+    assert_eq!(
+        constant.constant("N"),
+        Some(&mojito::IntLiteral::from(1_i64))
+    );
+    assert_eq!(constant.constant("M"), None);
 }
 
 #[test]

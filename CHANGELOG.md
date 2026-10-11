@@ -8,6 +8,14 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A package record keys nothing by a name its directory holds (R598): a
+  projected struct's method residue names its method by its function's
+  index in the record, whose name splits back into the method's name and
+  overload qualifier (`symbol::method_of_symbol`); an effect summary names
+  its function by that index; and a record's constant is the declaration's
+  own, named by its row. The build refuses a record that would not join
+  back. The bundled package shrinks by 10.8 KB, from 1,477,584 to
+  1,466,816 bytes (debug); the format is now `mojito-package 23`.
 - A module integer constant is folded once, by the check, before any
   declaration's symbol is spelled (R599), as upstream folds a constant once
   in its declaration: the checker's binder owners, the conformance oracle,

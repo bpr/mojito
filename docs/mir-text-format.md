@@ -881,10 +881,10 @@ library declaration, and one module table holding each module's link
 record, one file per package. The bundled library's is the
 only producer today (`src/package.rs`). No part of a package is MIR text:
 it is a header followed by bytecode records, as upstream's package is
-MLIR bytecode throughout. The format line is `mojito-package 22`.
+MLIR bytecode throughout. The format line is `mojito-package 23`.
 
 ```text
-mojito-package 22
+mojito-package 23
 <the header's length, 8 bytes little-endian>
 <the header, as bytecode>
 <the payload: every record, as bytecode>
@@ -937,8 +937,9 @@ mojito-package 22
   `MirStructDeclaration` and `MirFunctionDeclaration` the declaration
   lowers to (its own, its methods, and the functions nested in or lifted
   from it), its trait with the traits it refines, and the transfer and call-through effect summaries of its
-  callables, by callable identity, and its module constant's integer value
-  (`constants`); it stores no overload set, which an importer finds by
+  callables, each by its function's index in the record, and the integer
+  value of the module constant the declaration is (`constant`), named by
+  the declaration's row (format 23); it stores no overload set, which an importer finds by
   looking up the declarations under a name (format 20). Every list is sorted by
   name and every set and map written sorted, so equal declarations encode
   equal bytes. It names nothing the directory holds (format 21), as an MLIR
@@ -960,7 +961,10 @@ mojito-package 22
   the declaration's span of directory keys, the projected structs are the
   `Structs` keys with a lowered struct, the projected bindings the
   `Bindings` keys with a lowered function of their name, and a projected
-  struct's `ExplicitDestroy` key holds no row. The build refuses a residue
+  struct's `ExplicitDestroy` key holds no row. A projected struct's method
+  residue names its method by its function's index in the record, and the
+  join splits that function's name back into the method's name and
+  overload qualifier (format 23). The build refuses a residue
   whose names are not those its keys and lowered part imply, so the join
   restores each name from the string section. A struct's declared parameters, fields,
   fieldwise initializer, destructors, and explicit-destruction obligation,

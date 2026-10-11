@@ -18,7 +18,7 @@
 //! The container is a header followed by records:
 //!
 //! ```text
-//! mojito-package 22
+//! mojito-package 23
 //! <the header's length, 8 bytes little-endian>
 //! <the header, as bytecode>
 //! <the payload: every record, as bytecode>
@@ -51,7 +51,7 @@ use std::ops::Range;
 use std::sync::{Arc, Mutex, OnceLock};
 
 /// The container format this compiler writes and reads.
-pub const PACKAGE_FORMAT: &str = "mojito-package 22";
+pub const PACKAGE_FORMAT: &str = "mojito-package 23";
 
 /// Who built a package from what: an importer refuses a package another
 /// compiler built, or one built from other sources.
