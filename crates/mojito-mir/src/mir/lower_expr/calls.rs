@@ -35,9 +35,10 @@ impl Flatten<'_> {
         let (param_arg_regs, instantiated_args) = if contract.param_decls.is_empty() {
             (Vec::new(), Vec::new())
         } else {
-            let mut param_arg_regs = self.param_arg_regs(e, param_args);
-            param_arg_regs.extend(self.inferred_param_arg_regs(e));
-            (param_arg_regs, self.instantiated_args(e))
+            (
+                self.param_arg_regs(e, param_args),
+                self.instantiated_args(e),
+            )
         };
         let saved_anchor_permission = self.allow_argument_anchors;
         self.allow_argument_anchors = self.call_anchors_arguments(e);
@@ -289,8 +290,7 @@ impl Flatten<'_> {
             .callable_ty
             .clone()
             .or_else(|| self.f.reg_types.get(&callee.0).cloned());
-        let mut param_arg_regs = self.param_arg_regs(e, param_args);
-        param_arg_regs.extend(self.inferred_param_arg_regs(e));
+        let param_arg_regs = self.param_arg_regs(e, param_args);
         let param_decls = callable_ty
             .as_ref()
             .map(generic_callable_param_decls)

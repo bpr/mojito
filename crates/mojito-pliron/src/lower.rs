@@ -57,10 +57,9 @@ use mojito_common::literal::{FloatLiteral, IntLiteral};
 use mojito_common::token::SourceSpan;
 use mojito_mir::mir::{
     Const as MirConst, MirBlock, MirBlockId, MirCaptureMode, MirClosureCapture, MirFunction,
-    MirFunctionDeclaration, MirInstr, MirParamArg, MirPlace, MirStructDeclaration, MirTerm, Proj,
-    Reg, UseMode,
+    MirFunctionDeclaration, MirInstr, MirPlace, MirStructDeclaration, MirTerm, Proj, Reg, UseMode,
 };
-use mojito_types::types::{Ty, canonical_simd_ty, scalar_simd_dtype};
+use mojito_types::types::{Ty, TyArg, canonical_simd_ty, scalar_simd_dtype};
 
 use mojito_native::native::layout::{Layout, LayoutCx};
 use mojito_native::native::mangle;

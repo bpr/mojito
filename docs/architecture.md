@@ -1953,15 +1953,22 @@ for the VM and records the expression over those binders beside it
 (`MirParamArg::expr`, built by `Flatten::forwarded_value` through
 `ParamContext`), which the monomorphizer evaluates under the caller
 instance's bindings (`bind_explicit_value_arguments`, `eval_ct`). A closed
-bracket argument of a generic call (`tup[(1, Tag(8, "x"))]()`, `s[1 + 2]()`)
-has no run-time form: as Mojo's call carries a parameter attribute, the call
-carries the value in its instantiated arguments, the checker names the
-argument's span (`SemanticAdjustment::FoldedParameterArguments`), and MIR
-lowers no code for it and leaves its slot's register absent. The verifier
-accepts the absent register only while the call carries that closed value
-(`verify_param_arguments`), and the monomorphizer binds it from the
-instantiated arguments (`bind_instantiated_arguments`). Only an argument
-over the caller's binders, a string, a callable, or a type keeps a register.
+bracket argument of a generic call (`tup[(1, Tag(8, "x"))]()`, `s[1 + 2]()`,
+`f["x"]()`) or of a construction (`Counter[4](1)`) has no run-time form: as
+Mojo's call carries a parameter attribute, the call carries the value in its
+instantiated arguments, the checker names the argument's span
+(`SemanticAdjustment::FoldedParameterArguments`, over
+`CtValue::is_parameter_attribute`), and MIR lowers no code for it and leaves
+its slot's register absent. A construction's instantiated arguments are the
+struct's followed by the selected constructor's own, the layout its
+declaration restates them in (`Counter[4](1)` calls `Counter[4].__init__`).
+A value parameter the call leaves to inference (`size(Counter[4](1))` binds
+`n = 4`) has no slot at all: its value rides the same instantiated
+arguments. The verifier accepts an absent register, or a missing inferred
+parameter, only while the call carries the value (`verify_param_arguments`),
+and the monomorphizer binds it from the instantiated arguments
+(`bind_instantiated_arguments`). Only an argument over the caller's binders,
+a callable, or a type keeps a register.
 
 Examples of syntax that may parse before it is fully implemented include richer
 trait features and advanced expression/declaration forms that the VM does not
@@ -4382,8 +4389,10 @@ host boundary below the stdlib: a builtin over the closed libc callee table
 only an allowlisted callee (any other name is a contextual error), checks
 each argument and the declared return type against the C prototype, and
 types the call as never raising; MIR carries it as an ordinary named `Call`
-whose first parameter argument is the callee string constant, and every
-backend reads the result type from the destination register. The VM
+whose instantiated arguments are upstream's parameters in order (the callee
+string, the return type, the fixed-argument count), every backend reads the
+callee from the first of them, and the result type from the destination
+register. The VM
 (`backend/vm/libc.rs`) executes each callee on Rust's standard library with
 libc's observable contract — return value, an `errno` slot behind
 `__errno_location`, bytes written through pointer arguments (`readdir`

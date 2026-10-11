@@ -4,11 +4,11 @@
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 
-/// The checked types a named call carries: the compile-time argument slots
-/// a builtin reads as runtime data and its argument types.
+/// The checked types a named call carries: the compile-time arguments a
+/// builtin reads (`external_call`'s callee) and its argument types.
 #[derive(Default)]
 pub(super) struct CallTypes<'a> {
-    pub(super) param_vals: &'a [Option<Value>],
+    pub(super) instantiated: &'a [mojito_types::types::TyArg],
     pub(super) arg_types: &'a [Option<mojito_types::types::Ty>],
 }
 
@@ -243,7 +243,7 @@ impl VmBackend {
         types: &CallTypes<'_>,
     ) -> Result<Value, RuntimeError> {
         let CallTypes {
-            param_vals,
+            instantiated,
             arg_types,
         } = *types;
         // Built-ins take positional arguments only, and user functions handle
@@ -341,10 +341,12 @@ impl VmBackend {
                 Ok(Value::None)
             }
             // Upstream's libc FFI over the closed callee table: the callee
-            // name is the first compile-time parameter argument; the result
+            // name is the call's first compile-time argument; the result
             // is coerced to the destination's checked type by the caller.
             "external_call" => {
-                let Some(Some(Value::Str(callee))) = param_vals.first() else {
+                let Some(mojito_types::types::TyArg::Val(mojito_types::ct::CtValue::Str(callee))) =
+                    instantiated.first()
+                else {
                     return Err(RuntimeError::TypeError(
                         "vm: external_call without a callee parameter argument".to_string(),
                     ));

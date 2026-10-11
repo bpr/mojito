@@ -409,7 +409,7 @@ impl FnLowering<'_> {
                 capture_accesses,
                 param_arg_regs,
                 receiver: _,
-                instantiated_args: _,
+                instantiated_args,
                 spread: _,
             } => {
                 // The callee's compiled signature is authoritative for the
@@ -421,11 +421,11 @@ impl FnLowering<'_> {
                 // only at `mut`/`ref` parameter positions (borrowed read
                 // arguments pass their value copy).
                 let _ = capture_accesses;
-                // The libc FFI builtin carries its callee as a parameter
-                // argument by design; every other value parameter argument
-                // is a contract the native backend does not lower.
+                // The libc FFI builtin reads its callee from the call's
+                // compile-time arguments; a value parameter argument with a
+                // register is a contract the native backend does not lower.
                 if func.0 == "external_call" {
-                    return self.lower_external_call(ctx, *dest, args, param_arg_regs);
+                    return self.lower_external_call(ctx, *dest, args, instantiated_args);
                 }
                 if param_arg_regs.iter().any(|arg| arg.value.is_some()) {
                     return Err(self.unsupported_reg(

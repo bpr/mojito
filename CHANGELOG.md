@@ -8,6 +8,18 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A closed parameter argument outside a generic call's brackets is
+  compile-time data on its call (R474), as Mojo's call carries a parameter
+  attribute: a construction's bracket arguments (`Counter[4](1)`), a value
+  parameter inferred from an argument's type (`size(Counter[4](1))`), and a
+  string (`f["x"]()`, `external_call`'s callee) emit no register. A
+  construction records the struct's arguments then its constructor's own
+  (`record_construction_instantiation`), an inferred value rides the call's
+  instantiated arguments (`InferredValueArguments` and
+  `Flatten::inferred_param_arg_regs` are gone), and both backends read
+  `external_call`'s callee from them. A `UInt` value parameter inferred from
+  an argument type (`name(S[UInt(3)]())`, R450) now passes MIR verification.
+  A type argument still reifies as a string register (R601).
 - A function the check lifts from a body is named by its declaration and
   an index within it, `$comptime$<declaration>$c<k>` (R547), beside MIR's
   own `$comptime$<declaration>$<k>`, as upstream keeps a parameter

@@ -14,16 +14,24 @@ impl Checker {
     /// function; the declared return type and every argument are checked
     /// against the callee's C prototype, so the backends never see a shape
     /// the table does not describe. The call never raises.
+    ///
+    /// The call records its parameters as any generic call does, in
+    /// upstream's declaration order (callee, return type, fixed-argument
+    /// count): the callee and the count are compile-time data on the call,
+    /// which the backends read from its instantiated arguments.
     pub(super) fn infer_external_call(
         &self,
+        span: &SourceSpan,
         param_args: &[ParamArg],
         args: &[Expr],
     ) -> Result<Ty, TypeError> {
-        let callee_name = match param_args.first() {
-            Some(ParamArg::Value(Expr {
-                kind: ExprKind::Str(text),
-                ..
-            })) => text.clone(),
+        let (callee_name, callee_span) = match param_args.first() {
+            Some(ParamArg::Value(
+                callee @ Expr {
+                    kind: ExprKind::Str(text),
+                    ..
+                },
+            )) => (text.clone(), callee.source_span()),
             _ => {
                 return Err(TypeError::BadCall {
                     func: "external_call".to_string(),
@@ -54,13 +62,23 @@ impl Checker {
                 context: format!("return type of external_call[\"{callee_name}\"]"),
             });
         }
+        let mut arguments = vec![
+            TyArg::Val(CtValue::Str(callee_name.clone())),
+            TyArg::Ty(ret.clone()),
+        ];
+        let mut folded_arguments = vec![callee_span];
         for extra in &param_args[2..] {
             let fixed = match extra {
                 ParamArg::Named { name, value } if name == "num_fixed_args" => match &**value {
-                    ParamArg::Value(Expr {
-                        kind: ExprKind::Int(literal),
-                        ..
-                    }) => literal.wrapping_signed(64),
+                    ParamArg::Value(
+                        count @ Expr {
+                            kind: ExprKind::Int(literal),
+                            ..
+                        },
+                    ) => literal.wrapping_signed(64).inspect(|fixed| {
+                        arguments.push(TyArg::Val(CtValue::Int(*fixed)));
+                        folded_arguments.push(count.source_span());
+                    }),
                     _ => None,
                 },
                 _ => {
@@ -109,6 +127,17 @@ impl Checker {
                 });
             }
         }
+        self.generic_instantiations.borrow_mut().insert(
+            span.clone(),
+            mojito_checked::checked::GenericInstantiation {
+                callee: "external_call".to_string(),
+                parameter_names: Vec::new(),
+                parameter_types: Vec::new(),
+                variadic: None,
+                arguments,
+                folded_arguments,
+            },
+        );
         Ok(ret)
     }
 }

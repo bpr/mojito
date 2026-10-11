@@ -11,20 +11,20 @@ use mojito_types::ffi::{self, CType, FfiCallee};
 
 impl FnLowering<'_> {
     /// Lower `external_call["callee", Ret, ...](args)`: the callee name is
-    /// the first parameter argument's string constant; the result type is
-    /// the destination register's checked type.
+    /// the call's first compile-time argument; the result type is the
+    /// destination register's checked type.
     pub(super) fn lower_external_call(
         &mut self,
         ctx: &mut Context,
         dest: Reg,
         args: &[Reg],
-        param_arg_regs: &[MirParamArg],
+        instantiated: &[TyArg],
     ) -> Result<(), PlironError> {
-        let callee_reg = param_arg_regs.first().and_then(|argument| argument.value);
-        let name = callee_reg
-            .and_then(|reg| self.str_consts.get(&reg.0))
-            .map(|bytes| String::from_utf8_lossy(bytes).into_owned());
-        let Some(row) = name.as_deref().and_then(ffi::callee) else {
+        let name = match instantiated.first() {
+            Some(TyArg::Val(mojito_types::ct::CtValue::Str(name))) => Some(name.as_str()),
+            _ => None,
+        };
+        let Some(row) = name.and_then(ffi::callee) else {
             return Err(
                 self.unsupported_reg("external_call without an allowlisted callee".into(), dest)
             );

@@ -2098,7 +2098,11 @@ impl<'a> Specializer<'a> {
                                     // constructor lookup composes: the call
                                     // names it.
                                     let arity_keyed = bindings.variadic_arity.is_some();
-                                    let own_keyed = !instantiated_args.is_empty();
+                                    let own_keyed = instantiated_args.len()
+                                        > self
+                                            .structs
+                                            .get(func.0.as_str())
+                                            .map_or(0, |owner| owner.param_decls.len());
                                     let instance = self.enqueue(&target, bindings, arguments)?;
                                     if arity_keyed || own_keyed {
                                         func.0 = instance;
@@ -2122,6 +2126,7 @@ impl<'a> Specializer<'a> {
                                 // no slot for one (a body that still needs
                                 // one fails its own contextual check).
                                 param_arg_regs.clear();
+                                instantiated_args.clear();
                             }
                             continue;
                         }
@@ -3106,7 +3111,7 @@ fn without_pointer_origins(ty: &Ty) -> Ty {
 /// Strips what only an instantiation reads from the compile-time argument
 /// slots `instruction` still carries: the enclosing binder a slot forwards
 /// and the expression over value binders it computes. A call left unresolved
-/// (`external_call`, a `Func`-typed callee) keeps the slot's register.
+/// (a builtin, a `Func`-typed callee) keeps the slot's register.
 fn close_parameter_slots(instruction: &mut MirInstr) {
     let slots = match instruction {
         MirInstr::Call { param_arg_regs, .. }

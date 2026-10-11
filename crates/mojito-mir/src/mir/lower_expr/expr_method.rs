@@ -157,7 +157,7 @@ impl Flatten<'_> {
                 mojito_symbol::symbol::specialization_template(method).is_none()
             });
         let (param_arg_regs, instantiated_args) = if served {
-            (self.inferred_param_arg_regs(e), self.instantiated_args(e))
+            (Vec::new(), self.instantiated_args(e))
         } else {
             (Vec::new(), Vec::new())
         };
@@ -784,13 +784,13 @@ impl Flatten<'_> {
             .unwrap_or_default();
         let transfer_recv_place = recv_place.clone();
         let transfer_arg_places = arg_places.clone();
-        // A value parameter the call leaves to inference passes as a named
-        // compile-time argument, as a generic `def`'s does; a per-call clone
-        // has baked every parameter and takes none.
+        // A value parameter the call leaves to inference travels in its
+        // solved arguments, as a generic `def`'s does; a per-call clone has
+        // baked every parameter and takes none.
         let (param_arg_regs, instantiated_args) = if param_decls.is_empty() {
             (Vec::new(), Vec::new())
         } else {
-            (self.inferred_param_arg_regs(e), self.instantiated_args(e))
+            (Vec::new(), self.instantiated_args(e))
         };
         self.emit(MirInstr::MethodCall {
             dest: d,

@@ -276,6 +276,11 @@ pub struct CheckedIteratorCall {
 /// One resolved generic free-function application at a call site: the source
 /// callee name and the compile-time arguments, in declaration order, exactly
 /// as `resolve_use_params` returned them.
+///
+/// A construction records one too, under the struct's name: the struct's
+/// arguments, then the selected constructor's own, in the layout the
+/// constructor's declaration restates them (`Counter[4](1)` calls
+/// `Counter[4].__init__`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GenericInstantiation {
     pub callee: String,
@@ -298,25 +303,10 @@ pub struct GenericInstantiation {
     /// only in where the collector sits or in its pack's bounds.
     pub variadic: Option<mojito_symbol::symbol::VariadicKey>,
     pub arguments: Vec<mojito_types::types::TyArg>,
-    /// The value parameters the call's brackets leave to inference
-    /// (`size(Counter[4](1))` against `def size[n: Int](c: Counter[n])`), as
-    /// declaration indices into [`Self::arguments`] with their names. A call
-    /// that stays on the erased declaration passes each as a named
-    /// compile-time argument ([`SemanticAdjustment::InferredValueArguments`]).
-    pub inferred_values: Vec<(usize, String)>,
     /// The bracket arguments [`Self::arguments`] carries as closed values, by
     /// their value expressions' spans
     /// ([`SemanticAdjustment::FoldedParameterArguments`]).
     pub folded_arguments: Vec<SourceSpan>,
-}
-
-impl GenericInstantiation {
-    /// The inferred value parameters with their checked arguments, or `None`
-    /// when there are none. A slot filled later (`CtValue::Deferred`) is no
-    /// argument the call passes and is left out.
-    pub fn inferred_value_arguments(&self) -> Option<Vec<(String, mojito_types::ct::CtValue)>> {
-        inferred_value_arguments(&self.inferred_values, &self.arguments)
-    }
 }
 
 /// One resolved application of a struct method that declares its own
@@ -344,20 +334,9 @@ pub struct MethodInstantiation {
     /// parameter names mint only the selected one's clone.
     pub overload: Option<String>,
     pub arguments: Vec<mojito_types::types::TyArg>,
-    /// The value parameters the call's brackets leave to inference, as
-    /// [`GenericInstantiation::inferred_values`] records a `def`'s.
-    pub inferred_values: Vec<(usize, String)>,
     /// The bracket arguments carried as closed values, as
     /// [`GenericInstantiation::folded_arguments`] records a `def`'s.
     pub folded_arguments: Vec<SourceSpan>,
-}
-
-impl MethodInstantiation {
-    /// The inferred value parameters with their checked arguments, as
-    /// [`GenericInstantiation::inferred_value_arguments`] reads a `def`'s.
-    pub fn inferred_value_arguments(&self) -> Option<Vec<(String, mojito_types::ct::CtValue)>> {
-        inferred_value_arguments(&self.inferred_values, &self.arguments)
-    }
 }
 
 /// One closed application of an ordinary generic struct the checker reached as
@@ -793,15 +772,13 @@ pub enum SemanticAdjustment {
     /// source position for declaration alignment but must not evaluate it into
     /// a runtime register (notably an explicitly supplied `Origin`).
     EraseCompileTimeArgument,
-    /// The value parameters a call to an erased generic `def` inferred from
-    /// its arguments' types (`size(Counter[4](1))` binds `n = 4`), by name,
-    /// with their checked values: MIR passes each as a named compile-time
-    /// argument, exactly as if the brackets had spelled it.
-    InferredValueArguments(Vec<(String, mojito_types::ct::CtValue)>),
-    /// Every compile-time argument a call of a generic `def` solved, in
-    /// declaration order ([`GenericInstantiation::arguments`]): the call's
-    /// MIR carries them so the elaborator binds a type parameter no runtime
-    /// parameter or result spells.
+    /// Every compile-time argument a call of a generic `def` or a
+    /// construction solved, in declaration order
+    /// ([`GenericInstantiation::arguments`]), those it inferred from its
+    /// arguments' types (`size(Counter[4](1))` binds `n = 4`) included: the
+    /// call's MIR carries them as compile-time data, so the elaborator binds
+    /// a parameter no runtime parameter or result spells and the call emits
+    /// no code for one.
     InstantiatedArguments(Vec<mojito_types::types::TyArg>),
     /// The value expressions, by span, of the call's bracket arguments that
     /// [`Self::InstantiatedArguments`] carries as closed values
@@ -2694,9 +2671,6 @@ fn build_checked_expressions(
                 });
             }
             if let Some(instantiation) = self.generic_instantiations.get(&span) {
-                if let Some(arguments) = instantiation.inferred_value_arguments() {
-                    adjustments.push(SemanticAdjustment::InferredValueArguments(arguments));
-                }
                 adjustments.push(SemanticAdjustment::InstantiatedArguments(
                     instantiation.arguments.clone(),
                 ));
@@ -2706,9 +2680,6 @@ fn build_checked_expressions(
                     ));
                 }
             } else if let Some(instantiation) = self.method_instantiations.get(&span) {
-                if let Some(arguments) = instantiation.inferred_value_arguments() {
-                    adjustments.push(SemanticAdjustment::InferredValueArguments(arguments));
-                }
                 adjustments.push(SemanticAdjustment::InstantiatedArguments(
                     instantiation.arguments.clone(),
                 ));
@@ -3351,26 +3322,6 @@ pub fn materialized_borrow_owner(
         } => Some(*owner),
         _ => None,
     })
-}
-
-/// The inferred value parameters among `arguments` with their checked
-/// values, or `None` when there are none. A slot filled later
-/// (`CtValue::Deferred`) is no argument the call passes and is left out.
-fn inferred_value_arguments(
-    inferred: &[(usize, String)],
-    arguments: &[mojito_types::types::TyArg],
-) -> Option<Vec<(String, mojito_types::ct::CtValue)>> {
-    use mojito_types::ct::CtValue;
-    let arguments: Vec<_> = inferred
-        .iter()
-        .filter_map(|(index, name)| match arguments.get(*index) {
-            Some(mojito_types::types::TyArg::Val(CtValue::Deferred(_) | CtValue::Marker(_)))
-            | None => None,
-            Some(mojito_types::types::TyArg::Val(value)) => Some((name.clone(), value.clone())),
-            Some(_) => None,
-        })
-        .collect();
-    (!arguments.is_empty()).then_some(arguments)
 }
 
 /// Write `map` sorted by key, so a record encodes the same bytes in every

@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R601**.
+Next free ID: **R602**.
 
 ## Ordered Work
 
@@ -50,27 +50,22 @@ Scope: what remains of the plan's stages, and what the pipeline order still
 leaves to close. A defect found on the way is filed by its kind; a
 divergence from the pin goes to a catch-up track, however small.
 
-- [ ] **R474 (P5) A closed parameter argument outside a generic call's
-  brackets still lowers as run-time code**
+- [ ] **R601 (P5) A type bracket argument still lowers as a type-name
+  string register**
 
-  Problem: the caller still emits a `const` register for `Counter[4](1)`'s
-  `4`, for the inferred `n = 4` of `size(Counter[4](1))`, and for a string
-  argument such as `f["x"]()` or `external_call`'s callee, where Mojo's call
-  carries each as a parameter attribute and emits nothing.
-  - A generic call's closed bracket argument is compile-time data on the
-    call (`SemanticAdjustment::FoldedParameterArguments`); these shapes have
-    no such record.
-  - A struct instantiation carries no `InstantiatedArguments`, the inferred
-    values lower through `Flatten::inferred_param_arg_regs`, and a string is
-    excluded because `mojito-pliron/src/lower/externs.rs` reads
-    `external_call`'s callee off its register.
-  - The registers are dead after `native::mono`, so no output differs; a
-    struct's tuple value parameter would leak as R468 did, but R463 rejects
-    reading one.
-  - Fix: record the folded spans on the struct instantiation, read inferred
-    values from the call's instantiated arguments, and move the
-    `external_call` read to them.
-  - Found while landing R468 (2026-10-07).
+  Problem: `Array[UInt8, 16](fill=0)` emits `const string("UInt8")` for `T`,
+  and `external_call["strlen", UInt]` emits `const string("UInt")` for its
+  return type, where Mojo's call carries a type parameter as an attribute
+  and emits nothing.
+  - `Flatten::reified_type_argument` and `SemanticAdjustment::ReifyTypeArgument`
+    reify a bare type argument for `ConstructTypeParam`, which
+    `native::mono` now substitutes, so no backend reads the register.
+  - `native::mono` clears a resolved call's slots, but a builtin's survive:
+    `external_call`'s return-type register reaches concrete MIR.
+  - That register is why the concrete verifier
+    (`verify/concrete.rs:require_no_parameter_slots`) still accepts a slot
+    register; once the type slots carry none, it should reject every one.
+  - Found while landing R474 (2026-10-10).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

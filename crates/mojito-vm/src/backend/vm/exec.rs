@@ -325,7 +325,7 @@ impl VmBackend {
                 kwargs,
                 arg_places,
                 kwarg_places,
-                param_arg_regs,
+                instantiated_args,
                 spread,
                 ..
             } => {
@@ -335,17 +335,6 @@ impl VmBackend {
                 let mut kw: Vec<(String, Value)> = kwargs
                     .iter()
                     .map(|(n, r)| (n.clone(), regs[r.0 as usize].clone()))
-                    .collect();
-                // The compile-time argument slots a builtin reads as runtime
-                // data (`external_call`'s callee name); a user callee declares
-                // none on concrete MIR.
-                let pvals: Vec<Option<Value>> = param_arg_regs
-                    .iter()
-                    .map(|argument| {
-                        argument
-                            .value
-                            .map(|register| regs[register.0 as usize].clone())
-                    })
                     .collect();
                 // A handwritten constructor receives reference arguments as
                 // caller-frame handles, just like an ordinary ref-parameter call.
@@ -470,7 +459,7 @@ impl VmBackend {
                         argv,
                         kw,
                         &CallTypes {
-                            param_vals: &pvals,
+                            instantiated: instantiated_args,
                             arg_types: &arg_types,
                         },
                     );

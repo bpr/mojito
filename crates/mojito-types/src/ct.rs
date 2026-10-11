@@ -405,9 +405,16 @@ impl CtValue {
     }
 
     /// Whether a bracket argument solved to this value has no run-time form
-    /// at its call, which carries it as compile-time data alone: a closed
-    /// scalar, vector, or aggregate. A string is not one: `external_call`
-    /// reads its callee off the argument's register.
+    /// at its call, which carries it as a parameter attribute alone, as
+    /// Mojo's call does: a string, or any value
+    /// [`Self::is_folded_parameter_argument`] accepts.
+    pub fn is_parameter_attribute(&self) -> bool {
+        matches!(self, Self::Str(_)) || self.is_folded_parameter_argument()
+    }
+
+    /// Whether this value is closed data a constant holds whole: a closed
+    /// scalar, vector, or aggregate. A string is not one, since it owns a
+    /// buffer.
     pub fn is_folded_parameter_argument(&self) -> bool {
         self.is_closed_leaf() || self.is_closed_aggregate_value()
     }

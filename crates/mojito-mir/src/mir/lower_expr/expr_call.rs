@@ -537,8 +537,7 @@ impl Flatten<'_> {
         // evaluated before ordinary call arguments: a
         // **value** parameter is a comptime `Int` expression flattened to a
         // register; a **type** parameter is erased (`None`).
-        let mut param_arg_regs = self.param_arg_regs(e, param_args);
-        param_arg_regs.extend(self.inferred_param_arg_regs(e));
+        let param_arg_regs = self.param_arg_regs(e, param_args);
         // Retain only checker-selected `mut`/`ref` caller places. A
         // syntactically simple copied argument remains eligible for
         // ASAP destruction after its value has been evaluated.
@@ -794,9 +793,10 @@ impl Flatten<'_> {
             let (param_arg_regs, instantiated_args) = if param_decls.is_empty() {
                 (Vec::new(), Vec::new())
             } else {
-                let mut param_arg_regs = self.param_arg_regs(e, param_args);
-                param_arg_regs.extend(self.inferred_param_arg_regs(e));
-                (param_arg_regs, self.instantiated_args(e))
+                (
+                    self.param_arg_regs(e, param_args),
+                    self.instantiated_args(e),
+                )
             };
             let saved_anchor_permission = self.allow_argument_anchors;
             self.allow_argument_anchors = self.call_anchors_arguments(e);
@@ -846,9 +846,10 @@ impl Flatten<'_> {
         let (param_arg_regs, instantiated_args) = if param_decls.is_empty() {
             (Vec::new(), Vec::new())
         } else {
-            let mut param_arg_regs = self.param_arg_regs(e, param_args);
-            param_arg_regs.extend(self.inferred_param_arg_regs(e));
-            (param_arg_regs, self.instantiated_args(e))
+            (
+                self.param_arg_regs(e, param_args),
+                self.instantiated_args(e),
+            )
         };
         let saved_anchor_permission = self.allow_argument_anchors;
         self.allow_argument_anchors = self.call_anchors_arguments(e);

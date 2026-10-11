@@ -689,8 +689,9 @@ pub(super) fn verify_subscript_call(
 /// has no register, while every supplied value argument must carry a register
 /// compatible with its declared checked type.
 /// A value slot's register is absent only where the call's `instantiated`
-/// arguments carry the closed value it was folded to: the call carries
-/// that value as compile-time data, as Mojo's carries a parameter attribute.
+/// arguments carry the closed value it was folded to, and a value parameter
+/// the call leaves to inference has no slot at all: the call carries each
+/// value as compile-time data, as Mojo's carries a parameter attribute.
 pub(super) fn verify_param_arguments(
     prefix: &str,
     function: &MirFunction,
@@ -785,7 +786,7 @@ pub(super) fn verify_param_arguments(
             (mojito_types::types::ParamDecl::Value { name, .. }, None) => {
                 if !matches!(
                     instantiated.get(index),
-                    Some(mojito_types::types::TyArg::Val(value)) if value.is_folded_parameter_argument()
+                    Some(mojito_types::types::TyArg::Val(value)) if value.is_parameter_attribute()
                 ) {
                     errors.push(format!(
                         "{prefix}: value parameter '{name}' has no runtime register"
@@ -827,6 +828,11 @@ pub(super) fn verify_param_arguments(
             && callable_default.is_none()
             && !infer_only
             && !variadic
+            && !matches!(
+                instantiated.get(index),
+                Some(mojito_types::types::TyArg::Val(value))
+                    if !matches!(value, mojito_types::ct::CtValue::Deferred(_) | mojito_types::ct::CtValue::Marker(_))
+            )
         {
             errors.push(format!(
                 "{prefix}: required compile-time value parameter '{name}' is missing"

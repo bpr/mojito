@@ -1954,7 +1954,6 @@ impl Checker {
                 parameter_types: Vec::new(),
                 variadic: None,
                 arguments: tyargs.to_vec(),
-                inferred_values: Vec::new(),
                 folded_arguments: Vec::new(),
             },
         );
@@ -2000,61 +1999,36 @@ impl Checker {
         .map_err(Some)
     }
 
-    /// Record a generic constructor's resolved compile-time arguments: the
-    /// elaborator instantiates its template per call. A closed instance of a
-    /// generic struct owns the record.
-    fn record_constructor_instantiation(
+    /// Record a construction's compile-time arguments as a generic `def`
+    /// call records its own: the struct's, then the selected constructor's
+    /// own, in the layout the constructor's declaration restates them
+    /// (`Counter[4](1)` calls `Counter[4].__init__`). A bracket argument
+    /// solved to a closed value travels in the record alone, so the call
+    /// lowers no run-time form for it.
+    fn record_construction_instantiation(
         &self,
         span: &SourceSpan,
         name: &str,
-        owner_arguments: &[TyArg],
-        sig: &MethodSig,
-        subst: &TySubst,
+        bracket: (&[ParamDecl], &[mojito_ast::ast::ParamArg]),
+        parameter_names: &[String],
+        arguments: Vec<TyArg>,
     ) {
-        if sig.decls.is_empty() {
+        if arguments.is_empty() {
             return;
         }
-        let arguments: Option<Vec<TyArg>> = sig
-            .decls
-            .iter()
-            .map(|decl| match decl {
-                ParamDecl::Type { id, .. } => subst.get(id).map(|ty| TyArg::Ty(ty.clone())),
-                ParamDecl::Value { .. } => None,
-            })
-            .collect();
-        let Some(arguments) = arguments else {
-            return;
-        };
-        // A closed instance that mints its own clones keys the record; any
-        // other owner keeps the template's key.
-        let instance = self.instance_arguments(name, owner_arguments);
-        // The selected member of an overloaded constructor set: two generic
-        // constructors baked alike share a clone name.
-        let overload = self
-            .structs
-            .get(name)
-            .and_then(|info| info.methods.get("__init__"))
-            .filter(|sigs| sigs.len() > 1)
-            .and_then(|_| {
-                let lowered = method_lowered_name(
-                    name,
-                    "__init__",
-                    sig,
-                    self.self_instance_ty(name).as_ref(),
-                );
-                mojito_symbol::symbol::overload_qualifier(&lowered).map(str::to_string)
-            });
-        self.method_instantiations.borrow_mut().insert(
+        let (decls, param_args) = bracket;
+        let folded_arguments = crate::checker::call_inference::folded_parameter_arguments(
+            decls, param_args, &arguments,
+        );
+        self.generic_instantiations.borrow_mut().insert(
             span.clone(),
-            mojito_checked::checked::MethodInstantiation {
-                owner: name.to_string(),
-                owner_arguments: instance.unwrap_or_default(),
-                method: "__init__".to_string(),
-                parameter_names: sig.names.clone(),
-                overload,
+            mojito_checked::checked::GenericInstantiation {
+                callee: name.to_string(),
+                parameter_names: parameter_names.to_vec(),
+                parameter_types: Vec::new(),
+                variadic: None,
                 arguments,
-                inferred_values: Vec::new(),
-                folded_arguments: Vec::new(),
+                folded_arguments,
             },
         );
     }
@@ -2241,29 +2215,13 @@ impl Checker {
                         .borrow_mut()
                         .insert(span.clone(), target.clone());
                 }
-                if let Some(arguments) = &selected.instantiation {
-                    self.method_instantiations.borrow_mut().insert(
-                        span.clone(),
-                        mojito_checked::checked::MethodInstantiation {
-                            owner: name.to_string(),
-                            owner_arguments: Vec::new(),
-                            method: "__init__".to_string(),
-                            parameter_names: selected.parameter_names.clone(),
-                            overload: selected
-                                .lowered_name
-                                .as_deref()
-                                .and_then(mojito_symbol::symbol::overload_qualifier)
-                                .map(str::to_string),
-                            arguments: arguments.clone(),
-                            inferred_values:
-                                crate::checker::call_inference::unsupplied_value_parameters(
-                                    &selected.param_decls,
-                                    &[],
-                                ),
-                            folded_arguments: Vec::new(),
-                        },
-                    );
-                }
+                self.record_construction_instantiation(
+                    span,
+                    name,
+                    (&selected.param_decls, param_args),
+                    &selected.parameter_names,
+                    selected.instantiation.clone().unwrap_or_default(),
+                );
                 self.record_selected_method_conversions("__init__", &selected, args, kwargs)?;
                 // Constructor calls use the same reference-parameter handles as
                 // ordinary calls. Record their retained caller places after
@@ -2372,7 +2330,17 @@ impl Checker {
                     &arg_tys,
                     &partitioned.explicit_origins,
                 )?;
-                self.record_constructor_instantiation(span, name, &tyargs, sig, &subst);
+                self.record_construction_instantiation(
+                    span,
+                    name,
+                    (&decls, param_args),
+                    &sig.names,
+                    tyargs
+                        .iter()
+                        .cloned()
+                        .chain(constructor_own_arguments(sig, &subst))
+                        .collect(),
+                );
                 self.record_struct_instantiation(name, &tyargs, span.source.as_deref());
                 let values = solved_value_bindings(&decls, &tyargs);
                 for (i, pty) in params.iter().enumerate().take(args.len()) {
@@ -2775,7 +2743,17 @@ impl Checker {
                         .borrow_mut()
                         .insert(span.clone(), target);
                 }
-                self.record_constructor_instantiation(span, name, &tyargs, &sig, &subst);
+                self.record_construction_instantiation(
+                    span,
+                    name,
+                    (&decls, param_args),
+                    &sig.names,
+                    tyargs
+                        .iter()
+                        .cloned()
+                        .chain(constructor_own_arguments(&sig, &subst))
+                        .collect(),
+                );
                 self.solve_call_origins(
                     &slots,
                     &sig.conventions,
@@ -2866,6 +2844,14 @@ impl Checker {
         {
             return specialized;
         }
+        let field_names: Vec<String> = info.fields.iter().map(|(name, _)| name.clone()).collect();
+        self.record_construction_instantiation(
+            span,
+            name,
+            (&decls, param_args),
+            &field_names,
+            tyargs.clone(),
+        );
         let origin_bindings = self.bind_fieldwise_origins(
             name,
             &info.source_params,
@@ -3744,6 +3730,20 @@ fn collector_takes_bound_pack(
 
 /// Whether an actual is a caller's whole pack, still a parameter, forwarded
 /// into the callee's collector.
+/// A generic constructor's own type arguments, as `subst` solved them in
+/// declaration order; none unless every one is a solved type (a value
+/// parameter of its own is left to the call's arguments).
+fn constructor_own_arguments(sig: &MethodSig, subst: &TySubst) -> Vec<TyArg> {
+    sig.decls
+        .iter()
+        .map(|decl| match decl {
+            ParamDecl::Type { id, .. } => subst.get(id).map(|ty| TyArg::Ty(ty.clone())),
+            ParamDecl::Value { .. } => None,
+        })
+        .collect::<Option<Vec<_>>>()
+        .unwrap_or_default()
+}
+
 fn forwards_pack(actual: &Ty) -> bool {
     mojito_types::types::pack_spread(std::slice::from_ref(actual)).is_some()
 }

@@ -436,9 +436,9 @@ impl Checker {
                 }
                 // Upstream's libc FFI spelling over Mojito's closed callee
                 // table (`mojito_types::ffi`); the backends read the callee
-                // from the first parameter argument and the result type from
-                // the destination register.
-                "external_call" => return self.infer_external_call(param_args, args),
+                // from the call's instantiated arguments and the result type
+                // from the destination register.
+                "external_call" => return self.infer_external_call(&span, param_args, args),
                 // The static address of a parameter list's elements, spelled
                 // only by the bundled `ParameterList` (upstream's
                 // `global_constant` over `#pop.variadic_to_array`).
@@ -1892,7 +1892,6 @@ impl Checker {
                     variadic: mojito_symbol::symbol::VariadicKey::from_callable(generic),
                     folded_arguments: folded_parameter_arguments(decls, param_args, &tyargs),
                     arguments: tyargs,
-                    inferred_values: unsupplied_value_parameters(decls, param_args),
                 },
             );
         }
@@ -2238,41 +2237,9 @@ impl Checker {
     }
 }
 
-/// The value parameters of `decls` that `param_args` leaves unsupplied, as
-/// declaration indices with their names. Brackets bind as the MIR generic
-/// ABI does: a named argument selects its declaration, a positional one the
-/// next declaration that is not infer-only.
-pub(super) fn unsupplied_value_parameters(
-    decls: &[ParamDecl],
-    param_args: &[mojito_ast::ast::ParamArg],
-) -> Vec<(usize, String)> {
-    let mut supplied = vec![false; decls.len()];
-    for index in bracket_argument_slots(decls, param_args)
-        .into_iter()
-        .flatten()
-    {
-        if let Some(slot) = supplied.get_mut(index) {
-            *slot = true;
-        }
-    }
-    decls
-        .iter()
-        .enumerate()
-        .filter(|(index, _)| !supplied[*index])
-        .filter_map(|(index, decl)| match decl {
-            ParamDecl::Value {
-                name,
-                variadic: false,
-                ..
-            } => Some((index, name.clone())),
-            _ => None,
-        })
-        .collect()
-}
-
 /// The value expressions of the bracket arguments `param_args` supplies to a
 /// non-variadic value parameter of `decls` solved to a closed value
-/// ([`CtValue::is_folded_parameter_argument`]). Mojo's call carries such an
+/// ([`CtValue::is_parameter_attribute`]). Mojo's call carries such an
 /// argument as a parameter attribute alone; the call's instantiated arguments
 /// carry it here, so it has no run-time form at the call site
 /// ([`mojito_checked::checked::SemanticAdjustment::FoldedParameterArguments`]).
@@ -2304,7 +2271,7 @@ pub(super) fn folded_parameter_arguments(
                 mojito_ast::ast::ParamArg::Type(_) => return None,
             };
             value
-                .is_folded_parameter_argument()
+                .is_parameter_attribute()
                 .then(|| expression.source_span())
         })
         .collect()

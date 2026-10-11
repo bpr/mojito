@@ -3,7 +3,7 @@
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
-use crate::checker::call_inference::{folded_parameter_arguments, unsupplied_value_parameters};
+use crate::checker::call_inference::folded_parameter_arguments;
 
 impl Checker {
     /// Resolve the method to a concrete signature (params + return + whether
@@ -103,7 +103,6 @@ impl Checker {
                     parameter_names: resolved.parameter_names.clone(),
                     overload,
                     arguments: arguments.clone(),
-                    inferred_values: unsupplied_value_parameters(&resolved.param_decls, param_args),
                     folded_arguments: folded_parameter_arguments(
                         &resolved.param_decls,
                         param_args,

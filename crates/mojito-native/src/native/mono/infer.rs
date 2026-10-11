@@ -162,7 +162,7 @@ impl Specializer<'_> {
         });
         let mut owner_covered = 0;
         // A constructor's declaration restates its struct's parameters
-        // first; the call's solved arguments are the method's own.
+        // first, which a method's receiver binds.
         let mut own_start = 0;
         if let Some(receiver) = receiver {
             let actual_receiver = peel_refs(reg_ty(caller, receiver, owner)?);
@@ -202,10 +202,13 @@ impl Specializer<'_> {
             unify(receiver_pattern, actual_receiver, &mut bindings)
                 .map_err(|e| self.error(Some(owner), format!("monomorphizing `{target}`: {e}")))?;
         }
+        // A construction's solved arguments restate its struct's, as its
+        // declaration does; a method call's are the method's own.
+        let instantiated_start = if receiver == Some(dest) { 0 } else { own_start };
         self.bind_instantiated_arguments(
             owner,
             target,
-            &declaration.param_decls[own_start..],
+            &declaration.param_decls[instantiated_start..],
             instantiated,
             &mut bindings,
         )?;

@@ -53,7 +53,7 @@ map and dependency DAG live in `docs/architecture.md` §Workspace Layout.
 | Narrow float lanes (`Float16`, `Float32`) | `ast::Dtype::{is_narrow_float, round_lane, float_literal_lane}` over `common::float::{f16, round_f16, f16_bits}` and `literal::FloatLiteral::{to_f16, to_f32}` (crate `mojito-common`) | The VM's lane rounding, literal materialization, `to_bits`, and `__fma__` (`runtime.rs`); `CtLane::from_value` (`mojito-types/ct.rs`); pliron's `widen_float_lane`/`round_float_lane` (`lower/arith.rs`), `lower_narrow_float_binop` (`lower/binops.rs`), `narrow_float_constant` (`lower/emit.rs`), and `simd_round_float_vector` (`lower/simd.rs`). |
 | `DType` values | `ast::Dtype::{code, is_integral, is_floating_point, is_signed, is_unsigned, is_numeric, is_float8, is_half_float, predicate, float_query, repr_alias}` with `DTYPE_PREDICATES`, `DTYPE_FLOAT_QUERIES`, the `DTYPE_*_MASK` bits, and `UPSTREAM_ONLY_DTYPE_NAMES` (crate `mojito-ast`) | The checker's `dtype_constant` (`checker/indexing.rs`, recording `SemanticAdjustment::DtypeConstant` for `DType.<name>` and a `SIMD` type operand's `dtype` via `member_type_operand`; `infer_member` records it for a value's `dtype` beside `length`), its `dtype_float_query` (recording `SemanticAdjustment::ParamValue`: the answer at a known dtype, `ParamContext::dtype_float_query`'s application over a binder), and its `Ty::Dtype` method arm (`infer_dtype_predicate` in `method_calls/simd_receivers.rs`); MIR's `Const::Dtype` and `CheckedConst::Dtype`; the elaborator's predicate and float-query folds (`comptime/eval.rs`), a `SIMD` type's `dtype` in `associated_value` (`comptime/elab.rs`), and dtype equality (`compare_numeric_values`); the VM's `Value::Dtype` (display, `scalar_repr`, `hash_leaf_value`, the receiver arm in `invoke.rs`); pliron's `ScalarTy::Dtype` (`dtype_constant`, `dtype_text`, `lower_dtype_predicate`). A `DType` hashes as its `UInt8` code through `types::hash_leaf_ty`. |
 | Scalar splat into a vector | `types::scalar_splats_into` (crate `mojito-types`) and `symbol::SCALAR_SPLAT_CONVERSION` (crate `mojito-symbol`) | The checker's `implicit_conversion_constructor` selects the splat as an implicit conversion; `checked.rs` turns its target into `SemanticAdjustment::SplatScalar` and `checked_call_boundary` (`method_calls/selection.rs`) into `CheckedCallValueAdjustment::SplatScalar`; MIR's `Flatten::splat_scalar` (`lower_expr/calls.rs`) emits the one-element `MakeSimd`. |
-| Host call allowlist (`external_call`) | `mojito_types::ffi::{CType, FfiCallee, CALLEES, callee, accepts_arg, accepts_ret}` | The checker's `infer_external_call` (rejects any other callee, checks arguments and the declared return type), the VM's `backend/vm/libc.rs` table (std-only execution: descriptor table, `errno` slot, environment overlay, glibc `dirent` byte images, `_c_stat` fills by field name), and pliron's `lower/externs.rs` (on-demand `llvm.func` declarations, `open` variadic, real C calls). The callee travels as the call's first parameter argument; the result type is the destination register's checked type. |
+| Host call allowlist (`external_call`) | `mojito_types::ffi::{CType, FfiCallee, CALLEES, callee, accepts_arg, accepts_ret}` | The checker's `infer_external_call` (rejects any other callee, checks arguments and the declared return type), the VM's `backend/vm/libc.rs` table (std-only execution: descriptor table, `errno` slot, environment overlay, glibc `dirent` byte images, `_c_stat` fills by field name), and pliron's `lower/externs.rs` (on-demand `llvm.func` declarations, `open` variadic, real C calls). The callee travels as the call's first instantiated argument (`CtValue::Str`), which the VM's `call_named` (`CallTypes::instantiated`) and pliron's `lower_external_call` read; the result type is the destination register's checked type. |
 | Compiler-called Mojo bodies | `stdlib/std/_intrinsics.mojo` (`_pow_int`, `_int_digits`, `_uint_digits`), named by `mojito_symbol::symbol::{POW_INT_SYMBOL, INT_DIGITS_SYMBOL, UINT_DIGITS_SYMBOL, DIGITS_BUFFER_BYTES, calls_pow_int}` | The Mojo implementations behind `**` on `Int`/`UInt` and integer display, which the builtin has no struct to hang a method on. `std.prelude` imports the module so every linked program carries them, and they stay out of `PRELUDE_EXPORTS`. Callers: the VM's `apply_binop`/`format_value`, the native monomorphizer's roots, and pliron's `reachable_set` plus `lower_pow`/`format_scalar`. |
 | Generated string tables | `stdlib/std/_string_tables.mojo` (written by `scripts/gen-string-tables` from the pinned upstream `_unicode_lookups.mojo` and `_parsing_numbers/constants.mojo`) | Fixed-width hex records in string literals: the Unicode 16 case-mapping tables behind `StringSpan.upper`/`lower`/`isupper`/`islower` and the Eisel-Lemire power-of-five table behind `atof`; `string.mojo`'s `_hex_at`/`_hex_u64_at`/`_table_find` decode and binary-search them. Regenerate at every re-pin; never edit by hand. |
 | String formatting | `stdlib/std/string.mojo` (`_FormatUtils`, `_FormatCurlyEntry`, `_PrecompiledEntriesRuntime`, and the `format` methods of `String` and `StringSpan`), the literal stand-in named by `mojito_symbol::symbol::{STDLIB_FORMAT_UTILS_STRUCT, FORMAT_LITERAL_METHOD}` | Upstream's `collections/string/format.mojo`, kept beside `String` because `format` builds a `String`. A string literal's `format` reaches `_FormatUtils.format_literal` through `infer_literal_format` (`checker/method_calls/intrinsic_receivers.rs`) and `SemanticAdjustment::LiteralFormat`; nothing in the VM or the native backend formats a template. |
@@ -931,8 +931,11 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `SemanticAdjustment::InstantiatedArguments` carries into
   `MirInstr::Call::instantiated_args`, and a method's own from a
   `checked::MethodInstantiation` into `MirInstr::MethodCall::instantiated_args`,
-  its inferred value parameters (`MethodInstantiation::inferred_values`) passed
-  as named arguments as a `def`'s are); the checker closes a method's own value
+  inferred value parameters included, which take no slot; a construction's
+  record, `Checker::record_construction_instantiation`
+  (`checker/declarations.rs`), holds the struct's arguments then the
+  constructor's own, and `infer_call` binds a construction's from its
+  declaration's first parameter); the checker closes a method's own value
   binders in its result (`Checker::close_method_values`) and types a spelled
   `DType` argument (`record_dtype_parameter_arguments`); `split_method_symbol` splits a lowered method
   symbol from its receiver at the last `.` outside brackets (an instance's
@@ -942,11 +945,12 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   construction through an overload.
 - A closed bracket argument is compile-time data on its call: the checker's
   `folded_parameter_arguments` (`checker/call_inference.rs`, over
-  `bracket_argument_slots`, the one bracket-to-declaration binding
-  `unsupplied_value_parameters` also reads) fills
-  `GenericInstantiation::folded_arguments` and
+  `bracket_argument_slots`, the one bracket-to-declaration binding) fills
+  `GenericInstantiation::folded_arguments` (a construction's and
+  `external_call`'s included) and
   `MethodInstantiation::folded_arguments` with the spans of arguments solved
-  to `CtValue::is_folded_parameter_argument` values, carried to MIR as
+  to `CtValue::is_parameter_attribute` values (a string, or a closed
+  scalar, vector, or aggregate), carried to MIR as
   `SemanticAdjustment::FoldedParameterArguments`; `Flatten::param_arg_regs`
   (`Flatten::param_arg_has_no_runtime_form`, `mir.rs`) lowers no code for
   them; `verify_param_arguments` (`verify/subscripts.rs`) accepts the absent
