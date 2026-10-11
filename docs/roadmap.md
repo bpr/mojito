@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R603**.
+Next free ID: **R604**.
 
 ## Ordered Work
 
@@ -49,21 +49,6 @@ belongs to is named in its title.
 Scope: what remains of the plan's stages, and what the pipeline order still
 leaves to close. A defect found on the way is filed by its kind; a
 divergence from the pin goes to a catch-up track, however small.
-
-- [ ] **R347 (P3d) A static call on a `Tuple` type over a pack still open
-  finds no method**
-
-  Problem: `return Tuple[*Ts].__len__()` in `def plain_len[*Ts:
-  Movable](t: Tuple[*Ts])` stops with "type 'Tuple[…]' has no method
-  '__len__'", where the pin answers the length.
-  - `Tuple[*Ts.reverse()].__len__()` and
-    `Tuple[*TypeList._concat[Self.Ts.values, OtherTs.values]()].__len__()`
-    stop the same way.
-  - An instance member on such a tuple runs: `t^.reverse()`, `other[0]`.
-  - A `Tuple` type over an open pack has no declaration to serve a static
-    member until `Tuple` is a generator.
-  - Depends on R4.
-  - Model: Fable, Planned.
 
 - [ ] **R546 (P6) A package holds lowered CFG MIR where upstream's holds
   post-parse IR**
@@ -2814,6 +2799,24 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - The receiver reaches `infer` as a `TypeValue`, which has no
     expression type; a construction through the alias (`W3()`) works.
   - Found while landing R4's vector-keyed half (2026-10-05).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R603 A static call through a `comptime` alias of any type is
+  rejected, not just a generic struct's**
+
+  Problem: `comptime A = S` then `A.k()`, a `@staticmethod` of a
+  non-generic `struct S`, prints `7` at the pin, while Mojito reports
+  "function types as compile-time values".
+  - A closed `Tuple` alias fails the same way: `comptime T = Tuple[Int,
+    String]` then `T.__len__()` (pin: `2`), at local or module scope.
+  - In a pack def, `comptime T = Tuple[*Ts]` then `T.__len__()` stops
+    earlier, with "Undefined variable 'T'" (pin: the length); the same call
+    spelled `Tuple[*Ts].__len__()` runs.
+  - The aliased receiver reaches `Checker::infer_impl` as
+    `ExprKind::TypeValue`, as R338 describes for a generic struct; the fix
+    is to resolve an alias receiver as a static receiver for every type.
+  - Found while landing R347 (2026-10-10).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

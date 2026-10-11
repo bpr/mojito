@@ -285,6 +285,11 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- A static member on a `Tuple` type over a pack still open
+  (`Tuple[*Ts].__len__()`, also over `*Ts.reverse()`, a
+  `TypeList._concat`, and a struct's `Self.Ts`) runs, served by `Tuple`'s
+  own `@staticmethod`, and `assets/ok/tuple_static_len_open_pack.mojo` pins
+  it (R347). It has run since `Tuple` became a struct generator.
 - A `@fieldwise_init` struct whose copy or move constructor is spelled
   `__init__(out self, *, copy: Self)` keeps its fieldwise constructor, so
   `P(y=2, x=1)` runs as at the pin instead of failing with "keyword

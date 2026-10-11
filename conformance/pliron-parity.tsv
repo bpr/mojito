@@ -900,6 +900,7 @@ assets/ok/tuple_of_scalars_comparison.mojo	main	exe-differential	sanitized
 assets/ok/tuple_one_element.mojo	main	exe-differential	sanitized
 assets/ok/tuple_pointer_element_write.mojo	main	exe-differential	sanitized
 assets/ok/tuple_reverse_concat.mojo	main	exe-differential	sanitized
+assets/ok/tuple_static_len_open_pack.mojo	main	exe-differential	sanitized
 assets/ok/tuple_struct_element_equality.mojo	main	exe-differential	sanitized
 assets/ok/tuple_template_served.mojo	main	exe-differential	sanitized
 assets/ok/tuple_unpack.mojo	main	exe-differential	sanitized
