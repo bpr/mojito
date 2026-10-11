@@ -3,20 +3,22 @@
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 pub(super) use mojito_symbol::symbol::materialized_instantiation_argument;
+use mojito_types::types::TyKind;
 use mojito_types::types::{FuncTy, GenericFuncTy};
 pub use mojito_types::types::{map_tyargs, substitute};
 
 pub(super) fn unify(pattern: &Ty, actual: &Ty, subst: &mut TySubst) -> Result<(), TypeError> {
-    match pattern {
-        Ty::Param { binder, .. } => {
+    match pattern.kind() {
+        TyKind::Param { binder, .. } => {
             // A string literal binds the type it materializes to, as the
             // pin's nonmaterializable `StringLiteral` does.
-            let solved = match actual {
-                Ty::StringLiteral => Ty::Struct(
+            let solved = match actual.kind() {
+                TyKind::StringLiteral => TyKind::Struct(
                     mojito_symbol::symbol::STDLIB_STRING_STRUCT.to_string(),
-                    Vec::new().into(),
-                ),
-                actual => default_literal(actual),
+                    Vec::new(),
+                )
+                .into(),
+                _ => default_literal(actual),
             };
             match subst.get(&binder.id) {
                 None => {
@@ -27,7 +29,7 @@ pub(super) fn unify(pattern: &Ty, actual: &Ty, subst: &mut TySubst) -> Result<()
                 // (`Pair[Float64](0.5, 1)`) materializes to the binding, as
                 // it does against a concrete parameter type.
                 Some(existing)
-                    if matches!(actual, Ty::IntLiteral | Ty::FloatLiteral)
+                    if matches!(actual.kind(), TyKind::IntLiteral | TyKind::FloatLiteral)
                         && coerces(actual, existing) => {}
                 Some(existing) => {
                     return Err(TypeError::TypeMismatch {
@@ -43,18 +45,18 @@ pub(super) fn unify(pattern: &Ty, actual: &Ty, subst: &mut TySubst) -> Result<()
         // parameters (`Pair[T]` against `Pair[Int]` solves `T = Int`). Value
         // arguments contribute no type solution. A structural mismatch is left
         // for the caller's coercion check to report.
-        Ty::Struct(pn, pargs) => {
+        TyKind::Struct(pn, pargs) => {
             // A spread of a pack against a closed element list is a whole
             // argument list, which `solve_value_args` binds: its one slot is
             // no element pattern. Against another spread it forwards that
             // pack, which the slot below binds.
             if mojito_types::types::pack_spread_argument(pargs).is_some()
-                && !matches!(actual, Ty::Struct(_, aargs)
+                && !matches!(actual.kind(), TyKind::Struct(_, aargs)
                     if mojito_types::types::pack_spread_argument(aargs).is_some())
             {
                 return Ok(());
             }
-            if let Ty::Struct(an, aargs) = actual
+            if let TyKind::Struct(an, aargs) = actual.kind()
                 && pn == an
                 && pargs.len() == aargs.len()
             {
@@ -76,8 +78,8 @@ pub(super) fn unify(pattern: &Ty, actual: &Ty, subst: &mut TySubst) -> Result<()
             }
             Ok(())
         }
-        Ty::Variant(pattern_alternatives) => {
-            if let Ty::Variant(actual_alternatives) = actual
+        TyKind::Variant(pattern_alternatives) => {
+            if let TyKind::Variant(actual_alternatives) = actual.kind()
                 && pattern_alternatives.len() == actual_alternatives.len()
             {
                 for (pattern, actual) in pattern_alternatives.iter().zip(actual_alternatives) {
@@ -86,7 +88,7 @@ pub(super) fn unify(pattern: &Ty, actual: &Ty, subst: &mut TySubst) -> Result<()
             }
             Ok(())
         }
-        Ty::Func(func) => {
+        TyKind::Func(func) => {
             let FuncTy {
                 environment: pattern_environment,
                 params: pattern_params,
@@ -113,15 +115,15 @@ pub(super) fn unify(pattern: &Ty, actual: &Ty, subst: &mut TySubst) -> Result<()
                 if let (Some(pattern), Some(actual)) = (pattern_error, actual_error) {
                     unify(pattern, actual, subst)?;
                 } else if let Some(pattern) = pattern_error {
-                    unify(pattern, &Ty::Never, subst)?;
+                    unify(pattern, &Ty::never(), subst)?;
                 }
             }
             Ok(())
         }
         // A reference pattern solves through its referent; the actual may be
         // the bare referent type (reference reads type as the referent).
-        Ty::Ref(pattern_reference) => match actual {
-            Ty::Ref(actual_reference) => unify(
+        TyKind::Ref(pattern_reference) => match actual.kind() {
+            TyKind::Ref(actual_reference) => unify(
                 &pattern_reference.referent,
                 &actual_reference.referent,
                 subst,
@@ -131,11 +133,11 @@ pub(super) fn unify(pattern: &Ty, actual: &Ty, subst: &mut TySubst) -> Result<()
         // A pointer pattern solves through its pointee (`Pointer[Self.T,
         // Self.origin]` against `Pointer[Int, …]` solves `T = Int`); the
         // provenance is bound separately (constructor origin binding).
-        Ty::Pointer {
+        TyKind::Pointer {
             element: pattern_element,
             ..
         } => {
-            if let Ty::Pointer { element, .. } = actual {
+            if let TyKind::Pointer { element, .. } = actual.kind() {
                 unify(pattern_element, element, subst)?;
             }
             Ok(())
@@ -177,7 +179,7 @@ pub(super) fn substitute_at(ty: &Ty, info: &StructInfo, targs: &[TyArg]) -> Ty {
 /// carries the struct pack's declared bounds, which a spread of the caller's
 /// collector must match exactly.
 pub(super) fn substitute_variadic_at(ty: &Ty, info: &StructInfo, targs: &[TyArg]) -> Ty {
-    let Ty::Param { binder, .. } = ty else {
+    let TyKind::Param { binder, .. } = ty.kind() else {
         return substitute_at(ty, info, targs);
     };
     let Some(declared) = info.decls.iter().find_map(|decl| match decl {
@@ -192,17 +194,19 @@ pub(super) fn substitute_variadic_at(ty: &Ty, info: &StructInfo, targs: &[TyArg]
         return substitute_at(ty, info, targs);
     };
     let retyped = |element: &mut Ty| {
-        if let Ty::Param { binder, bounds, .. } = element
-            && binder.name.starts_with('*')
-        {
-            bounds.clone_from(declared);
+        if matches!(element.kind(), TyKind::Param { binder, .. } if binder.name.starts_with('*')) {
+            element.update(|kind| {
+                if let TyKind::Param { bounds, .. } = kind {
+                    bounds.clone_from(declared);
+                }
+            });
         }
     };
     if let Some((_, mut elements)) = bound_pack_elements(&info.decls, targs) {
         if let [element] = elements.as_mut_slice() {
             retyped(element);
         }
-        Ty::RuntimePack(elements)
+        TyKind::RuntimePack(elements).into()
     } else {
         let mut element = substitute_at(ty, info, targs);
         retyped(&mut element);
@@ -244,7 +248,7 @@ pub(super) fn expand_solved_packs(ty: &Ty, decls: &[ParamDecl], tyargs: &[TyArg]
             ) => values
                 .iter()
                 .map(|value| match value {
-                    CtValue::Type(ty) => Some((**ty).clone()),
+                    CtValue::Type(ty) => Some(ty.clone()),
                     _ => None,
                 })
                 .collect::<Option<Vec<_>>>()
@@ -298,7 +302,7 @@ pub(super) fn bound_pack_elements(
     types
         .iter()
         .map(|value| match value {
-            CtValue::Type(ty) => Some((**ty).clone()),
+            CtValue::Type(ty) => Some(ty.clone()),
             _ => None,
         })
         .collect::<Option<Vec<_>>>()
@@ -336,7 +340,7 @@ pub(super) fn solve_value_args(
     width_binders: &dyn Fn(&ParamId) -> bool,
     out: &mut HashMap<String, CtValue>,
 ) {
-    match (pattern, actual) {
+    match (pattern.kind(), actual.kind()) {
         // A symbolic lane binds to the actual's own dtype (`Scalar[dt]`
         // against `Scalar[DType.int32]` solves `dt`), and a numeric literal
         // binds it at the literal's default type (`kind(3)` solves
@@ -347,9 +351,9 @@ pub(super) fn solve_value_args(
         // vector, a scalar at width one); an `Int` binder there is a
         // conversion upstream leaves unresolved. A slot the actual leaves
         // open (the caller's own `SIMD[dt, n]`) binds its expression.
-        (Ty::Simd { dtype, width }, _) => {
-            let actual_slots = match actual {
-                Ty::Bool => Some((SimdDtype::Known(Dtype::Bool), SimdWidth::Known(1))),
+        (TyKind::Simd { dtype, width }, _) => {
+            let actual_slots = match actual.kind() {
+                TyKind::Bool => Some((SimdDtype::Known(Dtype::Bool), SimdWidth::Known(1))),
                 _ => simd_slots(actual),
             };
             let Some((actual_dtype, actual_width)) = actual_slots else {
@@ -385,17 +389,16 @@ pub(super) fn solve_value_args(
         // struct) binds the pack to the actual's whole element list, whether
         // the actual spells it element by element or as one bound pack. A
         // pack forwarded from another still-open pack solves nothing here.
-        (Ty::Struct(pn, pargs), Ty::Struct(an, aargs))
-            if let Some(Ty::Param { binder, .. }) =
-                mojito_types::types::pack_spread_argument(pargs)
+        (TyKind::Struct(pn, pargs), TyKind::Struct(an, aargs))
+            if let Some(TyKind::Param { binder, .. }) =
+                (mojito_types::types::pack_spread_argument(pargs)).map(Ty::kind)
                 && mojito_types::types::pack_spread_argument(aargs).is_none()
                 && (pn == an
                     || (pn == mojito_types::types::TUPLE_TYPE_NAME
                         && mojito_types::types::tuple_elements(actual).is_some())) =>
         {
-            let element_types = |types: Vec<Ty>| {
-                CtValue::Tuple(types.into_iter().map(Box::new).map(CtValue::Type).collect())
-            };
+            let element_types =
+                |types: Vec<Ty>| CtValue::Tuple(types.into_iter().map(CtValue::Type).collect());
             // A public Tuple actual may already be spelled by its concrete
             // specialization symbol (a later discovery round); its retained
             // element types are the list either way.
@@ -419,7 +422,7 @@ pub(super) fn solve_value_args(
                     .or_insert(elements);
             }
         }
-        (Ty::Struct(pn, pargs), Ty::Struct(an, aargs))
+        (TyKind::Struct(pn, pargs), TyKind::Struct(an, aargs))
             if pn == an && pargs.len() == aargs.len() =>
         {
             for (p, a) in pargs.iter().zip(aargs) {
@@ -440,7 +443,7 @@ pub(super) fn solve_value_args(
                 }
             }
         }
-        (Ty::Ref(pattern_reference), Ty::Ref(actual_reference)) => {
+        (TyKind::Ref(pattern_reference), TyKind::Ref(actual_reference)) => {
             solve_value_args(
                 &pattern_reference.referent,
                 &actual_reference.referent,
@@ -448,66 +451,74 @@ pub(super) fn solve_value_args(
                 out,
             );
         }
-        (Ty::Ref(pattern_reference), _) => {
+        (TyKind::Ref(pattern_reference), _) => {
             solve_value_args(&pattern_reference.referent, actual, width_binders, out);
         }
         _ => {}
     }
 }
 
-/// Replace every `Ty::SelfType` in `ty` with `replacement` (the conforming
+/// Replace every `TyKind::SelfType` in `ty` with `replacement` (the conforming
 /// struct type, or a bounded `T`). Recurses into struct/function types.
 pub(super) fn substitute_self(ty: &Ty, replacement: &Ty) -> Ty {
-    match ty {
-        Ty::SelfType => replacement.clone(),
-        Ty::Param {
+    match ty.kind() {
+        TyKind::SelfType => replacement.clone(),
+        TyKind::Param {
             binder,
             bounds,
             callable_bound,
-        } => Ty::Param {
+        } => TyKind::Param {
             binder: binder.clone(),
             bounds: bounds.clone(),
             callable_bound: callable_bound
                 .as_ref()
-                .map(|bound| Box::new(substitute_self(bound, replacement))),
-        },
-        Ty::Struct(name, args) => Ty::Struct(
-            name.clone(),
-            args.reusing(map_tyargs(args, |t| substitute_self(t, replacement))),
-        ),
-        Ty::Dependent(dependent) => dependent.map_types(|ty| substitute_self(ty, replacement)),
-        Ty::ComptimeList(elem) => Ty::ComptimeList(Box::new(substitute_self(elem, replacement))),
-        Ty::Tuple(elems) => Ty::Tuple(
-            elems
-                .iter()
-                .map(|t| substitute_self(t, replacement))
-                .collect(),
-        ),
-        Ty::RuntimePack(elems) => Ty::RuntimePack(
-            elems
-                .iter()
-                .map(|t| substitute_self(t, replacement))
-                .collect(),
-        ),
-        Ty::VariadicPack(element) => {
-            Ty::VariadicPack(Box::new(substitute_self(element, replacement)))
+                .map(|bound| substitute_self(bound, replacement)),
         }
-        Ty::Variant(alternatives) => Ty::Variant(
+        .into(),
+        TyKind::Struct(name, args) => ty.reusing(TyKind::Struct(
+            name.clone(),
+            map_tyargs(args, |t| substitute_self(t, replacement)),
+        )),
+        TyKind::Dependent(dependent) => dependent.map_types(|ty| substitute_self(ty, replacement)),
+        TyKind::ComptimeList(elem) => {
+            TyKind::ComptimeList(substitute_self(elem, replacement)).into()
+        }
+        TyKind::Tuple(elems) => TyKind::Tuple(
+            elems
+                .iter()
+                .map(|t| substitute_self(t, replacement))
+                .collect(),
+        )
+        .into(),
+        TyKind::RuntimePack(elems) => TyKind::RuntimePack(
+            elems
+                .iter()
+                .map(|t| substitute_self(t, replacement))
+                .collect(),
+        )
+        .into(),
+        TyKind::VariadicPack(element) => {
+            TyKind::VariadicPack(substitute_self(element, replacement)).into()
+        }
+        TyKind::Variant(alternatives) => TyKind::Variant(
             alternatives
                 .iter()
                 .map(|ty| substitute_self(ty, replacement))
                 .collect(),
-        ),
-        Ty::Pointer { element, origin } => Ty::Pointer {
-            element: Box::new(substitute_self(element, replacement)),
+        )
+        .into(),
+        TyKind::Pointer { element, origin } => TyKind::Pointer {
+            element: substitute_self(element, replacement),
             origin: origin.clone(),
-        },
-        Ty::Assoc { base, name, args } => Ty::Assoc {
-            base: Box::new(substitute_self(base, replacement)),
+        }
+        .into(),
+        TyKind::Assoc { base, name, args } => TyKind::Assoc {
+            base: substitute_self(base, replacement),
             name: name.clone(),
             args: map_tyargs(args, |t| substitute_self(t, replacement)),
-        },
-        Ty::Func(func) => {
+        }
+        .into(),
+        TyKind::Func(func) => {
             let FuncTy {
                 environment,
                 params,
@@ -525,39 +536,39 @@ pub(super) fn substitute_self(ty: &Ty, replacement: &Ty) -> Ty {
                 ref_return,
                 transfers,
             } = &**func;
-            Ty::Func(Box::new(FuncTy {
+            TyKind::Func(Box::new(FuncTy {
                 environment: environment.clone(),
                 params: params
                     .iter()
                     .map(|p| substitute_self(p, replacement))
                     .collect(),
                 names: names.clone(),
-                ret: Box::new(substitute_self(ret, replacement)),
+                ret: substitute_self(ret, replacement),
                 required: required.clone(),
-                variadic: variadic
-                    .as_ref()
-                    .map(|v| Box::new(substitute_self(v, replacement))),
+                variadic: variadic.as_ref().map(|v| substitute_self(v, replacement)),
                 kw_variadic: kw_variadic
                     .as_ref()
-                    .map(|v| Box::new(substitute_self(v, replacement))),
+                    .map(|v| substitute_self(v, replacement)),
                 positional_only: *positional_only,
                 keyword_only: *keyword_only,
                 raises: *raises,
                 error: error
                     .as_ref()
-                    .map(|error| Box::new(substitute_self(error, replacement))),
+                    .map(|error| substitute_self(error, replacement)),
                 conventions: conventions.clone(),
                 ref_params: ref_params.clone(),
                 ref_return: ref_return.clone(),
                 transfers: transfers.clone(),
             }))
+            .into()
         }
-        Ty::Overload(candidates) => Ty::Overload(
+        TyKind::Overload(candidates) => TyKind::Overload(
             candidates
                 .iter()
                 .map(|candidate| substitute_self(candidate, replacement))
                 .collect(),
-        ),
+        )
+        .into(),
         _ => ty.clone(),
     }
 }
@@ -610,43 +621,49 @@ fn substitute_values_and_origins(
             })
             .collect()
     };
-    match ty {
-        Ty::Struct(name, args) => Ty::Struct(name.clone(), map_args(args).into()),
-        Ty::Assoc { base, name, args } => Ty::Assoc {
-            base: Box::new(recur(base)),
+    match ty.kind() {
+        TyKind::Struct(name, args) => TyKind::Struct(name.clone(), map_args(args)).into(),
+        TyKind::Assoc { base, name, args } => TyKind::Assoc {
+            base: recur(base),
             name: name.clone(),
             args: map_args(args),
-        },
-        Ty::Pointer { element, origin } => Ty::Pointer {
-            element: Box::new(recur(element)),
-            origin: origin.clone(),
-        },
-        Ty::Ref(reference) => {
-            let mut reference = reference.clone();
-            reference.referent = Box::new(recur(&reference.referent));
-            reference.origin = substitute_origin(&reference.origin, origins);
-            Ty::Ref(reference)
         }
-        Ty::Tuple(elements) => Ty::Tuple(elements.iter().map(recur).collect()),
-        Ty::RuntimePack(elements) => Ty::RuntimePack(elements.iter().map(recur).collect()),
-        Ty::VariadicPack(element) => Ty::VariadicPack(Box::new(recur(element))),
-        Ty::Variant(alternatives) => Ty::Variant(alternatives.iter().map(recur).collect()),
-        Ty::ComptimeList(element) => Ty::ComptimeList(Box::new(recur(element))),
-        Ty::Dependent(dependent) => {
+        .into(),
+        TyKind::Pointer { element, origin } => TyKind::Pointer {
+            element: recur(element),
+            origin: origin.clone(),
+        }
+        .into(),
+        TyKind::Ref(reference) => {
+            let mut reference = reference.clone();
+            reference.referent = recur(&reference.referent);
+            reference.origin = substitute_origin(&reference.origin, origins);
+            TyKind::Ref(reference).into()
+        }
+        TyKind::Tuple(elements) => TyKind::Tuple(elements.iter().map(recur).collect()).into(),
+        TyKind::RuntimePack(elements) => {
+            TyKind::RuntimePack(elements.iter().map(recur).collect()).into()
+        }
+        TyKind::VariadicPack(element) => TyKind::VariadicPack(recur(element)).into(),
+        TyKind::Variant(alternatives) => {
+            TyKind::Variant(alternatives.iter().map(recur).collect()).into()
+        }
+        TyKind::ComptimeList(element) => TyKind::ComptimeList(recur(element)).into(),
+        TyKind::Dependent(dependent) => {
             let resolved = mojito_types::types::replace_parameters(&context, ty, &bindings, 0)
                 .unwrap_or_else(|_| ty.clone());
-            match &resolved {
-                Ty::Dependent(_) => dependent.map_types(recur),
+            match resolved.kind() {
+                TyKind::Dependent(_) => dependent.map_types(recur),
                 _ => recur(&resolved),
             }
         }
         // A symbolic lane dtype or width closes the same way and
         // re-canonicalizes (`Scalar[Self.dt]` at `dt = DType.int` is `Int`).
-        Ty::Simd { .. } if mojito_types::types::is_symbolic(ty) => {
+        TyKind::Simd { .. } if mojito_types::types::is_symbolic(ty) => {
             mojito_types::types::replace_parameters(&context, ty, &bindings, 0)
                 .unwrap_or_else(|_| ty.clone())
         }
-        other => other.clone(),
+        _ => ty.clone(),
     }
 }
 
@@ -854,20 +871,25 @@ impl Checker {
         mut callable: Ty,
         bindings: &[(Vec<usize>, mojito_types::origin::Origin)],
     ) -> Ty {
-        let Some(FuncTy {
-            ref_params,
-            ref_return,
-            ..
-        }) = callable.callable_mut()
-        else {
+        if callable.callable().is_none() {
             return callable;
-        };
-        for signature in ref_params.iter_mut().flatten() {
-            signature.origin = bind_sig_origin(&signature.origin, bindings);
         }
-        if let Some(signature) = ref_return {
-            signature.origin = bind_sig_origin(&signature.origin, bindings);
-        }
+        callable.update(|kind| {
+            let Some(FuncTy {
+                ref_params,
+                ref_return,
+                ..
+            }) = kind.callable_mut()
+            else {
+                return;
+            };
+            for signature in ref_params.iter_mut().flatten() {
+                signature.origin = bind_sig_origin(&signature.origin, bindings);
+            }
+            if let Some(signature) = ref_return {
+                signature.origin = bind_sig_origin(&signature.origin, bindings);
+            }
+        });
         callable
     }
 
@@ -897,10 +919,10 @@ impl Checker {
         callable: Ty,
         arguments: &[mojito_ast::ast::ParamArg],
     ) -> Result<(Ty, Vec<TyArg>), TypeError> {
-        let Ty::GenericFunc(generic) = callable else {
+        let TyKind::GenericFunc(generic) = callable.kind() else {
             return Ok((callable, Vec::new()));
         };
-        let GenericFuncTy { decls, func } = *generic;
+        let GenericFuncTy { decls, func } = (**generic).clone();
         let (subst, tyargs) = self.resolve_use_params(name, &decls, arguments, &[], &[])?;
         let values = Self::value_argument_environment(&decls, &tyargs);
         let resolve = |ty: &Ty| {
@@ -908,8 +930,8 @@ impl Checker {
             let substituted = self.resolve_assoc_ty(&substitute(&expanded, &subst));
             self.resolve_dependent_ty(&substituted, &values)
         };
-        let contract = Ty::Func(Box::new(func.try_map_types(resolve)?));
-        Ok((contract, tyargs))
+        let contract = TyKind::Func(Box::new(func.try_map_types(resolve)?));
+        Ok((contract.into(), tyargs))
     }
 
     pub(super) fn specialize_callable_value_candidate(
@@ -936,12 +958,12 @@ impl Checker {
                  capture environment; call it directly or use a capture-free function"
             )));
         }
-        match callable {
-            callable @ Ty::GenericFunc(_) => self
+        match callable.kind() {
+            TyKind::GenericFunc(_) => self
                 .instantiate_generic_callable_value(name, callable, &ordinary)
                 .map(|(contract, _)| contract),
-            callable @ Ty::Func(_) if ordinary.is_empty() => Ok(callable),
-            Ty::Func(_) => Err(TypeError::WrongTypeArgCount {
+            TyKind::Func(_) if ordinary.is_empty() => Ok(callable),
+            TyKind::Func(_) => Err(TypeError::WrongTypeArgCount {
                 name: name.to_string(),
                 expected: 0,
                 got: ordinary.len(),
@@ -964,7 +986,10 @@ impl Checker {
         let Some(callable) = self.lookup(name).cloned() else {
             return Ok(None);
         };
-        if !matches!(callable, Ty::Func(_) | Ty::GenericFunc(_) | Ty::Overload(_)) {
+        if !matches!(
+            callable.kind(),
+            TyKind::Func(_) | TyKind::GenericFunc(_) | TyKind::Overload(_)
+        ) {
             return Ok(None);
         }
         self.check_capture_access(name, false)?;
@@ -974,64 +999,61 @@ impl Checker {
                 .insert(span.clone(), owner);
         }
         let signatures = self.lookup_callable_origins(name).unwrap_or_default();
-        let (selected, target) = match callable {
-            Ty::Overload(candidates) => {
-                let expected = expected.ok_or_else(|| TypeError::BadCall {
-                    func: name.to_string(),
-                    reason: "an overloaded function value requires a contextual callable type"
-                        .to_string(),
-                })?;
-                let mut matches = candidates
-                    .iter()
-                    .enumerate()
-                    .filter_map(|(index, candidate)| {
-                        // Only a fitting candidate keeps the facts its
-                        // compile-time arguments recorded.
-                        let saved_argument_facts = self.compile_time_argument_facts(arguments);
-                        let fitting = self
-                            .specialize_callable_value_candidate(
-                                name,
-                                arguments,
-                                candidate.clone(),
-                                signatures.get(index),
-                            )
-                            .ok()
-                            .filter(|specialized| self.value_coerces(specialized, expected))
-                            .zip(callable_lowered_name(name, candidate));
-                        if fitting.is_none() {
-                            self.restore_compile_time_argument_facts(saved_argument_facts);
-                        }
-                        fitting
-                    })
-                    .collect::<Vec<_>>();
-                match matches.len() {
-                    0 => {
-                        return Err(TypeError::TypeMismatch {
-                            expected: expected.to_string(),
-                            found: format!("specialization of overload({name})"),
-                            context: "overloaded callable value".to_string(),
-                        });
+        let (selected, target) = if let TyKind::Overload(candidates) = callable.kind() {
+            let expected = expected.ok_or_else(|| TypeError::BadCall {
+                func: name.to_string(),
+                reason: "an overloaded function value requires a contextual callable type"
+                    .to_string(),
+            })?;
+            let mut matches = candidates
+                .iter()
+                .enumerate()
+                .filter_map(|(index, candidate)| {
+                    // Only a fitting candidate keeps the facts its
+                    // compile-time arguments recorded.
+                    let saved_argument_facts = self.compile_time_argument_facts(arguments);
+                    let fitting = self
+                        .specialize_callable_value_candidate(
+                            name,
+                            arguments,
+                            candidate.clone(),
+                            signatures.get(index),
+                        )
+                        .ok()
+                        .filter(|specialized| self.value_coerces(specialized, expected))
+                        .zip(callable_lowered_name(name, candidate));
+                    if fitting.is_none() {
+                        self.restore_compile_time_argument_facts(saved_argument_facts);
                     }
-                    1 => matches.pop().expect("one callable-value candidate"),
-                    _ => {
-                        return Err(TypeError::BadCall {
-                            func: name.to_string(),
-                            reason: format!(
-                                "multiple specialized overloads fit expected type '{expected}'"
-                            ),
-                        });
-                    }
+                    fitting
+                })
+                .collect::<Vec<_>>();
+            match matches.len() {
+                0 => {
+                    return Err(TypeError::TypeMismatch {
+                        expected: expected.to_string(),
+                        found: format!("specialization of overload({name})"),
+                        context: "overloaded callable value".to_string(),
+                    });
+                }
+                1 => matches.pop().expect("one callable-value candidate"),
+                _ => {
+                    return Err(TypeError::BadCall {
+                        func: name.to_string(),
+                        reason: format!(
+                            "multiple specialized overloads fit expected type '{expected}'"
+                        ),
+                    });
                 }
             }
-            candidate => {
-                let specialized = self.specialize_callable_value_candidate(
-                    name,
-                    arguments,
-                    candidate,
-                    signatures.first(),
-                )?;
-                (specialized, name.to_string())
-            }
+        } else {
+            let specialized = self.specialize_callable_value_candidate(
+                name,
+                arguments,
+                callable,
+                signatures.first(),
+            )?;
+            (specialized, name.to_string())
         };
         if record {
             self.overload_targets
@@ -1149,28 +1171,28 @@ impl Checker {
                 _ => set_element(&pattern).is_some(),
             },
         };
-        let Ty::Struct(name, arguments) = &pattern else {
+        let TyKind::Struct(name, arguments) = pattern.kind() else {
             return self.infer(expression);
         };
         if !shaped {
             return self.infer(expression);
         }
         let open = |ty: &Ty| {
-            matches!(ty, Ty::Param { binder, .. }
+            matches!(ty.kind(), TyKind::Param { binder, .. }
                 if decls.iter().any(|decl| matches!(decl,
                     ParamDecl::Type { id, variadic: false, .. } if *id == binder.id)))
         };
-        let holed = Ty::Struct(
+        let holed = Ty::new(TyKind::Struct(
             name.clone(),
             arguments
                 .iter()
                 .enumerate()
                 .map(|(index, argument)| match argument {
-                    TyArg::Ty(ty) if index < holes && open(ty) => TyArg::Ty(Ty::Infer),
+                    TyArg::Ty(ty) if index < holes && open(ty) => TyArg::Ty(Ty::infer()),
                     argument => argument.clone(),
                 })
                 .collect(),
-        );
+        ));
         if holed == pattern {
             return self.infer(expression);
         }
@@ -1301,8 +1323,8 @@ impl Checker {
         // arguments resolves to the heterogeneous element list, so each
         // overflow argument scores and converts against its own element
         // (the specialized-pack shape the selection pass already handles).
-        let resolved_variadic = match variadic {
-            Some(Ty::Param { binder, .. }) if binder.name.starts_with('*') => {
+        let resolved_variadic = match variadic.map(Ty::kind) {
+            Some(TyKind::Param { binder, .. }) if binder.name.starts_with('*') => {
                 let pack = signature
                     .decls
                     .iter()
@@ -1312,20 +1334,23 @@ impl Checker {
                     Some(TyArg::Val(CtValue::Tuple(values)))
                         if values.iter().all(|value| matches!(value, CtValue::Type(_))) =>
                     {
-                        Some(Ty::RuntimePack(
-                            values
-                                .iter()
-                                .map(|value| match value {
-                                    CtValue::Type(ty) => (**ty).clone(),
-                                    _ => unreachable!("checked above"),
-                                })
-                                .collect(),
-                        ))
+                        Some(
+                            TyKind::RuntimePack(
+                                values
+                                    .iter()
+                                    .map(|value| match value {
+                                        CtValue::Type(ty) => ty.clone(),
+                                        _ => unreachable!("checked above"),
+                                    })
+                                    .collect(),
+                            )
+                            .into(),
+                        )
                     }
                     _ => variadic.map(resolve).transpose()?,
                 }
             }
-            other => other.map(resolve).transpose()?,
+            _ => variadic.map(resolve).transpose()?,
         };
         Ok((
             params.iter().map(resolve).collect::<Result<Vec<_>, _>>()?,
@@ -1355,7 +1380,8 @@ impl Checker {
 
         impl mojito_types::types::TyRewrite for CloseElements<'_> {
             fn whole(&mut self, ty: &Ty) -> Option<Ty> {
-                if !matches!(ty, Ty::Dependent(dependent) if dependent.pack_element().is_some()) {
+                if !matches!(ty.kind(), TyKind::Dependent(dependent) if dependent.pack_element().is_some())
+                {
                     return None;
                 }
                 let closed = self
@@ -1393,12 +1419,12 @@ impl Checker {
         for decl in &mut closed.decls {
             if let ParamDecl::Value { ty, .. } = decl {
                 let rewritten = mojito_types::types::rewrite_ty(ty, &mut rewrite)
-                    .unwrap_or_else(|_| (**ty).clone());
+                    .unwrap_or_else(|_| (*ty).clone());
                 // A value parameter typed by the struct's own type binder
                 // (`[v: Self.T]`) takes the receiver's argument for it.
                 let at_receiver = substitute_at(&rewritten, info, targs);
                 retyped |= at_receiver != rewritten;
-                **ty = at_receiver;
+                *ty = at_receiver;
             }
         }
         (rewrite.closed || retyped).then_some(closed)
@@ -1551,28 +1577,33 @@ fn bind_callable_origin_tails(
     if tails.is_empty() {
         return callable;
     }
-    let Some(FuncTy {
-        params,
-        variadic,
-        kw_variadic,
-        ret,
-        ..
-    }) = callable.callable_mut()
-    else {
+    if callable.callable().is_none() {
         return callable;
-    };
-    let bind = |ty: &mut Ty| {
-        *ty = bind_pointer_origin_tails(
-            &super::origins::substitute_struct_origin_tails(ty, tails),
-            tails,
-        );
-    };
-    params.iter_mut().for_each(bind);
-    variadic
-        .iter_mut()
-        .chain(kw_variadic.iter_mut())
-        .for_each(|ty| bind(ty));
-    bind(ret);
+    }
+    callable.update(|kind| {
+        let Some(FuncTy {
+            params,
+            variadic,
+            kw_variadic,
+            ret,
+            ..
+        }) = kind.callable_mut()
+        else {
+            return;
+        };
+        let bind = |ty: &mut Ty| {
+            *ty = bind_pointer_origin_tails(
+                &super::origins::substitute_struct_origin_tails(ty, tails),
+                tails,
+            );
+        };
+        params.iter_mut().for_each(bind);
+        variadic
+            .iter_mut()
+            .chain(kw_variadic.iter_mut())
+            .for_each(&bind);
+        bind(ret);
+    });
     callable
 }
 
@@ -1585,8 +1616,8 @@ fn bind_pointer_origin_tails(
 ) -> Ty {
     use mojito_types::origin::{Mutability, Origin, OriginSeg, PointerOrigin};
     let recur = |ty: &Ty| bind_pointer_origin_tails(ty, tails);
-    match ty {
-        Ty::Pointer { element, origin } => {
+    match ty.kind() {
+        TyKind::Pointer { element, origin } => {
             let bound = match origin {
                 PointerOrigin::Param {
                     id,
@@ -1611,29 +1642,29 @@ fn bind_pointer_origin_tails(
                 },
                 _ => None,
             };
-            Ty::Pointer {
-                element: Box::new(recur(element)),
+            TyKind::Pointer {
+                element: recur(element),
                 origin: bound.unwrap_or_else(|| origin.clone()),
             }
+            .into()
         }
-        Ty::Struct(name, arguments) => Ty::Struct(
+        TyKind::Struct(name, arguments) => ty.reusing(TyKind::Struct(
             name.clone(),
-            arguments.reusing(
-                arguments
-                    .iter()
-                    .map(|argument| match argument {
-                        TyArg::Ty(ty) => TyArg::Ty(recur(ty)),
-                        other => other.clone(),
-                    })
-                    .collect(),
-            ),
-        ),
-        Ty::Ref(reference) => Ty::Ref(mojito_types::origin::RefTy {
-            referent: Box::new(recur(&reference.referent)),
+            arguments
+                .iter()
+                .map(|argument| match argument {
+                    TyArg::Ty(ty) => TyArg::Ty(recur(ty)),
+                    other => other.clone(),
+                })
+                .collect(),
+        )),
+        TyKind::Ref(reference) => TyKind::Ref(mojito_types::origin::RefTy {
+            referent: recur(&reference.referent),
             origin: reference.origin.clone(),
             mutability: reference.mutability,
-        }),
-        Ty::Tuple(elements) => Ty::Tuple(elements.iter().map(recur).collect()),
-        other => other.clone(),
+        })
+        .into(),
+        TyKind::Tuple(elements) => TyKind::Tuple(elements.iter().map(recur).collect()).into(),
+        _ => ty.clone(),
     }
 }

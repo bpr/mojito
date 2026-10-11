@@ -1,5 +1,6 @@
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
+use mojito_types::types::TyKind;
 
 fn host_target() -> Option<NativeTarget> {
     NativeTarget::host()
@@ -103,7 +104,7 @@ fn raising_user_iterator_types_the_split_slot_and_retargets_its_operations() {
         })
         .expect("main normalizes its iterable");
     assert!(
-        matches!(main.var_tys.get(&dest), Some(Ty::Struct(name, _)) if name == "RangeIter"),
+        matches!(main.var_tys.get(&dest).map(Ty::kind), Some(TyKind::Struct(name, _)) if name == "RangeIter"),
         "the split iterator slot must be typed by the prepare chain: {:?}",
         main.var_tys.get(&dest)
     );
@@ -147,7 +148,10 @@ fn raising_range_iteration_types_the_slot_and_reaches_its_operations() {
         })
         .expect("range iteration normalizes its iterable");
     assert!(
-        matches!(main.var_tys.get(&dest), Some(Ty::Struct(..))),
+        matches!(
+            main.var_tys.get(&dest).map(Ty::kind),
+            Some(TyKind::Struct(..))
+        ),
         "the range iterator slot must be struct-typed: {:?}",
         main.var_tys.get(&dest)
     );
@@ -197,8 +201,8 @@ fn generic_dispatch_iteration_unrolls_to_a_typed_concrete_chain() {
     );
     assert!(
         matches!(
-            first_count.1.var_tys.get(&dest),
-            Some(Ty::Struct(name, _)) if name.starts_with("CountIter")
+            first_count.1.var_tys.get(&dest).map(Ty::kind),
+            Some(TyKind::Struct(name, _)) if name.starts_with("CountIter")
         ),
         "the dispatched iterator slot must be concretely typed: {:?}",
         first_count.1.var_tys.get(&dest)
@@ -207,18 +211,18 @@ fn generic_dispatch_iteration_unrolls_to_a_typed_concrete_chain() {
 
 #[test]
 fn structural_inference_rejects_conflicting_solutions() {
-    let parameter = Ty::Param {
+    let parameter = Ty::new(TyKind::Param {
         binder: mojito_types::param_expr::ParamRef {
             id: mojito_types::param_expr::ParamId::new("$test:T", 0),
             name: "T".into(),
         },
         bounds: vec![],
         callable_bound: None,
-    };
+    });
     let mut bindings = Bindings::default();
-    unify(&parameter, &Ty::Int, &mut bindings).unwrap();
+    unify(&parameter, &Ty::int(), &mut bindings).unwrap();
     assert!(
-        unify(&parameter, &Ty::Bool, &mut bindings)
+        unify(&parameter, &Ty::bool(), &mut bindings)
             .unwrap_err()
             .contains("conflicting")
     );
@@ -252,21 +256,23 @@ fn same_spelled_binders_of_two_declarations_bind_apart() {
         id: mojito_types::param_expr::ParamId::new(owner, 0),
         name: "T".into(),
     };
-    let parameter = |owner: &str| Ty::Param {
-        binder: binder(owner),
-        bounds: vec![],
-        callable_bound: None,
+    let parameter = |owner: &str| {
+        Ty::new(TyKind::Param {
+            binder: binder(owner),
+            bounds: vec![],
+            callable_bound: None,
+        })
     };
     let mut bindings = Bindings::default();
-    unify(&parameter("outer"), &Ty::Int, &mut bindings).unwrap();
-    unify(&parameter("contract"), &Ty::Bool, &mut bindings).unwrap();
+    unify(&parameter("outer"), &Ty::int(), &mut bindings).unwrap();
+    unify(&parameter("contract"), &Ty::bool(), &mut bindings).unwrap();
     assert_eq!(
         substitute_ty(&parameter("outer"), &bindings).unwrap(),
-        Ty::Int
+        TyKind::Int
     );
     assert_eq!(
         substitute_ty(&parameter("contract"), &bindings).unwrap(),
-        Ty::Bool
+        TyKind::Bool
     );
     assert!(substitute_ty(&parameter("unbound"), &bindings).is_err());
 }
@@ -276,28 +282,28 @@ fn literal_actuals_merge_with_concrete_bindings_in_either_order() {
     let mut bindings = Bindings::default();
     // Receiver-first: `T := Int` from the concrete receiver, then a
     // literal-typed actual (`41 : IntLiteral`) — compatible, keeps `Int`.
-    bind_type(&test_binder("T"), &Ty::Int, &mut bindings).unwrap();
-    bind_type(&test_binder("T"), &Ty::IntLiteral, &mut bindings).unwrap();
-    assert_eq!(bindings.types.get(&test_binder("T")), Some(&Ty::Int));
+    bind_type(&test_binder("T"), &Ty::int(), &mut bindings).unwrap();
+    bind_type(&test_binder("T"), &Ty::int_literal(), &mut bindings).unwrap();
+    assert_eq!(bindings.types.get(&test_binder("T")), Some(&Ty::int()));
 
     // Result-last: the literal actual binds first, the concrete result
     // type upgrades it.
     let mut bindings = Bindings::default();
-    bind_type(&test_binder("T"), &Ty::IntLiteral, &mut bindings).unwrap();
-    bind_type(&test_binder("T"), &Ty::Int, &mut bindings).unwrap();
-    assert_eq!(bindings.types.get(&test_binder("T")), Some(&Ty::Int));
+    bind_type(&test_binder("T"), &Ty::int_literal(), &mut bindings).unwrap();
+    bind_type(&test_binder("T"), &Ty::int(), &mut bindings).unwrap();
+    assert_eq!(bindings.types.get(&test_binder("T")), Some(&Ty::int()));
 
     // Genuinely distinct concrete solutions still conflict, and the
     // message carries the structural forms (`Display` collapses
     // `IntLiteral` to `Int`).
     let mut bindings = Bindings::default();
-    bind_type(&test_binder("T"), &Ty::Int, &mut bindings).unwrap();
-    let error = bind_type(&test_binder("T"), &Ty::Float64, &mut bindings).unwrap_err();
+    bind_type(&test_binder("T"), &Ty::int(), &mut bindings).unwrap();
+    let error = bind_type(&test_binder("T"), &Ty::float64(), &mut bindings).unwrap_err();
     assert!(error.contains("conflicting"), "{error}");
     // Two different literal kinds conflict too.
     let mut bindings = Bindings::default();
-    bind_type(&test_binder("T"), &Ty::IntLiteral, &mut bindings).unwrap();
-    assert!(bind_type(&test_binder("T"), &Ty::FloatLiteral, &mut bindings).is_err());
+    bind_type(&test_binder("T"), &Ty::int_literal(), &mut bindings).unwrap();
+    assert!(bind_type(&test_binder("T"), &Ty::float_literal(), &mut bindings).is_err());
 }
 
 #[test]
@@ -375,39 +381,44 @@ fn nominal_len_rewrites_to_a_resolved_dunder_method_call() {
 
 #[test]
 fn colliding_instances_share_only_modulo_pointer_elements() {
-    let pointer = |element: Ty| Ty::Pointer {
-        element: Box::new(element),
-        origin: mojito_types::origin::PointerOrigin::Static,
+    let pointer = |element: Ty| {
+        Ty::new(TyKind::Pointer {
+            element,
+            origin: mojito_types::origin::PointerOrigin::Static,
+        })
     };
     // The `_RawAlloc`/`List` shape: fields differing only behind a
     // pointer are one opaque word and drop inertly — benign to share.
     assert!(fields_equivalent(
-        &[("ptr".into(), pointer(Ty::Int))],
-        &[("ptr".into(), pointer(Ty::Float64))],
+        &[("ptr".into(), pointer(Ty::int()))],
+        &[("ptr".into(), pointer(Ty::float64()))],
     ));
     // A payload-carrying difference (the `__UninitStorage` shape) is a
     // genuine layout/lifecycle hazard.
     assert!(!fields_equivalent(
         &[(
             "_storage".into(),
-            Ty::Struct("__UninitStorage".into(), vec![TyArg::Ty(Ty::Int)].into()),
+            TyKind::Struct("__UninitStorage".into(), vec![TyArg::Ty(Ty::int())]).into(),
         )],
         &[(
             "_storage".into(),
-            Ty::Struct(
+            TyKind::Struct(
                 "__UninitStorage".into(),
-                vec![TyArg::Ty(Ty::Struct("Recorder".into(), Vec::new().into()))].into(),
-            ),
+                vec![TyArg::Ty(
+                    TyKind::Struct("Recorder".into(), Vec::new()).into()
+                )],
+            )
+            .into(),
         )],
     ));
     // Field names and non-pointer types stay strict.
     assert!(!fields_equivalent(
-        &[("a".into(), Ty::Int)],
-        &[("b".into(), Ty::Int)],
+        &[("a".into(), Ty::int())],
+        &[("b".into(), Ty::int())],
     ));
     assert!(!fields_equivalent(
-        &[("a".into(), Ty::Int)],
-        &[("a".into(), Ty::Float64)],
+        &[("a".into(), Ty::int())],
+        &[("a".into(), Ty::float64())],
     ));
 }
 
@@ -417,7 +428,7 @@ fn substitution_resolves_nested_type_and_value_arguments() {
         structs: Rc::new(StructCatalog::generic(&["Buffer"])),
         ..Bindings::default()
     };
-    bindings.types.insert(test_binder("T"), Ty::UInt);
+    bindings.types.insert(test_binder("T"), Ty::uint());
     bindings.values.insert(
         mojito_types::param_expr::ParamRef {
             id: mojito_types::param_expr::ParamId::new("Holder", 1),
@@ -425,32 +436,35 @@ fn substitution_resolves_nested_type_and_value_arguments() {
         },
         CtValue::Int(4),
     );
-    let ty = Ty::Struct(
+    let ty = Ty::new(TyKind::Struct(
         "Buffer".into(),
         vec![
-            TyArg::Ty(Ty::Param {
-                binder: mojito_types::param_expr::ParamRef {
-                    id: mojito_types::param_expr::ParamId::new("$test:T", 0),
-                    name: "T".into(),
-                },
-                bounds: vec![],
-                callable_bound: None,
-            }),
+            TyArg::Ty(
+                TyKind::Param {
+                    binder: mojito_types::param_expr::ParamRef {
+                        id: mojito_types::param_expr::ParamId::new("$test:T", 0),
+                        name: "T".into(),
+                    },
+                    bounds: vec![],
+                    callable_bound: None,
+                }
+                .into(),
+            ),
             TyArg::Val(CtValue::Expr(ParamContext::detached().decl_ref(
                 mojito_types::param_expr::ParamId::new("Holder", 1),
                 "n",
                 mojito_types::param_expr::MetaTy::int(),
             ))),
-        ]
-        .into(),
-    );
-    let Ty::Struct(name, args) = substitute_ty(&ty, &bindings).unwrap() else {
+        ],
+    ));
+    let substituted = substitute_ty(&ty, &bindings).unwrap();
+    let TyKind::Struct(name, args) = substituted.kind() else {
         panic!()
     };
     assert!(name.contains("$mono$"));
     assert_eq!(
-        *args,
-        vec![TyArg::Ty(Ty::UInt), TyArg::Val(CtValue::Int(4))]
+        **args,
+        vec![TyArg::Ty(Ty::uint()), TyArg::Val(CtValue::Int(4))]
     );
 }
 
@@ -475,15 +489,16 @@ fn value_binders_sharing_a_spelling_keep_their_own_solutions() {
             mojito_types::param_expr::MetaTy::int(),
         )))
     };
-    let ty = Ty::Struct(
+    let ty = Ty::new(TyKind::Struct(
         "Grid".into(),
-        vec![reference("Grid.resize"), reference("Grid")].into(),
-    );
-    let Ty::Struct(_, args) = substitute_ty(&ty, &bindings).unwrap() else {
+        vec![reference("Grid.resize"), reference("Grid")],
+    ));
+    let substituted = substitute_ty(&ty, &bindings).unwrap();
+    let TyKind::Struct(_, args) = substituted.kind() else {
         panic!()
     };
     assert_eq!(
-        *args,
+        **args,
         vec![TyArg::Val(CtValue::Int(9)), TyArg::Val(CtValue::Int(4))]
     );
 }
@@ -553,8 +568,8 @@ fn distinct_instantiations_split_into_owner_named_instances() {
             .1
             .clone()
     };
-    assert_eq!(field_ty("Pairing$mono$TInt"), Ty::Int);
-    assert_eq!(field_ty("Pairing$mono$TBool"), Ty::Bool);
+    assert_eq!(field_ty("Pairing$mono$TInt"), Ty::int());
+    assert_eq!(field_ty("Pairing$mono$TBool"), Ty::bool());
     assert!(
         !specialized
             .program
@@ -568,27 +583,27 @@ fn distinct_instantiations_split_into_owner_named_instances() {
 
 #[test]
 fn binding_solutions_ignore_reference_origins() {
-    let referent = Box::new(Ty::Int);
-    let first = Ty::Ref(mojito_types::origin::RefTy {
+    let referent = Ty::int();
+    let first = Ty::new(TyKind::Ref(mojito_types::origin::RefTy {
         referent: referent.clone(),
         origin: mojito_types::origin::Origin::Static,
         mutability: mojito_types::origin::Mutability::Immutable,
-    });
-    let second = Ty::Ref(mojito_types::origin::RefTy {
+    }));
+    let second = Ty::new(TyKind::Ref(mojito_types::origin::RefTy {
         referent,
         origin: mojito_types::origin::Origin::Untracked { mutable: false },
         mutability: mojito_types::origin::Mutability::Immutable,
-    });
+    }));
     let mut bindings = Bindings::default();
     bind_type(&test_binder("T"), &first, &mut bindings).unwrap();
     bind_type(&test_binder("T"), &second, &mut bindings).unwrap();
     // First solution wins; a mutability disagreement still conflicts.
     assert_eq!(bindings.types.get(&test_binder("T")), Some(&first));
-    let mutable = Ty::Ref(mojito_types::origin::RefTy {
-        referent: Box::new(Ty::Int),
+    let mutable = Ty::new(TyKind::Ref(mojito_types::origin::RefTy {
+        referent: Ty::int(),
         origin: mojito_types::origin::Origin::Static,
         mutability: mojito_types::origin::Mutability::Mutable,
-    });
+    }));
     assert!(bind_type(&test_binder("T"), &mutable, &mut bindings).is_err());
 }
 
@@ -620,7 +635,7 @@ fn variadic_arity_joins_the_instance_identity_and_reifies_the_pack() {
     assert!(
         one.var_tys
             .values()
-            .any(|ty| matches!(ty, Ty::Tuple(elements) if elements == &[Ty::Int])),
+            .any(|ty| matches!(ty.kind(), TyKind::Tuple(elements) if elements == &[TyKind::Int])),
         "the pack parameter reifies to a one-element tuple: {:?}",
         one.var_tys
     );
@@ -823,13 +838,13 @@ fn demanded_member_its_instance_disproves_is_an_error() {
         .compile_source(CONDITIONAL_MEMBERS, std::path::Path::new("mono_test.mojo"))
         .expect("compile conditional members");
     let mut specializer = Specializer::new(compiled.drop_elaborated_mir(), None);
-    let available = slot_bindings(&specializer, Ty::Int);
+    let available = slot_bindings(&specializer, Ty::int());
     specializer
         .enqueue(&nullary_slot_init(), available, Vec::new())
         .expect("`Int` is `Defaultable`");
     let unavailable = slot_bindings(
         &specializer,
-        Ty::Struct("NoDefault".into(), Vec::new().into()),
+        TyKind::Struct("NoDefault".into(), Vec::new()).into(),
     );
     let error = specializer
         .enqueue(&nullary_slot_init(), unavailable, Vec::new())
@@ -845,7 +860,7 @@ fn available_member_that_does_not_materialize_is_an_error() {
         .expect("compile conditional members");
     let mut specializer = Specializer::new(compiled.drop_elaborated_mir(), None);
     // The empty tuple is `Defaultable`, and `T()` has no construction for it.
-    let bindings = slot_bindings(&specializer, Ty::Tuple(Vec::new()));
+    let bindings = slot_bindings(&specializer, TyKind::Tuple(Vec::new()).into());
     specializer
         .enqueue(&nullary_slot_init(), bindings, Vec::new())
         .expect("the clause holds");
@@ -906,7 +921,7 @@ fn trivial_value_and_pack_clauses_are_decided() {
         let template = &specializer.structs["Cell"];
         let mut bindings = specializer.base_bindings();
         let arguments = [
-            TyArg::Ty(Ty::Struct(argument.into(), Vec::new().into())),
+            TyArg::Ty(TyKind::Struct(argument.into(), Vec::new()).into()),
             TyArg::Val(CtValue::Int(n)),
         ];
         bind_ty_args(&template.param_decls, &arguments, &mut bindings).unwrap();
@@ -937,9 +952,12 @@ fn trivial_value_and_pack_clauses_are_decided() {
     bindings.values.insert(
         pack.clone(),
         CtValue::Tuple(
-            [Ty::Int, Ty::Struct("Tracked".into(), Vec::new().into())]
-                .map(|ty| CtValue::Type(Box::new(ty)))
-                .to_vec(),
+            [
+                Ty::int(),
+                TyKind::Struct("Tracked".into(), Vec::new()).into(),
+            ]
+            .map(CtValue::Type)
+            .to_vec(),
         ),
     );
     let mut declaration = specializer.declarations["Cell.bits"].clone();
@@ -962,7 +980,7 @@ fn trivial_value_and_pack_clauses_are_decided() {
     assert!(!decide(trivially(true)), "`Tracked` does not");
     assert!(decide(GenericConstraint::PackContains {
         param: pack.clone(),
-        element: ConstraintOperand::Type(Ty::Int),
+        element: ConstraintOperand::Type(Ty::int()),
     }));
     assert!(decide(GenericConstraint::Eq(
         ConstraintOperand::PackLength(pack.clone()),
@@ -972,14 +990,16 @@ fn trivial_value_and_pack_clauses_are_decided() {
     let tuple = |element: &str| {
         GenericConstraint::Trivial(
             mojito_types::types::TrivialLifecycle::Copyable,
-            ConstraintOperand::Type(Ty::Struct(
-                "Tuple".into(),
-                vec![
-                    TyArg::Ty(Ty::Int),
-                    TyArg::Ty(Ty::Struct(element.into(), Vec::new().into())),
-                ]
+            ConstraintOperand::Type(
+                TyKind::Struct(
+                    "Tuple".into(),
+                    vec![
+                        TyArg::Ty(Ty::int()),
+                        TyArg::Ty(TyKind::Struct(element.into(), Vec::new()).into()),
+                    ],
+                )
                 .into(),
-            )),
+            ),
         )
     };
     assert!(decide(tuple("Point")));
@@ -1015,8 +1035,8 @@ fn a_struct_conformance_is_decided_from_its_declaration_when_asked() {
         .expect("compile conformance program");
     assert!(compiled.imported_package().is_some());
     let specializer = Specializer::new(compiled.drop_elaborated_mir(), None);
-    let list = Ty::Struct("List".into(), vec![TyArg::Ty(Ty::Int)].into());
-    let book = Ty::Struct("Book".into(), Vec::new().into());
+    let list = Ty::new(TyKind::Struct("List".into(), vec![TyArg::Ty(Ty::int())]));
+    let book = Ty::new(TyKind::Struct("Book".into(), Vec::new()));
     let conforms =
         |ty: &Ty, trait_name: &str| specializer.type_conforms(ty, trait_name, &mut HashSet::new());
     // The package answered no clause ahead of use: `List` decides
@@ -1374,7 +1394,7 @@ fn reflected_field_type_construction_closes_per_unrolled_copy() {
 
 #[test]
 fn method_call_spread_expands_into_the_bound_pack_elements() {
-    let pack = Ty::Tuple(vec![Ty::Int, Ty::Bool]);
+    let pack = Ty::new(TyKind::Tuple(vec![Ty::int(), Ty::bool()]));
     let collector = MirPlace::root(0, Some(pack.clone()));
     let mut call = dunder_method_call(
         Reg(3),
@@ -1411,11 +1431,11 @@ fn method_call_spread_expands_into_the_bound_pack_elements() {
         ref_params: vec![false],
         returns_reference: false,
         var_tys: HashMap::from([(0, pack.clone())]),
-        ret_ty: Some(Ty::None),
+        ret_ty: Some(Ty::none()),
         raises: false,
         error_ty: None,
         spans: mojito_mir::mir::SpanTable::default(),
-        reg_types: HashMap::from([(0, pack), (2, Ty::Int)]),
+        reg_types: HashMap::from([(0, pack), (2, Ty::int())]),
     };
     expand_pack_spreads("fwd", &mut function).expect("expand the method-call spread");
     let instrs = &function.blocks[0].instrs;
@@ -1446,7 +1466,7 @@ fn method_call_spread_expands_into_the_bound_pack_elements() {
     assert_eq!(args, &vec![Reg(2), loaded[0].0, loaded[1].0]);
     assert_eq!(arg_places.len(), 3);
     assert!(arg_places.iter().all(Option::is_none));
-    assert_eq!(function.reg_types.get(&loaded[1].0.0), Some(&Ty::Bool));
+    assert_eq!(function.reg_types.get(&loaded[1].0.0), Some(&Ty::bool()));
 }
 
 #[test]
@@ -1461,23 +1481,23 @@ fn a_struct_pack_binds_element_by_element_or_whole() {
         variadic: true,
         constraints: Vec::new(),
     };
-    let elements = vec![Ty::Int, Ty::Bool, Ty::Float64];
+    let elements = vec![Ty::int(), Ty::bool(), Ty::float64()];
     let expected = CtValue::Tuple(
         elements
             .iter()
-            .map(|element| CtValue::Type(Box::new(element.clone())))
+            .map(|element| CtValue::Type(element.clone()))
             .collect(),
     );
     let elementwise: Vec<TyArg> = elements.iter().cloned().map(TyArg::Ty).collect();
     let whole = vec![TyArg::Val(expected.clone())];
-    let forwarded = vec![TyArg::Ty(Ty::RuntimePack(elements.clone()))];
+    let forwarded = vec![TyArg::Ty(TyKind::RuntimePack(elements.clone()).into())];
     for arguments in [elementwise, whole, forwarded] {
         let mut bindings = Bindings::default();
         bind_ty_args(std::slice::from_ref(&pack), &arguments, &mut bindings).unwrap();
         assert_eq!(bindings.values.get(&pack.binder()), Some(&expected));
         assert_eq!(
             bindings.types.get(&pack.binder()),
-            Some(&Ty::RuntimePack(elements.clone()))
+            Some(&Ty::new(TyKind::RuntimePack(elements.clone())))
         );
     }
 }
@@ -1587,7 +1607,7 @@ fn capturing_generic_callable_parameter_passes_only_its_environment() {
     // The instance folds the bound body and takes the captured `offset`
     // alone, by reference.
     assert_eq!(instance.ref_params, vec![true]);
-    assert_eq!(instance.param_types, vec![Ty::Int]);
+    assert_eq!(instance.param_types, vec![Ty::int()]);
     let declaration = specialized
         .program
         .declarations

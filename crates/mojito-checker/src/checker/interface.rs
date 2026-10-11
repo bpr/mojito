@@ -24,6 +24,7 @@ use mojito_checked::package::{
     PackageDeclarations, PackagedModule,
 };
 use mojito_common::literal::IntLiteral;
+use mojito_types::types::TyKind;
 use mojito_types::types::{FuncTy, GenericFuncTy};
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex, OnceLock};
@@ -314,29 +315,32 @@ impl InstalledInterfaces {
                 let directory = package.directory();
                 let entry = directory.declaration(position)?;
                 let path = directory.module(entry.module as usize)?.path;
-                mojito_ast::ast::decoding_from(path, || {
-                    postcard::from_bytes::<DeclarationInterface>(package.residue(position))
-                })
-                .map_err(|error| error.to_string())
-                .and_then(|mut record| {
-                    let lowered = package
-                        .lowered(position)
-                        .ok_or_else(|| "its lowered declarations do not decode".to_string())?;
-                    let keys: Vec<_> = directory.declaration_keys(position).collect();
-                    record.join(&keys, lowered)?;
-                    Ok(Box::new(record))
-                })
-                .map_err(|error| {
-                    self.0
-                        .failures
-                        .lock()
-                        .unwrap_or_else(std::sync::PoisonError::into_inner)
-                        .push(format!(
-                            "the interface of `{}` does not decode: {error}",
-                            entry.name
-                        ));
-                })
-                .ok()
+                package
+                    .decoding(|| {
+                        mojito_ast::ast::decoding_from(path, || {
+                            postcard::from_bytes::<DeclarationInterface>(package.residue(position))
+                        })
+                    })
+                    .map_err(|error| error.to_string())
+                    .and_then(|mut record| {
+                        let lowered = package
+                            .lowered(position)
+                            .ok_or_else(|| "its lowered declarations do not decode".to_string())?;
+                        let keys: Vec<_> = directory.declaration_keys(position).collect();
+                        record.join(&keys, lowered)?;
+                        Ok(Box::new(record))
+                    })
+                    .map_err(|error| {
+                        self.0
+                            .failures
+                            .lock()
+                            .unwrap_or_else(std::sync::PoisonError::into_inner)
+                            .push(format!(
+                                "the interface of `{}` does not decode: {error}",
+                                entry.name
+                            ));
+                    })
+                    .ok()
             })
             .as_deref()
     }
@@ -1137,7 +1141,7 @@ impl DeclarationInterface {
                         binding.name
                     )
                 })?;
-            binding.ty = Ty::None;
+            binding.ty = Ty::none();
             self.projected_bindings.push(projected);
         }
         Ok(())
@@ -1624,11 +1628,11 @@ impl MethodResidue {
                 .iter()
                 .map(|default| default.clone().map(SignatureDefault::Declared))
                 .collect(),
-            variadic: declaration.variadic.clone().map(Box::new),
+            variadic: declaration.variadic.clone(),
             variadic_index: declaration.variadic_index,
             variadic_convention: declaration.variadic_convention,
             variadic_name: self.variadic_name,
-            kw_variadic: declaration.kw_variadic.clone().map(Box::new),
+            kw_variadic: declaration.kw_variadic.clone(),
             kw_variadic_index: declaration.kw_variadic_index,
             positional_only: declaration.positional_only,
             keyword_only: declaration.keyword_only,
@@ -1636,7 +1640,7 @@ impl MethodResidue {
             ret: declaration.ret_ty.clone(),
             ret_mlir_index: self.ret_mlir_index,
             raises: declaration.raises,
-            error: declaration.error_ty.clone().map(Box::new),
+            error: declaration.error_ty.clone(),
             self_convention: declaration.receiver_convention,
             ref_params: self.ref_params,
             ref_return: self.ref_return,
@@ -1656,8 +1660,8 @@ impl ProjectedBinding {
     /// What the `def` type `ty` of the binding `name` says beyond its
     /// lowered declaration; `None` for any other type.
     fn of(name: &str, ty: &Ty) -> Option<Self> {
-        let (generic, environment, ref_params, ref_return, transfers) = match ty {
-            Ty::Func(func) => {
+        let (generic, environment, ref_params, ref_return, transfers) = match ty.kind() {
+            TyKind::Func(func) => {
                 let FuncTy {
                     environment,
                     ref_params,
@@ -1667,7 +1671,7 @@ impl ProjectedBinding {
                 } = &**func;
                 (false, environment, ref_params, ref_return, transfers)
             }
-            Ty::GenericFunc(generic) => {
+            TyKind::GenericFunc(generic) => {
                 let GenericFuncTy {
                     func:
                         FuncTy {
@@ -1706,14 +1710,14 @@ impl ProjectedBinding {
         });
         let params = declaration.param_types.clone();
         let names = declaration.param_names.clone();
-        let ret = Box::new(declaration.ret_ty.clone());
+        let ret = declaration.ret_ty.clone();
         let required = declaration.required.clone();
-        let variadic = declaration.variadic.clone().map(Box::new);
-        let kw_variadic = declaration.kw_variadic.clone().map(Box::new);
-        let error = declaration.error_ty.clone().map(Box::new);
+        let variadic = declaration.variadic.clone();
+        let kw_variadic = declaration.kw_variadic.clone();
+        let error = declaration.error_ty.clone();
         let conventions = declaration.param_conventions.clone();
         if self.generic {
-            Ty::GenericFunc(Box::new(GenericFuncTy {
+            TyKind::GenericFunc(Box::new(GenericFuncTy {
                 decls: declaration.param_decls.clone(),
                 func: FuncTy {
                     environment: self.environment,
@@ -1733,8 +1737,9 @@ impl ProjectedBinding {
                     transfers,
                 },
             }))
+            .into()
         } else {
-            Ty::Func(Box::new(FuncTy {
+            TyKind::Func(Box::new(FuncTy {
                 environment: self.environment,
                 params,
                 names,
@@ -1751,6 +1756,7 @@ impl ProjectedBinding {
                 ref_return: self.ref_return,
                 transfers,
             }))
+            .into()
         }
     }
 }
@@ -1953,7 +1959,7 @@ mod tests {
             has_receiver: true,
             receiver_convention: None,
             param_conventions: Vec::new(),
-            ret_ty: Ty::None,
+            ret_ty: Ty::none(),
             returns_reference: false,
             raises: false,
             error_ty: None,

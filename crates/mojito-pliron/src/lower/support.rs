@@ -3,6 +3,7 @@
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
+use mojito_types::types::TyKind;
 
 /// Emit the body of an `invoke` thunk (see [`ModuleShared::ensure_thunk`]):
 /// load/take the capture arguments out of the environment record, forward
@@ -198,7 +199,7 @@ pub fn collect_aliased_load_regs(
             function
                 .reg_types
                 .get(reg)
-                .is_some_and(|ty| is_aggregate_ty(ty) && !matches!(ty, Ty::Func(_)))
+                .is_some_and(|ty| is_aggregate_ty(ty) && !matches!(ty.kind(), TyKind::Func(_)))
         })
         .collect()
 }
@@ -242,33 +243,34 @@ pub fn collect_loaded_places(blocks: &[MirBlock]) -> HashMap<u32, MirPlace> {
 /// The SSA scalar shape of a built-in copyable receiver whose `copy()` is the
 /// value read (the scalar arms of `lower_ty`); references and pointers are
 /// not value copies and aggregates copy through their own lifecycle.
-pub const fn scalar_copy_ty(ty: &Ty) -> Option<ScalarTy> {
-    match ty {
-        Ty::Int | Ty::IntLiteral => Some(ScalarTy::Int),
-        Ty::UInt => Some(ScalarTy::UInt),
-        Ty::Float64 | Ty::FloatLiteral => Some(ScalarTy::Float64),
-        Ty::Bool => Some(ScalarTy::Bool),
-        Ty::Dtype => Some(ScalarTy::Dtype),
-        ty => match scalar_simd_dtype(ty) {
-            Some(dtype) => Some(ScalarTy::of_dtype(dtype)),
-            None => None,
-        },
+pub fn scalar_copy_ty(ty: &Ty) -> Option<ScalarTy> {
+    match ty.kind() {
+        TyKind::Int | TyKind::IntLiteral => Some(ScalarTy::Int),
+        TyKind::UInt => Some(ScalarTy::UInt),
+        TyKind::Float64 | TyKind::FloatLiteral => Some(ScalarTy::Float64),
+        TyKind::Bool => Some(ScalarTy::Bool),
+        TyKind::Dtype => Some(ScalarTy::Dtype),
+        ty => scalar_simd_dtype(ty).map(ScalarTy::of_dtype),
     }
 }
 
-/// The concrete lane dtype and width of a `Ty::Simd` register type. A
+/// The concrete lane dtype and width of a `TyKind::Simd` register type. A
 /// symbolic slot never reaches lowering: the MIR verifier refuses it.
 pub fn simd_dims(ty: &Ty) -> Option<(Dtype, i64)> {
-    match ty {
-        Ty::Simd { dtype, width } => Some((dtype.known()?, width.known()?)),
+    match ty.kind() {
+        TyKind::Simd { dtype, width } => Some((dtype.known()?, width.known()?)),
         _ => None,
     }
 }
 
-pub const fn is_aggregate_ty(ty: &Ty) -> bool {
+pub fn is_aggregate_ty(ty: &Ty) -> bool {
     matches!(
-        ty,
-        Ty::Struct(..) | Ty::Tuple(..) | Ty::RuntimePack(..) | Ty::Variant(..) | Ty::Func(_)
+        ty.kind(),
+        TyKind::Struct(..)
+            | TyKind::Tuple(..)
+            | TyKind::RuntimePack(..)
+            | TyKind::Variant(..)
+            | TyKind::Func(_)
     )
 }
 
@@ -278,14 +280,14 @@ pub fn scalar_type(
     ty: &Ty,
     location: Option<SourceSpan>,
 ) -> Result<ScalarTy, PlironError> {
-    match ty {
-        Ty::Int => Ok(ScalarTy::Int),
-        Ty::UInt => Ok(ScalarTy::UInt),
-        Ty::Float64 => Ok(ScalarTy::Float64),
-        Ty::Bool => Ok(ScalarTy::Bool),
-        Ty::Dtype => Ok(ScalarTy::Dtype),
+    match ty.kind() {
+        TyKind::Int => Ok(ScalarTy::Int),
+        TyKind::UInt => Ok(ScalarTy::UInt),
+        TyKind::Float64 => Ok(ScalarTy::Float64),
+        TyKind::Bool => Ok(ScalarTy::Bool),
+        TyKind::Dtype => Ok(ScalarTy::Dtype),
         ty if let Some(dtype) = scalar_simd_dtype(ty) => Ok(ScalarTy::of_dtype(dtype)),
-        Ty::Pointer { .. } | Ty::Ref(_) => Ok(ScalarTy::Ptr),
+        TyKind::Pointer { .. } | TyKind::Ref(_) => Ok(ScalarTy::Ptr),
         other => Err(PlironError {
             function: Some(function.to_string()),
             kind: PlironErrorKind::Unsupported {
@@ -410,13 +412,13 @@ pub enum SubscriptActual<'a> {
 
 /// The checker-virtual slice-descriptor struct name behind `ty`, if any.
 pub fn slice_struct_name(ty: &Ty) -> Option<&str> {
-    match ty {
-        Ty::Struct(name, _)
+    match ty.kind() {
+        TyKind::Struct(name, _)
             if matches!(name.as_str(), "Slice" | "ContiguousSlice" | "StridedSlice") =>
         {
             Some(name)
         }
-        Ty::Ref(reference) => slice_struct_name(&reference.referent),
+        TyKind::Ref(reference) => slice_struct_name(&reference.referent),
         _ => None,
     }
 }

@@ -24,6 +24,7 @@
 pub mod fold;
 
 use crate::ct::CtValue;
+use crate::types::TyKind;
 use crate::types::{PackPredicateRef, TrivialLifecycle, Ty};
 use mojito_ast::ast::InfixOp;
 use mojito_common::literal::IntLiteral;
@@ -312,12 +313,9 @@ impl ParamContext {
     /// to a Type constant; a type with free parameters is a shape.
     pub fn type_shape(&self, ty: Ty) -> ParamExpr {
         if crate::types::has_free_parameters(&ty) {
-            self.make(MetaTy::Type, ParamKind::TypeShape(Box::new(ty)))
+            self.make(MetaTy::Type, ParamKind::TypeShape(ty))
         } else {
-            self.make(
-                MetaTy::Type,
-                ParamKind::Constant(CtValue::Type(Box::new(ty))),
-            )
+            self.make(MetaTy::Type, ParamKind::Constant(CtValue::Type(ty)))
         }
     }
 
@@ -363,7 +361,7 @@ impl ParamContext {
             && let Some(elements) = values
                 .iter()
                 .map(|value| match value {
-                    CtValue::Type(ty) => Some((**ty).clone()),
+                    CtValue::Type(ty) => Some(ty.clone()),
                     _ => None,
                 })
                 .collect::<Option<Vec<Ty>>>()
@@ -652,12 +650,7 @@ impl ParamContext {
     /// The parameter list of `elements`: the constant list when every type
     /// is closed, and otherwise a tabulation selecting among them.
     pub fn type_list(&self, elements: Vec<Ty>) -> Result<ParamExpr, ParamError> {
-        let values = elements
-            .iter()
-            .cloned()
-            .map(Box::new)
-            .map(CtValue::Type)
-            .collect();
+        let values = elements.iter().cloned().map(CtValue::Type).collect();
         if let Ok(constant) = self.constant(CtValue::Tuple(values)) {
             return Ok(constant);
         }
@@ -975,6 +968,30 @@ impl ParamContext {
         existing.unwrap_or_else(|| expr.clone())
     }
 
+    /// The context's node equal to `ty`, which becomes it when the context
+    /// holds none yet, as MLIR's context uniques a type; `ty` itself when
+    /// the context is detached.
+    ///
+    /// A type carrying a decoration its equality leaves out
+    /// ([`Ty::carries_decorations`]) is not shared, since sharing its node
+    /// would hand one occurrence another's decoration.
+    pub fn intern_ty(&self, ty: &Ty) -> Ty {
+        let Some(shared) = &self.shared else {
+            return ty.clone();
+        };
+        if ty.carries_decorations() {
+            return ty.clone();
+        }
+        let existing = shared.lookup_or_insert_ty(ty);
+        let counter = if existing.is_some() {
+            &shared.type_hits
+        } else {
+            &shared.types_interned
+        };
+        counter.fetch_add(1, AtomicOrdering::Relaxed);
+        existing.unwrap_or_else(|| ty.clone())
+    }
+
     /// Instrumentation for `--timings`: never part of user output.
     pub fn stats(&self) -> ParamStats {
         let load = |counter: &AtomicU64| counter.load(AtomicOrdering::Relaxed);
@@ -983,6 +1000,8 @@ impl ParamContext {
             .map_or_else(ParamStats::default, |shared| ParamStats {
                 interned: load(&shared.interned),
                 hits: load(&shared.hits),
+                types_interned: load(&shared.types_interned),
+                type_hits: load(&shared.type_hits),
                 constant_folds: load(&shared.constant_folds),
                 replacements: load(&shared.replacements),
                 contexts: load(&CONTEXTS_CREATED),
@@ -1882,7 +1901,7 @@ impl ParamExpr {
         }
     }
 
-    fn carries_decorations(&self) -> bool {
+    pub(crate) fn carries_decorations(&self) -> bool {
         self.embedded_types()
             .into_iter()
             .any(|ty| crate::types::mentions(ty, &carries_transfers))
@@ -2045,7 +2064,7 @@ pub enum ParamKind {
         subject: ParamExpr,
     },
     /// A type with free typed references; a closed type is a constant.
-    TypeShape(Box<Ty>),
+    TypeShape(Ty),
     /// Finite type selection by an integer expression.
     Select { elements: Vec<Ty>, index: ParamExpr },
     /// `param_list.get`: one element of a parameter list that is still a
@@ -2389,7 +2408,7 @@ impl Hash for ParamRef {
 /// [`Ty`], so it has no place in that lattice.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum MetaTy {
-    Value(Box<Ty>),
+    Value(Ty),
     Type,
     ReflectedType,
     Tuple(Vec<Self>),
@@ -2402,20 +2421,20 @@ pub enum MetaTy {
 
 impl MetaTy {
     /// A runtime value domain.
-    pub fn value(ty: Ty) -> Self {
-        Self::Value(Box::new(ty))
+    pub const fn value(ty: Ty) -> Self {
+        Self::Value(ty)
     }
 
     pub fn int() -> Self {
-        Self::value(Ty::Int)
+        Self::value(Ty::int())
     }
 
     pub fn bool() -> Self {
-        Self::value(Ty::Bool)
+        Self::value(Ty::bool())
     }
 
     /// The runtime value domain, when this is one.
-    pub fn as_value(&self) -> Option<&Ty> {
+    pub const fn as_value(&self) -> Option<&Ty> {
         match self {
             Self::Value(ty) => Some(ty),
             _ => None,
@@ -2441,12 +2460,12 @@ impl MetaTy {
         let all = |values: &[CtValue]| values.iter().map(Self::of_value).collect();
         match value {
             CtValue::Int(_) => Self::int(),
-            CtValue::UInt(_) => Self::value(Ty::UInt),
-            CtValue::Float(_) => Self::value(Ty::Float64),
-            CtValue::IntLiteral(_) => Self::value(Ty::IntLiteral),
-            CtValue::FloatLiteral(_) => Self::value(Ty::FloatLiteral),
+            CtValue::UInt(_) => Self::value(Ty::uint()),
+            CtValue::Float(_) => Self::value(Ty::float64()),
+            CtValue::IntLiteral(_) => Self::value(Ty::int_literal()),
+            CtValue::FloatLiteral(_) => Self::value(Ty::float_literal()),
             CtValue::Bool(_) => Self::bool(),
-            CtValue::Str(_) => Self::value(Ty::StringLiteral),
+            CtValue::Str(_) => Self::value(Ty::string_literal()),
             CtValue::Tuple(values) => Self::Tuple(all(values)),
             CtValue::List(values) => Self::List(all(values)),
             CtValue::Dict { entries, .. } => Self::Dict(
@@ -2456,20 +2475,23 @@ impl MetaTy {
                     .collect(),
             ),
             CtValue::Set { elements, .. } => Self::Set(all(elements)),
-            CtValue::Dtype(_) => Self::value(Ty::Dtype),
-            CtValue::Simd { dtype, lanes } => Self::value(Ty::Simd {
-                dtype: crate::types::SimdDtype::Known(*dtype),
-                width: crate::types::SimdWidth::Known(lanes.len() as i64),
-            }),
+            CtValue::Dtype(_) => Self::value(Ty::dtype()),
+            CtValue::Simd { dtype, lanes } => Self::value(
+                TyKind::Simd {
+                    dtype: crate::types::SimdDtype::Known(*dtype),
+                    width: crate::types::SimdWidth::Known(lanes.len() as i64),
+                }
+                .into(),
+            ),
             CtValue::Struct { name, .. } => {
-                Self::value(Ty::Struct(name.clone(), Vec::new().into()))
+                Self::value(TyKind::Struct(name.clone(), Vec::new()).into())
             }
-            CtValue::Pointer { .. } => Self::value(Ty::Infer),
+            CtValue::Pointer { .. } => Self::value(Ty::infer()),
             CtValue::Type(_) => Self::Type,
             CtValue::Reflected(_) => Self::ReflectedType,
             CtValue::Expr(expr) => expr.meta().clone(),
             // A deferred slot has no value yet, so no domain either.
-            CtValue::Deferred(_) | CtValue::Marker(_) => Self::value(Ty::Infer),
+            CtValue::Deferred(_) | CtValue::Marker(_) => Self::value(Ty::infer()),
         }
     }
 
@@ -2479,7 +2501,10 @@ impl MetaTy {
     }
 
     pub fn is_integer(&self) -> bool {
-        matches!(self.as_value(), Some(Ty::Int | Ty::UInt | Ty::IntLiteral))
+        matches!(
+            self.as_value().map(Ty::kind),
+            Some(TyKind::Int | TyKind::UInt | TyKind::IntLiteral)
+        )
     }
 
     /// A constant aggregate bound to a parameter list: every member has the
@@ -2493,7 +2518,10 @@ impl MetaTy {
     }
 
     fn is_literal(&self) -> bool {
-        matches!(self.as_value(), Some(Ty::IntLiteral | Ty::FloatLiteral))
+        matches!(
+            self.as_value().map(Ty::kind),
+            Some(TyKind::IntLiteral | TyKind::FloatLiteral)
+        )
     }
 
     /// This meta-type with the type binders `subst` solves replaced.
@@ -2527,7 +2555,7 @@ impl MetaTy {
     /// Whether a value domain in this meta-type names a type parameter.
     pub fn has_free_parameters(&self) -> bool {
         match self {
-            Self::Value(ty) => matches!(**ty, Ty::Param { .. }),
+            Self::Value(ty) => matches!(*ty.kind(), TyKind::Param { .. }),
             Self::ParamList(element) => element.has_free_parameters(),
             Self::Tuple(elements) | Self::List(elements) | Self::Set(elements) => {
                 elements.iter().any(Self::has_free_parameters)
@@ -2543,8 +2571,8 @@ impl MetaTy {
     /// declares the resolved instance type.
     pub fn is_unresolved_struct(&self, declared: &Self) -> bool {
         matches!(
-            (self.as_value(), declared.as_value()),
-            (Some(Ty::Struct(found, _)), Some(Ty::Struct(expected, _)))
+            (self.as_value().map(Ty::kind), declared.as_value().map(Ty::kind)),
+            (Some(TyKind::Struct(found, _)), Some(TyKind::Struct(expected, _)))
                 if found == expected
         )
     }
@@ -2647,7 +2675,7 @@ impl ReflectQuery {
             Self::IsStruct => MetaTy::bool(),
             Self::FieldCount | Self::FieldIndex(_) => MetaTy::int(),
             Self::FieldTypes => MetaTy::type_list(),
-            Self::FieldNames => MetaTy::ParamList(Box::new(MetaTy::value(Ty::StringLiteral))),
+            Self::FieldNames => MetaTy::ParamList(Box::new(MetaTy::value(Ty::string_literal()))),
             Self::FieldNamed(_) => MetaTy::Type,
         }
     }
@@ -2675,14 +2703,14 @@ impl ReflectQuery {
                 .iter()
                 .position(|(declared, _)| declared == field)
                 .ok_or_else(|| ReflectError::NoField {
-                    owner: match subject {
-                        Ty::Struct(name, _) => name.clone(),
+                    owner: match subject.kind() {
+                        TyKind::Struct(name, _) => name.clone(),
                         other => other.to_string(),
                     },
                     field: field.to_string(),
                 })
         };
-        let field_ty = |(_, ty): &(String, Ty)| CtValue::Type(Box::new(ty.clone()));
+        let field_ty = |(_, ty): &(String, Ty)| CtValue::Type(ty.clone());
         Ok(match self {
             Self::IsStruct => CtValue::Bool(true),
             Self::FieldCount => CtValue::Int(fields.len() as i64),
@@ -2995,6 +3023,8 @@ impl ParamConstraint {
 pub struct ParamStats {
     pub interned: u64,
     pub hits: u64,
+    pub types_interned: u64,
+    pub type_hits: u64,
     pub constant_folds: u64,
     pub replacements: u64,
     pub contexts: u64,
@@ -3071,14 +3101,35 @@ pub fn identity_hash<H: Hasher>(value: &CtValue, state: &mut H) {
 #[derive(Debug, Default)]
 struct ContextState {
     nodes: Mutex<HashMap<u64, Vec<ParamExpr>>>,
+    /// The context's types, by digest, as MLIR's context uniques types
+    /// beside attributes.
+    types: Mutex<HashMap<u64, Vec<Ty>>>,
     binders: Mutex<HashMap<ParamId, BinderInfo>>,
     interned: AtomicU64,
     hits: AtomicU64,
+    types_interned: AtomicU64,
+    type_hits: AtomicU64,
     constant_folds: AtomicU64,
     replacements: AtomicU64,
 }
 
 impl ContextState {
+    /// The interned twin of `ty`, or `None` after recording `ty` as the
+    /// node of its class. The table is locked for exactly this lookup.
+    fn lookup_or_insert_ty(&self, ty: &Ty) -> Option<Ty> {
+        let mut table = self
+            .types
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let bucket = table.entry(ty.digest()).or_default();
+        let found = bucket.iter().find(|candidate| *candidate == ty).cloned();
+        if found.is_none() {
+            bucket.push(ty.clone());
+        }
+        drop(table);
+        found
+    }
+
     /// The interned twin of `expr`, or `None` after recording `expr` as the
     /// node of its class. The table is locked for exactly this lookup.
     fn lookup_or_insert(&self, expr: &ParamExpr) -> Option<ParamExpr> {
@@ -3127,19 +3178,19 @@ enum IntDomain {
 
 impl IntDomain {
     fn of(meta: &MetaTy) -> Option<Self> {
-        match meta.as_value() {
-            Some(Ty::Int) => Some(Self::Int),
-            Some(Ty::UInt) => Some(Self::UInt),
-            Some(Ty::IntLiteral) => Some(Self::Literal),
+        match meta.as_value().map(Ty::kind) {
+            Some(TyKind::Int) => Some(Self::Int),
+            Some(TyKind::UInt) => Some(Self::UInt),
+            Some(TyKind::IntLiteral) => Some(Self::Literal),
             _ => None,
         }
     }
 
-    const fn ty(self) -> Ty {
+    fn ty(self) -> Ty {
         match self {
-            Self::Int => Ty::Int,
-            Self::UInt => Ty::UInt,
-            Self::Literal => Ty::IntLiteral,
+            Self::Int => Ty::int(),
+            Self::UInt => Ty::uint(),
+            Self::Literal => Ty::int_literal(),
         }
     }
 
@@ -3359,18 +3410,18 @@ fn require_bool(op: ParamOp, operand: &ParamExpr) -> Result<(), ParamError> {
     }
 }
 
-const fn is_scalar_domain(ty: &Ty) -> bool {
+fn is_scalar_domain(ty: &Ty) -> bool {
     matches!(
-        ty,
-        Ty::Int
-            | Ty::UInt
-            | Ty::IntLiteral
-            | Ty::Float64
-            | Ty::FloatLiteral
-            | Ty::Bool
-            | Ty::StringLiteral
-            | Ty::Dtype
-            | Ty::Simd { .. }
+        ty.kind(),
+        TyKind::Int
+            | TyKind::UInt
+            | TyKind::IntLiteral
+            | TyKind::Float64
+            | TyKind::FloatLiteral
+            | TyKind::Bool
+            | TyKind::StringLiteral
+            | TyKind::Dtype
+            | TyKind::Simd { .. }
     )
 }
 

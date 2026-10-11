@@ -10,6 +10,7 @@
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 use mojito_types::origin::{Mutability, Origin, OriginParamId, PointerOrigin};
+use mojito_types::types::TyKind;
 
 /// The struct origin binders one construction binds: pointer provenance for
 /// substitution into pointer-typed parameters, and the origin every bound
@@ -204,15 +205,15 @@ impl Checker {
             // A reference field binds from the argument's origin when the
             // argument's own type carries no reference.
             let reference_actual;
-            let actual = match (pattern, actual) {
-                (Ty::Ref(_), Ty::Ref(_)) => actual,
-                (Ty::Ref(declared), _) => match self.reference_argument_origin(expression) {
+            let actual = match (pattern.kind(), actual.kind()) {
+                (TyKind::Ref(_), TyKind::Ref(_)) => actual,
+                (TyKind::Ref(declared), _) => match self.reference_argument_origin(expression) {
                     Some(origin) => {
-                        reference_actual = Ty::Ref(mojito_types::origin::RefTy {
+                        reference_actual = Ty::new(TyKind::Ref(mojito_types::origin::RefTy {
                             referent: declared.referent.clone(),
                             origin,
                             mutability: declared.mutability,
-                        });
+                        }));
                         &reference_actual
                     }
                     None => actual,
@@ -284,7 +285,7 @@ impl Checker {
         let mut bindings: HashMap<OriginParamId, PointerOrigin> = HashMap::new();
         for (index, actual) in bound {
             let (
-                Some(Ty::Pointer {
+                Some(TyKind::Pointer {
                     origin:
                         PointerOrigin::Param {
                             id,
@@ -294,11 +295,11 @@ impl Checker {
                         },
                     ..
                 }),
-                Ty::Pointer {
+                TyKind::Pointer {
                     origin: actual_origin,
                     ..
                 },
-            ) = (params.get(*index), actual)
+            ) = (params.get(*index).map(Ty::kind), actual.kind())
             else {
                 continue;
             };
@@ -372,9 +373,9 @@ impl Checker {
         bindings: &mut ConstructorOriginBindings,
     ) -> Result<(), TypeError> {
         let slot_of = |id: &OriginParamId| source_params.get(id.0 as usize);
-        match (pattern, actual) {
+        match (pattern.kind(), actual.kind()) {
             (
-                Ty::Pointer {
+                TyKind::Pointer {
                     origin:
                         PointerOrigin::Param {
                             id,
@@ -384,7 +385,7 @@ impl Checker {
                         },
                     ..
                 },
-                Ty::Pointer {
+                TyKind::Pointer {
                     origin: actual_origin,
                     ..
                 },
@@ -431,7 +432,7 @@ impl Checker {
                     conflicting_binding(struct_name, &slot.name)
                 })
             }
-            (Ty::Ref(declared), Ty::Ref(reference)) => {
+            (TyKind::Ref(declared), TyKind::Ref(reference)) => {
                 let Origin::Param(id) = &declared.origin else {
                     return Ok(());
                 };
@@ -454,9 +455,10 @@ impl Checker {
                     conflicting_binding(struct_name, &slot.name)
                 })
             }
-            (Ty::Struct(pattern_name, pattern_args), Ty::Struct(actual_name, actual_args))
-                if pattern_name == actual_name && pattern_args.len() == actual_args.len() =>
-            {
+            (
+                TyKind::Struct(pattern_name, pattern_args),
+                TyKind::Struct(actual_name, actual_args),
+            ) if pattern_name == actual_name && pattern_args.len() == actual_args.len() => {
                 for (pattern, actual) in pattern_args.iter().zip(actual_args) {
                     match (pattern, actual) {
                         (TyArg::Ty(pattern), TyArg::Ty(actual)) => Self::bind_origin_pattern(
@@ -494,7 +496,9 @@ impl Checker {
                 }
                 Ok(())
             }
-            (Ty::Tuple(patterns), Ty::Tuple(actuals)) if patterns.len() == actuals.len() => {
+            (TyKind::Tuple(patterns), TyKind::Tuple(actuals))
+                if patterns.len() == actuals.len() =>
+            {
                 for (pattern, actual) in patterns.iter().zip(actuals) {
                     Self::bind_origin_pattern(
                         struct_name,
@@ -516,13 +520,13 @@ impl Checker {
 /// Whether a parameter type names a callee origin binder: a `Pointer[T, o]`,
 /// a `ref[o]` referent, or a struct carrying `o` in its origin tail.
 pub(in crate::checker) fn names_origin_binder(parameter: &Ty) -> bool {
-    mojito_types::types::mentions(parameter, &|candidate| match candidate {
-        Ty::Pointer {
+    mojito_types::types::mentions(parameter, &|candidate| match candidate.kind() {
+        TyKind::Pointer {
             origin: PointerOrigin::Param { .. },
             ..
         } => true,
-        Ty::Ref(reference) => matches!(reference.origin, Origin::Param(_)),
-        Ty::Struct(_, arguments) => arguments
+        TyKind::Ref(reference) => matches!(reference.origin, Origin::Param(_)),
+        TyKind::Struct(_, arguments) => arguments
             .iter()
             .any(|argument| matches!(argument, TyArg::Origin(Origin::Param(_)))),
         _ => false,
@@ -538,8 +542,8 @@ fn bind_callable_tail_pattern(
     bindings: &mut ConstructorOriginBindings,
     conflict: &dyn Fn() -> TypeError,
 ) -> Result<(), TypeError> {
-    match (pattern, actual) {
-        (Ty::Struct(pattern_name, pattern_args), Ty::Struct(actual_name, actual_args))
+    match (pattern.kind(), actual.kind()) {
+        (TyKind::Struct(pattern_name, pattern_args), TyKind::Struct(actual_name, actual_args))
             if pattern_name == actual_name && pattern_args.len() == actual_args.len() =>
         {
             for (pattern, actual) in pattern_args.iter().zip(actual_args) {
@@ -555,7 +559,7 @@ fn bind_callable_tail_pattern(
             }
             Ok(())
         }
-        (Ty::Ref(declared), Ty::Ref(reference)) => {
+        (TyKind::Ref(declared), TyKind::Ref(reference)) => {
             if let Origin::Param(id) = &declared.origin {
                 bindings.bind_origin(*id, &reference.origin, conflict)?;
             }
@@ -567,11 +571,11 @@ fn bind_callable_tail_pattern(
         // the projection, and one the actual does not end in is checked by
         // coercion, not bound.
         (
-            Ty::Pointer {
+            TyKind::Pointer {
                 element: pattern_element,
                 origin: declared,
             },
-            Ty::Pointer {
+            TyKind::Pointer {
                 element,
                 origin: provenance,
             },
@@ -588,7 +592,7 @@ fn bind_callable_tail_pattern(
             }
             bind_callable_tail_pattern(pattern_element, element, bindings, conflict)
         }
-        (Ty::Tuple(patterns), Ty::Tuple(actuals)) if patterns.len() == actuals.len() => {
+        (TyKind::Tuple(patterns), TyKind::Tuple(actuals)) if patterns.len() == actuals.len() => {
             for (pattern, actual) in patterns.iter().zip(actuals) {
                 bind_callable_tail_pattern(pattern, actual, bindings, conflict)?;
             }

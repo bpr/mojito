@@ -5,6 +5,7 @@
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
+use mojito_types::types::TyKind;
 
 /// A call's positional registers and places, then its keyword registers and
 /// places.
@@ -23,16 +24,16 @@ pub(super) type LoweredKeywords = (Vec<(String, Reg)>, Vec<Option<MirPlace>>);
 /// an aggregate (a struct with a destructor or owning fields, tuple/pack
 /// storage, a variant, or a still-abstract parameter type). Kept textually
 /// aligned with the drop analysis' `may_alias_owned_storage`.
-pub(super) const fn owns_droppable_storage(ty: &Ty) -> bool {
+pub(super) fn owns_droppable_storage(ty: &Ty) -> bool {
     matches!(
-        ty,
-        Ty::Struct(..)
-            | Ty::Tuple(_)
-            | Ty::RuntimePack(_)
-            | Ty::Variant(_)
-            | Ty::ComptimeList(_)
-            | Ty::Param { .. }
-            | Ty::Assoc { .. }
+        ty.kind(),
+        TyKind::Struct(..)
+            | TyKind::Tuple(_)
+            | TyKind::RuntimePack(_)
+            | TyKind::Variant(_)
+            | TyKind::ComptimeList(_)
+            | TyKind::Param { .. }
+            | TyKind::Assoc { .. }
     )
 }
 
@@ -219,7 +220,7 @@ impl Flatten<'_> {
                     .ty
                     .clone()
                     .or_else(|| self.checked_ty(expression))
-                    .unwrap_or(Ty::Error),
+                    .unwrap_or_else(Ty::error),
             );
             self.emit(MirInstr::LoadPlace {
                 dest: value,
@@ -236,7 +237,7 @@ impl Flatten<'_> {
                     .ty
                     .clone()
                     .or_else(|| self.checked_ty(expression))
-                    .unwrap_or(Ty::Error),
+                    .unwrap_or_else(Ty::error),
             );
             self.emit(MirInstr::LoadPlace {
                 dest: value,
@@ -264,7 +265,7 @@ impl Flatten<'_> {
     pub(super) fn expr_without_call_value_adjustments(&mut self, expression: &Expr) -> Reg {
         if let Some(reference) = self.reference_result(expression) {
             let handle = self.reference_handle(expression);
-            let value_ty = (*reference.referent).clone();
+            let value_ty = reference.referent;
             let read = self.fresh_typed(expression.source_span(), None, value_ty.clone());
             self.emit(MirInstr::ReadRef {
                 dest: read,
@@ -314,7 +315,7 @@ impl Flatten<'_> {
                     .ty
                     .clone()
                     .or_else(|| self.checked_ty(expression))
-                    .unwrap_or(Ty::Error),
+                    .unwrap_or_else(Ty::error),
             );
             self.emit(MirInstr::LoadPlace {
                 dest: value,
@@ -330,7 +331,7 @@ impl Flatten<'_> {
                     .ty
                     .clone()
                     .or_else(|| self.checked_ty(expression))
-                    .unwrap_or(Ty::Error),
+                    .unwrap_or_else(Ty::error),
             );
             self.emit(MirInstr::LoadPlace {
                 dest: value,
@@ -409,7 +410,7 @@ impl Flatten<'_> {
                     let dest = self.fresh_typed(
                         site.clone(),
                         None,
-                        parameter_ty.clone().unwrap_or(Ty::Error),
+                        parameter_ty.clone().unwrap_or_else(Ty::error),
                     );
                     self.emit(MirInstr::Const {
                         dest,
@@ -423,7 +424,7 @@ impl Flatten<'_> {
                     let dest = self.fresh_typed(
                         site.clone(),
                         None,
-                        parameter_ty.clone().unwrap_or(Ty::Error),
+                        parameter_ty.clone().unwrap_or_else(Ty::error),
                     );
                     self.emit(MirInstr::Call {
                         dest,
@@ -447,7 +448,7 @@ impl Flatten<'_> {
                     let dest = self.fresh_typed(
                         site.clone(),
                         None,
-                        parameter_ty.clone().unwrap_or(Ty::Int),
+                        parameter_ty.clone().unwrap_or_else(Ty::int),
                     );
                     self.emit(MirInstr::MethodCall {
                         dest,
@@ -519,7 +520,7 @@ impl Flatten<'_> {
         let value = self.fresh_typed(
             site,
             Some(place.root),
-            place.ty.clone().unwrap_or(Ty::Error),
+            place.ty.clone().unwrap_or_else(Ty::error),
         );
         self.emit(MirInstr::LoadPlace {
             dest: value,
@@ -544,16 +545,18 @@ impl Flatten<'_> {
         {
             return (self.transfer(operand, moved), None);
         }
-        let Some(place) = self
-            .simple_place(operand)
-            .filter(|place| matches!(place.ty, Some(Ty::VariadicPack(_))))
-        else {
+        let Some(place) = self.simple_place(operand).filter(|place| {
+            matches!(
+                place.ty.as_ref().map(Ty::kind),
+                Some(TyKind::VariadicPack(_))
+            )
+        }) else {
             return (self.expr(expression), None);
         };
         let value = self.fresh_typed(
             operand.source_span(),
             Some(place.root),
-            place.ty.clone().unwrap_or(Ty::Error),
+            place.ty.clone().unwrap_or_else(Ty::error),
         );
         self.emit(MirInstr::LoadPlace {
             dest: value,
@@ -619,7 +622,7 @@ impl Flatten<'_> {
                 .ty
                 .clone()
                 .or_else(|| self.checked_ty(&argument.value))
-                .unwrap_or(Ty::Error),
+                .unwrap_or_else(Ty::error),
         );
         self.emit(MirInstr::LoadPlace {
             dest: source,
@@ -679,7 +682,7 @@ impl Flatten<'_> {
         fallback: Option<VarId>,
     ) -> MirPlace {
         let variable = self.var(&format!("$call_ref_r{}", handle.0));
-        let storage_ty = Ty::Ref(reference.clone());
+        let storage_ty = Ty::new(TyKind::Ref(reference.clone()));
         self.var_types.insert(variable, storage_ty.clone());
         self.runtime_aliases.insert(variable);
         self.emit(MirInstr::DefVar {
@@ -729,7 +732,7 @@ impl Flatten<'_> {
             let marker = self.fresh_typed(
                 expression.source_span(),
                 Some(loans[0].place.root),
-                Ty::None,
+                Ty::none(),
             );
             self.emit(MirInstr::EstablishLoans {
                 reference: variable,
@@ -741,7 +744,7 @@ impl Flatten<'_> {
         }
 
         let mut place = MirPlace::root(variable, Some(storage_ty));
-        place.ty = Some((*reference.referent).clone());
+        place.ty = Some(reference.referent.clone());
         place.through = Some(variable);
         place
     }
@@ -758,8 +761,8 @@ impl Flatten<'_> {
         let handle = self.reference_handle(expression);
         // `reference_handle` may peel an outer reference-valued aggregate layer.
         // Materialize the handle's actual type rather than recreating `ref ref T`.
-        let materialized_reference = match self.f.reg_types.get(&handle.0) {
-            Some(Ty::Ref(reference)) => reference.clone(),
+        let materialized_reference = match self.f.reg_types.get(&handle.0).map(Ty::kind) {
+            Some(TyKind::Ref(reference)) => reference.clone(),
             _ => reference,
         };
         Some(self.materialize_call_reference_place(
@@ -812,8 +815,8 @@ impl Flatten<'_> {
                     ) =>
             {
                 let mut place = base_place(self, object)?;
-                let projection = match self.checked_ty(object) {
-                    Some(Ty::Tuple(_)) => exact_nonnegative_index(index)
+                let projection = match self.checked_ty(object).as_ref().map(Ty::kind) {
+                    Some(TyKind::Tuple(_)) => exact_nonnegative_index(index)
                         .map_or_else(|| Proj::Index(self.expr(index)), Proj::ConstIndex),
                     _ => Proj::Index(self.expr(index)),
                 };
@@ -880,7 +883,7 @@ impl Flatten<'_> {
             let value = self.fresh_typed(
                 expression.source_span(),
                 Some(place.root),
-                place.ty.clone().unwrap_or(Ty::Error),
+                place.ty.clone().unwrap_or_else(Ty::error),
             );
             self.emit(MirInstr::LoadPlace {
                 dest: value,
@@ -896,7 +899,7 @@ impl Flatten<'_> {
                     .ty
                     .clone()
                     .or_else(|| self.checked_ty(expression))
-                    .unwrap_or(Ty::Error),
+                    .unwrap_or_else(Ty::error),
             );
             self.emit(MirInstr::LoadPlace {
                 dest: value,
@@ -923,7 +926,10 @@ impl Flatten<'_> {
         // reads through the view, so the source must outlive the call even at
         // its last use — the same hidden anchor a chained view result gets.
         if matches!(expression.kind, ExprKind::Call { .. })
-            && matches!(self.checked_ty(expression), Some(Ty::Struct(..)))
+            && matches!(
+                self.checked_ty(expression).as_ref().map(Ty::kind),
+                Some(TyKind::Struct(..))
+            )
         {
             let value = self.expr(expression);
             let loans = self.aggregate_borrows(expression);
@@ -1048,7 +1054,7 @@ impl Flatten<'_> {
             return None;
         }
         let field_ty = self.checked_ty(expression)?;
-        if matches!(field_ty, Ty::Ref(_)) {
+        if matches!(field_ty.kind(), TyKind::Ref(_)) {
             return None;
         }
         // A slice descriptor's `start`/`end`/`step` are intrinsic bounds on a
@@ -1200,7 +1206,7 @@ impl Flatten<'_> {
             let loans = self.aggregate_borrows_unmaterialized(expression);
             if let Some(first) = loans.first() {
                 let marker =
-                    self.fresh_typed(expression.source_span(), Some(first.place.root), Ty::None);
+                    self.fresh_typed(expression.source_span(), Some(first.place.root), Ty::none());
                 self.aggregate_loans.insert(variable, loans.clone());
                 self.emit(MirInstr::EstablishLoans {
                     reference: variable,
@@ -1214,7 +1220,10 @@ impl Flatten<'_> {
         let place = MirPlace::root(variable, self.var_types.get(&variable).cloned());
         // A reference-context lowering already handed back a handle to the
         // slot, which the call binds as it stands.
-        if matches!(self.f.reg_types.get(&value.0), Some(Ty::Ref(_))) {
+        if matches!(
+            self.f.reg_types.get(&value.0).map(Ty::kind),
+            Some(TyKind::Ref(_))
+        ) {
             return (value, Some(place));
         }
         // The slot now owns the temporary, so a use that copies it (a
@@ -1227,7 +1236,7 @@ impl Flatten<'_> {
                 .ty
                 .clone()
                 .or_else(|| self.f.reg_types.get(&value.0).cloned())
-                .unwrap_or(Ty::Error),
+                .unwrap_or_else(Ty::error),
         );
         self.emit(MirInstr::LoadPlace {
             dest: loaded,
@@ -1333,7 +1342,10 @@ impl Flatten<'_> {
                     .contains_key(&(std::ptr::from_ref::<Expr>(expression) as usize)));
         if (call_temporary || subscript_view)
             && !anchored_by_conversion
-            && matches!(self.checked_ty(expression), Some(Ty::Struct(..)))
+            && matches!(
+                self.checked_ty(expression).as_ref().map(Ty::kind),
+                Some(TyKind::Struct(..))
+            )
         {
             let loans = self.aggregate_borrows(expression);
             if !loans.is_empty() {
@@ -1361,7 +1373,7 @@ impl Flatten<'_> {
         let marker = self.fresh_typed(
             expression.source_span(),
             Some(loans[0].place.root),
-            Ty::None,
+            Ty::none(),
         );
         self.emit(MirInstr::EstablishLoans {
             reference: variable,
@@ -1404,7 +1416,7 @@ impl Flatten<'_> {
         let marker = self.fresh_typed(
             expression.source_span(),
             Some(loans[0].place.root),
-            Ty::None,
+            Ty::none(),
         );
         self.emit(MirInstr::EstablishLoans {
             reference: variable,
@@ -1417,7 +1429,7 @@ impl Flatten<'_> {
         let read = self.fresh_typed(
             expression.source_span(),
             Some(variable),
-            place.ty.clone().unwrap_or(Ty::Error),
+            place.ty.clone().unwrap_or_else(Ty::error),
         );
         self.emit(MirInstr::LoadPlace {
             dest: read,
@@ -1502,7 +1514,7 @@ impl Flatten<'_> {
                 _ => {}
             }
         }
-        if let Some(Ty::Ref(reference)) = self.checked_ty(expression) {
+        if let Some(TyKind::Ref(reference)) = self.checked_ty(expression).as_ref().map(Ty::kind) {
             collect(&reference.origin, &mut places);
         }
         places.sort();
@@ -1608,7 +1620,7 @@ impl Flatten<'_> {
             let except = invalidation
                 .except
                 .and_then(|owner| self.owner_vars.get(&owner).copied());
-            let marker = self.fresh_typed(site.clone(), Some(base.root), Ty::None);
+            let marker = self.fresh_typed(site.clone(), Some(base.root), Ty::none());
             self.emit(MirInstr::InvalidateInteriors {
                 base,
                 except,
@@ -1681,14 +1693,14 @@ impl Flatten<'_> {
         }
         let ty = self.checked_ty(expression)?;
         if !matches!(
-            ty,
-            Ty::Struct(..)
-                | Ty::Tuple(_)
-                | Ty::RuntimePack(_)
-                | Ty::VariadicPack(_)
-                | Ty::Variant(_)
-                | Ty::Param { .. }
-                | Ty::Assoc { .. }
+            ty.kind(),
+            TyKind::Struct(..)
+                | TyKind::Tuple(_)
+                | TyKind::RuntimePack(_)
+                | TyKind::VariadicPack(_)
+                | TyKind::Variant(_)
+                | TyKind::Param { .. }
+                | TyKind::Assoc { .. }
         ) {
             return None;
         }
@@ -1729,8 +1741,8 @@ impl Flatten<'_> {
             // A view (`Span[T, origin]`) lends storage it does not own; its
             // element keeps the ordinary read.
             let view = matches!(
-                self.checked_ty(object),
-                Some(Ty::Struct(_, arguments))
+                self.checked_ty(object).as_ref().map(Ty::kind),
+                Some(TyKind::Struct(_, arguments))
                     if arguments.iter().any(|argument| matches!(argument, TyArg::Origin(_)))
             );
             return (!view && owns_droppable_storage(&reference.referent))
@@ -1752,7 +1764,7 @@ impl Flatten<'_> {
                 .ty
                 .clone()
                 .or_else(|| self.checked_ty(expression))
-                .unwrap_or(Ty::Error),
+                .unwrap_or_else(Ty::error),
         );
         self.emit(MirInstr::LoadPlace { dest, place });
         Some(dest)

@@ -5,6 +5,7 @@
 //! values, tuples, callables — conforms by its shape alone, so the checker
 //! and the elaborator ask the same predicate here.
 
+use crate::types::TyKind;
 use crate::types::{Ty, default_literal, is_scalar_simd, simd_shape, trivial_predicate_name};
 
 /// Mojo's built-in traits the compiler knows by name. A program may also
@@ -147,44 +148,47 @@ pub fn leaf_conforms(
     element: &mut dyn FnMut(&Ty, &str) -> bool,
 ) -> Option<bool> {
     if matches!(
-        ty,
-        Ty::Struct(..)
-            | Ty::Param { .. }
-            | Ty::Assoc { .. }
-            | Ty::Dependent(_)
-            | Ty::SelfType
-            | Ty::Infer
-            | Ty::Error
+        ty.kind(),
+        TyKind::Struct(..)
+            | TyKind::Param { .. }
+            | TyKind::Assoc { .. }
+            | TyKind::Dependent(_)
+            | TyKind::SelfType
+            | TyKind::Infer
+            | TyKind::Error
     ) {
         return None;
     }
     Some(match trait_name {
-        "Copyable" | "ImplicitlyCopyable" | "Movable" | "Deinitable" => match ty {
-            Ty::ComptimeList(item) => element(item, trait_name),
-            Ty::Tuple(items) | Ty::RuntimePack(items) | Ty::Variant(items) => {
+        "Copyable" | "ImplicitlyCopyable" | "Movable" | "Deinitable" => match ty.kind() {
+            TyKind::ComptimeList(item) => element(item, trait_name),
+            TyKind::Tuple(items) | TyKind::RuntimePack(items) | TyKind::Variant(items) => {
                 items.iter().all(|item| element(item, trait_name))
             }
             _ => true,
         },
         "Hashable" => builtin_hashable_ty(ty),
-        "Writable" => !matches!(ty, Ty::Func(_) | Ty::GenericFunc(_) | Ty::Overload(_)),
+        "Writable" => !matches!(
+            ty.kind(),
+            TyKind::Func(_) | TyKind::GenericFunc(_) | TyKind::Overload(_)
+        ),
         "Writer" | "Hasher" => false,
-        "Defaultable" => match ty {
-            Ty::Int
-            | Ty::IntLiteral
-            | Ty::UInt
-            | Ty::Float64
-            | Ty::FloatLiteral
-            | Ty::Bool
-            | Ty::StringLiteral
-            | Ty::None
-            | Ty::Simd { .. } => true,
-            Ty::Tuple(items) | Ty::RuntimePack(items) => {
+        "Defaultable" => match ty.kind() {
+            TyKind::Int
+            | TyKind::IntLiteral
+            | TyKind::UInt
+            | TyKind::Float64
+            | TyKind::FloatLiteral
+            | TyKind::Bool
+            | TyKind::StringLiteral
+            | TyKind::None
+            | TyKind::Simd { .. } => true,
+            TyKind::Tuple(items) | TyKind::RuntimePack(items) => {
                 items.iter().all(|item| element(item, trait_name))
             }
             _ => false,
         },
-        "Indexer" => matches!(ty, Ty::Int | Ty::IntLiteral),
+        "Indexer" => matches!(ty.kind(), TyKind::Int | TyKind::IntLiteral),
         "Equatable" => is_scalar(ty) || is_numeric_like(ty) || is_scalar_simd(ty),
         "Comparable" => is_numeric_like(ty) || is_scalar_simd(ty),
         "Absable" | "Roundable" | "Powable" | "Addable" | "Subtractable" | "Multipliable"
@@ -193,7 +197,7 @@ pub fn leaf_conforms(
             is_integer_like(ty)
         }
         "Negatable" => is_signed_numeric_like(ty),
-        "Intable" => is_numeric_like(ty) || *ty == Ty::Bool,
+        "Intable" => is_numeric_like(ty) || *ty == TyKind::Bool,
         // `AnyType`, and the layout and operation markers that stay shallow.
         _ => true,
     })
@@ -201,15 +205,18 @@ pub fn leaf_conforms(
 
 /// Whether `ty` is a non-numeric scalar value type — what `==`/`!=` compare once
 /// the numeric cases are out of the way.
-pub const fn is_scalar(ty: &Ty) -> bool {
-    matches!(ty, Ty::Bool | Ty::StringLiteral | Ty::None | Ty::Dtype)
+pub fn is_scalar(ty: &Ty) -> bool {
+    matches!(
+        ty.kind(),
+        TyKind::Bool | TyKind::StringLiteral | TyKind::None | TyKind::Dtype
+    )
 }
 
 /// Whether `ty` is a numeric type (concrete or literal).
-pub const fn is_numeric(ty: &Ty) -> bool {
+pub fn is_numeric(ty: &Ty) -> bool {
     matches!(
-        ty,
-        Ty::Int | Ty::UInt | Ty::Float64 | Ty::IntLiteral | Ty::FloatLiteral
+        ty.kind(),
+        TyKind::Int | TyKind::UInt | TyKind::Float64 | TyKind::IntLiteral | TyKind::FloatLiteral
     )
 }
 
@@ -220,30 +227,30 @@ pub fn is_numeric_like(ty: &Ty) -> bool {
 /// Integer-kind scalars — the operands of bitwise and shift operators
 /// (`IntLiteral` materializes to `Int`).
 pub fn is_integer_like(ty: &Ty) -> bool {
-    matches!(default_literal(ty), Ty::Int | Ty::UInt)
+    matches!(default_literal(ty).kind(), TyKind::Int | TyKind::UInt)
 }
 
 /// Signed numeric scalars — the operands of arithmetic negation (`-x`); `UInt`
 /// is excluded.
 pub fn is_signed_numeric_like(ty: &Ty) -> bool {
-    matches!(default_literal(ty), Ty::Int | Ty::Float64)
+    matches!(default_literal(ty).kind(), TyKind::Int | TyKind::Float64)
 }
 
-pub const fn builtin_hashable_ty(ty: &Ty) -> bool {
+pub fn builtin_hashable_ty(ty: &Ty) -> bool {
     matches!(
-        ty,
-        Ty::Int
-            | Ty::UInt
-            | Ty::Bool
-            | Ty::StringLiteral
-            | Ty::Float64
-            | Ty::Simd { .. }
-            | Ty::Dtype
+        ty.kind(),
+        TyKind::Int
+            | TyKind::UInt
+            | TyKind::Bool
+            | TyKind::StringLiteral
+            | TyKind::Float64
+            | TyKind::Simd { .. }
+            | TyKind::Dtype
     )
 }
 
 /// Whether `ty` is a SIMD value — a native scalar (a width-1 vector) or a
 /// `SIMD[dtype, width]` — the types the hidden `$SIMD` bound admits.
-pub const fn simd_valued_ty(ty: &Ty) -> bool {
-    matches!(ty, Ty::Simd { .. }) || simd_shape(ty).is_some()
+pub fn simd_valued_ty(ty: &Ty) -> bool {
+    matches!(ty.kind(), TyKind::Simd { .. }) || simd_shape(ty).is_some()
 }

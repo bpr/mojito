@@ -3,6 +3,7 @@
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
+use mojito_types::types::TyKind;
 
 impl Decoder {
     pub(super) fn function(&mut self, value: &Value) -> Option<(String, MirFunction)> {
@@ -42,8 +43,8 @@ impl Decoder {
             .collect();
         self.register_binders = reg_types
             .iter()
-            .filter_map(|(register, ty)| match ty {
-                Ty::Param { binder, .. } => Some((*register, binder.clone())),
+            .filter_map(|(register, ty)| match ty.kind() {
+                TyKind::Param { binder, .. } => Some((*register, binder.clone())),
                 _ => None,
             })
             .collect();
@@ -309,8 +310,7 @@ impl Decoder {
             "call" => Some(MirInstr::Call {
                 dest: self.req(value, fields, "dest", Self::reg)?,
                 func: FuncRef(self.req(value, fields, "func", Self::symbol)?),
-                raises: (self.req(value, fields, "raises", |d, v| Some(d.option_ty(Some(v))))?)
-                    .map(Box::new),
+                raises: (self.req(value, fields, "raises", |d, v| Some(d.option_ty(Some(v))))?),
                 args: self.req(value, fields, "args", |d, v| Some(d.regs(v)))?,
                 kwargs: self.req(value, fields, "kwargs", |d, v| Some(d.kwargs(v)))?,
                 arg_places: self
@@ -329,8 +329,7 @@ impl Decoder {
                 receiver: (self
                     .field(fields, "receiver")
                     .ok()
-                    .and_then(|found| self.option_ty(Some(found))))
-                .map(Box::new),
+                    .and_then(|found| self.option_ty(Some(found)))),
                 // Schema 1.13 records the solved arguments of a generic
                 // `def` call; an older artifact carries none.
                 instantiated_args: self
@@ -350,8 +349,7 @@ impl Decoder {
                 dest: self.req(value, fields, "dest", Self::reg)?,
                 callee: self.req(value, fields, "callee", Self::reg)?,
                 resolved: self.req(value, fields, "resolved", |d, v| Some(d.option_symbol(v)))?,
-                raises: (self.req(value, fields, "raises", |d, v| Some(d.option_ty(Some(v))))?)
-                    .map(Box::new),
+                raises: (self.req(value, fields, "raises", |d, v| Some(d.option_ty(Some(v))))?),
                 args: self.req(value, fields, "args", |d, v| Some(d.regs(v)))?,
                 kwargs: self.req(value, fields, "kwargs", |d, v| Some(d.kwargs(v)))?,
                 callee_place: (self.req(value, fields, "callee_place", |d, v| {
@@ -376,8 +374,7 @@ impl Decoder {
                     fields,
                     "instantiated_contract",
                     |d, v| Some(d.option_ty(Some(v))),
-                )?)
-                .map(Box::new),
+                )?),
                 instantiated_args: self.req(value, fields, "instantiated_args", |d, v| {
                     Some(d.ty_args(v))
                 })?,
@@ -394,8 +391,7 @@ impl Decoder {
                 recv: self.req(value, fields, "recv", Self::reg)?,
                 method: self.req(value, fields, "method", Self::symbol)?,
                 resolved: self.req(value, fields, "resolved", |d, v| Some(d.option_symbol(v)))?,
-                raises: (self.req(value, fields, "raises", |d, v| Some(d.option_ty(Some(v))))?)
-                    .map(Box::new),
+                raises: (self.req(value, fields, "raises", |d, v| Some(d.option_ty(Some(v))))?),
                 reference_result: (self.req(value, fields, "reference_result", |d, v| {
                     Some(d.option_value(Some(v)).and_then(|v| d.ref_ty(v)))
                 })?)

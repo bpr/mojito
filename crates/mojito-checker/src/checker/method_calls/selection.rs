@@ -3,6 +3,7 @@
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
+use mojito_types::types::TyKind;
 
 impl Checker {
     /// Rebase a symbolic `origin_of(self)` pointer origin in a method result
@@ -12,12 +13,12 @@ impl Checker {
     /// unresolvable receivers pass through unchanged.
     pub(super) fn rebase_self_place_pointer(&self, ty: Ty, receiver: &Expr) -> Ty {
         use mojito_types::origin::{Mutability, Origin, OriginSeg, PointerOrigin};
-        let Ty::Pointer {
+        let TyKind::Pointer {
             element,
             origin: PointerOrigin::SelfPlace {
                 interior, subtree, ..
             },
-        } = &ty
+        } = ty.kind()
         else {
             return ty;
         };
@@ -45,10 +46,11 @@ impl Checker {
             },
             _ => return ty,
         };
-        Ty::Pointer {
+        TyKind::Pointer {
             element: element.clone(),
             origin,
         }
+        .into()
     }
 
     /// Apply the implicit conversions selected while scoring one concrete method
@@ -86,8 +88,8 @@ impl Checker {
             // against its per-index element (mirroring the scoring pass), so
             // a literal converts where a nominal String element is expected.
             for (pack_index, &position) in resolved.positional_overflow.iter().enumerate() {
-                let expected = match element {
-                    Ty::RuntimePack(elements) => elements.get(pack_index).unwrap_or(element),
+                let expected = match element.kind() {
+                    TyKind::RuntimePack(elements) => elements.get(pack_index).unwrap_or(element),
                     _ => element,
                 };
                 let expression = &args[position];
@@ -171,46 +173,45 @@ impl Checker {
         let argument =
             |source: CheckedCallArgumentSource, expression: &Expr| -> CheckedCallArgumentBoundary {
                 let value_source = expression.source_span();
-                let adjustments =
-                    if matches!(expression_types.get(&value_source), Some(Ty::Overload(_)))
-                        && let Some(target) = overloads.get(&value_source)
-                    {
-                        vec![CheckedCallValueAdjustment::ResolveCallable {
-                            target: target.clone(),
-                        }]
-                    } else if let Some(target) = implicit.get(&value_source) {
-                        if target == mojito_symbol::symbol::SCALAR_SPLAT_CONVERSION {
-                            implicit_types
-                                .get(&value_source)
-                                .map(|ty| {
-                                    vec![CheckedCallValueAdjustment::SplatScalar {
-                                        target: Box::new(ty.clone()),
-                                    }]
-                                })
-                                .unwrap_or_default()
-                        } else if mojito_symbol::symbol::is_index_normalization_symbol(target) {
-                            vec![CheckedCallValueAdjustment::IndexNormalization {
-                                target: target.clone(),
-                            }]
-                        } else {
-                            vec![CheckedCallValueAdjustment::ImplicitConversion {
-                                target: target.clone(),
-                            }]
-                        }
-                    } else {
-                        operations
+                let adjustments = if matches!(
+                    expression_types.get(&value_source).map(Ty::kind),
+                    Some(TyKind::Overload(_))
+                ) && let Some(target) = overloads.get(&value_source)
+                {
+                    vec![CheckedCallValueAdjustment::ResolveCallable {
+                        target: target.clone(),
+                    }]
+                } else if let Some(target) = implicit.get(&value_source) {
+                    if target == mojito_symbol::symbol::SCALAR_SPLAT_CONVERSION {
+                        implicit_types
                             .get(&value_source)
-                            .and_then(|adjustment| match adjustment {
-                                mojito_checked::checked::SemanticAdjustment::MaterializeLiteral(
-                                    target,
-                                ) => Some(vec![CheckedCallValueAdjustment::MaterializeLiteral {
-                                    target: Box::new(target.clone()),
-                                }]),
-
-                                _ => None,
+                            .map(|ty| {
+                                vec![CheckedCallValueAdjustment::SplatScalar { target: ty.clone() }]
                             })
                             .unwrap_or_default()
-                    };
+                    } else if mojito_symbol::symbol::is_index_normalization_symbol(target) {
+                        vec![CheckedCallValueAdjustment::IndexNormalization {
+                            target: target.clone(),
+                        }]
+                    } else {
+                        vec![CheckedCallValueAdjustment::ImplicitConversion {
+                            target: target.clone(),
+                        }]
+                    }
+                } else {
+                    operations
+                        .get(&value_source)
+                        .and_then(|adjustment| match adjustment {
+                            mojito_checked::checked::SemanticAdjustment::MaterializeLiteral(
+                                target,
+                            ) => Some(vec![CheckedCallValueAdjustment::MaterializeLiteral {
+                                target: target.clone(),
+                            }]),
+
+                            _ => None,
+                        })
+                        .unwrap_or_default()
+                };
                 let prior = before
                     .invalidations
                     .get(&value_source)
@@ -410,17 +411,19 @@ impl Checker {
             }
             score += conversion_count(&actual, &params[index]);
             simd_erasures += usize::from(
-                matches!(signature.params.get(index), Some(Ty::Param { .. }))
-                    && mojito_types::types::simd_shape(&actual).is_some(),
+                matches!(
+                    signature.params.get(index).map(Ty::kind),
+                    Some(TyKind::Param { .. })
+                ) && mojito_types::types::simd_shape(&actual).is_some(),
             );
         }
         if let Some(element) = variadic {
-            // A specialized heterogeneous pack (`Ty::RuntimePack`) checks each overflow
+            // A specialized heterogeneous pack (`TyKind::RuntimePack`) checks each overflow
             // argument against its per-index element type with exact arity; an
             // ordinary variadic checks every argument against one element type.
             for (pack_index, &position) in overflow.iter().enumerate() {
-                let expected = match element {
-                    Ty::RuntimePack(elements) => {
+                let expected = match element.kind() {
+                    TyKind::RuntimePack(elements) => {
                         elements
                             .get(pack_index)
                             .ok_or_else(|| TypeError::ArityMismatch {
@@ -462,7 +465,7 @@ impl Checker {
                 }
                 score += conversion_count(&actual, expected);
             }
-            if let Ty::RuntimePack(elements) = element
+            if let TyKind::RuntimePack(elements) = element.kind()
                 && elements.len() != overflow.len()
             {
                 return Err(TypeError::ArityMismatch {

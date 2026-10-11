@@ -21,6 +21,7 @@ use mojito_ast::ast::{KwArg, ParamArg, SyntaxOrigins};
 use mojito_ast::visit::{MutVisitor, walk_block_mut, walk_expr_mut};
 use mojito_common::literal::IntLiteral;
 use mojito_common::token::SyntaxId;
+use mojito_types::types::TyKind;
 
 /// The requirement defaults one call through a bound leaves out.
 ///
@@ -246,8 +247,10 @@ impl Checker {
         self.structs_declaring(method)
             .filter_map(|(struct_name, info)| Some((struct_name, info, info.methods.get(method)?)))
             .filter(|(struct_name, info, _)| {
-                let implementation =
-                    Ty::Struct((*struct_name).clone(), params_as_args(&info.decls).into());
+                let implementation = Ty::new(TyKind::Struct(
+                    (*struct_name).clone(),
+                    params_as_args(&info.decls),
+                ));
                 bounds
                     .iter()
                     .all(|bound| self.conforms_to(&implementation, bound))
@@ -270,7 +273,7 @@ impl Checker {
             .filter_map(|(name, info)| Some((name, info, info.methods.get(method)?)))
             .filter(|(name, info, _)| {
                 let implementation =
-                    Ty::Struct((*name).clone(), params_as_args(&info.decls).into());
+                    Ty::new(TyKind::Struct((*name).clone(), params_as_args(&info.decls)));
                 bounds
                     .iter()
                     .all(|bound| self.conforms_to(&implementation, bound))

@@ -4,6 +4,7 @@
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
+use mojito_types::types::TyKind;
 pub use mojito_types::types::canonical_generic_signature;
 use mojito_types::types::{FuncTy, GenericFuncTy};
 
@@ -58,7 +59,7 @@ pub(super) fn block_can_escape_owned_iteration(statements: &[Stmt], nested_loops
 #[derive(Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub(super) enum CtMemberReq {
     /// A compile-time value whose value type must match this type.
-    Value(Box<Ty>),
+    Value(Ty),
     /// A compile-time type value whose type must conform to these trait bounds.
     /// `params` is non-empty for a parameterized associated type such as
     /// `comptime IteratorType[iterable_mut: Bool, //, iterable_origin:
@@ -230,10 +231,10 @@ pub(super) fn canonical_generic_parameter_shape(
     )
 }
 
-pub(super) const fn callable_parameter_count(ty: &Ty) -> Option<usize> {
-    match ty {
-        Ty::Func(func) => Some(func.params.len()),
-        Ty::GenericFunc(generic) => {
+pub(super) fn callable_parameter_count(ty: &Ty) -> Option<usize> {
+    match ty.kind() {
+        TyKind::Func(func) => Some(func.params.len()),
+        TyKind::GenericFunc(generic) => {
             let GenericFuncTy {
                 func: FuncTy { params, .. },
                 ..
@@ -301,23 +302,23 @@ pub(super) fn same_callable_signature(a: &Ty, b: &Ty) -> bool {
             .map(|collector| collector.position())
             == mojito_symbol::symbol::VariadicKey::from_callable(b)
                 .map(|collector| collector.position())
-        && match (a, b) {
-            (Ty::Func(a), Ty::Func(b)) => {
+        && match (a.kind(), b.kind()) {
+            (TyKind::Func(a), TyKind::Func(b)) => {
                 symbol_equivalent_params(&a.params, &b.params)
                     && a.variadic == b.variadic
                     && a.kw_variadic == b.kw_variadic
             }
-            (Ty::GenericFunc(a), Ty::GenericFunc(b)) => {
+            (TyKind::GenericFunc(a), TyKind::GenericFunc(b)) => {
                 canonical_generic_parameter_shape(
                     &a.decls,
                     &a.params,
-                    a.variadic.as_deref(),
-                    a.kw_variadic.as_deref(),
+                    a.variadic.as_ref(),
+                    a.kw_variadic.as_ref(),
                 ) == canonical_generic_parameter_shape(
                     &b.decls,
                     &b.params,
-                    b.variadic.as_deref(),
-                    b.kw_variadic.as_deref(),
+                    b.variadic.as_ref(),
+                    b.kw_variadic.as_ref(),
                 )
             }
             _ => false,
@@ -400,11 +401,11 @@ pub(super) fn callable_lowered_name(name: &str, ty: &Ty) -> Option<String> {
         .min(params.len());
     let signature_types: Vec<_> = params[..collector_position]
         .iter()
-        .chain(variadic.iter().map(Box::as_ref))
+        .chain(variadic.iter())
         .chain(&params[collector_position..])
         .collect();
     let signature = mojito_symbol::symbol::SignatureKey::from_tys(signature_types)
-        .with_kw_variadic(kw_variadic.as_deref())
+        .with_kw_variadic(kw_variadic.as_ref())
         .with_keyword_names(names[collector_position..].to_vec())
         .with_owned_params(conventions);
     Some(mojito_symbol::symbol::function_symbol(name, &signature))
@@ -416,7 +417,7 @@ pub(super) fn callable_lowered_name(name: &str, ty: &Ty) -> Option<String> {
 /// receiver struct's instance type) canonicalizes those occurrences back to
 /// `Self`, so the key matches the MIR definition side, which mangles the bare
 /// `Self` annotation. Pass `None` for abstract trait dispatch, whose `sig`
-/// parameters retain `Ty::SelfType` and already spell `Self`.
+/// parameters retain `TyKind::SelfType` and already spell `Self`.
 pub(super) fn method_lowered_name(
     type_name: &str,
     method: &str,
@@ -426,7 +427,7 @@ pub(super) fn method_lowered_name(
     // The variadic element participates in overload identity at its declared
     // position (the MIR symbol walks parameters in source order).
     let mut signature_types: Vec<&Ty> = sig.params.iter().collect();
-    if let Some(element) = sig.variadic.as_deref() {
+    if let Some(element) = sig.variadic.as_ref() {
         let index = sig
             .variadic_index
             .unwrap_or(signature_types.len())
@@ -440,7 +441,7 @@ pub(super) fn method_lowered_name(
     };
     let signature =
         mojito_symbol::symbol::SignatureKey::from_tys_with_self(signature_types, self_ty)
-            .with_kw_variadic(sig.kw_variadic.as_deref())
+            .with_kw_variadic(sig.kw_variadic.as_ref())
             .with_keyword_names(keyword_names);
     if mojito_symbol::symbol::receiver_overloaded_method(method) {
         if sig.has_self {
@@ -623,12 +624,21 @@ pub(super) fn with_transfer_effects(
     mut callable: Ty,
     effects: &[mojito_checked::checked::TransferEffect],
 ) -> Ty {
-    if let Some(FuncTy { transfers, .. }) = callable.callable_mut() {
-        for effect in effects {
-            if !transfers.0.contains(effect) {
-                transfers.0.push(effect.clone());
+    let missing = callable.callable().is_some_and(|func| {
+        effects
+            .iter()
+            .any(|effect| !func.transfers.0.contains(effect))
+    });
+    if missing {
+        callable.update(|kind| {
+            if let Some(FuncTy { transfers, .. }) = kind.callable_mut() {
+                for effect in effects {
+                    if !transfers.0.contains(effect) {
+                        transfers.0.push(effect.clone());
+                    }
+                }
             }
-        }
+        });
     }
     callable
 }
@@ -645,8 +655,12 @@ pub(super) fn with_callable_environment(
     mut callable: Ty,
     environment: mojito_types::origin::CallableEnvironment,
 ) -> Ty {
-    if let Some(func) = callable.callable_mut() {
-        func.environment = environment;
+    if callable.callable().is_some() {
+        callable.update(|kind| {
+            if let Some(func) = kind.callable_mut() {
+                func.environment = environment;
+            }
+        });
     }
     callable
 }
@@ -772,7 +786,7 @@ impl ArgumentBinding {
 /// is the argument's materialized type, so a string literal costs what its
 /// conversion to `String` costs a regular parameter.
 pub(super) fn pack_element_conversion_count(actual: &Ty) -> usize {
-    usize::from(matches!(actual, Ty::StringLiteral))
+    usize::from(matches!(actual.kind(), TyKind::StringLiteral))
 }
 
 /// The conversion cost of one argument: 0 for an exact match or a numeric
@@ -783,14 +797,15 @@ pub(super) fn pack_element_conversion_count(actual: &Ty) -> usize {
 /// `s.__eq__("x")` selecting the `String`-typed overload beside the view one.
 pub(super) fn conversion_count(actual: &Ty, expected: &Ty) -> usize {
     if actual == expected
-        || matches!(actual, Ty::IntLiteral) && matches!(expected, Ty::Int)
-        || matches!(actual, Ty::FloatLiteral) && matches!(expected, Ty::Float64)
+        || matches!(actual.kind(), TyKind::IntLiteral) && matches!(expected.kind(), TyKind::Int)
+        || matches!(actual.kind(), TyKind::FloatLiteral)
+            && matches!(expected.kind(), TyKind::Float64)
     {
         0
-    } else if matches!(actual, Ty::StringLiteral)
+    } else if matches!(actual.kind(), TyKind::StringLiteral)
         && !matches!(
-            expected,
-            Ty::Struct(name, args)
+            expected.kind(),
+            TyKind::Struct(name, args)
                 if args.is_empty() && mojito_symbol::symbol::is_stdlib_string_struct(name)
         )
     {
@@ -967,11 +982,13 @@ pub(super) fn select_method_overload(
 
 pub(super) fn overload_candidates(existing: &Ty, new_ty: &Ty) -> Option<Vec<Ty>> {
     callable_parameter_count(new_ty)?;
-    match existing {
-        Ty::Func(_) | Ty::GenericFunc(_) if callable_parameter_count(existing).is_some() => {
+    match existing.kind() {
+        TyKind::Func(_) | TyKind::GenericFunc(_)
+            if callable_parameter_count(existing).is_some() =>
+        {
             Some(vec![existing.clone()])
         }
-        Ty::Overload(candidates) => Some(candidates.clone()),
+        TyKind::Overload(candidates) => Some(candidates.clone()),
         _ => None,
     }
 }

@@ -483,12 +483,12 @@ pub fn values_equal(a: &Value, b: &Value) -> Result<bool, RuntimeError> {
 /// The leaf's vector type, which the hasher's `_update_with_simd` instance is
 /// selected by (`canonical_simd_ty` canonicalizes a width-1 `int`/`float64`
 /// vector to the native scalar, as the checker does).
-pub const fn hash_leaf_ty(value: &Value) -> Option<Ty> {
+pub fn hash_leaf_ty(value: &Value) -> Option<Ty> {
     Some(match value {
-        Value::Int(_) | Value::IntLiteral(_) => Ty::Int,
-        Value::UInt(_) => Ty::UInt,
-        Value::Bool(_) => Ty::Bool,
-        Value::Float64(_) | Value::FloatLiteral(_) => Ty::Float64,
+        Value::Int(_) | Value::IntLiteral(_) => Ty::int(),
+        Value::UInt(_) => Ty::uint(),
+        Value::Bool(_) => Ty::bool(),
+        Value::Float64(_) | Value::FloatLiteral(_) => Ty::float64(),
         Value::Simd { dtype, lanes } => canonical_simd_ty(*dtype, lanes.width() as i64),
         // Upstream's `DType.__hash__` hashes its code as a `UInt8`.
         Value::Dtype(_) => canonical_simd_ty(Dtype::UInt8, 1),
@@ -1290,21 +1290,21 @@ pub fn materialize_literal(
     value: Value,
     target: &mojito_types::types::Ty,
 ) -> Result<Value, RuntimeError> {
-    use mojito_types::types::Ty;
-    match (value, target) {
-        (Value::IntLiteral(value), Ty::Int) => value
+    use mojito_types::types::TyKind;
+    match (value, target.kind()) {
+        (Value::IntLiteral(value), TyKind::Int) => value
             .wrapping_signed(64)
             .map(Value::Int)
             .ok_or_else(|| literal_materialization_error(&value, "Int")),
-        (Value::IntLiteral(value), Ty::UInt) => value
+        (Value::IntLiteral(value), TyKind::UInt) => value
             .wrapping_unsigned(64)
             .map(Value::UInt)
             .ok_or_else(|| literal_materialization_error(&value, "UInt")),
-        (Value::IntLiteral(value), Ty::Float64) => value
+        (Value::IntLiteral(value), TyKind::Float64) => value
             .to_f64()
             .map(Value::Float64)
             .ok_or_else(|| literal_materialization_error(&value, "Float64")),
-        (Value::FloatLiteral(value), Ty::Float64) => value
+        (Value::FloatLiteral(value), TyKind::Float64) => value
             .to_f64()
             .map(Value::Float64)
             .ok_or_else(|| literal_materialization_error(&value, "Float64")),
@@ -1352,18 +1352,18 @@ pub fn materialize_literal(
 }
 
 pub fn coerce_checked(value: Value, ty: &mojito_types::types::Ty) -> Value {
-    use mojito_types::types::Ty;
+    use mojito_types::types::TyKind;
     if matches!(value, Value::IntLiteral(_) | Value::FloatLiteral(_))
         && let Ok(materialized) = materialize_literal(value.clone(), ty)
     {
         return materialized;
     }
-    match ty {
-        Ty::UInt => match value {
+    match ty.kind() {
+        TyKind::UInt => match value {
             Value::Int(n) => Value::UInt(n as u64),
             value => value,
         },
-        Ty::Float64 => match value {
+        TyKind::Float64 => match value {
             Value::Int(n) => Value::Float64(n as f64),
             Value::UInt(n) => Value::Float64(n as f64),
             value => value,
@@ -1374,7 +1374,7 @@ pub fn coerce_checked(value: Value, ty: &mojito_types::types::Ty) -> Value {
                 Err(_) => value,
             }
         }
-        Ty::Tuple(types) => match value {
+        TyKind::Tuple(types) => match value {
             Value::Tuple(items) => Value::Tuple(
                 items
                     .into_iter()
@@ -1384,7 +1384,7 @@ pub fn coerce_checked(value: Value, ty: &mojito_types::types::Ty) -> Value {
             ),
             value => value,
         },
-        Ty::ComptimeList(element) => match value {
+        TyKind::ComptimeList(element) => match value {
             Value::ComptimeList(items) => Value::ComptimeList(
                 items
                     .into_iter()
@@ -1393,7 +1393,7 @@ pub fn coerce_checked(value: Value, ty: &mojito_types::types::Ty) -> Value {
             ),
             value => value,
         },
-        Ty::Variant(types) => match value {
+        TyKind::Variant(types) => match value {
             Value::Variant {
                 alternatives,
                 index,
@@ -2654,13 +2654,13 @@ mod tests {
             }
         );
         assert_eq!(hash_leaf_value(Value::Float64(-0.0)), Value::Float64(0.0));
-        assert_eq!(hash_leaf_ty(&Value::Bool(true)), Some(Ty::Bool));
+        assert_eq!(hash_leaf_ty(&Value::Bool(true)), Some(Ty::bool()));
         assert_eq!(
             hash_leaf_ty(&Value::Simd {
                 dtype: Dtype::Int,
                 lanes: SimdLanes::Int(vec![1]),
             }),
-            Some(Ty::Int)
+            Some(Ty::int())
         );
     }
 }

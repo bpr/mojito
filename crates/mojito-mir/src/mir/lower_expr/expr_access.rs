@@ -2,6 +2,7 @@
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
+use mojito_types::types::TyKind;
 
 use mojito_ast::ast::SubscriptArg;
 impl Flatten<'_> {
@@ -147,7 +148,7 @@ impl Flatten<'_> {
                 place_ty
                     .clone()
                     .or_else(|| self.checked_ty(e))
-                    .unwrap_or(Ty::Error),
+                    .unwrap_or_else(Ty::error),
             );
             self.emit(MirInstr::LoadPlace {
                 dest: loaded,
@@ -167,7 +168,7 @@ impl Flatten<'_> {
             // path.  Their ordinary referent copies are selected by the
             // checked `ReferenceResult` adjustment, not by this nominal
             // field rule.
-            if !matches!(place_ty, Some(Ty::Ref(_)))
+            if !matches!(place_ty.as_ref().map(Ty::kind), Some(TyKind::Ref(_)))
                 && self.checked_adjustments(e).iter().any(|adjustment| {
                     matches!(
                         adjustment,
@@ -184,7 +185,7 @@ impl Flatten<'_> {
                     .get(&loaded.0)
                     .cloned()
                     .or_else(|| self.checked_ty(e))
-                    .unwrap_or(Ty::Error);
+                    .unwrap_or_else(Ty::error);
                 let copied = self.fresh_typed(span(e), Some(place_root), ty);
                 self.emit(MirInstr::CopyValue {
                     dest: copied,
@@ -217,14 +218,15 @@ impl Flatten<'_> {
             // a temporary or reference-projected call result, or the
             // register copy aliases the base's heap storage past its
             // lifetime.
-            if !matches!(self.checked_ty(e), Some(Ty::Ref(_)))
-                && self.checked_adjustments(e).iter().any(|adjustment| {
-                    matches!(
-                        adjustment,
-                        mojito_checked::checked::SemanticAdjustment::CopyPlaceValue
-                    )
-                })
-            {
+            if !matches!(
+                self.checked_ty(e).as_ref().map(Ty::kind),
+                Some(TyKind::Ref(_))
+            ) && self.checked_adjustments(e).iter().any(|adjustment| {
+                matches!(
+                    adjustment,
+                    mojito_checked::checked::SemanticAdjustment::CopyPlaceValue
+                )
+            }) {
                 // Type the loaded register from the checked expression
                 // rather than leaving it to `GetField` instruction
                 // typing: in a generic body the declaration's raw field
@@ -234,7 +236,7 @@ impl Flatten<'_> {
                     self.f.reg_types.insert(d.0, ty);
                 }
                 let copied =
-                    self.fresh_typed(span(e), None, self.checked_ty(e).unwrap_or(Ty::Error));
+                    self.fresh_typed(span(e), None, self.checked_ty(e).unwrap_or_else(Ty::error));
                 self.emit(MirInstr::CopyValue {
                     dest: copied,
                     value: d,
@@ -259,18 +261,21 @@ impl Flatten<'_> {
             .expect("checked Variant projection carries a tag");
         let mut place = self.place(object);
         if place.root_ty.is_none() {
-            place.root_ty = Some(Ty::Variant(
-                self.checked_adjustments(e)
-                    .into_iter()
-                    .find_map(|adjustment| match adjustment {
-                        mojito_checked::checked::SemanticAdjustment::VariantProject {
-                            alternatives,
-                            ..
-                        } => Some(alternatives),
-                        _ => None,
-                    })
-                    .unwrap_or_default(),
-            ));
+            place.root_ty = Some(
+                TyKind::Variant(
+                    self.checked_adjustments(e)
+                        .into_iter()
+                        .find_map(|adjustment| match adjustment {
+                            mojito_checked::checked::SemanticAdjustment::VariantProject {
+                                alternatives,
+                                ..
+                            } => Some(alternatives),
+                            _ => None,
+                        })
+                        .unwrap_or_default(),
+                )
+                .into(),
+            );
         }
         let ty = self
             .checked_place_ty(e)
@@ -289,8 +294,11 @@ impl Flatten<'_> {
                 mojito_checked::checked::SemanticAdjustment::CopyPlaceValue
             )
         }) {
-            let copied =
-                self.fresh_typed(span(e), Some(root), self.checked_ty(e).unwrap_or(Ty::Error));
+            let copied = self.fresh_typed(
+                span(e),
+                Some(root),
+                self.checked_ty(e).unwrap_or_else(Ty::error),
+            );
             self.emit(MirInstr::CopyValue {
                 dest: copied,
                 value: dest,
@@ -312,9 +320,14 @@ impl Flatten<'_> {
         // checker-selected nominal accessor must stay on that dispatch
         // path: projecting the nominal struct as raw indexed storage
         // would lose its concrete `__getitem__$N` target.
-        if matches!(self.checked_place_ty(e), Some(Ty::Ref(_)))
-            && self.resolved_callable(e).is_none()
-            && !matches!(self.checked_ty(object), Some(Ty::Struct(..)))
+        if matches!(
+            self.checked_place_ty(e).as_ref().map(Ty::kind),
+            Some(TyKind::Ref(_))
+        ) && self.resolved_callable(e).is_none()
+            && !matches!(
+                self.checked_ty(object).as_ref().map(Ty::kind),
+                Some(TyKind::Struct(..))
+            )
             && let Some(place) = self.try_place(e)
         {
             let d = self.fresh(span(e), Some(place.root));
@@ -360,7 +373,7 @@ impl Flatten<'_> {
                 recv,
                 method: "__getitem_param__".to_string(),
                 resolved: Some(contract.target),
-                raises: self.checked_raises(e).map(Box::new),
+                raises: self.checked_raises(e),
                 reference_result: contract.reference_result.map(Box::new),
                 result_adapter: contract.result_adapter,
                 args: Vec::new(),
@@ -467,8 +480,10 @@ impl Flatten<'_> {
         // indexed dereference — lowers exactly like `ptr[i]`: place
         // substitution or handle read for origin-bearing pointers,
         // else the pointer-intrinsic `Index` read.
-        if matches!(self.checked_ty(object), Some(Ty::Pointer { .. }))
-            && let [SubscriptArg::Keyword { name, value }] = args
+        if matches!(
+            self.checked_ty(object).as_ref().map(Ty::kind),
+            Some(TyKind::Pointer { .. })
+        ) && let [SubscriptArg::Keyword { name, value }] = args
             && name == "unsafe_offset"
         {
             if let Some(place) = self.pointer_deref_place(object) {
@@ -607,18 +622,21 @@ impl Flatten<'_> {
             .expect("checked Variant projection carries a tag");
         let mut place = self.resolved_place(name);
         if place.root_ty.is_none() {
-            place.root_ty = Some(Ty::Variant(
-                self.checked_adjustments(e)
-                    .into_iter()
-                    .find_map(|adjustment| match adjustment {
-                        mojito_checked::checked::SemanticAdjustment::VariantProject {
-                            alternatives,
-                            ..
-                        } => Some(alternatives),
-                        _ => None,
-                    })
-                    .unwrap_or_default(),
-            ));
+            place.root_ty = Some(
+                TyKind::Variant(
+                    self.checked_adjustments(e)
+                        .into_iter()
+                        .find_map(|adjustment| match adjustment {
+                            mojito_checked::checked::SemanticAdjustment::VariantProject {
+                                alternatives,
+                                ..
+                            } => Some(alternatives),
+                            _ => None,
+                        })
+                        .unwrap_or_default(),
+                )
+                .into(),
+            );
         }
         let ty = self
             .checked_place_ty(e)
@@ -637,8 +655,11 @@ impl Flatten<'_> {
                 mojito_checked::checked::SemanticAdjustment::CopyPlaceValue
             )
         }) {
-            let copied =
-                self.fresh_typed(span(e), Some(root), self.checked_ty(e).unwrap_or(Ty::Error));
+            let copied = self.fresh_typed(
+                span(e),
+                Some(root),
+                self.checked_ty(e).unwrap_or_else(Ty::error),
+            );
             self.emit(MirInstr::CopyValue {
                 dest: copied,
                 value: dest,
@@ -672,7 +693,7 @@ impl Flatten<'_> {
                 .ty
                 .clone()
                 .or_else(|| self.checked_ty(e))
-                .unwrap_or(Ty::Error),
+                .unwrap_or_else(Ty::error),
         );
         self.emit_interior_invalidations(e, None);
         self.emit(MirInstr::LoadPlace {
@@ -693,7 +714,7 @@ impl Flatten<'_> {
             .get(&loaded.0)
             .cloned()
             .or_else(|| self.checked_ty(e))
-            .unwrap_or(Ty::Error);
+            .unwrap_or_else(Ty::error);
         let copied = self.fresh_typed(span(e), Some(root), ty);
         self.emit(MirInstr::CopyValue {
             dest: copied,

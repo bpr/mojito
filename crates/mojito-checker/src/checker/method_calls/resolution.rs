@@ -4,6 +4,7 @@
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 use crate::checker::call_inference::folded_parameter_arguments;
+use mojito_types::types::TyKind;
 
 impl Checker {
     /// Resolve the method to a concrete signature (params + return + whether
@@ -17,11 +18,11 @@ impl Checker {
         site: MethodCallSite<'_>,
         availability_failure: &mut Option<String>,
     ) -> Result<MethodSelection, TypeError> {
-        match site.obj_ty {
-            Ty::Struct(sname, targs) => {
+        match site.obj_ty.kind() {
+            TyKind::Struct(sname, targs) => {
                 self.resolve_struct_method(site, sname, targs, availability_failure)
             }
-            Ty::Param { .. } | Ty::Assoc { .. } => {
+            TyKind::Param { .. } | TyKind::Assoc { .. } => {
                 self.resolve_bound_method(site, availability_failure)
             }
             _ => self.resolve_builtin_method(site),
@@ -52,7 +53,7 @@ impl Checker {
         // through it (thin or capturing) — the field-invocation
         // channel.
         if !parameterized_syntax
-            && let Ty::Struct(sname, targs) = obj_ty
+            && let TyKind::Struct(sname, targs) = obj_ty.kind()
             && let Some(info) = self.structs.get(sname)
             && let Some((_, field_ty)) = info.fields.iter().find(|(fname, _)| fname == method)
         {
@@ -83,7 +84,9 @@ impl Checker {
             ..
         } = site;
         let param_args = call.param_args;
-        if let (Ty::Struct(sname, targs), Some(arguments)) = (obj_ty, &resolved.instantiation) {
+        if let (TyKind::Struct(sname, targs), Some(arguments)) =
+            (obj_ty.kind(), &resolved.instantiation)
+        {
             // On a closed instance of an ordinary generic struct the
             // instantiation is keyed by the instance: its arguments come
             // before the call's.
@@ -111,7 +114,7 @@ impl Checker {
                 },
             );
         }
-        if let Ty::Struct(sname, targs) = obj_ty
+        if let TyKind::Struct(sname, targs) = obj_ty.kind()
             && !targs.is_empty()
         {
             self.record_struct_instantiation(sname, targs, span.source.as_deref());
@@ -189,7 +192,7 @@ impl Checker {
                     if !overloaded
                         && matches!(method, "__getitem__" | "__getitem_param__")
                         && matches!(sig.decls.as_slice(),
-                            [ParamDecl::Value { ty, .. }] if **ty == Ty::Int) =>
+                            [ParamDecl::Value { ty, .. }] if **ty == TyKind::Int) =>
                 {
                     availability_failure.get_or_insert_with(|| {
                         "expected a compile-time Int index, found a runtime value".to_string()
@@ -272,12 +275,10 @@ impl Checker {
                     ),
                     result_adapter: None,
                     raises: sig.raises,
-                    error: sig.error.as_ref().map(|error| {
-                        Box::new(substitute(
-                            &substitute_at(error, info, targs),
-                            &method_subst,
-                        ))
-                    }),
+                    error: sig
+                        .error
+                        .as_ref()
+                        .map(|error| substitute(&substitute_at(error, info, targs), &method_subst)),
                     mutates_receiver: matches!(
                         sig.self_convention,
                         Some(mojito_ast::ast::ArgConvention::Mut)
@@ -344,8 +345,8 @@ impl Checker {
             kwargs,
             ..
         } = call;
-        let mut effective_bounds = match obj_ty {
-            Ty::Param { bounds, .. } => bounds.clone(),
+        let mut effective_bounds = match obj_ty.kind() {
+            TyKind::Param { bounds, .. } => bounds.clone(),
             _ => Vec::new(),
         };
         // `Copyable.copy` is proven by any route that proves
@@ -385,13 +386,10 @@ impl Checker {
                 .iter()
                 .map(|ty| substitute_self(ty, obj_ty))
                 .collect();
-            let receiver_variadic = sig
-                .variadic
-                .as_deref()
-                .map(|ty| substitute_self(ty, obj_ty));
+            let receiver_variadic = sig.variadic.as_ref().map(|ty| substitute_self(ty, obj_ty));
             let receiver_kw_variadic = sig
                 .kw_variadic
-                .as_deref()
+                .as_ref()
                 .map(|ty| substitute_self(ty, obj_ty));
             let (params, variadic, kw_variadic, method_subst, method_arguments) = match self
                 .instantiate_method_generics(
@@ -463,10 +461,10 @@ impl Checker {
                 ),
                 raises: sig.raises,
                 error: sig.error.as_ref().map(|error| {
-                    Box::new(self.resolve_assoc_ty(&substitute(
+                    self.resolve_assoc_ty(&substitute(
                         &substitute_self(error, obj_ty),
                         &method_subst,
-                    )))
+                    ))
                 }),
                 mutates_receiver: matches!(
                     sig.self_convention,
@@ -479,7 +477,7 @@ impl Checker {
                             | mojito_ast::ast::ArgConvention::Deinit
                     )
                 ),
-                // Abstract dispatch keeps `Ty::SelfType` in `sig`, which
+                // Abstract dispatch keeps `TyKind::SelfType` in `sig`, which
                 // already spells `Self`; the runtime retargets the receiver
                 // prefix once the concrete type is known.
                 lowered_name: Some(method_lowered_name("__trait_dispatch", method, &sig, None)),
@@ -589,7 +587,7 @@ impl Checker {
             }
             self.check_place(&args[0])?;
             return Ok(Ok(Some(intrinsic_resolution(
-                Ty::None,
+                Ty::none(),
                 vec![Some(ArgConvention::Mut)],
                 vec![hasher],
             ))));
@@ -599,7 +597,7 @@ impl Checker {
         // sized float scalars resolve through the SIMD method table.
         if kwargs.is_empty()
             && param_args.is_empty()
-            && *obj_ty == Ty::Float64
+            && *obj_ty == TyKind::Float64
             && method == "__fma__"
             && args.len() == 2
         {

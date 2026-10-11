@@ -1,3 +1,4 @@
+use mojito::Ty;
 use mojito::{Compiler, CompilerError, SemanticAdjustment, ValueCategory};
 
 #[test]
@@ -1355,10 +1356,10 @@ fn generic_def_declares_no_clone() {
         .expression_ids_at(&values[0].source_span());
     assert_eq!(ids.len(), 1, "one checked node for the template occurrence");
     let node = program.checked().expression(ids[0]).expect("checked node");
-    assert_eq!(node.ty, Some(mojito::Ty::IntLiteral));
+    assert_eq!(node.ty, Some(Ty::int_literal()));
     assert!(
         node.adjustments
-            .contains(&SemanticAdjustment::MaterializeLiteral(mojito::Ty::Int)),
+            .contains(&SemanticAdjustment::MaterializeLiteral(Ty::int())),
         "the literal keeps its materialization: {:?}",
         node.adjustments
     );
@@ -3987,7 +3988,7 @@ fn a_package_reads_back_to_the_bytes_it_was_written_as() {
         canonical: String::new(),
     };
     let modules = records().modules;
-    let bytes = write_package(&header, &root, program, &[], records()).expect("write");
+    let bytes = write_package(&header, &root, program, &[], || Ok(records())).expect("write");
     let package = read_package(PackageBytes::Owned(bytes.clone()), &root).expect("read");
     assert!(!modules.is_empty());
     assert_eq!(package.declarations.modules().len(), modules.len());
@@ -4019,7 +4020,7 @@ fn a_package_reads_back_to_the_bytes_it_was_written_as() {
     assert!(package.bodies.failures().is_empty());
     assert!(package.declarations.failures().is_empty());
     assert_eq!(
-        write_package(&header, &root, &again, &[], records()).expect("rewrite"),
+        write_package(&header, &root, &again, &[], || Ok(records())).expect("rewrite"),
         bytes
     );
     let truncated = bytes[..bytes.len() - 4].to_vec();

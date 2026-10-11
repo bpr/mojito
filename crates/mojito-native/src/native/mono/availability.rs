@@ -12,6 +12,7 @@ use super::*;
 use mojito_checked::checked::StructConformance;
 use mojito_types::conformance::{StructTraitRule, struct_trait_rule};
 use mojito_types::param_expr::fold::integer_value;
+use mojito_types::types::TyKind;
 use mojito_types::types::{
     ConstraintOperand, GenericConstraint, PackPredicateRef, TrivialLifecycle,
     is_uninit_storage_name, trivial_predicate_spelling, uninit_storage_element,
@@ -191,14 +192,18 @@ impl Specializer<'_> {
                 }
             };
         }
-        match ty {
-            Ty::Struct(..) => self.type_conforms(ty, trivial_predicate_spelling(kind), visiting),
-            Ty::Tuple(elements) | Ty::RuntimePack(elements) | Ty::Variant(elements) => every(
-                elements
-                    .iter()
-                    .map(|element| self.trivially(kind, element, visiting)),
-            ),
-            Ty::ComptimeList(element) => self.trivially(kind, element, visiting),
+        match ty.kind() {
+            TyKind::Struct(..) => {
+                self.type_conforms(ty, trivial_predicate_spelling(kind), visiting)
+            }
+            TyKind::Tuple(elements) | TyKind::RuntimePack(elements) | TyKind::Variant(elements) => {
+                every(
+                    elements
+                        .iter()
+                        .map(|element| self.trivially(kind, element, visiting)),
+                )
+            }
+            TyKind::ComptimeList(element) => self.trivially(kind, element, visiting),
             _ if is_symbolic(ty) => None,
             _ => self.type_conforms(ty, capability, visiting),
         }
@@ -251,7 +256,7 @@ impl Specializer<'_> {
         visiting: &mut HashSet<(String, String)>,
     ) -> Option<bool> {
         let declarations = &self.source.declarations;
-        let Ty::Struct(name, arguments) = ty else {
+        let TyKind::Struct(name, arguments) = ty.kind() else {
             if declarations.declares_trait(trait_name) {
                 // No compiler-known type conforms to a declared trait.
                 return mojito_types::conformance::leaf_conforms(ty, trait_name, &mut |_, _| true)
@@ -370,7 +375,7 @@ fn pack_types(param: &ParamRef, bindings: &Bindings) -> Option<Vec<Ty>> {
     elements
         .iter()
         .map(|element| match element {
-            CtValue::Type(ty) => Some((**ty).clone()),
+            CtValue::Type(ty) => Some(ty.clone()),
             _ => None,
         })
         .collect()
@@ -416,7 +421,7 @@ fn bind_struct_arguments(
                 [TyArg::Val(CtValue::Tuple(packed))] => packed
                     .iter()
                     .map(|element| match element {
-                        CtValue::Type(ty) => Some((**ty).clone()),
+                        CtValue::Type(ty) => Some(ty.clone()),
                         _ => None,
                     })
                     .collect::<Option<Vec<_>>>()?,

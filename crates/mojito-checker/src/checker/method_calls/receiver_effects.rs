@@ -4,6 +4,7 @@
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
+use mojito_types::types::TyKind;
 
 impl Checker {
     /// Replay the callee's loan-transfer effects against the actuals, and
@@ -31,7 +32,7 @@ impl Checker {
             .as_deref()
             .map(|arguments| struct_subst(&resolved.param_decls, arguments))
             .unwrap_or_default();
-        if let Ty::Struct(struct_name, _) = obj_ty {
+        if let TyKind::Struct(struct_name, _) = obj_ty.kind() {
             let method_key = format!("{struct_name}.{method}");
             let effect_key = selected_target.unwrap_or(&method_key);
             self.apply_transfer_effects(effect_key, Some(object), args, span, &bindings)?;
@@ -43,7 +44,7 @@ impl Checker {
                 args,
                 span,
             )?;
-        } else if let Ty::Param { bounds, .. } = obj_ty {
+        } else if let TyKind::Param { bounds, .. } = obj_ty.kind() {
             // Abstract trait dispatch has no concrete body: replay the union
             // of effects over every conforming implementation of the method
             // — the whole-program dispatch set. The method-name pre-filter is
@@ -298,7 +299,7 @@ impl Checker {
             });
         }
         if resolved.consumes_receiver
-            && let Ty::Struct(name, _) = obj_ty
+            && let TyKind::Struct(name, _) = obj_ty.kind()
             && self
                 .structs
                 .get(name)
@@ -425,11 +426,11 @@ impl Checker {
         // The receiver's origin tail binds the struct's own binders in the
         // declared signature (`Self`, `RefBox[Self.o]`), whose slots fix
         // their own mutability; type parameters stay abstract there.
-        let (tail_bindings, self_declared) = match obj_ty {
-            Ty::Struct(sname, targs) => match self.structs.get(sname) {
+        let (tail_bindings, self_declared) = match obj_ty.kind() {
+            TyKind::Struct(sname, targs) => match self.structs.get(sname) {
                 Some(info) => (
                     info.tail_origin_bindings(targs),
-                    Ty::Struct(sname.clone(), info.self_arguments().into()),
+                    TyKind::Struct(sname.clone(), info.self_arguments()).into(),
                 ),
                 None => (HashMap::new(), obj_ty.clone()),
             },
@@ -561,7 +562,7 @@ impl Checker {
             _ => mojito_types::origin::Mutability::Immutable,
         };
         let reference = mojito_types::origin::RefTy {
-            referent: Box::new(resolved.return_type.clone()),
+            referent: resolved.return_type.clone(),
             origin,
             mutability: mutable,
         };

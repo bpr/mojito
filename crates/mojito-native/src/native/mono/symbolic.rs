@@ -4,6 +4,7 @@
 use super::*;
 use mojito_types::param_expr::{ParamError, ReflectQuery};
 use mojito_types::types::FuncTy;
+use mojito_types::types::TyKind;
 
 /// The constant a parameter expression denotes under the mono environment:
 /// the shared replacement, every reflection query the instance's types
@@ -51,15 +52,15 @@ fn reflection_answer(
             Ok(ty) => ty,
             Err(_) => return Ok(None),
         },
-        ParamKind::Constant(CtValue::Type(ty)) => (**ty).clone(),
+        ParamKind::Constant(CtValue::Type(ty)) => ty.clone(),
         _ => return Ok(None),
     };
     if is_symbolic(&subject) {
         return Ok(None);
     }
     let unsupported = |error: MonoError| ParamError::Unsupported(error.construct);
-    let answer = match &subject {
-        Ty::Struct(_, args) => {
+    let answer = match subject.kind() {
+        TyKind::Struct(_, args) => {
             let Some(instance) = struct_instance(&subject, bindings).map_err(unsupported)? else {
                 return Ok(None);
             };
@@ -72,7 +73,7 @@ fn reflection_answer(
                 })
                 .collect::<Result<Vec<_>, _>>()
                 .map_err(unsupported)?;
-            let declared = Ty::Struct(instance.template.to_string(), args.clone());
+            let declared = Ty::new(TyKind::Struct(instance.template.to_string(), args.clone()));
             query.answer(&declared, Some(&fields))
         }
         _ => query.answer(&subject, None),
@@ -94,7 +95,7 @@ fn type_member_answer(
             Ok(ty) => ty,
             Err(_) => return Ok(None),
         },
-        ParamKind::Constant(CtValue::Type(ty)) => (**ty).clone(),
+        ParamKind::Constant(CtValue::Type(ty)) => ty.clone(),
         _ => return Ok(None),
     };
     if is_symbolic(&subject) {
@@ -118,23 +119,23 @@ fn type_member_answer(
 }
 
 pub(super) fn is_symbolic(ty: &Ty) -> bool {
-    match ty {
-        Ty::Infer
-        | Ty::Param { .. }
-        | Ty::Assoc { .. }
-        | Ty::Dependent(_)
-        | Ty::SelfType
-        | Ty::GenericFunc(_) => true,
-        Ty::Struct(_, args) => !args.is_closed() && args.iter().any(arg_has_symbolic),
-        Ty::Tuple(v) | Ty::RuntimePack(v) | Ty::Variant(v) | Ty::Overload(v) => {
+    match ty.kind() {
+        TyKind::Infer
+        | TyKind::Param { .. }
+        | TyKind::Assoc { .. }
+        | TyKind::Dependent(_)
+        | TyKind::SelfType
+        | TyKind::GenericFunc(_) => true,
+        TyKind::Struct(_, args) => !ty.is_closed() && args.iter().any(arg_has_symbolic),
+        TyKind::Tuple(v) | TyKind::RuntimePack(v) | TyKind::Variant(v) | TyKind::Overload(v) => {
             v.iter().any(is_symbolic)
         }
-        Ty::ComptimeList(v) | Ty::VariadicPack(v) | Ty::Pointer { element: v, .. } => {
+        TyKind::ComptimeList(v) | TyKind::VariadicPack(v) | TyKind::Pointer { element: v, .. } => {
             is_symbolic(v)
         }
-        Ty::Ref(v) => is_symbolic(&v.referent),
-        Ty::Simd { dtype, width } => dtype.is_symbolic() || width.is_symbolic(),
-        Ty::Func(func) => {
+        TyKind::Ref(v) => is_symbolic(&v.referent),
+        TyKind::Simd { dtype, width } => dtype.is_symbolic() || width.is_symbolic(),
+        TyKind::Func(func) => {
             let FuncTy {
                 params,
                 ret,
@@ -146,9 +147,9 @@ pub(super) fn is_symbolic(ty: &Ty) -> bool {
 
             params.iter().any(is_symbolic)
                 || is_symbolic(ret)
-                || variadic.as_deref().is_some_and(is_symbolic)
-                || kw_variadic.as_deref().is_some_and(is_symbolic)
-                || error.as_deref().is_some_and(is_symbolic)
+                || variadic.as_ref().is_some_and(is_symbolic)
+                || kw_variadic.as_ref().is_some_and(is_symbolic)
+                || error.as_ref().is_some_and(is_symbolic)
         }
         _ => false,
     }
@@ -227,19 +228,19 @@ pub(super) fn erase_specialized_generic_callable_storage(function: &mut MirFunct
     let generic_regs = function
         .reg_types
         .iter()
-        .filter_map(|(reg, ty)| matches!(ty, Ty::GenericFunc(_)).then_some(*reg))
+        .filter_map(|(reg, ty)| matches!(ty.kind(), TyKind::GenericFunc(_)).then_some(*reg))
         .collect::<HashSet<_>>();
     let generic_vars = function
         .var_tys
         .iter()
-        .filter_map(|(var, ty)| matches!(ty, Ty::GenericFunc(_)).then_some(*var))
+        .filter_map(|(var, ty)| matches!(ty.kind(), TyKind::GenericFunc(_)).then_some(*var))
         .collect::<HashSet<_>>();
     erase(&mut function.blocks, &generic_regs, &generic_vars);
     for reg in generic_regs {
-        function.reg_types.insert(reg, Ty::Int);
+        function.reg_types.insert(reg, Ty::int());
     }
     for var in generic_vars {
-        function.var_tys.insert(var, Ty::Int);
+        function.var_tys.insert(var, Ty::int());
     }
     erase_generic_callable_parameters(&mut function.param_types);
 }
@@ -249,8 +250,8 @@ pub(super) fn erase_specialized_generic_callable_storage(function: &mut MirFunct
 /// ([`erase_specialized_generic_callable_storage`]).
 pub(super) fn erase_generic_callable_parameters(types: &mut [Ty]) {
     for ty in types {
-        if matches!(ty, Ty::GenericFunc(_)) {
-            *ty = Ty::Int;
+        if matches!(ty.kind(), TyKind::GenericFunc(_)) {
+            *ty = Ty::int();
         }
     }
 }
@@ -312,21 +313,21 @@ pub(super) fn ensure_concrete_function(
     }
 }
 pub(super) fn collect_nested_types(ty: &Ty, output: &mut Vec<Ty>) {
-    match ty {
-        Ty::Struct(_, args) => output.extend(args.iter().filter_map(|a| {
+    match ty.kind() {
+        TyKind::Struct(_, args) => output.extend(args.iter().filter_map(|a| {
             if let TyArg::Ty(t) = a {
                 Some(t.clone())
             } else {
                 None
             }
         })),
-        Ty::Tuple(v) | Ty::RuntimePack(v) | Ty::Variant(v) | Ty::Overload(v) => {
+        TyKind::Tuple(v) | TyKind::RuntimePack(v) | TyKind::Variant(v) | TyKind::Overload(v) => {
             output.extend(v.iter().cloned());
         }
-        Ty::ComptimeList(v) | Ty::VariadicPack(v) | Ty::Pointer { element: v, .. } => {
-            output.push((**v).clone());
+        TyKind::ComptimeList(v) | TyKind::VariadicPack(v) | TyKind::Pointer { element: v, .. } => {
+            output.push((*v).clone());
         }
-        Ty::Ref(v) => output.push((*v.referent).clone()),
+        TyKind::Ref(v) => output.push(v.referent.clone()),
         _ => {}
     }
 }
@@ -359,9 +360,7 @@ fn eval_ct_at(expr: &ParamExpr, bindings: &Bindings, reached: bool) -> Result<Ct
                             .types
                             .get(binder)
                             .filter(|ty| !is_symbolic(ty))
-                            .and_then(|ty| {
-                                context.constant(CtValue::Type(Box::new(ty.clone()))).ok()
-                            }),
+                            .and_then(|ty| context.constant(CtValue::Type(ty.clone())).ok()),
                         _ => Some(arg.clone()),
                     })
                     .collect();
@@ -389,7 +388,7 @@ fn eval_ct_at(expr: &ParamExpr, bindings: &Bindings, reached: bool) -> Result<Ct
     {
         let ty = match subject.kind() {
             ParamKind::TypeShape(ty) => Some(substitute_ty(ty, bindings)?),
-            ParamKind::Constant(CtValue::Type(ty)) => Some((**ty).clone()),
+            ParamKind::Constant(CtValue::Type(ty)) => Some(ty.clone()),
             _ => None,
         };
         if let Some(ty) = ty

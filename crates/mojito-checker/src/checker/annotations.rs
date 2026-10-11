@@ -2,6 +2,7 @@
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
+use mojito_types::types::TyKind;
 pub use mojito_types::types::splats_to;
 
 impl Checker {
@@ -13,8 +14,8 @@ impl Checker {
 
     /// [`Self::method_binder_owner`] of `m` on the struct `self_ty` names.
     pub(super) fn method_owner(&self, self_ty: &Ty, m: &Method) -> String {
-        match self_ty {
-            Ty::Struct(owner, _) => self.method_binder_owner(owner, m),
+        match self_ty.kind() {
+            TyKind::Struct(owner, _) => self.method_binder_owner(owner, m),
             _ => self.method_binder_owner("Self", m),
         }
     }
@@ -67,7 +68,7 @@ impl Checker {
         if let mojito_ast::ast::ParamArg::Type(SourceType::SelfParam(param)) = arg {
             match self.self_param_value(param) {
                 Some(CtValue::Dtype(dtype)) => return Ok(SimdDtype::Known(dtype)),
-                Some(CtValue::Expr(expr)) if expr.meta().as_value() == Some(&Ty::Dtype) => {
+                Some(CtValue::Expr(expr)) if expr.meta().as_value() == Some(&Ty::dtype()) => {
                     return Ok(SimdDtype::Expr(expr));
                 }
                 _ => {}
@@ -97,7 +98,7 @@ impl Checker {
             return Some(dtype.clone());
         }
         self.value_parameter_in_scope(name)
-            .filter(|expr| expr.meta().as_value() == Some(&Ty::Dtype))
+            .filter(|expr| expr.meta().as_value() == Some(&Ty::dtype()))
             .map(SimdDtype::Expr)
     }
 
@@ -127,10 +128,10 @@ pub(super) fn converts_to_lane(ty: &Ty, dtype: &SimdDtype) -> bool {
     if splats_to(ty, dtype) {
         return true;
     }
-    let integer_source = matches!(ty, Ty::Int | Ty::UInt)
+    let integer_source = matches!(ty.kind(), TyKind::Int | TyKind::UInt)
         || matches!(scalar_simd_dtype(ty), Some(d) if !d.is_float() && d != Dtype::Bool);
-    let float_source =
-        matches!(ty, Ty::Float64) || matches!(scalar_simd_dtype(ty), Some(d) if d.is_float());
+    let float_source = matches!(ty.kind(), TyKind::Float64)
+        || matches!(scalar_simd_dtype(ty), Some(d) if d.is_float());
     match dtype.known() {
         Some(Dtype::Bool) => false,
         Some(dtype) if dtype.is_float() => float_source || integer_source,
@@ -158,9 +159,9 @@ pub(super) const fn int_literal_materializes_to_dtype(dtype: Dtype) -> bool {
 }
 
 /// The (canonicalized) `Ty` for a SIMD of `dtype`/`width`: a **width-1 `float64`**
-/// is the native `Ty::Float64` (Mojo unifies `Float64` with `SIMD[DType.float64,
-/// 1]`); everything else is a `Ty::Simd`.
-pub(super) const fn simd_ty(dtype: Dtype, width: i64) -> Ty {
+/// is the native `TyKind::Float64` (Mojo unifies `Float64` with `SIMD[DType.float64,
+/// 1]`); everything else is a `TyKind::Simd`.
+pub(super) fn simd_ty(dtype: Dtype, width: i64) -> Ty {
     mojito_types::types::canonical_simd_ty(dtype, width)
 }
 
@@ -174,26 +175,26 @@ pub(super) fn simd_of(dtype: SimdDtype, width: SimdWidth) -> Result<Ty, TypeErro
 /// `[name: X]` as a value vs. type parameter.
 pub(super) fn scalar_type_name(name: &str) -> Option<Ty> {
     match name {
-        "Int" => Some(Ty::Int),
+        "Int" => Some(Ty::int()),
         // A `DType` value, and the type of a `[dtype: DType]` value parameter.
-        "DType" => Some(Ty::Dtype),
+        "DType" => Some(Ty::dtype()),
         // The removed `SIMDSize` spelling rejects (upstream removed it 2026-08).
-        "SIMDLength" => Some(Ty::Int),
-        "UInt" => Some(Ty::UInt),
-        "Bool" => Some(Ty::Bool),
-        "String" => Some(Ty::StringLiteral),
-        "StringLiteral" => Some(Ty::StringLiteral),
-        "Float64" => Some(Ty::Float64),
+        "SIMDLength" => Some(Ty::int()),
+        "UInt" => Some(Ty::uint()),
+        "Bool" => Some(Ty::bool()),
+        "String" => Some(Ty::string_literal()),
+        "StringLiteral" => Some(Ty::string_literal()),
+        "Float64" => Some(Ty::float64()),
         // The prelude rewrite qualifies `String` bounds like any other name;
         // a `[text: String]` value parameter keeps the compile-time string
         // type regardless of the nominal stdlib struct.
-        _ if mojito_symbol::symbol::is_stdlib_string_struct(name) => Some(Ty::StringLiteral),
+        _ if mojito_symbol::symbol::is_stdlib_string_struct(name) => Some(Ty::string_literal()),
         _ => None,
     }
 }
 
 /// The type-parameter scope of a parameter list, for resolving a bare `T`
-/// annotation. Retaining the complete checked `Ty::Param` is important for
+/// annotation. Retaining the complete checked `TyKind::Param` is important for
 /// callable bounds: a name-only/bounds-only scope would discard the signature
 /// needed to type `f(...)` inside `[F: def(...) -> ...]`.
 pub(super) fn type_scope(decls: &[ParamDecl]) -> HashMap<String, Ty> {
@@ -203,24 +204,27 @@ pub(super) fn type_scope(decls: &[ParamDecl]) -> HashMap<String, Ty> {
         .collect()
 }
 
-/// The `Ty::Param` a type binder's uses carry, `None` for a value binder.
+/// The `TyKind::Param` a type binder's uses carry, `None` for a value binder.
 pub(super) fn type_parameter(decl: &ParamDecl) -> Option<Ty> {
     match decl {
         ParamDecl::Type {
             bounds,
             callable_bound,
             ..
-        } => Some(Ty::Param {
-            binder: decl.binder(),
-            bounds: bounds.clone(),
-            callable_bound: callable_bound.clone(),
-        }),
+        } => Some(
+            TyKind::Param {
+                binder: decl.binder(),
+                bounds: bounds.clone(),
+                callable_bound: callable_bound.clone(),
+            }
+            .into(),
+        ),
         ParamDecl::Value { .. } => None,
     }
 }
 
 /// A struct's own parameters, as the `TyArg`s they contribute to the struct's
-/// `Self` type while its body is checked: a type parameter as `Ty::Param`, a
+/// `Self` type while its body is checked: a type parameter as `TyKind::Param`, a
 /// value parameter as a reference to its declaration.
 pub(super) fn params_as_args(decls: &[ParamDecl]) -> Vec<TyArg> {
     decls.iter().map(ParamDecl::own_argument).collect()
@@ -272,11 +276,12 @@ pub(super) fn member_type_scope(
         .map(|(slot, p)| {
             (
                 p.name.clone(),
-                Ty::Param {
+                TyKind::Param {
                     binder: member_binder(owner, slot, &p.name),
                     bounds: p.bounds.clone(),
                     callable_bound: None,
-                },
+                }
+                .into(),
             )
         })
         .collect()
@@ -351,7 +356,7 @@ pub(super) fn value_scope(decls: &[ParamDecl]) -> HashMap<String, ParamExpr> {
                 ty,
                 callable_default: None,
                 ..
-            } if !matches!(ty.as_ref(), Ty::Func(_) | Ty::GenericFunc(_)) => Some((
+            } if !matches!(ty.kind(), TyKind::Func(_) | TyKind::GenericFunc(_)) => Some((
                 name.trim_start_matches('*').to_string(),
                 value_parameter_expr(decl, ty),
             )),

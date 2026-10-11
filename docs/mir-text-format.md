@@ -893,21 +893,32 @@ lowering unit, one record per library declaration, and one module table
 holding each module's link record, one file per package. The bundled library's is the
 only producer today (`src/package.rs`). No part of a package is MIR text:
 it is a header followed by bytecode records, as upstream's package is
-MLIR bytecode throughout. The format line is `mojito-package 28`.
+MLIR bytecode throughout. The format line is `mojito-package 29`.
 
 ```text
-mojito-package 28
+mojito-package 29
 <the header's length, 8 bytes little-endian>
 <the header, as bytecode>
-<the payload: every record, as bytecode>
+<the payload: every record, as bytecode, then the type section>
 ```
 
 - The header (`PackageDirectory`, `postcard`) holds the package's identity
   (`package`, `compiler`; no library root, since the package names each
   file relative to its library's root and the reader joins its own,
   `mojito_checked::package::LibraryRoot`), the payload's length, and the payload
-  range of the declaration directory. A reader refuses a header whose range leaves the payload or
+  ranges of the declaration directory and the type section. A reader refuses a header whose ranges leave the payload or
   whose payload length differs.
+- The type section (`mojito_types::type_section`, format 29) holds every
+  type the records hold once, as MLIR bytecode's attribute and type
+  section does: a `u32` entry count, each entry's start and the last
+  one's end as little-endian `u32` offsets, then the entries. An entry is
+  `postcard` of the type's variant (`TyKind`) with each child type the
+  `postcard` varint index of an earlier entry, and every record refers to
+  a type by its index the same way. The writer keys an entry by its bytes,
+  so equal types with different decorations (a callable's transfer
+  effects, a display's spelling) keep separate entries. A reader refuses a
+  section whose offsets are malformed, and decodes an entry the first time
+  a record refers to it, sharing its node with every later reference.
 - The declaration directory (`mojito_checked::package::DeclarationDirectory`)
   is read in place. Every name it holds is written once, in one string
   section, as an MLIR bytecode string section is: a LEB128 count, each

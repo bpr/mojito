@@ -2,6 +2,7 @@
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
+use mojito_types::types::TyKind;
 
 impl FnLowering<'_> {
     /// One checker-selected subscript invocation (`Index`/`Slice`/
@@ -158,8 +159,8 @@ impl FnLowering<'_> {
         // receiver back — the `lower_method_call` contract.
         let write_back = !receiver_alias
             && !self.aliased_load_regs.contains(&recv.0)
-            && match self.func.reg_types.get(&recv.0) {
-                Some(Ty::Struct(struct_name, _)) => self
+            && match self.func.reg_types.get(&recv.0).map(Ty::kind) {
+                Some(TyKind::Struct(struct_name, _)) => self
                     .struct_decls
                     .get(struct_name.as_str())
                     .is_some_and(|d| {
@@ -252,8 +253,8 @@ impl FnLowering<'_> {
         if !matches!(intrinsic, Sub::TupleStorage | Sub::VariadicStorage) {
             return Err(self.unsupported_reg("intrinsic subscript".into(), dest));
         }
-        let elements = match self.func.reg_types.get(&base.0) {
-            Some(Ty::Tuple(elements) | Ty::RuntimePack(elements)) => elements.clone(),
+        let elements = match self.func.reg_types.get(&base.0).map(Ty::kind) {
+            Some(TyKind::Tuple(elements) | TyKind::RuntimePack(elements)) => elements.clone(),
             other => {
                 return Err(self.unsupported_reg(
                     format!(
@@ -467,7 +468,11 @@ impl FnLowering<'_> {
         args: &[Reg],
     ) -> Result<(), PlironError> {
         let bound = |lowering: &Self, reg: Reg| {
-            (!matches!(lowering.func.reg_types.get(&reg.0), Some(Ty::None))).then_some(reg)
+            (!matches!(
+                lowering.func.reg_types.get(&reg.0).map(Ty::kind),
+                Some(TyKind::None)
+            ))
+            .then_some(reg)
         };
         let (lower, upper, step) = match (name, args) {
             ("slice", [end]) => (None, bound(self, *end), None),
@@ -478,7 +483,7 @@ impl FnLowering<'_> {
             }
         };
         let storage = if [lower, upper, step].iter().flatten().any(|reg| {
-            matches!(self.func.reg_types.get(&reg.0), Some(Ty::Struct(name, _))
+            matches!(self.func.reg_types.get(&reg.0).map(Ty::kind), Some(TyKind::Struct(name, _))
                 if name == "Optional"
                     || name.ends_with("$Optional")
                     || name.starts_with("Optional$mono$"))
@@ -511,7 +516,7 @@ impl FnLowering<'_> {
             let (value, present) = match bound {
                 None => (zero, self.bool_constant(ctx, false)),
                 Some(reg)
-                    if matches!(self.func.reg_types.get(&reg.0), Some(Ty::Struct(name, _))
+                    if matches!(self.func.reg_types.get(&reg.0).map(Ty::kind), Some(TyKind::Struct(name, _))
                         if name == "Optional"
                             || name.ends_with("$Optional")
                             || name.starts_with("Optional$mono$")) =>

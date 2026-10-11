@@ -2,6 +2,7 @@
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
+use mojito_types::types::TyKind;
 
 use mojito_ast::ast::KwArg;
 impl Flatten<'_> {
@@ -114,9 +115,9 @@ impl Flatten<'_> {
     /// spell that struct's binders (`W[Self.k]`), which the VM reads off the
     /// method's receiver-less `self` slot, so the slot is interned.
     pub(super) fn static_receiver(&mut self, object: &Expr) -> Option<Ty> {
-        let receiver = self
-            .checked_ty(object)
-            .filter(|ty| matches!(ty, Ty::Struct(_, arguments) if !arguments.is_empty()))?;
+        let receiver = self.checked_ty(object).filter(
+            |ty| matches!(ty.kind(), TyKind::Struct(_, arguments) if !arguments.is_empty()),
+        )?;
         self.intern_static_self();
         Some(receiver)
     }
@@ -164,14 +165,14 @@ impl Flatten<'_> {
         self.emit(MirInstr::Call {
             dest,
             func: FuncRef::named(target),
-            raises: self.checked_raises(e).map(Box::new),
+            raises: self.checked_raises(e),
             args: regs,
             kwargs: kw,
             arg_places,
             kwarg_places,
             capture_accesses: self.checked_call_capture_accesses(e),
             param_arg_regs,
-            receiver: receiver.map(Box::new),
+            receiver,
             instantiated_args,
             spread: spread_position(args).map(|position| position + usize::from(leading.is_some())),
         });
@@ -243,10 +244,10 @@ impl Flatten<'_> {
             && kwargs.is_empty()
             && self.checked_ty(object).is_some_and(|ty| {
                 matches!(
-                    ty,
-                    mojito_types::types::Ty::Int
-                        | mojito_types::types::Ty::IntLiteral
-                        | mojito_types::types::Ty::UInt
+                    ty.kind(),
+                    mojito_types::types::TyKind::Int
+                        | mojito_types::types::TyKind::IntLiteral
+                        | mojito_types::types::TyKind::UInt
                 )
             })
         {
@@ -279,7 +280,7 @@ impl Flatten<'_> {
             self.allow_argument_anchors = self.call_anchors_arguments(e);
             let (regs, arg_places) = self.lower_call_arguments(std::slice::from_ref(object), false);
             self.allow_argument_anchors = saved_anchor_permission;
-            let d = self.fresh_typed(span(e), None, Ty::None);
+            let d = self.fresh_typed(span(e), None, Ty::none());
             self.emit_interior_invalidations(writer, None);
             self.emit(MirInstr::MethodCall {
                 dest: d,
@@ -315,7 +316,7 @@ impl Flatten<'_> {
         }) {
             let writer = args.first().expect("checked write_repr_to has one writer");
             let value = self.expr(object);
-            let repr = self.fresh_typed(span(object), None, Ty::StringLiteral);
+            let repr = self.fresh_typed(span(object), None, Ty::string_literal());
             let value_place = self.simple_place(object);
             self.emit(MirInstr::Call {
                 dest: repr,
@@ -332,7 +333,7 @@ impl Flatten<'_> {
                 spread: None,
             });
             let (recv, recv_place) = self.lower_call_receiver(writer);
-            let d = self.fresh_typed(span(e), None, Ty::None);
+            let d = self.fresh_typed(span(e), None, Ty::none());
             self.emit_interior_invalidations(writer, None);
             self.emit(MirInstr::MethodCall {
                 dest: d,
@@ -575,7 +576,7 @@ impl Flatten<'_> {
             } else {
                 MirInstr::MarkDestroyed { place }
             });
-            let dest = self.fresh_typed(span(e), None, Ty::None);
+            let dest = self.fresh_typed(span(e), None, Ty::none());
             self.emit(MirInstr::Const {
                 dest,
                 k: Const::None,
@@ -610,7 +611,7 @@ impl Flatten<'_> {
                     let mut place = self.place(object);
                     place.project(Proj::UninitPayload, element);
                     self.emit(MirInstr::Store { place, src });
-                    let dest = self.fresh_typed(span(e), None, Ty::None);
+                    let dest = self.fresh_typed(span(e), None, Ty::none());
                     self.emit(MirInstr::Const {
                         dest,
                         k: Const::None,
@@ -714,7 +715,7 @@ impl Flatten<'_> {
                 place.project(Proj::Index(index), element);
                 self.emit(MirInstr::Store { place, src });
             }
-            let dest = self.fresh_typed(span(e), None, Ty::None);
+            let dest = self.fresh_typed(span(e), None, Ty::none());
             self.emit(MirInstr::Const {
                 dest,
                 k: Const::None,
@@ -797,7 +798,7 @@ impl Flatten<'_> {
             recv,
             method: method.to_owned(),
             resolved: self.resolved_callable(e),
-            raises: self.checked_raises(e).map(Box::new),
+            raises: self.checked_raises(e),
             reference_result: (self
                 .checked_call_contract(e)
                 .and_then(|contract| contract.reference_result))

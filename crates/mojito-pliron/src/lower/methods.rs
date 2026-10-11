@@ -2,6 +2,7 @@
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
+use mojito_types::types::TyKind;
 
 impl FnLowering<'_> {
     /// The `CopyIteratorReference` adapter over a method result: the callee
@@ -57,7 +58,7 @@ impl FnLowering<'_> {
             && args.len() == 1
             && kwargs.is_empty()
             && let Some(receiver) = self.func.reg_types.get(&recv.0).cloned()
-            && !matches!(receiver, Ty::Struct(..) | Ty::Ref(..))
+            && !matches!(receiver.kind(), TyKind::Struct(..) | TyKind::Ref(..))
         {
             return self.lower_hash_leaf(
                 ctx,
@@ -70,13 +71,20 @@ impl FnLowering<'_> {
         }
         // Pointer receivers dispatch to runtime intrinsics, never to compiled
         // stdlib bodies.
-        if matches!(self.func.reg_types.get(&recv.0), Some(Ty::Pointer { .. })) {
+        if matches!(
+            self.func.reg_types.get(&recv.0).map(Ty::kind),
+            Some(TyKind::Pointer { .. })
+        ) {
             return self.lower_pointer_method(ctx, dest, recv, method, args);
         }
         if let Some((dtype, width)) = self.func.reg_types.get(&recv.0).and_then(simd_dims) {
             return self.lower_simd_method(ctx, dest, recv, dtype, width as usize, method, args);
         }
-        if matches!(self.func.reg_types.get(&recv.0), Some(Ty::Dtype)) && args.is_empty() {
+        if matches!(
+            self.func.reg_types.get(&recv.0).map(Ty::kind),
+            Some(TyKind::Dtype)
+        ) && args.is_empty()
+        {
             return self.lower_dtype_predicate(ctx, dest, recv, method);
         }
         // `StringLiteral`'s byte primitives read the descriptor: the interned
@@ -84,7 +92,10 @@ impl FnLowering<'_> {
         if resolved.is_none()
             && args.is_empty()
             && matches!(method, "byte_length" | "ptr" | "unsafe_ptr")
-            && matches!(self.func.reg_types.get(&recv.0), Some(Ty::StringLiteral))
+            && matches!(
+                self.func.reg_types.get(&recv.0).map(Ty::kind),
+                Some(TyKind::StringLiteral)
+            )
         {
             let (data, len) = self.writer_argument_text(ctx, recv, dest)?;
             let value = if method == "byte_length" { len } else { data };
@@ -117,7 +128,10 @@ impl FnLowering<'_> {
                 method,
                 "write" | "write_string" | mojito_symbol::symbol::WRITE_FORMATTED
             )
-            && matches!(self.func.reg_types.get(&recv.0), Some(Ty::StringLiteral))
+            && matches!(
+                self.func.reg_types.get(&recv.0).map(Ty::kind),
+                Some(TyKind::StringLiteral)
+            )
         {
             return self.lower_str_writer_write(ctx, dest, recv, args, recv_place);
         }
@@ -144,7 +158,7 @@ impl FnLowering<'_> {
             && method == "copy"
             && args.is_empty()
             && kwargs.is_empty()
-            && let Some(Ty::Ref(reference)) = self.func.reg_types.get(&recv.0)
+            && let Some(TyKind::Ref(reference)) = self.func.reg_types.get(&recv.0).map(Ty::kind)
             && let Some(scalar) = scalar_copy_ty(&reference.referent)
         {
             let value = self.reg_value(ctx, recv, scalar)?;
@@ -158,7 +172,7 @@ impl FnLowering<'_> {
         // drop-inert literal-typed field leaks with no releasing owner.
         // Reject until a literal-ownership design lands.
         if method == "_as_string_literal"
-            && matches!(self.func.reg_types.get(&recv.0), Some(Ty::Struct(name, _))
+            && matches!(self.func.reg_types.get(&recv.0).map(Ty::kind), Some(TyKind::Struct(name, _))
                 if mojito_symbol::symbol::is_stdlib_string_struct(name))
         {
             return Err(self.unsupported_reg("String struct-to-literal bridge".into(), dest));
@@ -167,12 +181,14 @@ impl FnLowering<'_> {
         // and feed it through the receiver's compiled `write_string`.
         if resolved.is_none()
             && method == mojito_symbol::symbol::WRITE_FORMATTED
-            && let Some(Ty::Struct(writer, _)) = self.func.reg_types.get(&recv.0).cloned()
+            && let Some(TyKind::Struct(writer, _)) = (self.func.reg_types.get(&recv.0).cloned())
+                .as_ref()
+                .map(Ty::kind)
             && self
                 .signatures
                 .contains_key(&format!("{writer}.write_string"))
         {
-            return self.lower_writer_write(ctx, dest, &writer, args, recv_place);
+            return self.lower_writer_write(ctx, dest, writer, args, recv_place);
         }
         // `Sized` spelled on a specialized pack's storage: the clone has no
         // nominal Tuple to resolve the method onto, so the static element
@@ -182,8 +198,8 @@ impl FnLowering<'_> {
             && args.is_empty()
             && kwargs.is_empty()
             && matches!(
-                self.func.reg_types.get(&recv.0),
-                Some(Ty::Tuple(_) | Ty::RuntimePack(_))
+                self.func.reg_types.get(&recv.0).map(Ty::kind),
+                Some(TyKind::Tuple(_) | TyKind::RuntimePack(_))
             )
         {
             return self.lower_len_builtin(ctx, dest, &[recv], &[]);
@@ -193,7 +209,7 @@ impl FnLowering<'_> {
         // struct receiver with its own method arrives resolved instead.
         if resolved.is_none()
             && let Some(recv_ty) = self.func.reg_types.get(&recv.0).cloned()
-            && matches!(recv_ty, Ty::Int | Ty::UInt | Ty::Float64)
+            && matches!(recv_ty.kind(), TyKind::Int | TyKind::UInt | TyKind::Float64)
         {
             match (method, args.len()) {
                 ("__floor__" | "__ceil__" | "__trunc__", 0) => {
@@ -327,8 +343,8 @@ impl FnLowering<'_> {
         // temporary receiver.
         let write_back = !receiver_alias
             && !self.aliased_load_regs.contains(&recv.0)
-            && match self.func.reg_types.get(&recv.0) {
-                Some(Ty::Struct(struct_name, _)) => {
+            && match self.func.reg_types.get(&recv.0).map(Ty::kind) {
+                Some(TyKind::Struct(struct_name, _)) => {
                     let is_mut = self
                         .struct_decls
                         .get(struct_name.as_str())
@@ -379,9 +395,12 @@ impl FnLowering<'_> {
                     owned: true,
                 },
             );
-            return self.mark_owned_temp(dest, Ty::StringLiteral);
+            return self.mark_owned_temp(dest, Ty::string_literal());
         }
-        if matches!(self.func.reg_types.get(&arg.0), Some(Ty::None)) {
+        if matches!(
+            self.func.reg_types.get(&arg.0).map(Ty::kind),
+            Some(TyKind::None)
+        ) {
             let global = self.shared.intern_string(ctx, b"None");
             let source = self.global_address(ctx, &global, dest);
             let len = self.uint_constant(ctx, 4);
@@ -395,11 +414,11 @@ impl FnLowering<'_> {
                     owned: true,
                 },
             );
-            return self.mark_owned_temp(dest, Ty::StringLiteral);
+            return self.mark_owned_temp(dest, Ty::string_literal());
         }
-        if let Some(literal_scalar) = match self.func.reg_types.get(&arg.0) {
-            Some(Ty::IntLiteral) => Some(ScalarTy::Int),
-            Some(Ty::FloatLiteral) => Some(ScalarTy::Float64),
+        if let Some(literal_scalar) = match self.func.reg_types.get(&arg.0).map(Ty::kind) {
+            Some(TyKind::IntLiteral) => Some(ScalarTy::Int),
+            Some(TyKind::FloatLiteral) => Some(ScalarTy::Float64),
             _ => None,
         } {
             let value = self.reg_value(ctx, arg, literal_scalar)?;
@@ -424,11 +443,11 @@ impl FnLowering<'_> {
                     owned: true,
                 },
             );
-            return self.mark_owned_temp(dest, Ty::StringLiteral);
+            return self.mark_owned_temp(dest, Ty::string_literal());
         }
         if !matches!(
-            self.func.reg_types.get(&arg.0),
-            Some(Ty::Struct(..) | Ty::Ref(..))
+            self.func.reg_types.get(&arg.0).map(Ty::kind),
+            Some(TyKind::Struct(..) | TyKind::Ref(..))
         ) && let Some(scalar) = self.concrete_scalar_ty(arg)?
         {
             let value = self.reg_value(ctx, arg, scalar)?;
@@ -459,9 +478,11 @@ impl FnLowering<'_> {
                     owned: true,
                 },
             );
-            return self.mark_owned_temp(dest, Ty::StringLiteral);
+            return self.mark_owned_temp(dest, Ty::string_literal());
         }
-        if let Some(Ty::Ref(reference)) = self.func.reg_types.get(&arg.0).cloned()
+        if let Some(TyKind::Ref(reference)) = (self.func.reg_types.get(&arg.0).cloned())
+            .as_ref()
+            .map(Ty::kind)
             && let LowerTy::Scalar(scalar) = lower_ty(
                 self.name,
                 &reference.referent,
@@ -484,9 +505,12 @@ impl FnLowering<'_> {
                     owned: true,
                 },
             );
-            return self.mark_owned_temp(dest, Ty::StringLiteral);
+            return self.mark_owned_temp(dest, Ty::string_literal());
         }
-        if let Some(Ty::Struct(name, _)) = self.func.reg_types.get(&arg.0).cloned() {
+        if let Some(TyKind::Struct(name, _)) = (self.func.reg_types.get(&arg.0).cloned())
+            .as_ref()
+            .map(Ty::kind)
+        {
             let prefix = format!("{name}.write_repr_to");
             let mut candidates: Vec<_> = self
                 .signatures
@@ -521,7 +545,7 @@ impl FnLowering<'_> {
                         owned: true,
                     },
                 );
-                return self.mark_owned_temp(dest, Ty::StringLiteral);
+                return self.mark_owned_temp(dest, Ty::string_literal());
             }
             return Err(self.unsupported_reg(
                 format!("repr of `{name}` without compiled write_repr_to"),
@@ -746,7 +770,7 @@ impl FnLowering<'_> {
             .declarations
             .get(&write_string)
             .and_then(|decl| decl.param_types.first());
-        if !matches!(payload_ty, Some(Ty::Struct(payload, _))
+        if !matches!(payload_ty.map(Ty::kind), Some(TyKind::Struct(payload, _))
             if mojito_symbol::symbol::is_stdlib_string_span_struct(payload))
         {
             return Err(self.unsupported_reg(
@@ -777,10 +801,12 @@ impl FnLowering<'_> {
                 let parts = self.slice_string(ctx, *arg, dest, false)?;
                 temporary = Some(parts.0);
                 parts
-            } else if let Some(Ty::Struct(name, _)) = self.func.reg_types.get(&arg.0).cloned()
-                && !mojito_symbol::symbol::is_stdlib_string_struct(&name)
+            } else if let Some(TyKind::Struct(name, _)) = (self.func.reg_types.get(&arg.0).cloned())
+                .as_ref()
+                .map(Ty::kind)
+                && !mojito_symbol::symbol::is_stdlib_string_struct(name)
             {
-                if mojito_symbol::symbol::is_stdlib_string_span_struct(&name) {
+                if mojito_symbol::symbol::is_stdlib_string_span_struct(name) {
                     let span = self.reg_ptr(ctx, *arg)?;
                     self.string_parts(ctx, span, dest)
                 } else if name.contains("$Named$mono$") || name.ends_with("$Named") {
@@ -797,7 +823,7 @@ impl FnLowering<'_> {
                     let one = self.uint_constant(ctx, 1);
                     self.append_string_pair(ctx, descriptor, equals, one, dest);
                     let (value_offset, value_ty) = self.field_offset(&named_ty, "_value", dest)?;
-                    let Ty::Pointer { element, .. } = value_ty else {
+                    let TyKind::Pointer { element, .. } = value_ty.kind() else {
                         return Err(self.unsupported_reg("Named value pointer".into(), dest));
                     };
                     let pointer_address = self.offset_address(ctx, base, value_offset);
@@ -805,7 +831,7 @@ impl FnLowering<'_> {
                     let pointer = LoadOp::new(ctx, pointer_address, ptr_ty);
                     self.append(ctx, pointer.get_operation(), Some(dest));
                     let LowerTy::Scalar(scalar) =
-                        lower_ty(self.name, &element, &self.layout, self.reg_span(dest))?
+                        lower_ty(self.name, element, &self.layout, self.reg_span(dest))?
                     else {
                         return Err(self.unsupported_reg("aggregate Named value".into(), dest));
                     };
@@ -821,7 +847,7 @@ impl FnLowering<'_> {
                 } else {
                     let descriptor = self.entry_alloca(ctx, 16, 8);
                     self.mem_zero(ctx, descriptor, 16);
-                    self.append_struct_via_write_to(ctx, *arg, &name, descriptor, dest)?;
+                    self.append_struct_via_write_to(ctx, *arg, name, descriptor, dest)?;
                     let parts = self.string_parts(ctx, descriptor, dest);
                     temporary = Some(parts.0);
                     parts
@@ -863,23 +889,25 @@ impl FnLowering<'_> {
         if let Some(descriptor) = self.str_runtime.get(&arg.0).copied() {
             return Ok((descriptor.data, descriptor.len));
         }
-        match self.func.reg_types.get(&arg.0) {
-            Some(Ty::Error | Ty::StringLiteral) => {
+        match self.func.reg_types.get(&arg.0).map(Ty::kind) {
+            Some(TyKind::Error | TyKind::StringLiteral) => {
                 let ptr = self.reg_ptr(ctx, arg)?;
                 return Ok(self.string_parts(ctx, ptr, dest));
             }
-            Some(Ty::Struct(name, _)) if mojito_symbol::symbol::is_stdlib_string_struct(name) => {
+            Some(TyKind::Struct(name, _))
+                if mojito_symbol::symbol::is_stdlib_string_struct(name) =>
+            {
                 let ptr = self.reg_ptr(ctx, arg)?;
                 return Ok(self.string_parts(ctx, ptr, dest));
             }
-            Some(Ty::Struct(name, _))
+            Some(TyKind::Struct(name, _))
                 if mojito_symbol::symbol::is_stdlib_string_span_struct(name) =>
             {
                 let ptr = self.reg_ptr(ctx, arg)?;
                 return Ok(self.string_parts(ctx, ptr, dest));
             }
-            Some(Ty::Ref(reference)) => {
-                let referent = (*reference.referent).clone();
+            Some(TyKind::Ref(reference)) => {
+                let referent = reference.referent.clone();
                 if let LowerTy::Scalar(scalar) =
                     lower_ty(self.name, &referent, &self.layout, self.reg_span(arg))?
                 {
@@ -910,7 +938,7 @@ impl FnLowering<'_> {
         anchor: Reg,
     ) -> Result<Value, PlironError> {
         let (address, ty) = self.place_address(ctx, place, anchor)?;
-        if matches!(ty, Ty::Ref(_)) {
+        if matches!(ty.kind(), TyKind::Ref(_)) {
             let handle = ScalarTy::Ptr.handle(ctx);
             let load = LoadOp::new(ctx, address, handle);
             self.append(ctx, load.get_operation(), Some(anchor));

@@ -802,6 +802,10 @@ pub struct MirPlace {
     pub through: Option<VarId>,
 }
 
+/// A place's types are shared handles, so a place is its two lists and a
+/// few words.
+const _: () = assert!(std::mem::size_of::<MirPlace>() <= 80);
+
 impl MirPlace {
     pub fn root(root: VarId, ty: Option<Ty>) -> Self {
         Self {
@@ -1099,7 +1103,7 @@ pub enum MirInstr {
         dest: Reg,
         func: FuncRef,
         /// Checker-selected error contract for this call, if it may raise.
-        raises: Option<Box<Ty>>,
+        raises: Option<Ty>,
         args: Vec<Reg>,
         kwargs: Vec<(String, Reg)>,
         arg_places: Vec<Option<MirPlace>>,
@@ -1120,7 +1124,7 @@ pub enum MirInstr {
         /// (`Pair[Self.U].count()`), in the caller's binder scope. No runtime
         /// argument need carry the struct's parameters, so the elaborator
         /// binds them from this type; a resolved call keeps none.
-        receiver: Option<Box<Ty>>,
+        receiver: Option<Ty>,
         /// The compile-time arguments the checker solved for a call of a
         /// generic `def`, in declaration order and in the caller's binder
         /// scope. A type argument no runtime parameter or result spells
@@ -1145,7 +1149,7 @@ pub enum MirInstr {
         /// consults this only when `callee` is a nominal callable struct.
         resolved: Option<String>,
         /// Checker-selected error contract of the callable value.
-        raises: Option<Box<Ty>>,
+        raises: Option<Ty>,
         args: Vec<Reg>,
         kwargs: Vec<(String, Reg)>,
         /// The callable value's caller place, when it has one. This is needed
@@ -1168,7 +1172,7 @@ pub enum MirInstr {
         /// explicit compile-time arguments resolve dependent parameter/result
         /// types. Generic callable storage may remain symbolic; executable
         /// operand verification uses this concrete view.
-        instantiated_contract: Option<Box<Ty>>,
+        instantiated_contract: Option<Ty>,
         /// Complete checker-resolved generic arguments in declaration order.
         /// This semantic-only substitution witness lets verification validate
         /// `instantiated_contract` without inspecting the instructions which
@@ -1193,7 +1197,7 @@ pub enum MirInstr {
         method: String,
         resolved: Option<String>,
         /// Checker-selected concrete or trait-requirement error contract.
-        raises: Option<Box<Ty>>,
+        raises: Option<Ty>,
         /// Reference-return ABI retained independently from the destination
         /// value type. A value-returning method may itself produce a
         /// reference-valued element, so the verifier must not infer ABI from
@@ -1592,8 +1596,9 @@ pub enum MirInstr {
     },
 }
 
-/// An instruction is sized for its common variants: the places, subscript
-/// calls, and types only a few call variants carry sit behind boxes.
+/// An instruction is sized for its common variants: the places and subscript
+/// calls only a few call variants carry sit behind boxes, and a type is one
+/// handle. The call variants' argument lists set this bound.
 const _: () = assert!(std::mem::size_of::<MirInstr>() <= 296);
 
 impl MirInstr {
@@ -1602,7 +1607,7 @@ impl MirInstr {
         match self {
             Self::Call { raises, .. }
             | Self::CallIndirect { raises, .. }
-            | Self::MethodCall { raises, .. } => raises.as_deref(),
+            | Self::MethodCall { raises, .. } => raises.as_ref(),
             Self::Index { call, .. } | Self::Slice { call, .. } | Self::MultiIndex { call, .. } => {
                 call.as_ref().and_then(|call| call.raises.as_ref())
             }
@@ -1736,7 +1741,7 @@ pub struct MirFunction {
     #[serde(serialize_with = "super::sorted_map")]
     pub var_tys: HashMap<VarId, Ty>,
     /// Checked return type. `None` only on unchecked compatibility paths;
-    /// production lowering always records it (`Ty::None` for no return).
+    /// production lowering always records it (`TyKind::None` for no return).
     pub ret_ty: Option<Ty>,
     /// Checked raising contract (`raises Never` records as nonraising).
     pub raises: bool,

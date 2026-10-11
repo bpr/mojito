@@ -3,6 +3,7 @@
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
+use mojito_types::types::TyKind;
 
 impl FnLowering<'_> {
     /// A constructor call to declared struct `name`: the fieldwise copy form
@@ -21,8 +22,8 @@ impl FnLowering<'_> {
         kwarg_places: &[Option<MirPlace>],
     ) -> Result<(), PlironError> {
         let struct_ty = match self.func.reg_types.get(&dest.0) {
-            Some(ty @ Ty::Struct(..)) => ty.clone(),
-            _ => Ty::Struct(name.to_string(), Vec::new().into()),
+            Some(ty) if matches!(ty.kind(), TyKind::Struct(..)) => ty.clone(),
+            _ => TyKind::Struct(name.to_string(), Vec::new()).into(),
         };
         let lowered = lower_ty(self.name, &struct_ty, &self.layout, self.reg_span(dest))?;
         let LowerTy::Aggregate { ty, layout } = lowered else {
@@ -106,7 +107,7 @@ impl FnLowering<'_> {
                     .get(&dest.0)
                     .is_none_or(|(block, _)| *block == self.position.0)
             {
-                self.mark_owned_temp(dest, (*ty).clone())?;
+                self.mark_owned_temp(dest, ty.clone())?;
             }
             return Ok(());
         }
@@ -169,7 +170,7 @@ impl FnLowering<'_> {
             return Ok(());
         }
         if let Some(ty) = self.func.reg_types.get(&arg.0)
-            && let Ty::Struct(name, _) = ty
+            && let TyKind::Struct(name, _) = ty.kind()
             && mojito_symbol::symbol::is_stdlib_string_struct(name)
         {
             let ptr = self.reg_ptr(ctx, arg)?;
@@ -178,14 +179,19 @@ impl FnLowering<'_> {
         }
         // An error value converts to its bare message (the VM's
         // `format_value` over `Value::Error`), borrowed from the error.
-        if matches!(self.func.reg_types.get(&arg.0), Some(Ty::Error)) {
+        if matches!(
+            self.func.reg_types.get(&arg.0).map(Ty::kind),
+            Some(TyKind::Error)
+        ) {
             let ptr = self.reg_ptr(ctx, arg)?;
             let (data, len) = self.string_parts(ctx, ptr, dest);
             return self.borrow_or_adopt_string(ctx, arg, dest, data, len);
         }
         // A runtime StringLiteral value reads back as a borrowed string.
-        if matches!(self.func.reg_types.get(&arg.0), Some(Ty::StringLiteral))
-            && !self.pending_literals.contains_key(&arg.0)
+        if matches!(
+            self.func.reg_types.get(&arg.0).map(Ty::kind),
+            Some(TyKind::StringLiteral)
+        ) && !self.pending_literals.contains_key(&arg.0)
         {
             let ptr = self.reg_ptr(ctx, arg)?;
             let (data, len) = self.string_parts(ctx, ptr, dest);
@@ -194,12 +200,14 @@ impl FnLowering<'_> {
         // A nominal struct converts through its `write_to` conformance over
         // a fresh accumulator — the VM's `format_value` struct arm. The
         // accumulated buffer transfers into the resulting owned string.
-        if let Some(Ty::Struct(name, _)) = self.func.reg_types.get(&arg.0).cloned()
-            && !mojito_symbol::symbol::is_stdlib_string_struct(&name)
+        if let Some(TyKind::Struct(name, _)) = (self.func.reg_types.get(&arg.0).cloned())
+            .as_ref()
+            .map(Ty::kind)
+            && !mojito_symbol::symbol::is_stdlib_string_struct(name)
         {
             let writer = self.entry_alloca(ctx, 16, 8);
             self.mem_zero(ctx, writer, 16);
-            self.append_struct_via_write_to(ctx, arg, &name, writer, dest)?;
+            self.append_struct_via_write_to(ctx, arg, name, writer, dest)?;
             let (data, len) = self.string_parts(ctx, writer, dest);
             self.str_runtime.insert(
                 dest.0,
@@ -212,15 +220,15 @@ impl FnLowering<'_> {
             // The accumulator alloca is exactly the 16-byte `MjStrDesc`
             // StringLiteral storage; aggregate consumers read it directly.
             self.reg_values.insert(dest.0, writer);
-            self.mark_owned_temp(dest, Ty::StringLiteral)?;
+            self.mark_owned_temp(dest, Ty::string_literal())?;
             return Ok(());
         }
         let ty = match self.concrete_scalar_ty(arg)? {
             Some(ty) => ty,
             // A runtime FloatLiteral value rejects — the VM formats its
             // exact rational, which f64 storage cannot reproduce.
-            None => match self.func.reg_types.get(&arg.0) {
-                Some(Ty::FloatLiteral) => {
+            None => match self.func.reg_types.get(&arg.0).map(Ty::kind) {
+                Some(TyKind::FloatLiteral) => {
                     if !self.pending_literals.contains_key(&arg.0) {
                         return Err(self.unsupported_reg(
                             "String conversion of a runtime FloatLiteral value".into(),
@@ -244,7 +252,7 @@ impl FnLowering<'_> {
                 owned: true,
             },
         );
-        self.mark_owned_temp(dest, Ty::StringLiteral)?;
+        self.mark_owned_temp(dest, Ty::string_literal())?;
         Ok(())
     }
 
@@ -281,7 +289,7 @@ impl FnLowering<'_> {
         self.str_runtime
             .insert(dest.0, RuntimeStr { data, len, owned });
         if owned {
-            self.mark_owned_temp(dest, Ty::StringLiteral)?;
+            self.mark_owned_temp(dest, Ty::string_literal())?;
         }
         Ok(())
     }
@@ -296,8 +304,10 @@ impl FnLowering<'_> {
             return Ok(Some(LowerTy::Scalar(ScalarTy::Ptr)));
         }
         match self.func.ret_ty.as_ref() {
-            Some(Ty::None) | None => Ok(None),
-            Some(other) => Ok(Some(lower_ty(self.name, other, &self.layout, None)?)),
+            Some(ty) if *ty != TyKind::None => {
+                Ok(Some(lower_ty(self.name, ty, &self.layout, None)?))
+            }
+            _ => Ok(None),
         }
     }
 
@@ -332,23 +342,25 @@ impl FnLowering<'_> {
         // address. A storage-borrow destination (`ref (ref T)`) keeps the
         // slot address; its consumers dereference explicitly.
         let forwards_stored_handle = !place.proj.is_empty()
-            && match (&ty, self.func.reg_types.get(&dest.0)) {
-                (Ty::Ref(stored), Some(Ty::Ref(dest_ref))) => dest_ref.referent == stored.referent,
+            && match (ty.kind(), self.func.reg_types.get(&dest.0).map(Ty::kind)) {
+                (TyKind::Ref(stored), Some(TyKind::Ref(dest_ref))) => {
+                    dest_ref.referent == stored.referent
+                }
                 _ => false,
             };
         if (place.proj.is_empty() || forwards_stored_handle)
-            && let Ty::Ref(reference) = &ty
+            && let TyKind::Ref(reference) = ty.kind()
         {
             let handle = ScalarTy::Ptr.handle(ctx);
             let load = LoadOp::new(ctx, address, handle);
             self.append(ctx, load.get_operation(), Some(dest));
-            if matches!(*reference.referent, Ty::Pointer { .. }) {
+            if matches!(reference.referent.kind(), TyKind::Pointer { .. }) {
                 self.pointer_slot_refs.insert(dest.0);
             }
             self.reg_values.insert(dest.0, load.get_result(ctx));
             return Ok(());
         }
-        if matches!(ty, Ty::Pointer { .. }) {
+        if matches!(ty.kind(), TyKind::Pointer { .. }) {
             self.pointer_slot_refs.insert(dest.0);
         }
         self.reg_values.insert(dest.0, address);

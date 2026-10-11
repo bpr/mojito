@@ -3,6 +3,7 @@
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
+use mojito_types::types::TyKind;
 use mojito_types::types::{CallableDefault, FuncTy};
 
 /// A `Some[Trait]` sugar parameter is infer-only and absent from the
@@ -24,14 +25,14 @@ pub(super) fn push_sugar_arguments(
     arguments: &mut Vec<InstanceArg>,
 ) {
     for ty in declaration.param_types.iter().chain(&declaration.variadic) {
-        if let Ty::Param { binder, .. } = peel_refs(ty)
+        if let TyKind::Param { binder, .. } = peel_refs(ty).kind()
             && (binder.name.starts_with("Some[") || bindings.self_instance.is_none())
             && !declaration
                 .param_decls
                 .iter()
                 .any(|decl| *decl.id() == binder.id)
             && let Some(bound) = bindings.types.get(binder)
-            && *bound != Ty::StringLiteral
+            && *bound != TyKind::StringLiteral
         {
             arguments.push(InstanceArg::Ty(bound.clone()));
         }
@@ -86,19 +87,17 @@ pub(super) fn owner_instance_ty(
         .zip(ordered_arguments(decls, bindings, template)?)
     {
         match (decl, argument) {
-            (
-                ParamDecl::Type { variadic: true, .. },
-                InstanceArg::Ty(Ty::RuntimePack(elements)),
-            ) => {
+            (ParamDecl::Type { variadic: true, .. }, InstanceArg::Ty(pack))
+                if matches!(pack.kind(), TyKind::RuntimePack(_)) =>
+            {
+                let TyKind::RuntimePack(elements) = pack.into_kind() else {
+                    unreachable!("guard established a runtime pack");
+                };
                 if elementwise {
                     arguments.extend(elements.into_iter().map(InstanceArg::Ty));
                 } else {
                     arguments.push(InstanceArg::Value(CtValue::Tuple(
-                        elements
-                            .into_iter()
-                            .map(Box::new)
-                            .map(CtValue::Type)
-                            .collect(),
+                        elements.into_iter().map(CtValue::Type).collect(),
                     )));
                 }
             }
@@ -113,7 +112,7 @@ pub(super) fn owner_instance_ty(
             InstanceArg::Value(value) => TyArg::Val(value),
         })
         .collect();
-    Ok(Ty::Struct(name, ty_arguments.into()))
+    Ok(TyKind::Struct(name, ty_arguments).into())
 }
 
 /// Each supplied compile-time argument paired with the declaration it fills.
@@ -190,7 +189,7 @@ pub(super) fn bind_explicit_value_arguments(
             // solution, materialized at `T`'s: the register holds the
             // literal as spelled (`2` where `T` is `Float64`).
             ParamDecl::Value { ty, .. }
-                if matches!(ty.as_ref(), Ty::Param { .. })
+                if matches!(ty.kind(), TyKind::Param { .. })
                     && bindings
                         .values
                         .get(&declaration.binder())
@@ -264,7 +263,7 @@ pub(super) fn apply_defaults(
                 // A literal default binds at its declared type, as a supplied
                 // argument's constant register reads.
                 let value = match eval_ct(default, bindings)? {
-                    CtValue::IntLiteral(literal) if **ty != Ty::IntLiteral => literal
+                    CtValue::IntLiteral(literal) if **ty != TyKind::IntLiteral => literal
                         .to_i64()
                         .map_or(CtValue::IntLiteral(literal), CtValue::Int),
                     value => value,
@@ -293,7 +292,8 @@ pub(super) fn bind_ty_args(
     // A struct keyed on its lone pack applied element by element
     // (`Row[Int, Bool]`) binds the pack to every element.
     if let [decl @ ParamDecl::Type { variadic: true, .. }] = decls
-        && !matches!(args, [TyArg::Ty(Ty::RuntimePack(_)) | TyArg::Val(_)])
+        && !matches!(args, [TyArg::Val(_)])
+        && !matches!(args, [TyArg::Ty(pack)] if matches!(pack.kind(), TyKind::RuntimePack(_)))
     {
         let elements = args
             .iter()
@@ -317,7 +317,7 @@ pub(super) fn bind_ty_args(
                 let elements = elements
                     .iter()
                     .map(|element| match element {
-                        CtValue::Type(ty) => Ok((**ty).clone()),
+                        CtValue::Type(ty) => Ok(ty.clone()),
                         other => Err(format!(
                             "element `{other}` of the pack `{}` is not a type",
                             decl.name()
@@ -326,7 +326,9 @@ pub(super) fn bind_ty_args(
                     .collect::<Result<Vec<_>, _>>()?;
                 bind_pack(&decl.binder(), elements, bindings);
             }
-            (ParamDecl::Type { variadic: true, .. }, TyArg::Ty(Ty::RuntimePack(elements))) => {
+            (ParamDecl::Type { variadic: true, .. }, TyArg::Ty(pack))
+                if let TyKind::RuntimePack(elements) = pack.kind() =>
+            {
                 bind_pack(&decl.binder(), elements.clone(), bindings);
             }
             (ParamDecl::Type { .. }, TyArg::Ty(ty)) => bind_type(&decl.binder(), ty, bindings)?,
@@ -355,9 +357,9 @@ fn spreads_into(pattern: &str, instance: &str, actual: &Ty) -> bool {
 }
 
 pub(super) fn unify(pattern: &Ty, actual: &Ty, bindings: &mut Bindings) -> Result<(), String> {
-    match pattern {
-        Ty::Param { binder, .. } => bind_type(binder, actual, bindings),
-        Ty::Assoc { .. } => {
+    match pattern.kind() {
+        TyKind::Param { binder, .. } => bind_type(binder, actual, bindings),
+        TyKind::Assoc { .. } => {
             let key = pattern.to_string();
             match bindings.associated.get(&key) {
                 // Origins erase from the runtime ABI, as for a type binder.
@@ -377,19 +379,21 @@ pub(super) fn unify(pattern: &Ty, actual: &Ty, bindings: &mut Bindings) -> Resul
         // storage the checker admitted (`MaterializeLiteral` converts the
         // value at the boundary); the pattern constrains nothing here.
         _ if matches!(
-            actual,
-            Ty::IntLiteral | Ty::FloatLiteral | Ty::StringLiteral
+            actual.kind(),
+            TyKind::IntLiteral | TyKind::FloatLiteral | TyKind::StringLiteral
         ) && pattern != actual =>
         {
             Ok(())
         }
-        Ty::Struct(pn, pa) => match actual {
-            Ty::Struct(an, _) if nominal_template(pn) == nominal_template(an) && pa.is_empty() => {
+        TyKind::Struct(pn, pa) => match actual.kind() {
+            TyKind::Struct(an, _)
+                if nominal_template(pn) == nominal_template(an) && pa.is_empty() =>
+            {
                 Ok(())
             }
             // A spread of a list computed from packs solves nothing: it
             // closes once the packs it reads are bound.
-            Ty::Struct(an, _)
+            TyKind::Struct(an, _)
                 if spreads_into(pn, an, actual)
                     && mojito_types::types::list_spread_argument(pa).is_some() =>
             {
@@ -397,16 +401,16 @@ pub(super) fn unify(pattern: &Ty, actual: &Ty, bindings: &mut Bindings) -> Resul
             }
             // A spread of a pack binds it to the actual's whole element
             // list, unless the call's recorded arguments already did.
-            Ty::Struct(an, aa)
+            TyKind::Struct(an, aa)
                 if spreads_into(pn, an, actual)
-                    && let Some(Ty::Param { binder, .. }) =
-                        mojito_types::types::pack_spread_argument(pa) =>
+                    && let Some(TyKind::Param { binder, .. }) =
+                        (mojito_types::types::pack_spread_argument(pa)).map(Ty::kind) =>
             {
                 let elements = match aa.as_slice() {
                     [TyArg::Val(CtValue::Tuple(values))] => values
                         .iter()
                         .map(|value| match value {
-                            CtValue::Type(ty) => Some((**ty).clone()),
+                            CtValue::Type(ty) => Some(ty.clone()),
                             _ => None,
                         })
                         .collect::<Option<Vec<_>>>(),
@@ -427,7 +431,7 @@ pub(super) fn unify(pattern: &Ty, actual: &Ty, bindings: &mut Bindings) -> Resul
                     None => Err(format!("expected `{pattern}`, found `{actual}`")),
                 }
             }
-            Ty::Struct(an, aa)
+            TyKind::Struct(an, aa)
                 if nominal_template(pn) == nominal_template(an) && pa.len() == aa.len() =>
             {
                 pa.iter()
@@ -436,22 +440,26 @@ pub(super) fn unify(pattern: &Ty, actual: &Ty, bindings: &mut Bindings) -> Resul
             }
             _ => Err(format!("expected `{pattern}`, found `{actual}`")),
         },
-        Ty::Tuple(p) | Ty::RuntimePack(p) | Ty::Variant(p) => match actual {
-            Ty::Tuple(a) | Ty::RuntimePack(a) | Ty::Variant(a) if p.len() == a.len() => {
+        TyKind::Tuple(p) | TyKind::RuntimePack(p) | TyKind::Variant(p) => match actual.kind() {
+            TyKind::Tuple(a) | TyKind::RuntimePack(a) | TyKind::Variant(a)
+                if p.len() == a.len() =>
+            {
                 p.iter().zip(a).try_for_each(|(p, a)| unify(p, a, bindings))
             }
             _ => Err(format!("expected `{pattern}`, found `{actual}`")),
         },
-        Ty::ComptimeList(p) | Ty::VariadicPack(p) => match actual {
-            Ty::ComptimeList(a) | Ty::VariadicPack(a) => unify(p, a, bindings),
+        TyKind::ComptimeList(p) | TyKind::VariadicPack(p) => match actual.kind() {
+            TyKind::ComptimeList(a) | TyKind::VariadicPack(a) => unify(p, a, bindings),
             _ => Err(format!("expected `{pattern}`, found `{actual}`")),
         },
-        Ty::Pointer { element: p, .. } => match actual {
-            Ty::Pointer { element: a, .. } => unify(p, a, bindings),
+        TyKind::Pointer { element: p, .. } => match actual.kind() {
+            TyKind::Pointer { element: a, .. } => unify(p, a, bindings),
             _ => Err(format!("expected `{pattern}`, found `{actual}`")),
         },
-        Ty::Ref(p) => match actual {
-            Ty::Ref(a) if p.mutability == a.mutability => unify(&p.referent, &a.referent, bindings),
+        TyKind::Ref(p) => match actual.kind() {
+            TyKind::Ref(a) if p.mutability == a.mutability => {
+                unify(&p.referent, &a.referent, bindings)
+            }
             _ => Err(format!("expected `{pattern}`, found `{actual}`")),
         },
         // A vector's lane dtype or width that is a bare binder binds from the
@@ -459,7 +467,7 @@ pub(super) fn unify(pattern: &Ty, actual: &Ty, bindings: &mut Bindings) -> Resul
         // against a four-lane vector); a compound expression (`2 * n`) is
         // bound from the call's recorded arguments, as the pin binds it from
         // the brackets, and only its evaluation is compared.
-        Ty::Simd { dtype, width } => {
+        TyKind::Simd { dtype, width } => {
             let Some((actual_dtype, actual_width)) = mojito_types::types::simd_slots(actual) else {
                 return Err(format!("expected `{pattern}`, found `{actual}`"));
             };
@@ -483,7 +491,7 @@ pub(super) fn unify(pattern: &Ty, actual: &Ty, bindings: &mut Bindings) -> Resul
         // Callable contracts unify on their runtime structure — parameters,
         // return, raising — never on the environment (`thin` vs
         // `capturing[...]`) or origin spellings, which erase from the ABI.
-        Ty::Func(func) => {
+        TyKind::Func(func) => {
             let FuncTy {
                 params: p_params,
                 ret: p_ret,
@@ -496,8 +504,8 @@ pub(super) fn unify(pattern: &Ty, actual: &Ty, bindings: &mut Bindings) -> Resul
                 error: p_error,
                 ..
             } = &**func;
-            match actual {
-                Ty::Func(func)
+            match actual.kind() {
+                TyKind::Func(func)
                     if let FuncTy {
                         params: a_params,
                         ret: a_ret,
@@ -516,8 +524,8 @@ pub(super) fn unify(pattern: &Ty, actual: &Ty, bindings: &mut Bindings) -> Resul
                         && p_keyword_only == a_keyword_only
                         && p_raises == a_raises =>
                 {
-                    let unify_option = |p: &Option<Box<Ty>>,
-                                        a: &Option<Box<Ty>>,
+                    let unify_option = |p: &Option<Ty>,
+                                        a: &Option<Ty>,
                                         bindings: &mut Bindings|
                      -> Result<(), String> {
                         match (p, a) {
@@ -541,7 +549,7 @@ pub(super) fn unify(pattern: &Ty, actual: &Ty, bindings: &mut Bindings) -> Resul
         _ if pattern == actual => Ok(()),
         // A type computed from parameters (`Ts[index]`) solves nothing: it
         // closes once the parameters it reads are bound.
-        Ty::Dependent(_) => Ok(()),
+        TyKind::Dependent(_) => Ok(()),
         _ => Err(format!("expected `{pattern}`, found `{actual}`")),
     }
 }
@@ -555,11 +563,11 @@ pub(super) fn unify_result(
     bindings: &mut Bindings,
 ) -> Result<(), String> {
     let mut pattern = pattern;
-    while let Ty::Ref(reference) = pattern {
+    while let TyKind::Ref(reference) = pattern.kind() {
         pattern = &reference.referent;
     }
     let mut actual = actual;
-    while let Ty::Ref(reference) = actual {
+    while let TyKind::Ref(reference) = actual.kind() {
         actual = &reference.referent;
     }
     // A container element may itself be a reference. Receiver inference has
@@ -567,8 +575,8 @@ pub(super) fn unify_result(
     // result is spelled `ref U`; stripping its handle above leaves `U`.
     // Preserve the established element solution instead of mistaking the
     // flattened handle for a conflicting `T = U` solution.
-    if let Ty::Param { binder, .. } = pattern
-        && let Some(Ty::Ref(reference)) = bindings.types.get(binder)
+    if let TyKind::Param { binder, .. } = pattern.kind()
+        && let Some(TyKind::Ref(reference)) = bindings.types.get(binder).map(Ty::kind)
         && ty_equal_modulo_origins(&reference.referent, actual)
     {
         return Ok(());
@@ -623,13 +631,13 @@ pub(super) fn bind_pack(binder: &ParamRef, elements: Vec<Ty>, bindings: &mut Bin
         CtValue::Tuple(
             elements
                 .iter()
-                .map(|element| CtValue::Type(Box::new(element.clone())))
+                .map(|element| CtValue::Type(element.clone()))
                 .collect(),
         ),
     );
     bindings
         .types
-        .insert(binder.clone(), Ty::RuntimePack(elements));
+        .insert(binder.clone(), TyKind::RuntimePack(elements).into());
 }
 
 pub(super) fn bind_type(binder: &ParamRef, ty: &Ty, bindings: &mut Bindings) -> Result<(), String> {
@@ -641,7 +649,12 @@ pub(super) fn bind_type(binder: &ParamRef, ty: &Ty, bindings: &mut Bindings) -> 
     // so `capturing[origin@N]` and `thin` variants of one contract are one
     // instance.
     let ty = &materialize_nested_literals(&canonicalize_callable(ty));
-    let literal = |ty: &Ty| matches!(ty, Ty::IntLiteral | Ty::FloatLiteral | Ty::StringLiteral);
+    let literal = |ty: &Ty| {
+        matches!(
+            ty.kind(),
+            TyKind::IntLiteral | TyKind::FloatLiteral | TyKind::StringLiteral
+        )
+    };
     match bindings.types.get(binder) {
         // A literal-typed actual materializes into whatever concrete storage
         // is already bound, and a concrete solution upgrades an earlier

@@ -158,12 +158,12 @@ specialized name). Rules:
   values as LLVM fixed vectors in SSA, so its vector loads and stores declare
   the lane alignment and `bool` lanes convert between `<N x i1>` compute and
   byte-per-lane storage at that boundary.
-- A **retained callable** (`Ty::Func`) is the two-word value
+- A **retained callable** (`TyKind::Func`) is the two-word value
   `{ invoke: ptr, env: ptr }` (16/8). `invoke` is a backend-interned thunk
   (`mjthunk_<n>`, outside the `mj_` mangle image); `env` points at the
   frame-local environment record of the creating `MakeClosure`, or is null
   for a bare function value or empty-capture closure. Generic callable
-  values (`Ty::GenericFunc`) have no representation: monomorphization turns
+  values (`TyKind::GenericFunc`) have no representation: monomorphization turns
   each call through one into a direct call to its instance, passing a
   by-reference environment's places as the lifted body's leading reference
   arguments. A by-value environment has nowhere to live and rejects.
@@ -173,7 +173,7 @@ specialized name). Rules:
 
 ### Strings and the constant pool
 
-- A **string literal** (`Ty::StringLiteral`) is the borrowed descriptor
+- A **string literal** (`TyKind::StringLiteral`) is the borrowed descriptor
   `MjStrDesc { data: *const u8, len: u64 }` (16/8): `len` bytes of UTF-8, not
   NUL-terminated, never owned by the consumer. Literal bytes live in private
   constant globals named `mjstr_<n>` (an underscore — pliron identifiers

@@ -3,6 +3,7 @@
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
+use mojito_types::types::TyKind;
 
 impl<'a> Specializer<'a> {
     pub(super) fn new(source: &'a MirProgram, target: Option<&'a NativeTarget>) -> Self {
@@ -205,7 +206,9 @@ impl<'a> Specializer<'a> {
             ));
         }
         let owner = match bindings.self_instance.as_ref() {
-            Some((_, Ty::Struct(name, _))) => Some(name.clone()),
+            Some((_, instance)) if let TyKind::Struct(name, _) = instance.kind() => {
+                Some(name.clone())
+            }
             _ => None,
         };
 
@@ -420,13 +423,13 @@ impl<'a> Specializer<'a> {
         let mut references = Vec::new();
         while let Some(ty) = types.pop() {
             collect_nested_types(&ty, &mut types);
-            let Ty::Struct(name, _) = ty else {
+            let TyKind::Struct(name, _) = ty.kind() else {
                 continue;
             };
             if !structs.insert(name.clone()) {
                 continue;
             }
-            if let Some(&declared) = self.output_struct_positions.get(&name) {
+            if let Some(&declared) = self.output_struct_positions.get(name) {
                 types.extend(
                     self.output_structs[declared]
                         .fields
@@ -434,7 +437,7 @@ impl<'a> Specializer<'a> {
                         .map(|(_, ty)| ty.clone()),
                 );
             }
-            references.extend(self.lifecycle_instances.get(&name).into_iter().flatten());
+            references.extend(self.lifecycle_instances.get(name).into_iter().flatten());
         }
         references
     }
@@ -468,9 +471,9 @@ impl<'a> Specializer<'a> {
             let ParamDecl::Value { ty, .. } = decl else {
                 continue;
             };
-            let generic = match peel_refs(ty) {
-                Ty::GenericFunc(_) => true,
-                Ty::Func(_) => false,
+            let generic = match peel_refs(ty).kind() {
+                TyKind::GenericFunc(_) => true,
+                TyKind::Func(_) => false,
                 _ => continue,
             };
             let Some((callee, false)) = self.callable_targets.get(&reg.0) else {
@@ -822,7 +825,7 @@ impl<'a> Specializer<'a> {
             };
             let ty = match subject.kind() {
                 ParamKind::TypeShape(ty) => substitute_ty(ty, bindings),
-                ParamKind::Constant(CtValue::Type(ty)) => Ok((**ty).clone()),
+                ParamKind::Constant(CtValue::Type(ty)) => Ok(ty.clone()),
                 _ => {
                     return Err(self.error(
                         Some(template),
@@ -951,7 +954,7 @@ impl<'a> Specializer<'a> {
                 _ => None,
             }
             .ok_or_else(|| unresolved("an unresolved instance", instance))?;
-            let Ty::Struct(name, arguments) = &ty else {
+            let TyKind::Struct(name, arguments) = ty.kind() else {
                 return Err(unresolved("an instance that is no struct", instance));
             };
             bind_ty_args(&owner.param_decls, arguments, &mut instance_bindings)
@@ -967,7 +970,7 @@ impl<'a> Specializer<'a> {
                     let ty = match arg.kind() {
                         ParamKind::DeclRef(reference) => bindings.types.get(reference).cloned(),
                         ParamKind::TypeShape(ty) => substitute_ty(ty, bindings).ok(),
-                        ParamKind::Constant(CtValue::Type(ty)) => Some((**ty).clone()),
+                        ParamKind::Constant(CtValue::Type(ty)) => Some(ty.clone()),
                         _ => None,
                     }
                     .ok_or_else(|| unresolved("an unresolved type"))?;
@@ -1398,8 +1401,8 @@ impl<'a> Specializer<'a> {
                 query: PackQuery::Contains(element),
             } => {
                 let element = match element.kind() {
-                    ParamKind::TypeShape(ty) => (**ty).clone(),
-                    ParamKind::Constant(CtValue::Type(ty)) => (**ty).clone(),
+                    ParamKind::TypeShape(ty) => ty.clone(),
+                    ParamKind::Constant(CtValue::Type(ty)) => ty.clone(),
                     _ => return Ok(None),
                 };
                 Some(GenericConstraint::PackContains {
@@ -1559,9 +1562,10 @@ impl<'a> Specializer<'a> {
                 continue;
             };
             *target = resolved;
-            let Some(param_ty @ Ty::Struct(struct_name, arguments)) =
-                declaration.param_types.get(index)
-            else {
+            let Some(param_ty) = declaration.param_types.get(index) else {
+                continue;
+            };
+            let TyKind::Struct(struct_name, arguments) = param_ty.kind() else {
                 continue;
             };
             if is_symbolic(param_ty) {
@@ -1764,13 +1768,13 @@ impl<'a> Specializer<'a> {
         if is_symbolic(element) {
             return Ok(());
         }
-        let collector = Ty::Struct(
+        let collector = Ty::new(TyKind::Struct(
             mojito_symbol::symbol::instance_symbol(
                 "StringDict",
                 &[InstanceArg::Ty(element.clone())],
             ),
-            vec![mojito_types::types::TyArg::Ty(element.clone())].into(),
-        );
+            vec![mojito_types::types::TyArg::Ty(element.clone())],
+        ));
         self.enqueue_nominal_method_instance(owner, &collector, "__init__", 0, &[])?;
         self.enqueue_nominal_method_instance(owner, &collector, "__setitem__", 2, &[])
     }
@@ -1861,8 +1865,8 @@ impl<'a> Specializer<'a> {
                         && kwargs.is_empty()
                         && args.len() == 1
                         && matches!(
-                            function.reg_types.get(&args[0].0).map(peel_refs),
-                            Some(Ty::Struct(..))
+                            (function.reg_types.get(&args[0].0).map(peel_refs)).map(Ty::kind),
+                            Some(TyKind::Struct(..))
                         )
                     {
                         *instruction = dunder_method_call(*dest, args[0], method, None, Vec::new());
@@ -1877,8 +1881,8 @@ impl<'a> Specializer<'a> {
                         mojito_ast::ast::PrefixOp::Neg | mojito_ast::ast::PrefixOp::Invert
                     )
                     && matches!(
-                        function.reg_types.get(&a.0).map(peel_refs),
-                        Some(Ty::Struct(..))
+                        (function.reg_types.get(&a.0).map(peel_refs)).map(Ty::kind),
+                        Some(TyKind::Struct(..))
                     )
                 {
                     *instruction = dunder_method_call(*dest, *a, op.dunder(), None, Vec::new());
@@ -1902,8 +1906,8 @@ impl<'a> Specializer<'a> {
                         mojito_ast::ast::InfixOp::In | mojito_ast::ast::InfixOp::NotIn
                     )
                     && matches!(
-                        function.reg_types.get(&a.0).map(peel_refs),
-                        Some(Ty::Struct(..))
+                        (function.reg_types.get(&a.0).map(peel_refs)).map(Ty::kind),
+                        Some(TyKind::Struct(..))
                     )
                 {
                     // A type that declares `__eq__` and no `__ne__` takes
@@ -1915,7 +1919,7 @@ impl<'a> Specializer<'a> {
                     {
                         let equal = Reg(function.n_regs);
                         function.n_regs += 1;
-                        function.reg_types.insert(equal.0, Ty::Bool);
+                        function.reg_types.insert(equal.0, Ty::bool());
                         conversions.push((
                             index,
                             MirInstr::UnOp {
@@ -1943,20 +1947,23 @@ impl<'a> Specializer<'a> {
                             | mojito_ast::ast::InfixOp::Gt
                             | mojito_ast::ast::InfixOp::Ge
                     )
-                    && function.reg_types.get(&dest.0) == Some(&Ty::Bool)
-                    && let Some(Ty::Simd { width, .. }) =
-                        function.reg_types.get(&a.0).map(peel_refs).cloned()
+                    && function.reg_types.get(&dest.0) == Some(&Ty::bool())
+                    && let Some(TyKind::Simd { width, .. }) =
+                        (function.reg_types.get(&a.0).map(peel_refs).cloned())
+                            .as_ref()
+                            .map(Ty::kind)
                 {
                     let mask = Reg(function.n_regs);
                     function.n_regs += 1;
                     function.reg_types.insert(
                         mask.0,
-                        Ty::Simd {
+                        TyKind::Simd {
                             dtype: mojito_types::types::SimdDtype::Known(
                                 mojito_ast::ast::Dtype::Bool,
                             ),
-                            width,
-                        },
+                            width: width.clone(),
+                        }
+                        .into(),
                     );
                     conversions.push((
                         index,
@@ -2048,8 +2055,8 @@ impl<'a> Specializer<'a> {
                                 let copy_form =
                                     args.is_empty() && kwargs.len() == 1 && kwargs[0].0 == "copy";
                                 if copy_form {
-                                    if let Some(Ty::Struct(concrete, _)) =
-                                        function.reg_types.get(&dest.0)
+                                    if let Some(TyKind::Struct(concrete, _)) =
+                                        function.reg_types.get(&dest.0).map(Ty::kind)
                                         && concrete != &func.0
                                         && nominal_template(concrete) == func.0.as_str()
                                     {
@@ -2111,8 +2118,8 @@ impl<'a> Specializer<'a> {
                                 // A generic struct's output declaration is
                                 // instance-named; respell the constructor
                                 // call so lowering's struct lookup matches.
-                                if let Some(Ty::Struct(concrete, _)) =
-                                    function.reg_types.get(&dest.0)
+                                if let Some(TyKind::Struct(concrete, _)) =
+                                    function.reg_types.get(&dest.0).map(Ty::kind)
                                     && concrete != &func.0
                                     && nominal_template(concrete) == func.0.as_str()
                                 {
@@ -2193,7 +2200,7 @@ impl<'a> Specializer<'a> {
                         if method == "__hash__"
                             && args.len() == 1
                             && kwargs.is_empty()
-                            && !matches!(peel_refs(receiver), Ty::Struct(..))
+                            && !matches!(peel_refs(receiver).kind(), TyKind::Struct(..))
                         {
                             let receiver = peel_refs(receiver).clone();
                             self.enqueue_hash_leaf_instances(owner, function, args[0], &receiver)?;
@@ -2201,7 +2208,7 @@ impl<'a> Specializer<'a> {
                         if resolved
                             .as_deref()
                             .is_some_and(|target| target.starts_with("__trait_dispatch."))
-                            && !matches!(peel_refs(receiver), Ty::Struct(..))
+                            && !matches!(peel_refs(receiver).kind(), TyKind::Struct(..))
                         {
                             // The builtin answers the call itself and takes
                             // none of the requirement's compile-time arguments.
@@ -2209,7 +2216,7 @@ impl<'a> Specializer<'a> {
                             param_decls.clear();
                             instantiated_args.clear();
                             param_arg_regs.clear();
-                            if !matches!(peel_refs(receiver), Ty::StringLiteral) {
+                            if !matches!(peel_refs(receiver).kind(), TyKind::StringLiteral) {
                                 continue;
                             }
                         }
@@ -2221,7 +2228,7 @@ impl<'a> Specializer<'a> {
                         if matches!(
                             method.as_str(),
                             "write" | mojito_symbol::symbol::WRITE_FORMATTED
-                        ) && matches!(peel_refs(receiver), Ty::StringLiteral)
+                        ) && matches!(peel_refs(receiver).kind(), TyKind::StringLiteral)
                         {
                             for arg in args.clone() {
                                 self.enqueue_display_instance(owner, function, arg)?;
@@ -2230,7 +2237,7 @@ impl<'a> Specializer<'a> {
                         }
                         // A borrowed receiver dispatches on its referent, as
                         // the VM dereferences `Value::Ref` receivers.
-                        let Ty::Struct(receiver_name, _) = peel_refs(receiver) else {
+                        let TyKind::Struct(receiver_name, _) = peel_refs(receiver).kind() else {
                             continue;
                         };
                         // Source methods are declared under the template name;
@@ -2341,9 +2348,9 @@ impl<'a> Specializer<'a> {
                         let dependent_callable =
                             function.reg_types.get(&callee.0).is_some_and(|ty| {
                                 matches!(
-                                    peel_refs(ty),
-                                    Ty::GenericFunc(_)
-                                        | Ty::Param {
+                                    peel_refs(ty).kind(),
+                                    TyKind::GenericFunc(_)
+                                        | TyKind::Param {
                                             callable_bound: Some(_),
                                             ..
                                         }
@@ -2465,7 +2472,7 @@ impl<'a> Specializer<'a> {
                         {
                             *target = contract;
                         }
-                        let Ty::Struct(receiver_name, _) = peel_refs(receiver) else {
+                        let TyKind::Struct(receiver_name, _) = peel_refs(receiver).kind() else {
                             continue;
                         };
                         let target = mojito_symbol::symbol::resolve_method_symbol(
@@ -2495,8 +2502,8 @@ impl<'a> Specializer<'a> {
                             .declarations
                             .get(target.as_str())
                             .filter(|declaration| declaration.returns_reference)
-                            .and_then(|_| match function.reg_types.get(&dest.0) {
-                                Some(Ty::Ref(reference)) => Some(reference.clone()),
+                            .and_then(|_| match function.reg_types.get(&dest.0).map(Ty::kind) {
+                                Some(TyKind::Ref(reference)) => Some(reference.clone()),
                                 _ => None,
                             });
                         let concrete = self.enqueue(&target, bindings, arguments)?;
@@ -2681,11 +2688,11 @@ impl<'a> Specializer<'a> {
                         a,
                         ..
                     } => {
-                        if let Some(Ty::Variant(alternatives)) =
-                            function.reg_types.get(&a.0).map(peel_refs).cloned()
+                        if let Some(TyKind::Variant(alternatives)) =
+                            function.reg_types.get(&a.0).map(peel_refs).map(Ty::kind)
                         {
-                            for alternative in &alternatives {
-                                if matches!(alternative, Ty::Struct(..)) {
+                            for alternative in alternatives {
+                                if matches!(alternative.kind(), TyKind::Struct(..)) {
                                     self.enqueue_nominal_method_instance(
                                         owner,
                                         alternative,
@@ -2732,11 +2739,12 @@ impl<'a> Specializer<'a> {
         // even when no register or variable carries the bare element type.
         push_instruction_types(&function.blocks, &mut types);
         while let Some(ty) = types.pop() {
-            if matches!(ty, Ty::Struct(..)) && !self.discovered_types.insert(ty.clone()) {
+            if matches!(ty.kind(), TyKind::Struct(..)) && !self.discovered_types.insert(ty.clone())
+            {
                 continue;
             }
             collect_nested_types(&ty, &mut types);
-            let Ty::Struct(name, arguments) = ty else {
+            let TyKind::Struct(name, arguments) = ty.kind() else {
                 continue;
             };
             // The checker-virtual slice descriptors have no source template;
@@ -2744,14 +2752,14 @@ impl<'a> Specializer<'a> {
             // presence bitmask — the VM's `Value::Slice` `Option<i64>` fields)
             // so descriptor-typed parameters and locals lay out.
             if matches!(name.as_str(), "Slice" | "ContiguousSlice" | "StridedSlice") {
-                if !self.output_struct_positions.contains_key(&name) {
+                if !self.output_struct_positions.contains_key(name) {
                     self.declare_output_struct(MirStructDeclaration {
-                        name,
+                        name: name.clone(),
                         fields: vec![
-                            ("start".to_string(), Ty::Int),
-                            ("end".to_string(), Ty::Int),
-                            ("step".to_string(), Ty::Int),
-                            ("flags".to_string(), Ty::Int),
+                            ("start".to_string(), Ty::int()),
+                            ("end".to_string(), Ty::int()),
+                            ("step".to_string(), Ty::int()),
+                            ("flags".to_string(), Ty::int()),
                         ],
                         mut_self_methods: HashSet::default(),
                         fieldwise_init: false,
@@ -2766,7 +2774,7 @@ impl<'a> Specializer<'a> {
                 }
                 continue;
             }
-            let template_name = name.split("$mono").next().unwrap_or(&name).to_string();
+            let template_name = name.split("$mono").next().unwrap_or(name).to_string();
             let Some(template) = self.structs.get(template_name.as_str()) else {
                 continue;
             };
@@ -2781,12 +2789,12 @@ impl<'a> Specializer<'a> {
                         .is_some_and(|(instance, _)| instance == name)
                 })
             {
-                self.discovered_types.remove(&Ty::Struct(name, arguments));
+                self.discovered_types.remove(&ty);
                 continue;
             }
             // An instance applied element by element binds its lone pack to
             // every argument, of which the empty tuple has none.
-            let elementwise = name != template_name
+            let elementwise = *name != template_name
                 && matches!(
                     template.param_decls.as_slice(),
                     [ParamDecl::Type { variadic: true, .. }]
@@ -2795,16 +2803,16 @@ impl<'a> Specializer<'a> {
                 continue;
             }
             let mut bindings = self.base_bindings();
-            bind_ty_args(&template.param_decls, &arguments, &mut bindings).map_err(|e| {
+            bind_ty_args(&template.param_decls, arguments, &mut bindings).map_err(|e| {
                 self.error(
                     Some(owner),
                     format!("monomorphizing struct `{template_name}`: {e}"),
                 )
             })?;
-            if name != template_name {
+            if *name != template_name {
                 bindings.self_instance = Some((
                     template_name.clone(),
-                    Ty::Struct(name.clone(), arguments.clone()),
+                    TyKind::Struct(name.clone(), arguments.clone()).into(),
                 ));
             }
             // A field type may apply a function to the struct's parameters
@@ -2822,7 +2830,7 @@ impl<'a> Specializer<'a> {
                     break fields?;
                 }
             };
-            declaration.name = name;
+            declaration.name.clone_from(name);
             declaration.param_decls.clear();
             declaration.associated_types.clear();
             declaration.associated_values.clear();
@@ -2928,7 +2936,9 @@ impl<'a> Specializer<'a> {
     /// Whether a `!=` on `receiver` is served by `Equatable`'s default: its
     /// struct declares an `__eq__` and no `__ne__`.
     fn negates_equality(&self, function: &MirFunction, receiver: Reg) -> bool {
-        let Some(Ty::Struct(name, _)) = function.reg_types.get(&receiver.0).map(peel_refs) else {
+        let Some(TyKind::Struct(name, _)) =
+            (function.reg_types.get(&receiver.0).map(peel_refs)).map(Ty::kind)
+        else {
             return false;
         };
         let declares = |method: &str| {
@@ -2954,7 +2964,7 @@ impl<'a> Specializer<'a> {
                 .get(candidate.name)
                 .is_some_and(|declaration| {
                     declaration.variadic.as_ref().is_some_and(|element| {
-                        matches!(element, mojito_types::types::Ty::RuntimePack(_))
+                        matches!(element.kind(), mojito_types::types::TyKind::RuntimePack(_))
                             || mojito_types::types::pack_spread(std::slice::from_ref(element))
                                 .is_some()
                     })
@@ -3047,9 +3057,9 @@ impl<'a> Specializer<'a> {
 
 /// Whether `declaration` collects a variadic parameter whose element count a
 /// call site keys (`var *values: T`), rather than a runtime pack or a tuple.
-const fn arity_keyed_variadic(declaration: &MirFunctionDeclaration) -> bool {
+fn arity_keyed_variadic(declaration: &MirFunctionDeclaration) -> bool {
     matches!(&declaration.variadic, Some(element)
-        if !matches!(element, Ty::RuntimePack(_) | Ty::Tuple(_)))
+        if !matches!(element.kind(), TyKind::RuntimePack(_) | TyKind::Tuple(_)))
 }
 
 /// Append a call's trailing arguments for its capturing callable parameters,
@@ -3083,25 +3093,30 @@ fn pass_capturing_arguments(
 /// struct's origin slots do.
 fn without_pointer_origins(ty: &Ty) -> Ty {
     let recur = without_pointer_origins;
-    match ty {
-        Ty::Pointer { element, .. } => Ty::Pointer {
-            element: Box::new(recur(element)),
+    match ty.kind() {
+        TyKind::Pointer { element, .. } => TyKind::Pointer {
+            element: recur(element),
             origin: mojito_types::origin::PointerOrigin::Static,
-        },
-        Ty::Struct(_, arguments) if arguments.is_closed() => ty.clone(),
-        Ty::Struct(name, arguments) => Ty::Struct(
-            name.clone(),
-            arguments.reusing(mojito_types::types::map_tyargs(arguments, recur)),
-        ),
-        Ty::Tuple(elements) => Ty::Tuple(elements.iter().map(recur).collect()),
-        Ty::RuntimePack(elements) => Ty::RuntimePack(elements.iter().map(recur).collect()),
-        Ty::Variant(alternatives) => Ty::Variant(alternatives.iter().map(recur).collect()),
-        Ty::Ref(reference) => {
-            let mut reference = reference.clone();
-            reference.referent = Box::new(recur(&reference.referent));
-            Ty::Ref(reference)
         }
-        other => other.clone(),
+        .into(),
+        TyKind::Struct(..) if ty.is_closed() => ty.clone(),
+        TyKind::Struct(name, arguments) => ty.reusing(TyKind::Struct(
+            name.clone(),
+            mojito_types::types::map_tyargs(arguments, recur),
+        )),
+        TyKind::Tuple(elements) => TyKind::Tuple(elements.iter().map(recur).collect()).into(),
+        TyKind::RuntimePack(elements) => {
+            TyKind::RuntimePack(elements.iter().map(recur).collect()).into()
+        }
+        TyKind::Variant(alternatives) => {
+            TyKind::Variant(alternatives.iter().map(recur).collect()).into()
+        }
+        TyKind::Ref(reference) => {
+            let mut reference = reference.clone();
+            reference.referent = recur(&reference.referent);
+            TyKind::Ref(reference).into()
+        }
+        _ => ty.clone(),
     }
 }
 

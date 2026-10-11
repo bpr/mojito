@@ -4,6 +4,7 @@
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 use mojito_types::types::FuncTy;
+use mojito_types::types::TyKind;
 
 /// Field-list equivalence for name-colliding struct instances: strict
 /// structural equality except that pointer types collapse (one opaque
@@ -46,13 +47,13 @@ pub(super) fn functions_equivalent(a: &MirFunction, b: &MirFunction) -> bool {
 }
 
 pub(super) fn ty_equivalent(a: &Ty, b: &Ty) -> bool {
-    match (a, b) {
-        (Ty::Pointer { .. }, Ty::Pointer { .. }) => true,
+    match (a.kind(), b.kind()) {
+        (TyKind::Pointer { .. }, TyKind::Pointer { .. }) => true,
         // A reference is one target word whatever its origin.
-        (Ty::Ref(a), Ty::Ref(b)) => {
+        (TyKind::Ref(a), TyKind::Ref(b)) => {
             a.mutability == b.mutability && ty_equivalent(&a.referent, &b.referent)
         }
-        (Ty::Struct(a_name, a_args), Ty::Struct(b_name, b_args)) => {
+        (TyKind::Struct(a_name, a_args), TyKind::Struct(b_name, b_args)) => {
             a_name == b_name
                 && a_args.len() == b_args.len()
                 && a_args.iter().zip(b_args).all(|(a, b)| match (a, b) {
@@ -62,7 +63,7 @@ pub(super) fn ty_equivalent(a: &Ty, b: &Ty) -> bool {
                     _ => a == b,
                 })
         }
-        (Ty::Tuple(a), Ty::Tuple(b)) | (Ty::RuntimePack(a), Ty::RuntimePack(b)) => {
+        (TyKind::Tuple(a), TyKind::Tuple(b)) | (TyKind::RuntimePack(a), TyKind::RuntimePack(b)) => {
             a.len() == b.len() && a.iter().zip(b).all(|(a, b)| ty_equivalent(a, b))
         }
         _ => a == b,
@@ -246,14 +247,14 @@ pub(super) fn owner_covered_prefix(
 /// (which erase from the runtime ABI and vary per call site), while still
 /// requiring mutability agreement.
 pub(super) fn ty_equal_modulo_origins(a: &Ty, b: &Ty) -> bool {
-    match (a, b) {
-        (Ty::Ref(a), Ty::Ref(b)) => {
+    match (a.kind(), b.kind()) {
+        (TyKind::Ref(a), TyKind::Ref(b)) => {
             a.mutability == b.mutability && ty_equal_modulo_origins(&a.referent, &b.referent)
         }
-        (Ty::Pointer { element: a, .. }, Ty::Pointer { element: b, .. }) => {
+        (TyKind::Pointer { element: a, .. }, TyKind::Pointer { element: b, .. }) => {
             ty_equal_modulo_origins(a, b)
         }
-        (Ty::Struct(a_name, a_args), Ty::Struct(b_name, b_args)) => {
+        (TyKind::Struct(a_name, a_args), TyKind::Struct(b_name, b_args)) => {
             a_name == b_name
                 && a_args.len() == b_args.len()
                 && a_args.iter().zip(b_args).all(|(a, b)| match (a, b) {
@@ -262,19 +263,18 @@ pub(super) fn ty_equal_modulo_origins(a: &Ty, b: &Ty) -> bool {
                     _ => a == b,
                 })
         }
-        (Ty::Tuple(a), Ty::Tuple(b))
-        | (Ty::RuntimePack(a), Ty::RuntimePack(b))
-        | (Ty::Variant(a), Ty::Variant(b)) => {
+        (TyKind::Tuple(a), TyKind::Tuple(b))
+        | (TyKind::RuntimePack(a), TyKind::RuntimePack(b))
+        | (TyKind::Variant(a), TyKind::Variant(b)) => {
             a.len() == b.len() && a.iter().zip(b).all(|(a, b)| ty_equal_modulo_origins(a, b))
         }
-        (Ty::ComptimeList(a), Ty::ComptimeList(b)) | (Ty::VariadicPack(a), Ty::VariadicPack(b)) => {
-            ty_equal_modulo_origins(a, b)
-        }
+        (TyKind::ComptimeList(a), TyKind::ComptimeList(b))
+        | (TyKind::VariadicPack(a), TyKind::VariadicPack(b)) => ty_equal_modulo_origins(a, b),
         // Callable environments (`thin` vs `capturing[origin@N]`) and
         // parameter-name/convention spellings erase from the runtime ABI:
         // one two-word value shape serves every `def(...)` contract with the
         // same parameter/return/raising structure.
-        (Ty::Func(a_func), Ty::Func(b_func)) => {
+        (TyKind::Func(a_func), TyKind::Func(b_func)) => {
             let FuncTy {
                 params: a_params,
                 ret: a_ret,
@@ -299,7 +299,7 @@ pub(super) fn ty_equal_modulo_origins(a: &Ty, b: &Ty) -> bool {
                 error: b_error,
                 ..
             } = &**b_func;
-            let option_eq = |a: &Option<Box<Ty>>, b: &Option<Box<Ty>>| match (a, b) {
+            let option_eq = |a: &Option<Ty>, b: &Option<Ty>| match (a, b) {
                 (Some(a), Some(b)) => ty_equal_modulo_origins(a, b),
                 (None, None) => true,
                 _ => false,
@@ -322,7 +322,7 @@ pub(super) fn ty_equal_modulo_origins(a: &Ty, b: &Ty) -> bool {
     }
 }
 
-/// Erase the callable-environment spelling from every `Ty::Func` in `ty`,
+/// Erase the callable-environment spelling from every `TyKind::Func` in `ty`,
 /// recursively. Environments (`thin` vs `capturing[...]`) are semantic
 /// origin facts with no runtime ABI: instance identity and binding solutions
 /// must not split on them (`capturing[_]` vs `capturing[origin@N]` is the
@@ -333,30 +333,30 @@ pub(super) fn ty_equal_modulo_origins(a: &Ty, b: &Ty) -> bool {
 /// collision. The top-level literal case is `bind_type`'s merge rule.
 pub(super) fn materialize_nested_literals(ty: &Ty) -> Ty {
     fn leaf(ty: &Ty) -> Ty {
-        match ty {
-            Ty::IntLiteral => Ty::Int,
-            Ty::FloatLiteral => Ty::Float64,
-            other => materialize_nested_literals(other),
+        match ty.kind() {
+            TyKind::IntLiteral => Ty::int(),
+            TyKind::FloatLiteral => Ty::float64(),
+            _ => materialize_nested_literals(ty),
         }
     }
-    match ty {
-        Ty::Struct(_, arguments) if arguments.is_closed() => ty.clone(),
-        Ty::Struct(name, arguments) => Ty::Struct(
+    match ty.kind() {
+        TyKind::Struct(..) if ty.is_closed() => ty.clone(),
+        TyKind::Struct(name, arguments) => ty.reusing(TyKind::Struct(
             name.clone(),
-            arguments.reusing(
-                arguments
-                    .iter()
-                    .map(|argument| match argument {
-                        TyArg::Ty(ty) => TyArg::Ty(leaf(ty)),
-                        other => other.clone(),
-                    })
-                    .collect(),
-            ),
-        ),
-        Ty::Tuple(elements) => Ty::Tuple(elements.iter().map(leaf).collect()),
-        Ty::RuntimePack(elements) => Ty::RuntimePack(elements.iter().map(leaf).collect()),
-        Ty::Variant(elements) => Ty::Variant(elements.iter().map(leaf).collect()),
-        other => other.clone(),
+            arguments
+                .iter()
+                .map(|argument| match argument {
+                    TyArg::Ty(ty) => TyArg::Ty(leaf(ty)),
+                    other => other.clone(),
+                })
+                .collect(),
+        )),
+        TyKind::Tuple(elements) => TyKind::Tuple(elements.iter().map(leaf).collect()).into(),
+        TyKind::RuntimePack(elements) => {
+            TyKind::RuntimePack(elements.iter().map(leaf).collect()).into()
+        }
+        TyKind::Variant(elements) => TyKind::Variant(elements.iter().map(leaf).collect()).into(),
+        _ => ty.clone(),
     }
 }
 
@@ -367,8 +367,23 @@ pub(super) fn canonicalize_callable(ty: &Ty) -> Ty {
 }
 
 pub(super) fn erase_callable_environments(ty: &mut Ty) {
-    match ty {
-        Ty::Func(func) => {
+    let erases = match ty.kind() {
+        TyKind::Func(_)
+        | TyKind::Tuple(_)
+        | TyKind::RuntimePack(_)
+        | TyKind::Variant(_)
+        | TyKind::ComptimeList(_)
+        | TyKind::VariadicPack(_)
+        | TyKind::Pointer { .. }
+        | TyKind::Ref(_) => true,
+        TyKind::Struct(..) => !ty.is_closed(),
+        _ => false,
+    };
+    if !erases {
+        return;
+    }
+    ty.update(|kind| match kind {
+        TyKind::Func(func) => {
             let FuncTy {
                 environment,
                 params,
@@ -394,34 +409,34 @@ pub(super) fn erase_callable_environments(ty: &mut Ty) {
                 erase_callable_environments(error);
             }
         }
-        Ty::Struct(_, args) if !args.is_closed() => {
-            let mut erased = args.to_vec();
+        TyKind::Struct(_, args) => {
+            let mut erased = args.clone();
             for arg in &mut erased {
                 if let TyArg::Ty(ty) = arg {
                     erase_callable_environments(ty);
                 }
             }
-            *args = args.reusing(erased);
+            *args = erased;
         }
-        Ty::Tuple(elements) | Ty::RuntimePack(elements) | Ty::Variant(elements) => {
+        TyKind::Tuple(elements) | TyKind::RuntimePack(elements) | TyKind::Variant(elements) => {
             for element in elements {
                 erase_callable_environments(element);
             }
         }
-        Ty::ComptimeList(element) | Ty::VariadicPack(element) => {
+        TyKind::ComptimeList(element) | TyKind::VariadicPack(element) => {
             erase_callable_environments(element);
         }
-        Ty::Pointer { element, .. } => erase_callable_environments(element),
-        Ty::Ref(reference) => erase_callable_environments(&mut reference.referent),
+        TyKind::Pointer { element, .. } => erase_callable_environments(element),
+        TyKind::Ref(reference) => erase_callable_environments(&mut reference.referent),
         _ => {}
-    }
+    });
 }
 
 /// The referent behind any number of reference layers — the VM dereferences
 /// `Value::Ref` operands before nominal dispatch.
 pub(super) fn peel_refs(ty: &Ty) -> &Ty {
     let mut ty = ty;
-    while let Ty::Ref(reference) = ty {
+    while let TyKind::Ref(reference) = ty.kind() {
         ty = &reference.referent;
     }
     ty

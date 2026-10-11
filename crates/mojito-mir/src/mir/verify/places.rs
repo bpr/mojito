@@ -2,6 +2,7 @@
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
+use mojito_types::types::TyKind;
 
 pub(super) fn verify_terminator(
     name: &str,
@@ -29,7 +30,7 @@ pub(super) fn verify_terminator(
                 }
             }
             if let Some(found) = function.reg_types.get(&cond.0)
-                && *found != Ty::Bool
+                && *found != TyKind::Bool
             {
                 errors.push(format!("{prefix}: branch condition has type {found}"));
             }
@@ -296,14 +297,14 @@ pub fn instruction_places_mut(instruction: &mut MirInstr) -> Vec<&mut MirPlace> 
 /// instead keep an owned root plus analytical `through` metadata, so only an
 /// actually reference-typed root is unwrapped.
 pub fn place_base_ty(place: &MirPlace) -> Option<&Ty> {
-    match &place.root_ty {
-        Some(Ty::Ref(reference))
+    match place.root_ty.as_ref().map(Ty::kind) {
+        Some(TyKind::Ref(reference))
             if place.through.is_some()
                 && (!place.proj.is_empty() || place.ty.as_ref() != place.root_ty.as_ref()) =>
         {
             Some(&reference.referent)
         }
-        other => other.as_ref(),
+        _ => place.root_ty.as_ref(),
     }
 }
 
@@ -356,9 +357,9 @@ pub(super) fn verify_place(
                                 )
                             )
                     });
-            let local_handle = match function.var_tys.get(&through) {
-                Some(Ty::Ref(_)) => true,
-                Some(Ty::Pointer { origin, .. }) => origin.as_origin().is_some(),
+            let local_handle = match function.var_tys.get(&through).map(Ty::kind) {
+                Some(TyKind::Ref(_)) => true,
+                Some(TyKind::Pointer { origin, .. }) => origin.as_origin().is_some(),
                 _ => false,
             };
             if !parameter_handle && !receiver_handle && !local_handle {
@@ -398,8 +399,8 @@ pub(super) fn verify_place(
                         register.0
                     ));
                 } else if let Some(index_ty) = function.reg_types.get(&register.0)
-                    && !types_compatible(index_ty, &Ty::Int)
-                    && !matches!(index_ty, Ty::UInt)
+                    && !types_compatible(index_ty, &Ty::int())
+                    && !matches!(index_ty.kind(), TyKind::UInt)
                 {
                     errors.push(format!(
                         "{prefix} place index register r{} has non-Indexer type {index_ty}",
@@ -414,7 +415,7 @@ pub(super) fn verify_place(
                             if !candidates.is_empty()
                                 && !candidates.iter().any(|candidate| {
                                 types_compatible(projected, candidate)
-                                    || matches!(candidate, Ty::Ref(reference) if types_compatible(projected, &reference.referent))
+                                    || matches!(candidate.kind(), TyKind::Ref(reference) if types_compatible(projected, &reference.referent))
                             }) =>
                         {
                             errors.push(format!(
@@ -429,8 +430,8 @@ pub(super) fn verify_place(
                     }
                 }
             }
-            Proj::ConstIndex(index) => match &current {
-                Some(Ty::Tuple(elements)) => match elements.get(*index) {
+            Proj::ConstIndex(index) => match current.as_ref().map(Ty::kind) {
+                Some(TyKind::Tuple(elements)) => match elements.get(*index) {
                     None => errors.push(format!(
                         "{prefix} place projects Tuple element {index} out of {}",
                         elements.len()
@@ -451,7 +452,7 @@ pub(super) fn verify_place(
                 // A concrete non-generic struct's field projection must agree
                 // with its declared layout; generic layouts would need
                 // substitution the verifier deliberately does not re-derive.
-                if let Some(Ty::Struct(struct_name, arguments)) = &current
+                if let Some(TyKind::Struct(struct_name, arguments)) = current.as_ref().map(Ty::kind)
                     && arguments.is_empty()
                     && let Some(declaration) = declarations.structure(struct_name)
                 {
@@ -481,7 +482,7 @@ pub(super) fn verify_place(
                 }
             }
             Proj::Variant(index) => {
-                if let Some(Ty::Variant(alternatives)) = &current
+                if let Some(TyKind::Variant(alternatives)) = current.as_ref().map(Ty::kind)
                     && let Some(index) = index.known()
                     && index >= alternatives.len()
                 {

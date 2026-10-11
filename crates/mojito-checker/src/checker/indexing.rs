@@ -4,6 +4,7 @@
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
+use mojito_types::types::TyKind;
 
 impl Checker {
     /// Validate an assignment **place** and return the type stored there. A place
@@ -42,15 +43,15 @@ impl Checker {
         match &place.kind {
             ExprKind::Identifier(name) => self.lookup(name).cloned(),
             ExprKind::Member { object, field } => self.infer(object).ok().and_then(|base| {
-                let Ty::Struct(name, arguments) = base else {
+                let TyKind::Struct(name, arguments) = base.kind() else {
                     return None;
                 };
-                let info = self.structs.get(&name)?;
+                let info = self.structs.get(name)?;
                 let (_, field_ty) = info
                     .fields
                     .iter()
                     .find(|(candidate, _)| candidate == field)?;
-                Some(substitute_at(field_ty, info, &arguments))
+                Some(substitute_at(field_ty, info, arguments))
             }),
             ExprKind::Index { object, index } => self.index_storage_ty(object, index),
             ExprKind::MultiIndex { .. } => {
@@ -76,13 +77,13 @@ impl Checker {
         if let Some((_, value)) = dict_elements(&object_ty) {
             return Some(value.clone());
         }
-        match object_ty {
-            Ty::Tuple(elements) => {
+        match object_ty.kind() {
+            TyKind::Tuple(elements) => {
                 let index = usize::try_from(self.eval_ct(index).ok()?.to_i64()?).ok()?;
                 elements.get(index).cloned()
             }
-            Ty::Pointer { element, .. } => Some(*element),
-            Ty::Simd { dtype, .. } => Some(simd_lane(&dtype)),
+            TyKind::Pointer { element, .. } => Some((*element).clone()),
+            TyKind::Simd { dtype, .. } => Some(simd_lane(dtype)),
             _ => None,
         }
     }
@@ -98,9 +99,9 @@ impl Checker {
                     return Err(TypeError::ImmutableBinding(name.clone()));
                 }
                 self.lookup(name)
-                    .map(|ty| match ty {
-                        Ty::Ref(reference) => (*reference.referent).clone(),
-                        other => other.clone(),
+                    .map(|ty| match ty.kind() {
+                        TyKind::Ref(reference) => reference.referent.clone(),
+                        _ => ty.clone(),
                     })
                     .ok_or_else(|| TypeError::UndefinedVariable(name.clone()))
             }
@@ -159,10 +160,10 @@ impl Checker {
                 // (as upstream: a `Pointer[T, MutOrigin]` field is writable
                 // from any receiver).
                 if matches!(index.kind, ExprKind::EmptySubscript) {
-                    return match self.infer(object)? {
-                        Ty::Pointer { element, origin } => {
-                            self.check_pointer_write(object, &origin)?;
-                            Ok(*element)
+                    return match (self.infer(object)?).kind() {
+                        TyKind::Pointer { element, origin } => {
+                            self.check_pointer_write(object, origin)?;
+                            Ok((*element).clone())
                         }
                         other => Err(TypeError::Unsupported(format!(
                             "an empty subscript ('value[]') is the pointer dereference; \
@@ -174,13 +175,14 @@ impl Checker {
                 // mutable capability (`check_pointer_write` below), not a
                 // mutable binding, so `def w(p: Pointer[Int]): p[0] = 2`
                 // writes through the parameter as upstream does.
-                let obj_ty = match self.infer(object)? {
-                    pointer @ Ty::Pointer { .. } => pointer,
+                let inferred = self.infer(object)?;
+                let obj_ty = match inferred.kind() {
+                    TyKind::Pointer { .. } => inferred,
                     _ => self.check_place(object)?,
                 };
                 // A subscript-shaped Variant projection target (`storage[T] = x`
                 // on a Variant-typed field, `v[String] = x`).
-                if let Ty::Variant(alternatives) = &obj_ty
+                if let TyKind::Variant(alternatives) = obj_ty.kind()
                     && let Some(arg) = self.variant_projection_type_argument(index)
                 {
                     let alternatives = alternatives.clone();
@@ -203,7 +205,7 @@ impl Checker {
                     return Ok(alternative);
                 }
                 self.prepare_index_argument(&obj_ty, index, "__setitem__", 0)?;
-                if let Ty::Struct(name, _) = &obj_ty
+                if let TyKind::Struct(name, _) = obj_ty.kind()
                     && !self.structs.contains_key(name)
                 {
                     if let Some(element) = list_element(&obj_ty) {
@@ -215,9 +217,9 @@ impl Checker {
                                 context: "index".to_string(),
                             });
                         }
-                        return Ok(match element.clone() {
-                            Ty::Ref(reference) => *reference.referent,
-                            element => element,
+                        return Ok(match element.clone().kind() {
+                            TyKind::Ref(reference) => reference.referent.clone(),
+                            _ => element.clone(),
                         });
                     }
                     if let Some((key, value)) = dict_elements(&obj_ty) {
@@ -236,9 +238,9 @@ impl Checker {
                         // Recorded at the written place's site, where the
                         // assignment lowering consumes invalidation facts.
                         self.record_interior_invalidation(place.source_span(), object);
-                        return Ok(match value.clone() {
-                            Ty::Ref(reference) => *reference.referent,
-                            value => value,
+                        return Ok(match value.clone().kind() {
+                            TyKind::Ref(reference) => reference.referent.clone(),
+                            _ => value.clone(),
                         });
                     }
                     if tuple_elements(&obj_ty).is_some() {
@@ -250,9 +252,9 @@ impl Checker {
                 // A user struct with `__setitem__(mut self, i, v)` is index-assignable:
                 // `c[i] = e` → `c.__setitem__(i, e)`. The index must coerce to the
                 // first parameter; the *target* type (what `e` must be) is the second.
-                if let Ty::Struct(_, _) = &obj_ty {
-                    let idx_ty = if self.has_index_normalization(index, &Ty::Int) {
-                        Ty::Int
+                if let TyKind::Struct(_, _) = obj_ty.kind() {
+                    let idx_ty = if self.has_index_normalization(index, &Ty::int()) {
+                        Ty::int()
                     } else {
                         self.infer(index)?
                     };
@@ -265,40 +267,40 @@ impl Checker {
                     self.subscript_descriptors
                         .borrow_mut()
                         .insert(place.source_span(), (vec![None], resolution.value_keyword));
-                    return Ok(match resolution.return_type {
+                    return Ok(match resolution.return_type.kind() {
                         // Indexing a reference-valued container reads and writes
                         // through the stored handle. The physical storage type
                         // remains available through `place_storage_ty`; the
                         // assignment target is the referent.
-                        Ty::Ref(reference) => *reference.referent,
-                        value => value,
+                        TyKind::Ref(reference) => reference.referent.clone(),
+                        _ => resolution.return_type,
                     });
                 }
                 // Compiler-private heterogeneous storage is built or replaced
                 // one element at a time: each compile-time index is a place
                 // of its own inside the writable storage.
-                if matches!(obj_ty, Ty::Tuple(_)) {
+                if matches!(obj_ty.kind(), TyKind::Tuple(_)) {
                     self.check_place(object)?;
                     return self.infer(place);
                 }
-                let elem = match &obj_ty {
+                let elem = match obj_ty.kind() {
                     // A pointer store `ptr[i] = e`: the target is the pointee type.
                     // An origin-bearing pointer designates one value and its
                     // provenance must carry mutable capability.
-                    Ty::Pointer { element, origin } => {
+                    TyKind::Pointer { element, origin } => {
                         self.check_pointer_offset(origin, index)?;
                         self.check_pointer_write(object, origin)?;
-                        (**element).clone()
+                        (*element).clone()
                     }
                     // A SIMD lane write `v[i] = e`: the target is the width-1 scalar.
-                    Ty::Simd { dtype, .. } => simd_lane(dtype),
+                    TyKind::Simd { dtype, .. } => simd_lane(dtype),
                     _ => return Err(TypeError::NotIndexable(obj_ty.to_string())),
                 };
                 let idx_ty = self.infer(index)?;
                 self.check_subscript_index(&obj_ty, &idx_ty, "index")?;
-                Ok(match elem {
-                    Ty::Ref(reference) => *reference.referent,
-                    other => other,
+                Ok(match elem.kind() {
+                    TyKind::Ref(reference) => reference.referent.clone(),
+                    _ => elem,
                 })
             }
             ExprKind::Slice {
@@ -315,8 +317,9 @@ impl Checker {
                 } else {
                     SliceKind::ContiguousSlice
                 };
-                let descriptor = Ty::Struct(kind.type_name().to_string(), Vec::new().into());
-                let resolution = self.resolve_struct_setitem(&object_type, &[descriptor], None)?;
+                let descriptor = TyKind::Struct(kind.type_name().to_string(), Vec::new());
+                let resolution =
+                    self.resolve_struct_setitem(&object_type, &[descriptor.into()], None)?;
                 if let Some(target) = resolution.lowered_name {
                     self.overload_targets
                         .borrow_mut()
@@ -333,10 +336,10 @@ impl Checker {
                 // dereference): the pointer store, exactly like `ptr[i] = e`.
                 if let Some((object, offset)) =
                     super::places::pointer_offset_keyword_subscript(place)
-                    && let Ty::Pointer { element, origin } = self.infer(object)?
+                    && let TyKind::Pointer { element, origin } = (self.infer(object)?).kind()
                 {
-                    self.check_pointer_offset(&origin, offset)?;
-                    self.check_pointer_write(object, &origin)?;
+                    self.check_pointer_offset(origin, offset)?;
+                    self.check_pointer_write(object, origin)?;
                     let idx_ty = self.infer(offset)?;
                     if !self.is_index_type(&idx_ty) {
                         return Err(TypeError::TypeMismatch {
@@ -345,9 +348,9 @@ impl Checker {
                             context: "index".to_string(),
                         });
                     }
-                    return Ok(match *element {
-                        Ty::Ref(reference) => *reference.referent,
-                        other => other,
+                    return Ok(match element.kind() {
+                        TyKind::Ref(reference) => reference.referent.clone(),
+                        _ => (*element).clone(),
                     });
                 }
                 let object_type = self.check_place(object)?;
@@ -368,8 +371,8 @@ impl Checker {
                                 "__setitem__",
                                 position,
                             )?;
-                            let argument_type = if self.has_index_normalization(value, &Ty::Int) {
-                                Ty::Int
+                            let argument_type = if self.has_index_normalization(value, &Ty::int()) {
+                                Ty::int()
                             } else {
                                 self.infer(value)?
                             };
@@ -392,8 +395,9 @@ impl Checker {
                             } else {
                                 SliceKind::ContiguousSlice
                             };
-                            argument_types
-                                .push(Ty::Struct(kind.type_name().to_string(), Vec::new().into()));
+                            argument_types.push(
+                                TyKind::Struct(kind.type_name().to_string(), Vec::new()).into(),
+                            );
                             descriptors.push(Some(kind));
                         }
                     }
@@ -415,18 +419,18 @@ impl Checker {
                 if !self.is_binding_mutable(name) {
                     return Err(TypeError::ImmutableBinding(name.clone()));
                 }
-                let Ty::Variant(alternatives) = self
+                let variant = self
                     .lookup(name)
                     .cloned()
-                    .ok_or_else(|| TypeError::UndefinedVariable(name.clone()))?
-                else {
+                    .ok_or_else(|| TypeError::UndefinedVariable(name.clone()))?;
+                let TyKind::Variant(alternatives) = variant.kind() else {
                     return Err(TypeError::InvalidAssignTarget(name.clone()));
                 };
-                let (index, alternative) = self.variant_alternative(&alternatives, args)?;
+                let (index, alternative) = self.variant_alternative(alternatives, args)?;
                 self.operation_adjustments.borrow_mut().insert(
                     place.source_span(),
                     mojito_checked::checked::SemanticAdjustment::VariantProject {
-                        alternatives,
+                        alternatives: alternatives.clone(),
                         index,
                     },
                 );
@@ -449,8 +453,8 @@ impl Checker {
                 };
                 let callee = format!("{kind} '{name}()'");
                 let span = place.source_span();
-                let reference = match &found {
-                    Ty::Ref(reference) => Some(reference.clone()),
+                let reference = match found.kind() {
+                    TyKind::Ref(reference) => Some(reference.clone()),
                     _ => self
                         .selected_calls
                         .borrow()
@@ -470,7 +474,7 @@ impl Checker {
                         if reference.mutability != mojito_types::origin::Mutability::Immutable =>
                     {
                         self.reference_value_uses.borrow_mut().insert(span, true);
-                        Ok(*reference.referent)
+                        Ok(reference.referent)
                     }
                     Some(_) => Err(TypeError::ImmutableBinding(format!(
                         "immutable reference returned by {callee}"
@@ -492,7 +496,7 @@ impl Checker {
     ) -> Result<(), TypeError> {
         for bound in [lower, upper, step].into_iter().flatten() {
             let found = self.infer(bound)?;
-            if !coerces(&found, &Ty::Int) {
+            if !coerces(&found, &Ty::int()) {
                 return Err(TypeError::TypeMismatch {
                     expected: "Int".to_string(),
                     found: found.to_string(),
@@ -528,7 +532,7 @@ impl Checker {
         }
         self.expression_types.borrow_mut().insert(
             expression.source_span(),
-            Ty::Struct(kind.type_name().to_string(), Vec::new().into()),
+            TyKind::Struct(kind.type_name().to_string(), Vec::new()).into(),
         );
         expression
     }
@@ -543,10 +547,10 @@ impl Checker {
     pub(super) fn is_synthetic_slice_descriptor(&self, expression: &Expr) -> bool {
         matches!(expression.kind, ExprKind::None)
             && matches!(
-                self.expression_types
+                (self.expression_types
                     .borrow()
-                    .get(&expression.source_span()),
-                Some(Ty::Struct(name, args))
+                    .get(&expression.source_span())).map(Ty::kind),
+                Some(TyKind::Struct(name, args))
                     if matches!(
                         name.as_str(),
                         "Slice" | "ContiguousSlice" | "StridedSlice"
@@ -570,7 +574,8 @@ impl Checker {
             }
             ExprKind::Index { object, index } => {
                 let object_ty = self.infer(object)?;
-                if !matches!(&object_ty, Ty::Struct(name, _) if self.structs.contains_key(name)) {
+                if !matches!(object_ty.kind(), TyKind::Struct(name, _) if self.structs.contains_key(name))
+                {
                     return Ok(None);
                 }
                 // A base that is itself a reference result (`v[List[Int]][0]
@@ -593,7 +598,8 @@ impl Checker {
                 explicit_step,
             } => {
                 let object_ty = self.infer(object)?;
-                if !matches!(&object_ty, Ty::Struct(name, _) if self.structs.contains_key(name)) {
+                if !matches!(object_ty.kind(), TyKind::Struct(name, _) if self.structs.contains_key(name))
+                {
                     return Ok(None);
                 }
                 self.check_slice_bounds(lower.as_deref(), upper.as_deref(), step.as_deref())?;
@@ -610,7 +616,8 @@ impl Checker {
                 args: source,
             } => {
                 let object_ty = self.infer(object)?;
-                if !matches!(&object_ty, Ty::Struct(name, _) if self.structs.contains_key(name)) {
+                if !matches!(object_ty.kind(), TyKind::Struct(name, _) if self.structs.contains_key(name))
+                {
                     return Ok(None);
                 }
                 let mut arguments = Vec::with_capacity(source.len());
@@ -669,7 +676,7 @@ impl Checker {
         // writes through a mutable-reference-returning `__getitem__` (upstream
         // `Array` has no setter). Slice and multi-index assignment keep the
         // setter requirement.
-        let has_setitem = matches!(&object_ty, Ty::Struct(name, _) if self
+        let has_setitem = matches!(object_ty.kind(), TyKind::Struct(name, _) if self
             .structs
             .get(name)
             .is_some_and(|info| info.methods.contains_key("__setitem__")));
@@ -737,9 +744,9 @@ impl Checker {
         self.subscript_descriptors
             .borrow_mut()
             .insert(target.source_span(), (descriptors, value_keyword));
-        let target_ty = match target_ty {
-            Ty::Ref(reference) => *reference.referent,
-            ty => ty,
+        let target_ty = match target_ty.kind() {
+            TyKind::Ref(reference) => reference.referent.clone(),
+            _ => target_ty,
         };
         self.expression_types
             .borrow_mut()
@@ -833,7 +840,7 @@ impl Checker {
         index_arguments: &[Expr],
         value: &Expr,
     ) -> Result<bool, TypeError> {
-        let Ty::Struct(name, type_arguments) = receiver else {
+        let TyKind::Struct(name, type_arguments) = receiver.kind() else {
             return Err(TypeError::NotIndexable(receiver.to_string()));
         };
         let info = self
@@ -872,11 +879,11 @@ impl Checker {
                 .collect::<Vec<_>>();
             let receiver_variadic = signature
                 .variadic
-                .as_deref()
+                .as_ref()
                 .map(|parameter| substitute(parameter, &receiver_substitution));
             let receiver_kw_variadic = signature
                 .kw_variadic
-                .as_deref()
+                .as_ref()
                 .map(|parameter| substitute(parameter, &receiver_substitution));
             for (value_keyword, arguments, keywords) in shapes {
                 let Ok((params, variadic, kw_variadic, _, method_arguments)) = self
@@ -956,18 +963,18 @@ impl Checker {
             SliceKind::ContiguousSlice
         };
         let object_type = self.infer(object)?;
-        let result = match &object_type {
+        let result = match object_type.kind() {
             // Positional slicing on a StringLiteral value is gone at the
             // audited head along with nominal String positional slicing;
             // only the keyword-unit spellings remain.
-            Ty::StringLiteral => {
+            TyKind::StringLiteral => {
                 return Err(TypeError::Unsupported(
                     "String positional slicing was removed in current Mojo; spell the \
                      unit explicitly: 's[byte=a:b]' or 's[codepoint=a:b]'"
                         .to_string(),
                 ));
             }
-            Ty::Struct(name, _)
+            TyKind::Struct(name, _)
                 if !self.structs.contains_key(name) && list_element(&object_type).is_some() =>
             {
                 object_type.clone()
@@ -975,7 +982,7 @@ impl Checker {
             // Positional String slicing was removed in current Mojo (like
             // bare positional `s[i]`): the byte or codepoint unit is spelled
             // explicitly through a keyword slice.
-            Ty::Struct(name, arguments)
+            TyKind::Struct(name, arguments)
                 if arguments.is_empty() && mojito_symbol::symbol::is_stdlib_string_struct(name) =>
             {
                 return Err(TypeError::Unsupported(
@@ -984,7 +991,7 @@ impl Checker {
                         .to_string(),
                 ));
             }
-            Ty::Struct(..) | Ty::Param { .. } => {
+            TyKind::Struct(..) | TyKind::Param { .. } => {
                 let descriptor = self.synthetic_slice_descriptor(&span, 0, kind);
                 self.infer_method_call(
                     &span,
@@ -1033,7 +1040,7 @@ impl Checker {
         // `ptr[unsafe_offset=i]` is current Mojo's keyword spelling of the
         // indexed dereference (the positional `ptr[i]` is its deprecated
         // form). It is the only keyword subscript a pointer has.
-        if let Ty::Pointer { element, origin } = &object_type {
+        if let TyKind::Pointer { element, origin } = object_type.kind() {
             if let [SubscriptArg::Keyword { name, value }] = arguments
                 && name == "unsafe_offset"
             {
@@ -1047,7 +1054,7 @@ impl Checker {
                     });
                 }
                 self.materialize_temporary_holder(object, false);
-                return Ok((**element).clone());
+                return Ok((*element).clone());
             }
             return Err(TypeError::Unsupported(
                 "a Pointer keyword subscript is spelled exactly \
@@ -1055,7 +1062,10 @@ impl Checker {
                     .to_string(),
             ));
         }
-        if !matches!(object_type, Ty::Struct(..) | Ty::Param { .. }) {
+        if !matches!(
+            object_type.kind(),
+            TyKind::Struct(..) | TyKind::Param { .. }
+        ) {
             return Err(TypeError::NotIndexable(object_type.to_string()));
         }
         let mut actual_arguments = Vec::with_capacity(arguments.len());
@@ -1162,7 +1172,7 @@ impl Checker {
         arguments: &[Ty],
         value: Option<&Ty>,
     ) -> Result<SubscriptResolution, TypeError> {
-        let Ty::Struct(name, type_arguments) = receiver else {
+        let TyKind::Struct(name, type_arguments) = receiver.kind() else {
             return Err(TypeError::NotIndexable(receiver.to_string()));
         };
         let info = self
@@ -1200,7 +1210,7 @@ impl Checker {
             }
             let variadic = signature
                 .variadic
-                .as_deref()
+                .as_ref()
                 .map(|parameter| substitute(parameter, &substitution));
 
             let (value_index, value_keyword, fixed_index_count) = if variadic.is_some() {
@@ -1338,9 +1348,9 @@ impl Checker {
         // select the subscript on the referent type; the VM reads through
         // the handle at dispatch (the read twin of the ref-field store's
         // second dereference).
-        let obj_ty = match obj_ty {
-            Ty::Ref(reference) => (*reference.referent).clone(),
-            other => other,
+        let obj_ty = match obj_ty.kind() {
+            TyKind::Ref(reference) => reference.referent.clone(),
+            _ => obj_ty,
         };
         // The empty subscript `p[]` dereferences a pointer at offset 0 (always
         // in provenance, so no offset check). A nominal receiver may declare a
@@ -1348,7 +1358,7 @@ impl Checker {
         // the EmptySubscript node is syntax-only and is not passed as an
         // ordinary argument.
         if matches!(index.kind, ExprKind::EmptySubscript) {
-            if matches!(&obj_ty, Ty::Struct(name, _)
+            if matches!(obj_ty.kind(), TyKind::Struct(name, _)
             if self.structs.get(name).is_some_and(|info| {
                 info.methods.get("__getitem__").is_some_and(|methods| {
                     methods.iter().any(|method| method.has_self && method.params.is_empty())
@@ -1361,10 +1371,10 @@ impl Checker {
                     MethodCallArguments::ordinary(&[], &[]),
                 );
             }
-            return match &obj_ty {
-                Ty::Pointer { element, .. } => {
+            return match obj_ty.kind() {
+                TyKind::Pointer { element, .. } => {
                     self.materialize_temporary_holder(object, false);
-                    Ok((**element).clone())
+                    Ok((*element).clone())
                 }
                 other => Err(TypeError::Unsupported(format!(
                     "an empty subscript ('value[]') is the pointer dereference; \
@@ -1396,7 +1406,7 @@ impl Checker {
         // structs. Pass the source index as a checked value parameter and no
         // runtime argument; ordinary generic-method specialization then leaves
         // an exact callable target for HIR/MIR.
-        if let Ty::Struct(name, _) = &obj_ty
+        if let TyKind::Struct(name, _) = obj_ty.kind()
             && self
                 .structs
                 .get(name)
@@ -1409,22 +1419,23 @@ impl Checker {
                 "__getitem_param__",
                 MethodCallArguments::parameterized(&parameter_arguments, &[], &[]),
             )?;
-            return Ok(match result {
-                Ty::Ref(reference) => *reference.referent,
-                value => value,
+            return Ok(match result.kind() {
+                TyKind::Ref(reference) => reference.referent.clone(),
+                _ => result,
             });
         }
         // A tuple is heterogeneous, so its index must be a **compile-time** `Int`
         // constant — the result type is that element's type.
-        let tuple_elements = tuple_elements(&obj_ty).or_else(|| match &obj_ty {
+        let tuple_elements = tuple_elements(&obj_ty).or_else(|| match obj_ty.kind() {
             // Compiler-private heterogeneous pack storage uses the same static
             // per-index typing rule as public Tuple, but never method dispatch.
-            Ty::Tuple(elements) => Some(elements.iter().collect()),
+            TyKind::Tuple(elements) => Some(elements.iter().collect()),
             _ => None,
         });
         // Storage over a pack that is still a parameter: the dependent
         // element at a compile-time index.
-        if let Some([Ty::Param { binder, .. }]) = tuple_elements.as_deref()
+        if let Some([pack]) = tuple_elements.as_deref()
+            && let TyKind::Param { binder, .. } = pack.kind()
             && binder.name.starts_with('*')
             && let Some(elems) = &tuple_elements
         {
@@ -1448,9 +1459,9 @@ impl Checker {
                     context: "tuple index".to_string(),
                 });
             }
-            return Ok(match elems[i as usize] {
-                Ty::Ref(reference) => (*reference.referent).clone(),
-                element => element.clone(),
+            return Ok(match elems[i as usize].kind() {
+                TyKind::Ref(reference) => reference.referent.clone(),
+                _ => elems[i as usize].clone(),
             });
         }
         // A homogeneous runtime variadic collector is compiler-private Tuple
@@ -1458,12 +1469,12 @@ impl Checker {
         // its index may vary at runtime without changing the result type.
         // A heterogeneous pack that is still a parameter (`*args: *Ts`) has
         // one dependent element type per compile-time index.
-        if let Ty::VariadicPack(element) = &obj_ty
+        if let TyKind::VariadicPack(element) = obj_ty.kind()
             && let Some(pack) = mojito_types::types::pack_spread(std::slice::from_ref(element))
         {
             return self.pack_element_type(pack, index);
         }
-        if let Ty::VariadicPack(element) = &obj_ty {
+        if let TyKind::VariadicPack(element) = obj_ty.kind() {
             let idx_ty = self.infer(index)?;
             if !self.is_index_type(&idx_ty) {
                 return Err(TypeError::TypeMismatch {
@@ -1472,12 +1483,12 @@ impl Checker {
                     context: "variadic-pack index".to_string(),
                 });
             }
-            return Ok(match &**element {
-                Ty::Ref(reference) => (*reference.referent).clone(),
-                element => element.clone(),
+            return Ok(match element.kind() {
+                TyKind::Ref(reference) => reference.referent.clone(),
+                _ => element.clone(),
             });
         }
-        if let Ty::Struct(name, _) = &obj_ty
+        if let TyKind::Struct(name, _) = obj_ty.kind()
             && self.is_abstract_struct(name)
         {
             // A discovery-round abstract scalar range subscripts by Int to
@@ -1505,9 +1516,9 @@ impl Checker {
                     });
                 }
                 self.record_interior_reference(span, object, "element");
-                return Ok(match element.clone() {
-                    Ty::Ref(reference) => *reference.referent,
-                    element => element,
+                return Ok(match element.clone().kind() {
+                    TyKind::Ref(reference) => reference.referent.clone(),
+                    _ => element.clone(),
                 });
             }
             if let Some((key, value)) = dict_elements(&obj_ty) {
@@ -1520,16 +1531,16 @@ impl Checker {
                     });
                 }
                 self.record_replacing_interior_reference(span, object, "value");
-                return Ok(match value.clone() {
-                    Ty::Ref(reference) => *reference.referent,
-                    value => value,
+                return Ok(match value.clone().kind() {
+                    TyKind::Ref(reference) => reference.referent.clone(),
+                    _ => value.clone(),
                 });
             }
         }
         // A user struct with `__getitem__` is subscriptable: `c[i]` →
         // `c.__getitem__(i)`, typed by the method (the index need not be `Int`).
-        if matches!(obj_ty, Ty::Struct(..)) {
-            if let Ty::Struct(name, _) = &obj_ty
+        if matches!(obj_ty.kind(), TyKind::Struct(..)) {
+            if let TyKind::Struct(name, _) = obj_ty.kind()
                 && self
                     .structs
                     .get(name)
@@ -1546,9 +1557,9 @@ impl Checker {
                 // inference reads through it to `T`; `RefDecl` and aggregate
                 // storage recover the checked handle from the interior-origin
                 // and place-type facts recorded above.
-                return Ok(match result {
-                    Ty::Ref(reference) => *reference.referent,
-                    value => value,
+                return Ok(match result.kind() {
+                    TyKind::Ref(reference) => reference.referent.clone(),
+                    _ => result,
                 });
             }
             return Err(TypeError::NotIndexable(obj_ty.to_string()));
@@ -1557,7 +1568,7 @@ impl Checker {
         // concrete nominal receivers. This retains the requirement's error,
         // convention, capture, and reference-origin contract instead of
         // projecting only its parameter/result types.
-        if matches!(obj_ty, Ty::Param { .. }) {
+        if matches!(obj_ty.kind(), TyKind::Param { .. }) {
             return self.infer_method_call(
                 &span,
                 object,
@@ -1566,20 +1577,20 @@ impl Checker {
             );
         }
         // The result of indexing: a SIMD lane, a List element, or a pointer pointee.
-        let result = match &obj_ty {
-            Ty::Simd { dtype, .. } => simd_lane(dtype),
-            Ty::Pointer { element, origin } => {
+        let result = match obj_ty.kind() {
+            TyKind::Simd { dtype, .. } => simd_lane(dtype),
+            TyKind::Pointer { element, origin } => {
                 self.check_pointer_offset(origin, index)?;
                 self.materialize_temporary_holder(object, false);
-                (**element).clone()
+                (*element).clone()
             }
             _ => return Err(TypeError::NotIndexable(obj_ty.to_string())),
         };
         let idx_ty = self.infer(index)?;
         self.check_subscript_index(&obj_ty, &idx_ty, "index")?;
-        Ok(match result {
-            Ty::Ref(reference) => *reference.referent,
-            other => other,
+        Ok(match result.kind() {
+            TyKind::Ref(reference) => reference.referent.clone(),
+            _ => result,
         })
     }
 
@@ -1587,7 +1598,7 @@ impl Checker {
     /// subscript read — the shared entry for `infer_index`'s tail and the bare
     /// element-call re-dispatch, generalized to the multi-index arity. Records
     /// the interior-reference fact for list/dict-backed receivers and returns
-    /// the getter's raw result type; callers read through `Ty::Ref`.
+    /// the getter's raw result type; callers read through `TyKind::Ref`.
     pub(super) fn infer_struct_getitem_call(
         &self,
         span: SourceSpan,
@@ -1705,8 +1716,8 @@ impl Checker {
             ExprKind::Index { object, .. }
             | ExprKind::Slice { object, .. }
             | ExprKind::MultiIndex { object, .. } => {
-                if let Ty::Pointer { origin, .. } = self.infer(object)? {
-                    return self.check_pointer_write(object, &origin);
+                if let TyKind::Pointer { origin, .. } = (self.infer(object)?).kind() {
+                    return self.check_pointer_write(object, origin);
                 }
                 self.check_pointer_derefs(object)
             }
@@ -1727,9 +1738,9 @@ impl Checker {
         idx_ty: &Ty,
         context: &str,
     ) -> Result<(), TypeError> {
-        let lane = matches!(receiver, Ty::Simd { .. });
+        let lane = matches!(receiver.kind(), TyKind::Simd { .. });
         let accepted = if lane {
-            coerces(idx_ty, &Ty::Int)
+            coerces(idx_ty, &Ty::int())
         } else {
             self.is_index_type(idx_ty)
         };
@@ -1748,9 +1759,9 @@ impl Checker {
     /// concrete conformer supplies `__mlir_index__() -> __mlir_type.index`
     /// (represented as `Int`).
     pub(super) fn is_index_type(&self, ty: &Ty) -> bool {
-        coerces(ty, &Ty::Int)
-            || matches!(ty, Ty::Param { bounds, .. } if bounds.iter().any(|bound| bound == "Indexer"))
-            || matches!(ty, Ty::Struct(name, _)
+        coerces(ty, &Ty::int())
+            || matches!(ty.kind(), TyKind::Param { bounds, .. } if bounds.iter().any(|bound| bound == "Indexer"))
+            || matches!(ty.kind(), TyKind::Struct(name, _)
             if self.structs.get(name).is_some_and(|info| {
                 info.methods
                     .get("__mlir_index__")
@@ -1762,8 +1773,8 @@ impl Checker {
     /// abstract trait symbol is retained for a bounded generic and retargeted by
     /// ordinary checked method dispatch once its runtime receiver is known.
     pub(super) fn index_normalization_target(&self, ty: &Ty) -> Option<String> {
-        match ty {
-            Ty::Struct(name, arguments) => {
+        match ty.kind() {
+            TyKind::Struct(name, arguments) => {
                 let info = self.structs.get(name)?;
                 let substitution = struct_subst(&info.decls, arguments);
                 let methods = info.methods.get("__mlir_index__")?;
@@ -1771,7 +1782,7 @@ impl Checker {
                     method.has_self
                         && method.params.is_empty()
                         && method.ret_mlir_index
-                        && substitute(&method.ret, &substitution) == Ty::Int
+                        && substitute(&method.ret, &substitution) == TyKind::Int
                 })?;
                 Some(if methods.len() == 1 {
                     format!("{name}.__mlir_index__")
@@ -1784,11 +1795,11 @@ impl Checker {
                     )
                 })
             }
-            Ty::Param { bounds, .. } => {
+            TyKind::Param { bounds, .. } => {
                 let methods = self.lookup_trait_methods(bounds, "__mlir_index__", 0);
                 let selected = methods
                     .iter()
-                    .find(|method| method.params.is_empty() && method.ret == Ty::Int)?;
+                    .find(|method| method.params.is_empty() && method.ret == TyKind::Int)?;
                 Some(method_lowered_name(
                     "__trait_dispatch",
                     "__mlir_index__",
@@ -1801,7 +1812,7 @@ impl Checker {
     }
 
     pub(super) fn has_index_normalization(&self, expression: &Expr, expected: &Ty) -> bool {
-        *expected == Ty::Int
+        *expected == TyKind::Int
             && self
                 .implicit_conversions
                 .borrow()
@@ -1826,14 +1837,17 @@ impl Checker {
         position: usize,
     ) -> Result<(), TypeError> {
         let actual = self.infer(expression)?;
-        if coerces(&actual, &Ty::Int) {
+        if coerces(&actual, &Ty::int()) {
             return Ok(());
         }
         let Some(target) = self.index_normalization_target(&actual) else {
             return Ok(());
         };
-        let Ty::Struct(name, arguments) = receiver else {
-            if matches!(receiver, Ty::Pointer { .. } | Ty::VariadicPack(_)) {
+        let TyKind::Struct(name, arguments) = receiver.kind() else {
+            if matches!(
+                receiver.kind(),
+                TyKind::Pointer { .. } | TyKind::VariadicPack(_)
+            ) {
                 self.implicit_conversions
                     .borrow_mut()
                     .insert(expression.source_span(), target);
@@ -1851,7 +1865,7 @@ impl Checker {
         let mut accepts_int = false;
         for signature in signatures.iter().filter(|signature| signature.has_self) {
             let parameter = match signature.variadic_index {
-                Some(variadic_index) if position >= variadic_index => signature.variadic.as_deref(),
+                Some(variadic_index) if position >= variadic_index => signature.variadic.as_ref(),
                 _ => signature.params.get(position),
             };
             let Some(parameter) = parameter else {
@@ -1862,7 +1876,7 @@ impl Checker {
                 || self
                     .implicit_conversion_target(&actual, &expected)?
                     .is_some();
-            accepts_int |= expected == Ty::Int;
+            accepts_int |= expected == TyKind::Int;
         }
         if !accepts_source && accepts_int {
             self.implicit_conversions
@@ -1896,18 +1910,21 @@ impl Checker {
                     .iter()
                     .find(|d| d.name().trim_start_matches('*') == field)
             {
-                return Ok(Ty::VariadicPack(ty.clone()));
+                return Ok(TyKind::VariadicPack(ty.clone()).into());
             }
             return match self.self_decls.iter().find(|d| d.name() == field) {
                 // A vector-, struct-, or `DType`-typed value parameter
                 // (`AHasher[key: U256]`, `Tagged[e: Extent]`) reads as its
                 // declared type; the scalar kinds read as `Int`.
                 Some(ParamDecl::Value { ty, .. })
-                    if matches!(**ty, Ty::Simd { .. } | Ty::Struct(..) | Ty::Dtype) =>
+                    if matches!(
+                        *ty.kind(),
+                        TyKind::Simd { .. } | TyKind::Struct(..) | TyKind::Dtype
+                    ) =>
                 {
-                    Ok((**ty).clone())
+                    Ok((*ty).clone())
                 }
-                Some(ParamDecl::Value { .. }) => Ok(Ty::Int),
+                Some(ParamDecl::Value { .. }) => Ok(Ty::int()),
                 _ => self
                     .read_type_member(span, object, field)
                     .unwrap_or_else(|| Err(TypeError::UnknownSelfParam(field.to_string()))),
@@ -1918,7 +1935,7 @@ impl Checker {
                 span,
                 mojito_checked::checked::SemanticAdjustment::DtypeConstant { dtype: dtype? },
             );
-            return Ok(Ty::Dtype);
+            return Ok(Ty::dtype());
         }
         // `Ts.length` of a pack that is still a parameter is an `Int` no
         // instance has fixed yet.
@@ -1926,7 +1943,7 @@ impl Checker {
             && let Some(pack) = self.unbound_pack_named(object)
         {
             self.record_pack_query_value(span, &pack, mojito_types::param_expr::PackQuery::Length);
-            return Ok(Ty::Int);
+            return Ok(Ty::int());
         }
         // The length of a `TypeList` value, or of a list computed from
         // packs, is the `Int` its elements fix.
@@ -1941,7 +1958,7 @@ impl Checker {
                     materialized: None,
                 },
             );
-            return Ok(Ty::Int);
+            return Ok(Ty::int());
         }
         if let Some(read) = self.read_type_member(span.clone(), object, field) {
             return read;
@@ -1952,7 +1969,7 @@ impl Checker {
         // binding.
         if self.comptime_positions.get() == 0
             && self.is_parameter_read(object)
-            && matches!(self.infer(object)?, Ty::Struct(_, arguments) if arguments.is_empty())
+            && matches!((self.infer(object)?).kind(), TyKind::Struct(_, arguments) if arguments.is_empty())
             && let Some(value) = self.struct_value_field(object, field)
         {
             let value = value?;
@@ -1982,13 +1999,10 @@ impl Checker {
                 reference.mutability == mojito_types::origin::Mutability::Mutable,
             );
         }
-        if matches!(&obj_ty, Ty::Struct(name, args) if matches!(name.as_str(), "Slice" | "ContiguousSlice" | "StridedSlice") && args.is_empty())
+        if matches!(obj_ty.kind(), TyKind::Struct(name, args) if matches!(name.as_str(), "Slice" | "ContiguousSlice" | "StridedSlice") && args.is_empty())
             && matches!(field, "start" | "end" | "step")
         {
-            return Ok(Ty::Struct(
-                "Optional".to_string(),
-                vec![TyArg::Ty(Ty::Int)].into(),
-            ));
+            return Ok(TyKind::Struct("Optional".to_string(), vec![TyArg::Ty(Ty::int())]).into());
         }
         // `v.length` on a SIMD value (a native scalar is a width-1 vector)
         // is upstream's lane-count parameter: an `Int` constant when known,
@@ -2000,7 +2014,7 @@ impl Checker {
                 span,
                 mojito_checked::checked::SemanticAdjustment::SimdLength { width },
             );
-            return Ok(Ty::Int);
+            return Ok(Ty::int());
         }
         // `v.dtype` is upstream's lane-dtype parameter, the slot itself.
         if field == "dtype"
@@ -2010,18 +2024,19 @@ impl Checker {
                 span,
                 mojito_checked::checked::SemanticAdjustment::DtypeConstant { dtype: dtype? },
             );
-            return Ok(Ty::Dtype);
+            return Ok(Ty::dtype());
         }
-        if let Ty::Struct(sname, targs) = &obj_ty {
+        if let TyKind::Struct(sname, targs) = obj_ty.kind() {
             let info = self.structs.get(sname).ok_or_else(|| {
                 TypeError::InvariantViolation(format!("struct '{sname}' was not registered"))
             })?;
             if let Some((_, fty)) = info.fields.iter().find(|(n, _)| n == field) {
                 // The receiver's arguments — origin tail included — bind the
                 // field's declared type (`Cell[Self.o]` on a `Wrap[origin_of(xs)]`).
-                return Ok(match substitute_at(fty, info, targs) {
-                    Ty::Ref(reference) => *reference.referent,
-                    value => value,
+                let value = substitute_at(fty, info, targs);
+                return Ok(match value.kind() {
+                    TyKind::Ref(reference) => reference.referent.clone(),
+                    _ => value,
                 });
             }
         }
@@ -2181,11 +2196,11 @@ impl Checker {
 /// are width-1 vectors and `UInt`'s `DType.uint` has no Mojito dtype. `None`
 /// for any other type: a `Bool` or a literal type has no `dtype`.
 pub(super) fn simd_dtype(ty: &Ty) -> Option<Result<SimdDtype, TypeError>> {
-    match ty {
-        Ty::Int => Some(Ok(SimdDtype::Known(mojito_ast::ast::Dtype::Int))),
-        Ty::Float64 => Some(Ok(SimdDtype::Known(mojito_ast::ast::Dtype::Float64))),
-        Ty::Simd { dtype, .. } => Some(Ok(dtype.clone())),
-        Ty::UInt => Some(Err(TypeError::Unsupported(
+    match ty.kind() {
+        TyKind::Int => Some(Ok(SimdDtype::Known(mojito_ast::ast::Dtype::Int))),
+        TyKind::Float64 => Some(Ok(SimdDtype::Known(mojito_ast::ast::Dtype::Float64))),
+        TyKind::Simd { dtype, .. } => Some(Ok(dtype.clone())),
+        TyKind::UInt => Some(Err(TypeError::Unsupported(
             "DType.uint is not supported yet".to_string(),
         ))),
         _ => None,

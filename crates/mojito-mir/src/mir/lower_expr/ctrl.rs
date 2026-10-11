@@ -3,6 +3,7 @@
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
+use mojito_types::types::TyKind;
 
 impl Flatten<'_> {
     /// A condition whose value is a `Boolable` struct (checker-marked
@@ -26,7 +27,7 @@ impl Flatten<'_> {
 
     /// The `Bool(x)` call both backends dispatch to a struct's `__bool__`.
     pub(in crate::mir) fn bool_conversion(&mut self, span: SourceSpan, value: Reg) -> Reg {
-        let dest = self.fresh_typed(span, None, Ty::Bool);
+        let dest = self.fresh_typed(span, None, Ty::bool());
         self.emit(MirInstr::Call {
             dest,
             func: FuncRef::named("Bool"),
@@ -375,7 +376,7 @@ impl Flatten<'_> {
             if loans.is_empty() || loans.len() == before {
                 continue;
             }
-            let marker = self.fresh_typed(e.source_span(), Some(dest_root), Ty::None);
+            let marker = self.fresh_typed(e.source_span(), Some(dest_root), Ty::none());
             match &dest_interior {
                 Some(domain) => {
                     self.transfer_domain_loans
@@ -401,7 +402,7 @@ impl Flatten<'_> {
         expression: &Expr,
         target: &Ty,
     ) -> VarId {
-        let Ty::Struct(name, _) = target else {
+        let TyKind::Struct(name, _) = target.kind() else {
             unreachable!("checked collection target is nominal")
         };
         let empty = self.fresh_typed(expression.source_span(), None, target.clone());
@@ -453,7 +454,7 @@ impl Flatten<'_> {
             var: collection,
             mode: UseMode::BorrowMut,
         });
-        let dest = self.fresh_typed(expression.source_span(), None, Ty::None);
+        let dest = self.fresh_typed(expression.source_span(), None, Ty::none());
         self.emit(MirInstr::MethodCall {
             dest,
             recv,

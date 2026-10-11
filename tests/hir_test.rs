@@ -2,6 +2,7 @@
 //! graph — block count, edges, and terminators — for each control-flow construct,
 //! since Phase 1 is about structure, not instruction contents.
 
+use mojito::Ty;
 use mojito::hir::{Cfg, Terminator};
 use mojito::{check_program, parse};
 
@@ -332,9 +333,9 @@ fn checked_hir_places_use_owner_identity_and_typed_projections() {
         })
         .expect("return expression");
     let place = expression.place.as_ref().expect("checked place");
-    assert!(matches!(place.root_ty, mojito::Ty::Struct(ref name, _) if name == "Cell"));
+    assert!(matches!(place.root_ty.kind(), mojito::TyKind::Struct(name, _) if name == "Cell"));
     assert_eq!(place.projections.len(), 1);
-    assert_eq!(place.ty, mojito::Ty::Int);
+    assert_eq!(place.ty, Ty::int());
 }
 
 #[test]
@@ -467,16 +468,23 @@ fn checked_hir_raising_iterator_has_explicit_exhaustion_result() {
         .copied()
         .find_map(|instruction| match instruction {
             mojito::hir::HirInstr::TryNext {
-                exhaustion: mojito::Ty::Struct(name, arguments),
+                exhaustion,
                 element_ty,
                 call,
                 ..
-            } if name == "StopIteration" && arguments.is_empty() => Some((element_ty, call)),
+            } if matches!(
+                exhaustion.kind(),
+                mojito::TyKind::Struct(name, arguments)
+                    if name == "StopIteration" && arguments.is_empty()
+            ) =>
+            {
+                Some((element_ty, call))
+            }
             _ => None,
         })
         .expect("typed TryNext");
-    assert_eq!(element_ty, &mojito::Ty::Int);
-    assert_eq!(&call.result_ty, &mojito::Ty::Int);
+    assert_eq!(element_ty, &Ty::int());
+    assert_eq!(&call.result_ty, &Ty::int());
     assert!(call.reference_result.is_none());
     assert!(!operations.iter().any(|instruction| matches!(
         instruction,
@@ -500,17 +508,17 @@ fn checked_hir_reference_yielding_try_next_retains_a_reference_result() {
         })
         .expect("reference-yielding TryNext");
     assert!(matches!(
-        element_ty,
-        mojito::Ty::Ref(reference) if reference.referent.as_ref() == &mojito::Ty::Int
+        element_ty.kind(),
+        mojito::TyKind::Ref(reference) if reference.referent == mojito::TyKind::Int
     ));
     assert!(matches!(
-        &call.result_ty,
-        mojito::Ty::Ref(reference) if reference.referent.as_ref() == &mojito::Ty::Int
+        call.result_ty.kind(),
+        mojito::TyKind::Ref(reference) if reference.referent == mojito::TyKind::Int
     ));
     assert_eq!(
         call.reference_result.as_ref(),
-        match &call.result_ty {
-            mojito::Ty::Ref(reference) => Some(reference),
+        match call.result_ty.kind() {
+            mojito::TyKind::Ref(reference) => Some(reference),
             _ => None,
         }
     );

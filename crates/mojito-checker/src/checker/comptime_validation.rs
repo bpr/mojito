@@ -8,6 +8,7 @@
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 use mojito_ast::ast::{ParamArg, SourceType};
+use mojito_types::types::TyKind;
 use mojito_types::types::{ConstraintOperand, GenericConstraint};
 
 /// The bundled `ParameterList`'s linked name, its implicit public identity.
@@ -284,7 +285,7 @@ impl Checker {
                     && args.len() == 2
                     && self
                         .comptime_type_operand(&args[0])?
-                        .is_some_and(|operand| !matches!(operand, Ty::Param { .. })) =>
+                        .is_some_and(|operand| !matches!(operand.kind(), TyKind::Param { .. })) =>
             {
                 let Some(trait_names) = mojito_ast::ast::trait_conjunction_names(&args[1]) else {
                     return Err(TypeError::Unsupported(
@@ -302,7 +303,7 @@ impl Checker {
                 // elaborator below MIR decides once the element is closed.
                 // A concrete type's conformance is a fact decided here.
                 let operand = self.comptime_type_operand(&args[0])?;
-                let Some(Ty::Dependent(dependent)) = operand else {
+                let Some(TyKind::Dependent(dependent)) = operand.as_ref().map(Ty::kind) else {
                     let Some(operand) = operand else {
                         return Ok(None);
                     };
@@ -456,9 +457,9 @@ impl Checker {
                 let Some(trait_names) = mojito_ast::ast::trait_conjunction_names(&args[1]) else {
                     return Ok(());
                 };
-                let key = match self.comptime_type_operand(&args[0])? {
-                    Some(Ty::Param { binder, .. }) => AssumedSubject::Binder(binder.id),
-                    Some(Ty::Dependent(dependent)) => {
+                let key = match self.comptime_type_operand(&args[0])?.as_ref().map(Ty::kind) {
+                    Some(TyKind::Param { binder, .. }) => AssumedSubject::Binder(binder.id.clone()),
+                    Some(TyKind::Dependent(dependent)) => {
                         AssumedSubject::Element(dependent.expr().clone())
                     }
                     _ => return Ok(()),
@@ -512,7 +513,7 @@ impl Checker {
         };
         let element = match (&bound, &names) {
             (Some(display), _) => display.element.clone(),
-            (None, Some(_)) => Ty::StringLiteral,
+            (None, Some(_)) => Ty::string_literal(),
             (None, None) => self.comptime_iteration_element(&iter)?,
         };
         let before = self.uninitialized.borrow().clone();
@@ -522,13 +523,13 @@ impl Checker {
         }
         let elements = self.closed_iteration_elements(&iter, &element);
         // A string element binds as a `String` value parameter does.
-        let element = match (&elements, element) {
-            (Some(_), Ty::Struct(name, args))
-                if args.is_empty() && mojito_types::types::is_stdlib_string_struct(&name) =>
+        let element = match (&elements, element.kind()) {
+            (Some(_), TyKind::Struct(name, args))
+                if args.is_empty() && mojito_types::types::is_stdlib_string_struct(name) =>
             {
-                Ty::StringLiteral
+                Ty::string_literal()
             }
-            (_, element) => element,
+            _ => element,
         };
         // A value pack still a parameter is its own sequence, as is a
         // constant the check lifted (`comptime D = {"a": f(1)}`), which the
@@ -560,18 +561,18 @@ impl Checker {
             && !matches!(&iter.kind, ExprKind::Call { name, .. } if name == "range")
             && self.applies_callable(&iter)
             && self.reads_compile_time_alone(&iter);
-        let element = match element {
-            Ty::Struct(name, args)
+        let element = match element.kind() {
+            TyKind::Struct(name, args)
                 if (evaluated || applied || requested)
                     && args.is_empty()
-                    && mojito_types::types::is_stdlib_string_struct(&name) =>
+                    && mojito_types::types::is_stdlib_string_struct(name) =>
             {
-                Ty::StringLiteral
+                Ty::string_literal()
             }
-            element => element,
+            _ => element,
         };
         let binds_index =
-            element == Ty::Int || sequence.is_some() || evaluated || applied || bound.is_some();
+            element == TyKind::Int || sequence.is_some() || evaluated || applied || bound.is_some();
         // The loop's variable must be a binder MIR carries.
         if !binds_index {
             return Err(TypeError::Unsupported(format!(
@@ -818,12 +819,13 @@ impl Checker {
         if raised {
             return None;
         }
-        let ty = match ty.ok()? {
-            Ty::Int | Ty::IntLiteral => Ty::Int,
-            Ty::Bool => Ty::Bool,
+        let ty = ty.ok()?;
+        let ty = match ty.kind() {
+            TyKind::Int | TyKind::IntLiteral => Ty::int(),
+            TyKind::Bool => Ty::bool(),
             // A struct-valued call is an application the elaborator runs and
             // materializes; no other struct expression lifts.
-            ty @ Ty::Struct(..) if called.is_some() => ty,
+            TyKind::Struct(..) if called.is_some() => ty,
             _ => return None,
         };
         let application = match called {
@@ -853,7 +855,7 @@ impl Checker {
         let result = self
             .ty_from_anno(&function.result)
             .ok()
-            .filter(|ty| matches!(ty, Ty::Int | Ty::Bool | Ty::Struct(..)))?;
+            .filter(|ty| matches!(ty.kind(), TyKind::Int | TyKind::Bool | TyKind::Struct(..)))?;
         (!function.raises).then(|| {
             self.param_context.apply(
                 &function.symbol,
@@ -947,7 +949,7 @@ impl Checker {
         };
         let instance = match &object.kind {
             ExprKind::Identifier(name) if name == "Self" => self.self_ty.clone().filter(
-                |ty| matches!(ty, Ty::Struct(owner, _) if applicable(template_name(owner))),
+                |ty| matches!(ty.kind(), TyKind::Struct(owner, _) if applicable(template_name(owner))),
             ),
             ExprKind::Identifier(name) => named(name, Vec::new()),
             ExprKind::TypeApply { name, args } => named(name, args.clone()),
@@ -964,8 +966,8 @@ impl Checker {
             },
             _ => None,
         }?;
-        match &instance {
-            Ty::Struct(owner, _) => Some((template_name(owner).to_string(), instance.clone())),
+        match instance.kind() {
+            TyKind::Struct(owner, _) => Some((template_name(owner).to_string(), instance.clone())),
             _ => None,
         }
     }
@@ -1172,8 +1174,8 @@ impl Checker {
             }
             // A bare type argument (`width[T]()`) names its binder.
             let type_parameter = self.tparams.iter().rev().find_map(|scope| scope.get(name));
-            match type_parameter {
-                Some(Ty::Param { binder, .. }) => {
+            match type_parameter.map(Ty::kind) {
+                Some(TyKind::Param { binder, .. }) => {
                     read.insert(binder.id.clone());
                     continue;
                 }
@@ -1253,8 +1255,8 @@ impl Checker {
         iter: &Expr,
         element: &Ty,
     ) -> Option<Vec<mojito_types::ct::CtValue>> {
-        let scalar = matches!(element, Ty::Int | Ty::Float64 | Ty::Bool)
-            || matches!(element, Ty::Struct(name, args)
+        let scalar = matches!(element.kind(), TyKind::Int | TyKind::Float64 | TyKind::Bool)
+            || matches!(element.kind(), TyKind::Struct(name, args)
                 if args.is_empty() && mojito_types::types::is_stdlib_string_struct(name));
         if !scalar && !self.parameter_aggregate_element(element) {
             return None;
@@ -1287,21 +1289,21 @@ impl Checker {
     fn parameter_aggregate_element(&self, element: &Ty) -> bool {
         let leaf = |ty: &Ty| {
             matches!(
-                ty,
-                Ty::Int
-                    | Ty::Float64
-                    | Ty::Bool
-                    | Ty::IntLiteral
-                    | Ty::FloatLiteral
-                    | Ty::StringLiteral
-            ) || matches!(ty, Ty::Struct(name, args)
+                ty.kind(),
+                TyKind::Int
+                    | TyKind::Float64
+                    | TyKind::Bool
+                    | TyKind::IntLiteral
+                    | TyKind::FloatLiteral
+                    | TyKind::StringLiteral
+            ) || matches!(ty.kind(), TyKind::Struct(name, args)
                 if args.is_empty() && mojito_types::types::is_stdlib_string_struct(name))
                 || self.parameter_aggregate_element(ty)
         };
         if let Some(elements) = mojito_types::types::tuple_elements(element) {
             return !elements.is_empty() && elements.into_iter().all(leaf);
         }
-        matches!(element, Ty::Struct(name, args) if args.is_empty()
+        matches!(element.kind(), TyKind::Struct(name, args) if args.is_empty()
         && self.structs.get(name).is_some_and(|info| {
             info.fieldwise_init
                 && info.decls.is_empty()
@@ -1418,7 +1420,7 @@ impl Checker {
                     .resolve_storage_annotation(annotation, super::StorageStrictness::AllowBare)?;
                 // Any other annotation converts the value, as a runtime
                 // binding's does (`comptime x: Float64 = i`).
-                if &expected != found && !matches!(expected, Ty::Int | Ty::Bool) {
+                if &expected != found && !matches!(expected.kind(), TyKind::Int | TyKind::Bool) {
                     return Ok(false);
                 }
                 if &expected != found {
@@ -1609,8 +1611,8 @@ impl Checker {
         // loop header reads element by element; one its annotation types as
         // another collection (`comptime L: List[Int] = [1, 2]`) is that
         // collection's value.
-        let annotated = matches!(application.meta().as_value(),
-            Some(Ty::Struct(collection, _)) if collection != mojito_types::types::ARRAY_TYPE_NAME);
+        let annotated = matches!(application.meta().as_value().map(Ty::kind),
+            Some(TyKind::Struct(collection, _)) if collection != mojito_types::types::ARRAY_TYPE_NAME);
         let meta = match &value.kind {
             ExprKind::ListLit(_) | ExprKind::TupleLit(_) if !annotated => {
                 match self.comptime_iteration_element(value) {
@@ -1764,7 +1766,7 @@ impl Checker {
                     ty,
                     callable_default: None,
                     ..
-                } if !matches!(ty.as_ref(), Ty::Func(_) | Ty::GenericFunc(_)) => {
+                } if !matches!(ty.kind(), TyKind::Func(_) | TyKind::GenericFunc(_)) => {
                     Some(super::annotations::value_parameter_expr(decl, ty))
                 }
                 ParamDecl::Value { .. } => None,
@@ -1774,8 +1776,8 @@ impl Checker {
             let packs = self.pack_params.get(level);
             let mut types: Vec<ParamExpr> = types
                 .values()
-                .filter_map(|ty| match ty {
-                    Ty::Param { binder, .. } => Some(
+                .filter_map(|ty| match ty.kind() {
+                    TyKind::Param { binder, .. } => Some(
                         packs
                             .and_then(|packs| packs.get(binder.name.trim_start_matches('*')))
                             .cloned()
@@ -2144,10 +2146,10 @@ impl Checker {
         let ExprKind::Identifier(name) = &expr.kind else {
             return None;
         };
-        let Some(Ty::VariadicPack(element)) = self.lookup(name) else {
+        let Some(TyKind::VariadicPack(element)) = self.lookup(name).map(Ty::kind) else {
             return None;
         };
-        if mojito_types::types::pack_spread(std::slice::from_ref(element.as_ref())).is_some() {
+        if mojito_types::types::pack_spread(std::slice::from_ref(element)).is_some() {
             return None;
         }
         self.value_parameter_in_scope(name).filter(|pack| {
@@ -2366,7 +2368,7 @@ impl Checker {
     /// parameter: the dependent `Ts[index]`, whose index is a compile-time
     /// expression over the parameters and `comptime for` variables in scope.
     pub(super) fn pack_element_type(&self, pack: &Ty, index: &Expr) -> Result<Ty, TypeError> {
-        let Ty::Param { binder, .. } = pack else {
+        let TyKind::Param { binder, .. } = pack.kind() else {
             return Err(TypeError::InvariantViolation(format!(
                 "'{pack}' is not a variadic pack parameter"
             )));
@@ -2460,11 +2462,11 @@ impl Checker {
         let ExprKind::Identifier(binding) = &source.kind else {
             return None;
         };
-        let Some(Ty::VariadicPack(element)) = self.lookup(binding) else {
+        let Some(TyKind::VariadicPack(element)) = self.lookup(binding).map(Ty::kind) else {
             return None;
         };
-        let element = mojito_types::types::pack_spread(std::slice::from_ref(&**element))?;
-        let Ty::Param { binder, .. } = element else {
+        let element = mojito_types::types::pack_spread(std::slice::from_ref(element))?;
+        let TyKind::Param { binder, .. } = element.kind() else {
             return None;
         };
         // The binder in scope carries the declared bounds; a pack reached
@@ -2528,9 +2530,9 @@ impl Checker {
         collector: &Ty,
         collector_owned: Option<bool>,
     ) -> Result<Ty, TypeError> {
-        let Ty::Param {
+        let TyKind::Param {
             bounds: expected, ..
-        } = collector
+        } = collector.kind()
         else {
             return Err(TypeError::TypeMismatch {
                 expected: format!("VariadicList[{collector}]"),
@@ -2566,16 +2568,16 @@ impl Checker {
         // The collector is the forwarded pack itself retyped by a struct's
         // pack (`*b: *Self.Ts` on `V[*Ts]`): pack types are invariant in
         // their bounds.
-        let retyped = matches!((collector, &forwarded.pack),
-            (Ty::Param { binder, bounds, .. }, Ty::Param { binder: own, bounds: own_bounds, .. })
+        let retyped = matches!((collector.kind(), forwarded.pack.kind()),
+            (TyKind::Param { binder, bounds, .. }, TyKind::Param { binder: own, bounds: own_bounds, .. })
                 if binder.id == own.id && !same_bounds(bounds, own_bounds));
         if retyped
             || expected
                 .iter()
                 .any(|bound| !self.conforms_to(&forwarded.pack, bound))
         {
-            let declared = match &forwarded.pack {
-                Ty::Param { bounds, .. } if !bounds.is_empty() => bounds.join(" & "),
+            let declared = match forwarded.pack.kind() {
+                TyKind::Param { bounds, .. } if !bounds.is_empty() => bounds.join(" & "),
                 _ => "AnyType".to_string(),
             };
             return Err(TypeError::BadCall {
@@ -2621,17 +2623,17 @@ impl Checker {
         let ExprKind::Identifier(binding) = &source.kind else {
             return None;
         };
-        let Some(Ty::VariadicPack(element)) = self.lookup(binding) else {
+        let Some(TyKind::VariadicPack(element)) = self.lookup(binding).map(Ty::kind) else {
             return None;
         };
-        let pack = mojito_types::types::pack_spread(std::slice::from_ref(&**element))?.clone();
+        let pack = mojito_types::types::pack_spread(std::slice::from_ref(element))?.clone();
         let boundary = || {
             TypeError::SymbolicBoundary(format!(
                 "'{name}' called with a spread of the unbound pack '{binding}'"
             ))
         };
         let constructed = match name {
-            "__RuntimeTuple" => Ty::Tuple(vec![pack]),
+            "__RuntimeTuple" => Ty::new(TyKind::Tuple(vec![pack])),
             // Any other callee binds the forwarded pack to its own collector
             // (`forwarded_pack_argument`, `bind_forwarded_pack`), a struct
             // through its declared `__init__` (`infer_construction`).
@@ -2668,7 +2670,7 @@ impl Checker {
     /// type's value environment reads.
     pub(super) fn close_pack_elements(&self, ty: Ty, scopes: &[(&[ParamDecl], &[TyArg])]) -> Ty {
         let names_element = |ty: &Ty| {
-            matches!(ty, Ty::Dependent(dependent) if dependent.pack_element().is_some())
+            matches!(ty.kind(), TyKind::Dependent(dependent) if dependent.pack_element().is_some())
                 || mojito_types::types::list_spread(ty).is_some()
         };
         if !mojito_types::types::mentions(&ty, &names_element) {
@@ -2681,9 +2683,13 @@ impl Checker {
                 let name = decl.name().trim_start_matches('*').to_string();
                 match argument {
                     TyArg::Val(value) => Some((name, value.clone())),
-                    TyArg::Ty(Ty::Param { binder, .. }) if binder.name.starts_with('*') => self
-                        .pack_reference(&binder.name)
-                        .map(|reference| (name, CtValue::Expr(reference))),
+                    TyArg::Ty(ty)
+                        if let TyKind::Param { binder, .. } = ty.kind()
+                            && binder.name.starts_with('*') =>
+                    {
+                        self.pack_reference(&binder.name)
+                            .map(|reference| (name, CtValue::Expr(reference)))
+                    }
                     // A pack bound to a list computed from other packs.
                     TyArg::Ty(ty) if let Some(list) = mojito_types::types::list_spread(ty) => {
                         Some((name, CtValue::Expr(list.clone())))
@@ -2702,7 +2708,7 @@ impl Checker {
     /// conforms_to` arm proves of this element. The dependent type stays the
     /// element's identity; this is what its capabilities are read from.
     pub(super) fn opaque_element(&self, ty: &Ty) -> Option<Ty> {
-        let Ty::Dependent(dependent) = ty else {
+        let TyKind::Dependent(dependent) = ty.kind() else {
             return None;
         };
         let reflected = |node: &ParamExpr| {
@@ -2728,8 +2734,8 @@ impl Checker {
                     .find_map(type_parameter)
             })
         });
-        let mut bounds = match declared {
-            Some(Ty::Param { bounds, .. }) => bounds,
+        let mut bounds = match declared.as_ref().map(Ty::kind) {
+            Some(TyKind::Param { bounds, .. }) => bounds.clone(),
             _ => Vec::new(),
         };
         let spelled = dependent.expr().to_string();
@@ -2752,11 +2758,14 @@ impl Checker {
             _ => spelled,
         };
         views.insert(name.clone(), ty.clone());
-        Some(Ty::Param {
-            binder: pack_element_view_binder(&name),
-            bounds,
-            callable_bound: None,
-        })
+        Some(
+            TyKind::Param {
+                binder: pack_element_view_binder(&name),
+                bounds,
+                callable_bound: None,
+            }
+            .into(),
+        )
     }
 
     /// Reject a type-argument list that spreads a pack beside other
@@ -2927,7 +2936,7 @@ impl Checker {
             && name == "range"
         {
             self.infer_range(args)?;
-            return Ok(Ty::Int);
+            return Ok(Ty::int());
         }
         // A value pack iterates its elements at compile time; only a
         // runtime read is its `ParameterList`.
@@ -2953,18 +2962,16 @@ impl Checker {
                     .join(", ")
             ))
         };
-        match ty {
-            Ty::ComptimeList(element) | Ty::VariadicPack(element) => Ok(*element),
+        match ty.kind() {
+            TyKind::ComptimeList(element) | TyKind::VariadicPack(element) => Ok((*element).clone()),
             // A compile-time dictionary iterates its keys, a set its elements.
-            ref dict if let Some((key, _)) = mojito_types::types::dict_elements(dict) => {
+            dict if let Some((key, _)) = mojito_types::types::dict_elements(dict) => {
                 Ok(key.clone())
             }
-            ref set if let Some(element) = mojito_types::types::set_element(set) => {
-                Ok(element.clone())
-            }
+            set if let Some(element) = mojito_types::types::set_element(set) => Ok(element.clone()),
             // A list display of literals is a fixed-size array here; the
             // elaborator's list value iterates by element type.
-            Ty::Struct(ref name, ref args)
+            TyKind::Struct(name, args)
                 if (name == mojito_types::types::LIST_TYPE_NAME
                     || name == mojito_types::types::ARRAY_TYPE_NAME)
                     && let Some(TyArg::Ty(element)) = args.first() =>
@@ -2974,8 +2981,8 @@ impl Checker {
             // A compile-time `Tuple` has no `__iter__`, as upstream; the
             // rejection spells the tuple's element types as the elaborator
             // does for the same program.
-            Ty::Tuple(elements) | Ty::RuntimePack(elements) => Err(not_iterable(&elements)),
-            Ty::Struct(ref name, ref args) if name == mojito_types::types::TUPLE_TYPE_NAME => {
+            TyKind::Tuple(elements) | TyKind::RuntimePack(elements) => Err(not_iterable(elements)),
+            TyKind::Struct(name, args) if name == mojito_types::types::TUPLE_TYPE_NAME => {
                 let elements: Vec<Ty> = args
                     .iter()
                     .filter_map(|argument| match argument {
@@ -3080,7 +3087,7 @@ pub(super) fn positional_pack_binding(
     arguments
         .iter()
         .map(|argument| match argument {
-            TyArg::Ty(ty) => Some(CtValue::Type(Box::new(ty.clone()))),
+            TyArg::Ty(ty) => Some(CtValue::Type(ty.clone())),
             TyArg::Val(_) | TyArg::Origin(_) => None,
         })
         .collect::<Option<Vec<_>>>()
@@ -3114,8 +3121,8 @@ impl ApplicableShape<'_> {
     /// The callable under `symbol`, when a compile-time call can apply it.
     fn applicable(&self, symbol: String, on_instance: bool) -> Option<ApplicableFunction> {
         let scalar = |ty: &SourceType| match ty {
-            SourceType::Int => Some(Ty::Int),
-            SourceType::Bool => Some(Ty::Bool),
+            SourceType::Int => Some(Ty::int()),
+            SourceType::Bool => Some(Ty::bool()),
             _ => None,
         };
         let binders = self
@@ -3129,8 +3136,8 @@ impl ApplicableShape<'_> {
                     && binder.constraints.is_empty()
                     && !binder.infer_only;
                 let ty = match binder.bounds.as_slice() {
-                    [bound] if plain && bound == "Int" => Ty::Int,
-                    [bound] if plain && bound == "Bool" => Ty::Bool,
+                    [bound] if plain && bound == "Int" => Ty::int(),
+                    [bound] if plain && bound == "Bool" => Ty::bool(),
                     _ => return None,
                 };
                 Some((binder.name.clone(), ty))
@@ -3179,11 +3186,11 @@ fn template_name(name: &str) -> &str {
 /// `Array[Int, Int(2)]`, a set `Set[Int]`, a dictionary `Dict[String, Int]`.
 fn materialized_collection_spelling(ty: &Ty) -> String {
     fn scalar(element: &Ty) -> String {
-        match element {
-            Ty::Int | Ty::IntLiteral => "Int".to_string(),
-            Ty::Float64 | Ty::FloatLiteral => "Float64".to_string(),
-            Ty::StringLiteral => "String".to_string(),
-            other => match mojito_types::types::tuple_elements(other) {
+        match element.kind() {
+            TyKind::Int | TyKind::IntLiteral => "Int".to_string(),
+            TyKind::Float64 | TyKind::FloatLiteral => "Float64".to_string(),
+            TyKind::StringLiteral => "String".to_string(),
+            _ => match mojito_types::types::tuple_elements(element) {
                 Some(elements) => format!(
                     "Tuple[{}]",
                     elements
@@ -3192,7 +3199,7 @@ fn materialized_collection_spelling(ty: &Ty) -> String {
                         .collect::<Vec<_>>()
                         .join(", ")
                 ),
-                None => mojito_types::types::unqualified_type_name(other),
+                None => mojito_types::types::unqualified_type_name(element),
             },
         }
     }
@@ -3205,7 +3212,7 @@ fn materialized_collection_spelling(ty: &Ty) -> String {
     if let Some(element) = mojito_types::types::set_element(ty) {
         return format!("Set[{}]", scalar(element));
     }
-    if let Ty::Struct(name, args) = ty
+    if let TyKind::Struct(name, args) = ty.kind()
         && name == mojito_types::types::ARRAY_TYPE_NAME
     {
         let mut arguments = args.iter();
@@ -3222,11 +3229,11 @@ fn materialized_collection_spelling(ty: &Ty) -> String {
 /// element is named by the type it materializes to, as the elaborator
 /// spells the same rejection.
 fn materialized_element_spelling(ty: &Ty) -> String {
-    match ty {
-        Ty::IntLiteral => "Int".to_string(),
-        Ty::StringLiteral => "String".to_string(),
-        Ty::FloatLiteral => "Float64".to_string(),
-        other => mojito_types::types::unqualified_type_name(other),
+    match ty.kind() {
+        TyKind::IntLiteral => "Int".to_string(),
+        TyKind::StringLiteral => "String".to_string(),
+        TyKind::FloatLiteral => "Float64".to_string(),
+        _ => mojito_types::types::unqualified_type_name(ty),
     }
 }
 
@@ -3356,21 +3363,21 @@ fn evaluated_display(iter: &Expr, element: &Ty) -> bool {
         _ => false,
     };
     display
-        && (matches!(element, Ty::Int | Ty::Bool | Ty::Float64)
-            || matches!(element, Ty::Struct(name, args)
+        && (matches!(element.kind(), TyKind::Int | TyKind::Bool | TyKind::Float64)
+            || matches!(element.kind(), TyKind::Struct(name, args)
                 if args.is_empty() && mojito_types::types::is_stdlib_string_struct(name)))
 }
 
 /// The element a display of `element`s binds: a string element binds as a
 /// `String` value parameter does.
 pub(super) fn string_element_binder(element: Ty) -> Ty {
-    match element {
-        Ty::Struct(name, args)
-            if args.is_empty() && mojito_types::types::is_stdlib_string_struct(&name) =>
+    match element.kind() {
+        TyKind::Struct(name, args)
+            if args.is_empty() && mojito_types::types::is_stdlib_string_struct(name) =>
         {
-            Ty::StringLiteral
+            Ty::string_literal()
         }
-        element => element,
+        _ => element,
     }
 }
 
@@ -3380,7 +3387,7 @@ fn is_bool_loop_binder(binder: &ParamExpr) -> bool {
     binder
         .as_decl_ref()
         .is_some_and(|reference| reference.id.is_comptime_for_binder())
-        && binder.meta().as_value() == Some(&Ty::Bool)
+        && binder.meta().as_value() == Some(&Ty::bool())
 }
 
 /// Record `value` for `name` unless a different value is already recorded,

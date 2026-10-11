@@ -2,6 +2,7 @@
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
+use mojito_types::types::TyKind;
 
 #[allow(
     clippy::ref_option,
@@ -98,18 +99,18 @@ impl Checker {
     /// reference result is none: a call result or display whose struct type is not `Deinitable` under the
     /// body's bounds, or a call result typed by one of the body's own type
     /// parameters whose bounds do not prove `Deinitable`. The parameter must
-    /// be in scope here — the same `Ty::Param` at a concrete call site is the
+    /// be in scope here — the same `TyKind::Param` at a concrete call site is the
     /// erased-dispatch spelling of a solved argument, not a linear value.
     pub(super) fn record_linear_temporary(&self, expr: &Expr, ty: &Ty) {
         let call = matches!(
             expr.kind,
             ExprKind::Call { .. } | ExprKind::MethodCall { .. } | ExprKind::Invoke { .. }
         );
-        let linear = match ty {
-            Ty::Param { binder, .. } => {
+        let linear = match ty.kind() {
+            TyKind::Param { binder, .. } => {
                 call && self.is_own_parameter(binder) && !self.is_deinitable(ty)
             }
-            Ty::Struct(..) => {
+            TyKind::Struct(..) => {
                 (call || matches!(expr.kind, ExprKind::ListLit(_) | ExprKind::TupleLit(_)))
                     && !self.is_deinitable(ty)
             }
@@ -134,14 +135,14 @@ impl Checker {
         if self.is_deinitable(referent) {
             return Ok(());
         }
-        match referent {
-            Ty::Param { binder, .. } if self.is_own_parameter(binder) => {
+        match referent.kind() {
+            TyKind::Param { binder, .. } if self.is_own_parameter(binder) => {
                 Err(TypeError::LinearAbandoned {
                     var: target.to_string(),
                     message: "unhandled explicitly destroyed type 'AnyType'".to_string(),
                 })
             }
-            Ty::Struct(name, _) => match self.structs.get(name) {
+            TyKind::Struct(name, _) => match self.structs.get(name) {
                 Some(info) => Err(TypeError::Abandoned {
                     var: target.to_string(),
                     message: info.explicit_destroy_message.clone().unwrap_or_else(|| {
@@ -172,7 +173,7 @@ impl Checker {
             || self.is_compile_time_binding(root)
             || self
                 .lookup(root)
-                .is_none_or(|binding| matches!(binding, Ty::Ref(_)))
+                .is_none_or(|binding| matches!(binding.kind(), TyKind::Ref(_)))
             || self.is_trivial_register_passable(ty)
         {
             return Ok(());
@@ -199,13 +200,13 @@ impl Checker {
     }
 
     /// Whether `binder` is one of the enclosing declarations' own type
-    /// parameters. The same `Ty::Param` at a concrete call site is the
+    /// parameters. The same `TyKind::Param` at a concrete call site is the
     /// erased-dispatch spelling of a solved argument instead.
     fn is_own_parameter(&self, binder: &mojito_types::param_expr::ParamRef) -> bool {
         self.tparams.iter().any(|scope| {
             scope
                 .values()
-                .any(|declared| matches!(declared, Ty::Param { binder: own, .. } if own == binder))
+                .any(|declared| matches!(declared.kind(), TyKind::Param { binder: own, .. } if own == binder))
         })
     }
 }

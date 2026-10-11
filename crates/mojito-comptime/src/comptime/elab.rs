@@ -4,6 +4,7 @@
 use super::*;
 use mojito_ast::ast::Method;
 use mojito_ast::visit::{MutVisitor, walk_block_mut};
+use mojito_types::types::TyKind;
 
 /// The type handles a block's `comptime T = ...` statements bound so far:
 /// each handle, and its source spelling. A module block also reads the
@@ -511,9 +512,7 @@ impl Elab<'_> {
     ) -> Result<CtValue, ComptimeError> {
         match decl {
             ParamDecl::Type { name, .. } => match arg {
-                ParamArg::Type(ty) => self
-                    .type_from_anno(ty, scope)
-                    .map(|ty| CtValue::Type(Box::new(ty))),
+                ParamArg::Type(ty) => self.type_from_anno(ty, scope).map(CtValue::Type),
                 ParamArg::Value(Expr {
                     kind: ExprKind::Identifier(id),
                     ..
@@ -562,8 +561,7 @@ impl Elab<'_> {
         args: &[ParamArg],
         scope: &ConstEnv<'_>,
     ) -> Result<CtValue, ComptimeError> {
-        self.type_from_name(name, args, scope)
-            .map(|ty| CtValue::Type(Box::new(ty)))
+        self.type_from_name(name, args, scope).map(CtValue::Type)
     }
 
     /// Resolve a `[...]` argument that is expected to be a **type** (a type
@@ -584,7 +582,7 @@ impl Elab<'_> {
                 ..
             }) => self.type_from_name(name, args, scope),
             ParamArg::Value(expr) => match self.eval(expr, scope)? {
-                CtValue::Type(ty) => Ok(*ty),
+                CtValue::Type(ty) => Ok(ty),
                 _ => Err(ComptimeError::NotComptime(
                     "expected a type argument".to_string(),
                 )),
@@ -599,15 +597,15 @@ impl Elab<'_> {
         scope: &ConstEnv<'_>,
     ) -> Result<Ty, ComptimeError> {
         match ty {
-            Type::Int => Ok(Ty::Int),
-            Type::UInt => Ok(Ty::UInt),
-            Type::Bool => Ok(Ty::Bool),
-            Type::StringLiteral | Type::ClosedStringLiteral => Ok(Ty::StringLiteral),
-            Type::Float64 => Ok(Ty::Float64),
-            Type::None => Ok(Ty::None),
+            Type::Int => Ok(Ty::int()),
+            Type::UInt => Ok(Ty::uint()),
+            Type::Bool => Ok(Ty::bool()),
+            Type::StringLiteral | Type::ClosedStringLiteral => Ok(Ty::string_literal()),
+            Type::Float64 => Ok(Ty::float64()),
+            Type::None => Ok(Ty::none()),
             Type::Named(name, args) => self.type_from_name(name, args, scope),
             Type::SelfParam(name) => match scope.get(name) {
-                Some(CtValue::Type(ty)) => Ok((**ty).clone()),
+                Some(CtValue::Type(ty)) => Ok(ty.clone()),
                 Some(_) => Err(ComptimeError::NotComptime(format!(
                     "Self.{name} is not type-valued"
                 ))),
@@ -621,11 +619,11 @@ impl Elab<'_> {
                     && name == "T"
                     && let Some(CtValue::Reflected(ty)) = scope.get(binding)
                 {
-                    return Ok((**ty).clone());
+                    return Ok(ty.clone());
                 }
                 let base = self.type_from_anno(base, scope)?;
                 match self.associated_value(&base, name)? {
-                    CtValue::Type(ty) => Ok(*ty),
+                    CtValue::Type(ty) => Ok(ty),
                     _ => Err(ComptimeError::NotComptime(format!(
                         "{base}.{name} is not type-valued"
                     ))),
@@ -655,7 +653,7 @@ impl Elab<'_> {
                     .ok()
                     .and_then(|position| values.get(position))
                 {
-                    Some(CtValue::Type(ty)) => Ok((**ty).clone()),
+                    Some(CtValue::Type(ty)) => Ok(ty.clone()),
                     Some(_) => Err(ComptimeError::NotComptime(format!(
                         "{base_ty}.{name}[{index}] is not type-valued"
                     ))),
@@ -680,13 +678,14 @@ impl Elab<'_> {
                         "reference type arguments require a named origin".to_string(),
                     ));
                 };
-                let referent = Box::new(self.type_from_anno(referent, scope)?);
+                let referent = self.type_from_anno(referent, scope)?;
                 if origin_name == "UntrackedOrigin" {
-                    return Ok(Ty::Ref(mojito_types::origin::RefTy {
+                    return Ok(TyKind::Ref(mojito_types::origin::RefTy {
                         referent,
                         origin: mojito_types::origin::Origin::Untracked { mutable: false },
                         mutability: mojito_types::origin::Mutability::Immutable,
-                    }));
+                    })
+                    .into());
                 }
                 let mut reference = scope
                     .get(origin_name)
@@ -697,7 +696,7 @@ impl Elab<'_> {
                         ))
                     })?;
                 reference.referent = referent;
-                Ok(Ty::Ref(reference))
+                Ok(TyKind::Ref(reference).into())
             }
             Type::SelfType | Type::Func { .. } => Err(ComptimeError::NotComptime(
                 "unsupported compile-time type argument".to_string(),
@@ -713,7 +712,7 @@ impl Elab<'_> {
     ) -> Result<Ty, ComptimeError> {
         if args.is_empty() {
             if let Some(CtValue::Type(ty)) = scope.get(name) {
-                return Ok((**ty).clone());
+                return Ok(ty.clone());
             }
             if let Some(ty) = scalar_type_name(name) {
                 return Ok(ty);
@@ -725,10 +724,11 @@ impl Elab<'_> {
             && let Some((dtype, width)) =
                 simd_source_dims(args).or_else(|| self.evaluated_simd_dims(args, scope))
         {
-            return Ok(Ty::Simd {
+            return Ok(TyKind::Simd {
                 dtype: mojito_types::types::SimdDtype::Known(dtype),
                 width: mojito_types::types::SimdWidth::Known(width),
-            });
+            }
+            .into());
         }
         // In type-argument grammar, `types[i]` is represented as a named type
         // application. A reflected `field_types()` result is a compile-time
@@ -739,7 +739,7 @@ impl Elab<'_> {
         {
             let index = self.eval(index, scope)?.as_int("type-list index")?;
             return match values.get(index as usize) {
-                Some(CtValue::Type(ty)) => Ok((**ty).clone()),
+                Some(CtValue::Type(ty)) => Ok(ty.clone()),
                 Some(_) => Err(ComptimeError::NotComptime(format!(
                     "'{name}[{index}]' is not type-valued"
                 ))),
@@ -767,7 +767,7 @@ impl Elab<'_> {
                 .iter()
                 .map(|argument| self.param_arg_type(argument, scope).map(TyArg::Ty))
                 .collect::<Result<Vec<_>, _>>()?;
-            return Ok(Ty::Struct(name.to_string(), elements.into()));
+            return Ok(TyKind::Struct(name.to_string(), elements).into());
         }
         // Omitted trailing arguments fill from declared type-parameter
         // defaults (`Set[Int]` is `Set[Int, default_hasher]`), matching the
@@ -809,7 +809,7 @@ impl Elab<'_> {
                         ..
                     } = decl
                     {
-                        return Ok(TyArg::Ty((**default).clone()));
+                        return Ok(TyArg::Ty(default.clone()));
                     }
                     let default = source_defaults
                         .get(index)
@@ -817,7 +817,7 @@ impl Elab<'_> {
                         .flatten()
                         .expect("defaults_fill established trailing type defaults");
                     return match self.eval(default, scope)? {
-                        CtValue::Type(ty) => Ok(TyArg::Ty(*ty)),
+                        CtValue::Type(ty) => Ok(TyArg::Ty(ty)),
                         other => Err(ComptimeError::NotComptime(format!(
                             "default for type parameter '{}' of '{name}' is not a type: {other}",
                             decl.name()
@@ -826,7 +826,7 @@ impl Elab<'_> {
                 };
                 let value = self.resolve_ct_arg(decl, arg, scope)?;
                 match (decl, value) {
-                    (ParamDecl::Type { .. }, CtValue::Type(ty)) => Ok(TyArg::Ty(*ty)),
+                    (ParamDecl::Type { .. }, CtValue::Type(ty)) => Ok(TyArg::Ty(ty)),
                     (ParamDecl::Type { name, .. }, _) => Err(ComptimeError::NotComptime(format!(
                         "type parameter '{name}' needs a type argument"
                     ))),
@@ -834,7 +834,7 @@ impl Elab<'_> {
                 }
             })
             .collect::<Result<Vec<_>, _>>()?;
-        Ok(Ty::Struct(name.to_string(), tyargs.into()))
+        Ok(TyKind::Struct(name.to_string(), tyargs).into())
     }
 
     pub(super) fn associated_value(
@@ -845,17 +845,17 @@ impl Elab<'_> {
         // A `SIMD` type's `dtype` parameter; `Int` and `Float64` are width-1
         // vectors.
         if member == "dtype" {
-            match base {
-                Ty::Int => return Ok(CtValue::Dtype(mojito_ast::ast::Dtype::Int)),
-                Ty::Float64 => return Ok(CtValue::Dtype(mojito_ast::ast::Dtype::Float64)),
-                Ty::Simd { dtype, .. } => {
+            match base.kind() {
+                TyKind::Int => return Ok(CtValue::Dtype(mojito_ast::ast::Dtype::Int)),
+                TyKind::Float64 => return Ok(CtValue::Dtype(mojito_ast::ast::Dtype::Float64)),
+                TyKind::Simd { dtype, .. } => {
                     // A symbolic lane has no constant yet: the elaborator
                     // only folds a bound instance.
                     return dtype.known().map(CtValue::Dtype).ok_or_else(|| {
                         ComptimeError::NotComptime(format!("'{base}' has no concrete dtype"))
                     });
                 }
-                Ty::UInt => {
+                TyKind::UInt => {
                     return Err(ComptimeError::NotComptime(
                         "DType.uint is not supported yet".to_string(),
                     ));
@@ -863,7 +863,7 @@ impl Elab<'_> {
                 _ => {}
             }
         }
-        let Ty::Struct(name, args) = base else {
+        let TyKind::Struct(name, args) = base.kind() else {
             return Err(ComptimeError::NotComptime(format!(
                 "type '{base}' has no compile-time member '{member}'"
             )));
@@ -895,7 +895,7 @@ impl Elab<'_> {
         for (decl, arg) in info.decls.iter().zip(args) {
             match (decl, arg) {
                 (ParamDecl::Type { name, .. }, TyArg::Ty(ty)) => {
-                    env.insert(name.clone(), CtValue::Type(Box::new(ty.clone())));
+                    env.insert(name.clone(), CtValue::Type(ty.clone()));
                 }
                 (ParamDecl::Value { name, .. }, TyArg::Val(value)) => {
                     env.insert(name.clone(), value.clone());
@@ -982,7 +982,12 @@ impl Elab<'_> {
         }
         self.param_arg_type(&ParamArg::Type(annotation.clone()), env)
             .ok()
-            .filter(|target| !matches!(target, Ty::Int | Ty::IntLiteral | Ty::UInt))
+            .filter(|target| {
+                !matches!(
+                    target.kind(),
+                    TyKind::Int | TyKind::IntLiteral | TyKind::UInt
+                )
+            })
             .and_then(|target| mojito_types::types::simd_shape(&target))
             .and_then(|(dtype, width)| {
                 mojito_types::ct::CtLane::from_value(&value, dtype).map(|lane| CtValue::Simd {
@@ -1499,7 +1504,7 @@ impl Elab<'_> {
                 })
                 .map(|decl| {
                     let struct_valued = matches!(decl, ParamDecl::Value { ty, .. }
-                        if matches!(**ty, Ty::Struct(..)));
+                        if matches!(*ty.kind(), TyKind::Struct(..)));
                     (decl.name().to_string(), struct_valued)
                 })
                 .collect(),

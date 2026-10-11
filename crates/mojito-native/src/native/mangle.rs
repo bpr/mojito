@@ -86,13 +86,13 @@ mod tests {
         use mojito_symbol::symbol::{
             SignatureKey, function_symbol, iterator_method_symbol, method_symbol,
         };
-        use mojito_types::types::Ty;
-        let pair = Ty::Struct("Pair".to_string(), Vec::new().into());
+        use mojito_types::types::{Ty, TyKind};
+        let pair = Ty::new(TyKind::Struct("Pair".to_string(), Vec::new()));
         let names = [
             method_symbol(
                 "Array",
                 "__init__",
-                &SignatureKey::from_tys([&Ty::Int]).with_keyword_names(vec!["fill".to_string()]),
+                &SignatureKey::from_tys([&Ty::int()]).with_keyword_names(vec!["fill".to_string()]),
             ),
             iterator_method_symbol(
                 "Array",
@@ -100,8 +100,8 @@ mod tests {
                 &SignatureKey::from_tys([]),
             ),
             "__module$std$range$_SequentialRange$dint;".to_string(),
-            method_symbol("Box", "__init__", &SignatureKey::from_tys([&Ty::Int])),
-            function_symbol("pick", &SignatureKey::from_tys([&pair, &Ty::Int])),
+            method_symbol("Box", "__init__", &SignatureKey::from_tys([&Ty::int()])),
+            function_symbol("pick", &SignatureKey::from_tys([&pair, &Ty::int()])),
         ];
         for name in &names {
             let mangled = mangle(name);

@@ -3,6 +3,7 @@
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
+use mojito_types::types::TyKind;
 
 /// The argument position of a call's pack spread (`f(*a)`), the slot the
 /// elaborator expands into the collector's elements.
@@ -50,14 +51,14 @@ impl Flatten<'_> {
         self.emit(MirInstr::Call {
             dest,
             func: FuncRef::named(&contract.target),
-            raises: self.checked_raises(e).map(Box::new),
+            raises: self.checked_raises(e),
             args: regs,
             kwargs: kw,
             arg_places,
             kwarg_places,
             capture_accesses: self.checked_call_capture_accesses(e),
             param_arg_regs,
-            receiver: receiver.map(Box::new),
+            receiver,
             instantiated_args,
             spread: spread_position(args),
         });
@@ -117,7 +118,7 @@ impl Flatten<'_> {
             dest,
             callee,
             resolved,
-            raises: raises.map(Box::new),
+            raises,
             args: arg_regs,
             kwargs: kw_regs,
             callee_place: callee_place.map(Box::new),
@@ -126,7 +127,7 @@ impl Flatten<'_> {
             capture_accesses,
             param_arg_regs,
             param_decls,
-            instantiated_contract: instantiated_contract.map(Box::new),
+            instantiated_contract,
             instantiated_args,
             spread: spread_position(args),
         });
@@ -207,7 +208,7 @@ impl Flatten<'_> {
                 let value = self.fresh_typed(
                     e.source_span(),
                     Some(place.root),
-                    place.ty.clone().unwrap_or(Ty::Error),
+                    place.ty.clone().unwrap_or_else(Ty::error),
                 );
                 self.emit(MirInstr::LoadPlace {
                     dest: value,
@@ -316,7 +317,7 @@ impl Flatten<'_> {
             .or_else(|| {
                 let arguments = self.instantiated_args(e);
                 let contract = callable_ty.as_ref()?;
-                (!arguments.is_empty() && matches!(contract, Ty::GenericFunc(_)))
+                (!arguments.is_empty() && matches!(contract.kind(), TyKind::GenericFunc(_)))
                     .then(|| {
                         crate::mir::verify::instantiate_generic_callable_contract(
                             contract, &arguments,
@@ -337,7 +338,7 @@ impl Flatten<'_> {
             // attaching that abstract target here can disagree with an erased
             // variadic closure ABI even though execution never consults it.
             resolved: None,
-            raises: self.checked_raises(e).map(Box::new),
+            raises: self.checked_raises(e),
             args: arg_regs,
             kwargs: kw_regs,
             callee_place: callee_place.map(Box::new),
@@ -346,7 +347,7 @@ impl Flatten<'_> {
             capture_accesses,
             param_arg_regs,
             param_decls,
-            instantiated_contract: instantiated_contract.map(Box::new),
+            instantiated_contract,
             instantiated_args,
             spread: spread_position(args),
         });
@@ -424,13 +425,16 @@ impl Flatten<'_> {
             let callable_capture = NestedCapture {
                 name: info.source_name.clone(),
                 binding: info.binding,
-                ty: info.callable_ty.clone().unwrap_or_else(|| Ty::Param {
-                    binder: mojito_types::param_expr::ParamRef {
-                        id: mojito_types::param_expr::ParamId::new("$capture", 0),
-                        name: "$capture".into(),
-                    },
-                    bounds: Vec::new(),
-                    callable_bound: None,
+                ty: info.callable_ty.clone().unwrap_or_else(|| {
+                    TyKind::Param {
+                        binder: mojito_types::param_expr::ParamRef {
+                            id: mojito_types::param_expr::ParamId::new("$capture", 0),
+                            name: "$capture".into(),
+                        },
+                        bounds: Vec::new(),
+                        callable_bound: None,
+                    }
+                    .into()
                 }),
                 kind: mojito_ast::ast::CaptureKind::Imm,
             };
@@ -557,17 +561,17 @@ impl Flatten<'_> {
         if !(param_args.is_empty() && args.is_empty() && kwargs.is_empty()) {
             return None;
         }
-        let zero = match (name.as_str(), self.checked_ty(e)?) {
-            ("Int" | "UInt", Ty::Int | Ty::UInt) => Const::Int(0),
-            ("Float64", Ty::Float64) => Const::Float(0.0),
-            ("Bool", Ty::Bool) => Const::Bool(false),
+        let zero = match (name.as_str(), (self.checked_ty(e)?).kind()) {
+            ("Int" | "UInt", TyKind::Int | TyKind::UInt) => Const::Int(0),
+            ("Float64", TyKind::Float64) => Const::Float(0.0),
+            ("Bool", TyKind::Bool) => Const::Bool(false),
             _ => return None,
         };
         let value = self.constant(e, zero);
         if name != "UInt" {
             return Some(value);
         }
-        let dest = self.fresh_typed(span(e), None, Ty::UInt);
+        let dest = self.fresh_typed(span(e), None, Ty::uint());
         self.emit(MirInstr::Call {
             dest,
             func: FuncRef::named("UInt"),
@@ -588,14 +592,14 @@ impl Flatten<'_> {
     /// Emit a `Const` writing a fresh register.
     pub(in crate::mir) fn constant(&mut self, e: &Expr, k: Const) -> Reg {
         let constant_ty = match &k {
-            Const::Int(_) => Some(Ty::Int),
-            Const::Float(_) => Some(Ty::Float64),
-            Const::IntLiteral(_) => Some(Ty::IntLiteral),
-            Const::FloatLiteral(_) => Some(Ty::FloatLiteral),
-            Const::Bool(_) => Some(Ty::Bool),
-            Const::Str(_) => Some(Ty::StringLiteral),
-            Const::None => Some(Ty::None),
-            Const::Dtype(_) => Some(Ty::Dtype),
+            Const::Int(_) => Some(Ty::int()),
+            Const::Float(_) => Some(Ty::float64()),
+            Const::IntLiteral(_) => Some(Ty::int_literal()),
+            Const::FloatLiteral(_) => Some(Ty::float_literal()),
+            Const::Bool(_) => Some(Ty::bool()),
+            Const::Str(_) => Some(Ty::string_literal()),
+            Const::None => Some(Ty::none()),
+            Const::Dtype(_) => Some(Ty::dtype()),
             Const::Function(_) => self.checked_ty(e),
             Const::Param(value) => value.meta().as_value().cloned(),
             Const::Value(value) => mojito_types::param_expr::MetaTy::of_value(value)
@@ -620,20 +624,20 @@ impl Flatten<'_> {
             return value;
         };
         let compatible =
-            match found {
-                Ty::IntLiteral => {
-                    matches!(target, Ty::Int | Ty::UInt | Ty::Float64)
+            match found.kind() {
+                TyKind::IntLiteral => {
+                    matches!(target.kind(), TyKind::Int | TyKind::UInt | TyKind::Float64)
                         || mojito_types::types::is_scalar_simd(target)
                 }
-                Ty::FloatLiteral => {
-                    matches!(target, Ty::Float64)
+                TyKind::FloatLiteral => {
+                    matches!(target.kind(), TyKind::Float64)
                         || mojito_types::types::scalar_simd_dtype(target)
                             .is_some_and(mojito_ast::ast::Dtype::is_float)
                 }
                 _ => false,
             } || mojito_types::types::simd_shape(target).is_some_and(|(dtype, width)| {
                 width > 1
-                    && matches!(found, Ty::IntLiteral | Ty::FloatLiteral)
+                    && matches!(found.kind(), TyKind::IntLiteral | TyKind::FloatLiteral)
                     && mojito_types::types::splats_to(
                         found,
                         &mojito_types::types::SimdDtype::Known(dtype),

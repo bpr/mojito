@@ -6,6 +6,7 @@
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 use mojito_mir::mir::Proj;
+use mojito_types::types::TyKind;
 
 /// Expand every whole-pack spread of the instance, as the elaborator does for
 /// upstream's pack expansion: the spread argument's register, typed the
@@ -58,7 +59,7 @@ pub(super) fn retire_forwarded_packs(function: &mut MirFunction) {
     let forwarded: HashSet<u32> = function
         .reg_types
         .iter()
-        .filter(|(_, ty)| matches!(ty, Ty::VariadicPack(_)))
+        .filter(|(_, ty)| matches!(ty.kind(), TyKind::VariadicPack(_)))
         .map(|(register, _)| *register)
         .collect();
     if forwarded.is_empty() {
@@ -110,8 +111,8 @@ fn expand_in_block(block: &mut MirBlock, tables: &mut SpreadTables<'_>) -> Resul
         };
         let collector = collector_read(&block.instrs[..index], pack, tables.var_tys)
             .ok_or_else(|| tables.error("a spread reads no collector"))?;
-        let elements = match tables.reg_types.get(&pack.0) {
-            Some(Ty::Tuple(elements)) => elements.clone(),
+        let elements = match tables.reg_types.get(&pack.0).map(Ty::kind) {
+            Some(TyKind::Tuple(elements)) => elements.clone(),
             _ => return Err(tables.error("a spread's pack is still a parameter")),
         };
         let span = tables.spans.0.get(&pack.0).cloned();

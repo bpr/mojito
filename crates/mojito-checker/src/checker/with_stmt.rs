@@ -22,6 +22,7 @@
 use super::*;
 use mojito_ast::ast::WithItem;
 use mojito_common::token::SyntaxId;
+use mojito_types::types::TyKind;
 
 /// The desugar a `with` statement takes.
 ///
@@ -131,7 +132,7 @@ impl Checker {
         let no_enter = || {
             TypeError::ContextManager(format!("'{ty}' does not implement the '__enter__' method"))
         };
-        let Ty::Struct(name, _) = ty else {
+        let TyKind::Struct(name, _) = ty.kind() else {
             return Err(no_enter());
         };
         let info = self.structs.get(name).ok_or_else(no_enter)?;
@@ -152,8 +153,8 @@ impl Checker {
         let error_exit = exits.iter().any(|sig| {
             sig.has_self
                 && sig.params.len() == 1
-                && sig.params[0] == Ty::Error
-                && sig.ret == Ty::Bool
+                && sig.params[0] == TyKind::Error
+                && sig.ret == TyKind::Bool
         });
         if enter_consumes && (plain_exit || error_exit) {
             return Err(TypeError::ContextManager(format!(
@@ -168,7 +169,7 @@ impl Checker {
         }
         Ok(if enter_consumes {
             WithForm::ConsumingEnter {
-                returns_none: enter.ret == Ty::None,
+                returns_none: enter.ret == TyKind::None,
             }
         } else if !plain_exit {
             WithForm::KeptManager

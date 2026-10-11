@@ -494,6 +494,8 @@ impl Compiler {
         let param_stats = context.param_context().stats();
         timing::count("param_expr.interned", param_stats.interned);
         timing::count("param_expr.intern_hits", param_stats.hits);
+        timing::count("types.interned", param_stats.types_interned);
+        timing::count("types.intern_hits", param_stats.type_hits);
         timing::count("param_expr.constant_folds", param_stats.constant_folds);
         timing::count("param_expr.replacements", param_stats.replacements);
         timing::count("param_expr.contexts", param_stats.contexts);

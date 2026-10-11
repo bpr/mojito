@@ -5,6 +5,7 @@
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
+use mojito_types::types::TyKind;
 
 /// Materialize the `Copyable` trait's default `copy` method (current Mojo:
 /// `def copy(self) -> Self: return Self(copy=self)`; overriding it is not
@@ -318,7 +319,9 @@ pub(super) fn fold_simd_alias_bounds(
     installed: Option<&InstalledInterfaces>,
 ) {
     let imported = |name: &str| match installed?.elaborated(name)? {
-        ElaboratedConstant::Value(CtValue::Type(ty)) if matches!(**ty, Ty::Simd { .. }) => {
+        ElaboratedConstant::Value(CtValue::Type(ty))
+            if matches!(*ty.kind(), TyKind::Simd { .. }) =>
+        {
             match source_type_from_ty(ty)? {
                 Type::Named(_, args) => Some(args),
                 _ => None,

@@ -3,6 +3,7 @@
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
+use mojito_types::types::TyKind;
 
 impl FnLowering<'_> {
     /// `mjrt_trace(kind, data, len)` — one ordered lifecycle event (test
@@ -52,7 +53,10 @@ impl FnLowering<'_> {
         let mut vars: Vec<u32> = self.drop_flags.keys().copied().collect();
         vars.sort_unstable();
         for var in vars {
-            if !matches!(self.func.var_tys.get(&var), Some(Ty::Error)) {
+            if !matches!(
+                self.func.var_tys.get(&var).map(Ty::kind),
+                Some(TyKind::Error)
+            ) {
                 continue;
             }
             let borrowed_param = (var as usize) < self.func.n_params
@@ -68,7 +72,7 @@ impl FnLowering<'_> {
             let flag = self.drop_flags[&var];
             let cont = self.begin_flag_guard(ctx, flag);
             let slot = self.var_slots[var as usize];
-            self.emit_release_storage(ctx, slot, &Ty::Error)?;
+            self.emit_release_storage(ctx, slot, &Ty::error())?;
             self.end_flag_guard(ctx, cont);
         }
         Ok(())
@@ -207,8 +211,10 @@ impl FnLowering<'_> {
             self.store_string_fields(ctx, storage, data, len_value, len_value, src);
             return Ok(());
         }
-        match self.func.reg_types.get(&src.0) {
-            Some(Ty::Struct(name, _)) if mojito_symbol::symbol::is_stdlib_string_struct(name) => {
+        match self.func.reg_types.get(&src.0).map(Ty::kind) {
+            Some(TyKind::Struct(name, _))
+                if mojito_symbol::symbol::is_stdlib_string_struct(name) =>
+            {
                 let ptr = self.reg_ptr(ctx, src)?;
                 if self.owned_temps.remove(&src.0).is_some() {
                     // The temporary transfers its whole allocation.
@@ -223,7 +229,7 @@ impl FnLowering<'_> {
                 }
                 Ok(())
             }
-            Some(Ty::Error) => {
+            Some(TyKind::Error) => {
                 let ptr = self.reg_ptr(ctx, src)?;
                 self.mem_copy(ctx, storage, ptr, 24, src);
                 self.owned_temps.remove(&src.0);
@@ -233,10 +239,10 @@ impl FnLowering<'_> {
             // runtime payload; its owned message is the VM's `Display` of the
             // value, `Name()`. Structs with fields keep rejecting: their
             // display embeds runtime field values.
-            Some(ty @ Ty::Struct(name, _))
+            Some(TyKind::Struct(name, _))
                 if self
                     .layout
-                    .layout_of(ty)
+                    .layout_of(&self.func.reg_types[&src.0])
                     .is_ok_and(|layout| layout.size == 0) =>
             {
                 let message = format!("{name}()").into_bytes();
@@ -312,7 +318,7 @@ impl FnLowering<'_> {
         self.store_error_into(ctx, err_slot, src)?;
         // The VM's lifecycle log records only `Value::Error` raises; a raised
         // error struct (`raise StopIteration()`) stays silent there.
-        let struct_raise = matches!(self.func.reg_types.get(&src.0), Some(Ty::Struct(name, _))
+        let struct_raise = matches!(self.func.reg_types.get(&src.0).map(Ty::kind), Some(TyKind::Struct(name, _))
             if !mojito_symbol::symbol::is_stdlib_string_struct(name));
         if self.trace_lifecycle && !struct_raise {
             self.emit_trace_err_slot(ctx, mojito_native::native::rt_abi::TRACE_RAISE);

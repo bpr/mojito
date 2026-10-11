@@ -1,6 +1,5 @@
 //! Textual MIR schema vocabulary and compatibility pins.
 
-use mojito::Ty;
 use mojito::mir::text::{
     INSTRUCTION_MNEMONICS, MAGIC, RESERVED_WORDS, TERMINATOR_MNEMONICS, TYPE_SPELLINGS,
     VERSION_MAJOR, VERSION_MINOR, constant_spelling, instruction_mnemonic,
@@ -8,6 +7,7 @@ use mojito::mir::text::{
     terminator_mnemonic, type_spelling, use_mode_spelling, version_header,
 };
 use mojito::mir::{Const, MirInstr, MirIntrinsicSubscript, MirTerm, Proj, Reg, UseMode};
+use mojito::types::{Ty, TyKind};
 use std::collections::HashSet;
 
 #[test]
@@ -83,8 +83,11 @@ fn constants_and_types_use_schema_tags() {
         constant_spelling(&Const::Function("main".into())),
         "function"
     );
-    assert_eq!(type_spelling(&Ty::Int), "Int");
-    assert_eq!(type_spelling(&Ty::Tuple(vec![Ty::Int, Ty::Bool])), "tuple");
+    assert_eq!(type_spelling(&Ty::int()), "Int");
+    assert_eq!(
+        type_spelling(&Ty::new(TyKind::Tuple(vec![Ty::int(), Ty::bool()]))),
+        "tuple"
+    );
 }
 
 #[test]
@@ -96,9 +99,9 @@ fn type_spellings_are_canonical_and_unique() {
         assert!(!spelling.is_empty());
     }
     for representative in [
-        type_spelling(&Ty::Int),
-        type_spelling(&Ty::Tuple(vec![Ty::Int])),
-        type_spelling(&Ty::Variant(vec![Ty::Int])),
+        type_spelling(&Ty::int()),
+        type_spelling(&Ty::new(TyKind::Tuple(vec![Ty::int()]))),
+        type_spelling(&Ty::new(TyKind::Variant(vec![Ty::int()]))),
     ] {
         assert!(
             TYPE_SPELLINGS.contains(&representative),

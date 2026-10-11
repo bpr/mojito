@@ -3,6 +3,7 @@
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
+use mojito_types::types::TyKind;
 
 pub(super) fn verify_subscript_instruction(
     cx: &InstrCx<'_>,
@@ -249,12 +250,12 @@ pub(super) fn verify_subscript_instruction(
 /// untracked pointer values use allocation arithmetic and are not valid
 /// operands for `ReadRef`/`WriteRef`.
 pub(super) fn reference_capability(ty: &Ty) -> Option<ReferenceCapability<'_>> {
-    match ty {
-        Ty::Ref(reference) => Some(ReferenceCapability {
+    match ty.kind() {
+        TyKind::Ref(reference) => Some(ReferenceCapability {
             target: &reference.referent,
             permission: ReferencePermission::from_mutability(reference.mutability),
         }),
-        Ty::Pointer { element, origin } => {
+        TyKind::Pointer { element, origin } => {
             let permission = match origin {
                 PointerOrigin::Place { mutable, .. } => {
                     if *mutable {
@@ -292,17 +293,17 @@ pub(super) fn verify_subscript_receiver_place(
     ) else {
         return;
     };
-    let receiver = match storage {
-        Ty::Ref(reference) => reference.referent.as_ref(),
-        other => other,
+    let receiver = match storage.kind() {
+        TyKind::Ref(reference) => &reference.referent,
+        _ => storage,
     };
     // The loaded base register may legitimately stay reference-typed one
     // level above its place (the VM's LoadPlace second dereference resolves
     // it at runtime); peel exactly one level, symmetric with the storage
     // peel above, so genuine mismatches still fail.
-    let found = match found {
-        Ty::Ref(reference) => reference.referent.as_ref(),
-        other => other,
+    let found = match found.kind() {
+        TyKind::Ref(reference) => &reference.referent,
+        _ => found,
     };
     if !types_compatible(found, receiver) {
         errors.push(format!(
@@ -352,10 +353,10 @@ pub(super) fn verify_subscript_call(
             call.target
         ));
     }
-    let concrete_receiver = match receiver_ty {
-        Some(Ty::Struct(name, _)) => Some(name.as_str()),
-        Some(Ty::Ref(reference)) => match reference.referent.as_ref() {
-            Ty::Struct(name, _) => Some(name.as_str()),
+    let concrete_receiver = match receiver_ty.map(Ty::kind) {
+        Some(TyKind::Struct(name, _)) => Some(name.as_str()),
+        Some(TyKind::Ref(reference)) => match reference.referent.kind() {
+            TyKind::Struct(name, _) => Some(name.as_str()),
             _ => None,
         },
         _ => None,
@@ -454,13 +455,13 @@ pub(super) fn verify_subscript_call(
     let retained_reference_ty = call
         .reference_result
         .as_ref()
-        .map(|reference| Ty::Ref(reference.clone()));
+        .map(|reference| TyKind::Ref(reference.clone()));
     match &retained_reference_ty {
         Some(expected) if &call.result_ty != expected => errors.push(format!(
             "{prefix}: subscript reference-result metadata {expected} does not match selected result type {}",
             call.result_ty
         )),
-        None if matches!(call.result_ty, Ty::Ref(_)) => errors.push(format!(
+        None if matches!(call.result_ty.kind(), TyKind::Ref(_)) => errors.push(format!(
             "{prefix}: subscript selected result type {} lacks reference-result metadata",
             call.result_ty
         )),
@@ -470,8 +471,8 @@ pub(super) fn verify_subscript_call(
         && let Some(found) = function.reg_types.get(&dest.0)
     {
         let exact_reference_mismatch = matches!(
-            (found, &call.result_ty),
-            (Ty::Ref(found), Ty::Ref(expected)) if found != expected
+            (found.kind(), call.result_ty.kind()),
+            (TyKind::Ref(found), TyKind::Ref(expected)) if found != expected
         );
         if exact_reference_mismatch || !types_compatible(found, &call.result_ty) {
             errors.push(format!(
@@ -550,7 +551,7 @@ pub(super) fn verify_subscript_call(
                 ));
             }
             if let Some(reference) = &call.reference_result
-                && !types_compatible(reference.referent.as_ref(), &declaration.ret_ty)
+                && !types_compatible(&reference.referent, &declaration.ret_ty)
             {
                 errors.push(format!(
                     "{prefix}: subscript reference-result referent {} does not match '{}' declaration {}",
@@ -622,8 +623,8 @@ pub(super) fn verify_subscript_call(
                     )
                 })
                 .collect::<Vec<_>>();
-            let expected_positional = match declaration.variadic.as_ref() {
-                Some(Ty::RuntimePack(elements)) => {
+            let expected_positional = match declaration.variadic.as_ref().map(Ty::kind) {
+                Some(TyKind::RuntimePack(elements)) => {
                     if elements.len() != positional_overflow.len() {
                         errors.push(format!(
                             "{prefix}: selected subscript has {} positional overflow argument(s), but '{}' requires RuntimePack arity {}",
@@ -640,8 +641,10 @@ pub(super) fn verify_subscript_call(
             for argument in overflow {
                 let expected = match argument.source {
                     mojito_checked::checked::CheckedCallArgumentSource::Positional(_) => {
-                        let expected = match (&declaration.variadic, expected_positional) {
-                            (Some(Ty::RuntimePack(_)), Some(elements)) => {
+                        let expected = match (declaration.variadic.as_ref(), expected_positional) {
+                            (Some(variadic), Some(elements))
+                                if matches!(variadic.kind(), TyKind::RuntimePack(_)) =>
+                            {
                                 elements.get(positional_index)
                             }
                             (Some(element), _) => Some(element),
@@ -788,11 +791,11 @@ pub(super) fn verify_param_arguments(
             (mojito_types::types::ParamDecl::Value { name, ty, .. }, Some(register)) => {
                 // A value pack spread whole binds the pack of its element.
                 let spread = pack(index)
-                    && matches!(function.reg_types.get(&register.0),
-                        Some(Ty::VariadicPack(element)) if types_compatible(element, ty));
+                    && matches!(function.reg_types.get(&register.0).map(Ty::kind),
+                        Some(TyKind::VariadicPack(element)) if types_compatible(element, ty));
                 if let Some(found) = function.reg_types.get(&register.0)
                     && !spread
-                    && !(matches!(ty.as_ref(), Ty::Func(_) | Ty::GenericFunc(_))
+                    && !(matches!(ty.kind(), TyKind::Func(_) | TyKind::GenericFunc(_))
                         && mojito_types::types::callable_bound_accepts(found, ty))
                     && !types_compatible(found, ty)
                 {

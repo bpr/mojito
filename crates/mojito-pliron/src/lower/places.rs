@@ -3,6 +3,7 @@
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
+use mojito_types::types::TyKind;
 
 impl FnLowering<'_> {
     /// Resolve a place to the address and checked type of its designated
@@ -73,8 +74,8 @@ impl FnLowering<'_> {
             .get(&through_var)
             .cloned()
             .unwrap_or_else(|| root_ty.clone());
-        let designated_ty = match &root_ty {
-            Ty::Ref(reference) => (*reference.referent).clone(),
+        let designated_ty = match root_ty.kind() {
+            TyKind::Ref(reference) => reference.referent.clone(),
             _ => root_ty.clone(),
         };
         let ref_param_root = (through_var as usize) < self.func.n_params
@@ -90,9 +91,9 @@ impl FnLowering<'_> {
                 let load = LoadOp::new(ctx, through_slot, handle);
                 self.append(ctx, load.get_operation(), Some(dest));
                 (recorded_ty, load.get_result(ctx), projected)
-            } else if place.through.is_some() || matches!(root_ty, Ty::Ref(_)) {
-                let (ty, address) = match &through_ty {
-                    Ty::Ref(_) | Ty::Pointer { .. } => {
+            } else if place.through.is_some() || matches!(root_ty.kind(), TyKind::Ref(_)) {
+                let (ty, address) = match through_ty.kind() {
+                    TyKind::Ref(_) | TyKind::Pointer { .. } => {
                         let handle = ScalarTy::Ptr.handle(ctx);
                         let load = LoadOp::new(ctx, through_slot, handle);
                         self.append(ctx, load.get_operation(), Some(dest));
@@ -114,7 +115,7 @@ impl FnLowering<'_> {
             };
         let mut offset: u64 = 0;
         for (step, proj) in place.proj.iter().enumerate().skip(projected) {
-            while let Ty::Ref(reference) = ty {
+            while let TyKind::Ref(reference) = ty.kind() {
                 if offset != 0 {
                     address = self.gep_byte(ctx, address, offset, dest);
                     offset = 0;
@@ -123,7 +124,7 @@ impl FnLowering<'_> {
                 let load = LoadOp::new(ctx, address, ptr_ty);
                 self.append(ctx, load.get_operation(), Some(dest));
                 address = load.get_result(ctx);
-                ty = *reference.referent;
+                ty = reference.referent.clone();
             }
             match proj {
                 Proj::Field(field) => {
@@ -132,7 +133,8 @@ impl FnLowering<'_> {
                     ty = field_ty;
                 }
                 Proj::ConstIndex(index) => {
-                    let (Ty::Tuple(elements) | Ty::RuntimePack(elements)) = &ty else {
+                    let (TyKind::Tuple(elements) | TyKind::RuntimePack(elements)) = ty.kind()
+                    else {
                         return Err(self
                             .unsupported_reg(format!("tuple-element projection on `{ty}`"), dest));
                     };
@@ -152,7 +154,7 @@ impl FnLowering<'_> {
                     // like `Proj::ConstIndex` (the Tuple accessor bodies'
                     // `self.storage[0]` shape); a runtime one traps outside
                     // `0..len` and addresses homogeneous storage by stride.
-                    if let Ty::Tuple(elements) | Ty::RuntimePack(elements) = &ty {
+                    if let TyKind::Tuple(elements) | TyKind::RuntimePack(elements) = ty.kind() {
                         let elements = elements.clone();
                         if let Some(element) = self.constant_pack_index(*index, elements.len()) {
                             let composed = self.struct_layout_of(&elements, dest)?;
@@ -193,21 +195,21 @@ impl FnLowering<'_> {
                             offset = 0;
                         }
                         self.emit_index_guard(ctx, *index, width as usize, dest)?;
-                        let element = Ty::Simd {
+                        let element = Ty::new(TyKind::Simd {
                             dtype: mojito_types::types::SimdDtype::Known(dtype),
                             width: mojito_types::types::SimdWidth::Known(1),
-                        };
+                        });
                         let lane = self.layout.layout_of(&element).expect("SIMD lane layout");
                         address = self.simd_lane_address(ctx, address, *index, lane.size, dest)?;
                         ty = element;
                         continue;
                     }
-                    let Ty::Pointer { element, .. } = &ty else {
+                    let TyKind::Pointer { element, .. } = ty.kind() else {
                         return Err(
                             self.unsupported_reg(format!("subscript projection on `{ty}`"), dest)
                         );
                     };
-                    let element = (**element).clone();
+                    let element = element.clone();
                     // The address so far designates pointer storage; load the
                     // pointer value and address its element.
                     if offset != 0 {
@@ -227,7 +229,7 @@ impl FnLowering<'_> {
                     ty = element;
                 }
                 Proj::Variant(index) => {
-                    let Ty::Variant(alternatives) = &ty else {
+                    let TyKind::Variant(alternatives) = ty.kind() else {
                         return Err(
                             self.unsupported_reg(format!("Variant projection on `{ty}`"), dest)
                         );
@@ -260,7 +262,7 @@ impl FnLowering<'_> {
                     };
                     let fields = self
                         .layout
-                        .struct_layout(&[Ty::Bool, element.clone()])
+                        .struct_layout(&[Ty::bool(), element.clone()])
                         .map_err(|error| {
                             self.unsupported_reg(format!("uninit storage ({error})"), dest)
                         })?;
@@ -293,7 +295,7 @@ impl FnLowering<'_> {
         field: &str,
         dest: Reg,
     ) -> Result<(u64, Ty), PlironError> {
-        let Ty::Struct(name, _) = ty else {
+        let TyKind::Struct(name, _) = ty.kind() else {
             return Err(self.unsupported_reg(format!("field access on `{ty}`"), dest));
         };
         let Some(decl) = self.struct_decls.get(name.as_str()) else {
@@ -334,8 +336,8 @@ impl FnLowering<'_> {
         let Some(mut base_ty) = self.func.reg_types.get(&base.0).cloned() else {
             return Err(self.unsupported_reg(format!("untyped field base %r{}", base.0), dest));
         };
-        while let Ty::Ref(reference) = base_ty {
-            base_ty = *reference.referent;
+        while let TyKind::Ref(reference) = base_ty.kind() {
+            base_ty = reference.referent.clone();
         }
         // A slice-descriptor bound access materializes a fresh `Optional`
         // through its compiled constructor — the VM's `slice_bound_optional`.
@@ -413,7 +415,13 @@ impl FnLowering<'_> {
         base: Reg,
         field: &str,
     ) -> Result<(), PlironError> {
-        let Some(optional_ty @ Ty::Struct(..)) = self.func.reg_types.get(&dest.0).cloned() else {
+        let Some(optional_ty) = self
+            .func
+            .reg_types
+            .get(&dest.0)
+            .filter(|ty| matches!(ty.kind(), TyKind::Struct(..)))
+            .cloned()
+        else {
             return Err(self.unsupported_reg("untyped slice bound access".into(), dest));
         };
         let lowered = lower_ty(self.name, &optional_ty, &self.layout, self.reg_span(dest))?;
@@ -497,8 +505,11 @@ impl FnLowering<'_> {
         elems: &[Reg],
         element_types: Option<&[Ty]>,
     ) -> Result<(), PlironError> {
-        let elements: Vec<Ty> = match (self.func.reg_types.get(&dest.0), element_types) {
-            (Some(Ty::Tuple(es) | Ty::RuntimePack(es)), _) => es.clone(),
+        let elements: Vec<Ty> = match (
+            self.func.reg_types.get(&dest.0).map(Ty::kind),
+            element_types,
+        ) {
+            (Some(TyKind::Tuple(es) | TyKind::RuntimePack(es)), _) => es.clone(),
             (_, Some(es)) => es.to_vec(),
             _ => {
                 return Err(self.unsupported_reg("untyped tuple construction".into(), dest));

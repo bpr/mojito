@@ -4,6 +4,7 @@
 
 use mojito::hir::Cfg;
 use mojito::mir::{MirInstr, MirPlace, MirSubscriptArg, MirTerm, Proj, lower_cfg, lower_program};
+use mojito::types::TyKind;
 use mojito::{Compiler, SemanticAdjustment, Ty, parse};
 use std::path::Path;
 
@@ -30,7 +31,10 @@ fn free_function_union_reference_result_retains_a_typed_handle_slot() {
         .position(|name| name == "selected")
         .expect("selected slot") as u32;
     assert!(
-        matches!(main.var_tys.get(&selected), Some(Ty::Ref(_))),
+        matches!(
+            main.var_tys.get(&selected).map(Ty::kind),
+            Some(TyKind::Ref(_))
+        ),
         "reference assignment must not overwrite its handle slot type: {main:#?}"
     );
 }
@@ -267,9 +271,9 @@ fn projected_pointer_actual_retains_one_accessor_handle_and_one_dynamic_index() 
     for place in retained {
         assert_eq!(place.through, Some(place.root), "{place:#?}");
         assert!(matches!(
-            main.var_tys.get(&place.root),
-            Some(Ty::Ref(reference))
-                if matches!(reference.referent.as_ref(), Ty::Struct(name, _) if name == "Buffer")
+            main.var_tys.get(&place.root).map(Ty::kind),
+            Some(TyKind::Ref(reference))
+                if matches!(&reference.referent.kind(), TyKind::Struct(name, _) if name == "Buffer")
         ));
         assert!(matches!(
             place.proj.as_slice(),
@@ -425,8 +429,8 @@ fn augmented_mutating_index_reloads_typed_source_before_setter() {
             _ => None,
         })
         .expect("mutated index must be reloaded before the setter");
-    assert_eq!(reload.1.ty, Some(Ty::Int), "{instructions:#?}");
-    assert_eq!(main.reg_types.get(&reload.0.0), Some(&Ty::Int));
+    assert_eq!(reload.1.ty, Some(Ty::int()), "{instructions:#?}");
+    assert_eq!(main.reg_types.get(&reload.0.0), Some(&Ty::int()));
 }
 
 #[test]
@@ -565,14 +569,21 @@ fn raising_iterator_lowers_to_typed_try_next() {
             MirInstr::TryNext {
                 dest,
                 call,
-                exhaustion: mojito::Ty::Struct(name, arguments),
+                exhaustion,
                 ..
-            } if name == "StopIteration" && arguments.is_empty() => Some((dest, call)),
+            } if matches!(
+                exhaustion.kind(),
+                mojito::TyKind::Struct(name, arguments)
+                    if name == "StopIteration" && arguments.is_empty()
+            ) =>
+            {
+                Some((dest, call))
+            }
             _ => None,
         })
         .expect("typed TryNext");
-    assert_eq!(main.reg_types.get(&dest.0), Some(&mojito::Ty::Int));
-    assert_eq!(&call.result_ty, &mojito::Ty::Int);
+    assert_eq!(main.reg_types.get(&dest.0), Some(&Ty::int()));
+    assert_eq!(&call.result_ty, &Ty::int());
     assert!(call.reference_result.is_none());
     assert!(!instructions.iter().any(|instruction| matches!(
         instruction,
@@ -604,14 +615,14 @@ fn reference_yielding_try_next_retains_a_typed_reference_destination() {
         .get(&dest.0)
         .expect("typed TryNext destination");
     assert!(matches!(
-        destination_ty,
-        mojito::Ty::Ref(reference) if reference.referent.as_ref() == &mojito::Ty::Int
+        destination_ty.kind(),
+        mojito::TyKind::Ref(reference) if reference.referent == mojito::TyKind::Int
     ));
     assert_eq!(&call.result_ty, destination_ty);
     assert_eq!(
         call.reference_result.as_ref(),
-        match destination_ty {
-            mojito::Ty::Ref(reference) => Some(reference),
+        match destination_ty.kind() {
+            mojito::TyKind::Ref(reference) => Some(reference),
             _ => None,
         }
     );
@@ -701,7 +712,7 @@ fn bounded_iterator_carries_its_checked_element_type_into_mir() {
             _ => None,
         })
         .expect("bounded iterator Next");
-    assert_eq!(main.reg_types.get(&element.0), Some(&mojito::Ty::Int));
+    assert_eq!(main.reg_types.get(&element.0), Some(&Ty::int()));
     assert!(
         main.blocks
             .iter()
@@ -710,9 +721,9 @@ fn bounded_iterator_carries_its_checked_element_type_into_mir() {
                 instruction,
                 MirInstr::DefVar {
                     src,
-                    binding_ty: Some(mojito::Ty::Int),
+                    binding_ty: Some(binding_ty),
                     ..
-                } if *src == element
+                } if *src == element && *binding_ty == Ty::int()
             ))
     );
 }
@@ -891,9 +902,11 @@ fn checked_mir_places_carry_root_projection_and_storage_types() {
         })
         .expect("typed store place");
     assert!(place.is_typed());
-    assert!(matches!(place.root_ty, Some(mojito::Ty::Struct(ref name, _)) if name == "Cell"));
-    assert_eq!(place.projection_tys, vec![mojito::Ty::Int]);
-    assert_eq!(place.ty, Some(mojito::Ty::Int));
+    assert!(
+        matches!(place.root_ty.as_ref().map(Ty::kind), Some(mojito::TyKind::Struct(name, _)) if name == "Cell")
+    );
+    assert_eq!(place.projection_tys, vec![Ty::int()]);
+    assert_eq!(place.ty, Some(Ty::int()));
 }
 
 #[test]
@@ -960,7 +973,7 @@ fn checked_indexer_normalization_becomes_explicit_typed_mir_calls() {
         .collect::<Vec<_>>();
     assert_eq!(calls.len(), 2, "{:#?}", main.blocks);
     assert!(calls.iter().all(|(dest, resolved, args)| {
-        main.reg_types.get(&dest.0) == Some(&mojito::Ty::Int)
+        main.reg_types.get(&dest.0) == Some(&Ty::int())
             && resolved.as_deref() == Some("Offset.__mlir_index__")
             && args.is_empty()
     }));
@@ -1057,7 +1070,7 @@ fn checked_lowering_owns_typed_declarations_and_normalized_defaults() {
         .iter()
         .find(|declaration| declaration.lowered_name == "f")
         .unwrap();
-    assert_eq!(declaration.param_types, vec![mojito::Ty::UInt]);
+    assert_eq!(declaration.param_types, vec![Ty::uint()]);
     assert!(matches!(
         declaration.defaults.as_slice(),
         [Some(mojito::CheckedConst::Int(value))] if value.to_i64() == Some(3)
@@ -1076,7 +1089,7 @@ fn executable_mir_carries_checked_binding_and_parameter_types() {
         .find(|(name, _)| name == "widen")
         .expect("lowered function");
 
-    assert_eq!(function.1.param_types, vec![mojito::Ty::UInt]);
+    assert_eq!(function.1.param_types, vec![Ty::uint()]);
     assert!(
         function
             .1
@@ -1086,9 +1099,9 @@ fn executable_mir_carries_checked_binding_and_parameter_types() {
             .any(|instruction| matches!(
                 instruction,
                 MirInstr::DefVar {
-                    binding_ty: Some(mojito::Ty::Float64),
+                    binding_ty: Some(binding_ty),
                     ..
-                }
+                } if *binding_ty == Ty::float64()
             ))
     );
 }
@@ -1116,10 +1129,7 @@ fn literal_materialization_is_explicit_in_typed_mir() {
     )));
     assert!(instructions.clone().any(|instruction| matches!(
         instruction,
-        MirInstr::MaterializeLiteral {
-            target: mojito::Ty::Int,
-            ..
-        }
+        MirInstr::MaterializeLiteral { target, .. } if *target == mojito::TyKind::Int
     )));
 }
 
@@ -1236,10 +1246,7 @@ fn collection_and_range_literal_boundaries_are_explicit_in_typed_mir() {
         .filter(|instruction| {
             matches!(
                 instruction,
-                MirInstr::MaterializeLiteral {
-                    target: mojito::Ty::Int,
-                    ..
-                }
+                MirInstr::MaterializeLiteral { target, .. } if *target == mojito::TyKind::Int
             )
         })
         .count();
@@ -1296,7 +1303,7 @@ fn bounded_trait_calls_carry_the_requirement_error_contract_into_mir() {
                     method,
                     raises: Some(raises),
                     ..
-                } if method == "run" && **raises == mojito::Ty::Error
+                } if method == "run" && **raises == mojito::TyKind::Error
             ))
     );
 }
@@ -1327,8 +1334,8 @@ fn checked_declaration_types_are_keyed_by_source_site_not_type_syntax() {
 /// `ty` is the type parameter spelled `name` with exactly `bounds`. Its
 /// identity is its declaration's, which a test cannot spell independently.
 fn assert_type_parameter(ty: &Ty, name: &str, bounds: &[&str]) {
-    match ty {
-        Ty::Param {
+    match ty.kind() {
+        TyKind::Param {
             binder,
             bounds: found,
             callable_bound: None,
@@ -1393,10 +1400,10 @@ fn mir_declarations_carry_generic_free_and_method_keyword_collectors() {
             .as_ref()
             .expect("keyword collector element")
             .clone();
-        let body_type = mojito::Ty::Struct(
+        let body_type = Ty::new(mojito::TyKind::Struct(
             "StringDict".into(),
-            vec![mojito::types::TyArg::Ty(element)].into(),
-        );
+            vec![mojito::types::TyArg::Ty(element)],
+        ));
         let function = collector_body(name);
         assert_eq!(function.param_types.last(), Some(&body_type));
         let collector_slot = function.n_params - 1;
@@ -2095,7 +2102,10 @@ fn borrowed_list_iteration_lowers_a_reference_bind_and_interior_loan() {
         instruction,
         MirInstr::MakeRef { place, .. } if place.root == values && place.proj.is_empty()
     )));
-    assert!(matches!(main.var_tys.get(&source_slot), Some(Ty::Ref(_))));
+    assert!(matches!(
+        main.var_tys.get(&source_slot).map(Ty::kind),
+        Some(TyKind::Ref(_))
+    ));
     let interior_loan = |reference: u32| {
         instructions.iter().any(|instruction| {
             matches!(
@@ -2171,7 +2181,7 @@ fn borrowed_named_user_source_lowers_a_reference_bind_and_whole_place_loan() {
         .flat_map(|block| &block.instrs)
         .collect::<Vec<_>>();
 
-    // Uniform shape with the collection case: `MakeRef` into a `Ty::Ref`-typed
+    // Uniform shape with the collection case: `MakeRef` into a `TyKind::Ref`-typed
     // retained-source slot; the only difference is the loan granularity — a
     // whole-place shared loan (`interior: None`) instead of an element
     // generation.
@@ -2179,7 +2189,10 @@ fn borrowed_named_user_source_lowers_a_reference_bind_and_whole_place_loan() {
         instruction,
         MirInstr::MakeRef { place, .. } if place.root == nums && place.proj.is_empty()
     )));
-    assert!(matches!(main.var_tys.get(&source_slot), Some(Ty::Ref(_))));
+    assert!(matches!(
+        main.var_tys.get(&source_slot).map(Ty::kind),
+        Some(TyKind::Ref(_))
+    ));
     let whole_place_loan = |reference: u32| {
         instructions.iter().any(|instruction| {
             matches!(
@@ -2245,7 +2258,10 @@ fn borrowed_comprehension_sources_lower_like_statement_loops() {
         instruction,
         MirInstr::MakeRef { place, .. } if place.root == values && place.proj.is_empty()
     )));
-    assert!(matches!(main.var_tys.get(&source_slot), Some(Ty::Ref(_))));
+    assert!(matches!(
+        main.var_tys.get(&source_slot).map(Ty::kind),
+        Some(TyKind::Ref(_))
+    ));
     let interior_loan = |reference: u32| {
         instructions.iter().any(|instruction| {
             matches!(
@@ -2311,7 +2327,10 @@ fn borrowed_comprehension_sources_lower_like_statement_loops() {
         instruction,
         MirInstr::MakeRef { place, .. } if place.root == nums && place.proj.is_empty()
     )));
-    assert!(matches!(main.var_tys.get(&source_slot), Some(Ty::Ref(_))));
+    assert!(matches!(
+        main.var_tys.get(&source_slot).map(Ty::kind),
+        Some(TyKind::Ref(_))
+    ));
     let whole_place_loan = |reference: u32| {
         instructions.iter().any(|instruction| {
             matches!(
@@ -2434,8 +2453,8 @@ fn reference_list_iteration_lowers_through_the_generic_protocol() {
         .iter()
         .position(|name| name == "value")
         .expect("reference loop binding") as u32;
-    match main.var_tys.get(&value) {
-        Some(Ty::Ref(reference)) => {
+    match main.var_tys.get(&value).map(Ty::kind) {
+        Some(TyKind::Ref(reference)) => {
             assert_eq!(reference.mutability, mojito::Mutability::Mutable);
         }
         other => panic!("loop binding is a mutable reference, got {other:?}"),
@@ -2525,8 +2544,8 @@ fn chained_reference_subscript_materializes_a_retained_handle() {
         .position(|name| name.starts_with("$call_ref"))
         .expect("synthetic subscript reference slot") as u32;
     assert!(matches!(
-        main.var_tys.get(&reference_slot),
-        Some(mojito::Ty::Ref(_))
+        main.var_tys.get(&reference_slot).map(Ty::kind),
+        Some(mojito::TyKind::Ref(_))
     ));
     let instructions = main
         .blocks
@@ -2589,7 +2608,10 @@ fn dynamic_reference_returning_call_actual_retains_one_hidden_place() {
         })
         .expect("mut actual retains a caller place");
     assert_eq!(retained.through, Some(retained.root));
-    assert!(matches!(main.var_tys.get(&retained.root), Some(Ty::Ref(_))));
+    assert!(matches!(
+        main.var_tys.get(&retained.root).map(Ty::kind),
+        Some(TyKind::Ref(_))
+    ));
     assert!(
         mir.invariant_errors.is_empty(),
         "{:?}",
@@ -2678,7 +2700,7 @@ fn union_interior_return_keeps_every_possible_generation() {
 
 #[test]
 fn checked_lowering_records_declaration_contracts() {
-    use mojito::{Ty, check_program};
+    use mojito::check_program;
     let src = "@fieldwise_init\nstruct Box:\n    var value: Int\n    def get(ref self) -> ref[self.value] Int:\n        return self.value\n\ndef plain() -> Int:\n    return 1\n\ndef failing() raises:\n    raise Error(\"boom\")\n\ndef main():\n    print(plain())\n    try:\n        failing()\n    except err:\n        print(err)\n";
     let program = parse(src).expect("parse");
     let checked = check_program(&program).expect("check");
@@ -2695,11 +2717,11 @@ fn checked_lowering_records_declaration_contracts() {
             .unwrap_or_else(|| panic!("function '{name}' lowered"))
             .1
     };
-    assert_eq!(function("main").ret_ty, Some(Ty::None));
+    assert_eq!(function("main").ret_ty, Some(Ty::none()));
     assert!(!function("main").raises);
-    assert_eq!(function("plain").ret_ty, Some(Ty::Int));
+    assert_eq!(function("plain").ret_ty, Some(Ty::int()));
     assert!(function("failing").raises);
-    assert_eq!(function("__toplevel__").ret_ty, Some(Ty::None));
+    assert_eq!(function("__toplevel__").ret_ty, Some(Ty::none()));
     // The ref-returning method records the checked fact without reading
     // source return syntax.
     assert!(function("Box.get").returns_reference);
@@ -2710,15 +2732,13 @@ fn checked_lowering_records_declaration_contracts() {
             .find(|declaration| declaration.lowered_name == name)
             .unwrap_or_else(|| panic!("declaration '{name}' recorded"))
     };
-    assert_eq!(declaration("plain").ret_ty, Ty::Int);
+    assert_eq!(declaration("plain").ret_ty, Ty::int());
     assert!(declaration("failing").raises);
     assert!(!declaration("plain").raises);
 }
 
 #[test]
 fn recursively_lifted_declarations_preserve_checked_call_abis() {
-    use mojito::Ty;
-
     let src = "def outer() raises -> Int:\n    var base = 40\n    def middle() raises {base} -> Int:\n        def inner(head: Int, /, tail: Int = 0, *, bump: Int = 0) raises {base} -> Int:\n            return base + head + tail + bump\n        return inner(1, bump=1)\n    return middle()\n\ndef main():\n    try:\n        print(outer())\n    except error:\n        print(error)\n";
     let mir = lower_program(&parse(src).expect("parse")).expect("checked lowering");
     assert!(
@@ -2741,7 +2761,7 @@ fn recursively_lifted_declarations_preserve_checked_call_abis() {
     assert_eq!(declaration.positional_only, Some(2));
     assert_eq!(declaration.keyword_only, Some(3));
     assert!(declaration.raises);
-    assert_eq!(declaration.ret_ty, Ty::Int);
+    assert_eq!(declaration.ret_ty, Ty::int());
     assert_eq!(declaration.ref_params, [true, false, false, false]);
 
     let function = &mir
@@ -2751,13 +2771,11 @@ fn recursively_lifted_declarations_preserve_checked_call_abis() {
         .expect("deep function")
         .1;
     assert!(function.raises);
-    assert_eq!(function.ret_ty, Some(Ty::Int));
+    assert_eq!(function.ret_ty, Some(Ty::int()));
 }
 
 #[test]
 fn recursively_lifted_reference_return_keeps_its_checked_contract() {
-    use mojito::Ty;
-
     let src = "def main():\n    var value = 40\n    def middle(mut middle_item: Int):\n        def inner(ref inner_item: Int) -> ref[inner_item] Int:\n            return inner_item\n        ref alias = inner(middle_item)\n        alias += 2\n    middle(value)\n";
     let mir = lower_program(&parse(src).expect("parse")).expect("checked lowering");
     assert!(
@@ -2772,7 +2790,7 @@ fn recursively_lifted_reference_return_keeps_its_checked_contract() {
         .expect("deep reference-returning function")
         .1;
     assert!(function.returns_reference);
-    assert_eq!(function.ret_ty, Some(Ty::Int));
+    assert_eq!(function.ret_ty, Some(Ty::int()));
     assert_eq!(function.ref_params, [true]);
 
     let declaration = mir
@@ -2781,7 +2799,7 @@ fn recursively_lifted_reference_return_keeps_its_checked_contract() {
         .iter()
         .find(|declaration| declaration.lowered_name == "main$middle$inner")
         .expect("deep reference-returning declaration");
-    assert_eq!(declaration.ret_ty, Ty::Int);
+    assert_eq!(declaration.ret_ty, Ty::int());
     assert_eq!(declaration.ref_params, [true]);
 }
 
@@ -2906,8 +2924,8 @@ fn forwarded_sibling_capture_parameter_keeps_its_callable_type() {
         .position(|name| name == "helper")
         .expect("forwarded helper slot") as u32;
     assert!(matches!(
-        middle.var_tys.get(&helper_slot),
-        Some(mojito::Ty::Func(_))
+        middle.var_tys.get(&helper_slot).map(Ty::kind),
+        Some(mojito::TyKind::Func(_))
     ));
     let capture = middle
         .blocks
@@ -2922,8 +2940,8 @@ fn forwarded_sibling_capture_parameter_keeps_its_callable_type() {
         .expect("inner captures forwarded helper");
     assert_eq!(capture.place.root, helper_slot);
     assert!(matches!(
-        capture.place.root_ty.as_ref(),
-        Some(mojito::Ty::Func(_))
+        capture.place.root_ty.as_ref().map(Ty::kind),
+        Some(mojito::TyKind::Func(_))
     ));
 }
 
@@ -3051,8 +3069,8 @@ fn explicit_origin_selection_erases_semantic_arguments_and_types_function_consta
         })
         .expect("selected function constant");
     assert!(matches!(
-        main.reg_types.get(&function_register.0),
-        Some(mojito::Ty::Func(_))
+        main.reg_types.get(&function_register.0).map(Ty::kind),
+        Some(mojito::TyKind::Func(_))
     ));
 }
 
@@ -3087,17 +3105,17 @@ fn callable_type_bound_is_retained_and_verifies_indirect_calls() {
             _ => None,
         })
         .expect("bounded callback lowers indirectly");
-    let Some(mojito::Ty::Param {
+    let Some(mojito::TyKind::Param {
         callable_bound: Some(contract),
         ..
-    }) = apply.reg_types.get(&callee.0)
+    }) = apply.reg_types.get(&callee.0).map(Ty::kind)
     else {
         panic!("callee register must retain its bounded type parameter")
     };
     assert!(
         contract
             .as_func()
-            .is_some_and(|func| func.params == [mojito::Ty::Int] && *func.ret == mojito::Ty::Int)
+            .is_some_and(|func| func.params == [Ty::int()] && *func.ret == mojito::TyKind::Int)
     );
     assert!(
         target
@@ -3105,8 +3123,8 @@ fn callable_type_bound_is_retained_and_verifies_indirect_calls() {
             .is_some_and(|target| target.contains("__trait_dispatch.__call__")),
         "bounded call retains an abstract checked dispatch target: {target:?}"
     );
-    assert_eq!(apply.reg_types.get(&dest.0), Some(&mojito::Ty::Int));
-    apply.reg_types.insert(argument.0, mojito::Ty::Bool);
+    assert_eq!(apply.reg_types.get(&dest.0), Some(&Ty::int()));
+    apply.reg_types.insert(argument.0, Ty::bool());
     let errors = mojito::mir::verify::verify(&mir);
     assert!(
         errors
@@ -3256,7 +3274,7 @@ fn nested_origin_specialization_loads_materialized_closure_with_bound_type() {
 
 #[test]
 fn pack_keyed_def_is_template_served_without_the_runtime_pack_marker() {
-    use mojito::{Ty, check_program, elaborate};
+    use mojito::{TyKind, check_program, elaborate};
 
     // A pack-keyed `def` that reads its collector is served by its template:
     // its declaration keeps the symbolic pack, and the ABI-only
@@ -3275,7 +3293,10 @@ fn pack_keyed_def_is_template_served_without_the_runtime_pack_marker() {
         !mir.declarations
             .functions
             .iter()
-            .any(|declaration| matches!(declaration.variadic, Some(Ty::RuntimePack(_)))),
+            .any(|declaration| matches!(
+                declaration.variadic.as_ref().map(Ty::kind),
+                Some(TyKind::RuntimePack(_))
+            )),
         "no clone carries the heterogeneous ABI marker"
     );
     assert!(

@@ -128,7 +128,7 @@ pub struct OutcomeAbi {
 }
 
 /// The physical ABI of an indirect call, derived from the callee register's
-/// checked `Ty::Func` contract by the same classification rules
+/// checked `TyKind::Func` contract by the same classification rules
 /// [`declare_function`] applies to a compiled callee. The `invoke` thunk a
 /// callable value carries has exactly this signature with the environment
 /// pointer prepended after the out-pointer: `[outcome*|sret*], env*,
@@ -321,7 +321,7 @@ pub enum ScalarTy {
 #[derive(Clone)]
 pub enum LowerTy {
     Scalar(ScalarTy),
-    Aggregate { ty: Box<Ty>, layout: Layout },
+    Aggregate { ty: Ty, layout: Layout },
     ZeroSized,
 }
 

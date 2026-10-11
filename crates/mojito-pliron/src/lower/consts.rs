@@ -2,6 +2,7 @@
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
+use mojito_types::types::TyKind;
 
 impl FnLowering<'_> {
     pub(super) fn lower_const(
@@ -81,7 +82,8 @@ impl FnLowering<'_> {
                 dest,
             ));
         };
-        let Some(Ty::Pointer { element, .. }) = self.func.reg_types.get(&dest.0).cloned() else {
+        let register_ty = self.func.reg_types.get(&dest.0).cloned();
+        let Some(TyKind::Pointer { element, .. }) = register_ty.as_ref().map(Ty::kind) else {
             return Err(self.unsupported_reg(
                 "a parameter list's address needs a pointer register".to_string(),
                 dest,
@@ -89,21 +91,21 @@ impl FnLowering<'_> {
         };
         let mut bytes = Vec::new();
         for value in elements {
-            let encoded = match (element.as_ref(), value) {
-                (Ty::Int, CtValue::Int(value)) => Some(value.to_le_bytes().to_vec()),
-                (Ty::Int, CtValue::IntLiteral(value)) => {
+            let encoded = match (element.kind(), value) {
+                (TyKind::Int, CtValue::Int(value)) => Some(value.to_le_bytes().to_vec()),
+                (TyKind::Int, CtValue::IntLiteral(value)) => {
                     value.to_i64().map(|v| v.to_le_bytes().to_vec())
                 }
-                (Ty::UInt, CtValue::UInt(value)) => Some(value.to_le_bytes().to_vec()),
-                (Ty::UInt, CtValue::IntLiteral(value)) => {
+                (TyKind::UInt, CtValue::UInt(value)) => Some(value.to_le_bytes().to_vec()),
+                (TyKind::UInt, CtValue::IntLiteral(value)) => {
                     value.to_u64().map(|v| v.to_le_bytes().to_vec())
                 }
-                (Ty::Float64, CtValue::Float(bits)) => Some(bits.to_le_bytes().to_vec()),
-                (Ty::Float64, CtValue::FloatLiteral(value)) => {
+                (TyKind::Float64, CtValue::Float(bits)) => Some(bits.to_le_bytes().to_vec()),
+                (TyKind::Float64, CtValue::FloatLiteral(value)) => {
                     value.to_f64().map(|v| v.to_bits().to_le_bytes().to_vec())
                 }
-                (Ty::Bool, CtValue::Bool(value)) => Some(vec![u8::from(*value)]),
-                (Ty::Dtype, CtValue::Dtype(dtype)) => Some(vec![dtype.code()]),
+                (TyKind::Bool, CtValue::Bool(value)) => Some(vec![u8::from(*value)]),
+                (TyKind::Dtype, CtValue::Dtype(dtype)) => Some(vec![dtype.code()]),
                 _ => None,
             };
             let Some(encoded) = encoded else {
@@ -114,8 +116,8 @@ impl FnLowering<'_> {
             };
             bytes.extend(encoded);
         }
-        let align = match element.as_ref() {
-            Ty::Bool | Ty::Dtype => 1,
+        let align = match element.kind() {
+            TyKind::Bool | TyKind::Dtype => 1,
             _ => 8,
         };
         let global = self.shared.intern_param_list(ctx, &bytes, align);
@@ -145,7 +147,7 @@ impl FnLowering<'_> {
                 // A struct value is typed by its own name; a tuple by the
                 // nominal `Tuple` instance its register names.
                 let ty = match value {
-                    CtValue::Struct { name, .. } => Ty::Struct(name.clone(), Vec::new().into()),
+                    CtValue::Struct { name, .. } => TyKind::Struct(name.clone(), Vec::new()).into(),
                     _ => self.func.reg_types.get(&dest.0).cloned().ok_or_else(|| {
                         self.unsupported_reg(format!("untyped parameter value `{value}`"), dest)
                     })?,
@@ -179,14 +181,14 @@ impl FnLowering<'_> {
         dest: Reg,
     ) -> Result<(), PlironError> {
         use mojito_types::ct::CtValue;
-        let (leaves, leaf_tys): (Vec<&CtValue>, Vec<Ty>) = match (value, ty) {
+        let (leaves, leaf_tys): (Vec<&CtValue>, Vec<Ty>) = match (value, ty.kind()) {
             (CtValue::Simd { dtype, lanes }, _) if lanes.len() > 1 => {
                 let vector = self.parameter_vector(ctx, *dtype, lanes, dest)?;
                 let store = StoreOp::new(ctx, vector, address);
                 self.append(ctx, store.get_operation(), Some(dest));
                 return Ok(());
             }
-            (CtValue::Pointer { memory, offset }, Ty::Pointer { element, .. }) => {
+            (CtValue::Pointer { memory, offset }, TyKind::Pointer { element, .. }) => {
                 let layout = self.layout.layout_of(element).map_err(|error| {
                     self.unsupported_reg(format!("frozen pointer element layout ({error})"), dest)
                 })?;
@@ -227,7 +229,7 @@ impl FnLowering<'_> {
                 self.append(ctx, store.get_operation(), Some(dest));
                 return Ok(());
             }
-            (CtValue::Str(text), Ty::Struct(name, _))
+            (CtValue::Str(text), TyKind::Struct(name, _))
                 if mojito_symbol::symbol::is_stdlib_string_struct(name) =>
             {
                 let global = self.shared.intern_string(ctx, text.as_bytes());
@@ -238,7 +240,7 @@ impl FnLowering<'_> {
                 self.store_string_fields(ctx, address, data, length, length, dest);
                 return Ok(());
             }
-            (CtValue::Struct { .. } | CtValue::Tuple(_), Ty::Struct(name, _)) => {
+            (CtValue::Struct { .. } | CtValue::Tuple(_), TyKind::Struct(name, _)) => {
                 let Some(decl) = self.struct_decls.get(name.as_str()) else {
                     return Err(self.unsupported_reg(format!("parameter value of `{name}`"), dest));
                 };
@@ -258,9 +260,10 @@ impl FnLowering<'_> {
                     }
                 }
             }
-            (CtValue::Tuple(elements), Ty::Tuple(element_tys) | Ty::RuntimePack(element_tys)) => {
-                (elements.iter().collect(), element_tys.clone())
-            }
+            (
+                CtValue::Tuple(elements),
+                TyKind::Tuple(element_tys) | TyKind::RuntimePack(element_tys),
+            ) => (elements.iter().collect(), element_tys.clone()),
             _ => {
                 let LowerTy::Scalar(scalar) =
                     lower_ty(self.name, ty, &self.layout, self.reg_span(dest))?
@@ -383,14 +386,14 @@ impl FnLowering<'_> {
         value: Reg,
         target: &Ty,
     ) -> Result<(), PlironError> {
-        let target = match target {
-            Ty::Int => ScalarTy::Int,
-            Ty::UInt => ScalarTy::UInt,
-            Ty::Float64 => ScalarTy::Float64,
+        let target = match target.kind() {
+            TyKind::Int => ScalarTy::Int,
+            TyKind::UInt => ScalarTy::UInt,
+            TyKind::Float64 => ScalarTy::Float64,
             ty if let Some(dtype) = scalar_simd_dtype(ty) => ScalarTy::of_dtype(dtype),
             // Literal-typed storage holds the exact value at its default
             // width, rejecting what i64/f64 cannot represent.
-            Ty::IntLiteral | Ty::FloatLiteral => {
+            TyKind::IntLiteral | TyKind::FloatLiteral => {
                 let Some(literal) = self.pending_literals.get(&value.0).cloned() else {
                     if let Some(materialized) = self.reg_values.get(&value.0).copied() {
                         self.reg_values.insert(dest.0, materialized);
@@ -440,8 +443,8 @@ impl FnLowering<'_> {
         target: &Ty,
         span_reg: Reg,
     ) -> Result<Value, PlironError> {
-        match (literal, target) {
-            (PendingLiteral::Int(literal), Ty::IntLiteral) => {
+        match (literal, target.kind()) {
+            (PendingLiteral::Int(literal), TyKind::IntLiteral) => {
                 let value = literal.to_i64().ok_or_else(|| {
                     self.literal_out_of_range(
                         literal.as_bigint().to_string(),
@@ -461,7 +464,7 @@ impl FnLowering<'_> {
                 })?;
                 Ok(self.float_constant(ctx, value))
             }
-            (PendingLiteral::Float(literal), Ty::FloatLiteral) => {
+            (PendingLiteral::Float(literal), TyKind::FloatLiteral) => {
                 let value = literal.to_f64().ok_or_else(|| {
                     self.literal_out_of_range(
                         literal.to_string(),

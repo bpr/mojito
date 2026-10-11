@@ -12,6 +12,7 @@ use super::rebind::reachable;
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 use mojito_types::types::LaneMask;
+use mojito_types::types::TyKind;
 
 impl Specializer<'_> {
     /// Fold every lane mask the instance `function` of `template` reaches to
@@ -53,7 +54,8 @@ fn close_blocks(blocks: &mut [MirBlock], reg_types: &HashMap<u32, Ty>) -> Result
                     }
                 }
                 MirInstr::SimdShuffle { value, mask, .. } if mask.is_symbolic() => {
-                    let Some(Ty::Simd { width, .. }) = reg_types.get(&value.0) else {
+                    let Some(TyKind::Simd { width, .. }) = reg_types.get(&value.0).map(Ty::kind)
+                    else {
                         continue;
                     };
                     match width.known().and_then(|width| mask.resolve(width)) {

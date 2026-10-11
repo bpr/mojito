@@ -16,6 +16,7 @@
 //! stage, packs, callables — reject with [`LayoutError::Unsupported`] so
 //! backends surface a contextual diagnostic instead of guessing.
 
+use mojito_types::types::TyKind;
 use std::collections::HashMap;
 
 use crate::target::NativeTarget;
@@ -94,21 +95,21 @@ impl LayoutCx<'_> {
         // ordinary struct destruction still treats the wrapper as inert.
         if let Some(element) = mojito_types::types::uninit_storage_element(ty) {
             return self
-                .struct_layout(&[Ty::Bool, element.clone()])
+                .struct_layout(&[Ty::bool(), element.clone()])
                 .map(|s| s.layout);
         }
-        match ty {
-            Ty::Int | Ty::UInt | Ty::Float64 => Ok(Layout::new(8, 8)),
+        match ty.kind() {
+            TyKind::Int | TyKind::UInt | TyKind::Float64 => Ok(Layout::new(8, 8)),
             // A `DType` is its one-byte upstream code.
-            Ty::Bool | Ty::Dtype => Ok(Layout::new(1, 1)),
-            Ty::None => Ok(Layout::ZERO),
+            TyKind::Bool | TyKind::Dtype => Ok(Layout::new(1, 1)),
+            TyKind::None => Ok(Layout::ZERO),
             // The borrowed string-literal descriptor: `{ data: ptr, len: u64 }`
             // (`MjStrDesc` in the runtime contract).
-            Ty::StringLiteral => Ok(compose(&[self.pointer(), Layout::new(8, 8)]).layout),
+            TyKind::StringLiteral => Ok(compose(&[self.pointer(), Layout::new(8, 8)]).layout),
             // The built-in error value: `{ message: MjString }` where
             // `MjString` is `{ data: ptr, size: i64, cap: i64 }`.
-            Ty::Error => Ok(self.mj_error()),
-            Ty::Struct(name, _) => {
+            TyKind::Error => Ok(self.mj_error()),
+            TyKind::Struct(name, _) => {
                 let Some(fields) = self.structs.get(name) else {
                     return Err(LayoutError::Unsupported(format!(
                         "struct '{name}' has no MIR declaration to lay out"
@@ -116,16 +117,16 @@ impl LayoutCx<'_> {
                 };
                 Ok(self.struct_layout(fields)?.layout)
             }
-            Ty::Tuple(elements) | Ty::RuntimePack(elements) => {
+            TyKind::Tuple(elements) | TyKind::RuntimePack(elements) => {
                 Ok(self.struct_layout(elements)?.layout)
             }
-            Ty::Variant(alternatives) => Ok(self.variant_layout(alternatives)?.layout),
-            Ty::Pointer { .. } | Ty::Ref(_) => Ok(self.pointer()),
+            TyKind::Variant(alternatives) => Ok(self.variant_layout(alternatives)?.layout),
+            TyKind::Pointer { .. } | TyKind::Ref(_) => Ok(self.pointer()),
             // A retained callable is the two-word `{ invoke: ptr, env: ptr }`
             // value; the environment record it points at is frame-local
             // storage of its creating `MakeClosure`, not part of the value.
-            Ty::Func(_) => Ok(compose(&[self.pointer(), self.pointer()]).layout),
-            Ty::Simd { dtype, width } => {
+            TyKind::Func(_) => Ok(compose(&[self.pointer(), self.pointer()]).layout),
+            TyKind::Simd { dtype, width } => {
                 let (Some(dtype), Some(width)) = (dtype.known(), width.known()) else {
                     return Err(LayoutError::Symbolic(ty.to_string()));
                 };
@@ -134,7 +135,7 @@ impl LayoutCx<'_> {
             }
             // Literal-typed storage holds the value at its default
             // materialized width; a value that exceeds it rejects at lowering.
-            Ty::IntLiteral | Ty::FloatLiteral => Ok(Layout::new(8, 8)),
+            TyKind::IntLiteral | TyKind::FloatLiteral => Ok(Layout::new(8, 8)),
             unsupported => Err(LayoutError::Unsupported(format!(
                 "type has no native layout yet: {unsupported}"
             ))),
@@ -276,18 +277,20 @@ mod tests {
 
     #[test]
     fn scalar_layouts() {
-        assert_eq!(layout_of(&Ty::Int), Ok(Layout::new(8, 8)));
-        assert_eq!(layout_of(&Ty::UInt), Ok(Layout::new(8, 8)));
-        assert_eq!(layout_of(&Ty::Float64), Ok(Layout::new(8, 8)));
-        assert_eq!(layout_of(&Ty::Bool), Ok(Layout::new(1, 1)));
-        assert_eq!(layout_of(&Ty::None), Ok(Layout::ZERO));
+        assert_eq!(layout_of(&Ty::int()), Ok(Layout::new(8, 8)));
+        assert_eq!(layout_of(&Ty::uint()), Ok(Layout::new(8, 8)));
+        assert_eq!(layout_of(&Ty::float64()), Ok(Layout::new(8, 8)));
+        assert_eq!(layout_of(&Ty::bool()), Ok(Layout::new(1, 1)));
+        assert_eq!(layout_of(&Ty::none()), Ok(Layout::ZERO));
     }
 
     #[test]
     fn width_one_simd_scalars_store_at_lane_width() {
-        let scalar = |dtype| Ty::Simd {
-            dtype: SimdDtype::Known(dtype),
-            width: SimdWidth::Known(1),
+        let scalar = |dtype| {
+            Ty::new(TyKind::Simd {
+                dtype: SimdDtype::Known(dtype),
+                width: SimdWidth::Known(1),
+            })
         };
         assert_eq!(layout_of(&scalar(Dtype::Int8)), Ok(Layout::new(1, 1)));
         assert_eq!(layout_of(&scalar(Dtype::UInt8)), Ok(Layout::new(1, 1)));
@@ -309,7 +312,7 @@ mod tests {
             structs,
         };
         let mixed = cx
-            .struct_layout(&[scalar(Dtype::UInt8), scalar(Dtype::Int32), Ty::Int])
+            .struct_layout(&[scalar(Dtype::UInt8), scalar(Dtype::Int32), Ty::int()])
             .unwrap();
         assert_eq!(mixed.offsets, vec![0, 4, 8]);
         assert_eq!(mixed.layout, Layout::new(16, 8));
@@ -329,30 +332,32 @@ mod tests {
 
     #[test]
     fn literal_storage_uses_materialized_widths() {
-        assert_eq!(layout_of(&Ty::IntLiteral), Ok(Layout::new(8, 8)));
-        assert_eq!(layout_of(&Ty::FloatLiteral), Ok(Layout::new(8, 8)));
+        assert_eq!(layout_of(&Ty::int_literal()), Ok(Layout::new(8, 8)));
+        assert_eq!(layout_of(&Ty::float_literal()), Ok(Layout::new(8, 8)));
     }
 
     #[test]
     fn uninit_storage_carries_presence_and_payload() {
         let storage = |name: &str, element: Ty| {
-            Ty::Struct(
-                name.to_string(),
-                vec![mojito_types::types::TyArg::Ty(element)].into(),
-            )
+            Ty::new({
+                TyKind::Struct(
+                    name.to_string(),
+                    vec![mojito_types::types::TyArg::Ty(element)],
+                )
+            })
         };
         assert_eq!(
-            layout_of(&storage("__UninitStorage", Ty::Int)),
+            layout_of(&storage("__UninitStorage", Ty::int())),
             Ok(Layout::new(16, 8))
         );
         assert_eq!(
-            layout_of(&storage("__UninitStorage", Ty::Bool)),
+            layout_of(&storage("__UninitStorage", Ty::bool())),
             Ok(Layout::new(2, 1))
         );
         // Backend-monomorphized instance names keep their argument list, so
         // the payload stays recoverable through the mangled spelling.
         assert_eq!(
-            layout_of(&storage("__UninitStorage$mono$TInt", Ty::Int)),
+            layout_of(&storage("__UninitStorage$mono$TInt", Ty::int())),
             Ok(Layout::new(16, 8))
         );
         // The wrapper's presence bit remains part of enclosing storage.
@@ -363,7 +368,7 @@ mod tests {
             structs,
         };
         let nested = cx
-            .struct_layout(&[Ty::Bool, storage("__UninitStorage", Ty::Int)])
+            .struct_layout(&[Ty::bool(), storage("__UninitStorage", Ty::int())])
             .unwrap();
         assert_eq!(nested.offsets, vec![0, 8]);
         assert_eq!(nested.layout, Layout::new(24, 8));
@@ -371,12 +376,12 @@ mod tests {
 
     #[test]
     fn descriptor_error_and_pointer_layouts() {
-        assert_eq!(layout_of(&Ty::StringLiteral), Ok(Layout::new(16, 8)));
-        assert_eq!(layout_of(&Ty::Error), Ok(Layout::new(24, 8)));
-        let pointer = Ty::Pointer {
-            element: Box::new(Ty::Int),
+        assert_eq!(layout_of(&Ty::string_literal()), Ok(Layout::new(16, 8)));
+        assert_eq!(layout_of(&Ty::error()), Ok(Layout::new(24, 8)));
+        let pointer = Ty::new(TyKind::Pointer {
+            element: Ty::int(),
             origin: PointerOrigin::Static,
-        };
+        });
         assert_eq!(layout_of(&pointer), Ok(Layout::new(8, 8)));
     }
 
@@ -389,30 +394,38 @@ mod tests {
             target: &target,
             structs,
         };
-        let layout = cx.struct_layout(&[Ty::Bool, Ty::Int, Ty::Bool]).unwrap();
+        let layout = cx
+            .struct_layout(&[Ty::bool(), Ty::int(), Ty::bool()])
+            .unwrap();
         assert_eq!(layout.offsets, vec![0, 8, 16]);
         assert_eq!(layout.layout, Layout::new(24, 8));
         // Declaration order is preserved even when reordering would pack
         // tighter: { i1, i1, i64 } is 16 bytes, not 24.
-        let packed = cx.struct_layout(&[Ty::Bool, Ty::Bool, Ty::Int]).unwrap();
+        let packed = cx
+            .struct_layout(&[Ty::bool(), Ty::bool(), Ty::int()])
+            .unwrap();
         assert_eq!(packed.offsets, vec![0, 1, 8]);
         assert_eq!(packed.layout, Layout::new(16, 8));
         assert_eq!(
-            layout_of(&Ty::Tuple(vec![Ty::Bool, Ty::Int, Ty::Bool])),
+            layout_of(&Ty::new(TyKind::Tuple(vec![
+                Ty::bool(),
+                Ty::int(),
+                Ty::bool()
+            ]))),
             Ok(Layout::new(24, 8))
         );
     }
 
     #[test]
     fn empty_and_zero_sized_aggregates() {
-        assert_eq!(layout_of(&Ty::Tuple(vec![])), Ok(Layout::ZERO));
+        assert_eq!(layout_of(&Ty::new(TyKind::Tuple(vec![]))), Ok(Layout::ZERO));
         assert_eq!(
-            layout_of(&Ty::Tuple(vec![Ty::None, Ty::None])),
+            layout_of(&Ty::new(TyKind::Tuple(vec![Ty::none(), Ty::none()]))),
             Ok(Layout::ZERO)
         );
         // A ZST field takes no space and forces no padding.
         assert_eq!(
-            layout_of(&Ty::Tuple(vec![Ty::None, Ty::Bool])),
+            layout_of(&Ty::new(TyKind::Tuple(vec![Ty::none(), Ty::bool()]))),
             Ok(Layout::new(1, 1))
         );
     }
@@ -420,17 +433,17 @@ mod tests {
     #[test]
     fn nominal_structs_resolve_through_the_field_index() {
         let mut structs = StructFieldIndex::default();
-        structs.insert("Pair".to_string(), vec![Ty::Int, Ty::Bool]);
+        structs.insert("Pair".to_string(), vec![Ty::int(), Ty::bool()]);
         let (target, structs) = cx(&structs);
         let cx = LayoutCx {
             target: &target,
             structs,
         };
         assert_eq!(
-            cx.layout_of(&Ty::Struct("Pair".to_string(), vec![].into())),
+            cx.layout_of(&Ty::new(TyKind::Struct("Pair".to_string(), vec![]))),
             Ok(Layout::new(16, 8))
         );
-        let missing = cx.layout_of(&Ty::Struct("Absent".to_string(), vec![].into()));
+        let missing = cx.layout_of(&Ty::new(TyKind::Struct("Absent".to_string(), vec![])));
         assert!(matches!(missing, Err(LayoutError::Unsupported(_))));
     }
 
@@ -443,21 +456,21 @@ mod tests {
             structs,
         };
         // { tag: u32, ok: Int, err: MjError }: tag 0, ok 8, err 16; 40/8.
-        let int = cx.outcome_layout(&Ty::Int).unwrap();
+        let int = cx.outcome_layout(&Ty::int()).unwrap();
         assert_eq!(int.offsets, vec![0, 8, 16]);
         assert_eq!(int.layout, Layout::new(40, 8));
         // A None return is a zero-sized ok payload: err right after the tag's
         // padding — { tag, err } at offsets 0 and 8; 32/8.
-        let none = cx.outcome_layout(&Ty::None).unwrap();
+        let none = cx.outcome_layout(&Ty::none()).unwrap();
         assert_eq!(none.offsets, vec![0, 4, 8]);
         assert_eq!(none.layout, Layout::new(32, 8));
         // Bool packs into the tag's padding.
-        let boolean = cx.outcome_layout(&Ty::Bool).unwrap();
+        let boolean = cx.outcome_layout(&Ty::bool()).unwrap();
         assert_eq!(boolean.offsets, vec![0, 4, 8]);
         assert_eq!(boolean.layout, Layout::new(32, 8));
         // The ok payload of an unrepresentable type rejects like any layout.
         assert!(matches!(
-            cx.outcome_layout(&Ty::Never),
+            cx.outcome_layout(&Ty::never()),
             Err(LayoutError::Unsupported(_))
         ));
     }
@@ -471,11 +484,11 @@ mod tests {
             structs,
         };
         // Variant[Int, Bool]: tag at 0, payload at 8, size 16, align 8.
-        let variant = cx.variant_layout(&[Ty::Int, Ty::Bool]).unwrap();
+        let variant = cx.variant_layout(&[Ty::int(), Ty::bool()]).unwrap();
         assert_eq!(variant.payload_offset, 8);
         assert_eq!(variant.layout, Layout::new(16, 8));
         // Variant[Bool]: payload aligns 1, so it sits right after the tag.
-        let small = cx.variant_layout(&[Ty::Bool]).unwrap();
+        let small = cx.variant_layout(&[Ty::bool()]).unwrap();
         assert_eq!(small.payload_offset, 4);
         assert_eq!(small.layout, Layout::new(8, 4));
     }
@@ -494,25 +507,26 @@ mod tests {
             name: "T".into(),
         };
         for ty in [
-            Ty::Param {
+            TyKind::Param {
                 binder,
                 bounds: Vec::new(),
                 callable_bound: None,
             },
-            Ty::Infer,
-            Ty::SelfType,
-            Ty::Simd {
+            TyKind::Infer,
+            TyKind::SelfType,
+            TyKind::Simd {
                 dtype: mojito_types::types::SimdDtype::Known(Dtype::Int32),
                 width: mojito_types::types::SimdWidth::Expr(width.clone()),
             },
-            Ty::Struct(
+            TyKind::Struct(
                 "Buf".into(),
                 vec![mojito_types::types::TyArg::Val(
                     mojito_types::ct::CtValue::Expr(width),
-                )]
-                .into(),
+                )],
             ),
-        ] {
+        ]
+        .map(Ty::new)
+        {
             assert!(
                 matches!(layout_of(&ty), Err(LayoutError::Symbolic(_))),
                 "{ty} should be refused as symbolic"
@@ -523,10 +537,12 @@ mod tests {
     #[test]
     fn unrepresentable_types_reject_loudly() {
         for ty in [
-            Ty::Never,
-            Ty::VariadicPack(Box::new(Ty::Int)),
-            Ty::ComptimeList(Box::new(Ty::Int)),
-        ] {
+            TyKind::Never,
+            TyKind::VariadicPack(Ty::int()),
+            TyKind::ComptimeList(Ty::int()),
+        ]
+        .map(Ty::new)
+        {
             assert!(
                 matches!(layout_of(&ty), Err(LayoutError::Unsupported(_))),
                 "{ty} should have no layout"

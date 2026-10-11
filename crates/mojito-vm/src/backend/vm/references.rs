@@ -4,6 +4,7 @@
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
+use mojito_types::types::TyKind;
 
 /// How many handle-to-handle hops a projection walk will chase before
 /// treating the chain as cyclic. Reborrows nest as deep as the source does,
@@ -83,8 +84,8 @@ impl VmBackend {
             return value;
         };
         if !matches!(
-            target,
-            Some(Ty::Ref(reference)) if reference.origin == mojito_types::origin::Origin::Static
+            target.map(Ty::kind),
+            Some(TyKind::Ref(reference)) if reference.origin == mojito_types::origin::Origin::Static
         ) {
             return value;
         }
@@ -769,8 +770,8 @@ impl VmBackend {
 /// is the offset-0 dereference, not element selection.
 pub(super) fn single_pointee_pointer(ty: Option<&Ty>) -> bool {
     matches!(
-        ty,
-        Some(Ty::Pointer { origin, .. }) if origin.as_origin().is_some() && !origin.multi_element()
+        ty.map(Ty::kind),
+        Some(TyKind::Pointer { origin, .. }) if origin.as_origin().is_some() && !origin.multi_element()
     )
 }
 
@@ -789,7 +790,7 @@ pub(super) fn place_crosses_reference(place: &MirPlace) -> bool {
         .iter()
         .rev()
         .skip(1)
-        .any(|ty| matches!(ty, Ty::Ref(_)) || single_pointee_pointer(Some(ty)))
+        .any(|ty| matches!(ty.kind(), TyKind::Ref(_)) || single_pointee_pointer(Some(ty)))
 }
 
 /// Whether a place designates one element slot of multi-element raw pointer
@@ -804,7 +805,7 @@ pub(super) fn pointer_element_slot(place: &MirPlace) -> bool {
         length => place.projection_tys.get(length - 2),
     };
     matches!(place.proj.last(), Some(Proj::Index(_)))
-        && matches!(base_ty, Some(Ty::Pointer { .. }))
+        && matches!(base_ty.map(Ty::kind), Some(TyKind::Pointer { .. }))
         && !single_pointee_pointer(base_ty)
 }
 

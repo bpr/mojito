@@ -3,6 +3,7 @@
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
+use mojito_types::types::TyKind;
 
 impl FnLowering<'_> {
     /// Build the two-word `{ invoke, env }` value of a retained callable:
@@ -31,10 +32,10 @@ impl FnLowering<'_> {
         // whose address the invoke thunk passes as the capture's reference
         // parameter (in-place mutation across repeated invocations, the
         // VM's owned-capture re-referencing).
-        let pointer_slot = Ty::Pointer {
-            element: Box::new(Ty::None),
+        let pointer_slot = Ty::new(TyKind::Pointer {
+            element: Ty::none(),
             origin: mojito_types::origin::PointerOrigin::Untracked { mutable: true },
-        };
+        });
         let mut modes = String::with_capacity(captures.len());
         let mut slot_tys = vec![pointer_slot.clone()];
         for capture in captures {
@@ -152,7 +153,7 @@ impl FnLowering<'_> {
                     // relocation above is that constructor's exact
                     // semantics, so mirror the event.
                     if self.trace_lifecycle
-                        && let Ty::Struct(name, _) = ty
+                        && let TyKind::Struct(name, _) = ty.kind()
                         && self
                             .declarations
                             .contains_key(&format!("{name}.__moveinit__"))
@@ -278,10 +279,10 @@ impl FnLowering<'_> {
         let Some(mut contract) = contract else {
             return Err(self.unsupported_reg("untyped indirect callee".into(), dest));
         };
-        while let Ty::Ref(reference) = contract {
-            contract = *reference.referent;
+        while let TyKind::Ref(reference) = contract.kind() {
+            contract = reference.referent.clone();
         }
-        if let Ty::Struct(name, _) = &contract {
+        if let TyKind::Struct(name, _) = contract.kind() {
             // Monomorphization devirtualizes nominal callables into direct
             // `__call__` method calls; one that survives to lowering is a
             // shape it could not rewrite.
@@ -317,7 +318,7 @@ impl FnLowering<'_> {
 
     /// Resolve an indirect call's arguments into the contract's positional
     /// parameter order via `call::match_call_slots` — the same structural
-    /// binding as `bind_call_slots`, off the `Ty::Func` contract instead of
+    /// binding as `bind_call_slots`, off the `TyKind::Func` contract instead of
     /// a compiled declaration. Defaults reject: the VM binds an omitted
     /// argument from the runtime callee's declaration, which the native
     /// caller cannot see behind the thunk.
@@ -359,8 +360,8 @@ impl FnLowering<'_> {
         for (index, expected) in abi.params.iter().enumerate() {
             if abi.kw_pack_index == Some(index) {
                 let element = match expected {
-                    LowerTy::Aggregate { ty, .. } => match ty.as_ref() {
-                        Ty::Struct(_, args) => match args.as_slice() {
+                    LowerTy::Aggregate { ty, .. } => match ty.kind() {
+                        TyKind::Struct(_, args) => match args.as_slice() {
                             [mojito_types::types::TyArg::Ty(element)] => Some(element.clone()),
                             _ => None,
                         },

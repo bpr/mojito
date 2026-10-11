@@ -2,6 +2,7 @@
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
+use mojito_types::types::TyKind;
 
 impl FnLowering<'_> {
     pub(super) fn run(&mut self, ctx: &mut Context, func_op: FuncOp) -> Result<(), PlironError> {
@@ -141,7 +142,7 @@ impl FnLowering<'_> {
             .filter_map(|place| self.leaf_position(place).map(|pos| (place.root, pos)))
             .collect();
         for (var, ty) in &self.func.var_tys {
-            if let Ty::Tuple(elements) | Ty::RuntimePack(elements) = ty {
+            if let TyKind::Tuple(elements) | TyKind::RuntimePack(elements) = ty.kind() {
                 leaf_targets.extend(
                     elements
                         .iter()
@@ -286,7 +287,7 @@ impl FnLowering<'_> {
                             || self.stdlib_deinit_temp(&ty)
                             || self.needs_drop(&ty)
                         {
-                            self.mark_owned_temp(*dest, (*ty).clone())?;
+                            self.mark_owned_temp(*dest, ty.clone())?;
                         }
                         Ok(())
                     }
@@ -689,7 +690,7 @@ impl FnLowering<'_> {
                     kwargs,
                     arg_places,
                     kwarg_places,
-                    instantiated_contract.as_deref(),
+                    instantiated_contract.as_ref(),
                 )
             }
             MirInstr::MakeVariant {

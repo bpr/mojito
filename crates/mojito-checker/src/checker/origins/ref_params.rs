@@ -4,6 +4,7 @@
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 use mojito_types::types::FuncTy;
+use mojito_types::types::TyKind;
 
 impl Checker {
     /// `binder`: the enclosing struct's origin binder the parameter's clause
@@ -28,7 +29,7 @@ impl Checker {
         self.reference_parameter_scopes[scope].insert(
             name.to_string(),
             mojito_types::origin::RefTy {
-                referent: Box::new(referent),
+                referent,
                 origin: mojito_types::origin::Origin::Place(mojito_types::origin::OriginPlace {
                     root: owner,
                     path: Vec::new(),
@@ -102,12 +103,12 @@ impl Checker {
     pub(in crate::checker) fn type_may_carry_loans(&self, ty: &Ty) -> bool {
         fn contains_open_captures(ty: &Ty) -> bool {
             use mojito_types::origin::{CallableEnvironment, CaptureOriginSet};
-            match ty {
+            match ty.kind() {
                 // An abstract type parameter may be instantiated with a
                 // loan-carrying type: origin bookkeeping stays conservative
                 // so generic bodies record transfer effects.
-                Ty::Param { .. } => true,
-                Ty::Func(func) => {
+                TyKind::Param { .. } => true,
+                TyKind::Func(func) => {
                     let FuncTy { environment, .. } = &**func;
                     matches!(
                         environment,
@@ -116,12 +117,12 @@ impl Checker {
                         )
                     )
                 }
-                Ty::Struct(_, arguments) => arguments.iter().any(|argument| match argument {
+                TyKind::Struct(_, arguments) => arguments.iter().any(|argument| match argument {
                     mojito_types::types::TyArg::Ty(ty) => contains_open_captures(ty),
                     _ => false,
                 }),
-                Ty::Ref(reference) => contains_open_captures(&reference.referent),
-                Ty::Tuple(elements) => elements.iter().any(contains_open_captures),
+                TyKind::Ref(reference) => contains_open_captures(&reference.referent),
+                TyKind::Tuple(elements) => elements.iter().any(contains_open_captures),
                 _ => false,
             }
         }
@@ -129,8 +130,8 @@ impl Checker {
             // A struct's fields, at the application's arguments, may hold
             // open-capture callables; a field left open by the arguments
             // stays conservative.
-            match ty {
-                Ty::Struct(name, arguments) => self.structs.get(name).is_some_and(|info| {
+            match ty.kind() {
+                TyKind::Struct(name, arguments) => self.structs.get(name).is_some_and(|info| {
                     let subst = struct_subst(&info.decls, arguments);
                     info.fields
                         .iter()
@@ -163,21 +164,23 @@ impl Checker {
                 }
                 return;
             }
-            match ty {
-                Ty::Ref(reference) => out.push(CaptureOrigin::read(reference.origin.clone())),
-                Ty::Pointer { element, origin } => {
+            match ty.kind() {
+                TyKind::Ref(reference) => out.push(CaptureOrigin::read(reference.origin.clone())),
+                TyKind::Pointer { element, origin } => {
                     if let Some(origin) = origin.as_origin() {
                         out.push(CaptureOrigin::read(origin));
                     }
                     collect(checker, element, out);
                 }
-                Ty::ComptimeList(element) => collect(checker, element, out),
-                Ty::Tuple(elements) | Ty::RuntimePack(elements) | Ty::Variant(elements) => {
+                TyKind::ComptimeList(element) => collect(checker, element, out),
+                TyKind::Tuple(elements)
+                | TyKind::RuntimePack(elements)
+                | TyKind::Variant(elements) => {
                     for element in elements {
                         collect(checker, element, out);
                     }
                 }
-                Ty::Struct(name, arguments) => {
+                TyKind::Struct(name, arguments) => {
                     let Some(info) = checker.structs.get(name) else {
                         return;
                     };
@@ -186,7 +189,7 @@ impl Checker {
                         collect(checker, &substitute(field, &subst), out);
                     }
                 }
-                Ty::Func(_) | Ty::GenericFunc(_)
+                TyKind::Func(_) | TyKind::GenericFunc(_)
                     if let Some(FuncTy {
                         environment:
                             CallableEnvironment::Capturing(CaptureOriginSet::Concrete(captures)),
@@ -268,20 +271,20 @@ impl Checker {
                     .into_iter()
                     .any(|element| contains(checker, element, pointer_loans, seen));
             }
-            match ty {
-                Ty::Ref(_) => true,
-                Ty::Pointer { element, origin } => {
+            match ty.kind() {
+                TyKind::Ref(_) => true,
+                TyKind::Pointer { element, origin } => {
                     (pointer_loans && origin.as_origin().is_some())
                         || contains(checker, element, pointer_loans, seen)
                 }
-                Ty::ComptimeList(element) => contains(checker, element, pointer_loans, seen),
-                Ty::Tuple(elements) | Ty::RuntimePack(elements) => elements
+                TyKind::ComptimeList(element) => contains(checker, element, pointer_loans, seen),
+                TyKind::Tuple(elements) | TyKind::RuntimePack(elements) => elements
                     .iter()
                     .any(|element| contains(checker, element, pointer_loans, seen)),
-                Ty::Variant(alternatives) => alternatives
+                TyKind::Variant(alternatives) => alternatives
                     .iter()
                     .any(|alternative| contains(checker, alternative, pointer_loans, seen)),
-                Ty::Struct(name, args) => {
+                TyKind::Struct(name, args) => {
                     let key = ty.to_string();
                     if !seen.insert(key.clone()) {
                         return false;
@@ -296,7 +299,7 @@ impl Checker {
                     seen.remove(&key);
                     result
                 }
-                Ty::Func(_) | Ty::GenericFunc(_)
+                TyKind::Func(_) | TyKind::GenericFunc(_)
                     if let Some(FuncTy {
                         environment:
                             mojito_types::origin::CallableEnvironment::Capturing(
@@ -332,15 +335,15 @@ impl Checker {
                 .into_iter()
                 .any(Self::type_contains_unsafe_any_pointer);
         }
-        match ty {
-            Ty::Pointer {
+        match ty.kind() {
+            TyKind::Pointer {
                 origin: mojito_types::origin::PointerOrigin::UnsafeAny { .. },
                 ..
             } => true,
-            Ty::Pointer { element, .. } | Ty::ComptimeList(element) => {
+            TyKind::Pointer { element, .. } | TyKind::ComptimeList(element) => {
                 Self::type_contains_unsafe_any_pointer(element)
             }
-            Ty::Tuple(elements) | Ty::RuntimePack(elements) | Ty::Variant(elements) => {
+            TyKind::Tuple(elements) | TyKind::RuntimePack(elements) | TyKind::Variant(elements) => {
                 elements.iter().any(Self::type_contains_unsafe_any_pointer)
             }
             _ => false,
@@ -402,14 +405,15 @@ impl Checker {
                 if !aggregate.is_empty() {
                     return aggregate;
                 }
-                match self.lookup(name) {
-                    Some(Ty::Ref(reference)) => vec![reference.origin.clone()],
-                    Some(Ty::Pointer { origin, .. }) => origin
+                let found = self.lookup(name);
+                match found.map(Ty::kind) {
+                    Some(TyKind::Ref(reference)) => vec![reference.origin.clone()],
+                    Some(TyKind::Pointer { origin, .. }) => origin
                         .as_origin()
                         .map(|origin| vec![origin])
                         .unwrap_or_default(),
-                    Some(ty @ (Ty::Func(_) | Ty::GenericFunc(_))) => self
-                        .capture_origins_in_type(ty)
+                    Some(TyKind::Func(_) | TyKind::GenericFunc(_)) => self
+                        .capture_origins_in_type(found.expect("matched a callable"))
                         .into_iter()
                         .map(|capture| capture.origin)
                         .collect(),
@@ -483,7 +487,7 @@ impl Checker {
                         let fields: Vec<Ty> =
                             info.fields.iter().map(|(_, ty)| ty.clone()).collect();
                         for (field, argument) in fields.iter().zip(args) {
-                            if matches!(field, Ty::Ref(_)) {
+                            if matches!(field.kind(), TyKind::Ref(_)) {
                                 if let Ok(reference) = self.materialized_reference_actual(argument)
                                 {
                                     append_unique(&mut result, [reference.origin]);
@@ -607,7 +611,7 @@ impl Checker {
                 // A method whose selected contract returns an origin-bearing
                 // pointer (`xs.unsafe_ptr()`) carries that rebased origin.
                 if let Some(contract) = self.selected_calls.borrow().get(&expression.source_span())
-                    && let Ty::Pointer { origin, .. } = &contract.result_ty
+                    && let TyKind::Pointer { origin, .. } = contract.result_ty.kind()
                     && let Some(origin) = origin.as_origin()
                 {
                     return vec![origin];

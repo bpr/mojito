@@ -4,6 +4,7 @@
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
+use mojito_types::types::TyKind;
 
 impl Elab<'_> {
     /// Evaluate a compile-time expression to a `CtValue`. `scope` is the current
@@ -25,9 +26,9 @@ impl Elab<'_> {
                 }
                 self.type_value(name, &[], scope)
             }
-            ExprKind::TypeValue(ty) => Ok(CtValue::Type(Box::new(
+            ExprKind::TypeValue(ty) => Ok(CtValue::Type(
                 self.param_arg_type(&ParamArg::Type(ty.clone()), scope)?,
-            ))),
+            )),
             ExprKind::TypeApply { name, args }
                 if mojito_types::types::trivial_predicate_name(name).is_some() =>
             {
@@ -46,9 +47,7 @@ impl Elab<'_> {
                         "reflect[T] takes exactly one type parameter".to_string(),
                     ));
                 }
-                Ok(CtValue::Reflected(Box::new(
-                    self.param_arg_type(&args[0], scope)?,
-                )))
+                Ok(CtValue::Reflected(self.param_arg_type(&args[0], scope)?))
             }
             // A module-scope generic comptime alias applied in a compile-time
             // position (typically a `comptime if` condition, pruned before the
@@ -422,11 +421,11 @@ impl Elab<'_> {
                     None => self.eval(&args[0], scope)?,
                 };
                 let types = match values {
-                    CtValue::Type(ty) => vec![*ty],
+                    CtValue::Type(ty) => vec![ty],
                     CtValue::Tuple(values) | CtValue::List(values) => values
                         .into_iter()
                         .map(|value| match value {
-                            CtValue::Type(ty) => Ok(*ty),
+                            CtValue::Type(ty) => Ok(ty),
                             _ => Err(ComptimeError::NotComptime(
                                 "conforms_to expects a type or type pack".to_string(),
                             )),
@@ -455,9 +454,9 @@ impl Elab<'_> {
                         "reflect[T]() takes exactly one type parameter".to_string(),
                     ));
                 }
-                Ok(CtValue::Reflected(Box::new(
+                Ok(CtValue::Reflected(
                     self.param_arg_type(&param_args[0], scope)?,
-                )))
+                ))
             }
             // `SIMD[DType.d, w](lanes...)`, or an alias application of a
             // vector type (`U256(0)`), builds a compile-time vector: one lane
@@ -573,22 +572,28 @@ impl Elab<'_> {
                 && !self.declares_function(name)
                 && !self.declares_struct(name)
                 && matches!(
-                    scalar_type_name(name),
-                    Some(Ty::Int | Ty::UInt | Ty::Float64 | Ty::Bool)
+                    scalar_type_name(name).as_ref().map(Ty::kind),
+                    Some(TyKind::Int | TyKind::UInt | TyKind::Float64 | TyKind::Bool)
                 ) =>
             {
                 let ty = scalar_type_name(name).expect("guard established a scalar type");
                 let value = match args.first() {
                     Some(argument) => self.eval(argument, scope)?,
-                    None if ty == Ty::Bool => CtValue::Bool(false),
+                    None if ty == TyKind::Bool => CtValue::Bool(false),
                     None => CtValue::IntLiteral(0.into()),
                 };
                 // A construction converts between the numeric types
                 // (`Float64(n)`, `Int(x)`), as the pin's initializers do.
-                let value = match (value, &ty) {
-                    (CtValue::Int(value), Ty::Float64) => CtValue::Float((value as f64).to_bits()),
-                    (CtValue::UInt(value), Ty::Float64) => CtValue::Float((value as f64).to_bits()),
-                    (CtValue::Float(bits), Ty::Int) => CtValue::Int(f64::from_bits(bits) as i64),
+                let value = match (value, ty.kind()) {
+                    (CtValue::Int(value), TyKind::Float64) => {
+                        CtValue::Float((value as f64).to_bits())
+                    }
+                    (CtValue::UInt(value), TyKind::Float64) => {
+                        CtValue::Float((value as f64).to_bits())
+                    }
+                    (CtValue::Float(bits), TyKind::Int) => {
+                        CtValue::Int(f64::from_bits(bits) as i64)
+                    }
                     (value, _) => value,
                 };
                 value.clone().materialize_as(&ty).ok_or_else(|| {
@@ -698,11 +703,11 @@ impl Elab<'_> {
                     self.apply_generic_alias(alias, alias_args, scope)?
                 }
                 ParamArg::Type(annotation) => {
-                    CtValue::Type(Box::new(self.type_from_anno(annotation, scope)?))
+                    CtValue::Type(self.type_from_anno(annotation, scope)?)
                 }
                 ParamArg::Value(expr) => match self.eval(expr, scope) {
                     Ok(value) => value,
-                    Err(_) => CtValue::Type(Box::new(self.param_arg_type(argument, scope)?)),
+                    Err(_) => CtValue::Type(self.param_arg_type(argument, scope)?),
                 },
                 ParamArg::Named { .. } => {
                     return Err(ComptimeError::NotComptime(
@@ -750,7 +755,7 @@ impl Elab<'_> {
         for argument in param_args {
             match argument {
                 ParamArg::Named { name, .. } if name == "Trait" => {}
-                other => types.push(CtValue::Type(Box::new(self.param_arg_type(other, scope)?))),
+                other => types.push(CtValue::Type(self.param_arg_type(other, scope)?)),
             }
         }
         Ok(make_typelist(types))
@@ -773,7 +778,7 @@ impl Elab<'_> {
         let types = elements
             .iter()
             .map(|value| match value {
-                CtValue::Type(ty) => Ok((**ty).clone()),
+                CtValue::Type(ty) => Ok(ty.clone()),
                 _ => Err(ComptimeError::NotComptime(
                     "a TypeList holds types".to_string(),
                 )),
@@ -812,7 +817,7 @@ impl Elab<'_> {
                     } else if self.is_generic_alias(&predicate) {
                         self.apply_generic_alias_values(
                             &predicate,
-                            vec![CtValue::Type(Box::new(ty.clone()))],
+                            vec![CtValue::Type(ty.clone())],
                         )?
                         .as_bool("TypeList predicate")?
                     } else {
@@ -863,7 +868,7 @@ impl Elab<'_> {
         if method == "is_struct" {
             return Ok(CtValue::Bool(true));
         }
-        let Ty::Struct(name, arguments) = ty else {
+        let TyKind::Struct(name, arguments) = ty.kind() else {
             return Err(ComptimeError::NotComptime(format!(
                 "reflect[{ty}].{method}() requires a struct type"
             )));
@@ -882,7 +887,7 @@ impl Elab<'_> {
             "field_types" => (0..info.field_names().len())
                 .map(|index| {
                     self.reflected_field_type(info, ty, arguments, outer_scope, index)
-                        .map(|ty| CtValue::Type(Box::new(ty)))
+                        .map(CtValue::Type)
                 })
                 .collect::<Result<Vec<_>, _>>()
                 .map(CtValue::Tuple),
@@ -904,7 +909,7 @@ impl Elab<'_> {
                 "Reflected.field_type was removed; use Reflected.field[name]".to_string(),
             ));
         }
-        let Ty::Struct(name, _) = ty else {
+        let TyKind::Struct(name, _) = ty.kind() else {
             return Err(ComptimeError::NotComptime(format!(
                 "reflect[{ty}].{method} requires a struct type"
             )));
@@ -930,7 +935,7 @@ impl Elab<'_> {
                 &ParamDecl::Value {
                     id: mojito_types::param_expr::ParamId::new("$builtin:struct_field", 0),
                     name: "name".to_string(),
-                    ty: Box::new(Ty::StringLiteral),
+                    ty: Ty::string_literal(),
                     default: None,
                     callable_default: None,
                     infer_only: false,
@@ -977,7 +982,7 @@ impl Elab<'_> {
         argument: &Expr,
         scope: &ConstEnv<'_>,
     ) -> Result<CtValue, ComptimeError> {
-        let Ty::Struct(name, arguments) = ty else {
+        let TyKind::Struct(name, arguments) = ty.kind() else {
             return Err(ComptimeError::NotComptime(format!(
                 "reflect[{ty}].{selector}[...] requires a struct type"
             )));
@@ -1030,7 +1035,7 @@ impl Elab<'_> {
         };
 
         let field_ty = self.reflected_field_type(info, ty, arguments, scope, index)?;
-        Ok(CtValue::Reflected(Box::new(field_ty)))
+        Ok(CtValue::Reflected(field_ty))
     }
 
     /// The type of field `index` of `ty`, an instance of struct `info`
@@ -1249,8 +1254,8 @@ impl Elab<'_> {
             .cloned()
             .or_else(|| self.module_constant(name))?;
         match bound {
-            CtValue::Type(ty) => match *ty {
-                Ty::Simd { .. } => mojito_types::types::simd_shape(&ty),
+            CtValue::Type(ty) => match *ty.kind() {
+                TyKind::Simd { .. } => mojito_types::types::simd_shape(&ty),
                 _ => None,
             },
             _ => None,

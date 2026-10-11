@@ -1,3 +1,4 @@
+use mojito::Ty;
 use mojito::{Lexer, Parser, SemanticAdjustment, TypeError, check, check_program, parse};
 
 /// Parse `source` and run the type checker, returning its result.
@@ -132,10 +133,7 @@ fn checked_declarations_preserve_shadowed_function_and_unused_capture_identities
             if capture.binding == values
                 && capture.kind == mojito::ast::CaptureKind::Move
     ));
-    assert_eq!(
-        take.captures[0].ty,
-        mojito::types::list_type(mojito::Ty::Int)
-    );
+    assert_eq!(take.captures[0].ty, mojito::types::list_type(Ty::int()));
     let marker = checked
         .declarations()
         .iter()
@@ -153,7 +151,7 @@ fn checked_declarations_preserve_shadowed_function_and_unused_capture_identities
             if capture.binding == marker
                 && capture.kind == mojito::ast::CaptureKind::Copy
     ));
-    assert_eq!(inspect.captures[0].ty, mojito::Ty::Int);
+    assert_eq!(inspect.captures[0].ty, Ty::int());
 }
 
 #[test]
@@ -4934,8 +4932,8 @@ fn augmented_subscript_retains_distinct_getter_and_setter_contracts() {
             .as_ref()
             .is_some_and(|setter| setter.target.starts_with("Counter.__setitem__"))
     );
-    assert_eq!(pair.operand_ty, mojito::Ty::Int);
-    assert_eq!(pair.result_ty, mojito::Ty::Int);
+    assert_eq!(pair.operand_ty, Ty::int());
+    assert_eq!(pair.result_ty, Ty::int());
     assert!(expression.adjustments.iter().any(|adjustment| {
         matches!(
             adjustment,
@@ -5104,7 +5102,7 @@ fn checked_subscript_retains_the_selected_call_contract() {
         })
         .expect("selected Index contract");
     assert_eq!(contract.target, "Box.__getitem__");
-    assert_eq!(contract.raises, Some(mojito::Ty::Error));
+    assert_eq!(contract.raises, Some(Ty::error()));
     assert!(contract.receiver_requires_place);
     assert_eq!(
         contract.receiver_convention,
@@ -5174,7 +5172,7 @@ fn raising_iterator_protocol_uses_typed_stop_iteration_without_len() {
         .iter()
         .find(|declaration| declaration.name == "value")
         .expect("loop binding");
-    assert_eq!(value.ty.as_ref(), Some(&mojito::Ty::Int));
+    assert_eq!(value.ty.as_ref(), Some(&Ty::int()));
 
     let error = err(
         "@fieldwise_init\nstruct OtherError:\n    var marker: Int\n\n@fieldwise_init\nstruct I:\n    var current: Int\n    def __next__(mut self) raises OtherError -> Int:\n        raise OtherError(0)\n        return self.current\n\n@fieldwise_init\nstruct C:\n    var end: Int\n    def __iter__(self) -> I:\n        return I(self.end)\n\ndef main():\n    for value in C(3):\n        print(value)\n",
@@ -5197,8 +5195,8 @@ fn raising_reference_iterator_preserves_the_reference_loop_binding_type() {
         .find(|declaration| declaration.name == "item")
         .expect("loop binding");
     assert!(matches!(
-        item.ty.as_ref(),
-        Some(mojito::Ty::Ref(reference)) if reference.referent.as_ref() == &mojito::Ty::Int
+        item.ty.as_ref().map(Ty::kind),
+        Some(mojito::TyKind::Ref(reference)) if reference.referent == mojito::TyKind::Int
     ));
 }
 

@@ -2,6 +2,7 @@
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
+use mojito_types::types::TyKind;
 
 /// A struct of an imported package, as the package's check resolved it,
 /// which the elaborator reads in place of its declaration.
@@ -258,7 +259,7 @@ impl ConformanceOracle {
                     ParamDecl::Type { variadic: true, .. }
                         | ParamDecl::Value { variadic: true, .. }
                 ) || matches!(decl, ParamDecl::Value { ty, .. }
-                    if matches!(**ty, Ty::Dtype | Ty::Struct(..)))
+                    if matches!(*ty.kind(), TyKind::Dtype | TyKind::Struct(..)))
             }) {
                 // Pack-dependent fields are expanded into ordinary concrete
                 // fields/types by specialization; DType-/struct-valued
@@ -266,14 +267,11 @@ impl ConformanceOracle {
                 // itself cannot be resolved as a single erased type.
                 continue;
             }
-            let self_ty = Ty::Struct(
-                name.clone(),
-                (self_struct_arguments(&decls, type_params)).into(),
-            );
+            let self_ty = TyKind::Struct(name.clone(), self_struct_arguments(&decls, type_params));
             let saved_self_decls = std::mem::replace(&mut checker.self_decls, decls);
             let saved_type_params =
                 std::mem::replace(&mut checker.enclosing_type_params, type_params.clone());
-            let saved_self_ty = checker.self_ty.replace(self_ty);
+            let saved_self_ty = checker.self_ty.replace(self_ty.into());
             let saved_bundled = std::mem::replace(
                 &mut checker.bundled_stdlib_declaration,
                 is_bundled_stdlib_source(bundled_struct_source(
@@ -355,8 +353,8 @@ impl ConformanceOracle {
     /// `name`, when it is one generic declaration rather than an overload
     /// family.
     pub fn package_function_params(&self, name: &str) -> Option<&[ParamDecl]> {
-        match &self.installed()?.binding(name)?.1.ty {
-            Ty::GenericFunc(generic) => Some(&generic.decls),
+        match (self.installed()?.binding(name)?.1.ty).kind() {
+            TyKind::GenericFunc(generic) => Some(&generic.decls),
             _ => None,
         }
     }
@@ -373,7 +371,7 @@ impl ConformanceOracle {
             object_type: base.to_string(),
             member: member.to_string(),
         };
-        let Ty::Struct(name, arguments) = base else {
+        let TyKind::Struct(name, arguments) = base.kind() else {
             return Err(missing());
         };
         let info = self
@@ -386,7 +384,7 @@ impl ConformanceOracle {
             return self
                 .checker
                 .associated_type_from_base(base, member, &[])
-                .map(|ty| CtValue::Type(Box::new(ty)));
+                .map(CtValue::Type);
         }
         let value = info.associated.get(member).ok_or_else(missing)?;
         self.checker
@@ -397,7 +395,7 @@ impl ConformanceOracle {
     /// The field types of `base`, an instance of a package struct, in
     /// declaration order, each at the instance's arguments.
     pub fn package_field_types(&self, base: &Ty) -> Option<Vec<Ty>> {
-        let Ty::Struct(name, arguments) = base else {
+        let TyKind::Struct(name, arguments) = base.kind() else {
             return None;
         };
         let info = self.package_struct(name)?.0;

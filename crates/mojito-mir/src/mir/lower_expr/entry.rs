@@ -3,6 +3,7 @@
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
+use mojito_types::types::TyKind;
 
 impl Flatten<'_> {
     /// Post-order: each subexpression emits one instruction and yields its result
@@ -247,7 +248,7 @@ impl Flatten<'_> {
                 (_, Some(constructed)) if !constructed.is_empty() => self.fresh_typed(
                     span(e),
                     provenance,
-                    Ty::Struct(constructed.to_string(), Vec::new().into()),
+                    TyKind::Struct(constructed.to_string(), Vec::new()).into(),
                 ),
                 _ => self.fresh(span(e), provenance),
             };
@@ -263,7 +264,7 @@ impl Flatten<'_> {
             self.emit(MirInstr::Call {
                 dest,
                 func: FuncRef::named(&target),
-                raises: raises.map(Box::new),
+                raises,
                 args: vec![argument],
                 kwargs: Vec::new(),
                 arg_places: vec![source_place.clone()],
@@ -292,7 +293,7 @@ impl Flatten<'_> {
                         src: dest,
                         binding_ty: view_ty.clone(),
                     });
-                    let marker = self.fresh_typed(span(e), Some(loans[0].place.root), Ty::None);
+                    let marker = self.fresh_typed(span(e), Some(loans[0].place.root), Ty::none());
                     self.emit(MirInstr::EstablishLoans {
                         reference: variable,
                         loans: loans.clone(),
@@ -330,7 +331,7 @@ impl Flatten<'_> {
             if let Some(source) = self.checked_ty(e) {
                 self.f.reg_types.entry(recv.0).or_insert(source);
             }
-            let dest = self.fresh_typed(span(e), None, Ty::Int);
+            let dest = self.fresh_typed(span(e), None, Ty::int());
             self.emit(MirInstr::MethodCall {
                 dest,
                 recv,
@@ -431,7 +432,7 @@ impl Flatten<'_> {
                 .ty
                 .clone()
                 .or_else(|| self.checked_ty(e))
-                .unwrap_or(Ty::Error);
+                .unwrap_or_else(Ty::error);
             let read = self.fresh_typed(span(e), Some(place.root), value_ty.clone());
             self.emit(MirInstr::LoadPlace { dest: read, place });
             let dest = self.fresh_typed(span(e), None, value_ty);
@@ -440,9 +441,9 @@ impl Flatten<'_> {
         }
         if let Some(reference) = self.reference_result(e) {
             let handle = self.reference_handle(e);
-            let value_ty = match self.f.reg_types.get(&handle.0) {
-                Some(Ty::Ref(reference)) => (*reference.referent).clone(),
-                _ => (*reference.referent).clone(),
+            let value_ty = match self.f.reg_types.get(&handle.0).map(Ty::kind) {
+                Some(TyKind::Ref(reference)) => reference.referent.clone(),
+                _ => reference.referent,
             };
             let read = self.fresh_typed(span(e), None, value_ty.clone());
             self.emit(MirInstr::ReadRef {
@@ -483,7 +484,7 @@ impl Flatten<'_> {
                 .ty
                 .clone()
                 .or_else(|| self.checked_ty(e))
-                .unwrap_or(Ty::Error),
+                .unwrap_or_else(Ty::error),
         );
         self.emit(MirInstr::LoadPlace {
             dest: value,
@@ -532,18 +533,21 @@ impl Flatten<'_> {
     /// borrows a nominal `String`, so the wrap is re-emitted here: the
     /// materialized slot must hold the struct the constructor lends.
     fn nominal_string_view_source(&mut self, e: &Expr, value: Reg, target: &str) -> Reg {
-        if !matches!(self.f.reg_types.get(&value.0), Some(Ty::StringLiteral))
-            || !mojito_symbol::symbol::single_nominal_string_ctor(target)
+        if !matches!(
+            self.f.reg_types.get(&value.0).map(Ty::kind),
+            Some(TyKind::StringLiteral)
+        ) || !mojito_symbol::symbol::single_nominal_string_ctor(target)
         {
             return value;
         }
         let nominal = self.fresh_typed(
             span(e),
             None,
-            Ty::Struct(
+            TyKind::Struct(
                 mojito_symbol::symbol::STDLIB_STRING_STRUCT.to_string(),
-                Vec::new().into(),
-            ),
+                Vec::new(),
+            )
+            .into(),
         );
         self.emit(MirInstr::Call {
             dest: nominal,

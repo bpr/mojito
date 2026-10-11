@@ -19,14 +19,20 @@
 //! The container is a header followed by records:
 //!
 //! ```text
-//! mojito-package 28
+//! mojito-package 29
 //! <the header's length, 8 bytes little-endian>
 //! <the header, as bytecode>
-//! <the payload: every record, as bytecode>
+//! <the payload: every record, as bytecode, then the type section>
 //! ```
 //!
+//! The type section holds every type the records hold once, and a record
+//! refers to a type by its index there, as MLIR bytecode's attribute and
+//! type section holds each type once per file; an importer decodes an
+//! entry the first time a record refers to it
+//! (`mojito_types::type_section`).
+//!
 //! The header names the package and the compiler that built it, and holds
-//! the payload range of the declaration directory
+//! the payload ranges of the type section and of the declaration directory
 //! (`mojito_checked::package::DeclarationDirectory`). That directory holds
 //! every name once, in one string section, and places every module's link
 //! record, every declaration's record, and every function's unit: one row
@@ -47,13 +53,14 @@ use mojito_checked::package::{
 };
 use mojito_checked::unit::CheckedUnit;
 use mojito_common::timing;
+use mojito_types::type_section::encoding_types;
 use std::collections::HashMap;
 use std::fmt;
 use std::ops::Range;
 use std::sync::{Arc, Mutex, OnceLock};
 
 /// The container format this compiler writes and reads.
-pub const PACKAGE_FORMAT: &str = "mojito-package 28";
+pub const PACKAGE_FORMAT: &str = "mojito-package 29";
 
 /// Who built a package from what: an importer refuses a package another
 /// compiler built, whose identity covers the library's sources.
@@ -246,7 +253,8 @@ impl PackageBodies {
     fn lower(&self, range: &Range<usize>) -> LoweredUnit {
         let unit = {
             let _decode = timing::span("package.unit.decode");
-            CheckedUnit::decode(self.payload.get(range), &self.root)?
+            self.payload
+                .decoding(|| CheckedUnit::decode(self.payload.get(range), &self.root))?
         };
         let _lower = timing::span("package.unit.lower");
         let program = unit.program(Arc::clone(&self.overloads), Arc::clone(&self.constants));
@@ -277,10 +285,13 @@ impl std::error::Error for PackageError {}
 /// the checked `units` it was lowered from, naming every file relative to
 /// the library `root`.
 ///
-/// The package holds its declaration `records`, which hold
+/// The package holds the declaration records `records` gives, which hold
 /// its module table and every struct and function declaration of
 /// `program`, and each of `units` with the names of the functions it
-/// places: every function of `program`, each once.
+/// places: every function of `program`, each once. It holds every type
+/// those records hold once, in its type section, which the records refer
+/// to by index ([`mojito_types::type_section`]); `records` runs inside that
+/// encoding, so the checker residues it encodes refer to the section too.
 ///
 /// Verification runs first, so an error never leaves a partial package.
 pub fn write_package(
@@ -288,122 +299,131 @@ pub fn write_package(
     root: &LibraryRoot,
     program: &MirProgram,
     units: &[(CheckedUnit, Vec<String>)],
-    records: DeclarationRecords,
+    records: impl FnOnce() -> Result<DeclarationRecords, String>,
 ) -> Result<Vec<u8>, PackageError> {
-    let mut findings = program.invariant_errors.clone();
-    findings.extend(crate::mir::verify::verify(program));
-    findings.extend(super::write::schema_findings(program));
-    let recorded = |names: fn(&LoweredDeclaration) -> Vec<&String>| {
-        let mut recorded: Vec<&String> = records
+    let (written, section) = encoding_types(|| {
+        let records = records().map_err(PackageError)?;
+        let mut findings = program.invariant_errors.clone();
+        findings.extend(crate::mir::verify::verify(program));
+        findings.extend(super::write::schema_findings(program));
+        let recorded = |names: fn(&LoweredDeclaration) -> Vec<&String>| {
+            let mut recorded: Vec<&String> = records
+                .declarations
+                .values()
+                .flat_map(|record| names(&record.lowered))
+                .collect();
+            recorded.sort();
+            recorded
+        };
+        let mut structs: Vec<&String> = program
             .declarations
-            .values()
-            .flat_map(|record| names(&record.lowered))
-            .collect();
-        recorded.sort();
-        recorded
-    };
-    let mut structs: Vec<&String> = program
-        .declarations
-        .structs
-        .iter()
-        .map(|declaration| &declaration.name)
-        .collect();
-    structs.sort();
-    let mut functions: Vec<&String> = program
-        .declarations
-        .functions
-        .iter()
-        .map(|declaration| &declaration.lowered_name)
-        .collect();
-    functions.sort();
-    if recorded(|lowered| {
-        lowered
             .structs
             .iter()
             .map(|declaration| &declaration.name)
-            .collect()
-    }) != structs
-        || recorded(|lowered| {
+            .collect();
+        structs.sort();
+        let mut functions: Vec<&String> = program
+            .declarations
+            .functions
+            .iter()
+            .map(|declaration| &declaration.lowered_name)
+            .collect();
+        functions.sort();
+        if recorded(|lowered| {
             lowered
-                .functions
+                .structs
                 .iter()
-                .map(|declaration| &declaration.lowered_name)
+                .map(|declaration| &declaration.name)
                 .collect()
-        }) != functions
-    {
-        findings.push("the declaration records hold other declarations than the program".into());
-    }
-    let mut declared: Vec<&String> = records
-        .declarations
-        .values()
-        .flat_map(|record| &record.keys)
-        .filter(|(table, _)| *table == mojito_checked::package::InterfaceTable::Traits)
-        .map(|(_, key)| key)
-        .collect();
-    declared.sort();
-    let mut traits: Vec<&String> = program
-        .declarations
-        .traits
-        .iter()
-        .map(|declaration| &declaration.name)
-        .collect();
-    traits.sort();
-    if declared != traits {
-        findings.push(format!(
-            "the program declares the traits {traits:?}, its declarations {declared:?}"
-        ));
-    }
-    if !findings.is_empty() {
-        return Err(PackageError(findings.join("; ")));
-    }
-    let mut payload = Vec::new();
-    let mut record = |bytes: &[u8]| {
-        let start = payload.len();
-        payload.extend_from_slice(bytes);
-        start..payload.len()
-    };
-    let functions: HashMap<&str, &MirFunction> = program
-        .functions
-        .iter()
-        .map(|(name, function)| (name.as_str(), function))
-        .collect();
-    let mut placed = 0;
-    let mut bodies = Vec::with_capacity(program.functions.len());
-    for (unit, names) in units {
-        if names.is_empty() {
-            continue;
+        }) != structs
+            || recorded(|lowered| {
+                lowered
+                    .functions
+                    .iter()
+                    .map(|declaration| &declaration.lowered_name)
+                    .collect()
+            }) != functions
+        {
+            findings
+                .push("the declaration records hold other declarations than the program".into());
         }
-        let range = record(&unit.encode(root).map_err(|error| {
-            PackageError(format!(
-                "the unit of `{}` does not encode: {error}",
-                names[0]
-            ))
-        })?);
-        for name in names {
-            let function = functions.get(name.as_str()).ok_or_else(|| {
-                PackageError(format!("a unit places `{name}`, which the program lacks"))
-            })?;
-            placed += 1;
-            bodies.push(PackagedBody {
-                name: name.clone(),
-                n_params: function.n_params,
-                ref_params: function.ref_params.clone(),
-                range: range.clone(),
-            });
+        let mut declared: Vec<&String> = records
+            .declarations
+            .values()
+            .flat_map(|record| &record.keys)
+            .filter(|(table, _)| *table == mojito_checked::package::InterfaceTable::Traits)
+            .map(|(_, key)| key)
+            .collect();
+        declared.sort();
+        let mut traits: Vec<&String> = program
+            .declarations
+            .traits
+            .iter()
+            .map(|declaration| &declaration.name)
+            .collect();
+        traits.sort();
+        if declared != traits {
+            findings.push(format!(
+                "the program declares the traits {traits:?}, its declarations {declared:?}"
+            ));
         }
-    }
-    if placed != program.functions.len() {
-        return Err(PackageError(format!(
-            "the units place {placed} functions, the program has {}",
-            program.functions.len()
-        )));
-    }
-    let declarations = records
-        .encode(Some(bodies), Some(root), &mut record)
-        .map_err(PackageError)?;
+        if !findings.is_empty() {
+            return Err(PackageError(findings.join("; ")));
+        }
+        let mut payload = Vec::new();
+        let mut record = |bytes: &[u8]| {
+            let start = payload.len();
+            payload.extend_from_slice(bytes);
+            start..payload.len()
+        };
+        let functions: HashMap<&str, &MirFunction> = program
+            .functions
+            .iter()
+            .map(|(name, function)| (name.as_str(), function))
+            .collect();
+        let mut placed = 0;
+        let mut bodies = Vec::with_capacity(program.functions.len());
+        for (unit, names) in units {
+            if names.is_empty() {
+                continue;
+            }
+            let range = record(&unit.encode(root).map_err(|error| {
+                PackageError(format!(
+                    "the unit of `{}` does not encode: {error}",
+                    names[0]
+                ))
+            })?);
+            for name in names {
+                let function = functions.get(name.as_str()).ok_or_else(|| {
+                    PackageError(format!("a unit places `{name}`, which the program lacks"))
+                })?;
+                placed += 1;
+                bodies.push(PackagedBody {
+                    name: name.clone(),
+                    n_params: function.n_params,
+                    ref_params: function.ref_params.clone(),
+                    range: range.clone(),
+                });
+            }
+        }
+        if placed != program.functions.len() {
+            return Err(PackageError(format!(
+                "the units place {placed} functions, the program has {}",
+                program.functions.len()
+            )));
+        }
+        let declarations = records
+            .encode(Some(bodies), Some(root), &mut record)
+            .map_err(PackageError)?;
+        Ok((payload, declarations))
+    });
+    let (mut payload, declarations) = written?;
+    let types_start = payload.len();
+    payload.extend_from_slice(&section);
     let directory = bytecode(&PackageDirectory {
         header: header.clone(),
         declarations,
+        types: types_start..payload.len(),
         payload: payload.len(),
     })?;
     let mut output = format!("{PACKAGE_FORMAT}\n").into_bytes();
@@ -445,7 +465,9 @@ pub fn read_package(bytes: PackageBytes, root: &LibraryRoot) -> Result<Package, 
     }
     directory.validate()?;
     drop(reading);
-    let payload = Payload::new(bytes, start);
+    let payload = Payload::new(bytes, start)
+        .with_types(&directory.types)
+        .map_err(PackageError)?;
     let declarations = Arc::new(
         PackageDeclarations::read(payload.clone(), &directory.declarations, Some(root))
             .map_err(PackageError)?,
@@ -486,17 +508,21 @@ struct PackageDirectory {
     /// The declaration directory, which places every declaration record and
     /// every unit.
     declarations: Range<usize>,
+    /// The type section, which every record's types refer to.
+    types: Range<usize>,
     /// The payload's length.
     payload: usize,
 }
 
 impl PackageDirectory {
-    /// Refuse a directory whose declaration directory leaves the payload
-    /// (the declaration directory's rows are checked as they are read).
+    /// Refuse a directory whose declaration directory or type section
+    /// leaves the payload (the declaration directory's rows and the type
+    /// section's offsets are checked as they are read).
     fn validate(&self) -> Result<(), PackageError> {
-        let range = &self.declarations;
-        if range.start > range.end || !(..=self.payload).contains(&range.end) {
-            return Err(PackageError("a record overruns the payload".to_string()));
+        for range in [&self.declarations, &self.types] {
+            if range.start > range.end || !(..=self.payload).contains(&range.end) {
+                return Err(PackageError("a record overruns the payload".to_string()));
+            }
         }
         Ok(())
     }

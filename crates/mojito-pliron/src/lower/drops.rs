@@ -3,6 +3,7 @@
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
+use mojito_types::types::TyKind;
 
 impl FnLowering<'_> {
     /// `DropVar` — the VM's `drop_value`: nothing for scalars; for aggregates
@@ -103,7 +104,7 @@ impl FnLowering<'_> {
                     .map(|flag| self.begin_flag_guard(ctx, flag));
                 if !synthesized
                     && self.trace_lifecycle
-                    && let Ty::Struct(name, _) = ty.as_ref()
+                    && let TyKind::Struct(name, _) = &ty.kind()
                 {
                     let name = name.clone();
                     self.emit_trace_text(ctx, mojito_native::native::rt_abi::TRACE_CONSUME, &name);
@@ -116,9 +117,9 @@ impl FnLowering<'_> {
                     // surviving fields/elements; deeper untracked moves
                     // reject rather than guess.
                     if !matches!(
-                        ty.as_ref(),
-                        Ty::Struct(..) | Ty::Tuple(..) | Ty::RuntimePack(..)
-                    ) || (matches!(ty.as_ref(), Ty::Struct(..))
+                        &ty.kind(),
+                        TyKind::Struct(..) | TyKind::Tuple(..) | TyKind::RuntimePack(..)
+                    ) || (matches!(&ty.kind(), TyKind::Struct(..))
                         && self.partially_moved.contains(&var))
                     {
                         return Err(self.unsupported(
@@ -168,12 +169,12 @@ impl FnLowering<'_> {
         let LowerTy::Aggregate { ty, .. } = self.var_lower_ty(place.root)? else {
             return Ok(());
         };
-        let element_tys: Vec<Ty> = match ty.as_ref() {
-            Ty::Struct(name, _) => match self.struct_decls.get(name.as_str()).copied() {
+        let element_tys: Vec<Ty> = match &ty.kind() {
+            TyKind::Struct(name, _) => match self.struct_decls.get(name.as_str()).copied() {
                 Some(decl) => decl.fields.iter().map(|(_, field)| field.clone()).collect(),
                 None => return Ok(()),
             },
-            Ty::Tuple(elements) | Ty::RuntimePack(elements) => elements.clone(),
+            TyKind::Tuple(elements) | TyKind::RuntimePack(elements) => elements.clone(),
             _ => return Ok(()),
         };
         let element = element_tys[position].clone();
@@ -330,14 +331,14 @@ impl FnLowering<'_> {
         leaves: &std::collections::BTreeMap<usize, Value>,
         last_first: bool,
     ) -> Result<(), PlironError> {
-        let element_tys = match ty {
-            Ty::Struct(name, _) => {
+        let element_tys = match ty.kind() {
+            TyKind::Struct(name, _) => {
                 let Some(decl) = self.struct_decls.get(name.as_str()).copied() else {
                     return Ok(());
                 };
                 decl.fields.iter().map(|(_, field)| field.clone()).collect()
             }
-            Ty::Tuple(elements) | Ty::RuntimePack(elements) => elements.clone(),
+            TyKind::Tuple(elements) | TyKind::RuntimePack(elements) => elements.clone(),
             _ => return Ok(()),
         };
         let composed = self
@@ -380,12 +381,12 @@ impl FnLowering<'_> {
             return None;
         }
         let ty = self.func.var_tys.get(&place.root)?;
-        match (ty, &place.proj[0]) {
-            (Ty::Struct(name, _), Proj::Field(field)) => self
+        match (ty.kind(), &place.proj[0]) {
+            (TyKind::Struct(name, _), Proj::Field(field)) => self
                 .struct_decls
                 .get(name.as_str())
                 .and_then(|decl| decl.fields.iter().position(|(name, _)| name == field)),
-            (Ty::Tuple(elements) | Ty::RuntimePack(elements), Proj::ConstIndex(index)) => {
+            (TyKind::Tuple(elements) | TyKind::RuntimePack(elements), Proj::ConstIndex(index)) => {
                 (*index < elements.len()).then_some(*index)
             }
             _ => None,
@@ -429,11 +430,11 @@ impl FnLowering<'_> {
         ty: &Ty,
         skip_whole_deinit: bool,
     ) -> Result<(), PlironError> {
-        match ty {
+        match ty.kind() {
             // The built-in error has no user destructor; dropping it frees
             // the message buffer invisibly (the VM's error drop is a no-op —
             // its message is arena-owned).
-            Ty::Error => {
+            TyKind::Error => {
                 let handle = ScalarTy::Ptr.handle(ctx);
                 let data = LoadOp::new(ctx, ptr, handle);
                 self.append(ctx, data.get_operation(), None);
@@ -446,7 +447,7 @@ impl FnLowering<'_> {
             // after running, so drops of aliasing two-word copies are
             // idempotent per record — the VM's deep-copying closure clones
             // are a recorded divergence.
-            Ty::Func(_) => {
+            TyKind::Func(_) => {
                 let handle = ScalarTy::Ptr.handle(ctx);
                 let env_address = self.gep_byte_unspanned(ctx, ptr, 8);
                 let env = LoadOp::new(ctx, env_address, handle);
@@ -471,7 +472,7 @@ impl FnLowering<'_> {
                 self.end_flag_guard(ctx, cont_env);
                 Ok(())
             }
-            Ty::Struct(name, _) => {
+            TyKind::Struct(name, _) => {
                 let deinit = format!("{name}.__deinit__");
                 if !skip_whole_deinit && self.declarations.contains_key(&deinit) {
                     let Some(signature) = self.signatures.get(&deinit) else {
@@ -521,7 +522,7 @@ impl FnLowering<'_> {
                 }
                 Ok(())
             }
-            Ty::Tuple(elements) | Ty::RuntimePack(elements) => {
+            TyKind::Tuple(elements) | TyKind::RuntimePack(elements) => {
                 let elements = elements.clone();
                 let composed = self
                     .layout
@@ -551,7 +552,7 @@ impl FnLowering<'_> {
     /// (its environment record may carry owned droppable captures — a
     /// null-guarded header dispatch, free when there are none).
     pub(super) fn needs_drop(&self, ty: &Ty) -> bool {
-        matches!(ty, Ty::Error | Ty::Func(_))
+        matches!(ty.kind(), TyKind::Error | TyKind::Func(_))
             || self.has_lifecycle_method(ty, "__deinit__")
             || self.fields_need_drop(ty)
     }
@@ -559,15 +560,15 @@ impl FnLowering<'_> {
     /// Whether any transitive field/element of `ty` performs drop work
     /// (excluding `ty`'s own whole-value destructor).
     pub(super) fn fields_need_drop(&self, ty: &Ty) -> bool {
-        match ty {
-            Ty::Struct(name, _) => self
+        match ty.kind() {
+            TyKind::Struct(name, _) => self
                 .struct_decls
                 .get(name.as_str())
                 .is_some_and(|decl| decl.fields.iter().any(|(_, field)| self.needs_drop(field))),
-            Ty::Tuple(elements) | Ty::RuntimePack(elements) => {
+            TyKind::Tuple(elements) | TyKind::RuntimePack(elements) => {
                 elements.iter().any(|element| self.needs_drop(element))
             }
-            Ty::Variant(alternatives) => alternatives
+            TyKind::Variant(alternatives) => alternatives
                 .iter()
                 .any(|alternative| self.needs_drop(alternative)),
             _ => false,
@@ -576,7 +577,7 @@ impl FnLowering<'_> {
 
     /// Whether `ty` is a struct whose program declares `method` for it.
     pub(super) fn has_lifecycle_method(&self, ty: &Ty, method: &str) -> bool {
-        matches!(ty, Ty::Struct(name, _) if self
+        matches!(ty.kind(), TyKind::Struct(name, _) if self
             .declarations
             .contains_key(&format!("{name}.{method}")))
     }
@@ -586,16 +587,16 @@ impl FnLowering<'_> {
         if self.has_lifecycle_method(ty, method) {
             return true;
         }
-        match ty {
-            Ty::Struct(name, _) => self.struct_decls.get(name.as_str()).is_some_and(|decl| {
+        match ty.kind() {
+            TyKind::Struct(name, _) => self.struct_decls.get(name.as_str()).is_some_and(|decl| {
                 decl.fields
                     .iter()
                     .any(|(_, field)| self.has_nested_lifecycle(field, method))
             }),
-            Ty::Tuple(elements) | Ty::RuntimePack(elements) => elements
+            TyKind::Tuple(elements) | TyKind::RuntimePack(elements) => elements
                 .iter()
                 .any(|element| self.has_nested_lifecycle(element, method)),
-            Ty::Variant(alternatives) => alternatives
+            TyKind::Variant(alternatives) => alternatives
                 .iter()
                 .any(|alternative| self.has_nested_lifecycle(alternative, method)),
             _ => false,

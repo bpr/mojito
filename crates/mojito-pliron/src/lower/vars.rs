@@ -3,6 +3,7 @@
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
+use mojito_types::types::TyKind;
 
 impl FnLowering<'_> {
     /// Materialize the runtime handle of a static `ref` binding. MIR normally
@@ -18,7 +19,10 @@ impl FnLowering<'_> {
         marker: Reg,
     ) -> Result<(), PlironError> {
         if !self.initialized_vars.contains(&reference)
-            && matches!(self.func.var_tys.get(&reference), Some(Ty::Ref(_)))
+            && matches!(
+                self.func.var_tys.get(&reference).map(Ty::kind),
+                Some(TyKind::Ref(_))
+            )
         {
             let [loan] = loans else {
                 return Err(self.unsupported_reg(
@@ -68,7 +72,7 @@ impl FnLowering<'_> {
                 } else {
                     // The nominal String's `__moveinit__` is an identity
                     // field move — the byte copy below is exactly it.
-                    let stdlib_string = matches!(ty.as_ref(), Ty::Struct(name, _)
+                    let stdlib_string = matches!(&ty.kind(), TyKind::Struct(name, _)
                         if mojito_symbol::symbol::is_stdlib_string_struct(name));
                     if !stdlib_string && self.has_lifecycle_method(&ty, "__moveinit__") {
                         // A `^` transfer with a compiled `__moveinit__` always
@@ -76,7 +80,7 @@ impl FnLowering<'_> {
                         // already established the consuming source contract;
                         // the constructor, not a backend pointer heuristic,
                         // defines the move semantics.
-                        if let Ty::Struct(name, _) = ty.as_ref()
+                        if let TyKind::Struct(name, _) = &ty.kind()
                             && self
                                 .signatures
                                 .contains_key(&format!("{name}.__moveinit__"))
@@ -97,7 +101,7 @@ impl FnLowering<'_> {
                     // value is an owned temporary until consumed.
                     self.set_drop_flag(ctx, var, false);
                     if self.owns_heap(&ty) || self.stdlib_deinit_temp(&ty) || self.needs_drop(&ty) {
-                        self.mark_owned_temp(dest, (*ty).clone())?;
+                        self.mark_owned_temp(dest, ty.clone())?;
                     }
                     Ok(())
                 }
@@ -153,7 +157,8 @@ impl FnLowering<'_> {
         src: Reg,
         expected: ScalarTy,
     ) -> Result<Value, PlironError> {
-        if let Some(ty @ (Ty::IntLiteral | Ty::FloatLiteral)) = self.func.var_tys.get(&var).cloned()
+        if let Some(ty) = self.func.var_tys.get(&var).cloned()
+            && matches!(ty.kind(), TyKind::IntLiteral | TyKind::FloatLiteral)
             && let Some(literal) = self.pending_literals.get(&src.0).cloned()
         {
             let constant = self.exact_literal_storage(ctx, &literal, &ty, src)?;
@@ -240,12 +245,13 @@ impl FnLowering<'_> {
         count: Reg,
         alignment: Option<Reg>,
     ) -> Result<(), PlironError> {
-        let Some(Ty::Pointer { element, .. }) = self.func.reg_types.get(&dest.0).cloned() else {
+        let register_ty = self.func.reg_types.get(&dest.0).cloned();
+        let Some(TyKind::Pointer { element, .. }) = register_ty.as_ref().map(Ty::kind) else {
             return Err(
                 self.unsupported_reg("allocation without a concrete pointer result".into(), dest)
             );
         };
-        let element_layout = self.layout.layout_of(&element).map_err(|error| {
+        let element_layout = self.layout.layout_of(element).map_err(|error| {
             self.unsupported_reg(format!("allocation element layout ({error})"), dest)
         })?;
         let count = self.reg_value(ctx, count, ScalarTy::Int)?;

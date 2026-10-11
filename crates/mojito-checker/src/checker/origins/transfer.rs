@@ -3,6 +3,7 @@
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
+use mojito_types::types::TyKind;
 
 impl Checker {
     /// The transfer effects of `callee`: this pass's, else the imported
@@ -85,11 +86,11 @@ impl Checker {
     /// collide with an effectful declaration name over-approximates, the
     /// same union the name-keyed call path already applies.
     pub(in crate::checker) fn bake_value_transfer_effects(&self, name: &str, ty: Ty) -> Ty {
-        let bakeable = match &ty {
-            Ty::Func(_) | Ty::GenericFunc(_) => true,
-            Ty::Overload(members) => members
+        let bakeable = match ty.kind() {
+            TyKind::Func(_) | TyKind::GenericFunc(_) => true,
+            TyKind::Overload(members) => members
                 .iter()
-                .any(|member| matches!(member, Ty::Func(_) | Ty::GenericFunc(_))),
+                .any(|member| matches!(member.kind(), TyKind::Func(_) | TyKind::GenericFunc(_))),
             _ => false,
         };
         if !bakeable {
@@ -109,16 +110,17 @@ impl Checker {
         let Some(effects) = effects else {
             return ty;
         };
-        match ty {
+        match ty.kind() {
             // Overloads share the bare-name effect entry; the union applies
             // to whichever member a later call selects.
-            Ty::Overload(members) => Ty::Overload(
+            TyKind::Overload(members) => TyKind::Overload(
                 members
-                    .into_iter()
-                    .map(|member| with_transfer_effects(member, &effects))
+                    .iter()
+                    .map(|member| with_transfer_effects(member.clone(), &effects))
                     .collect(),
-            ),
-            other => with_transfer_effects(other, &effects),
+            )
+            .into(),
+            _ => with_transfer_effects(ty, &effects),
         }
     }
 
@@ -325,8 +327,8 @@ impl Checker {
         &self,
         name: &str,
     ) -> Vec<mojito_checked::checked::TransferEffect> {
-        let key = match self.lookup(name) {
-            Some(Ty::Struct(struct_name, _)) => format!("{struct_name}.__call__"),
+        let key = match self.lookup(name).map(Ty::kind) {
+            Some(TyKind::Struct(struct_name, _)) => format!("{struct_name}.__call__"),
             _ => name.to_string(),
         };
         let effects = self.callee_transfer_effects(&key);
@@ -491,7 +493,7 @@ impl Checker {
                     if !effect.src_is_place {
                         symbolic_value = reference
                             .as_ref()
-                            .map(|reference| (*reference.referent).clone())
+                            .map(|reference| reference.referent.clone())
                             .or_else(|| self.infer(src_expr).ok())
                             .filter(|ty| {
                                 mojito_types::types::is_symbolic(ty)
@@ -622,7 +624,7 @@ impl Checker {
                         frame.record(
                             mojito_checked::checked::TransferEffect {
                                 dest: dest_sig.clone(),
-                                src: SigOrigin::Carried(Box::new(stored.clone())),
+                                src: SigOrigin::Carried(stored.clone()),
                                 src_is_place: false,
                                 mutable: false,
                             },
@@ -768,8 +770,8 @@ impl Checker {
             base if dest_path.is_empty() => base,
             base => SigOrigin::Projected(Box::new(base), dest_path),
         };
-        let mutable = match storage {
-            Some(Ty::Ref(reference)) => {
+        let mutable = match storage.as_ref().map(Ty::kind) {
+            Some(TyKind::Ref(reference)) => {
                 reference.mutability == mojito_types::origin::Mutability::Mutable
             }
             _ => true,
@@ -780,7 +782,7 @@ impl Checker {
             frame.record(
                 mojito_checked::checked::TransferEffect {
                     dest: dest.clone(),
-                    src: SigOrigin::Carried(Box::new(stored.clone())),
+                    src: SigOrigin::Carried(stored.clone()),
                     src_is_place: false,
                     mutable: false,
                 },
@@ -832,7 +834,7 @@ impl Checker {
         );
         let unbound = mojito_types::types::mentions(
             stored,
-            &|ty| matches!(ty, Ty::Param { binder, .. } if !subst.contains_key(&binder.id)),
+            &|ty| matches!(ty.kind(), TyKind::Param { binder, .. } if !subst.contains_key(&binder.id)),
         );
         (!unbound).then(|| substitute(stored, &subst))
     }
@@ -842,9 +844,9 @@ impl Checker {
     fn receiver_bindings(&self, receiver: &Expr) -> Option<TySubst> {
         let receiver = self
             .infer_reference_value(receiver)
-            .map(|reference| *reference.referent)
+            .map(|reference| reference.referent)
             .or_else(|| self.infer(receiver).ok())?;
-        let Ty::Struct(name, arguments) = &receiver else {
+        let TyKind::Struct(name, arguments) = receiver.kind() else {
             return None;
         };
         let info = self.structs.get(name)?;
@@ -866,14 +868,14 @@ fn named_place_origins(ty: &Ty) -> Vec<mojito_types::origin::Origin> {
     let found = std::cell::RefCell::new(Vec::new());
     mojito_types::types::mentions(ty, &|ty| {
         let mut found = found.borrow_mut();
-        match ty {
-            Ty::Ref(reference) => places(&reference.origin, &mut found),
-            Ty::Pointer { origin, .. } => {
+        match ty.kind() {
+            TyKind::Ref(reference) => places(&reference.origin, &mut found),
+            TyKind::Pointer { origin, .. } => {
                 if let Some(origin) = origin.as_origin() {
                     places(&origin, &mut found);
                 }
             }
-            Ty::Struct(_, arguments) => {
+            TyKind::Struct(_, arguments) => {
                 for argument in arguments {
                     if let mojito_types::types::TyArg::Origin(origin) = argument {
                         places(origin, &mut found);

@@ -132,6 +132,19 @@ import (every compilation that links the bundled library):
   rows; declarations and units decode from their own ranges on demand:
   Hello World decodes three of 251 declaration records and lowers three
   of 874 bodies.
+- **The type section** (`mojito_types::type_section`) holds every type
+  the records hold once, as MLIR bytecode's attribute and type section
+  does: a record refers to a type by its index, and an entry holds the
+  type's variant with each child an index of an earlier entry. The
+  package write runs every record encode, the checker residues included,
+  inside one `encoding_types` scope and appends the section last, its
+  range in the header; the importer's `Payload` runs every record decode
+  inside `decoding_types`, which decodes an entry the first time a record
+  refers to it and shares the node with every later reference. An entry
+  is keyed by its own bytes, so a decorated type never shares an entry
+  with its undecorated twin. The section is 0.6 MB smaller than the
+  inline types it replaced (2.54 MB to 1.98 MB), and decoding the units
+  Hello World reaches takes about 25 ms rather than 30.
 - **A unit's record** (`checked_unit::CheckedUnit`) is a package body as
   the check left it, as upstream's package holds each body's IR as its
   parser wrote it and its checks validated it, structured control flow
@@ -1042,13 +1055,13 @@ substitutes when `Tuple.__getitem_param__[index]` is applied at `i`, renames
 when one struct's pack is forwarded as another's (`Tuple[*Self.Ts]`), and
 folds to the element once the pack binds to a list
 (`Checker::close_pack_elements`). Its capabilities are read through a bounded
-`Ty::Param` view (`Checker::opaque_element`): the pack's declared bounds plus
+`TyKind::Param` view (`Checker::opaque_element`): the pack's declared bounds plus
 every trait a conjunctive `conforms_to(Ts.values, Trait)` or
 `Ts.all_conforms_to[Trait]()` of the enclosing declarations guarantees, and
 nothing else — a struct-header conditional conformance, a disjunction, and a
 `comptime if` guard license nothing, as at the pin. Storage over an unbound
-pack is a list that spreads it (`Ty::Tuple`, `Ty::Variant`, or a `Tuple[...]`
-application whose one argument is the starred `Ty::Param`,
+pack is a list that spreads it (`TyKind::Tuple`, `TyKind::Variant`, or a `Tuple[...]`
+application whose one argument is the starred `TyKind::Param`,
 `types::pack_spread`); a spread beside other arguments is rejected. A
 `TypeList` proposition over the pack is a `Bool` no instantiation has fixed,
 so both arms of `comptime if Self.Ts.contains[T]()` check, and
@@ -1080,7 +1093,7 @@ there is no per-instantiation check to leave it to (R519). `docs/notes/param-exp
 **A SIMD lane is symbolic too.** A body keyed on a `DType` parameter, or on a
 vector width naming its own parameter (`def total[dt: DType, width:
 Int](v: SIMD[dt, width])`, a struct field `SIMD[Self.dt, Self.width]`), is
-validated like any other. `Ty::Simd` holds typed slots (`SimdDtype`,
+validated like any other. `TyKind::Simd` holds typed slots (`SimdDtype`,
 `SimdWidth`): a slot is a known dtype or width, or the parameter expression
 the template names (`dtype_from_arg`, `simd_width` in the checker), and the
 one constructor of a symbolic vector type (`types::simd_ty_from_slots`) folds
@@ -1150,7 +1163,7 @@ still a parameter is a `ParamKind::Reflect` node: `field_count()`,
 `is_struct()` a `Bool`, `field_names()[i]` a string literal, and a field
 type — `types[i]`, `r.field_at[i].T`, `r.field["x"].T` — the dependent
 element `ListGet` of a `field_types()` list, viewed through the same bounded
-`Ty::Param` a pack element is (`opaque_element`, now keyed by the element's
+`TyKind::Param` a pack element is (`opaque_element`, now keyed by the element's
 spelling). A field type has no declared bound: `T`'s own bound says nothing
 about a field, so a trait use of it is rejected until proved, and a
 `comptime if conforms_to(X, A & B)` condition proves exactly those traits of
@@ -1207,6 +1220,39 @@ CtValue::Expr      // a residual parameter expression, never a constant
 CtValue::Deferred  // a slot whose value arrives later; not part of identity
 ```
 
+### Types
+
+A type is a handle to shared, immutable storage, as MLIR's `Type` is a
+pointer to storage its context uniques (`mojito_types::types`):
+
+- `Ty` is one pointer to a `TyNode`, which holds the variant (`TyKind`)
+  and two facts cached when the node is built: the variant's hash and
+  whether the type is closed (`Ty::is_closed`). A node's children are
+  handles too, so a clone copies a pointer and a nested type holds each
+  level once.
+- Equality compares the handles first, then the digests, and the variants
+  only when both agree; hashing writes the digest. A variant that carries
+  no data (`Ty::int()`, `Ty::none()`, …) is one node per process.
+- A write is explicit: `Ty::update` unshares the node and refreshes its
+  facts, and a rewriting walk rebuilds through `Ty::reusing`, which keeps
+  the handle it read when the rebuilt variant is equal.
+- The checker's `ParamContext` uniques the types it records
+  (`ParamContext::intern_ty`, beside the parameter expressions it already
+  uniques, as MLIR's context uniques types beside attributes): every
+  recorded expression, place, binding, declaration, and conversion type
+  becomes the context's node for it when the check hands its facts off
+  (`body_carry`), so lowering, which clones them into registers, shares
+  one node per distinct type (`--timings` counts `types.interned` and
+  `types.intern_hits`).
+- A type whose decoration equality leaves out (`Ty::carries_decorations`:
+  a callable's transfer effects, a dictionary or set value's display
+  spelling) is never uniqued, since sharing its node would hand one
+  occurrence another's decoration.
+- Below the check (mono, HIR, MIR lowering, the MIR text reader) types are
+  still built without the context, so identity stays structural there:
+  equal types may be distinct nodes, and equality falls back to comparing
+  them.
+
 ### Parameter Expressions
 
 A value argument such as the `n + 1` of `Buf[n + 1]` is a typed, immutable,
@@ -1240,7 +1286,7 @@ second expression tree.
   not carry. The lowered symbol spells the method's own binders
   with their bounds (`First.pick$ov$T$Copyable$Int`), a callable bound
   (`F$Callable$def…`), and an existential `Some[Trait]` parameter
-  (`Some$u5B$Writer$u5D$$Writer`) exactly as the checker's `Ty::Param`
+  (`Some$u5B$Writer$u5D$$Writer`) exactly as the checker's `TyKind::Param`
   spells a call's selected overload, so the symbol a call names is the one
   MIR declares. The checker and the elaborator
   (`comptime/params.rs`, `elaborated_binder`) both name a method's binders
@@ -1250,7 +1296,7 @@ second expression tree.
   `Trait.method`, or, overloaded, by the symbol `lowered_method_name` gives
   it (`Picker.pick$ov$T`): `OverloadSets` counts requirements as it counts
   struct methods. A type binder is the same identity: `ParamDecl`
-  carries its `id`, `Ty::Param { binder: ParamRef }` compares by it, and every
+  carries its `id`, `TyKind::Param { binder: ParamRef }` compares by it, and every
   type substitution is a `TySubst` keyed by it; a canonicalized callable
   contract's binders are `$contract` slots, so contracts differing only in
   spelling are one identity and a trait witness may spell its binder as it
@@ -1434,7 +1480,7 @@ a generic body) is instantiated where the body's own instance is.
 
 An *ordinary* generic struct (`struct Optional[T: AnyType]`, every parameter
 a plain type parameter) keeps its template in the program — checked once
-with `T` as `Ty::Param` (Mojo's generic pre-check). A method with no
+with `T` as `TyKind::Param` (Mojo's generic pre-check). A method with no
 compile-time construct in its body is a generator: its template's MIR serves
 every instance, and `native::mono` substitutes into it for both
 backends, so nothing is cloned, checked, or derived per instance. What the
@@ -1763,7 +1809,7 @@ a lexical scope, and a template derivation counts each copy of a declaration as 
 local of its own (`renumber_locals`). HIR may suffix the internal slot name, but downstream place lookup is
 by owner identity; independently inferred sibling types therefore never merge
 in `MirFunction::var_tys`. A substituted local `ref` alias has no runtime handle
-payload, yet its analytical slot retains the checked `Ty::Ref` capability used
+payload, yet its analytical slot retains the checked `TyKind::Ref` capability used
 by every `MirPlace::through` access. Opaque structured statements may retain a
 source spelling after HIR has assigned a shadowed declaration a suffixed slot,
 so MIR resolves identifier writes through the checked `OwnerId` exactly as it
@@ -1771,10 +1817,10 @@ does reads; the two halves of augmented assignment cannot select different
 same-spelled bindings.
 
 Public collection types, including heterogeneous `Tuple[*Ts]`, cross the checked
-boundary as `Ty::Struct` with their concrete type arguments. `Ty::ComptimeList`
-exists only while materializing `CtValue::List`; `Ty::Tuple(Vec<Ty>)` is the
+boundary as `TyKind::Struct` with their concrete type arguments. `TyKind::ComptimeList`
+exists only while materializing `CtValue::List`; `TyKind::Tuple(Vec<Ty>)` is the
 compiler-private heterogeneous pack carrier and is never the type of a public
-tuple expression. `Ty::Variant(Vec<Ty>)` is the compiler-private tagged-union
+tuple expression. `TyKind::Variant(Vec<Ty>)` is the compiler-private tagged-union
 storage of the bundled `__VariantStorage[*Ts]` field behind `std.utils.Variant`
 (gated on `bundled_stdlib_declaration`, never the type of a public expression);
 it retains alternative order at the checked boundary. Storage construction and
@@ -1836,7 +1882,7 @@ the VM retain static dispatch and need no trait-object representation.
 Associated compile-time members may be monomorphic or parameterized.
 `TraitComptime` and `StructComptime` retain a name and requirement/value plus an
 optional member-local parameter list (type, value, and origin parameters, with
-the `//` infer-only boundary), and `Type::Assoc`/`Ty::Assoc` carry application
+the `//` infer-only boundary), and `Type::Assoc`/`TyKind::Assoc` carry application
 arguments (`TyArg::Ty`/`Val`/`Origin`, the origin erased from the runtime ABI like
 a pointer origin). A type-parameterized member instantiated by a conforming struct
 resolves concretely by substituting those arguments into the member's lowered
@@ -1846,7 +1892,7 @@ template. The bundled owned iterator protocol uses the monomorphic
 and the dependent application `Self.IteratorType[origin_of(self)]` parse, check,
 and arity-validate.
 
-A struct's own origin arguments are part of its checked identity: `Ty::Struct`
+A struct's own origin arguments are part of its checked identity: `TyKind::Struct`
 carries its declared type and value arguments first and then an **origin tail**,
 one `TyArg::Origin` per explicit `Origin`/`OriginSet` source parameter in source
 order (`P[origin_of(xs)]` and `P[origin_of(ys)]` are different types, as
@@ -1863,17 +1909,12 @@ the checker's
 instantiation records reset it to unbound so a place origin (a per-check owner
 id) never makes an instantiation look new across passes.
 
-`Ty::Struct`'s argument list is a `TyArgs`, shared between clones, so a nested
-type (`W[W[Int]]`) copied into every register, key, and binding holds its level
-below once. Writes are explicit: `TyArgs::update` unshares one level, and a
-rewriting walk rebuilds through `TyArgs::reusing`, which keeps the list it read
-when nothing changed. Each list caches its hash and whether it is closed
-(`TyArgs::is_closed`: no parameter, projection, literal or inference type,
-callable, pointer, reference, expression, deferred value, or bound origin at
-any depth), so hashing a nested type visits one level, and `is_symbolic`,
+A type's node caches whether it is closed (`Ty::is_closed`: no parameter,
+projection, literal or inference type, callable, pointer, reference,
+expression, deferred value, or bound origin at any depth), so `is_symbolic`,
 `mentions_open`, `substitute`, the literal, origin, and callable-environment
 canonicalizers, and every `TyRewrite` that does not opt in through
-`visits_closed` pass a closed level whole.
+`visits_closed` pass a closed type whole (see Types).
 
 An `origin_of(self)` argument on a trait method's *abstract* signature has no
 bound `self` place, so it lowers to the symbolic `Origin::SelfParam` — the
@@ -1992,7 +2033,7 @@ naming its binder, which `native::mono` writes as the bound type's default
 construction. A type bracket argument has no run-time form: as Mojo's call
 carries a type parameter as an attribute, it rides the call's instantiated
 arguments, and a forwarded binder (`hash[Self.H](key)` in
-`DictEntry.__init__`) is a `Ty::Param` there, which substitution closes under
+`DictEntry.__init__`) is a `TyKind::Param` there, which substitution closes under
 the caller's bindings (`Bindings.types`, keyed by `ParamRef`), so an explicit
 `Dict[K, V, SumHasher]` hashes under `SumHasher` on insertion as well as
 lookup. A value argument built from the caller's own value binders
@@ -2043,7 +2084,7 @@ contract is [`docs/notes/generator-contract.md`](notes/generator-contract.md).
 
 Top-level functions, methods, trait requirements, and constructors may form
 overload sets. The checker represents a repeated top-level `def` name as
-`Ty::Overload(Vec<Ty>)`; struct and trait methods use a per-name list of
+`TyKind::Overload(Vec<Ty>)`; struct and trait methods use a per-name list of
 `MethodSig`s.
 
 Duplicate-equivalent signatures are rejected. Distinct arities are naturally
@@ -2308,12 +2349,12 @@ A variadic type parameter retains a leading `*` in the checked parameter name.
 Generic-call inference recognizes the matching `*args: *Pack` element type and
 checks each overflow argument independently against the pack bounds instead of
 forcing all arguments to unify to one type. Specialization records the concrete
-sequence as the internal checked `Ty::RuntimePack([T0, ...])` call ABI; the VM
+sequence as the internal checked `TyKind::RuntimePack([T0, ...])` call ABI; the VM
 materializes that collector in private `Value::Tuple` storage. An ordinary
 homogeneous `*args: Tuple[...]` instead remains a nominal `List` whose repeated
 element type is the public nominal `Tuple`. This supports heterogeneous calls
 and pack length queries without confusing a public tuple with the private
-`Ty::Tuple` carrier. Specialization infers literal
+`TyKind::Tuple` carrier. Specialization infers literal
 and directly constructed call-argument types, binds the pack's type tuple into
 the compile-time environment, and unrolls `args.__len__()`-driven loops.
 Because specialization consumes this generic call before whole-program checking,
@@ -2430,7 +2471,7 @@ List/Set/Dict place gains an `element` `Interior` segment, while a named
 user-struct iterable records the *whole* source place — and HIR `BorrowIter`
 preserves that place instead of invoking its value copy lifecycle. MIR always
 binds the retained source as a genuine reference (`MakeRef` into a
-`Ty::Ref`-typed retained-source slot; a borrowed `__iter__(ref self)` re-roots
+`TyKind::Ref`-typed retained-source slot; a borrowed `__iter__(ref self)` re-roots
 at the source, so the handle is read only by `GetIter` and dropped afterward
 as a no-op) and normalizes the iterator into a distinct iterator-object slot.
 Whole-source versus interior borrowing is expressed only as loan granularity:
@@ -2529,7 +2570,7 @@ Concrete iterator selection retains an exact checked `__next__` operation:
 target, raising effect, executable result type, and (when present) the
 origin-bearing reference result. HIR and MIR carry that contract unchanged, and
 MIR verification checks it against the selected declaration. Thus a
-reference-yielding iterator writes a `Ty::Ref` register and binding; the VM is
+reference-yielding iterator writes a `TyKind::Ref` register and binding; the VM is
 never relied on to smuggle a reference handle through a register typed as its
 referent. Compiler-private iterator carriers alone omit the nominal operation
 contract.
@@ -2730,7 +2771,7 @@ final storage type.
 
 Dynamic `Index(Reg)` projections conservatively overlap every index. A
 `ConstIndex` is emitted only for an exact nonnegative literal selecting an
-element of compiler-private heterogeneous `Ty::Tuple` storage. This gives each
+element of compiler-private heterogeneous `TyKind::Tuple` storage. This gives each
 pack element a distinct ownership path without changing nominal collection
 subscript dispatch. A store to such an element is a store to that path: an
 `out self` initializer builds the storage one element at a time
@@ -2740,7 +2781,7 @@ holds one placeholder per element for the stores to fill.
 
 When an accessor returns a reference used immediately as another receiver or
 place — including the target of a field store or augmented assignment
-(`xs[i].field = v`) — lowering evaluates it once into a hidden `Ty::Ref`
+(`xs[i].field = v`) — lowering evaluates it once into a hidden `TyKind::Ref`
 local. `DefVar` stores the handle and `EstablishLoans` retains its owner
 generation; the derived place names that local in `through`. Later chained
 loads, projections, stores, and calls therefore preserve provenance without
@@ -2754,7 +2795,7 @@ pass fills the remaining results by copying facts already present in the
 instruction stream — operand register types, place storage types, inline
 element types, slot types, and declaration returns — never by re-implementing
 checker inference. Loan and consumption markers, which hold no runtime value,
-are typed `Ty::None` by convention. Functions additionally carry their checked
+are typed `TyKind::None` by convention. Functions additionally carry their checked
 `ret_ty`, raising contract (`raises`/`error_ty`), and per-slot `var_tys`.
 
 `mir::verify` has two modes. `verify` accepts parametric MIR, the form the
@@ -2874,7 +2915,7 @@ construction calls its bare struct name and resolves to the
 its function's `ref_params` mask, and an unknown callee stays exclusive.
 
 A place's storage type is distinct from its expression value type. For a field
-declared `ref[origin] T`, the place stores `Ty::Ref`, while an ordinary load
+declared `ref[origin] T`, the place stores `TyKind::Ref`, while an ordinary load
 produces `T`. The VM now chooses reference read/write behavior from this checked
 place type; it does not inspect a runtime `Value::Ref` to rediscover semantics.
 
@@ -2991,7 +3032,7 @@ ultimate referent and never replaces the reference stored in the List element.
 Relatedly, a chained subscript's loaded base register may legitimately stay
 reference-typed one level above its place — the VM's `LoadPlace` second
 dereference resolves it at runtime — so the verifier peels exactly one
-`Ty::Ref` level on both the storage and the loaded register when checking a
+`TyKind::Ref` level on both the storage and the loaded register when checking a
 subscript receiver, symmetric by design. No consumer needs the register
 retyped (analysis and drops read place types, not the loaded base register),
 so this one-level tolerance is the sanctioned contract rather than a gap.
@@ -3117,7 +3158,7 @@ declaration list against the callee register type, validates every value
 register, and rejects malformed raising and statically decidable
 reference-result metadata.
 
-`Ty::Func` and `Ty::GenericFunc` hold their signature behind one box, a
+`TyKind::Func` and `TyKind::GenericFunc` hold their signature behind one box, a
 `FuncTy` (the generic form's `GenericFuncTy` adds its parameter declarations to
 one), so a `Ty` is sized for its common variants; a compile-time assertion
 beside `Ty` pins that size. `Ty::callable` reads either form's signature.
@@ -3145,7 +3186,7 @@ used for trait requirements and bounded method calls. `Call`, `CallIndirect`,
 optional error type for MIR verification; the VM does not rediscover an effect
 from a source declaration.
 
-When a `Ty::GenericFunc` appears where a concrete `Ty::Func` is expected, the
+When a `TyKind::GenericFunc` appears where a concrete `TyKind::Func` is expected, the
 checker solves its type parameters from the expected parameter and result types
 and validates the resulting monomorphic signature. When both sides are generic,
 it alpha-normalizes their binder names, preserves arity and bounds, and compares
@@ -3158,7 +3199,7 @@ compile-time parameter list:
 
 - `F: def(T) -> T` declares a type parameter with a checked anonymous callable
   constraint. Its `ParamDecl::Type { callable_bound, ... }` retains the complete
-  dependent `Ty::Func` or `Ty::GenericFunc`, so a call through `F` inside the
+  dependent `TyKind::Func` or `TyKind::GenericFunc`, so a call through `F` inside the
   template is checked against that signature. A monomorphic contract requires
   one monomorphic function type or a struct with nominal `def(...)` conformance;
   a contract with its own `def[...]` binders accepts an alpha-equivalent generic
@@ -3188,7 +3229,7 @@ as a compile-time closure payload.
 An explicit `function[origin_of(place)]` expression is the current-Mojo spelling
 for materializing an origin-generic function as a value without erasing its loan
 contract. The checker binds the function's semantic-only Origin parameters to
-the caller's checked origins and produces a concrete `Ty::Func`; its parameter
+the caller's checked origins and produces a concrete `TyKind::Func`; its parameter
 reference signatures and reference-result signature are then ordinary indirect-
 call facts. The runtime value still needs only the resolved MIR symbol because
 the origin substitution has already constrained legal calls and escapes. A
@@ -3607,7 +3648,7 @@ in-place dunder rides ordinary method selection, so its callee effects
 replay at the `+=` site.
 
 Effects also ride checked function types. A `def` name in value position
-bakes its committed effects into the produced `Ty::Func`/`Ty::GenericFunc`
+bakes its committed effects into the produced `TyKind::Func`/`TyKind::GenericFunc`
 as an identity-transparent `TransferSet` (never part of type equality or
 acceptance — a `def(...)` contract cannot spell effects, so soundness comes
 from call-site replay, not acceptance filtering), with a fixpoint
@@ -3702,8 +3743,8 @@ slicing, and the result APIs, which live on the view with `String`
 forwarding through `StringSpan(self)`) is pure library code.
 
 The `StringLiteral`-vs-`String` split is realized at the type level. The
-compile-time literal type is `Ty::StringLiteral` (spelled `StringLiteral` in
-source, mirroring `Ty::IntLiteral`); string literals and literal-only
+compile-time literal type is `TyKind::StringLiteral` (spelled `StringLiteral` in
+source, mirroring `TyKind::IntLiteral`); string literals and literal-only
 operations stay on it, as do comptime strings, `[text: String]` value
 parameters, kwargs keys, and Writer payloads inside the stdlib. A source
 `String` annotation is not a builtin type keyword: it parses as an ordinary
@@ -4666,7 +4707,7 @@ The main pressure points are:
   `MirDeclarations`
 - the backend-ready MIR checkpoint is closed: abstract erased-dispatch
   requirements live in typed call-local contracts, callable-value requirements
-  live in their stored `Ty::Func`/`Ty::GenericFunc` contracts, variadic
+  live in their stored `TyKind::Func`/`TyKind::GenericFunc` contracts, variadic
   conventions are explicit declaration fields, and reference loans are checked
   against their executable capability permission and canonical interior owner
 - source modules and packages are flattened after lexical namespace resolution;

@@ -3,6 +3,7 @@
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
+use mojito_types::types::TyKind;
 
 impl Checker {
     #[allow(
@@ -123,7 +124,9 @@ impl Checker {
             return;
         };
         let except = match &base.kind {
-            ExprKind::Identifier(name) if matches!(self.lookup(name), Some(Ty::Ref(_))) => {
+            ExprKind::Identifier(name)
+                if matches!(self.lookup(name).map(Ty::kind), Some(TyKind::Ref(_))) =>
+            {
                 self.lookup_owner(name)
             }
             _ => None,
@@ -151,16 +154,19 @@ impl Checker {
                 .map(|(object, _)| object),
         };
         if let Some(object) = pointer_object
-            && let Ok(Ty::Pointer {
+            && let Ok(TyKind::Pointer {
                 origin: mojito_types::origin::PointerOrigin::Place { place: origin, .. },
                 ..
-            }) = self.infer(object)
+            }) = self.infer(object).as_ref().map(Ty::kind)
         {
-            self.record_origin_invalidation(site, origin, None);
+            self.record_origin_invalidation(site, origin.clone(), None);
             return;
         }
 
-        if matches!(self.place_storage_ty(place), Some(Ty::Ref(_))) {
+        if matches!(
+            self.place_storage_ty(place).as_ref().map(Ty::kind),
+            Some(TyKind::Ref(_))
+        ) {
             // An `out self` initializer stores the incoming reference handle;
             // subsequent assignments write through that established handle.
             if self.self_initializing && place_root_name(place) == Some("self") {
@@ -318,10 +324,13 @@ impl Checker {
         let Some(slots) = recorded else {
             return HashMap::new();
         };
-        let Ok(Ty::Struct(name, _)) = self.infer(expression) else {
+        let Ok(inferred) = self.infer(expression) else {
             return HashMap::new();
         };
-        let Some(info) = self.structs.get(&name) else {
+        let TyKind::Struct(name, _) = inferred.kind() else {
+            return HashMap::new();
+        };
+        let Some(info) = self.structs.get(name) else {
             return HashMap::new();
         };
         let mut result: HashMap<String, Vec<mojito_types::origin::Origin>> = HashMap::new();
@@ -537,7 +546,7 @@ impl Checker {
                 let mut result = HashMap::new();
                 if info.fieldwise_init {
                     for ((field_name, field_ty), argument) in fields.into_iter().zip(args) {
-                        let origins = if matches!(field_ty, Ty::Ref(_)) {
+                        let origins = if matches!(field_ty.kind(), TyKind::Ref(_)) {
                             // An owned place auto-borrows into a ref field;
                             // synthesize its place origin like the equivalent
                             // `ref` binding would.
@@ -572,10 +581,10 @@ impl Checker {
                 for (field_name, field_ty) in fields {
                     // A `ref[o]` field, or upstream's `Pointer[T, Self.o]`
                     // storage of a forwarded `ref[Self.o]` parameter.
-                    let origin_bearing = matches!(field_ty, Ty::Ref(_))
+                    let origin_bearing = matches!(field_ty.kind(), TyKind::Ref(_))
                         || matches!(
-                            field_ty,
-                            Ty::Pointer {
+                            field_ty.kind(),
+                            TyKind::Pointer {
                                 origin: mojito_types::origin::PointerOrigin::Param { .. },
                                 ..
                             }

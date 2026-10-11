@@ -3,6 +3,7 @@
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
+use mojito_types::types::TyKind;
 
 impl FnLowering<'_> {
     /// `UnsafePointer.unsafe_dangling` / `Pointer.unsafe_dangling`: the null
@@ -44,20 +45,23 @@ impl FnLowering<'_> {
             self.reg_values.insert(dest.0, descriptor.len);
             return Ok(());
         }
-        match self.func.reg_types.get(&arg.0).cloned() {
-            Some(Ty::StringLiteral) => {
+        match (self.func.reg_types.get(&arg.0).cloned())
+            .as_ref()
+            .map(Ty::kind)
+        {
+            Some(TyKind::StringLiteral) => {
                 let ptr = self.reg_ptr(ctx, arg)?;
                 let (_, len) = self.string_parts(ctx, ptr, dest);
                 self.reg_values.insert(dest.0, len);
                 Ok(())
             }
-            Some(Ty::Tuple(elements) | Ty::RuntimePack(elements)) => {
+            Some(TyKind::Tuple(elements) | TyKind::RuntimePack(elements)) => {
                 let length = self.int_constant(ctx, elements.len() as i64);
                 self.reg_values.insert(dest.0, length);
                 Ok(())
             }
-            Some(ty @ (Ty::Float64 | Ty::Simd { .. }))
-                if let Some((_, width)) = mojito_types::types::simd_shape(&ty) =>
+            Some(ty @ (TyKind::Float64 | TyKind::Simd { .. }))
+                if let Some((_, width)) = mojito_types::types::simd_shape(ty) =>
             {
                 let length = self.int_constant(ctx, width);
                 self.reg_values.insert(dest.0, length);
@@ -66,7 +70,10 @@ impl FnLowering<'_> {
             other => Err(self.unsupported_reg(
                 format!(
                     "`len` over `{}`",
-                    other.map_or_else(|| "an untyped value".to_string(), |ty| ty.to_string())
+                    other.map_or_else(
+                        || "an untyped value".to_string(),
+                        std::string::ToString::to_string
+                    )
                 ),
                 dest,
             )),
@@ -86,8 +93,11 @@ impl FnLowering<'_> {
             return Err(self.unsupported_reg("`abs` call contract".into(), dest));
         }
         let arg = args[0];
-        match self.func.reg_types.get(&arg.0).cloned() {
-            Some(Ty::Int | Ty::IntLiteral) => {
+        match (self.func.reg_types.get(&arg.0).cloned())
+            .as_ref()
+            .map(Ty::kind)
+        {
+            Some(TyKind::Int | TyKind::IntLiteral) => {
                 let value = self.reg_value(ctx, arg, ScalarTy::Int)?;
                 let zero = self.int_constant(ctx, 0);
                 let negated = SubOp::new_with_overflow_flag(ctx, zero, value, no_overflow_flags());
@@ -102,12 +112,12 @@ impl FnLowering<'_> {
                 );
                 self.define(ctx, dest, select.get_operation(), select.get_result(ctx))
             }
-            Some(Ty::UInt) => {
+            Some(TyKind::UInt) => {
                 let value = self.reg_value(ctx, arg, ScalarTy::UInt)?;
                 self.reg_values.insert(dest.0, value);
                 Ok(())
             }
-            Some(Ty::Float64 | Ty::FloatLiteral) => {
+            Some(TyKind::Float64 | TyKind::FloatLiteral) => {
                 let value = self.reg_value(ctx, arg, ScalarTy::Float64)?;
                 let result = self.float_unary(ctx, "llvm.fabs.f64", value, dest);
                 self.reg_values.insert(dest.0, result);
@@ -116,7 +126,10 @@ impl FnLowering<'_> {
             other => Err(self.unsupported_reg(
                 format!(
                     "`abs` over `{}`",
-                    other.map_or_else(|| "an untyped value".to_string(), |ty| ty.to_string())
+                    other.map_or_else(
+                        || "an untyped value".to_string(),
+                        std::string::ToString::to_string
+                    )
                 ),
                 dest,
             )),
@@ -140,10 +153,10 @@ impl FnLowering<'_> {
         if !kwargs.is_empty() || args.len() != 2 {
             return Err(self.unsupported_reg("`min`/`max` call contract".into(), dest));
         }
-        let rank = |ty: &Ty| match ty {
-            Ty::Int | Ty::IntLiteral => Some(0),
-            Ty::UInt => Some(1),
-            Ty::Float64 | Ty::FloatLiteral => Some(2),
+        let rank = |ty: &Ty| match ty.kind() {
+            TyKind::Int | TyKind::IntLiteral => Some(0),
+            TyKind::UInt => Some(1),
+            TyKind::Float64 | TyKind::FloatLiteral => Some(2),
             _ => None,
         };
         let ty_of = |this: &Self, reg: Reg| this.func.reg_types.get(&reg.0).cloned();
@@ -156,24 +169,25 @@ impl FnLowering<'_> {
             );
         };
         let common = lhs_rank.max(rhs_rank);
-        if common == 1 && (lhs_ty == Ty::Int || rhs_ty == Ty::Int) {
+        if common == 1 && (lhs_ty == TyKind::Int || rhs_ty == TyKind::Int) {
             return Err(
                 self.unsupported_reg("`min`/`max` over mixed Int and UInt operands".into(), dest)
             );
         }
-        let promote = |this: &mut Self, ctx: &mut Context, reg: Reg, ty: &Ty| match (common, ty) {
-            (2, Ty::Int) => {
-                let value = this.reg_value(ctx, reg, ScalarTy::Int)?;
-                Ok(this.int_to_f64(ctx, value, dest))
-            }
-            (2, Ty::UInt) => {
-                let value = this.reg_value(ctx, reg, ScalarTy::UInt)?;
-                Ok(this.uint_to_f64(ctx, value, dest))
-            }
-            (2, _) => this.reg_value(ctx, reg, ScalarTy::Float64),
-            (1, _) => this.reg_value(ctx, reg, ScalarTy::UInt),
-            _ => this.reg_value(ctx, reg, ScalarTy::Int),
-        };
+        let promote =
+            |this: &mut Self, ctx: &mut Context, reg: Reg, ty: &Ty| match (common, ty.kind()) {
+                (2, TyKind::Int) => {
+                    let value = this.reg_value(ctx, reg, ScalarTy::Int)?;
+                    Ok(this.int_to_f64(ctx, value, dest))
+                }
+                (2, TyKind::UInt) => {
+                    let value = this.reg_value(ctx, reg, ScalarTy::UInt)?;
+                    Ok(this.uint_to_f64(ctx, value, dest))
+                }
+                (2, _) => this.reg_value(ctx, reg, ScalarTy::Float64),
+                (1, _) => this.reg_value(ctx, reg, ScalarTy::UInt),
+                _ => this.reg_value(ctx, reg, ScalarTy::Int),
+            };
         let x = promote(self, ctx, args[0], &lhs_ty)?;
         let y = promote(self, ctx, args[1], &rhs_ty)?;
         let le = match common {
@@ -212,23 +226,29 @@ impl FnLowering<'_> {
             return Err(self.unsupported_reg("`round` call contract".into(), dest));
         }
         let arg = args[0];
-        let value = match self.func.reg_types.get(&arg.0).cloned() {
-            Some(Ty::Int) => {
+        let value = match (self.func.reg_types.get(&arg.0).cloned())
+            .as_ref()
+            .map(Ty::kind)
+        {
+            Some(TyKind::Int) => {
                 let value = self.reg_value(ctx, arg, ScalarTy::Int)?;
                 self.int_to_f64(ctx, value, dest)
             }
-            Some(Ty::UInt) => {
+            Some(TyKind::UInt) => {
                 let value = self.reg_value(ctx, arg, ScalarTy::UInt)?;
                 self.uint_to_f64(ctx, value, dest)
             }
-            Some(Ty::Float64 | Ty::FloatLiteral | Ty::IntLiteral) => {
+            Some(TyKind::Float64 | TyKind::FloatLiteral | TyKind::IntLiteral) => {
                 self.reg_value(ctx, arg, ScalarTy::Float64)?
             }
             other => {
                 return Err(self.unsupported_reg(
                     format!(
                         "`round` over `{}`",
-                        other.map_or_else(|| "an untyped value".to_string(), |ty| ty.to_string())
+                        other.map_or_else(
+                            || "an untyped value".to_string(),
+                            std::string::ToString::to_string
+                        )
                     ),
                     dest,
                 ));
@@ -258,14 +278,18 @@ impl FnLowering<'_> {
         };
         // The result pack: either the nominal Tuple's single `storage` field
         // or (defensively) a bare private pack.
-        let elements = match &dest_ty {
-            Ty::Tuple(elements) | Ty::RuntimePack(elements) => elements.clone(),
-            Ty::Struct(name, _) => match self.struct_decls.get(name.as_str()) {
+        let elements = match dest_ty.kind() {
+            TyKind::Tuple(elements) | TyKind::RuntimePack(elements) => elements.clone(),
+            TyKind::Struct(name, _) => match self.struct_decls.get(name.as_str()) {
                 Some(decl)
                     if decl.fields.len() == 1
-                        && matches!(&decl.fields[0].1, Ty::Tuple(_) | Ty::RuntimePack(_)) =>
+                        && matches!(
+                            (decl.fields[0].1).kind(),
+                            TyKind::Tuple(_) | TyKind::RuntimePack(_)
+                        ) =>
                 {
-                    let (Ty::Tuple(elements) | Ty::RuntimePack(elements)) = &decl.fields[0].1
+                    let (TyKind::Tuple(elements) | TyKind::RuntimePack(elements)) =
+                        (decl.fields[0].1).kind()
                     else {
                         unreachable!("guard matched a pack field");
                     };
@@ -287,8 +311,8 @@ impl FnLowering<'_> {
             return Err(self.unsupported_reg(format!("`divmod` result shape `{dest_ty}`"), dest));
         };
         let element = element.clone();
-        let (quotient, remainder) = match &element {
-            Ty::Int | Ty::IntLiteral => {
+        let (quotient, remainder) = match element.kind() {
+            TyKind::Int | TyKind::IntLiteral => {
                 let lhs = self.reg_value(ctx, args[0], ScalarTy::Int)?;
                 let rhs = self.reg_value(ctx, args[1], ScalarTy::Int)?;
                 self.emit_div_zero_guard(ctx, rhs, dest)?;
@@ -297,7 +321,7 @@ impl FnLowering<'_> {
                 let remainder = self.floor_mod_value(ctx, dest, lhs, rhs)?;
                 (quotient, remainder)
             }
-            Ty::UInt => {
+            TyKind::UInt => {
                 let lhs = self.reg_value(ctx, args[0], ScalarTy::UInt)?;
                 let rhs = self.reg_value(ctx, args[1], ScalarTy::UInt)?;
                 self.emit_div_zero_guard(ctx, rhs, dest)?;
@@ -307,7 +331,7 @@ impl FnLowering<'_> {
                 self.append(ctx, rem.get_operation(), Some(dest));
                 (div.get_result(ctx), rem.get_result(ctx))
             }
-            Ty::Float64 | Ty::FloatLiteral => {
+            TyKind::Float64 | TyKind::FloatLiteral => {
                 let lhs = self.reg_value(ctx, args[0], ScalarTy::Float64)?;
                 let rhs = self.reg_value(ctx, args[1], ScalarTy::Float64)?;
                 let flags = FastmathFlagsAttr::default;
@@ -366,8 +390,8 @@ impl FnLowering<'_> {
         // shape serves either destination type.
         let dest_ty = self.func.reg_types.get(&dest.0).cloned();
         let Some(dest_ty) = dest_ty.filter(|ty| {
-            matches!(ty, Ty::StringLiteral)
-                || matches!(ty, Ty::Struct(name, _)
+            matches!(ty.kind(), TyKind::StringLiteral)
+                || matches!(ty.kind(), TyKind::Struct(name, _)
                     if mojito_symbol::symbol::is_stdlib_string_struct(name))
         }) else {
             return Err(self.unsupported_reg("`input` without a String result".into(), dest));
@@ -390,7 +414,7 @@ impl FnLowering<'_> {
         // owned runtime descriptor (the release rule frees StringLiteral
         // temporaries through `str_runtime`, exactly like `String(x)`
         // stringify); a nominal String result releases through its storage.
-        if matches!(dest_ty, Ty::StringLiteral) {
+        if matches!(dest_ty.kind(), TyKind::StringLiteral) {
             let (data, len) = self.string_parts(ctx, storage, dest);
             self.str_runtime.insert(
                 dest.0,
@@ -447,9 +471,9 @@ impl FnLowering<'_> {
         recv_ty: &Ty,
         method: &str,
     ) -> Result<(), PlironError> {
-        match recv_ty {
-            Ty::Int | Ty::UInt => {
-                let scalar = if matches!(recv_ty, Ty::UInt) {
+        match recv_ty.kind() {
+            TyKind::Int | TyKind::UInt => {
+                let scalar = if matches!(recv_ty.kind(), TyKind::UInt) {
                     ScalarTy::UInt
                 } else {
                     ScalarTy::Int
@@ -526,7 +550,9 @@ impl FnLowering<'_> {
                 "llvm.fma.f32",
                 FP32Type::get(ctx).into(),
             ),
-            ty if matches!(ty, Ty::Float64) || scalar_simd_dtype(ty) == Some(Dtype::Float64) => {
+            ty if matches!(ty.kind(), TyKind::Float64)
+                || scalar_simd_dtype(ty) == Some(Dtype::Float64) =>
+            {
                 (ScalarTy::Float64, "llvm.fma.f64", FP64Type::get(ctx).into())
             }
             other => {
@@ -557,8 +583,8 @@ impl FnLowering<'_> {
         denominator: Reg,
         recv_ty: &Ty,
     ) -> Result<(), PlironError> {
-        match recv_ty {
-            Ty::Int => {
+        match recv_ty.kind() {
+            TyKind::Int => {
                 let numerator = self.reg_value(ctx, recv, ScalarTy::Int)?;
                 let divisor = self.reg_value(ctx, denominator, ScalarTy::Int)?;
                 self.emit_div_zero_guard(ctx, divisor, dest)?;
@@ -572,7 +598,7 @@ impl FnLowering<'_> {
                 let result = SubOp::new_with_overflow_flag(ctx, zero, floored, no_overflow_flags());
                 self.define(ctx, dest, result.get_operation(), result.get_result(ctx))
             }
-            Ty::UInt => {
+            TyKind::UInt => {
                 let numerator = self.reg_value(ctx, recv, ScalarTy::UInt)?;
                 let divisor = self.reg_value(ctx, denominator, ScalarTy::UInt)?;
                 self.emit_div_zero_guard(ctx, divisor, dest)?;

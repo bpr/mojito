@@ -6,6 +6,7 @@
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 use mojito_types::types::FuncTy;
+use mojito_types::types::TyKind;
 
 impl Checker {
     /// Check a comprehension in its own lexical scope and cache its result type
@@ -246,7 +247,10 @@ impl Checker {
                 .cloned()
             else {
                 let names_function = self.lookup(name).is_some_and(|ty| {
-                    matches!(ty, Ty::Func(_) | Ty::GenericFunc(_) | Ty::Overload(_))
+                    matches!(
+                        ty.kind(),
+                        TyKind::Func(_) | TyKind::GenericFunc(_) | TyKind::Overload(_)
+                    )
                 });
                 return Err(if names_function {
                     TypeError::ImmutableBinding(name.clone())
@@ -405,12 +409,13 @@ impl Checker {
             .and_then(|ty| self.apply_rebind_target(expr, ty))
             .map(|ty| self.read_through_call_reference(expr, ty));
         if let Ok(ty) = &result {
-            if (matches!(ty, Ty::Int | Ty::UInt | Ty::Float64) || is_scalar_simd(ty))
+            if (matches!(ty.kind(), TyKind::Int | TyKind::UInt | TyKind::Float64)
+                || is_scalar_simd(ty))
                 && let Some(value) = self.exact_literal_value(expr)
             {
                 let literal_ty = match value {
-                    CtValue::IntLiteral(_) => Ty::IntLiteral,
-                    CtValue::FloatLiteral(_) => Ty::FloatLiteral,
+                    CtValue::IntLiteral(_) => Ty::int_literal(),
+                    CtValue::FloatLiteral(_) => Ty::float_literal(),
                     _ => unreachable!("exact_literal_value only returns literal values"),
                 };
                 self.record_literal_materializations(expr, &literal_ty, ty)?;
@@ -513,35 +518,42 @@ impl Checker {
             ExprKind::Transfer(inner) | ExprKind::Named { value: inner, .. } => {
                 self.infer_reference_value(inner)
             }
-            ExprKind::Identifier(name) => match self.lookup(name) {
-                Some(Ty::Ref(reference)) => Some(reference.clone()),
+            ExprKind::Identifier(name) => match self.lookup(name).map(Ty::kind) {
+                Some(TyKind::Ref(reference)) => Some(reference.clone()),
                 _ => self.lookup_reference_parameter(name),
             },
             ExprKind::Member { object, field } => {
                 let object_ty = self.infer(object).ok()?;
-                let Ty::Struct(name, _) = object_ty else {
+                let TyKind::Struct(name, _) = object_ty.kind() else {
                     return None;
                 };
                 self.structs
-                    .get(&name)?
+                    .get(name)?
                     .fields
                     .iter()
                     .find_map(|(candidate, ty)| {
-                        (candidate == field).then_some(ty).and_then(|ty| match ty {
-                            Ty::Ref(reference) => Some(reference.clone()),
-                            _ => None,
-                        })
+                        (candidate == field)
+                            .then_some(ty)
+                            .and_then(|ty| match ty.kind() {
+                                TyKind::Ref(reference) => Some(reference.clone()),
+                                _ => None,
+                            })
                     })
             }
             ExprKind::Index { object, index } => match self.index_storage_ty(object, index)? {
-                Ty::Ref(reference) => Some(reference),
+                referent if matches!(referent.kind(), TyKind::Ref(_)) => {
+                    let TyKind::Ref(reference) = referent.into_kind() else {
+                        unreachable!("guard established a reference");
+                    };
+                    Some(reference)
+                }
                 referent => self
                     .interior_references
                     .borrow()
                     .get(&expr.source_span())
                     .cloned()
                     .map(|origin| mojito_types::origin::RefTy {
-                        referent: Box::new(referent),
+                        referent,
                         mutability: if self.owner_is_mutable(origin.root) {
                             mojito_types::origin::Mutability::Mutable
                         } else {
@@ -559,7 +571,7 @@ impl Checker {
                     self.infer(expr)
                         .ok()
                         .map(|referent| mojito_types::origin::RefTy {
-                            referent: Box::new(referent),
+                            referent,
                             mutability: if self.owner_is_mutable(origin.root) {
                                 mojito_types::origin::Mutability::Mutable
                             } else {
@@ -578,8 +590,8 @@ impl Checker {
     /// handle.  Keeping this contextual and recursive avoids changing ordinary
     /// expression semantics for tuples/lists which merely contain references.
     pub(super) fn infer_storage_value(&self, expr: &Expr, expected: &Ty) -> Result<Ty, TypeError> {
-        match expected {
-            Ty::Ref(_) => {
+        match expected.kind() {
+            TyKind::Ref(_) => {
                 // Record ordinary read-through facts (expression/place types)
                 // for the argument span before resolving the handle: MIR place
                 // builders need them to type a ref-field projection such as
@@ -590,8 +602,8 @@ impl Checker {
                 // temporary) materializes as an anonymous owned binding whose
                 // lifetime extends to the borrower's, upstream's rule.
                 self.infer_reference_value(expr)
-                    .map(Ty::Ref)
-                    .or_else(|| self.materialized_reference_actual(expr).ok().map(Ty::Ref))
+                    .or_else(|| self.materialized_reference_actual(expr).ok())
+                    .map(|reference| TyKind::Ref(reference).into())
                     .ok_or_else(|| TypeError::TypeMismatch {
                         expected: expected.to_string(),
                         found: self
@@ -600,7 +612,7 @@ impl Checker {
                         context: "reference-valued aggregate element".to_string(),
                     })
             }
-            expected if tuple_elements(expected).is_some() => {
+            _ if tuple_elements(expected).is_some() => {
                 let expected_elements = tuple_elements(expected).expect("tuple elements");
                 let values = match &expr.kind {
                     ExprKind::TupleLit(values) => Some(values.as_slice()),
@@ -629,7 +641,7 @@ impl Checker {
                 }
                 self.infer(expr)
             }
-            expected if list_element(expected).is_some() => {
+            _ if list_element(expected).is_some() => {
                 let expected_element = list_element(expected).expect("list element");
                 let values = match &expr.kind {
                     ExprKind::ListLit(values) => Some(values.as_slice()),
@@ -675,8 +687,8 @@ impl Checker {
     /// compatibility.  A tracked origin parameter accepts a tracked place; an
     /// explicitly untracked field must only receive the same untracked kind.
     pub(super) fn storage_value_coerces(from: &Ty, to: &Ty) -> bool {
-        match (from, to) {
-            (Ty::Ref(actual), Ty::Ref(expected)) => {
+        match (from.kind(), to.kind()) {
+            (TyKind::Ref(actual), TyKind::Ref(expected)) => {
                 coerces(&actual.referent, &expected.referent)
                     && (expected.mutability != mojito_types::origin::Mutability::Mutable
                         || actual.mutability == mojito_types::origin::Mutability::Mutable)
@@ -694,11 +706,11 @@ impl Checker {
                     }
             }
             (
-                Ty::Pointer {
+                TyKind::Pointer {
                     element: actual_element,
                     origin: actual_origin,
                 },
-                Ty::Pointer {
+                TyKind::Pointer {
                     element: expected_element,
                     origin: expected_origin,
                 },
@@ -742,7 +754,7 @@ impl Checker {
             // value's capture origins would silently leave loan tracking.
             // Call-position downward funargs deliberately keep the erasing
             // coercion; only storage rejects it.
-            (Ty::Func(from), Ty::Func(to))
+            (TyKind::Func(from), TyKind::Func(to))
                 if matches!(
                     from.environment,
                     mojito_types::origin::CallableEnvironment::Capturing(_)
@@ -758,8 +770,8 @@ impl Checker {
     /// an ordinary read-through value.  MIR consumes these checked adjustments;
     /// it never has to rediscover aggregate reference semantics from source AST.
     pub(super) fn mark_reference_storage_uses(&self, expr: &Expr, expected: &Ty) {
-        match expected {
-            Ty::Ref(reference) => {
+        match expected.kind() {
+            TyKind::Ref(reference) => {
                 // The outer `Transfer` retains its Move adjustment.  Mark the
                 // transferred place itself so MIR loads the stored reference
                 // handle instead of reading through it to the referent.
@@ -772,7 +784,7 @@ impl Checker {
                     reference.mutability == mojito_types::origin::Mutability::Mutable,
                 );
             }
-            expected if tuple_elements(expected).is_some() => {
+            _ if tuple_elements(expected).is_some() => {
                 let expected_elements = tuple_elements(expected).expect("tuple elements");
                 let values = match &expr.kind {
                     ExprKind::TupleLit(values) => Some(values.as_slice()),
@@ -785,7 +797,7 @@ impl Checker {
                     }
                 }
             }
-            expected if list_element(expected).is_some() => {
+            _ if list_element(expected).is_some() => {
                 let expected_element = list_element(expected).expect("list element");
                 let values = match &expr.kind {
                     ExprKind::ListLit(values) => Some(values.as_slice()),
@@ -811,11 +823,11 @@ impl Checker {
             return self.infer_value_pack_read(expr);
         }
         match &expr.kind {
-            ExprKind::Int(_) => Ok(Ty::IntLiteral),
-            ExprKind::Float(_) => Ok(Ty::FloatLiteral),
-            ExprKind::Bool(_) => Ok(Ty::Bool),
-            ExprKind::Str(_) => Ok(Ty::StringLiteral),
-            ExprKind::None => Ok(Ty::None),
+            ExprKind::Int(_) => Ok(Ty::int_literal()),
+            ExprKind::Float(_) => Ok(Ty::float_literal()),
+            ExprKind::Bool(_) => Ok(Ty::bool()),
+            ExprKind::Str(_) => Ok(Ty::string_literal()),
+            ExprKind::None => Ok(Ty::none()),
             ExprKind::Uninitialized => Err(TypeError::InvariantViolation(
                 "uninitialized marker reached expression inference".to_string(),
             )),
@@ -867,7 +879,7 @@ impl Checker {
                     if let Some(query) = self.typelist_proposition_query(proposition) {
                         self.record_pack_query_value(expr.source_span(), &pack, query);
                     }
-                    return Ok(Ty::Bool);
+                    return Ok(Ty::bool());
                 }
                 if let ExprKind::Member { object, field } = &callee.kind
                     && matches!(&object.kind, ExprKind::Identifier(name) if name == "Self")
@@ -890,7 +902,7 @@ impl Checker {
                             materialized: None,
                         },
                     );
-                    return Ok(Ty::Int);
+                    return Ok(Ty::int());
                 }
                 // Parameterized method syntax is parsed as `Invoke(Member)` so
                 // that ordinary indexing remains unambiguous. Keep it a direct
@@ -924,7 +936,7 @@ impl Checker {
                 // are a subscript of the member value, not parameter
                 // application on a callable — the member-base mirror of the
                 // identifier-base re-dispatch in `infer_call`.
-                if let Ty::Struct(struct_name, _) = &callable
+                if let TyKind::Struct(struct_name, _) = callable.kind()
                     && !param_args.is_empty()
                     && param_args
                         .iter()
@@ -973,7 +985,7 @@ impl Checker {
                         &TySubst::new(),
                     )?;
                 }
-                if let Ty::Struct(struct_name, _) = &callable {
+                if let TyKind::Struct(struct_name, _) = callable.kind() {
                     let method_key = format!("{struct_name}.__call__");
                     let effect_key = target.as_deref().unwrap_or(&method_key);
                     self.apply_transfer_effects(
@@ -996,7 +1008,7 @@ impl Checker {
                         .borrow_mut()
                         .insert(expr.source_span(), target);
                 }
-                if let Some(error) = error.filter(|ty| *ty != Ty::Never) {
+                if let Some(error) = error.filter(|ty| *ty != TyKind::Never) {
                     self.record_call_effect(expr.source_span(), error.clone());
                     self.require_error("call through a raising callable", error)?;
                 }
@@ -1107,9 +1119,9 @@ impl Checker {
                     );
                 }
                 self.lookup(name)
-                    .map(|ty| match ty {
-                        Ty::Ref(reference) => (*reference.referent).clone(),
-                        other => other.clone(),
+                    .map(|ty| match ty.kind() {
+                        TyKind::Ref(reference) => reference.referent.clone(),
+                        _ => ty.clone(),
                     })
                     .map(|ty| self.bake_value_transfer_effects(name, ty))
                     .ok_or_else(|| TypeError::UndefinedVariable(name.clone()))
@@ -1189,8 +1201,10 @@ impl Checker {
                     );
                 }
                 if let Some(arg) = self.variant_projection_type_argument(index)
-                    && let Some(Ty::Variant(alternatives)) =
-                        self.variant_projection_receiver(object)?
+                    && let Some(TyKind::Variant(alternatives)) = self
+                        .variant_projection_receiver(object)?
+                        .as_ref()
+                        .map(Ty::kind)
                 {
                     if let ExprKind::Identifier(vname) = &object.kind {
                         self.check_capture_access(vname, false)?;
@@ -1201,11 +1215,11 @@ impl Checker {
                         }
                     }
                     let (index, result) =
-                        self.variant_alternative(&alternatives, std::slice::from_ref(&arg))?;
+                        self.variant_alternative(alternatives, std::slice::from_ref(&arg))?;
                     self.operation_adjustments.borrow_mut().insert(
                         expr.source_span(),
                         mojito_checked::checked::SemanticAdjustment::VariantProject {
-                            alternatives,
+                            alternatives: alternatives.clone(),
                             index,
                         },
                     );
@@ -1233,7 +1247,10 @@ impl Checker {
                 let ty = self.infer(inner)?;
                 let private_tuple_element = match &inner.kind {
                     ExprKind::Index { object, .. } => {
-                        matches!(self.infer(object), Ok(Ty::Tuple(_)))
+                        matches!(
+                            self.infer(object).as_ref().map(Ty::kind),
+                            Ok(TyKind::Tuple(_))
+                        )
                     }
                     _ => false,
                 };
@@ -1288,7 +1305,9 @@ impl Checker {
                 for (value, ty) in elems.iter().zip(&tys) {
                     // A generic `def` is no runtime value until specialized,
                     // as the pin reports for a display element.
-                    if let (ExprKind::Identifier(name), Ty::GenericFunc(_)) = (&value.kind, ty) {
+                    if let (ExprKind::Identifier(name), TyKind::GenericFunc(_)) =
+                        (&value.kind, ty.kind())
+                    {
                         return Err(TypeError::Unsupported(format!(
                             "cannot use parametric function '{name}' as a runtime closure; \
                              specialize it explicitly"
@@ -1356,9 +1375,11 @@ impl Checker {
                     true,
                 )? {
                     Ok(specialized)
-                } else if let Some(Ty::Variant(alternatives)) = self.lookup(name).cloned() {
+                } else if let Some(TyKind::Variant(alternatives)) =
+                    (self.lookup(name).cloned()).as_ref().map(Ty::kind)
+                {
                     self.check_capture_access(name, false)?;
-                    let (index, result) = self.variant_alternative(&alternatives, args)?;
+                    let (index, result) = self.variant_alternative(alternatives, args)?;
                     if let Some(owner) = self.lookup_owner(name) {
                         self.expression_bindings
                             .borrow_mut()
@@ -1367,7 +1388,7 @@ impl Checker {
                     self.operation_adjustments.borrow_mut().insert(
                         expr.source_span(),
                         mojito_checked::checked::SemanticAdjustment::VariantProject {
-                            alternatives,
+                            alternatives: alternatives.clone(),
                             index,
                         },
                     );
@@ -1425,7 +1446,7 @@ impl Checker {
     /// Whether a variable's struct declares a type-keyed
     /// `__getitem_param__[T]` accessor (the self-hosted `Variant`'s `v[T]`).
     pub(super) fn type_keyed_accessor_receiver(&self, name: &str) -> bool {
-        let Some(Ty::Struct(sname, _)) = self.lookup(name) else {
+        let Some(TyKind::Struct(sname, _)) = self.lookup(name).map(Ty::kind) else {
             return false;
         };
         self.structs.get(sname).is_some_and(|info| {
@@ -1447,7 +1468,7 @@ impl Checker {
             ExprKind::Member { .. } => Some(self.infer(object)?),
             _ => None,
         };
-        Ok(ty.filter(|ty| matches!(ty, Ty::Variant(_))))
+        Ok(ty.filter(|ty| matches!(ty.kind(), TyKind::Variant(_))))
     }
 
     /// Recognize the parameterized operations of the compiler-private
@@ -1458,7 +1479,7 @@ impl Checker {
     /// `infer_method_call` from both the parameterized `Invoke(Member)`
     /// spelling (`self._storage.unwrap[T]()`) and the ordinary method-call
     /// spelling for parameterless operations
-    /// (`self._storage.deinit_with(handler)`). Only a `Ty::Variant`-typed
+    /// (`self._storage.deinit_with(handler)`). Only a `TyKind::Variant`-typed
     /// receiver — the storage field of the bundled `Variant` struct — reaches
     /// it; every other receiver is `None`.
     pub(super) fn infer_variant_storage_method(
@@ -1479,7 +1500,7 @@ impl Checker {
             Ok(ty) => ty,
             Err(error) => return Some(Err(error)),
         };
-        let Ty::Variant(alternatives) = object_ty else {
+        let TyKind::Variant(alternatives) = object_ty.kind() else {
             return None;
         };
         if !matches!(
@@ -1519,12 +1540,12 @@ impl Checker {
                             .to_string(),
                     });
                 }
-                self.require_variant_set_deinitable(&alternatives)?;
+                self.require_variant_set_deinitable(alternatives)?;
                 self.check_place(object)?;
                 let factory = self.infer(&kwarg.value)?;
                 let factory_ret = placement_factory_result(&factory);
                 let index = factory_ret.and_then(|ret| {
-                    self.variant_index(&alternatives, ret, |alternative| coerces(ret, alternative))
+                    self.variant_index(alternatives, ret, |alternative| coerces(ret, alternative))
                 });
                 let Some(index) = index else {
                     return Err(TypeError::TypeMismatch {
@@ -1536,12 +1557,12 @@ impl Checker {
                 self.operation_adjustments.borrow_mut().insert(
                     span.clone(),
                     mojito_checked::checked::SemanticAdjustment::VariantSetInitWith {
-                        alternatives,
+                        alternatives: alternatives.clone(),
                         index,
                     },
                 );
                 self.record_interior_invalidation(span, object);
-                return Ok(Ty::None);
+                return Ok(Ty::none());
             }
             if !kwargs.is_empty() {
                 return Err(TypeError::BadCall {
@@ -1551,7 +1572,7 @@ impl Checker {
             }
             match field {
                 "isa" => {
-                    let (index, _) = self.variant_alternative(&alternatives, param_args)?;
+                    let (index, _) = self.variant_alternative(alternatives, param_args)?;
                     if !args.is_empty() {
                         return Err(TypeError::ArityMismatch {
                             name: "Variant.isa".to_string(),
@@ -1562,18 +1583,18 @@ impl Checker {
                     self.operation_adjustments.borrow_mut().insert(
                         span,
                         mojito_checked::checked::SemanticAdjustment::VariantIs {
-                            alternatives,
+                            alternatives: alternatives.clone(),
                             index,
                         },
                     );
-                    Ok(Ty::Bool)
+                    Ok(Ty::bool())
                 }
                 // `unsafe_get[T]()` — the unchecked projection read. The VM
                 // still validates the tag deterministically; the result is a
                 // value read of the payload (a Copyable alternative copies).
                 "unsafe_get" => {
                     let (index, alternative) =
-                        self.variant_alternative(&alternatives, param_args)?;
+                        self.variant_alternative(alternatives, param_args)?;
                     if !args.is_empty() {
                         return Err(TypeError::ArityMismatch {
                             name: "Variant.unsafe_get".to_string(),
@@ -1584,7 +1605,7 @@ impl Checker {
                     self.operation_adjustments.borrow_mut().insert(
                         span.clone(),
                         mojito_checked::checked::SemanticAdjustment::VariantProject {
-                            alternatives,
+                            alternatives: alternatives.clone(),
                             index,
                         },
                     );
@@ -1595,7 +1616,7 @@ impl Checker {
                 }
                 "set" => {
                     let (index, alternative) =
-                        self.variant_alternative(&alternatives, param_args)?;
+                        self.variant_alternative(alternatives, param_args)?;
                     if args.len() != 1 {
                         return Err(TypeError::ArityMismatch {
                             name: "Variant.set".to_string(),
@@ -1603,7 +1624,7 @@ impl Checker {
                             got: args.len(),
                         });
                     }
-                    self.require_variant_set_deinitable(&alternatives)?;
+                    self.require_variant_set_deinitable(alternatives)?;
                     self.check_place(object)?;
                     let actual = self.infer(&args[0])?;
                     if !self.record_implicit_conversion(&args[0], &actual, &alternative)? {
@@ -1617,16 +1638,16 @@ impl Checker {
                     self.operation_adjustments.borrow_mut().insert(
                         span.clone(),
                         mojito_checked::checked::SemanticAdjustment::VariantSet {
-                            alternatives,
+                            alternatives: alternatives.clone(),
                             index,
                         },
                     );
                     self.record_interior_invalidation(span, object);
-                    Ok(Ty::None)
+                    Ok(Ty::none())
                 }
                 "unwrap" | "unsafe_unwrap" => {
                     let (index, alternative) =
-                        self.variant_alternative(&alternatives, param_args)?;
+                        self.variant_alternative(alternatives, param_args)?;
                     if !args.is_empty() {
                         return Err(TypeError::ArityMismatch {
                             name: format!("Variant.{field}"),
@@ -1643,7 +1664,7 @@ impl Checker {
                     self.operation_adjustments.borrow_mut().insert(
                         span.clone(),
                         mojito_checked::checked::SemanticAdjustment::VariantTake {
-                            alternatives,
+                            alternatives: alternatives.clone(),
                             index,
                             checked: field == "unwrap",
                         },
@@ -1672,16 +1693,16 @@ impl Checker {
                             reason: "consuming receiver must be an owned place".to_string(),
                         });
                     }
-                    let index = self.check_variant_deinit_handler(&alternatives, &args[0])?;
+                    let index = self.check_variant_deinit_handler(alternatives, &args[0])?;
                     self.operation_adjustments.borrow_mut().insert(
                         span.clone(),
                         mojito_checked::checked::SemanticAdjustment::VariantDeinitWith {
-                            alternatives,
+                            alternatives: alternatives.clone(),
                             index,
                         },
                     );
                     self.record_interior_invalidation(span, object);
-                    Ok(Ty::None)
+                    Ok(Ty::none())
                 }
                 "replace" | "unsafe_replace" => {
                     if param_args.len() != 2 {
@@ -1701,16 +1722,16 @@ impl Checker {
                     let input = self.type_param_argument(&param_args[0], "Variant.replace")?;
                     let output = self.type_param_argument(&param_args[1], "Variant.replace")?;
                     let input_index = self
-                        .variant_index(&alternatives, &input, |alternative| alternative == &input)
+                        .variant_index(alternatives, &input, |alternative| alternative == &input)
                         .ok_or_else(|| TypeError::TypeMismatch {
-                            expected: format!("one of {}", Ty::Variant(alternatives.clone())),
+                            expected: format!("one of {}", TyKind::Variant(alternatives.clone())),
                             found: input.to_string(),
                             context: "Variant replacement input type".to_string(),
                         })?;
                     let output_index = self
-                        .variant_index(&alternatives, &output, |alternative| alternative == &output)
+                        .variant_index(alternatives, &output, |alternative| alternative == &output)
                         .ok_or_else(|| TypeError::TypeMismatch {
-                            expected: format!("one of {}", Ty::Variant(alternatives.clone())),
+                            expected: format!("one of {}", TyKind::Variant(alternatives.clone())),
                             found: output.to_string(),
                             context: "Variant replacement output type".to_string(),
                         })?;
@@ -1742,7 +1763,7 @@ impl Checker {
                     self.operation_adjustments.borrow_mut().insert(
                         span.clone(),
                         mojito_checked::checked::SemanticAdjustment::VariantReplace {
-                            alternatives,
+                            alternatives: alternatives.clone(),
                             input_index,
                             output_index,
                             checked: field == "replace",
@@ -1799,15 +1820,15 @@ impl Checker {
         };
         // A handler typed by a callable-bounded parameter has its bound's
         // contract.
-        let contract = match &handler_ty {
-            Ty::Param {
+        let contract = match handler_ty.kind() {
+            TyKind::Param {
                 callable_bound: Some(bound),
                 ..
-            } => bound.as_ref(),
-            other => other,
+            } => bound,
+            _ => &handler_ty,
         };
-        match contract {
-            Ty::Func(func)
+        match contract.kind() {
+            TyKind::Func(func)
                 if let FuncTy {
                     params,
                     conventions,
@@ -1816,7 +1837,7 @@ impl Checker {
                     ..
                 } = &**func
                     && params.len() == 1
-                    && **ret == Ty::None =>
+                    && **ret == TyKind::None =>
             {
                 if !matches!(
                     conventions.first(),
@@ -1854,7 +1875,7 @@ impl Checker {
         })
         .map(|index| (index, requested.clone()))
         .ok_or_else(|| TypeError::TypeMismatch {
-            expected: format!("one of {}", Ty::Variant(alternatives.to_vec())),
+            expected: format!("one of {}", TyKind::Variant(alternatives.to_vec())),
             found: requested.to_string(),
             context: "Variant operation type".to_string(),
         })
@@ -1870,8 +1891,8 @@ impl Checker {
         selected: &Ty,
         selects: impl Fn(&Ty) -> bool,
     ) -> Option<VariantIndex> {
-        match mojito_types::types::pack_spread(alternatives) {
-            Some(Ty::Param { binder, .. }) => {
+        match (mojito_types::types::pack_spread(alternatives)).map(Ty::kind) {
+            Some(TyKind::Param { binder, .. }) => {
                 Some(VariantIndex::Expr(self.param_context.pack_query(
                     binder,
                     mojito_types::param_expr::PackQuery::IndexOf(
@@ -1919,9 +1940,9 @@ impl Checker {
         // every recorded fact lands on the original nodes; HIR substitutes
         // the base name physically during syntax renaming.
         if let Some(root_span) = contextual_root_span(expression) {
-            let base = match expected {
-                Ty::Struct(name, _) => name.clone(),
-                Ty::Param { .. } => {
+            let base = match expected.kind() {
+                TyKind::Struct(name, _) => name.clone(),
+                TyKind::Param { .. } => {
                     return Err(TypeError::ContextualMember {
                         member: contextual_member_name(expression),
                         reason: format!(
@@ -1946,7 +1967,7 @@ impl Checker {
             return Ok(ty);
         }
         if let ExprKind::TypeApply { name, args } = &expression.kind
-            && matches!(expected, Ty::Func(_))
+            && matches!(expected.kind(), TyKind::Func(_))
             && let Some(specialized) = self.infer_specialized_callable_value(
                 expression.source_span(),
                 name,
@@ -1961,7 +1982,7 @@ impl Checker {
         // expression position.  A reference-typed parameter is a storage
         // context, just like a reference field: infer and forward the handle
         // itself, as a fieldwise initializer's `ref` field parameter needs.
-        if matches!(expected, Ty::Ref(_)) {
+        if matches!(expected.kind(), TyKind::Ref(_)) {
             let actual = self.infer_storage_value(expression, expected)?;
             if !Self::storage_value_coerces(&actual, expected) {
                 return Err(TypeError::TypeMismatch {
@@ -1980,7 +2001,7 @@ impl Checker {
         // its environment into plain `def(...)` element storage.
         if let ExprKind::ListLit(values) = &expression.kind
             && let Some(element) = list_element(expected)
-            && matches!(element, Ty::Func(_) | Ty::GenericFunc(_))
+            && matches!(element.kind(), TyKind::Func(_) | TyKind::GenericFunc(_))
         {
             for (index, value) in values.iter().enumerate() {
                 let actual = self.infer_with_expected(value, element, record)?;
@@ -2005,7 +2026,7 @@ impl Checker {
         // solve is intentionally shallow: nested holes remain non-concrete.
         let solved_expected = match (&expression.kind, expected) {
             (ExprKind::ListLit(values), expected)
-                if list_element(expected).is_some_and(|element| *element == Ty::Infer) =>
+                if list_element(expected).is_some_and(|element| *element == TyKind::Infer) =>
             {
                 if values.is_empty() {
                     return Err(TypeError::CannotInferTypeParam {
@@ -2016,7 +2037,7 @@ impl Checker {
                 Some(list_type(self.infer_list_elem(values)?))
             }
             (ExprKind::BraceLit(entries), expected)
-                if set_element(expected).is_some_and(|element| *element == Ty::Infer)
+                if set_element(expected).is_some_and(|element| *element == TyKind::Infer)
                     && entries.iter().all(|(_, value)| value.is_none()) =>
             {
                 if entries.is_empty() {
@@ -2037,7 +2058,7 @@ impl Checker {
             {
                 let (expected_key, expected_value) =
                     dict_elements(expected).expect("dictionary arguments");
-                if (expected_key == &Ty::Infer || expected_value == &Ty::Infer)
+                if (expected_key == &TyKind::Infer || expected_value == &TyKind::Infer)
                     && entries.is_empty()
                 {
                     return Err(TypeError::CannotInferTypeParam {
@@ -2053,12 +2074,12 @@ impl Checker {
                     .iter()
                     .filter_map(|(_, value)| value.clone())
                     .collect::<Vec<_>>();
-                let key = if expected_key == &Ty::Infer {
+                let key = if expected_key == &TyKind::Infer {
                     self.infer_list_elem(&actual_keys)?
                 } else {
                     expected_key.clone()
                 };
-                let value = if expected_value == &Ty::Infer {
+                let value = if expected_value == &TyKind::Infer {
                     self.infer_list_elem(&actual_values)?
                 } else {
                     expected_value.clone()
@@ -2273,9 +2294,10 @@ impl Checker {
     /// The stored type of one collection element or key: a literal default,
     /// with a string literal wrapped into the nominal `String`.
     pub(super) fn materialized_element_ty(&self, element: &Expr) -> Result<Ty, TypeError> {
-        match self.infer(element)? {
-            Ty::StringLiteral => self.nominal_string_wrap(element.source_span()),
-            ty => Ok(default_literal(&ty)),
+        let ty = self.infer(element)?;
+        match ty.kind() {
+            TyKind::StringLiteral => self.nominal_string_wrap(element.source_span()),
+            _ => Ok(default_literal(&ty)),
         }
     }
 
@@ -2283,9 +2305,10 @@ impl Checker {
     /// a string literal materialized to the nominal `String`, as upstream's
     /// `Tuple.__init__(var *args: *Ts)` infers `Ts`.
     pub(super) fn tuple_element_ty(&self, element: &Expr) -> Result<Ty, TypeError> {
-        match self.infer(element)? {
-            Ty::StringLiteral => self.nominal_string_wrap(element.source_span()),
-            ty => Ok(ty),
+        let ty = self.infer(element)?;
+        match ty.kind() {
+            TyKind::StringLiteral => self.nominal_string_wrap(element.source_span()),
+            _ => Ok(ty),
         }
     }
 
@@ -2365,7 +2388,7 @@ impl Checker {
         // infers `[name(n), "z"]`.
         if is_nominal_string(&element) {
             for value in elems {
-                if self.infer(value)? == Ty::StringLiteral {
+                if self.infer(value)? == TyKind::StringLiteral {
                     self.nominal_string_wrap(value.source_span())?;
                 }
             }
@@ -2373,7 +2396,7 @@ impl Checker {
         }
         // A string element materializes the nominal `String`, as upstream's
         // non-materializable `StringLiteral` does in every runtime display.
-        if element == Ty::StringLiteral {
+        if element == TyKind::StringLiteral {
             let mut materialized = element;
             for value in elems {
                 materialized = self.nominal_string_wrap(value.source_span())?;
@@ -2389,7 +2412,7 @@ impl Checker {
     }
 
     pub(super) fn record_collection_construction(&self, span: SourceSpan, target: &Ty) {
-        let Ty::Struct(name, _) = target else {
+        let TyKind::Struct(name, _) = target.kind() else {
             return;
         };
         let insert = if list_element(target).is_some() {
@@ -2433,7 +2456,7 @@ impl Checker {
         span: SourceSpan,
         target: &Ty,
     ) -> Result<(), TypeError> {
-        let Ty::Struct(name, _) = target else {
+        let TyKind::Struct(name, _) = target.kind() else {
             return Ok(());
         };
         let constructor = self
@@ -2528,10 +2551,11 @@ impl Checker {
                 init: !args.is_empty(),
             },
         );
-        Ok(Ty::Struct(
+        Ok(TyKind::Struct(
             name.to_string(),
-            vec![mojito_types::types::TyArg::Ty(element)].into(),
-        ))
+            vec![mojito_types::types::TyArg::Ty(element)],
+        )
+        .into())
     }
 
     pub(super) fn infer_list_construction(
@@ -2648,7 +2672,8 @@ impl Checker {
                     got: args.len(),
                 });
             }
-            let Ty::Variant(alternatives) = self.variant_type(param_args)? else {
+            let variant = self.variant_type(param_args)?;
+            let TyKind::Variant(alternatives) = variant.kind() else {
                 return Err(TypeError::InvariantViolation(
                     "Variant type construction did not produce a variant".to_string(),
                 ));
@@ -2656,7 +2681,7 @@ impl Checker {
             let factory = self.infer(&kwarg.value)?;
             let factory_ret = placement_factory_result(&factory);
             let selected = factory_ret.and_then(|ret| {
-                self.variant_index(&alternatives, ret, |alternative| coerces(ret, alternative))
+                self.variant_index(alternatives, ret, |alternative| coerces(ret, alternative))
                     .map(|index| (index, ret.clone()))
             });
             let Some((index, payload)) = selected else {
@@ -2674,7 +2699,7 @@ impl Checker {
                     payload,
                 },
             );
-            return Ok(Ty::Variant(alternatives));
+            return Ok(TyKind::Variant(alternatives.clone()).into());
         }
         if !kwargs.is_empty() {
             return Err(TypeError::BadCall {
@@ -2689,7 +2714,8 @@ impl Checker {
                 got: args.len(),
             });
         }
-        let Ty::Variant(alternatives) = self.variant_type(param_args)? else {
+        let variant = self.variant_type(param_args)?;
+        let TyKind::Variant(alternatives) = variant.kind() else {
             return Err(TypeError::InvariantViolation(
                 "Variant type construction did not produce a variant".to_string(),
             ));
@@ -2698,10 +2724,10 @@ impl Checker {
         // Over a pack that is still a parameter, the payload's materialized
         // type selects the alternative, as the pin's `__init__[T]` does;
         // each instantiation closes which one it is.
-        if mojito_types::types::pack_spread(&alternatives).is_some() {
+        if mojito_types::types::pack_spread(alternatives).is_some() {
             let payload = default_literal(&actual);
             let index = self
-                .variant_index(&alternatives, &payload, |_| false)
+                .variant_index(alternatives, &payload, |_| false)
                 .ok_or_else(|| {
                     TypeError::InvariantViolation(
                         "a pack-spread Variant selects a symbolic alternative".to_string(),
@@ -2714,7 +2740,7 @@ impl Checker {
                     index,
                 },
             );
-            return Ok(Ty::Variant(alternatives));
+            return Ok(TyKind::Variant(alternatives.clone()).into());
         }
         let exact: Vec<_> = alternatives
             .iter()
@@ -2775,7 +2801,7 @@ impl Checker {
                 index: VariantIndex::Known(*index),
             },
         );
-        Ok(Ty::Variant(alternatives))
+        Ok(TyKind::Variant(alternatives.clone()).into())
     }
 
     /// Whether an uncontextualized display may store its callable element
@@ -2856,7 +2882,7 @@ impl Checker {
     /// handle (`ref r = f(x)`, a forwarded `return`) still finds it through
     /// `infer_reference_value`. Any other expression keeps `found`.
     fn read_through_call_reference(&self, value: &Expr, found: Ty) -> Ty {
-        let Ty::Ref(reference) = found else {
+        let TyKind::Ref(reference) = found.kind() else {
             return found;
         };
         let span = value.source_span();
@@ -2872,12 +2898,14 @@ impl Checker {
                     )
                 })
         {
-            return Ty::Ref(reference);
+            return TyKind::Ref(reference.clone()).into();
         }
-        let referent = (*reference.referent).clone();
+        let referent = reference.referent.clone();
         self.operation_adjustments.borrow_mut().insert(
             span,
-            mojito_checked::checked::SemanticAdjustment::ReferenceResult { reference },
+            mojito_checked::checked::SemanticAdjustment::ReferenceResult {
+                reference: reference.clone(),
+            },
         );
         referent
     }
@@ -2950,15 +2978,15 @@ fn with_contextual_root(expression: &Expr, base: &str) -> Expr {
 /// The result type of an `init_with` placement factory: a zero-parameter,
 /// non-raising callable, or a type parameter bounded by one.
 fn placement_factory_result(factory: &Ty) -> Option<&Ty> {
-    let callable = match factory {
-        Ty::Param {
+    let callable = match factory.kind() {
+        TyKind::Param {
             callable_bound: Some(bound),
             ..
-        } => bound.as_ref(),
-        other => other,
+        } => bound,
+        _ => factory,
     };
-    match callable {
-        Ty::Func(func)
+    match callable.kind() {
+        TyKind::Func(func)
             if let FuncTy {
                 params,
                 raises: false,
@@ -2967,7 +2995,7 @@ fn placement_factory_result(factory: &Ty) -> Option<&Ty> {
             } = &**func
                 && params.is_empty() =>
         {
-            Some(ret.as_ref())
+            Some(ret)
         }
         _ => None,
     }

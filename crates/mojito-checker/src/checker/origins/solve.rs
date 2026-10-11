@@ -2,6 +2,7 @@
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
+use mojito_types::types::TyKind;
 
 impl Checker {
     /// Whether an owner is bound BELOW the current function's scope base —
@@ -317,7 +318,9 @@ impl Checker {
             };
             if let Some(origin) = origins.get(index).and_then(Clone::clone) {
                 let except = match &expression.kind {
-                    ExprKind::Identifier(name) if matches!(self.lookup(name), Some(Ty::Ref(_))) => {
+                    ExprKind::Identifier(name)
+                        if matches!(self.lookup(name).map(Ty::kind), Some(TyKind::Ref(_))) =>
+                    {
                         self.lookup_owner(name)
                     }
                     _ => None,
@@ -392,7 +395,7 @@ impl Checker {
                     .any(|(i, o)| o.is_some() && mutable[i]),
             };
             RefTy {
-                referent: Box::new(Ty::None), // replaced by the caller's declared return type
+                referent: Ty::none(), // replaced by the caller's declared return type
                 origin,
                 mutability: if is_mutable {
                     Mutability::Mutable
@@ -528,59 +531,58 @@ fn reconcile_origin_tails(
     mismatch: &mut bool,
 ) -> Ty {
     use mojito_types::origin::Origin;
-    match (found, declared, bound) {
+    match (found.kind(), declared.kind(), bound.kind()) {
         (
-            Ty::Struct(found_name, found_args),
-            Ty::Struct(declared_name, declared_args),
-            Ty::Struct(bound_name, bound_args),
+            TyKind::Struct(found_name, found_args),
+            TyKind::Struct(declared_name, declared_args),
+            TyKind::Struct(bound_name, bound_args),
         ) if found_name == declared_name
             && declared_name == bound_name
             && found_args.len() == declared_args.len()
             && declared_args.len() == bound_args.len() =>
         {
-            Ty::Struct(
+            found.reusing(TyKind::Struct(
                 found_name.clone(),
-                found_args.reusing(
-                    found_args
-                        .iter()
-                        .zip(declared_args)
-                        .zip(bound_args)
-                        .map(
-                            |((found, declared), bound)| match (found, declared, bound) {
-                                (TyArg::Ty(found), TyArg::Ty(declared), TyArg::Ty(bound)) => {
-                                    TyArg::Ty(reconcile_origin_tails(
-                                        found, declared, bound, fits, mismatch,
-                                    ))
+                found_args
+                    .iter()
+                    .zip(declared_args)
+                    .zip(bound_args)
+                    .map(
+                        |((found, declared), bound)| match (found, declared, bound) {
+                            (TyArg::Ty(found), TyArg::Ty(declared), TyArg::Ty(bound)) => TyArg::Ty(
+                                reconcile_origin_tails(found, declared, bound, fits, mismatch),
+                            ),
+                            (
+                                TyArg::Origin(Origin::Unbound),
+                                TyArg::Origin(_),
+                                TyArg::Origin(_),
+                            ) => found.clone(),
+                            (
+                                TyArg::Origin(actual),
+                                TyArg::Origin(expected),
+                                TyArg::Origin(bound),
+                            ) => {
+                                if fits(actual, bound) {
+                                    TyArg::Origin(expected.clone())
+                                } else {
+                                    *mismatch |= body_place_origin(actual);
+                                    found.clone()
                                 }
-                                (
-                                    TyArg::Origin(Origin::Unbound),
-                                    TyArg::Origin(_),
-                                    TyArg::Origin(_),
-                                ) => found.clone(),
-                                (
-                                    TyArg::Origin(actual),
-                                    TyArg::Origin(expected),
-                                    TyArg::Origin(bound),
-                                ) => {
-                                    if fits(actual, bound) {
-                                        TyArg::Origin(expected.clone())
-                                    } else {
-                                        *mismatch |= body_place_origin(actual);
-                                        found.clone()
-                                    }
-                                }
-                                _ => found.clone(),
-                            },
-                        )
-                        .collect(),
-                ),
-            )
+                            }
+                            _ => found.clone(),
+                        },
+                    )
+                    .collect(),
+            ))
         }
-        (Ty::Tuple(found_elements), Ty::Tuple(declared_elements), Ty::Tuple(bound_elements))
-            if found_elements.len() == declared_elements.len()
-                && declared_elements.len() == bound_elements.len() =>
+        (
+            TyKind::Tuple(found_elements),
+            TyKind::Tuple(declared_elements),
+            TyKind::Tuple(bound_elements),
+        ) if found_elements.len() == declared_elements.len()
+            && declared_elements.len() == bound_elements.len() =>
         {
-            Ty::Tuple(
+            TyKind::Tuple(
                 found_elements
                     .iter()
                     .zip(declared_elements)
@@ -590,10 +592,11 @@ fn reconcile_origin_tails(
                     })
                     .collect(),
             )
+            .into()
         }
         // The public `Tuple` and its generated specialization symbol compare
         // by element (see `coerces`); reconcile the elements in place.
-        (Ty::Struct(found_name, found_args), _, _)
+        (TyKind::Struct(found_name, found_args), _, _)
             if let (Some(found_elements), Some(declared_elements), Some(bound_elements)) = (
                 mojito_types::types::tuple_elements(found),
                 mojito_types::types::tuple_elements(declared),
@@ -610,20 +613,16 @@ fn reconcile_origin_tails(
                 })
                 .collect();
             let mut elements = reconciled.into_iter();
-            Ty::Struct(
+            found.reusing(TyKind::Struct(
                 found_name.clone(),
-                found_args.reusing(
-                    found_args
-                        .iter()
-                        .map(|argument| match argument {
-                            TyArg::Ty(_) => {
-                                elements.next().map_or_else(|| argument.clone(), TyArg::Ty)
-                            }
-                            TyArg::Val(_) | TyArg::Origin(_) => argument.clone(),
-                        })
-                        .collect(),
-                ),
-            )
+                found_args
+                    .iter()
+                    .map(|argument| match argument {
+                        TyArg::Ty(_) => elements.next().map_or_else(|| argument.clone(), TyArg::Ty),
+                        TyArg::Val(_) | TyArg::Origin(_) => argument.clone(),
+                    })
+                    .collect(),
+            ))
         }
         _ => found.clone(),
     }

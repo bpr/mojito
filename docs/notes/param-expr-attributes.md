@@ -70,9 +70,12 @@ holds across contexts. Hashing is the cached structural fingerprint, never an
 address. Operand order (`Ord`) is kind, then payload — never a pointer, an
 allocation order, a randomized hash, or a source location.
 
-`Ty` and everything it reaches derive `Hash`. `TransferSet` is
-equality-transparent by design, so its `Hash` hashes nothing; a type's hash
-never sees metadata its identity ignores. A node whose payload holds a callable
+A `Ty` hashes as the digest its node caches, the hash of its variant
+(`TyKind`), and everything the variant reaches derives `Hash`. `TransferSet`
+is equality-transparent by design, so its `Hash` hashes nothing; a type's
+hash never sees metadata its identity ignores. The context uniques types by
+that digest too (`ParamContext::intern_ty`), and refuses a decorated one for
+the same reason as a decorated node. A node whose payload holds a callable
 type with transfer effects is **not interned**: it is equal to its undecorated
 twin, and sharing one node would hand one occurrence another's effects
 (`equal_types_hash_equally_and_interning_keeps_decorations`).

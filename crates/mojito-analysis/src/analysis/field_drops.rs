@@ -12,6 +12,7 @@ use mojito_mir::mir::verify::{
     instruction_operand_regs, instruction_places, instruction_result_regs,
 };
 use mojito_types::types::Ty;
+use mojito_types::types::TyKind;
 
 /// Splice `DropPlace`s for every refinable field of every `deinit`
 /// parameter of struct type with a known declaration.
@@ -74,7 +75,7 @@ struct FieldSeeds<'a> {
 
 fn deinit_root(f: &MirFunction, var: VarId, declarations: &MirDeclarations) -> Option<DeinitRoot> {
     let root_ty = f.var_tys.get(&var)?.clone();
-    let Ty::Struct(name, _) = &root_ty else {
+    let TyKind::Struct(name, _) = root_ty.kind() else {
         return None;
     };
     let decl = declarations.structure(name)?;

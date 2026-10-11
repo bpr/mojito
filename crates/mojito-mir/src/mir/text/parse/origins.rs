@@ -138,7 +138,7 @@ impl Decoder {
 
     pub(super) fn ref_ty(&mut self, value: &Value) -> Option<RefTy> {
         let fields = self.record(value, "ref").ok()?;
-        let referent = Box::new(self.req(value, fields, "referent", Self::ty)?);
+        let referent = self.req(value, fields, "referent", Self::ty)?;
         let origin = self.req(value, fields, "origin", Self::origin)?;
         let mutability = self.req(value, fields, "mutability", Self::mutability)?;
         self.unknown(fields, &["referent", "origin", "mutability"]);
@@ -190,7 +190,7 @@ impl Decoder {
             ValueKind::Positional(tag, inner) => match tag.as_str() {
                 "sig_param" => self.uint(inner).map(SigOrigin::Param),
                 "sig_bound" => self.origin(inner).map(SigOrigin::Bound),
-                "sig_carried" => self.ty(inner).map(|ty| SigOrigin::Carried(Box::new(ty))),
+                "sig_carried" => self.ty(inner).map(SigOrigin::Carried),
                 "sig_union" => {
                     let members = self
                         .list(inner)

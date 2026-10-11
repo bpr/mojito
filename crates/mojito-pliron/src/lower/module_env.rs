@@ -4,6 +4,7 @@
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
+use mojito_types::types::TyKind;
 
 impl ModuleShared {
     pub(crate) fn new(module: ModuleOp) -> Self {
@@ -210,10 +211,10 @@ pub fn declare_function(
             // A raising reference return rides the tagged outcome with a
             // single place pointer as the ok payload (the reference-yielding
             // raising `__next__` convention).
-            let pointer = Ty::Pointer {
-                element: Box::new(ret_ty.clone()),
+            let pointer = Ty::new(TyKind::Pointer {
+                element: ret_ty.clone(),
                 origin: mojito_types::origin::PointerOrigin::Untracked { mutable: true },
-            };
+            });
             let composed = layout
                 .outcome_layout(&pointer)
                 .map_err(|error| PlironError {

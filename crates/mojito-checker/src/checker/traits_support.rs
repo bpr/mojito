@@ -3,6 +3,7 @@
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
+use mojito_types::types::TyKind;
 use mojito_types::types::{FuncTy, TransferSet};
 
 /// Compose inherited associated-member requirements. Type-valued members with
@@ -174,11 +175,11 @@ pub(super) fn canonical_availability(method: &MethodSig) -> Vec<GenericConstrain
 }
 
 pub(super) fn method_callable_ty(method: &MethodSig) -> Ty {
-    Ty::Func(Box::new(FuncTy {
+    TyKind::Func(Box::new(FuncTy {
         environment: mojito_types::origin::CallableEnvironment::Default,
         params: method.params.clone(),
         names: method.names.clone(),
-        ret: Box::new(method.ret.clone()),
+        ret: method.ret.clone(),
         required: method.required.clone(),
         variadic: method.variadic.clone(),
         kw_variadic: method.kw_variadic.clone(),
@@ -191,6 +192,7 @@ pub(super) fn method_callable_ty(method: &MethodSig) -> Ty {
         ref_return: method.ref_return.clone().map(Box::new),
         transfers: TransferSet::default(),
     }))
+    .into()
 }
 
 /// A method's contract with its own binders canonicalized to signature slots
@@ -203,9 +205,9 @@ fn canonical_method_shape(method: &MethodSig) -> MethodSig {
     }
     let mut types = method.params.clone();
     types.push(method.ret.clone());
-    types.extend(method.variadic.as_deref().cloned());
-    types.extend(method.kw_variadic.as_deref().cloned());
-    types.extend(method.error.as_deref().cloned());
+    types.extend(method.variadic.clone());
+    types.extend(method.kw_variadic.clone());
+    types.extend(method.error.clone());
     let (decls, mut types) =
         mojito_types::types::canonical_generic_signature(&method.decls, &types);
     let mut shape = method.clone();
@@ -213,15 +215,15 @@ fn canonical_method_shape(method: &MethodSig) -> MethodSig {
     shape.error = method
         .error
         .is_some()
-        .then(|| Box::new(types.pop().expect("error type")));
+        .then(|| types.pop().expect("error type"));
     shape.kw_variadic = method
         .kw_variadic
         .is_some()
-        .then(|| Box::new(types.pop().expect("keyword collector type")));
+        .then(|| types.pop().expect("keyword collector type"));
     shape.variadic = method
         .variadic
         .is_some()
-        .then(|| Box::new(types.pop().expect("collector type")));
+        .then(|| types.pop().expect("collector type"));
     shape.ret = types.pop().expect("return type");
     shape.params = types;
     shape

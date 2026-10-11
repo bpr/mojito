@@ -3,37 +3,38 @@
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
+use mojito_types::types::TyKind;
 use mojito_types::types::{FuncTy, GenericFuncTy};
 
 impl Decoder {
     pub(super) fn ty(&mut self, value: &Value) -> Option<Ty> {
         match &value.kind {
             ValueKind::Atom(tag) => Some(match tag.as_str() {
-                "Int" => Ty::Int,
-                "UInt" => Ty::UInt,
-                "Bool" => Ty::Bool,
-                "StringLiteral" => Ty::StringLiteral,
-                "Float64" => Ty::Float64,
-                "None" => Ty::None,
-                "Never" => Ty::Never,
-                "IntLiteral" => Ty::IntLiteral,
-                "FloatLiteral" => Ty::FloatLiteral,
-                "Infer" => Ty::Infer,
-                "DType" => Ty::Dtype,
-                "Self" => Ty::SelfType,
-                "Error" => Ty::Error,
+                "Int" => Ty::int(),
+                "UInt" => Ty::uint(),
+                "Bool" => Ty::bool(),
+                "StringLiteral" => Ty::string_literal(),
+                "Float64" => Ty::float64(),
+                "None" => Ty::none(),
+                "Never" => Ty::never(),
+                "IntLiteral" => Ty::int_literal(),
+                "FloatLiteral" => Ty::float_literal(),
+                "Infer" => Ty::infer(),
+                "DType" => Ty::dtype(),
+                "Self" => Ty::self_type(),
+                "Error" => Ty::error(),
                 other => {
                     self.error(value.span, format!("unknown type `{other}`"));
                     return None;
                 }
             }),
             ValueKind::Positional(tag, inner) => Some(match tag.as_str() {
-                "overload" => Ty::Overload(self.types(inner)),
-                "comptime_list" => Ty::ComptimeList(Box::new(self.ty(inner)?)),
-                "tuple" => Ty::Tuple(self.types(inner)),
-                "runtime_pack" => Ty::RuntimePack(self.types(inner)),
-                "variadic_pack" => Ty::VariadicPack(Box::new(self.ty(inner)?)),
-                "variant" => Ty::Variant(self.types(inner)),
+                "overload" => TyKind::Overload(self.types(inner)).into(),
+                "comptime_list" => TyKind::ComptimeList(self.ty(inner)?).into(),
+                "tuple" => TyKind::Tuple(self.types(inner)).into(),
+                "runtime_pack" => TyKind::RuntimePack(self.types(inner)).into(),
+                "variadic_pack" => TyKind::VariadicPack(self.ty(inner)?).into(),
+                "variant" => TyKind::Variant(self.types(inner)).into(),
                 // A type-valued parameter expression; it folds back to the
                 // type it denotes when the text spelled a closed one. A list
                 // of types computed from packs is the spread a struct type's
@@ -41,7 +42,7 @@ impl Decoder {
                 "dependent_parameter" => {
                     let expr = self.param_expr(inner)?;
                     if *expr.meta() == MetaTy::type_list() {
-                        return Some(Ty::Dependent(DependentType::Parameter(expr)));
+                        return Some(TyKind::Dependent(DependentType::Parameter(expr)).into());
                     }
                     if *expr.meta() != MetaTy::Type {
                         self.error(
@@ -67,16 +68,14 @@ impl Decoder {
                     let name = self.req(value, fields, "name", Self::symbol)?;
                     let id = self.binder_id(value, fields, &name)?;
                     let bounds = self.req(value, fields, "bounds", |d, v| Some(d.strings(v)))?;
-                    let callable_bound = self
-                        .req(value, fields, "callable_bound", |d, v| {
-                            Some(d.option_ty(Some(v)))
-                        })?
-                        .map(Box::new);
+                    let callable_bound = self.req(value, fields, "callable_bound", |d, v| {
+                        Some(d.option_ty(Some(v)))
+                    })?;
                     self.unknown(
                         fields,
                         &["owner", "slot", "name", "bounds", "callable_bound"],
                     );
-                    Ty::Param {
+                    TyKind::Param {
                         binder: mojito_types::param_expr::ParamRef {
                             id,
                             name: name.into(),
@@ -84,13 +83,14 @@ impl Decoder {
                         bounds,
                         callable_bound,
                     }
+                    .into()
                 }
                 "assoc" => {
-                    let base = Box::new(self.req(value, fields, "base", Self::ty)?);
+                    let base = self.req(value, fields, "base", Self::ty)?;
                     let name = self.req(value, fields, "member", Self::symbol)?;
                     let args = self.req(value, fields, "arguments", |d, v| Some(d.ty_args(v)))?;
                     self.unknown(fields, &["base", "member", "arguments"]);
-                    Ty::Assoc { base, name, args }
+                    TyKind::Assoc { base, name, args }.into()
                 }
                 // Schema 1.0's finite selection; 1.1 spells it as the
                 // `dependent_parameter` of a `param_select`.
@@ -106,7 +106,7 @@ impl Decoder {
                     let name = self.req(value, fields, "name", Self::symbol)?;
                     let args = self.req(value, fields, "arguments", |d, v| Some(d.ty_args(v)))?;
                     self.unknown(fields, &["name", "arguments"]);
-                    Ty::Struct(name, args.into())
+                    TyKind::Struct(name, args).into()
                 }
                 // Either slot may be a `ct_expr(...)` while symbolic; the
                 // rebuild folds a closed one back to its constant.
@@ -119,12 +119,12 @@ impl Decoder {
                         .ok()?
                 }
                 "pointer" => {
-                    let element = Box::new(self.req(value, fields, "element", Self::ty)?);
+                    let element = self.req(value, fields, "element", Self::ty)?;
                     let origin = self.req(value, fields, "origin", Self::pointer_origin)?;
                     self.unknown(fields, &["element", "origin"]);
-                    Ty::Pointer { element, origin }
+                    TyKind::Pointer { element, origin }.into()
                 }
-                "ref" => Ty::Ref(self.ref_ty(value)?),
+                "ref" => TyKind::Ref(self.ref_ty(value)?).into(),
                 other => {
                     self.error(value.span, format!("unknown type `{other}`"));
                     return None;
@@ -147,27 +147,21 @@ impl Decoder {
         let decls = self.req(value, fields, "param_decls", |d, v| Some(d.param_decls(v)))?;
         let params = self.req(value, fields, "params", |d, v| Some(d.types(v)))?;
         let names = self.req(value, fields, "names", |d, v| Some(d.strings(v)))?;
-        let ret = Box::new(self.req(value, fields, "return_type", Self::ty)?);
+        let ret = self.req(value, fields, "return_type", Self::ty)?;
         let required = self.req(value, fields, "required", |d, v| Some(d.bools(v)))?;
-        let variadic = self
-            .req(value, fields, "variadic", |d, v| Some(d.option_ty(Some(v))))?
-            .map(Box::new);
-        let kw_variadic = self
-            .req(value, fields, "kw_variadic", |d, v| {
-                Some(d.option_ty(Some(v)))
-            })?
-            .map(Box::new);
+        let variadic = self.req(value, fields, "variadic", |d, v| Some(d.option_ty(Some(v))))?;
+        let kw_variadic = self.req(value, fields, "kw_variadic", |d, v| {
+            Some(d.option_ty(Some(v)))
+        })?;
         let positional_only = self.req(value, fields, "positional_only", |d, v| {
             Some(d.option_uint(v))
         })?;
         let keyword_only =
             self.req(value, fields, "keyword_only", |d, v| Some(d.option_uint(v)))?;
         let raises = self.req(value, fields, "raises", Self::boolean)?;
-        let error = self
-            .req(value, fields, "error_type", |d, v| {
-                Some(d.option_ty(Some(v)))
-            })?
-            .map(Box::new);
+        let error = self.req(value, fields, "error_type", |d, v| {
+            Some(d.option_ty(Some(v)))
+        })?;
         let conventions = self.req(value, fields, "conventions", |d, v| Some(d.conventions(v)))?;
         let ref_params = self.req(value, fields, "ref_params", |d, v| Some(d.ref_sigs(v)))?;
         let ref_return = {
@@ -199,48 +193,54 @@ impl Decoder {
             ],
         );
         if generic {
-            return Some(Ty::GenericFunc(Box::new(GenericFuncTy {
-                decls,
-                func: FuncTy {
-                    environment,
-                    params,
-                    names,
-                    ret,
-                    required,
-                    variadic,
-                    kw_variadic,
-                    positional_only,
-                    keyword_only,
-                    raises,
-                    error,
-                    conventions,
-                    ref_params,
-                    ref_return,
-                    transfers,
-                },
-            })));
+            return Some(
+                TyKind::GenericFunc(Box::new(GenericFuncTy {
+                    decls,
+                    func: FuncTy {
+                        environment,
+                        params,
+                        names,
+                        ret,
+                        required,
+                        variadic,
+                        kw_variadic,
+                        positional_only,
+                        keyword_only,
+                        raises,
+                        error,
+                        conventions,
+                        ref_params,
+                        ref_return,
+                        transfers,
+                    },
+                }))
+                .into(),
+            );
         }
         if !decls.is_empty() {
             self.error(value.span, "`func` types take no param_decls");
             return None;
         }
-        Some(Ty::Func(Box::new(FuncTy {
-            environment,
-            params,
-            names,
-            ret,
-            required,
-            variadic,
-            kw_variadic,
-            positional_only,
-            keyword_only,
-            raises,
-            error,
-            conventions,
-            ref_params,
-            ref_return,
-            transfers,
-        })))
+        Some(
+            TyKind::Func(Box::new(FuncTy {
+                environment,
+                params,
+                names,
+                ret,
+                required,
+                variadic,
+                kw_variadic,
+                positional_only,
+                keyword_only,
+                raises,
+                error,
+                conventions,
+                ref_params,
+                ref_return,
+                transfers,
+            }))
+            .into(),
+        )
     }
 
     pub(super) fn transfer_set(&mut self, value: &Value) -> TransferSet {
@@ -305,14 +305,11 @@ impl Decoder {
             "type_param" => {
                 let name = self.req(value, fields, "name", Self::symbol)?;
                 let bounds = self.req(value, fields, "bounds", |d, v| Some(d.strings(v)))?;
-                let callable_bound = self
-                    .req(value, fields, "callable_bound", |d, v| {
-                        Some(d.option_ty(Some(v)))
-                    })?
-                    .map(Box::new);
-                let default = self
-                    .req(value, fields, "default", |d, v| Some(d.option_ty(Some(v))))?
-                    .map(Box::new);
+                let callable_bound = self.req(value, fields, "callable_bound", |d, v| {
+                    Some(d.option_ty(Some(v)))
+                })?;
+                let default =
+                    self.req(value, fields, "default", |d, v| Some(d.option_ty(Some(v))))?;
                 let infer_only = self.req(value, fields, "infer_only", Self::boolean)?;
                 let variadic = self.req(value, fields, "variadic", Self::boolean)?;
                 let constraints =
@@ -344,7 +341,7 @@ impl Decoder {
             }
             "value_param" => {
                 let name = self.req(value, fields, "name", Self::symbol)?;
-                let ty = Box::new(self.req(value, fields, "type", Self::ty)?);
+                let ty = self.req(value, fields, "type", Self::ty)?;
                 let default = {
                     let field = self.required(value, fields, "default")?;
                     self.option_value(Some(field))
@@ -1040,7 +1037,7 @@ impl Decoder {
                         && let (Ok(name), Ok(ty)) =
                             (scratch.field(fields, "name"), scratch.field(fields, "type"))
                         && let (Some(name), Some(ty)) = (scratch.symbol(name), scratch.ty(ty))
-                        && !matches!(ty, Ty::Func(_) | Ty::GenericFunc(_))
+                        && !matches!(ty.kind(), TyKind::Func(_) | TyKind::GenericFunc(_))
                     {
                         let metas = out
                             .entry(name.trim_start_matches('*').to_string())
@@ -1134,8 +1131,8 @@ impl Decoder {
                 "ct_tuple" => Some(CtValue::Tuple(self.ct_values(inner))),
                 "ct_list" => Some(CtValue::List(self.ct_values(inner))),
                 "ct_dtype" => self.dtype(inner).map(CtValue::Dtype),
-                "ct_type" => self.ty(inner).map(|ty| CtValue::Type(Box::new(ty))),
-                "ct_reflected" => self.ty(inner).map(|ty| CtValue::Reflected(Box::new(ty))),
+                "ct_type" => self.ty(inner).map(CtValue::Type),
+                "ct_reflected" => self.ty(inner).map(CtValue::Reflected),
                 "ct_expr" => self.param_expr(inner).map(ParamExpr::into_value),
                 "ct_deferred" => self.deferred_slot(inner),
                 "ct_marker" => self.ct_marker(inner).map(CtValue::Marker),
@@ -1258,10 +1255,7 @@ impl Decoder {
                     }
                 }
                 self.unknown(fields, &["spelling", "entries"]);
-                Some(CtValue::Dict {
-                    spelling: spelling.map(Box::new),
-                    entries,
-                })
+                Some(CtValue::Dict { spelling, entries })
             }
             ValueKind::Record(tag, fields) if tag == "ct_set" => {
                 let spelling = match self.field(fields, "spelling") {
@@ -1271,10 +1265,7 @@ impl Decoder {
                 let elements_value = self.required(value, fields, "elements")?;
                 let elements = self.ct_values(elements_value);
                 self.unknown(fields, &["spelling", "elements"]);
-                Some(CtValue::Set {
-                    spelling: spelling.map(Box::new),
-                    elements,
-                })
+                Some(CtValue::Set { spelling, elements })
             }
             _ => {
                 self.error(value.span, "expected compile-time value");

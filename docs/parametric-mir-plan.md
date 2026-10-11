@@ -58,7 +58,7 @@ Consequences of that arrangement:
 Three facts make the target reachable from here.
 
 - **MIR is already parametric for one class.** A trait-bound generic body
-  reaches MIR with `Ty::Param` types, passes `mir::verify` and ownership
+  reaches MIR with `TyKind::Param` types, passes `mir::verify` and ownership
   analysis once, and `native::mono` substitutes types and compile-time values
   into it per instance. That is a generator and an elaborator in all but
   name.

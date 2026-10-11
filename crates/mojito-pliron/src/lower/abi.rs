@@ -3,6 +3,7 @@
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
+use mojito_types::types::TyKind;
 
 impl FnLowering<'_> {
     /// The bound operand value of one argument at its expected lowered type.
@@ -38,8 +39,8 @@ impl FnLowering<'_> {
                 // O1 exposed that as allocator corruption. Materialize the
                 // checked conversion explicitly and transfer the buffer.
                 if owned
-                    && matches!(ty.as_ref(), Ty::Struct(name, _) if name.split("$mono").next() == Some("List"))
-                    && matches!(self.func.reg_types.get(&reg.0), Some(Ty::Struct(name, _)) if name.split("$mono").next() == Some("Array"))
+                    && matches!(ty.kind(), TyKind::Struct(name, _) if name.split("$mono").next() == Some("List"))
+                    && matches!(self.func.reg_types.get(&reg.0).map(Ty::kind), Some(TyKind::Struct(name, _)) if name.split("$mono").next() == Some("Array"))
                 {
                     return self.materialize_owned_array_as_list(ctx, reg, dest);
                 }
@@ -47,12 +48,18 @@ impl FnLowering<'_> {
                 // materializes through the constructor bridge — the VM's
                 // runtime coercion for generic parameters the checker could
                 // not wrap at check time.
-                if matches!(ty.as_ref(), Ty::Struct(name, _)
+                if matches!(ty.kind(), TyKind::Struct(name, _)
                         if mojito_symbol::symbol::is_stdlib_string_struct(name))
-                    && !matches!(self.func.reg_types.get(&reg.0), Some(Ty::Struct(..)))
+                    && !matches!(
+                        self.func.reg_types.get(&reg.0).map(Ty::kind),
+                        Some(TyKind::Struct(..))
+                    )
                     && (self.str_consts.contains_key(&reg.0)
                         || self.str_runtime.contains_key(&reg.0)
-                        || matches!(self.func.reg_types.get(&reg.0), Some(Ty::StringLiteral)))
+                        || matches!(
+                            self.func.reg_types.get(&reg.0).map(Ty::kind),
+                            Some(TyKind::StringLiteral)
+                        ))
                 {
                     return self.materialize_string_argument(ctx, reg, ty, owned, dest);
                 }
@@ -305,7 +312,7 @@ impl FnLowering<'_> {
                 // The ok payload transferred ownership here, like an sret
                 // result.
                 if (self.owns_heap(&ty) && self.releasable(&ty)) || self.stdlib_deinit_temp(&ty) {
-                    self.mark_owned_temp(dest, *ty)?;
+                    self.mark_owned_temp(dest, ty)?;
                 }
                 Ok(())
             }
@@ -392,7 +399,7 @@ impl FnLowering<'_> {
             LowerTy::Scalar(scalar) => {
                 // A pending literal entering literal-typed storage converts
                 // exactly (reject-never-wrap) rather than at the slot kind.
-                let value = if matches!(ty, Ty::IntLiteral | Ty::FloatLiteral)
+                let value = if matches!(ty.kind(), TyKind::IntLiteral | TyKind::FloatLiteral)
                     && let Some(literal) = self.pending_literals.get(&src.0).cloned()
                 {
                     let constant = self.exact_literal_storage(ctx, &literal, ty, src)?;
@@ -411,7 +418,9 @@ impl FnLowering<'_> {
                 // the literal value model is drop-inert, so the buffer would
                 // lose its releasing owner (the recorded literal-ownership
                 // gap behind the struct-to-literal bridge rejection).
-                if matches!(*ty, Ty::StringLiteral) && self.owned_temps.contains_key(&src.0) {
+                if matches!(*ty.kind(), TyKind::StringLiteral)
+                    && self.owned_temps.contains_key(&src.0)
+                {
                     return Err(self.unsupported(
                         "owned string bytes entering drop-inert literal storage".into(),
                         self.reg_span(src),
@@ -443,7 +452,7 @@ impl FnLowering<'_> {
         if !self.owned_temps.contains_key(&src.0)
             && let LowerTy::Aggregate { ty, layout } =
                 lower_ty(self.name, ty, &self.layout, self.reg_span(src))?
-            && !matches!(*ty, Ty::StringLiteral)
+            && !matches!(*ty.kind(), TyKind::StringLiteral)
         {
             let ptr = self.reg_ptr(ctx, src)?;
             self.copy_value(ctx, address, ptr, &ty, layout, src);
@@ -659,9 +668,9 @@ impl FnLowering<'_> {
 
 /// The lane type and width of a value that lowers to a whole LLVM vector:
 /// width-one aliases are scalars and never take the vector-storage path.
-const fn multi_lane_simd(ty: &Ty) -> Option<(Dtype, usize)> {
-    match ty {
-        Ty::Simd {
+fn multi_lane_simd(ty: &Ty) -> Option<(Dtype, usize)> {
+    match ty.kind() {
+        TyKind::Simd {
             dtype: mojito_types::types::SimdDtype::Known(dtype),
             width: mojito_types::types::SimdWidth::Known(width),
         } if *width > 1 => Some((*dtype, *width as usize)),

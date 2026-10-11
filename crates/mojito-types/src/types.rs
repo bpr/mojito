@@ -2,13 +2,13 @@
 //!
 //! This is the type lattice used by the checker, but it also needs to be visible
 //! to compile-time values once comptime can carry type values. Keeping `Ty` out
-//! of `checker.rs` lets [`CtValue`](crate::ct::CtValue) represent `Type(Box<Ty>)`
+//! of `checker.rs` lets [`CtValue`](crate::ct::CtValue) represent `Type(Ty)`
 //! without making the checker the owner of all type-level facts.
 
 use std::collections::HashMap;
 use std::fmt;
 use std::ops::{Deref, DerefMut};
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
 
 use crate::ct::CtValue;
 use crate::param_expr::{
@@ -110,8 +110,8 @@ impl DependentType {
     /// constant, and the symbolic wrapper otherwise.
     pub fn resolve(expr: ParamExpr) -> Ty {
         match expr.as_constant() {
-            Some(CtValue::Type(ty)) => (**ty).clone(),
-            _ => Ty::Dependent(Self::Parameter(expr)),
+            Some(CtValue::Type(ty)) => (*ty).clone(),
+            _ => TyKind::Dependent(Self::Parameter(expr)).into(),
         }
     }
 
@@ -146,13 +146,13 @@ impl DependentType {
         match self.selection() {
             Some((elements, index)) => ParamContext::detached()
                 .select(elements.iter().map(f).collect(), index)
-                .map_or_else(|_| Ty::Dependent(self.clone()), Self::resolve),
-            None => Ty::Dependent(self.clone()),
+                .map_or_else(|_| TyKind::Dependent(self.clone()).into(), Self::resolve),
+            None => TyKind::Dependent(self.clone()).into(),
         }
     }
 }
 
-/// The element type of a [`Ty::Simd`]: a concrete dtype, or a `DType`-valued
+/// The element type of a [`TyKind::Simd`]: a concrete dtype, or a `DType`-valued
 /// parameter expression while the enclosing declaration is still symbolic
 /// (`Scalar[dt]` under source validation).
 ///
@@ -205,7 +205,7 @@ impl fmt::Display for SimdDtype {
     }
 }
 
-/// The lane count of a [`Ty::Simd`]: a concrete width, or an `Int`-valued
+/// The lane count of a [`TyKind::Simd`]: a concrete width, or an `Int`-valued
 /// parameter expression while the enclosing declaration is still symbolic
 /// (`SIMD[dt, width]`, `SIMD[dt, 2 * n]`).
 ///
@@ -436,10 +436,11 @@ impl fmt::Display for LaneMask {
     }
 }
 
-/// A type in mojito's semantic lattice. Scalars mirror `ast::Type`; `Func` is
-/// synthesized from a `def` signature or lowered from a function-type annotation.
+/// The variants of a [`Ty`], the storage its handle shares. Scalars mirror
+/// `ast::Type`; `Func` is synthesized from a `def` signature or lowered from a
+/// function-type annotation.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
-pub enum Ty {
+pub enum TyKind {
     Int,
     UInt,
     Bool,
@@ -473,7 +474,7 @@ pub enum Ty {
     /// resolves an overload set at each call site. The first implementation
     /// supports distinct call shapes/arity; keeping this as a first-class type
     /// leaves type-ranked overload resolution as a natural extension.
-    Overload(Vec<Self>),
+    Overload(Vec<Ty>),
     /// A type parameter (`T`) inside a generic body, carrying its trait bounds.
     /// The binder is the declaration's parameter by identity (`ParamId`); its
     /// spelling is diagnostic metadata, so two declarations that both spell
@@ -485,7 +486,7 @@ pub enum Ty {
         /// `F: def(T) -> T`. Unlike an ordinary trait name, the full checked
         /// signature is needed both to validate specializations and to type
         /// calls through `F` inside the generic body.
-        callable_bound: Option<Box<Self>>,
+        callable_bound: Option<Ty>,
     },
     /// A symbolic associated type lookup such as `C.Element` where `C` is an
     /// opaque type parameter. It may resolve to a concrete type once `C` is
@@ -494,7 +495,7 @@ pub enum Ty {
     /// bare `C.Element`. The arguments are retained so the projection can be
     /// resolved concretely once the base is a conforming struct.
     Assoc {
-        base: Box<Self>,
+        base: Ty,
         name: String,
         args: Vec<TyArg>,
     },
@@ -510,7 +511,7 @@ pub enum Ty {
     /// order. The tail is part of the checked identity (`P[origin_of(xs)]` and
     /// `P[origin_of(ys)]` are different types, as upstream) and erases from
     /// the runtime ABI: mangling, layout, and MIR verification ignore it.
-    Struct(String, TyArgs),
+    Struct(String, Vec<TyArg>),
     /// A SIMD vector type `SIMD[DType.<dtype>, width]`. Either slot is a
     /// parameter expression while the declaration it belongs to is symbolic;
     /// a symbolic slot never crosses the MIR waist.
@@ -522,28 +523,28 @@ pub enum Ty {
     Error,
     /// Compile-time-only list shape used while materializing `CtValue::List`.
     /// Checked executable List values use `Struct("List", ...)`.
-    ComptimeList(Box<Self>),
+    ComptimeList(Ty),
     /// Compiler-private `__RuntimeTuple[T1, ..., Tn]` storage. Public
     /// `Tuple[T1, ..., Tn]` values are nominal standard-library structs.
-    Tuple(Vec<Self>),
+    Tuple(Vec<Ty>),
     /// Internal checked ABI type for a compile-time-specialized heterogeneous
     /// runtime parameter pack. Unlike a source `Tuple[...]` used as the element
     /// type of an ordinary homogeneous `*args`, each entry describes one
     /// positional argument and the collector uses private tuple-shaped storage.
     /// This type cannot be written directly in Mojo source.
-    RuntimePack(Vec<Self>),
+    RuntimePack(Vec<Ty>),
     /// Internal checked ABI type for an ordinary homogeneous runtime variadic.
     /// Source `List[T]` is a nominal standard-library struct; a `*args: T`
     /// collector is compiler storage and must therefore not masquerade as that
     /// user-facing collection.
-    VariadicPack(Box<Self>),
+    VariadicPack(Ty),
     /// The built-in tagged union `Variant[T1, ..., Tn]`.  The ordering is part
     /// of the type: it determines the runtime tag used by typed projection.
-    Variant(Vec<Self>),
+    Variant(Vec<Ty>),
     /// The built-in `UnsafePointer[T, origin]`.  The VM erases the origin, but
     /// the checked and MIR types retain it for lifetime/aggregate validation.
     Pointer {
-        element: Box<Self>,
+        element: Ty,
         origin: crate::origin::PointerOrigin,
     },
     /// A reference value. Origins and permissions are checked statically; its
@@ -551,11 +552,175 @@ pub enum Ty {
     Ref(crate::origin::RefTy),
 }
 
-/// A `Ty` is sized for its common variants: the callable payloads, the
+/// A node is sized for its common variants: the callable payloads, the
 /// largest, sit behind a box.
-const _: () = assert!(std::mem::size_of::<Ty>() <= 72);
+const _: () = assert!(std::mem::size_of::<TyKind>() <= 72);
+
+/// A type in mojito's semantic lattice: a handle to immutable, shared storage.
+///
+/// Cloning a type copies the handle, and every clone shares one node; a
+/// node's children are handles too, so a nested type (`W[W[Int]]`) copied
+/// into every register, key, and binding that names it holds each level
+/// once. A write is explicit — [`Ty::update`] unshares one node, and a
+/// rewriting walk rebuilds through [`Ty::reusing`] — so a walk that
+/// changes nothing never copies the levels it passes through.
+///
+/// Each node caches two facts about everything below it, computed once when
+/// it is built: its hash, so hashing a type reads one word and equality
+/// compares the handles first, then the digests, and the variants only when
+/// both agree; and whether it is [closed](Ty::is_closed), so a walk that only
+/// looks for or rewrites open positions stops there. A deeply nested type
+/// then costs each walk its own level, not its depth.
+#[derive(Clone)]
+pub struct Ty(Arc<TyNode>);
+
+/// A handle is one pointer, and an absent type costs nothing beside it.
+const _: () = assert!(std::mem::size_of::<Ty>() <= 8);
+const _: () = assert!(std::mem::size_of::<Option<Ty>>() <= 8);
+
+macro_rules! dataless_types {
+    ($($(#[$doc:meta])* $name:ident => $variant:ident),* $(,)?) => {
+        impl Ty {
+            $(
+                $(#[$doc])*
+                pub fn $name() -> Self {
+                    static TY: LazyLock<Ty> =
+                        LazyLock::new(|| Ty(Arc::new(TyNode::new(TyKind::$variant))));
+                    TY.clone()
+                }
+            )*
+
+            /// The shared node of a variant that carries no data.
+            fn dataless(kind: &TyKind) -> Option<Self> {
+                match kind {
+                    $(TyKind::$variant => Some(Self::$name()),)*
+                    _ => None,
+                }
+            }
+        }
+    };
+}
+
+dataless_types! {
+    /// `Int`.
+    int => Int,
+    /// `UInt`.
+    uint => UInt,
+    /// `Bool`.
+    bool => Bool,
+    /// `StringLiteral`.
+    string_literal => StringLiteral,
+    /// `Float64`.
+    float64 => Float64,
+    /// `None`.
+    none => None,
+    /// `Never`.
+    never => Never,
+    /// An integer literal's flexible type.
+    int_literal => IntLiteral,
+    /// A float literal's flexible type.
+    float_literal => FloatLiteral,
+    /// An inference hole, `_`.
+    infer => Infer,
+    /// The `DType` value-parameter type.
+    dtype => Dtype,
+    /// `Self` inside a trait.
+    self_type => SelfType,
+    /// `Error`.
+    error => Error,
+}
 
 impl Ty {
+    /// The type of variant `kind`. A variant that carries no data shares one
+    /// node per compilation.
+    pub fn new(kind: TyKind) -> Self {
+        Self::dataless(&kind).unwrap_or_else(|| Self(Arc::new(TyNode::new(kind))))
+    }
+
+    /// The type's variant.
+    pub fn kind(&self) -> &TyKind {
+        &self.0.kind
+    }
+
+    /// The type's variant, owned: moved out when this handle is the node's
+    /// only one, copied otherwise.
+    pub fn into_kind(self) -> TyKind {
+        Arc::unwrap_or_clone(self.0).kind
+    }
+
+    /// Apply `write` to this type's variant, unshared from every other
+    /// handle first, and refresh the node's cached facts after it.
+    pub fn update<R>(&mut self, write: impl FnOnce(&mut TyKind) -> R) -> R {
+        let node = Arc::make_mut(&mut self.0);
+        let result = write(&mut node.kind);
+        node.digest = TyNode::digest(&node.kind);
+        node.closed = closed_kind(&node.kind);
+        result
+    }
+
+    /// Whether the type, at any depth, is a concrete runtime-shaped type
+    /// whose compile-time values are scalars and whose origins are unbound.
+    ///
+    /// A closed type holds no parameter, associated or dependent projection,
+    /// `Self`, inference hole, literal type or value, callable, pointer,
+    /// reference, expression, deferred slot, marker, or bound origin. So
+    /// [`is_symbolic`] is false of it, substitution and the literal, origin,
+    /// and callable-environment canonicalizers leave it as it is, and a
+    /// [`TyRewrite`] that rewrites only those positions passes it whole.
+    pub fn is_closed(&self) -> bool {
+        self.0.closed
+    }
+
+    /// The type of variant `rebuilt`, keeping this handle when a rewrite
+    /// left the variant as it was.
+    #[must_use]
+    pub fn reusing(&self, rebuilt: TyKind) -> Self {
+        if *self.kind() == rebuilt {
+            self.clone()
+        } else {
+            Self::new(rebuilt)
+        }
+    }
+
+    /// Whether the two handles share one node.
+    pub fn ptr_eq(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.0, &other.0)
+    }
+
+    /// The address of the node this handle shares.
+    pub(crate) fn address(&self) -> usize {
+        Arc::as_ptr(&self.0).addr()
+    }
+
+    /// The node's cached hash of its variant.
+    pub(crate) fn digest(&self) -> u64 {
+        self.0.digest
+    }
+
+    /// Whether the type, at any depth, carries a decoration its equality
+    /// leaves out: a callable's transfer effects, or a dictionary or set
+    /// value's display spelling.
+    pub fn carries_decorations(&self) -> bool {
+        !self.is_closed() && decorated(self)
+    }
+
+    /// The signature of a callable type, generic or not.
+    pub fn callable(&self) -> Option<&FuncTy> {
+        self.kind().callable()
+    }
+
+    /// The signature of a non-generic function type.
+    pub fn as_func(&self) -> Option<&FuncTy> {
+        self.kind().as_func()
+    }
+
+    /// The signature of a generic function type.
+    pub fn as_generic_func(&self) -> Option<&GenericFuncTy> {
+        self.kind().as_generic_func()
+    }
+}
+
+impl TyKind {
     /// The signature of a callable type, generic or not.
     pub fn callable(&self) -> Option<&FuncTy> {
         match self {
@@ -607,6 +772,74 @@ impl Ty {
     }
 }
 
+impl From<TyKind> for Ty {
+    fn from(kind: TyKind) -> Self {
+        Self::new(kind)
+    }
+}
+
+impl Deref for Ty {
+    type Target = TyKind;
+
+    fn deref(&self) -> &TyKind {
+        self.kind()
+    }
+}
+
+impl PartialEq for Ty {
+    fn eq(&self, other: &Self) -> bool {
+        self.ptr_eq(other) || (self.0.digest == other.0.digest && self.0.kind == other.0.kind)
+    }
+}
+
+impl Eq for Ty {}
+
+impl PartialEq<TyKind> for Ty {
+    fn eq(&self, other: &TyKind) -> bool {
+        self.kind() == other
+    }
+}
+
+impl PartialEq<Ty> for TyKind {
+    fn eq(&self, other: &Ty) -> bool {
+        self == other.kind()
+    }
+}
+
+impl std::hash::Hash for Ty {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        state.write_u64(self.0.digest);
+    }
+}
+
+impl fmt::Debug for Ty {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.kind().fmt(f)
+    }
+}
+
+/// A type encodes as its variant, or inside a package's type section
+/// ([`crate::type_section`]) as the index of its entry there.
+impl serde::Serialize for Ty {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        match crate::type_section::encoded(self) {
+            Some(Ok(index)) => serializer.serialize_u32(index),
+            Some(Err(error)) => Err(serde::ser::Error::custom(error)),
+            None => self.kind().serialize(serializer),
+        }
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for Ty {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        if let Some(section) = crate::type_section::decoding_section() {
+            let index = u32::deserialize(deserializer)?;
+            return section.get(index).map_err(serde::de::Error::custom);
+        }
+        TyKind::deserialize(deserializer).map(Self::new)
+    }
+}
+
 /// A function signature. `params`/`names` describe the regular parameters;
 /// `required[i]` is true when regular parameter `i` has no default. The
 /// marker fields are indexes into this regular-parameter list.
@@ -617,15 +850,15 @@ pub struct FuncTy {
     pub environment: crate::origin::CallableEnvironment,
     pub params: Vec<Ty>,
     pub names: Vec<String>,
-    pub ret: Box<Ty>,
+    pub ret: Ty,
     pub required: Vec<bool>,
-    pub variadic: Option<Box<Ty>>,
+    pub variadic: Option<Ty>,
     /// Homogeneous element type collected by `**kwargs`, when present.
-    pub kw_variadic: Option<Box<Ty>>,
+    pub kw_variadic: Option<Ty>,
     pub positional_only: Option<usize>,
     pub keyword_only: Option<usize>,
     pub raises: bool,
-    pub error: Option<Box<Ty>>,
+    pub error: Option<Ty>,
     /// The argument convention of each regular parameter.
     pub conventions: Vec<Option<ArgConvention>>,
     pub ref_params: Vec<Option<crate::origin::RefSig>>,
@@ -640,10 +873,10 @@ impl FuncTy {
     pub fn types(&self) -> impl Iterator<Item = &Ty> {
         self.params
             .iter()
-            .chain(std::iter::once(&*self.ret))
-            .chain(self.variadic.as_deref())
-            .chain(self.kw_variadic.as_deref())
-            .chain(self.error.as_deref())
+            .chain(std::iter::once(&self.ret))
+            .chain(self.variadic.as_ref())
+            .chain(self.kw_variadic.as_ref())
+            .chain(self.error.as_ref())
     }
 
     /// This signature with every parameter, result, variadic, and error type
@@ -657,16 +890,16 @@ impl FuncTy {
     /// [`FuncTy::map_types`] with a rewrite that may fail.
     pub fn try_map_types<E>(&self, mut f: impl FnMut(&Ty) -> Result<Ty, E>) -> Result<Self, E> {
         let params = self.params.iter().map(&mut f).collect::<Result<_, _>>()?;
-        let ret = Box::new(f(&self.ret)?);
-        let variadic = self.variadic.as_deref().map(&mut f).transpose()?;
-        let kw_variadic = self.kw_variadic.as_deref().map(&mut f).transpose()?;
-        let error = self.error.as_deref().map(&mut f).transpose()?;
+        let ret = f(&self.ret)?;
+        let variadic = self.variadic.as_ref().map(&mut f).transpose()?;
+        let kw_variadic = self.kw_variadic.as_ref().map(&mut f).transpose()?;
+        let error = self.error.as_ref().map(&mut f).transpose()?;
         Ok(Self {
             params,
             ret,
-            variadic: variadic.map(Box::new),
-            kw_variadic: kw_variadic.map(Box::new),
-            error: error.map(Box::new),
+            variadic,
+            kw_variadic,
+            error,
             environment: self.environment.clone(),
             names: self.names.clone(),
             required: self.required.clone(),
@@ -733,15 +966,15 @@ pub const SCALAR_RANGE_FAMILY: [&str; 3] =
 /// which iterates by index through a fused multiply-add rather than by value.
 pub const FLOAT_STRIDED_RANGE: &str = "_FloatStridedRange";
 
-/// Decompose a checker-abstract scalar-range type — `Ty::Struct` naming a
+/// Decompose a checker-abstract scalar-range type — a struct naming a
 /// [`SCALAR_RANGE_FAMILY`] member or [`FLOAT_STRIDED_RANGE`] (plain or
 /// module-qualified) with one concrete dtype value argument.
 ///
 /// This form exists only in the discovery round: the specialization fixpoint
 /// rewrites every occurrence into a construction of the linked range struct
 /// at its dtype before MIR lowering.
-pub fn scalar_range_parts(ty: &Ty) -> Option<(&'static str, mojito_ast::ast::Dtype)> {
-    let Ty::Struct(name, arguments) = ty else {
+pub fn scalar_range_parts(ty: &TyKind) -> Option<(&'static str, mojito_ast::ast::Dtype)> {
+    let TyKind::Struct(name, arguments) = ty else {
         return None;
     };
     let family = SCALAR_RANGE_FAMILY
@@ -766,13 +999,13 @@ pub const UNINIT_STORAGE_TYPE_NAME: &str = "__UninitStorage";
 /// Compiler-private tagged-union storage, the field type of the self-hosted
 /// `Variant`.
 ///
-/// The intrinsic `Ty::Variant` spelled from bundled standard-library sources
+/// The intrinsic `TyKind::Variant` spelled from bundled standard-library sources
 /// only (`var _storage: __VariantStorage[*Ts]`).
 pub const VARIANT_STORAGE_TYPE_NAME: &str = "__VariantStorage";
 
 /// Construct a nominal standard-library type from ordinary type arguments.
 pub fn nominal_type(name: impl Into<String>, arguments: Vec<Ty>) -> Ty {
-    Ty::Struct(name.into(), arguments.into_iter().map(TyArg::Ty).collect())
+    TyKind::Struct(name.into(), arguments.into_iter().map(TyArg::Ty).collect()).into()
 }
 
 pub fn list_type(element: Ty) -> Ty {
@@ -786,14 +1019,15 @@ pub fn array_type(element: Ty, length: i64) -> Ty {
 /// `Array[element, length]` whose length may still be symbolic, as a
 /// reflected list over a type parameter is sized by its field count.
 pub fn array_type_of(element: Ty, length: CtValue) -> Ty {
-    Ty::Struct(
+    TyKind::Struct(
         ARRAY_TYPE_NAME.into(),
-        vec![TyArg::Ty(element), TyArg::Val(length)].into(),
+        vec![TyArg::Ty(element), TyArg::Val(length)],
     )
+    .into()
 }
 
-pub fn array_parts(ty: &Ty) -> Option<(&Ty, i64)> {
-    let Ty::Struct(_, arguments) = ty else {
+pub fn array_parts(ty: &TyKind) -> Option<(&Ty, i64)> {
+    let TyKind::Struct(_, arguments) = ty else {
         return None;
     };
     let element = array_element(ty)?;
@@ -805,8 +1039,8 @@ pub fn array_parts(ty: &Ty) -> Option<(&Ty, i64)> {
 
 /// The element of any `Array` instantiation, including a struct-body template
 /// whose `length` is still a symbolic `CtValue::Expr`.
-pub fn array_element(ty: &Ty) -> Option<&Ty> {
-    let Ty::Struct(name, arguments) = ty else {
+pub fn array_element(ty: &TyKind) -> Option<&Ty> {
+    let TyKind::Struct(name, arguments) = ty else {
         return None;
     };
     if name != ARRAY_TYPE_NAME && !name.ends_with(&format!("${ARRAY_TYPE_NAME}")) {
@@ -849,7 +1083,7 @@ pub fn is_uninit_storage_name(name: &str) -> bool {
 /// Mono renames the struct while keeping its substituted argument list, so the
 /// payload stays recoverable from the arguments.
 pub fn uninit_storage_element(ty: &Ty) -> Option<&Ty> {
-    let Ty::Struct(name, arguments) = ty else {
+    let TyKind::Struct(name, arguments) = ty.kind() else {
         return None;
     };
     if !is_uninit_storage_name(name) {
@@ -861,7 +1095,7 @@ pub fn uninit_storage_element(ty: &Ty) -> Option<&Ty> {
     Some(element)
 }
 
-pub fn list_element(ty: &Ty) -> Option<&Ty> {
+pub fn list_element(ty: &TyKind) -> Option<&Ty> {
     let arguments = nominal_type_arguments(ty, LIST_TYPE_NAME)?;
     let [element] = arguments.as_slice() else {
         return None;
@@ -878,7 +1112,7 @@ pub fn set_type_with(element: Ty, hasher: Ty) -> Ty {
     nominal_type(SET_TYPE_NAME, vec![element, hasher])
 }
 
-pub fn set_element(ty: &Ty) -> Option<&Ty> {
+pub fn set_element(ty: &TyKind) -> Option<&Ty> {
     let arguments = nominal_type_arguments(ty, SET_TYPE_NAME)?;
     let ([element] | [element, _]) = arguments.as_slice() else {
         return None;
@@ -886,7 +1120,7 @@ pub fn set_element(ty: &Ty) -> Option<&Ty> {
     Some(*element)
 }
 
-pub fn optional_element(ty: &Ty) -> Option<&Ty> {
+pub fn optional_element(ty: &TyKind) -> Option<&Ty> {
     let arguments = nominal_type_arguments(ty, OPTIONAL_TYPE_NAME)?;
     let [element] = arguments.as_slice() else {
         return None;
@@ -894,7 +1128,7 @@ pub fn optional_element(ty: &Ty) -> Option<&Ty> {
     Some(*element)
 }
 
-pub fn owned_pointer_element(ty: &Ty) -> Option<&Ty> {
+pub fn owned_pointer_element(ty: &TyKind) -> Option<&Ty> {
     let arguments = nominal_type_arguments(ty, "OwnedPointer")?;
     let [element] = arguments.as_slice() else {
         return None;
@@ -911,7 +1145,7 @@ pub fn dict_type_with(key: Ty, value: Ty, hasher: Ty) -> Ty {
     nominal_type(DICT_TYPE_NAME, vec![key, value, hasher])
 }
 
-pub fn dict_elements(ty: &Ty) -> Option<(&Ty, &Ty)> {
+pub fn dict_elements(ty: &TyKind) -> Option<(&Ty, &Ty)> {
     let arguments = nominal_type_arguments(ty, DICT_TYPE_NAME)?;
     let ([key, value] | [key, value, _]) = arguments.as_slice() else {
         return None;
@@ -953,15 +1187,15 @@ pub fn unqualified_value_argument(value: &CtValue) -> String {
 /// only; `mojito_symbol::symbol::unqualified_instance_name` is the spelling
 /// that decodes the baked arguments at every nesting level.
 pub fn unqualified_type_name(ty: &Ty) -> String {
-    match ty {
-        Ty::Int | Ty::IntLiteral => "SIMD[DType.int, 1]".to_string(),
-        Ty::UInt => "SIMD[DType.uint, 1]".to_string(),
-        Ty::Float64 | Ty::FloatLiteral => "SIMD[DType.float64, 1]".to_string(),
-        Ty::Bool => "Bool".to_string(),
-        Ty::Simd { dtype, width } => format!("SIMD[{dtype}, {width}]"),
-        Ty::StringLiteral => "StringLiteral".to_string(),
-        Ty::None => "NoneType".to_string(),
-        Ty::Struct(name, args) => {
+    match ty.kind() {
+        TyKind::Int | TyKind::IntLiteral => "SIMD[DType.int, 1]".to_string(),
+        TyKind::UInt => "SIMD[DType.uint, 1]".to_string(),
+        TyKind::Float64 | TyKind::FloatLiteral => "SIMD[DType.float64, 1]".to_string(),
+        TyKind::Bool => "Bool".to_string(),
+        TyKind::Simd { dtype, width } => format!("SIMD[{dtype}, {width}]"),
+        TyKind::StringLiteral => "StringLiteral".to_string(),
+        TyKind::None => "NoneType".to_string(),
+        TyKind::Struct(name, args) => {
             // A public tuple's specialization symbol encodes its elements;
             // spell it as upstream's `Tuple[...]`.
             if let Some(elements) = tuple_elements(ty) {
@@ -1009,7 +1243,7 @@ pub fn unqualified_type_name(ty: &Ty) -> String {
                 format!("{base}[{}]", arguments.join(", "))
             }
         }
-        Ty::Variant(alternatives) => format!(
+        TyKind::Variant(alternatives) => format!(
             "Variant[{}]",
             alternatives
                 .iter()
@@ -1024,10 +1258,12 @@ pub fn unqualified_type_name(ty: &Ty) -> String {
 /// The variadic pack a type-argument list spreads, if it is exactly one.
 ///
 /// The pack is still a parameter (`Tuple[*Self.Ts]` inside the template that
-/// declares `*Ts`), and its starred spelling is its `Ty::Param` name.
+/// declares `*Ts`), and its starred spelling is its `TyKind::Param` name.
 pub fn pack_spread(elements: &[Ty]) -> Option<&Ty> {
     match elements {
-        [pack @ Ty::Param { binder, .. }] if binder.name.starts_with('*') => Some(pack),
+        [pack] if matches!(pack.kind(), TyKind::Param { binder, .. } if binder.name.starts_with('*')) => {
+            Some(pack)
+        }
         _ => None,
     }
 }
@@ -1041,7 +1277,7 @@ pub fn pack_spread(elements: &[Ty]) -> Option<&Ty> {
 /// `Variant[(Int, Bool)]`.
 pub fn expand_pack_spread(ty: &Ty, pack: &str, elements: &[Ty]) -> Ty {
     let spreads = |list: &[Ty]| {
-        matches!(pack_spread(list), Some(Ty::Param { binder, .. })
+        matches!(pack_spread(list).map(Ty::kind), Some(TyKind::Param { binder, .. })
             if binder.name.trim_start_matches('*') == pack)
     };
     let expand = |list: &[Ty]| -> Vec<Ty> {
@@ -1053,10 +1289,10 @@ pub fn expand_pack_spread(ty: &Ty, pack: &str, elements: &[Ty]) -> Ty {
                 .collect()
         }
     };
-    match ty {
+    match ty.kind() {
         // A spread of a list computed from packs closes over the bound
         // pack, to its elements once every length in it is known.
-        Ty::Struct(name, arguments) if let Some(list) = list_spread_argument(arguments) => {
+        TyKind::Struct(name, arguments) if let Some(list) = list_spread_argument(arguments) => {
             let context = ParamContext::detached();
             context
                 .type_list(elements.to_vec())
@@ -1068,39 +1304,35 @@ pub fn expand_pack_spread(ty: &Ty, pack: &str, elements: &[Ty]) -> Ty {
                 .and_then(|list| spread_arguments(name, &list))
                 .map_or_else(
                     |_| ty.clone(),
-                    |arguments| Ty::Struct(name.clone(), arguments.into()),
+                    |arguments| TyKind::Struct(name.clone(), arguments).into(),
                 )
         }
-        Ty::Struct(name, arguments) => {
+        TyKind::Struct(name, arguments) => {
             let spread = pack_spread_argument(arguments)
                 .is_some_and(|spread| spreads(std::slice::from_ref(spread)));
             let arguments = if spread && binds_pack_elementwise(name) {
                 elements.iter().cloned().map(TyArg::Ty).collect()
             } else if spread {
                 vec![TyArg::Val(CtValue::Tuple(
-                    elements
-                        .iter()
-                        .cloned()
-                        .map(Box::new)
-                        .map(CtValue::Type)
-                        .collect(),
+                    elements.iter().cloned().map(CtValue::Type).collect(),
                 ))]
             } else {
                 map_tyargs(arguments, |ty| expand_pack_spread(ty, pack, elements))
             };
-            Ty::Struct(name.clone(), arguments.into())
+            TyKind::Struct(name.clone(), arguments).into()
         }
-        Ty::Tuple(list) => Ty::Tuple(expand(list)),
-        Ty::RuntimePack(list) => Ty::RuntimePack(expand(list)),
-        Ty::Variant(list) => Ty::Variant(expand(list)),
-        Ty::Pointer { element, origin } => Ty::Pointer {
-            element: Box::new(expand_pack_spread(element, pack, elements)),
+        TyKind::Tuple(list) => TyKind::Tuple(expand(list)).into(),
+        TyKind::RuntimePack(list) => TyKind::RuntimePack(expand(list)).into(),
+        TyKind::Variant(list) => TyKind::Variant(expand(list)).into(),
+        TyKind::Pointer { element, origin } => TyKind::Pointer {
+            element: expand_pack_spread(element, pack, elements),
             origin: origin.clone(),
-        },
-        Ty::Ref(reference) => {
+        }
+        .into(),
+        TyKind::Ref(reference) => {
             let mut reference = reference.clone();
-            reference.referent = Box::new(expand_pack_spread(&reference.referent, pack, elements));
-            Ty::Ref(reference)
+            reference.referent = expand_pack_spread(&reference.referent, pack, elements);
+            TyKind::Ref(reference).into()
         }
         _ => ty.clone(),
     }
@@ -1119,8 +1351,8 @@ pub fn pack_spread_argument(arguments: &[TyArg]) -> Option<&Ty> {
 /// `*Ts.reverse()` and `*TypeList._concat[..]()` are such lists; a pack
 /// itself is [`pack_spread`]'s.
 pub fn list_spread(ty: &Ty) -> Option<&ParamExpr> {
-    match ty {
-        Ty::Dependent(list) if matches!(list.expr().meta(), MetaTy::ParamList(_)) => {
+    match ty.kind() {
+        TyKind::Dependent(list) if matches!(list.expr().meta(), MetaTy::ParamList(_)) => {
             Some(list.expr())
         }
         _ => None,
@@ -1142,19 +1374,19 @@ pub fn list_spread_argument(arguments: &[TyArg]) -> Option<&ParamExpr> {
 /// itself while a length is open.
 pub fn spread_arguments(name: &str, list: &ParamExpr) -> Result<Vec<TyArg>, ParamError> {
     let Some(elements) = ParamContext::detached().list_elements(list)? else {
-        return Ok(vec![TyArg::Ty(Ty::Dependent(DependentType::Parameter(
-            list.clone(),
-        )))]);
+        return Ok(vec![TyArg::Ty(
+            TyKind::Dependent(DependentType::Parameter(list.clone())).into(),
+        )]);
     };
     let types = elements.into_iter().map(|element| match element.kind() {
-        ParamKind::TypeShape(ty) => (**ty).clone(),
+        ParamKind::TypeShape(ty) => ty.clone(),
         _ => DependentType::resolve(element),
     });
     Ok(if binds_pack_elementwise(name) {
         types.map(TyArg::Ty).collect()
     } else {
         vec![TyArg::Val(CtValue::Tuple(
-            types.map(Box::new).map(CtValue::Type).collect(),
+            types.map(CtValue::Type).collect(),
         ))]
     })
 }
@@ -1198,15 +1430,15 @@ pub fn canonical_pack_arguments(name: &str, arguments: Vec<TyArg>) -> Vec<TyArg>
     canonical.splice(
         position..position,
         values.into_iter().map(|value| match value {
-            CtValue::Type(ty) => TyArg::Ty(*ty),
+            CtValue::Type(ty) => TyArg::Ty(ty),
             _ => unreachable!("every element is a type"),
         }),
     );
     canonical
 }
 
-pub fn tuple_elements(ty: &Ty) -> Option<Vec<&Ty>> {
-    let Ty::Struct(name, arguments) = ty else {
+pub fn tuple_elements(ty: &TyKind) -> Option<Vec<&Ty>> {
+    let TyKind::Struct(name, arguments) = ty else {
         return None;
     };
     // `$` cannot be written in a source identifier: besides the ordinary
@@ -1228,7 +1460,7 @@ pub fn range_type() -> Ty {
     nominal_type(RANGE_TYPE_NAME, Vec::new())
 }
 
-pub fn is_range_type(ty: &Ty) -> bool {
+pub fn is_range_type(ty: &TyKind) -> bool {
     nominal_type_arguments(ty, RANGE_TYPE_NAME).is_some_and(|arguments| arguments.is_empty())
 }
 
@@ -1238,11 +1470,11 @@ pub fn is_range_type(ty: &Ty) -> bool {
 /// parameter. A method with any other parameter is an ordinary overload, and
 /// the value displays through the reflective default instead.
 pub fn is_writer_parameter(ty: &Ty) -> bool {
-    matches!(ty, Ty::Param { bounds, .. } if bounds.iter().any(|bound| bound == "Writer"))
+    matches!(ty.kind(), TyKind::Param { bounds, .. } if bounds.iter().any(|bound| bound == "Writer"))
 }
 
 pub fn contains_infer(ty: &Ty) -> bool {
-    mentions_open(ty, &|ty| matches!(ty, Ty::Infer))
+    mentions_open(ty, &|ty| matches!(ty.kind(), TyKind::Infer))
 }
 
 /// Whether the compile-time `StringLiteral` occurs anywhere in `ty`.
@@ -1251,7 +1483,7 @@ pub fn contains_infer(ty: &Ty) -> bool {
 /// `String` struct's, so an instantiation argument that mentions it never
 /// selects a nominal-`String` instance.
 pub fn contains_string_literal(ty: &Ty) -> bool {
-    mentions_open(ty, &|ty| matches!(ty, Ty::StringLiteral))
+    mentions_open(ty, &|ty| matches!(ty.kind(), TyKind::StringLiteral))
 }
 
 /// Whether `predicate` holds for `ty` or any type nested in it (struct
@@ -1261,7 +1493,7 @@ pub fn mentions(ty: &Ty, predicate: &dyn Fn(&Ty) -> bool) -> bool {
 }
 
 /// [`mentions`] for a `predicate` that holds of no type a
-/// [closed](TyArgs::is_closed) argument list can hold — a parameter, a
+/// [closed](Ty::is_closed) argument list can hold — a parameter, a
 /// literal or inference type, a callable — so a closed level is not walked.
 pub fn mentions_open(ty: &Ty, predicate: &dyn Fn(&Ty) -> bool) -> bool {
     mentions_below(ty, predicate, true)
@@ -1273,15 +1505,15 @@ pub fn mentions_open(ty: &Ty, predicate: &dyn Fn(&Ty) -> bool) -> bool {
 pub enum ParamDecl {
     /// A type parameter `T: Trait & ...`.
     Type {
-        /// The binder's identity: its declaration and slot. Every `Ty::Param`
+        /// The binder's identity: its declaration and slot. Every `TyKind::Param`
         /// naming this binder carries the same id.
         id: ParamId,
         name: String,
         bounds: Vec<String>,
         /// Checked anonymous callable-trait contract, when this parameter was
         /// declared with `F: def(...) -> ...`.
-        callable_bound: Option<Box<Ty>>,
-        default: Option<Box<Ty>>,
+        callable_bound: Option<Ty>,
+        default: Option<Ty>,
         infer_only: bool,
         variadic: bool,
         constraints: Vec<GenericConstraint>,
@@ -1293,7 +1525,7 @@ pub enum ParamDecl {
         /// The binder's identity; a `DeclRef` to this parameter carries it.
         id: ParamId,
         name: String,
-        ty: Box<Ty>,
+        ty: Ty,
         default: Option<ParamExpr>,
         /// A callable default is deliberately not a `CtValue`: captured
         /// closures contain frame-relative runtime state and therefore cannot
@@ -1627,13 +1859,13 @@ impl ParamDecl {
     pub fn with_value_type(&self, ty: Ty) -> Self {
         let mut typed = self.clone();
         if let Self::Value { ty: declared, .. } = &mut typed {
-            **declared = ty;
+            *declared = ty;
         }
         typed
     }
 
     /// The argument this binder contributes to its declaration's own `Self`
-    /// type: a type binder as its `Ty::Param`, a value binder as a reference
+    /// type: a type binder as its `TyKind::Param`, a value binder as a reference
     /// to itself.
     pub fn own_argument(&self) -> TyArg {
         match self {
@@ -1641,13 +1873,16 @@ impl ParamDecl {
                 bounds,
                 callable_bound,
                 ..
-            } => TyArg::Ty(Ty::Param {
-                binder: self.binder(),
-                bounds: bounds.clone(),
-                callable_bound: callable_bound.clone(),
-            }),
+            } => TyArg::Ty(
+                TyKind::Param {
+                    binder: self.binder(),
+                    bounds: bounds.clone(),
+                    callable_bound: callable_bound.clone(),
+                }
+                .into(),
+            ),
             Self::Value { ty, variadic, .. } => {
-                let element = MetaTy::value((**ty).clone());
+                let element = MetaTy::value((*ty).clone());
                 TyArg::Val(CtValue::Expr(ParamContext::detached().decl_ref(
                     self.id().clone(),
                     self.name().trim_start_matches('*'),
@@ -1670,7 +1905,7 @@ pub type TySubst = HashMap<ParamId, Ty>;
 ///
 /// Part of a struct type's identity, so `FixedBuffer[8] != FixedBuffer[9]`.
 /// Origins participate in checked identity but erase from the runtime ABI,
-/// exactly like `Ty::Pointer` origins — a parameterized iterator's `origin`
+/// exactly like `TyKind::Pointer` origins — a parameterized iterator's `origin`
 /// argument distinguishes checked types without changing lowering.
 #[derive(Debug, Clone, Eq, serde::Serialize, serde::Deserialize)]
 pub enum TyArg {
@@ -1709,7 +1944,7 @@ impl TyArg {
     /// scope. Origins erase from runtime state and bind no value.
     pub fn ct_value(&self) -> Option<CtValue> {
         match self {
-            Self::Ty(ty) => Some(CtValue::Type(Box::new(ty.clone()))),
+            Self::Ty(ty) => Some(CtValue::Type(ty.clone())),
             Self::Val(value) => Some(value.clone()),
             Self::Origin(_) => None,
         }
@@ -1726,168 +1961,13 @@ impl fmt::Display for TyArg {
     }
 }
 
-/// A struct type's argument list, shared between clones.
-///
-/// A nested type (`W[W[Int]]`) copied into every register, key, and binding
-/// that names it holds its level below once rather than once per copy. Reads
-/// see a `Vec<TyArg>`. A write is explicit — [`TyArgs::update`] unshares one
-/// level, and a rewriting walk rebuilds through [`TyArgs::reusing`] — so a
-/// walk that changes nothing never copies the levels it passes through.
-///
-/// Each level caches two facts about everything below it, computed once when
-/// the level is built: its hash, so hashing a type visits one level, and
-/// whether it is [closed](TyArgs::is_closed), so a walk that only looks for
-/// or rewrites open positions stops there. A deeply nested type then costs
-/// each walk its own level, not its depth.
-#[derive(Clone, PartialEq, Eq, Hash)]
-pub struct TyArgs(Arc<TyArgList>);
-
-impl TyArgs {
-    /// The arguments as an owned list, unsharing them only when shared.
-    pub fn into_vec(self) -> Vec<TyArg> {
-        Arc::unwrap_or_clone(self.0).arguments
-    }
-
-    /// Apply `write` to the arguments, unshared from every other clone
-    /// first, and refresh the cached facts after it.
-    pub fn update<R>(&mut self, write: impl FnOnce(&mut Vec<TyArg>) -> R) -> R {
-        let list = Arc::make_mut(&mut self.0);
-        let result = write(&mut list.arguments);
-        *list = TyArgList::new(std::mem::take(&mut list.arguments));
-        result
-    }
-
-    /// `rebuilt` as an argument list, keeping this one's storage when a
-    /// rewrite left every argument as it was, so a walk over a nested type
-    /// that changes nothing shares the type rather than copying it.
-    #[must_use]
-    pub fn reusing(&self, rebuilt: Vec<TyArg>) -> Self {
-        if self.0.arguments == rebuilt {
-            self.clone()
-        } else {
-            rebuilt.into()
-        }
-    }
-
-    /// Whether every argument, at any depth, is a concrete runtime-shaped
-    /// type or a scalar compile-time value, and every origin is unbound.
-    ///
-    /// A closed list holds no parameter, associated or dependent projection,
-    /// `Self`, inference hole, literal type or value, callable, pointer,
-    /// reference, expression, deferred slot, marker, or bound origin. So
-    /// [`is_symbolic`] is false of it, substitution and the literal, origin,
-    /// and callable-environment canonicalizers leave it as it is, and a
-    /// [`TyRewrite`] that rewrites only those positions passes it whole.
-    pub fn is_closed(&self) -> bool {
-        self.0.closed
-    }
-}
-
-/// The storage behind [`TyArgs`]: the arguments with their cached facts.
-#[derive(Clone)]
-struct TyArgList {
-    arguments: Vec<TyArg>,
-    digest: u64,
-    closed: bool,
-}
-
-impl TyArgList {
-    fn new(arguments: Vec<TyArg>) -> Self {
-        use std::hash::{Hash, Hasher};
-        // A fixed-key hasher, so equal lists digest alike in every clone.
-        let mut hasher = std::hash::DefaultHasher::new();
-        arguments.hash(&mut hasher);
-        Self {
-            digest: hasher.finish(),
-            closed: arguments.iter().all(closed_argument),
-            arguments,
-        }
-    }
-}
-
-impl PartialEq for TyArgList {
-    fn eq(&self, other: &Self) -> bool {
-        self.digest == other.digest && self.arguments == other.arguments
-    }
-}
-
-impl Eq for TyArgList {}
-
-impl std::hash::Hash for TyArgList {
-    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        state.write_u64(self.digest);
-    }
-}
-
-impl Default for TyArgs {
-    fn default() -> Self {
-        Vec::new().into()
-    }
-}
-
-impl Deref for TyArgs {
-    type Target = Vec<TyArg>;
-
-    fn deref(&self) -> &Vec<TyArg> {
-        &self.0.arguments
-    }
-}
-
-impl fmt::Debug for TyArgs {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        self.0.arguments.fmt(f)
-    }
-}
-
-impl serde::Serialize for TyArgs {
-    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        self.0.arguments.serialize(serializer)
-    }
-}
-
-impl<'de> serde::Deserialize<'de> for TyArgs {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        Vec::<TyArg>::deserialize(deserializer).map(Self::from)
-    }
-}
-
-impl From<Vec<TyArg>> for TyArgs {
-    fn from(arguments: Vec<TyArg>) -> Self {
-        Self(Arc::new(TyArgList::new(arguments)))
-    }
-}
-
-impl From<TyArgs> for Vec<TyArg> {
-    fn from(arguments: TyArgs) -> Self {
-        arguments.into_vec()
-    }
-}
-
-impl FromIterator<TyArg> for TyArgs {
-    fn from_iter<I: IntoIterator<Item = TyArg>>(iter: I) -> Self {
-        iter.into_iter().collect::<Vec<_>>().into()
-    }
-}
-
-impl IntoIterator for TyArgs {
-    type Item = TyArg;
-    type IntoIter = std::vec::IntoIter<TyArg>;
-
-    fn into_iter(self) -> Self::IntoIter {
-        self.into_vec().into_iter()
-    }
-}
-
-impl<'a> IntoIterator for &'a TyArgs {
-    type Item = &'a TyArg;
-    type IntoIter = std::slice::Iter<'a, TyArg>;
-
-    fn into_iter(self) -> Self::IntoIter {
-        self.0.arguments.iter()
-    }
-}
-
 impl fmt::Display for Ty {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.kind().fmt(f)
+    }
+}
+
+impl fmt::Display for TyKind {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Int | Self::IntLiteral => write!(f, "Int"),
@@ -2059,8 +2139,8 @@ impl fmt::Display for Ty {
     }
 }
 
-fn nominal_type_arguments<'a>(ty: &'a Ty, expected: &str) -> Option<Vec<&'a Ty>> {
-    let Ty::Struct(name, arguments) = ty else {
+fn nominal_type_arguments<'a>(ty: &'a TyKind, expected: &str) -> Option<Vec<&'a Ty>> {
+    let TyKind::Struct(name, arguments) = ty else {
         return None;
     };
     // Linked stdlib declarations used module-qualified symbols historically.
@@ -2086,36 +2166,39 @@ fn nominal_type_arguments<'a>(ty: &'a Ty, expected: &str) -> Option<Vec<&'a Ty>>
 /// look new on every discovery round.
 pub fn erase_origin_arguments(ty: &Ty) -> Ty {
     let recur = |ty: &Ty| erase_origin_arguments(ty);
-    match ty {
-        Ty::Struct(_, arguments) if arguments.is_closed() => ty.clone(),
-        Ty::Struct(name, arguments) => Ty::Struct(
+    match ty.kind() {
+        TyKind::Struct(..) if ty.is_closed() => ty.clone(),
+        TyKind::Struct(name, arguments) => ty.reusing(TyKind::Struct(
             name.clone(),
-            arguments.reusing(
-                arguments
-                    .iter()
-                    .map(|argument| match argument {
-                        TyArg::Ty(inner) => TyArg::Ty(recur(inner)),
-                        TyArg::Val(value) => TyArg::Val(value.clone()),
-                        TyArg::Origin(_) => TyArg::Origin(crate::origin::Origin::Unbound),
-                    })
-                    .collect(),
-            ),
-        ),
-        Ty::Tuple(elements) => Ty::Tuple(elements.iter().map(recur).collect()),
-        Ty::RuntimePack(elements) => Ty::RuntimePack(elements.iter().map(recur).collect()),
-        Ty::Variant(alternatives) => Ty::Variant(alternatives.iter().map(recur).collect()),
-        Ty::ComptimeList(element) => Ty::ComptimeList(Box::new(recur(element))),
-        Ty::VariadicPack(element) => Ty::VariadicPack(Box::new(recur(element))),
-        Ty::Pointer { element, origin } => Ty::Pointer {
-            element: Box::new(recur(element)),
-            origin: origin.clone(),
-        },
-        Ty::Ref(reference) => {
-            let mut reference = reference.clone();
-            reference.referent = Box::new(recur(&reference.referent));
-            Ty::Ref(reference)
+            arguments
+                .iter()
+                .map(|argument| match argument {
+                    TyArg::Ty(inner) => TyArg::Ty(recur(inner)),
+                    TyArg::Val(value) => TyArg::Val(value.clone()),
+                    TyArg::Origin(_) => TyArg::Origin(crate::origin::Origin::Unbound),
+                })
+                .collect(),
+        )),
+        TyKind::Tuple(elements) => TyKind::Tuple(elements.iter().map(recur).collect()).into(),
+        TyKind::RuntimePack(elements) => {
+            TyKind::RuntimePack(elements.iter().map(recur).collect()).into()
         }
-        other => other.clone(),
+        TyKind::Variant(alternatives) => {
+            TyKind::Variant(alternatives.iter().map(recur).collect()).into()
+        }
+        TyKind::ComptimeList(element) => TyKind::ComptimeList(recur(element)).into(),
+        TyKind::VariadicPack(element) => TyKind::VariadicPack(recur(element)).into(),
+        TyKind::Pointer { element, origin } => TyKind::Pointer {
+            element: recur(element),
+            origin: origin.clone(),
+        }
+        .into(),
+        TyKind::Ref(reference) => {
+            let mut reference = reference.clone();
+            reference.referent = recur(&reference.referent);
+            TyKind::Ref(reference).into()
+        }
+        _ => ty.clone(),
     }
 }
 
@@ -2127,21 +2210,22 @@ pub fn value_coerces(from: &Ty, to: &Ty) -> bool {
 
 /// The (canonicalized) `Ty` for a SIMD of `dtype`/`width`.
 ///
-/// A width-1 `int` is the native `Ty::Int` and a width-1 `float64` the native
-/// `Ty::Float64` (Mojo unifies `Int`/`Float64` with their `SIMD[..., 1]`
-/// spellings); everything else is a `Ty::Simd`.
+/// A width-1 `int` is the native `TyKind::Int` and a width-1 `float64` the native
+/// `TyKind::Float64` (Mojo unifies `Int`/`Float64` with their `SIMD[..., 1]`
+/// spellings); everything else is a `TyKind::Simd`.
 ///
 /// Every phase that names a SIMD leaf type (checker annotations, the VM's
 /// runtime leaf classification, the hasher's leaf instances) agrees through this
 /// one function.
-pub const fn canonical_simd_ty(dtype: Dtype, width: i64) -> Ty {
+pub fn canonical_simd_ty(dtype: Dtype, width: i64) -> Ty {
     match (dtype, width) {
-        (Dtype::Int, 1) => Ty::Int,
-        (Dtype::Float64, 1) => Ty::Float64,
-        _ => Ty::Simd {
+        (Dtype::Int, 1) => Ty::int(),
+        (Dtype::Float64, 1) => Ty::float64(),
+        _ => TyKind::Simd {
             dtype: SimdDtype::Known(dtype),
             width: SimdWidth::Known(width),
-        },
+        }
+        .into(),
     }
 }
 
@@ -2149,7 +2233,7 @@ pub const fn canonical_simd_ty(dtype: Dtype, width: i64) -> Ty {
 ///
 /// A slot whose expression is a closed constant becomes `Known`, and two
 /// known slots canonicalize through [`canonical_simd_ty`]. This is the only
-/// constructor of a symbolic `Ty::Simd`, so `Expr` never holds a closed
+/// constructor of a symbolic `TyKind::Simd`, so `Expr` never holds a closed
 /// expression.
 pub fn simd_ty_from_slots(dtype: SimdDtype, width: SimdWidth) -> Result<Ty, ParamError> {
     let dtype = match dtype {
@@ -2183,7 +2267,7 @@ pub fn simd_ty_from_slots(dtype: SimdDtype, width: SimdWidth) -> Result<Ty, Para
     };
     Ok(match (dtype, width) {
         (SimdDtype::Known(dtype), SimdWidth::Known(width)) => canonical_simd_ty(dtype, width),
-        (dtype, width) => Ty::Simd { dtype, width },
+        (dtype, width) => TyKind::Simd { dtype, width }.into(),
     })
 }
 
@@ -2193,10 +2277,10 @@ pub fn simd_ty_from_slots(dtype: SimdDtype, width: SimdWidth) -> Result<Ty, Para
 /// `Bool` as `Scalar[DType.bool]` (upstream's `Bool.__hash__`); every other
 /// leaf hashes as itself.
 pub fn hash_leaf_ty(ty: &Ty) -> Ty {
-    match ty {
-        Ty::Dtype => canonical_simd_ty(Dtype::UInt8, 1),
-        Ty::Bool => canonical_simd_ty(Dtype::Bool, 1),
-        other => other.clone(),
+    match ty.kind() {
+        TyKind::Dtype => canonical_simd_ty(Dtype::UInt8, 1),
+        TyKind::Bool => canonical_simd_ty(Dtype::Bool, 1),
+        _ => ty.clone(),
     }
 }
 
@@ -2206,12 +2290,12 @@ pub fn hash_leaf_ty(ty: &Ty) -> Ty {
 ///
 /// `Bool` is not a SIMD value (upstream's `Bool` is its own struct;
 /// `Scalar[DType.bool]` is the vector).
-pub const fn simd_shape(ty: &Ty) -> Option<(Dtype, i64)> {
+pub const fn simd_shape(ty: &TyKind) -> Option<(Dtype, i64)> {
     Some(match ty {
-        Ty::Int | Ty::IntLiteral => (Dtype::Int, 1),
-        Ty::UInt => (Dtype::UInt64, 1),
-        Ty::Float64 | Ty::FloatLiteral => (Dtype::Float64, 1),
-        Ty::Simd {
+        TyKind::Int | TyKind::IntLiteral => (Dtype::Int, 1),
+        TyKind::UInt => (Dtype::UInt64, 1),
+        TyKind::Float64 | TyKind::FloatLiteral => (Dtype::Float64, 1),
+        TyKind::Simd {
             dtype: SimdDtype::Known(dtype),
             width: SimdWidth::Known(width),
         } => (*dtype, *width),
@@ -2221,31 +2305,31 @@ pub const fn simd_shape(ty: &Ty) -> Option<(Dtype, i64)> {
 
 /// The slots of a SIMD-valued type, symbolic or not — [`simd_shape`] for a
 /// declaration that is still a template.
-pub fn simd_slots(ty: &Ty) -> Option<(SimdDtype, SimdWidth)> {
+pub fn simd_slots(ty: &TyKind) -> Option<(SimdDtype, SimdWidth)> {
     match ty {
-        Ty::Simd { dtype, width } => Some((dtype.clone(), width.clone())),
+        TyKind::Simd { dtype, width } => Some((dtype.clone(), width.clone())),
         _ => {
             simd_shape(ty).map(|(dtype, width)| (SimdDtype::Known(dtype), SimdWidth::Known(width)))
         }
     }
 }
 
-/// Whether `ty` is a width-one `Ty::Simd` (a scalar alias other than the
+/// Whether `ty` is a width-one `TyKind::Simd` (a scalar alias other than the
 /// native `Int`/`Float64`), whatever its dtype slot.
-pub const fn is_scalar_simd(ty: &Ty) -> bool {
+pub const fn is_scalar_simd(ty: &TyKind) -> bool {
     matches!(
         ty,
-        Ty::Simd {
+        TyKind::Simd {
             width: SimdWidth::Known(1),
             ..
         }
     )
 }
 
-/// The known dtype of a width-one `Ty::Simd`.
-pub const fn scalar_simd_dtype(ty: &Ty) -> Option<Dtype> {
+/// The known dtype of a width-one `TyKind::Simd`.
+pub const fn scalar_simd_dtype(ty: &TyKind) -> Option<Dtype> {
     match ty {
-        Ty::Simd {
+        TyKind::Simd {
             dtype: SimdDtype::Known(dtype),
             width: SimdWidth::Known(1),
         } => Some(*dtype),
@@ -2258,10 +2342,11 @@ pub const fn scalar_simd_dtype(ty: &Ty) -> Option<Dtype> {
 pub fn simd_lane(dtype: &SimdDtype) -> Ty {
     match dtype {
         SimdDtype::Known(dtype) => canonical_simd_ty(*dtype, 1),
-        SimdDtype::Expr(_) => Ty::Simd {
+        SimdDtype::Expr(_) => TyKind::Simd {
             dtype: dtype.clone(),
             width: SimdWidth::Known(1),
-        },
+        }
+        .into(),
     }
 }
 
@@ -2269,31 +2354,31 @@ pub fn simd_lane(dtype: &SimdDtype) -> Ty {
 /// another (`IntLiteral` → `Int`, `FloatLiteral` → `Float64`), applied through
 /// struct arguments, packs, and variants.
 pub fn default_literal(ty: &Ty) -> Ty {
-    match ty {
-        Ty::IntLiteral => Ty::Int,
-        Ty::FloatLiteral => Ty::Float64,
-        Ty::Struct(_, arguments) if arguments.is_closed() => ty.clone(),
-        Ty::Struct(name, arguments) => Ty::Struct(
+    match ty.kind() {
+        TyKind::IntLiteral => Ty::int(),
+        TyKind::FloatLiteral => Ty::float64(),
+        TyKind::Struct(..) if ty.is_closed() => ty.clone(),
+        TyKind::Struct(name, arguments) => ty.reusing(TyKind::Struct(
             name.clone(),
-            arguments.reusing(
-                arguments
-                    .iter()
-                    .map(|argument| match argument {
-                        TyArg::Ty(ty) => TyArg::Ty(default_literal(ty)),
-                        TyArg::Val(value) => TyArg::Val(value.clone()),
-                        TyArg::Origin(origin) => TyArg::Origin(origin.clone()),
-                    })
-                    .collect(),
-            ),
-        ),
+            arguments
+                .iter()
+                .map(|argument| match argument {
+                    TyArg::Ty(ty) => TyArg::Ty(default_literal(ty)),
+                    TyArg::Val(value) => TyArg::Val(value.clone()),
+                    TyArg::Origin(origin) => TyArg::Origin(origin.clone()),
+                })
+                .collect(),
+        )),
         // Internal heterogeneous pack storage also materializes its elements.
-        Ty::Tuple(elems) => Ty::Tuple(elems.iter().map(default_literal).collect()),
-        Ty::VariadicPack(element) => Ty::VariadicPack(Box::new(default_literal(element))),
-        Ty::RuntimePack(elems) => Ty::RuntimePack(elems.iter().map(default_literal).collect()),
-        Ty::Variant(alternatives) => {
-            Ty::Variant(alternatives.iter().map(default_literal).collect())
+        TyKind::Tuple(elems) => TyKind::Tuple(elems.iter().map(default_literal).collect()).into(),
+        TyKind::VariadicPack(element) => TyKind::VariadicPack(default_literal(element)).into(),
+        TyKind::RuntimePack(elems) => {
+            TyKind::RuntimePack(elems.iter().map(default_literal).collect()).into()
         }
-        other => other.clone(),
+        TyKind::Variant(alternatives) => {
+            TyKind::Variant(alternatives.iter().map(default_literal).collect()).into()
+        }
+        _ => ty.clone(),
     }
 }
 
@@ -2307,14 +2392,14 @@ pub fn default_literal(ty: &Ty) -> Ty {
 /// Panics if the `Tuple` guard above admits a type without element types,
 /// which the type lattice forbids.
 pub fn coerces(from: &Ty, to: &Ty) -> bool {
-    if *from == Ty::Never {
+    if *from == TyKind::Never {
         return true;
     }
     if from == to {
         return true;
     }
-    match (from, to) {
-        (Ty::Struct(from, from_args), Ty::Struct(to, to_args))
+    match (from.kind(), to.kind()) {
+        (TyKind::Struct(from, from_args), TyKind::Struct(to, to_args))
             if matches!(from.as_str(), "ContiguousSlice" | "StridedSlice")
                 && to == "Slice"
                 && from_args.is_empty()
@@ -2326,7 +2411,7 @@ pub fn coerces(from: &Ty, to: &Ty) -> bool {
         // Slice)`: a `Slice`-typed descriptor value selects the strided
         // (normalizing) overloads. A contiguous literal does not widen this
         // way, matching upstream where `[a:b]` never builds a `StridedSlice`.
-        (Ty::Struct(from, from_args), Ty::Struct(to, to_args))
+        (TyKind::Struct(from, from_args), TyKind::Struct(to, to_args))
             if from == "Slice"
                 && to == "StridedSlice"
                 && from_args.is_empty()
@@ -2334,8 +2419,8 @@ pub fn coerces(from: &Ty, to: &Ty) -> bool {
         {
             true
         }
-        (Ty::Param { binder: a, .. }, Ty::Param { binder: b, .. }) => a == b,
-        (Ty::Struct(an, aargs), Ty::Struct(bn, bargs)) => {
+        (TyKind::Param { binder: a, .. }, TyKind::Param { binder: b, .. }) => a == b,
+        (TyKind::Struct(an, aargs), TyKind::Struct(bn, bargs)) => {
             an == bn
                 && aargs.len() == bargs.len()
                 && aargs.iter().zip(bargs).all(|(a, b)| match (a, b) {
@@ -2347,18 +2432,18 @@ pub fn coerces(from: &Ty, to: &Ty) -> bool {
                     _ => false,
                 })
         }
-        (Ty::ComptimeList(a), Ty::ComptimeList(b)) => coerces(a, b),
+        (TyKind::ComptimeList(a), TyKind::ComptimeList(b)) => coerces(a, b),
         (
-            Ty::Pointer {
+            TyKind::Pointer {
                 element: a,
                 origin: ao,
             },
-            Ty::Pointer {
+            TyKind::Pointer {
                 element: b,
                 origin: bo,
             },
         ) => coerces(a, b) && ao.coerces_to(bo),
-        (Ty::Func(from), Ty::Func(to)) => {
+        (TyKind::Func(from), TyKind::Func(to)) => {
             let FuncTy {
                 environment: from_environment,
                 params: from_params,
@@ -2398,13 +2483,13 @@ pub fn coerces(from: &Ty, to: &Ty) -> bool {
                 && from_ref_params == to_ref_params
                 && from_ref_return == to_ref_return
                 && (!from_raises || *to_raises)
-                && match (from_error.as_deref(), to_error.as_deref()) {
+                && match (from_error.as_ref().map(Ty::kind), to_error.as_ref().map(Ty::kind)) {
                     (None, None) => true,
-                    (None, Some(Ty::Never)) => true,
+                    (None, Some(TyKind::Never)) => true,
                     (None, Some(_)) => true,
-                    (Some(from), Some(Ty::Error)) => from != &Ty::Never,
+                    (Some(from), Some(TyKind::Error)) => *from != TyKind::Never,
                     (Some(from), Some(to)) => from == to,
-                    (Some(Ty::Never), None) => true,
+                    (Some(TyKind::Never), None) => true,
                     (Some(_), None) => false,
                 }
                 && from_params.len() == to_params.len()
@@ -2414,29 +2499,32 @@ pub fn coerces(from: &Ty, to: &Ty) -> bool {
                     .all(|(from, to)| from == to)
                 && from_ret == to_ret
         }
-        (Ty::IntLiteral, Ty::Int | Ty::UInt | Ty::Float64 | Ty::FloatLiteral) => true,
-        (Ty::FloatLiteral, Ty::Float64) => true,
         (
-            literal,
-            Ty::Simd {
+            TyKind::IntLiteral,
+            TyKind::Int | TyKind::UInt | TyKind::Float64 | TyKind::FloatLiteral,
+        ) => true,
+        (TyKind::FloatLiteral, TyKind::Float64) => true,
+        (
+            _,
+            TyKind::Simd {
                 dtype,
                 width: SimdWidth::Known(1),
             },
-        ) if splats_to(literal, dtype) => true,
+        ) if splats_to(from, dtype) => true,
         // Upstream's `@implicit SIMD.__init__(IntLiteral)` and
         // `(FloatLiteral)` splat an exact literal across every lane, a
         // symbolic lane count included.
-        (literal @ (Ty::IntLiteral | Ty::FloatLiteral), Ty::Simd { dtype, width })
-            if !width.is_inferred() && splats_to(literal, dtype) =>
+        (TyKind::IntLiteral | TyKind::FloatLiteral, TyKind::Simd { dtype, width })
+            if !width.is_inferred() && splats_to(from, dtype) =>
         {
             true
         }
         (
-            Ty::Simd {
+            TyKind::Simd {
                 dtype: from_dtype,
                 width: from_width,
             },
-            Ty::Simd {
+            TyKind::Simd {
                 dtype: to_dtype,
                 width: to_width,
             },
@@ -2445,10 +2533,10 @@ pub fn coerces(from: &Ty, to: &Ty) -> bool {
         }
         // A tuple coerces element-wise (same arity) — so a literal element
         // materializes: `(1, 2.0)` fits `Tuple[Float64, Float64]`.
-        (Ty::Tuple(a), Ty::Tuple(b)) => {
+        (TyKind::Tuple(a), TyKind::Tuple(b)) => {
             a.len() == b.len() && a.iter().zip(b).all(|(x, y)| coerces(x, y))
         }
-        (Ty::Variant(a), Ty::Variant(b)) => {
+        (TyKind::Variant(a), TyKind::Variant(b)) => {
             a.len() == b.len() && a.iter().zip(b).all(|(x, y)| coerces(x, y))
         }
         _ => false,
@@ -2462,17 +2550,17 @@ pub fn coerces(from: &Ty, to: &Ty) -> bool {
 /// fits. Into a symbolic dtype an integer or floating literal fits (the
 /// literal's fit is the instantiation's to check, as upstream), a concrete
 /// scalar never does, and a width-one vector of the same expression does.
-pub fn splats_to(ty: &Ty, dtype: &SimdDtype) -> bool {
+pub fn splats_to(ty: &TyKind, dtype: &SimdDtype) -> bool {
     match (ty, dtype) {
-        (Ty::IntLiteral, SimdDtype::Known(dtype)) => *dtype != Dtype::Bool,
-        (Ty::FloatLiteral, SimdDtype::Known(dtype)) => dtype.is_float(),
-        (Ty::IntLiteral | Ty::FloatLiteral, SimdDtype::Expr(_)) => true,
-        (Ty::Bool, SimdDtype::Known(dtype)) => *dtype == Dtype::Bool,
-        (Ty::Int, SimdDtype::Known(dtype)) => *dtype == Dtype::Int,
+        (TyKind::IntLiteral, SimdDtype::Known(dtype)) => *dtype != Dtype::Bool,
+        (TyKind::FloatLiteral, SimdDtype::Known(dtype)) => dtype.is_float(),
+        (TyKind::IntLiteral | TyKind::FloatLiteral, SimdDtype::Expr(_)) => true,
+        (TyKind::Bool, SimdDtype::Known(dtype)) => *dtype == Dtype::Bool,
+        (TyKind::Int, SimdDtype::Known(dtype)) => *dtype == Dtype::Int,
         // `Float64` is `SIMD[DType.float64, 1]`, so it splats into a float64 vector.
-        (Ty::Float64, SimdDtype::Known(dtype)) => *dtype == Dtype::Float64,
+        (TyKind::Float64, SimdDtype::Known(dtype)) => *dtype == Dtype::Float64,
         (
-            Ty::Simd {
+            TyKind::Simd {
                 dtype: d,
                 width: SimdWidth::Known(1),
             },
@@ -2491,10 +2579,10 @@ pub fn splats_to(ty: &Ty, dtype: &SimdDtype) -> bool {
 /// its own initializer instead.
 pub fn scalar_splats_into(from: &Ty, to: &Ty) -> bool {
     matches!(
-        to,
-        Ty::Simd { dtype, width }
+        to.kind(),
+        TyKind::Simd { dtype, width }
             if width.known().is_none_or(|width| width > 1)
-                && !matches!(from, Ty::Bool | Ty::IntLiteral | Ty::FloatLiteral)
+                && !matches!(from.kind(), TyKind::Bool | TyKind::IntLiteral | TyKind::FloatLiteral)
                 && splats_to(from, dtype)
     )
 }
@@ -2568,28 +2656,28 @@ pub fn callable_environment_coerces(
 /// literals, tuples, packs, and variants copy by the ordinary value read.
 /// Nominal, parametric, associated, and reference types resolve their `copy`
 /// through declarations or trait dispatch instead.
-pub const fn builtin_copy_is_value_read(ty: &Ty) -> bool {
+pub const fn builtin_copy_is_value_read(ty: &TyKind) -> bool {
     !matches!(
         ty,
-        Ty::Struct(..)
-            | Ty::Param { .. }
-            | Ty::Assoc { .. }
-            | Ty::Dependent(_)
-            | Ty::Ref(_)
-            | Ty::SelfType
-            | Ty::Func(_)
-            | Ty::GenericFunc(_)
-            | Ty::Overload(_)
-            | Ty::Error
+        TyKind::Struct(..)
+            | TyKind::Param { .. }
+            | TyKind::Assoc { .. }
+            | TyKind::Dependent(_)
+            | TyKind::Ref(_)
+            | TyKind::SelfType
+            | TyKind::Func(_)
+            | TyKind::GenericFunc(_)
+            | TyKind::Overload(_)
+            | TyKind::Error
     )
 }
 
 /// Recover the monomorphic or generic callable contract carried either directly
 /// by a function type or indirectly by a callable-bounded type parameter.
 pub fn callable_contract_ty(ty: &Ty) -> Option<&Ty> {
-    match ty {
-        Ty::Func(_) | Ty::GenericFunc(_) => Some(ty),
-        Ty::Param {
+    match ty.kind() {
+        TyKind::Func(_) | TyKind::GenericFunc(_) => Some(ty),
+        TyKind::Param {
             callable_bound: Some(bound),
             ..
         } => callable_contract_ty(bound),
@@ -2608,7 +2696,9 @@ pub fn callable_contract_ty(ty: &Ty) -> Option<&Ty> {
 /// precondition — while an unconstrained implementation may serve a
 /// constrained contract.
 pub fn callable_bound_accepts(actual: &Ty, contract: &Ty) -> bool {
-    if matches!(actual, Ty::GenericFunc(_)) || matches!(contract, Ty::GenericFunc(_)) {
+    if matches!(actual.kind(), TyKind::GenericFunc(_))
+        || matches!(contract.kind(), TyKind::GenericFunc(_))
+    {
         let (Some((actual_decls, actual)), Some((contract_decls, contract))) = (
             erase_generic_callable_binders(actual),
             erase_generic_callable_binders(contract),
@@ -2649,7 +2739,8 @@ pub fn callable_bound_accepts(actual: &Ty, contract: &Ty) -> bool {
         return structural && constraints_declared && callable_bound_accepts(&actual, &contract);
     }
 
-    let (Ty::Func(actual_func), Ty::Func(contract_func)) = (actual, contract) else {
+    let (TyKind::Func(actual_func), TyKind::Func(contract_func)) = (actual.kind(), contract.kind())
+    else {
         return false;
     };
     let FuncTy {
@@ -2711,10 +2802,13 @@ pub fn callable_bound_accepts(actual: &Ty, contract: &Ty) -> bool {
         && actual_ref_params == contract_ref_params
         && actual_ref_return == contract_ref_return
         && (!*actual_raises || *contract_raises)
-        && match (actual_error.as_deref(), contract_error.as_deref()) {
-            (None | Some(Ty::Never), _) => true,
+        && match (
+            actual_error.as_ref().map(Ty::kind),
+            contract_error.as_ref().map(Ty::kind),
+        ) {
+            (None | Some(TyKind::Never), _) => true,
             (Some(_), None) => false,
-            (Some(actual), Some(Ty::Error)) => actual != &Ty::Never,
+            (Some(actual), Some(TyKind::Error)) => *actual != TyKind::Never,
             (Some(actual), Some(contract)) => actual == contract,
         }
 }
@@ -2727,7 +2821,7 @@ pub fn callable_bound_accepts(actual: &Ty, contract: &Ty) -> bool {
 /// callable-contract rules without making source binder spelling part of the
 /// type identity.
 pub fn erase_generic_callable_binders(callable: &Ty) -> Option<(Vec<ParamDecl>, Ty)> {
-    let Ty::GenericFunc(generic) = callable else {
+    let TyKind::GenericFunc(generic) = callable.kind() else {
         return None;
     };
     let GenericFuncTy {
@@ -2755,42 +2849,43 @@ pub fn erase_generic_callable_binders(callable: &Ty) -> Option<(Vec<ParamDecl>, 
     let mut signature = params.clone();
     let variadic_index = variadic.as_ref().map(|parameter| {
         let index = signature.len();
-        signature.push((**parameter).clone());
+        signature.push((*parameter).clone());
         index
     });
     let kw_variadic_index = kw_variadic.as_ref().map(|parameter| {
         let index = signature.len();
-        signature.push((**parameter).clone());
+        signature.push((*parameter).clone());
         index
     });
     let return_index = signature.len();
-    signature.push((**ret).clone());
+    signature.push((*ret).clone());
     let error_index = error.as_ref().map(|error| {
         let index = signature.len();
-        signature.push((**error).clone());
+        signature.push((*error).clone());
         index
     });
     let (decls, signature) = canonical_generic_signature(decls, &signature);
 
     Some((
         decls,
-        Ty::Func(Box::new(FuncTy {
+        TyKind::Func(Box::new(FuncTy {
             environment: environment.clone(),
             params: signature[..params.len()].to_vec(),
             names: names.clone(),
-            ret: Box::new(signature[return_index].clone()),
+            ret: signature[return_index].clone(),
             required: required.clone(),
-            variadic: variadic_index.map(|index| Box::new(signature[index].clone())),
-            kw_variadic: kw_variadic_index.map(|index| Box::new(signature[index].clone())),
+            variadic: variadic_index.map(|index| signature[index].clone()),
+            kw_variadic: kw_variadic_index.map(|index| signature[index].clone()),
             positional_only: *positional_only,
             keyword_only: *keyword_only,
             raises: *raises,
-            error: error_index.map(|index| Box::new(signature[index].clone())),
+            error: error_index.map(|index| signature[index].clone()),
             conventions: conventions.clone(),
             ref_params: ref_params.clone(),
             ref_return: ref_return.clone(),
             transfers: transfers.clone(),
-        })),
+        }))
+        .into(),
     ))
 }
 
@@ -2830,22 +2925,20 @@ pub fn canonical_generic_signature(
             } => {
                 let canonical_name = format!("${index}");
                 let canonical_id = ParamId::new(CONTRACT_BINDER_OWNER, index);
-                let canonical_callable_bound = callable_bound.as_ref().map(|bound| {
-                    Box::new(bind_signature_slots(
-                        &substitute(bound, &subst),
-                        &value_slots,
-                    ))
-                });
+                let canonical_callable_bound = callable_bound
+                    .as_ref()
+                    .map(|bound| bind_signature_slots(&substitute(bound, &subst), &value_slots));
                 subst.insert(
                     id.clone(),
-                    Ty::Param {
+                    TyKind::Param {
                         binder: ParamRef {
                             id: canonical_id.clone(),
                             name: canonical_name.as_str().into(),
                         },
                         bounds: bounds.clone(),
                         callable_bound: canonical_callable_bound.clone(),
-                    },
+                    }
+                    .into(),
                 );
                 binders.insert(
                     id.clone(),
@@ -2886,7 +2979,7 @@ pub fn canonical_generic_signature(
                     ParamContext::detached().index_ref(
                         0,
                         u32::try_from(index).unwrap_or(u32::MAX),
-                        MetaTy::value((**ty).clone()),
+                        MetaTy::value((*ty).clone()),
                     ),
                 );
                 binders.insert(
@@ -2899,7 +2992,7 @@ pub fn canonical_generic_signature(
                 ParamDecl::Value {
                     id: canonical_id,
                     name: canonical_name,
-                    ty: Box::new(canonical_ty),
+                    ty: canonical_ty,
                     default: None,
                     callable_default: None,
                     infer_only: false,
@@ -2960,11 +3053,11 @@ pub fn reown_generic_signature(
                 callable_bound,
                 ..
             } => {
-                let ty = Ty::Param {
+                let ty = Ty::new(TyKind::Param {
                     binder: reowned.clone(),
                     bounds: bounds.clone(),
                     callable_bound: callable_bound.clone(),
-                };
+                });
                 bindings.bind_type(declared.id.clone(), ty.clone());
                 subst.insert(declared.id.clone(), ty);
             }
@@ -2973,7 +3066,7 @@ pub fn reown_generic_signature(
                 ParamContext::detached().decl_ref(
                     reowned.id.clone(),
                     name.trim_start_matches('*'),
-                    crate::param_expr::MetaTy::value((**ty).clone()),
+                    crate::param_expr::MetaTy::value((*ty).clone()),
                 ),
             ),
         }
@@ -2993,7 +3086,7 @@ pub fn reown_generic_signature(
                     ..
                 } => {
                     for ty in callable_bound.iter_mut().chain(default.iter_mut()) {
-                        **ty = moved(ty);
+                        *ty = moved(ty);
                     }
                     (id, constraints)
                 }
@@ -3004,7 +3097,7 @@ pub fn reown_generic_signature(
                     constraints,
                     ..
                 } => {
-                    **ty = moved(ty);
+                    *ty = moved(ty);
                     if let Some(default) = default {
                         *default = ParamContext::detached()
                             .replace(default, &bindings)
@@ -3062,28 +3155,31 @@ pub fn substitute_packs<S: std::hash::BuildHasher>(
     substitute(&expand_packs(ty, subst, packs, values), subst)
 }
 
-/// Replace every `Ty::Param` in `ty` with its solution from `subst` (leaving an
+/// Replace every `TyKind::Param` in `ty` with its solution from `subst` (leaving an
 /// unsolved parameter untouched), including types embedded in parameter
 /// expressions and SIMD slots.
 pub fn substitute(ty: &Ty, subst: &TySubst) -> Ty {
-    match ty {
-        Ty::Param {
+    match ty.kind() {
+        TyKind::Param {
             binder,
             bounds,
             callable_bound,
-        } => subst.get(&binder.id).cloned().unwrap_or_else(|| Ty::Param {
-            binder: binder.clone(),
-            bounds: bounds.clone(),
-            callable_bound: callable_bound
-                .as_ref()
-                .map(|bound| Box::new(substitute(bound, subst))),
+        } => subst.get(&binder.id).cloned().unwrap_or_else(|| {
+            TyKind::Param {
+                binder: binder.clone(),
+                bounds: bounds.clone(),
+                callable_bound: callable_bound
+                    .as_ref()
+                    .map(|bound| substitute(bound, subst)),
+            }
+            .into()
         }),
-        Ty::Struct(_, args) if args.is_closed() => ty.clone(),
-        Ty::Struct(name, args) => Ty::Struct(
+        TyKind::Struct(..) if ty.is_closed() => ty.clone(),
+        TyKind::Struct(name, args) => ty.reusing(TyKind::Struct(
             name.clone(),
-            args.reusing(map_tyargs(args, |t| substitute(t, subst))),
-        ),
-        Ty::Dependent(_) | Ty::Simd { .. } if is_symbolic(ty) => {
+            map_tyargs(args, |t| substitute(t, subst)),
+        )),
+        TyKind::Dependent(_) | TyKind::Simd { .. } if is_symbolic(ty) => {
             let mut bindings = ParamBindings::new();
             for (id, ty) in subst {
                 bindings.bind_type(id.clone(), ty.clone());
@@ -3091,34 +3187,41 @@ pub fn substitute(ty: &Ty, subst: &TySubst) -> Ty {
             replace_parameters(&ParamContext::detached(), ty, &bindings, 0)
                 .unwrap_or_else(|_| ty.clone())
         }
-        Ty::ComptimeList(elem) => Ty::ComptimeList(Box::new(substitute(elem, subst))),
-        Ty::Tuple(elems) => Ty::Tuple(elems.iter().map(|t| substitute(t, subst)).collect()),
-        Ty::RuntimePack(elems) => {
-            Ty::RuntimePack(elems.iter().map(|t| substitute(t, subst)).collect())
+        TyKind::ComptimeList(elem) => TyKind::ComptimeList(substitute(elem, subst)).into(),
+        TyKind::Tuple(elems) => {
+            TyKind::Tuple(elems.iter().map(|t| substitute(t, subst)).collect()).into()
         }
-        Ty::VariadicPack(element) => Ty::VariadicPack(Box::new(substitute(element, subst))),
-        Ty::Variant(alternatives) => Ty::Variant(
+        TyKind::RuntimePack(elems) => {
+            TyKind::RuntimePack(elems.iter().map(|t| substitute(t, subst)).collect()).into()
+        }
+        TyKind::VariadicPack(element) => TyKind::VariadicPack(substitute(element, subst)).into(),
+        TyKind::Variant(alternatives) => TyKind::Variant(
             alternatives
                 .iter()
                 .map(|ty| substitute(ty, subst))
                 .collect(),
-        ),
-        Ty::Pointer { element, origin } => Ty::Pointer {
-            element: Box::new(substitute(element, subst)),
+        )
+        .into(),
+        TyKind::Pointer { element, origin } => TyKind::Pointer {
+            element: substitute(element, subst),
             origin: origin.clone(),
-        },
-        Ty::Ref(reference) => {
-            let mut reference = reference.clone();
-            reference.referent = Box::new(substitute(&reference.referent, subst));
-            Ty::Ref(reference)
         }
-        Ty::Assoc { base, name, args } => Ty::Assoc {
-            base: Box::new(substitute(base, subst)),
+        .into(),
+        TyKind::Ref(reference) => {
+            let mut reference = reference.clone();
+            reference.referent = substitute(&reference.referent, subst);
+            TyKind::Ref(reference).into()
+        }
+        TyKind::Assoc { base, name, args } => TyKind::Assoc {
+            base: substitute(base, subst),
             name: name.clone(),
             args: map_tyargs(args, |t| substitute(t, subst)),
-        },
-        Ty::Func(func) => Ty::Func(Box::new(func.map_types(|ty| substitute(ty, subst)))),
-        Ty::GenericFunc(generic) => {
+        }
+        .into(),
+        TyKind::Func(func) => {
+            TyKind::Func(Box::new(func.map_types(|ty| substitute(ty, subst)))).into()
+        }
+        TyKind::GenericFunc(generic) => {
             let decls = &generic.decls;
             // An anonymous callable's own binders shadow names from the
             // surrounding substitution. Outer parameters may still occur in
@@ -3146,10 +3249,8 @@ pub fn substitute(ty: &Ty, subst: &TySubst) -> Ty {
                         bounds: bounds.clone(),
                         callable_bound: callable_bound
                             .as_ref()
-                            .map(|bound| Box::new(substitute(bound, &nested))),
-                        default: default
-                            .as_ref()
-                            .map(|default| Box::new(substitute(default, &nested))),
+                            .map(|bound| substitute(bound, &nested)),
+                        default: default.as_ref().map(|default| substitute(default, &nested)),
                         infer_only: *infer_only,
                         variadic: *variadic,
                         constraints: constraints.clone(),
@@ -3166,7 +3267,7 @@ pub fn substitute(ty: &Ty, subst: &TySubst) -> Ty {
                     } => ParamDecl::Value {
                         id: id.clone(),
                         name: name.clone(),
-                        ty: Box::new(substitute(ty, &nested)),
+                        ty: substitute(ty, &nested),
                         default: default.clone(),
                         callable_default: callable_default.clone(),
                         infer_only: *infer_only,
@@ -3175,17 +3276,19 @@ pub fn substitute(ty: &Ty, subst: &TySubst) -> Ty {
                     },
                 })
                 .collect();
-            Ty::GenericFunc(Box::new(GenericFuncTy {
+            TyKind::GenericFunc(Box::new(GenericFuncTy {
                 decls,
                 func: generic.map_types(|ty| substitute(ty, &nested)),
             }))
+            .into()
         }
-        Ty::Overload(candidates) => Ty::Overload(
+        TyKind::Overload(candidates) => TyKind::Overload(
             candidates
                 .iter()
                 .map(|candidate| substitute(candidate, subst))
                 .collect(),
-        ),
+        )
+        .into(),
         _ => ty.clone(),
     }
 }
@@ -3221,7 +3324,7 @@ pub trait TyRewrite {
 
     fn exit_signature(&mut self) {}
 
-    /// Whether a [closed](TyArgs::is_closed) struct type is walked rather
+    /// Whether a [closed](Ty::is_closed) struct type is walked rather
     /// than passed whole. Nothing inside one reaches `param` or `expr`, so
     /// only a rewrite whose `whole` or `value` hook must see inside it opts
     /// in.
@@ -3242,63 +3345,65 @@ pub fn rewrite_ty(ty: &Ty, rewrite: &mut dyn TyRewrite) -> Result<Ty, ParamError
             .map(|ty| rewrite_ty(ty, rewrite))
             .collect::<Result<Vec<_>, _>>()
     };
-    let boxed = |ty: &Option<Box<Ty>>, rewrite: &mut dyn TyRewrite| {
-        ty.as_deref()
-            .map(|ty| rewrite_ty(ty, rewrite).map(Box::new))
-            .transpose()
+    let optional = |ty: &Option<Ty>, rewrite: &mut dyn TyRewrite| {
+        ty.as_ref().map(|ty| rewrite_ty(ty, rewrite)).transpose()
     };
-    Ok(match ty {
-        Ty::Param {
+    Ok(match ty.kind() {
+        TyKind::Param {
             binder,
             bounds,
             callable_bound,
         } => match rewrite.param(binder) {
             Some(replacement) => replacement,
-            None => Ty::Param {
+            None => TyKind::Param {
                 binder: binder.clone(),
                 bounds: bounds.clone(),
-                callable_bound: boxed(callable_bound, rewrite)?,
-            },
+                callable_bound: optional(callable_bound, rewrite)?,
+            }
+            .into(),
         },
-        Ty::Struct(_, arguments) if arguments.is_closed() && !rewrite.visits_closed() => ty.clone(),
+        TyKind::Struct(..) if ty.is_closed() && !rewrite.visits_closed() => ty.clone(),
         // A spread list closes into its elements once the rewrite knows
         // every length in it.
-        Ty::Struct(name, arguments) if let Some(list) = list_spread_argument(arguments) => {
-            Ty::Struct(
+        TyKind::Struct(name, arguments) if let Some(list) = list_spread_argument(arguments) => ty
+            .reusing(TyKind::Struct(
                 name.clone(),
-                arguments.reusing(spread_arguments(name, &rewrite.expr(list)?)?),
-            )
-        }
-        Ty::Struct(name, arguments) => Ty::Struct(
+                spread_arguments(name, &rewrite.expr(list)?)?,
+            )),
+        TyKind::Struct(name, arguments) => ty.reusing(TyKind::Struct(
             name.clone(),
-            arguments.reusing(rewrite_tyargs(arguments, rewrite)?),
-        ),
-        Ty::Dependent(dependent) => DependentType::resolve(rewrite.expr(dependent.expr())?),
-        Ty::ComptimeList(element) => Ty::ComptimeList(Box::new(rewrite_ty(element, rewrite)?)),
-        Ty::VariadicPack(element) => Ty::VariadicPack(Box::new(rewrite_ty(element, rewrite)?)),
-        Ty::Tuple(elements) => Ty::Tuple(all(elements, rewrite)?),
-        Ty::RuntimePack(elements) => Ty::RuntimePack(all(elements, rewrite)?),
-        Ty::Variant(alternatives) => Ty::Variant(all(alternatives, rewrite)?),
-        Ty::Overload(candidates) => Ty::Overload(all(candidates, rewrite)?),
-        Ty::Pointer { element, origin } => Ty::Pointer {
-            element: Box::new(rewrite_ty(element, rewrite)?),
+            rewrite_tyargs(arguments, rewrite)?,
+        )),
+        TyKind::Dependent(dependent) => DependentType::resolve(rewrite.expr(dependent.expr())?),
+        TyKind::ComptimeList(element) => TyKind::ComptimeList(rewrite_ty(element, rewrite)?).into(),
+        TyKind::VariadicPack(element) => TyKind::VariadicPack(rewrite_ty(element, rewrite)?).into(),
+        TyKind::Tuple(elements) => TyKind::Tuple(all(elements, rewrite)?).into(),
+        TyKind::RuntimePack(elements) => TyKind::RuntimePack(all(elements, rewrite)?).into(),
+        TyKind::Variant(alternatives) => TyKind::Variant(all(alternatives, rewrite)?).into(),
+        TyKind::Overload(candidates) => TyKind::Overload(all(candidates, rewrite)?).into(),
+        TyKind::Pointer { element, origin } => TyKind::Pointer {
+            element: rewrite_ty(element, rewrite)?,
             origin: origin.clone(),
-        },
-        Ty::Ref(reference) => {
-            let mut reference = reference.clone();
-            reference.referent = Box::new(rewrite_ty(&reference.referent, rewrite)?);
-            Ty::Ref(reference)
         }
-        Ty::Assoc { base, name, args } => Ty::Assoc {
-            base: Box::new(rewrite_ty(base, rewrite)?),
+        .into(),
+        TyKind::Ref(reference) => {
+            let mut reference = reference.clone();
+            reference.referent = rewrite_ty(&reference.referent, rewrite)?;
+            TyKind::Ref(reference).into()
+        }
+        TyKind::Assoc { base, name, args } => TyKind::Assoc {
+            base: rewrite_ty(base, rewrite)?,
             name: name.clone(),
             args: rewrite_tyargs(args, rewrite)?,
-        },
-        Ty::Func(func) => Ty::Func(Box::new(func.try_map_types(|ty| rewrite_ty(ty, rewrite))?)),
-        Ty::GenericFunc(generic) => {
+        }
+        .into(),
+        TyKind::Func(func) => {
+            TyKind::Func(Box::new(func.try_map_types(|ty| rewrite_ty(ty, rewrite))?)).into()
+        }
+        TyKind::GenericFunc(generic) => {
             rewrite.enter_signature(&generic.decls);
             let rebuilt = (|| {
-                Ok(Ty::GenericFunc(Box::new(GenericFuncTy {
+                Ok(TyKind::GenericFunc(Box::new(GenericFuncTy {
                     decls: generic
                         .decls
                         .iter()
@@ -3308,9 +3413,9 @@ pub fn rewrite_ty(ty: &Ty, rewrite: &mut dyn TyRewrite) -> Result<Ty, ParamError
                 })))
             })();
             rewrite.exit_signature();
-            rebuilt?
+            Ty::new(rebuilt?)
         }
-        Ty::Simd { dtype, width } => {
+        TyKind::Simd { dtype, width } => {
             let dtype = match dtype {
                 SimdDtype::Expr(expr) => SimdDtype::Expr(rewrite.expr(expr)?),
                 known @ SimdDtype::Known(_) => known.clone(),
@@ -3321,19 +3426,19 @@ pub fn rewrite_ty(ty: &Ty, rewrite: &mut dyn TyRewrite) -> Result<Ty, ParamError
             };
             simd_ty_from_slots(dtype, width)?
         }
-        Ty::Int
-        | Ty::UInt
-        | Ty::Bool
-        | Ty::StringLiteral
-        | Ty::Float64
-        | Ty::None
-        | Ty::Never
-        | Ty::IntLiteral
-        | Ty::FloatLiteral
-        | Ty::Infer
-        | Ty::Dtype
-        | Ty::SelfType
-        | Ty::Error => ty.clone(),
+        TyKind::Int
+        | TyKind::UInt
+        | TyKind::Bool
+        | TyKind::StringLiteral
+        | TyKind::Float64
+        | TyKind::None
+        | TyKind::Never
+        | TyKind::IntLiteral
+        | TyKind::FloatLiteral
+        | TyKind::Infer
+        | TyKind::Dtype
+        | TyKind::SelfType
+        | TyKind::Error => ty.clone(),
     })
 }
 
@@ -3383,8 +3488,8 @@ pub fn rewrite_value(value: &CtValue, rewrite: &mut dyn TyRewrite) -> Result<CtV
             offset: *offset,
         },
         CtValue::Expr(expr) => rewrite.expr(expr)?.into_value(),
-        CtValue::Type(ty) => CtValue::Type(Box::new(rewrite_ty(ty, rewrite)?)),
-        CtValue::Reflected(ty) => CtValue::Reflected(Box::new(rewrite_ty(ty, rewrite)?)),
+        CtValue::Type(ty) => CtValue::Type(rewrite_ty(ty, rewrite)?),
+        CtValue::Reflected(ty) => CtValue::Reflected(rewrite_ty(ty, rewrite)?),
         CtValue::Tuple(values) => CtValue::Tuple(all(values, rewrite)?),
         CtValue::List(values) => CtValue::List(all(values, rewrite)?),
         CtValue::Set { spelling, elements } => CtValue::Set {
@@ -3552,7 +3657,7 @@ pub fn map_tyargs(args: &[TyArg], mut f: impl FnMut(&Ty) -> Ty) -> Vec<TyArg> {
                 values
                     .iter()
                     .map(|value| match value {
-                        CtValue::Type(ty) => CtValue::Type(Box::new(f(ty))),
+                        CtValue::Type(ty) => CtValue::Type(f(ty)),
                         other => other.clone(),
                     })
                     .collect(),
@@ -3689,36 +3794,41 @@ pub struct CheckedDeclId(pub u32);
 /// has no runtime identity — no native layout, and nothing the VM can dispatch
 /// on. Origins erase from the runtime ABI, so they never make a type symbolic.
 pub fn is_symbolic(ty: &Ty) -> bool {
-    match ty {
-        Ty::Infer | Ty::Param { .. } | Ty::Assoc { .. } | Ty::Dependent(_) | Ty::SelfType => true,
-        Ty::Struct(_, arguments) if arguments.is_closed() => false,
-        Ty::Struct(_, arguments) => arguments.iter().any(|argument| match argument {
+    match ty.kind() {
+        TyKind::Infer
+        | TyKind::Param { .. }
+        | TyKind::Assoc { .. }
+        | TyKind::Dependent(_)
+        | TyKind::SelfType => true,
+        TyKind::Struct(..) if ty.is_closed() => false,
+        TyKind::Struct(_, arguments) => arguments.iter().any(|argument| match argument {
             TyArg::Ty(ty) => is_symbolic(ty),
             TyArg::Val(value) => ct_value_is_symbolic(value),
             TyArg::Origin(_) => false,
         }),
-        Ty::Func(_) | Ty::GenericFunc(_) => ty
+        TyKind::Func(_) | TyKind::GenericFunc(_) => ty
             .callable()
             .is_some_and(|func| func.types().any(is_symbolic)),
-        Ty::Overload(types) | Ty::Tuple(types) | Ty::RuntimePack(types) | Ty::Variant(types) => {
-            types.iter().any(is_symbolic)
-        }
-        Ty::ComptimeList(element) | Ty::VariadicPack(element) | Ty::Pointer { element, .. } => {
-            is_symbolic(element)
-        }
-        Ty::Ref(reference) => is_symbolic(&reference.referent),
-        Ty::Simd { dtype, width } => dtype.is_symbolic() || width.is_symbolic(),
-        Ty::Dtype
-        | Ty::Int
-        | Ty::UInt
-        | Ty::Bool
-        | Ty::StringLiteral
-        | Ty::Float64
-        | Ty::None
-        | Ty::Never
-        | Ty::IntLiteral
-        | Ty::FloatLiteral
-        | Ty::Error => false,
+        TyKind::Overload(types)
+        | TyKind::Tuple(types)
+        | TyKind::RuntimePack(types)
+        | TyKind::Variant(types) => types.iter().any(is_symbolic),
+        TyKind::ComptimeList(element)
+        | TyKind::VariadicPack(element)
+        | TyKind::Pointer { element, .. } => is_symbolic(element),
+        TyKind::Ref(reference) => is_symbolic(&reference.referent),
+        TyKind::Simd { dtype, width } => dtype.is_symbolic() || width.is_symbolic(),
+        TyKind::Dtype
+        | TyKind::Int
+        | TyKind::UInt
+        | TyKind::Bool
+        | TyKind::StringLiteral
+        | TyKind::Float64
+        | TyKind::None
+        | TyKind::Never
+        | TyKind::IntLiteral
+        | TyKind::FloatLiteral
+        | TyKind::Error => false,
     }
 }
 
@@ -3727,17 +3837,17 @@ pub fn is_symbolic(ty: &Ty) -> bool {
 /// This is the *closedness* question, which is not [`is_symbolic`]'s: a
 /// generic callable value binds the parameters its own signature mentions, so
 /// `def[T](T) -> T` is closed — it is a compile-time type constant, and
-/// `DependentType::resolve` unwraps it — even though a `Ty::Param` named `T`
+/// `DependentType::resolve` unwraps it — even though a `TyKind::Param` named `T`
 /// occurs inside it. A binder nested below another's signature is left to
 /// [`is_symbolic`]'s conservative answer.
 pub fn has_free_parameters(ty: &Ty) -> bool {
-    let Ty::GenericFunc(generic) = ty else {
+    let TyKind::GenericFunc(generic) = ty.kind() else {
         return is_symbolic(ty);
     };
     let bound: Vec<&ParamId> = generic.decls.iter().map(ParamDecl::id).collect();
-    mentions_open(ty, &|inner| match inner {
-        Ty::Param { binder, .. } => !bound.contains(&&binder.id),
-        Ty::Infer | Ty::Assoc { .. } | Ty::Dependent(_) | Ty::SelfType => true,
+    mentions_open(ty, &|inner| match inner.kind() {
+        TyKind::Param { binder, .. } => !bound.contains(&&binder.id),
+        TyKind::Infer | TyKind::Assoc { .. } | TyKind::Dependent(_) | TyKind::SelfType => true,
         _ => false,
     })
 }
@@ -3867,20 +3977,20 @@ fn mentions_below(ty: &Ty, predicate: &dyn Fn(&Ty) -> bool, skip_closed: bool) -
         }),
         TyArg::Val(_) | TyArg::Origin(_) => false,
     };
-    match ty {
-        Ty::Struct(_, arguments) if skip_closed && arguments.is_closed() => false,
-        Ty::Struct(_, arguments) => arguments.iter().any(argument_mentions),
-        Ty::ComptimeList(element) | Ty::VariadicPack(element) | Ty::Pointer { element, .. } => {
-            mentions(element, predicate)
-        }
-        Ty::Dependent(dependent) => expr_mentions(dependent.expr(), predicate),
-        Ty::Tuple(elements) | Ty::RuntimePack(elements) | Ty::Variant(elements) => {
+    match ty.kind() {
+        TyKind::Struct(..) if skip_closed && ty.is_closed() => false,
+        TyKind::Struct(_, arguments) => arguments.iter().any(argument_mentions),
+        TyKind::ComptimeList(element)
+        | TyKind::VariadicPack(element)
+        | TyKind::Pointer { element, .. } => mentions(element, predicate),
+        TyKind::Dependent(dependent) => expr_mentions(dependent.expr(), predicate),
+        TyKind::Tuple(elements) | TyKind::RuntimePack(elements) | TyKind::Variant(elements) => {
             elements.iter().any(|element| mentions(element, predicate))
         }
-        Ty::Assoc { base, args, .. } => {
+        TyKind::Assoc { base, args, .. } => {
             mentions(base, predicate) || args.iter().any(argument_mentions)
         }
-        Ty::Func(_) | Ty::GenericFunc(_) if let Some(func) = ty.callable() => {
+        TyKind::Func(_) | TyKind::GenericFunc(_) if let Some(func) = ty.callable() => {
             let FuncTy {
                 params,
                 ret,
@@ -3891,23 +4001,118 @@ fn mentions_below(ty: &Ty, predicate: &dyn Fn(&Ty) -> bool, skip_closed: bool) -
             params.iter().any(|param| mentions(param, predicate))
                 || mentions(ret, predicate)
                 || variadic
-                    .as_deref()
+                    .as_ref()
                     .is_some_and(|variadic| mentions(variadic, predicate))
                 || kw_variadic
-                    .as_deref()
+                    .as_ref()
                     .is_some_and(|variadic| mentions(variadic, predicate))
         }
-        Ty::Overload(candidates) => candidates
+        TyKind::Overload(candidates) => candidates
             .iter()
             .any(|candidate| mentions(candidate, predicate)),
         _ => false,
     }
 }
 
-/// Whether one struct argument is closed; see [`TyArgs::is_closed`].
+/// [`Ty::carries_decorations`], below the closedness check.
+fn decorated(ty: &Ty) -> bool {
+    let callable = |func: &FuncTy| {
+        !func.transfers.0.is_empty()
+            || func
+                .params
+                .iter()
+                .chain(std::iter::once(&func.ret))
+                .chain(&func.variadic)
+                .chain(&func.kw_variadic)
+                .chain(&func.error)
+                .any(Ty::carries_decorations)
+    };
+    match ty.kind() {
+        TyKind::Func(func) => callable(func),
+        TyKind::GenericFunc(generic) => callable(&generic.func),
+        TyKind::Overload(types)
+        | TyKind::Tuple(types)
+        | TyKind::RuntimePack(types)
+        | TyKind::Variant(types) => types.iter().any(Ty::carries_decorations),
+        TyKind::Param { callable_bound, .. } => {
+            callable_bound.as_ref().is_some_and(Ty::carries_decorations)
+        }
+        TyKind::Assoc { base, args, .. } => {
+            base.carries_decorations() || args.iter().any(argument_decorated)
+        }
+        TyKind::Struct(_, arguments) => arguments.iter().any(argument_decorated),
+        TyKind::ComptimeList(element)
+        | TyKind::VariadicPack(element)
+        | TyKind::Pointer { element, .. } => element.carries_decorations(),
+        TyKind::Ref(reference) => reference.referent.carries_decorations(),
+        TyKind::Dependent(dependent) => dependent.expr().carries_decorations(),
+        TyKind::Simd { dtype, width } => {
+            matches!(dtype, SimdDtype::Expr(expr) if expr.carries_decorations())
+                || matches!(width, SimdWidth::Expr(expr) if expr.carries_decorations())
+        }
+        _ => false,
+    }
+}
+
+fn argument_decorated(argument: &TyArg) -> bool {
+    match argument {
+        TyArg::Ty(ty) => ty.carries_decorations(),
+        TyArg::Val(value) => value_decorated(value),
+        TyArg::Origin(_) => false,
+    }
+}
+
+/// Whether a compile-time value carries a display spelling or a decorated
+/// type.
+fn value_decorated(value: &CtValue) -> bool {
+    match value {
+        CtValue::Dict { spelling, entries } => {
+            spelling.is_some()
+                || entries
+                    .iter()
+                    .any(|(key, value)| value_decorated(key) || value_decorated(value))
+        }
+        CtValue::Set { spelling, elements } => {
+            spelling.is_some() || elements.iter().any(value_decorated)
+        }
+        CtValue::Tuple(values) | CtValue::List(values) => values.iter().any(value_decorated),
+        CtValue::Struct { fields, .. } => fields.iter().any(|(_, field)| value_decorated(field)),
+        CtValue::Type(ty) | CtValue::Reflected(ty) => ty.carries_decorations(),
+        CtValue::Expr(expr) => expr.carries_decorations(),
+        _ => false,
+    }
+}
+
+/// The storage behind a [`Ty`]: its variant with the variant's cached facts.
+#[derive(Clone)]
+struct TyNode {
+    kind: TyKind,
+    digest: u64,
+    closed: bool,
+}
+
+impl TyNode {
+    fn new(kind: TyKind) -> Self {
+        Self {
+            digest: Self::digest(&kind),
+            closed: closed_kind(&kind),
+            kind,
+        }
+    }
+
+    /// A fixed-key hash, so equal variants digest alike in every node.
+    fn digest(kind: &TyKind) -> u64 {
+        use std::hash::{Hash, Hasher};
+        let mut hasher = std::hash::DefaultHasher::new();
+        kind.hash(&mut hasher);
+        hasher.finish()
+    }
+}
+
+/// Whether one struct argument is closed; see [`Ty::is_closed`].
 fn closed_argument(argument: &TyArg) -> bool {
     match argument {
-        TyArg::Ty(ty) => closed_ty(ty),
+        TyArg::Ty(ty) => ty.is_closed(),
         TyArg::Val(value) => matches!(
             value,
             CtValue::Int(_)
@@ -3922,22 +4127,23 @@ fn closed_argument(argument: &TyArg) -> bool {
     }
 }
 
-fn closed_ty(ty: &Ty) -> bool {
-    match ty {
-        Ty::Int
-        | Ty::UInt
-        | Ty::Bool
-        | Ty::Float64
-        | Ty::None
-        | Ty::Never
-        | Ty::Dtype
-        | Ty::Error => true,
-        Ty::Simd { dtype, width } => !dtype.is_expr() && !width.is_expr(),
-        Ty::Struct(_, arguments) => arguments.is_closed(),
-        Ty::Tuple(elements) | Ty::RuntimePack(elements) | Ty::Variant(elements) => {
-            elements.iter().all(closed_ty)
+/// Whether a variant is closed, from its children's cached closedness.
+fn closed_kind(kind: &TyKind) -> bool {
+    match kind {
+        TyKind::Int
+        | TyKind::UInt
+        | TyKind::Bool
+        | TyKind::Float64
+        | TyKind::None
+        | TyKind::Never
+        | TyKind::Dtype
+        | TyKind::Error => true,
+        TyKind::Simd { dtype, width } => !dtype.is_expr() && !width.is_expr(),
+        TyKind::Struct(_, arguments) => arguments.iter().all(closed_argument),
+        TyKind::Tuple(elements) | TyKind::RuntimePack(elements) | TyKind::Variant(elements) => {
+            elements.iter().all(Ty::is_closed)
         }
-        Ty::ComptimeList(element) | Ty::VariadicPack(element) => closed_ty(element),
+        TyKind::ComptimeList(element) | TyKind::VariadicPack(element) => element.is_closed(),
         _ => false,
     }
 }
@@ -3949,10 +4155,8 @@ fn bind_constraints(constraints: &mut [GenericConstraint], scopes: &[&[ParamDecl
 }
 
 fn rewrite_decl(decl: &ParamDecl, rewrite: &mut dyn TyRewrite) -> Result<ParamDecl, ParamError> {
-    let boxed = |ty: &Option<Box<Ty>>, rewrite: &mut dyn TyRewrite| {
-        ty.as_deref()
-            .map(|ty| rewrite_ty(ty, rewrite).map(Box::new))
-            .transpose()
+    let optional = |ty: &Option<Ty>, rewrite: &mut dyn TyRewrite| {
+        ty.as_ref().map(|ty| rewrite_ty(ty, rewrite)).transpose()
     };
     Ok(match decl {
         ParamDecl::Type {
@@ -3968,8 +4172,8 @@ fn rewrite_decl(decl: &ParamDecl, rewrite: &mut dyn TyRewrite) -> Result<ParamDe
             id: id.clone(),
             name: name.clone(),
             bounds: bounds.clone(),
-            callable_bound: boxed(callable_bound, rewrite)?,
-            default: boxed(default, rewrite)?,
+            callable_bound: optional(callable_bound, rewrite)?,
+            default: optional(default, rewrite)?,
             infer_only: *infer_only,
             variadic: *variadic,
             constraints: constraints.clone(),
@@ -3986,7 +4190,7 @@ fn rewrite_decl(decl: &ParamDecl, rewrite: &mut dyn TyRewrite) -> Result<ParamDe
         } => ParamDecl::Value {
             id: id.clone(),
             name: name.clone(),
-            ty: Box::new(rewrite_ty(ty, rewrite)?),
+            ty: rewrite_ty(ty, rewrite)?,
             default: default
                 .as_ref()
                 .map(|value| rewrite.expr(value))
@@ -4030,8 +4234,8 @@ fn expand_packs<S: std::hash::BuildHasher>(
     values: &[(ParamId, CtValue)],
 ) -> Ty {
     let recurse = |ty: &Ty| expand_packs(ty, subst, packs, values);
-    let elements_of = |ty: &Ty| match ty {
-        Ty::Param { binder, .. } => packs.get(&binder.id),
+    let elements_of = |ty: &Ty| match ty.kind() {
+        TyKind::Param { binder, .. } => packs.get(&binder.id),
         _ => None,
     };
     let expand = |list: &[Ty]| -> Vec<Ty> {
@@ -4044,15 +4248,16 @@ fn expand_packs<S: std::hash::BuildHasher>(
             })
             .collect()
     };
-    match ty {
-        Ty::Param { .. } => {
-            elements_of(ty).map_or_else(|| ty.clone(), |elements| Ty::RuntimePack(elements.clone()))
-        }
-        Ty::VariadicPack(element) => elements_of(element).map_or_else(
-            || Ty::VariadicPack(Box::new(recurse(element))),
-            |elements| Ty::Tuple(elements.clone()),
+    match ty.kind() {
+        TyKind::Param { .. } => elements_of(ty).map_or_else(
+            || ty.clone(),
+            |elements| TyKind::RuntimePack(elements.clone()).into(),
         ),
-        Ty::Struct(name, arguments) => {
+        TyKind::VariadicPack(element) => Ty::new(elements_of(element).map_or_else(
+            || TyKind::VariadicPack(recurse(element)),
+            |elements| TyKind::Tuple(elements.clone()),
+        )),
+        TyKind::Struct(name, arguments) => {
             let mut arguments = match pack_spread_argument(arguments).and_then(elements_of) {
                 Some(elements) => elements.iter().cloned().map(TyArg::Ty).collect(),
                 None => map_tyargs(arguments, recurse),
@@ -4070,21 +4275,22 @@ fn expand_packs<S: std::hash::BuildHasher>(
                     }
                 }
             }
-            Ty::Struct(name.clone(), arguments.into())
+            TyKind::Struct(name.clone(), arguments).into()
         }
-        Ty::Tuple(list) => Ty::Tuple(expand(list)),
-        Ty::RuntimePack(list) => Ty::RuntimePack(expand(list)),
-        Ty::Variant(list) => Ty::Variant(expand(list)),
-        Ty::Pointer { element, origin } => Ty::Pointer {
-            element: Box::new(recurse(element)),
+        TyKind::Tuple(list) => TyKind::Tuple(expand(list)).into(),
+        TyKind::RuntimePack(list) => TyKind::RuntimePack(expand(list)).into(),
+        TyKind::Variant(list) => TyKind::Variant(expand(list)).into(),
+        TyKind::Pointer { element, origin } => TyKind::Pointer {
+            element: recurse(element),
             origin: origin.clone(),
-        },
-        Ty::Ref(reference) => {
-            let mut reference = reference.clone();
-            reference.referent = Box::new(recurse(&reference.referent));
-            Ty::Ref(reference)
         }
-        Ty::Dependent(dependent) => {
+        .into(),
+        TyKind::Ref(reference) => {
+            let mut reference = reference.clone();
+            reference.referent = recurse(&reference.referent);
+            TyKind::Ref(reference).into()
+        }
+        TyKind::Dependent(dependent) => {
             let context = ParamContext::detached();
             context
                 .replace(
@@ -4095,7 +4301,7 @@ fn expand_packs<S: std::hash::BuildHasher>(
         }
         // A lane dtype or width naming a folded value binder closes and
         // re-canonicalizes (`Scalar[dt]` at `dt = DType.int` is `Int`).
-        Ty::Simd { .. } if !values.is_empty() && is_symbolic(ty) => {
+        TyKind::Simd { .. } if !values.is_empty() && is_symbolic(ty) => {
             let context = ParamContext::detached();
             replace_parameters(
                 &context,
@@ -4124,7 +4330,7 @@ fn pack_bindings<S: std::hash::BuildHasher>(
     let lists = packs.iter().map(|(id, elements)| {
         let list = elements
             .iter()
-            .map(|element| CtValue::Type(Box::new(element.clone())))
+            .map(|element| CtValue::Type(element.clone()))
             .collect();
         (id, CtValue::Tuple(list))
     });
@@ -4263,7 +4469,7 @@ mod simd_slot_tests {
     use crate::param_expr::{MetaTy, ParamId};
 
     fn dtype_binder(context: &ParamContext) -> ParamExpr {
-        context.decl_ref(ParamId::new("f", 0), "dt", MetaTy::value(Ty::Dtype))
+        context.decl_ref(ParamId::new("f", 0), "dt", MetaTy::value(Ty::dtype()))
     }
 
     fn width_binder(context: &ParamContext) -> ParamExpr {
@@ -4278,7 +4484,7 @@ mod simd_slot_tests {
             .expect("a constant");
         assert_eq!(
             simd_ty_from_slots(SimdDtype::Expr(float64), SimdWidth::Known(1)).expect("closed"),
-            Ty::Float64
+            TyKind::Float64
         );
         let one = context.constant(CtValue::Int(1)).expect("a constant");
         assert_eq!(
@@ -4299,34 +4505,34 @@ mod simd_slot_tests {
     fn literals_splat_into_a_symbolic_lane_and_concrete_scalars_do_not() {
         let context = ParamContext::detached();
         let lane = SimdDtype::Expr(dtype_binder(&context));
-        assert!(splats_to(&Ty::IntLiteral, &lane));
-        assert!(splats_to(&Ty::FloatLiteral, &lane));
+        assert!(splats_to(&Ty::int_literal(), &lane));
+        assert!(splats_to(&Ty::float_literal(), &lane));
         for scalar in [
-            Ty::Int,
-            Ty::Float64,
-            Ty::Bool,
+            Ty::int(),
+            Ty::float64(),
+            Ty::bool(),
             canonical_simd_ty(Dtype::Int32, 1),
         ] {
             assert!(!splats_to(&scalar, &lane), "{scalar}");
         }
-        let same = Ty::Simd {
+        let same = Ty::new(TyKind::Simd {
             dtype: lane.clone(),
             width: SimdWidth::Known(1),
-        };
+        });
         assert!(splats_to(&same, &lane));
-        assert!(coerces(&Ty::FloatLiteral, &same));
-        assert!(!coerces(&same, &Ty::Float64));
-        let vector = Ty::Simd {
+        assert!(coerces(&Ty::float_literal(), &same));
+        assert!(!coerces(&same, &Ty::float64()));
+        let vector = Ty::new(TyKind::Simd {
             dtype: lane.clone(),
             width: SimdWidth::Expr(width_binder(&context)),
-        };
+        });
         assert!(!coerces(&vector, &canonical_simd_ty(Dtype::Int32, 4)));
         assert!(coerces(
             &vector,
-            &Ty::Simd {
+            &Ty::new(TyKind::Simd {
                 dtype: lane,
                 width: SimdWidth::inferred(&context),
-            }
+            })
         ));
     }
 
@@ -4334,13 +4540,13 @@ mod simd_slot_tests {
     fn exact_literals_splat_into_a_known_multi_lane_vector() {
         let int32x4 = canonical_simd_ty(Dtype::Int32, 4);
         let float32x4 = canonical_simd_ty(Dtype::Float32, 4);
-        assert!(coerces(&Ty::IntLiteral, &int32x4));
-        assert!(coerces(&Ty::IntLiteral, &float32x4));
-        assert!(coerces(&Ty::FloatLiteral, &float32x4));
-        assert!(!coerces(&Ty::FloatLiteral, &int32x4));
-        assert!(!coerces(&Ty::Bool, &canonical_simd_ty(Dtype::Bool, 4)));
+        assert!(coerces(&Ty::int_literal(), &int32x4));
+        assert!(coerces(&Ty::int_literal(), &float32x4));
+        assert!(coerces(&Ty::float_literal(), &float32x4));
+        assert!(!coerces(&Ty::float_literal(), &int32x4));
+        assert!(!coerces(&Ty::bool(), &canonical_simd_ty(Dtype::Bool, 4)));
         assert!(!coerces(&canonical_simd_ty(Dtype::Int32, 1), &int32x4));
-        assert!(!coerces(&Ty::Int, &canonical_simd_ty(Dtype::Int, 4)));
+        assert!(!coerces(&Ty::int(), &canonical_simd_ty(Dtype::Int, 4)));
     }
 
     #[test]
@@ -4351,11 +4557,11 @@ mod simd_slot_tests {
             &int32x4
         ));
         assert!(scalar_splats_into(
-            &Ty::Int,
+            &Ty::int(),
             &canonical_simd_ty(Dtype::Int, 4)
         ));
         assert!(scalar_splats_into(
-            &Ty::Float64,
+            &Ty::float64(),
             &canonical_simd_ty(Dtype::Float64, 2)
         ));
         assert!(!scalar_splats_into(
@@ -4363,14 +4569,14 @@ mod simd_slot_tests {
             &canonical_simd_ty(Dtype::Int64, 4)
         ));
         assert!(!scalar_splats_into(
-            &Ty::Int,
+            &Ty::int(),
             &canonical_simd_ty(Dtype::Int64, 4)
         ));
         assert!(!scalar_splats_into(
-            &Ty::Bool,
+            &Ty::bool(),
             &canonical_simd_ty(Dtype::Bool, 4)
         ));
-        assert!(!scalar_splats_into(&Ty::IntLiteral, &int32x4));
+        assert!(!scalar_splats_into(&Ty::int_literal(), &int32x4));
         assert!(!scalar_splats_into(
             &canonical_simd_ty(Dtype::Int32, 1),
             &canonical_simd_ty(Dtype::Int32, 1)
@@ -4380,10 +4586,10 @@ mod simd_slot_tests {
     #[test]
     fn replacement_closes_symbolic_slots_through_the_canonical_form() {
         let context = ParamContext::detached();
-        let scalar = Ty::Simd {
+        let scalar = Ty::new(TyKind::Simd {
             dtype: SimdDtype::Expr(dtype_binder(&context)),
             width: SimdWidth::Expr(width_binder(&context)),
-        };
+        });
         let mut referenced = std::collections::HashSet::new();
         referenced_parameters(&scalar, &mut referenced);
         assert!(referenced.contains("dt") && referenced.contains("width"));
@@ -4394,7 +4600,7 @@ mod simd_slot_tests {
         let bindings = ParamBindings::from_named_values(&context, &values);
         assert_eq!(
             replace_parameters(&context, &scalar, &bindings, 0).expect("closed"),
-            Ty::Float64
+            TyKind::Float64
         );
     }
 }
@@ -4405,25 +4611,26 @@ mod collection_representation_tests {
 
     #[test]
     fn public_collection_helpers_construct_only_nominal_types() {
-        let runtime_list = list_type(Ty::Int);
+        let runtime_list = list_type(Ty::int());
         for ty in [
             runtime_list.clone(),
-            set_type(Ty::Int),
-            dict_type(Ty::StringLiteral, Ty::Int),
+            set_type(Ty::int()),
+            dict_type(Ty::string_literal(), Ty::int()),
             range_type(),
         ] {
-            assert!(matches!(ty, Ty::Struct(..)), "got {ty:?}");
+            assert!(matches!(ty.kind(), TyKind::Struct(..)), "got {ty:?}");
         }
-        assert_ne!(runtime_list, Ty::ComptimeList(Box::new(Ty::Int)));
+        assert_ne!(runtime_list, TyKind::ComptimeList(Ty::int()));
         assert_eq!(
-            Ty::ComptimeList(Box::new(Ty::Int)).to_string(),
+            TyKind::ComptimeList(Ty::int()).to_string(),
             "<comptime-list[Int]>"
         );
     }
 
     #[test]
     fn uninit_storage_element_recognizes_every_mangled_spelling() {
-        let storage = |name: &str| Ty::Struct(name.to_string(), vec![TyArg::Ty(Ty::Int)].into());
+        let storage =
+            |name: &str| Ty::new(TyKind::Struct(name.to_string(), vec![TyArg::Ty(Ty::int())]));
         for name in [
             "__UninitStorage",
             "mono_test$__UninitStorage",
@@ -4432,13 +4639,13 @@ mod collection_representation_tests {
         ] {
             assert_eq!(
                 uninit_storage_element(&storage(name)),
-                Some(&Ty::Int),
+                Some(&Ty::int()),
                 "{name}"
             );
         }
         assert_eq!(uninit_storage_element(&storage("Storageish")), None);
         assert_eq!(
-            uninit_storage_element(&Ty::Struct("__UninitStorage".into(), vec![].into())),
+            uninit_storage_element(&Ty::new(TyKind::Struct("__UninitStorage".into(), vec![]))),
             None
         );
     }
@@ -4486,7 +4693,7 @@ mod encoding_tests {
             ParamDecl::Value {
                 id: ParamId::new("f", 1),
                 name: "n".to_string(),
-                ty: Box::new(Ty::Int),
+                ty: Ty::int(),
                 default: Some(context.constant(CtValue::Int(4)).expect("4")),
                 callable_default: None,
                 infer_only: false,
@@ -4494,17 +4701,17 @@ mod encoding_tests {
                 constraints: Vec::new(),
             },
         ];
-        let array = Ty::Struct(
+        let array = Ty::new(TyKind::Struct(
             "Array".to_string(),
-            vec![TyArg::Ty(Ty::Int), TyArg::Val(CtValue::Expr(doubled))].into(),
-        );
-        let function = Ty::GenericFunc(Box::new(GenericFuncTy {
+            vec![TyArg::Ty(Ty::int()), TyArg::Val(CtValue::Expr(doubled))],
+        ));
+        let function = TyKind::GenericFunc(Box::new(GenericFuncTy {
             decls,
             func: FuncTy {
                 environment: crate::origin::CallableEnvironment::Default,
                 params: vec![array.clone()],
                 names: vec!["xs".to_string()],
-                ret: Box::new(array),
+                ret: array,
                 required: vec![true],
                 variadic: None,
                 kw_variadic: None,

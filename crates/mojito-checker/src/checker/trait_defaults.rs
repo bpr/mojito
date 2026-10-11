@@ -7,6 +7,7 @@
 //! inside its trait; the check checks the member after every module
 //! declaration is bound, and builds the wrapper.
 
+use mojito_types::types::TyKind;
 use std::collections::{HashMap, HashSet};
 
 use mojito_ast::ast::{
@@ -620,7 +621,7 @@ impl Checker {
             .into_iter()
             .flatten()
         {
-            **ty = moved(ty);
+            *ty = moved(ty);
         }
         sig.ret = moved(&sig.ret);
         sig.overload = overloaded
@@ -640,8 +641,8 @@ impl Checker {
         for (param, declared) in wrapper.shape.params.iter().enumerate() {
             let ty = match declared.kind {
                 ParamKind::Regular => regular.next().cloned(),
-                ParamKind::Variadic => sig.variadic.as_deref().cloned(),
-                ParamKind::KwVariadic => sig.kw_variadic.as_deref().cloned(),
+                ParamKind::Variadic => sig.variadic.clone(),
+                ParamKind::KwVariadic => sig.kw_variadic.clone(),
             }
             .ok_or_else(|| {
                 TypeError::InvariantViolation(format!(
@@ -671,7 +672,7 @@ impl Checker {
             return_site,
             DeclarationEffect {
                 raises: sig.raises,
-                error: sig.raises.then(|| sig.error.as_deref().cloned()).flatten(),
+                error: sig.raises.then(|| sig.error.clone()).flatten(),
                 returns_reference: sig.ref_return.is_some(),
                 param_writes: DeclarationEffect::param_writes(&sig.conventions, &sig.ref_params),
                 availability: sig.availability.clone(),
@@ -742,76 +743,72 @@ impl Checker {
     ) -> Result<(), TypeError> {
         let method = wrapper.shape.method.as_str();
         self.push_scope();
-        self.raising_context
-            .push(signature.error.as_deref().cloned());
-        let result =
-            (|| {
-                self.declare_value_parameters(&signature.decls)?;
-                let self_writable = ref_binding_is_writable(signature.self_convention, None, &[]);
-                self.bind_receiver(self_ty, self_writable)?;
-                let mut regular = signature.params.iter();
-                for param in &wrapper.shape.params {
-                    let pty =
-                        match param.kind {
-                            ParamKind::Regular => regular.next().cloned(),
-                            ParamKind::Variadic => signature.variadic.as_deref().cloned().map(
-                                |element| match element {
-                                    Ty::RuntimePack(elements) => Ty::Tuple(elements),
-                                    element => Ty::VariadicPack(Box::new(element)),
-                                },
-                            ),
-                            ParamKind::KwVariadic => signature
-                                .kw_variadic
-                                .as_deref()
-                                .cloned()
-                                .map(|element| {
-                                    self.kwargs_collector_ty(
-                                        element,
-                                        &format!("keyword collector '{}'", param.name),
-                                    )
-                                })
-                                .transpose()?,
-                        }
-                        .ok_or_else(|| {
-                            TypeError::InvariantViolation(format!(
-                                "parameter '{}' of '{}.{method}' has no checked type",
-                                param.name, wrapper.declaration
-                            ))
-                        })?;
-                    self.bind_parameter(
-                        BodyParam {
-                            name: &param.name,
-                            kind: param.kind,
-                            convention: param.convention,
-                        },
-                        &pty,
-                        ref_binding_is_writable(param.convention, None, &[]),
-                        None,
-                    )?;
-                }
-                self.check_method_body(MethodBody {
-                    name: method,
-                    params: wrapper
-                        .shape
-                        .params
-                        .iter()
-                        .map(|param| BodyParam {
-                            name: &param.name,
-                            kind: param.kind,
-                            convention: param.convention,
+        self.raising_context.push(signature.error.clone());
+        let result = (|| {
+            self.declare_value_parameters(&signature.decls)?;
+            let self_writable = ref_binding_is_writable(signature.self_convention, None, &[]);
+            self.bind_receiver(self_ty, self_writable)?;
+            let mut regular = signature.params.iter();
+            for param in &wrapper.shape.params {
+                let pty = match param.kind {
+                    ParamKind::Regular => regular.next().cloned(),
+                    ParamKind::Variadic => signature.variadic.clone().map(|element| match element
+                        .kind()
+                    {
+                        TyKind::RuntimePack(elements) => TyKind::Tuple(elements.clone()).into(),
+                        _ => TyKind::VariadicPack(element).into(),
+                    }),
+                    ParamKind::KwVariadic => signature
+                        .kw_variadic
+                        .clone()
+                        .map(|element| {
+                            self.kwargs_collector_ty(
+                                element,
+                                &format!("keyword collector '{}'", param.name),
+                            )
                         })
-                        .collect(),
-                    self_writable,
-                    initializing: false,
-                    effect_key,
-                    method_decls: &signature.decls,
-                    ref_return: signature.ref_return.clone(),
-                    return_annotation: None,
-                    generic: !signature.decls.is_empty(),
-                    ret_ty: &signature.ret,
-                    body: &wrapper.body,
-                })
-            })();
+                        .transpose()?,
+                }
+                .ok_or_else(|| {
+                    TypeError::InvariantViolation(format!(
+                        "parameter '{}' of '{}.{method}' has no checked type",
+                        param.name, wrapper.declaration
+                    ))
+                })?;
+                self.bind_parameter(
+                    BodyParam {
+                        name: &param.name,
+                        kind: param.kind,
+                        convention: param.convention,
+                    },
+                    &pty,
+                    ref_binding_is_writable(param.convention, None, &[]),
+                    None,
+                )?;
+            }
+            self.check_method_body(MethodBody {
+                name: method,
+                params: wrapper
+                    .shape
+                    .params
+                    .iter()
+                    .map(|param| BodyParam {
+                        name: &param.name,
+                        kind: param.kind,
+                        convention: param.convention,
+                    })
+                    .collect(),
+                self_writable,
+                initializing: false,
+                effect_key,
+                method_decls: &signature.decls,
+                ref_return: signature.ref_return.clone(),
+                return_annotation: None,
+                generic: !signature.decls.is_empty(),
+                ret_ty: &signature.ret,
+                body: &wrapper.body,
+            })
+        })();
         self.raising_context.pop();
         self.pop_scope();
         result

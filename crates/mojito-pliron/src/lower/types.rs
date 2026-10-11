@@ -3,6 +3,7 @@
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
+use mojito_types::types::TyKind;
 
 impl Locator {
     pub(crate) fn new(ctx: &mut Context, sources: &[(String, String)]) -> Self {
@@ -130,38 +131,38 @@ pub fn lower_ty(
     layout: &LayoutCx<'_>,
     location: Option<SourceSpan>,
 ) -> Result<LowerTy, PlironError> {
-    match ty {
-        Ty::Int => Ok(LowerTy::Scalar(ScalarTy::Int)),
-        Ty::UInt => Ok(LowerTy::Scalar(ScalarTy::UInt)),
-        Ty::Float64 => Ok(LowerTy::Scalar(ScalarTy::Float64)),
-        Ty::Bool => Ok(LowerTy::Scalar(ScalarTy::Bool)),
-        Ty::Dtype => Ok(LowerTy::Scalar(ScalarTy::Dtype)),
+    match ty.kind() {
+        TyKind::Int => Ok(LowerTy::Scalar(ScalarTy::Int)),
+        TyKind::UInt => Ok(LowerTy::Scalar(ScalarTy::UInt)),
+        TyKind::Float64 => Ok(LowerTy::Scalar(ScalarTy::Float64)),
+        TyKind::Bool => Ok(LowerTy::Scalar(ScalarTy::Bool)),
+        TyKind::Dtype => Ok(LowerTy::Scalar(ScalarTy::Dtype)),
         ty if let Some(dtype) = scalar_simd_dtype(ty) => {
             Ok(LowerTy::Scalar(ScalarTy::of_dtype(dtype)))
         }
         // Literal-typed storage holds the default materialized value; a
         // constant that exceeds it rejects at the storage boundary rather
         // than wrapping (the VM keeps arbitrary precision).
-        Ty::IntLiteral => Ok(LowerTy::Scalar(ScalarTy::Int)),
-        Ty::FloatLiteral => Ok(LowerTy::Scalar(ScalarTy::Float64)),
+        TyKind::IntLiteral => Ok(LowerTy::Scalar(ScalarTy::Int)),
+        TyKind::FloatLiteral => Ok(LowerTy::Scalar(ScalarTy::Float64)),
         // Origins and ownership facts erase after validation; a pointer is
         // one opaque target pointer regardless of its element type.
-        Ty::Pointer { .. } | Ty::Ref(_) => Ok(LowerTy::Scalar(ScalarTy::Ptr)),
-        Ty::None => Ok(LowerTy::ZeroSized),
+        TyKind::Pointer { .. } | TyKind::Ref(_) => Ok(LowerTy::Scalar(ScalarTy::Ptr)),
+        TyKind::None => Ok(LowerTy::ZeroSized),
         // The built-in error value is `MjError { message: MjString }` storage;
         // its message buffer frees invisibly on drop (no user destructor).
         // `StringLiteral` storage is the borrowed `MjStrDesc` descriptor.
         // A retained callable is the two-word `{ invoke, env }` value.
-        Ty::Error
-        | Ty::Struct(..)
-        | Ty::Tuple(_)
-        | Ty::RuntimePack(_)
-        | Ty::Variant(_)
-        | Ty::Simd { .. }
-        | Ty::StringLiteral
-        | Ty::Func(_) => match layout.layout_of(ty) {
+        TyKind::Error
+        | TyKind::Struct(..)
+        | TyKind::Tuple(_)
+        | TyKind::RuntimePack(_)
+        | TyKind::Variant(_)
+        | TyKind::Simd { .. }
+        | TyKind::StringLiteral
+        | TyKind::Func(_) => match layout.layout_of(ty) {
             Ok(computed) => Ok(LowerTy::Aggregate {
-                ty: Box::new(ty.clone()),
+                ty: ty.clone(),
                 layout: computed,
             }),
             Err(error) => Err(PlironError {

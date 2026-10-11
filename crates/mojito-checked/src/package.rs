@@ -41,6 +41,7 @@ use mojito_symbol::symbol::{
     LiftedOwner, OV_SEP, OverloadFamily, OverloadLookup, OverloadSets, lifted_owner,
     split_method_symbol,
 };
+use mojito_types::type_section::{TypeSection, decoding_types};
 use std::borrow::Cow;
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, HashMap};
@@ -74,6 +75,12 @@ impl Deref for PackageBytes {
             Self::Mapped(map) => map,
             Self::Owned(bytes) => bytes,
         }
+    }
+}
+
+impl AsRef<[u8]> for PackageBytes {
+    fn as_ref(&self) -> &[u8] {
+        self
     }
 }
 
@@ -138,6 +145,9 @@ impl LibraryRoot {
 pub struct Payload {
     bytes: Arc<PackageBytes>,
     start: usize,
+    /// The section its records' types decode from, when they were written
+    /// against one.
+    types: Option<Arc<TypeSection>>,
 }
 
 impl Payload {
@@ -146,7 +156,35 @@ impl Payload {
         Self {
             bytes: Arc::new(bytes),
             start,
+            types: None,
         }
+    }
+
+    /// The payload with its records' types decoding from the type section
+    /// at `range` of it.
+    ///
+    /// # Errors
+    ///
+    /// When the section overruns the payload or is malformed.
+    pub fn with_types(mut self, range: &Range<usize>) -> Result<Self, String> {
+        let bytes: Arc<dyn AsRef<[u8]> + Send + Sync> = self.bytes.clone();
+        let section = self.start + range.start..self.start + range.end;
+        self.types = Some(Arc::new(TypeSection::new(bytes, section)?));
+        Ok(self)
+    }
+
+    /// Run `decode` over records of this payload: their types decode from
+    /// its type section, when it has one.
+    pub fn decoding<R>(&self, decode: impl FnOnce() -> R) -> R {
+        match &self.types {
+            Some(section) => decoding_types(section, decode),
+            None => decode(),
+        }
+    }
+
+    /// Its type section, when it has one.
+    pub fn types(&self) -> Option<&TypeSection> {
+        self.types.as_deref()
     }
 
     /// The payload's length.
@@ -978,8 +1016,11 @@ impl PackageDeclarations {
                     .get(..declaration.residue)
                     .ok_or_else(|| "its record is truncated".to_string())
                     .and_then(|lowered| {
-                        let mut lowered: LoweredDeclaration =
-                            postcard::from_bytes(lowered).map_err(|error| error.to_string())?;
+                        let mut lowered: LoweredDeclaration = self
+                            .directory
+                            .payload
+                            .decoding(|| postcard::from_bytes(lowered))
+                            .map_err(|error| error.to_string())?;
                         lowered.join(&self.directory, entry, declaration.name)?;
                         Ok(lowered)
                     })
@@ -998,6 +1039,12 @@ impl PackageDeclarations {
     /// ([`DeclaringModules::declaration_of`]), decoded on first use.
     pub fn lowered_owning(&self, name: &str) -> Option<&LoweredDeclaration> {
         self.lowered(self.owning(name)?)
+    }
+
+    /// Run `decode` over records of this package, such as a residue: their
+    /// types decode from its type section, when it has one.
+    pub fn decoding<R>(&self, decode: impl FnOnce() -> R) -> R {
+        self.directory.payload.decoding(decode)
     }
 
     /// The checker residue of the declaration at `entry`, undecoded.

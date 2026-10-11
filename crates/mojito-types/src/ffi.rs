@@ -13,6 +13,7 @@
 //! byte images written through pointer arguments — on top of Rust's standard
 //! library.
 
+use crate::types::TyKind;
 use crate::types::{Ty, scalar_simd_dtype};
 use mojito_ast::ast::Dtype;
 
@@ -303,14 +304,14 @@ pub fn accepts_arg(kind: CType, ty: &Ty) -> bool {
         CType::Int | CType::UInt | CType::SizeT | CType::SSizeT | CType::OffT => {
             is_integer_scalar(ty)
         }
-        CType::ConstCharPtr => match ty {
-            Ty::Pointer { element, .. } => is_byte(element),
-            Ty::Struct(name, _) => is_c_string_slice_struct(name),
+        CType::ConstCharPtr => match ty.kind() {
+            TyKind::Pointer { element, .. } => is_byte(element),
+            TyKind::Struct(name, _) => is_c_string_slice_struct(name),
             _ => false,
         },
-        CType::CharPtr | CType::VoidPtr | CType::IntPtr => match ty {
-            Ty::Pointer { .. } => true,
-            Ty::Struct(name, _) => is_c_string_slice_struct(name),
+        CType::CharPtr | CType::VoidPtr | CType::IntPtr => match ty.kind() {
+            TyKind::Pointer { .. } => true,
+            TyKind::Struct(name, _) => is_c_string_slice_struct(name),
             _ => false,
         },
         CType::Void => false,
@@ -323,15 +324,15 @@ pub fn accepts_arg(kind: CType, ty: &Ty) -> bool {
 pub fn accepts_ret(kind: CType, ty: &Ty) -> bool {
     match kind {
         CType::Int | CType::UInt | CType::SizeT | CType::SSizeT | CType::OffT => {
-            matches!(ty, Ty::Int | Ty::UInt)
+            matches!(ty.kind(), TyKind::Int | TyKind::UInt)
                 || matches!(scalar_simd_dtype(ty), Some(dtype) if is_integer_dtype(dtype))
         }
-        CType::IntPtr => matches!(ty, Ty::Pointer { element, .. }
+        CType::IntPtr => matches!(ty.kind(), TyKind::Pointer { element, .. }
             if matches!(scalar_simd_dtype(element), Some(Dtype::Int32 | Dtype::UInt32))),
         CType::ConstCharPtr | CType::CharPtr | CType::VoidPtr => {
-            matches!(ty, Ty::Pointer { .. })
+            matches!(ty.kind(), TyKind::Pointer { .. })
         }
-        CType::Void => matches!(ty, Ty::None),
+        CType::Void => matches!(ty.kind(), TyKind::None),
     }
 }
 
@@ -340,16 +341,18 @@ pub fn is_c_string_slice_struct(name: &str) -> bool {
     name == "CStringSlice" || name.ends_with("$CStringSlice")
 }
 
-const fn is_integer_scalar(ty: &Ty) -> bool {
-    matches!(ty, Ty::Int | Ty::UInt | Ty::Bool | Ty::IntLiteral)
-        || matches!(scalar_simd_dtype(ty), Some(dtype) if is_integer_dtype(dtype))
+fn is_integer_scalar(ty: &Ty) -> bool {
+    matches!(
+        ty.kind(),
+        TyKind::Int | TyKind::UInt | TyKind::Bool | TyKind::IntLiteral
+    ) || matches!(scalar_simd_dtype(ty), Some(dtype) if is_integer_dtype(dtype))
 }
 
 const fn is_integer_dtype(dtype: Dtype) -> bool {
     !dtype.is_float() && !matches!(dtype, Dtype::Bool)
 }
 
-const fn is_byte(ty: &Ty) -> bool {
+fn is_byte(ty: &Ty) -> bool {
     matches!(scalar_simd_dtype(ty), Some(Dtype::Int8 | Dtype::UInt8))
 }
 
@@ -389,32 +392,32 @@ mod tests {
     #[test]
     fn argument_and_return_acceptance() {
         let int32 = canonical_simd_ty(Dtype::Int32, 1);
-        let byte_ptr = Ty::Pointer {
-            element: Box::new(canonical_simd_ty(Dtype::UInt8, 1)),
+        let byte_ptr = Ty::new(TyKind::Pointer {
+            element: canonical_simd_ty(Dtype::UInt8, 1),
             origin: crate::origin::PointerOrigin::Untracked { mutable: true },
-        };
+        });
         assert!(accepts_arg(CType::Int, &int32));
-        assert!(accepts_arg(CType::Int, &Ty::Int));
-        assert!(!accepts_arg(CType::Int, &Ty::StringLiteral));
+        assert!(accepts_arg(CType::Int, &Ty::int()));
+        assert!(!accepts_arg(CType::Int, &Ty::string_literal()));
         assert!(accepts_arg(CType::ConstCharPtr, &byte_ptr));
         assert!(accepts_arg(
             CType::ConstCharPtr,
-            &Ty::Struct(
+            &Ty::new(TyKind::Struct(
                 "__module$std$ffi$CStringSlice".to_string(),
-                Vec::new().into()
-            )
+                Vec::new()
+            ))
         ));
-        assert!(!accepts_arg(CType::ConstCharPtr, &Ty::Int));
+        assert!(!accepts_arg(CType::ConstCharPtr, &Ty::int()));
         assert!(accepts_ret(CType::Int, &int32));
-        assert!(accepts_ret(CType::SizeT, &Ty::UInt));
+        assert!(accepts_ret(CType::SizeT, &Ty::uint()));
         assert!(accepts_ret(CType::CharPtr, &byte_ptr));
         assert!(!accepts_ret(CType::IntPtr, &byte_ptr));
         assert!(!accepts_ret(
             CType::Int,
-            &Ty::Pointer {
-                element: Box::new(Ty::Int),
+            &Ty::new(TyKind::Pointer {
+                element: Ty::int(),
                 origin: crate::origin::PointerOrigin::Untracked { mutable: false },
-            }
+            })
         ));
     }
 }

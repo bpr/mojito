@@ -6,7 +6,8 @@ use mojito::mir::{
     self, Const, MirBlock, MirDeclarations, MirFunction, MirFunctionDeclaration, MirInstr,
     MirProgram, MirStructDeclaration, MirTerm, Reg, SpanTable, UseMode,
 };
-use mojito::types::{ParamDecl, Ty};
+use mojito::types::ParamDecl;
+use mojito::types::Ty;
 use std::collections::{HashMap, HashSet};
 
 fn identity_program() -> MirProgram {
@@ -23,13 +24,13 @@ fn identity_program() -> MirProgram {
         n_vars: 1,
         var_names: vec!["value".into()],
         n_params: 1,
-        param_types: vec![Ty::Int],
+        param_types: vec![Ty::int()],
         owned_params: vec![false],
         deinit_params: vec![false],
         ref_params: vec![false],
         returns_reference: false,
-        var_tys: HashMap::from([(0, Ty::Int)]),
-        ret_ty: Some(Ty::Int),
+        var_tys: HashMap::from([(0, Ty::int())]),
+        ret_ty: Some(Ty::int()),
         raises: false,
         error_ty: None,
         spans: SpanTable(HashMap::from([(
@@ -39,7 +40,7 @@ fn identity_program() -> MirProgram {
                 Some(0),
             ),
         )])),
-        reg_types: HashMap::from([(0, Ty::Int)]),
+        reg_types: HashMap::from([(0, Ty::int())]),
     };
     MirProgram {
         functions: vec![("identity".into(), function)],
@@ -65,7 +66,7 @@ fn control_flow_program() -> MirProgram {
             MirInstr::MaterializeLiteral {
                 dest: Reg(dest + 1),
                 value: Reg(dest),
-                target: Ty::Int,
+                target: Ty::int(),
             },
         ]
     };
@@ -96,22 +97,22 @@ fn control_flow_program() -> MirProgram {
         n_vars: 1,
         var_names: vec!["flag".into()],
         n_params: 1,
-        param_types: vec![Ty::Bool],
+        param_types: vec![Ty::bool()],
         owned_params: vec![false],
         deinit_params: vec![false],
         ref_params: vec![false],
         returns_reference: false,
-        var_tys: HashMap::from([(0, Ty::Bool)]),
-        ret_ty: Some(Ty::Int),
+        var_tys: HashMap::from([(0, Ty::bool())]),
+        ret_ty: Some(Ty::int()),
         raises: false,
         error_ty: None,
         spans: SpanTable::default(),
         reg_types: HashMap::from([
-            (0, Ty::Bool),
-            (1, Ty::IntLiteral),
-            (2, Ty::Int),
-            (3, Ty::IntLiteral),
-            (4, Ty::Int),
+            (0, Ty::bool()),
+            (1, Ty::int_literal()),
+            (2, Ty::int()),
+            (3, Ty::int_literal()),
+            (4, Ty::int()),
         ]),
     };
     MirProgram {
@@ -126,7 +127,7 @@ fn metadata_program() -> MirProgram {
     program.declarations = MirDeclarations {
         structs: vec![MirStructDeclaration {
             name: "Box".into(),
-            fields: vec![("value".into(), Ty::Int)],
+            fields: vec![("value".into(), Ty::int())],
             mut_self_methods: HashSet::from(["set".into()]),
             fieldwise_init: true,
             param_decls: vec![ParamDecl::Type {
@@ -153,7 +154,7 @@ fn metadata_program() -> MirProgram {
         functions: vec![MirFunctionDeclaration {
             lowered_name: "scale".into(),
             param_names: vec!["value".into(), "by".into()],
-            param_types: vec![Ty::Int, Ty::Float64],
+            param_types: vec![Ty::int(), Ty::float64()],
             defaults: vec![
                 None,
                 Some(CheckedConst::Float(
@@ -173,7 +174,7 @@ fn metadata_program() -> MirProgram {
             has_receiver: false,
             receiver_convention: None,
             param_conventions: vec![None, Some(ArgConvention::Imm)],
-            ret_ty: Ty::Int,
+            ret_ty: Ty::int(),
             returns_reference: false,
             raises: false,
             error_ty: None,
@@ -232,8 +233,8 @@ fn output_uses_lf_and_exactly_one_trailing_newline() {
 fn map_insertion_order_does_not_change_output() {
     let first = identity_program();
     let mut second = identity_program();
-    second.functions[0].1.var_tys = std::iter::once((0, Ty::Int)).collect();
-    second.functions[0].1.reg_types = std::iter::once((0, Ty::Int)).collect();
+    second.functions[0].1.var_tys = std::iter::once((0, Ty::int())).collect();
+    second.functions[0].1.reg_types = std::iter::once((0, Ty::int())).collect();
     assert_eq!(
         mir::text::disassemble(&first).unwrap(),
         mir::text::disassemble(&second).unwrap()

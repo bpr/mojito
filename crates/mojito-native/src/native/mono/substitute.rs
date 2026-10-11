@@ -4,6 +4,7 @@
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 use mojito_mir::mir::Proj;
+use mojito_types::types::TyKind;
 use mojito_types::types::{FuncTy, VariantIndex};
 
 /// The declarations a parameter value's construction names: a struct
@@ -234,11 +235,11 @@ pub(super) fn repair_storage_result_types(function: &mut MirFunction) {
                         if let Some(ty) = var_tys.get(&place.root) {
                             // A load through a reference-holding root
                             // (`through`) reads the referent, not the handle.
-                            let ty = match ty {
-                                Ty::Ref(reference) if place.through.is_some() => {
-                                    (*reference.referent).clone()
+                            let ty = match ty.kind() {
+                                TyKind::Ref(reference) if place.through.is_some() => {
+                                    reference.referent.clone()
                                 }
-                                other => other.clone(),
+                                _ => ty.clone(),
                             };
                             reg_repairs.push((dest.0, ty));
                         }
@@ -473,9 +474,9 @@ pub(super) fn substitute_declaration(
         // An arity-specialized instance's pack reifies as the concrete
         // tuple shape the call site collected.
         if let Some(arity) = bindings.variadic_arity
-            && !matches!(ty, Ty::RuntimePack(_) | Ty::Tuple(_))
+            && !matches!(ty.kind(), TyKind::RuntimePack(_) | TyKind::Tuple(_))
         {
-            *ty = Ty::RuntimePack(vec![ty.clone(); arity]);
+            *ty = TyKind::RuntimePack(vec![ty.clone(); arity]).into();
         }
     }
     if let Some(ty) = &mut decl.kw_variadic {
@@ -521,10 +522,10 @@ pub(super) fn substitute_instruction(
         | SimdCast { dtype, width, .. }
         | SimdBitcast { dtype, width, .. } => {
             let built = substitute_ty(
-                &Ty::Simd {
+                &Ty::new(TyKind::Simd {
                     dtype: dtype.clone(),
                     width: width.clone(),
-                },
+                }),
                 bindings,
             )?;
             if let Some((closed_dtype, closed_width)) = mojito_types::types::simd_slots(&built) {
@@ -591,10 +592,10 @@ pub(super) fn substitute_instruction(
             instantiated_args,
             ..
         } => {
-            sub_opt_ty(raises.as_deref_mut(), bindings)?;
+            sub_opt_ty(raises.as_mut(), bindings)?;
             sub_places(arg_places, bindings)?;
             sub_places(kwarg_places, bindings)?;
-            sub_opt_ty(receiver.as_deref_mut(), bindings)?;
+            sub_opt_ty(receiver.as_mut(), bindings)?;
             for arg in instantiated_args {
                 *arg = substitute_arg(arg, bindings)?;
             }
@@ -639,14 +640,14 @@ pub(super) fn substitute_instruction(
                     });
                 }
             };
-            match binding {
+            match binding.map(Ty::kind) {
                 Some(ty) if mojito_types::types::builtin_copy_is_value_read(ty) => {
                     *instruction = MirInstr::CopyValue {
                         dest: *dest,
                         value: source,
                     };
                 }
-                Some(Ty::Struct(struct_name, _)) => {
+                Some(TyKind::Struct(struct_name, _)) => {
                     sub_places(kwarg_places, bindings)?;
                     *instruction = Call {
                         dest: *dest,
@@ -711,11 +712,11 @@ pub(super) fn substitute_instruction(
             instantiated_args,
             ..
         } => {
-            sub_opt_ty(raises.as_deref_mut(), bindings)?;
+            sub_opt_ty(raises.as_mut(), bindings)?;
             sub_place_opt(callee_place.as_deref_mut(), bindings)?;
             sub_places(arg_places, bindings)?;
             sub_places(kwarg_places, bindings)?;
-            sub_opt_ty(instantiated_contract.as_deref_mut(), bindings)?;
+            sub_opt_ty(instantiated_contract.as_mut(), bindings)?;
             for arg in instantiated_args {
                 *arg = substitute_arg(arg, bindings)?;
             }
@@ -729,7 +730,7 @@ pub(super) fn substitute_instruction(
             instantiated_args,
             ..
         } => {
-            sub_opt_ty(raises.as_deref_mut(), bindings)?;
+            sub_opt_ty(raises.as_mut(), bindings)?;
             sub_ref_opt(reference_result.as_deref_mut(), bindings)?;
             sub_place_opt(recv_place.as_deref_mut(), bindings)?;
             sub_places(arg_places, bindings)?;
@@ -899,13 +900,13 @@ fn close_variant_index(index: &mut VariantIndex, bindings: &Bindings) -> Result<
     else {
         return Ok(());
     };
-    let Some(Ty::RuntimePack(alternatives)) = bindings.types.get(pack) else {
+    let Some(TyKind::RuntimePack(alternatives)) = bindings.types.get(pack).map(Ty::kind) else {
         return Ok(());
     };
     let alternatives = sub_types(alternatives, bindings)?;
     let selected = match element.kind() {
         ParamKind::TypeShape(ty) => substitute_ty(ty, bindings)?,
-        ParamKind::Constant(CtValue::Type(ty)) => (**ty).clone(),
+        ParamKind::Constant(CtValue::Type(ty)) => ty.clone(),
         _ => return Ok(()),
     };
     if is_symbolic(&selected) || alternatives.iter().any(is_symbolic) {
@@ -921,7 +922,7 @@ fn close_variant_index(index: &mut VariantIndex, bindings: &Bindings) -> Result<
                 construct: format!(
                     "constraint failed: Type does not exist in Variant. ('{selected}' is not \
                      one of {})",
-                    Ty::Variant(alternatives.clone())
+                    TyKind::Variant(alternatives.clone())
                 ),
             })?,
     );
@@ -956,7 +957,7 @@ pub(super) fn sub_ref_opt(
     bindings: &Bindings,
 ) -> Result<(), MonoError> {
     if let Some(ty) = ty {
-        *ty.referent = substitute_ty(&ty.referent, bindings)?;
+        ty.referent = substitute_ty(&ty.referent, bindings)?;
     }
     Ok(())
 }
@@ -989,7 +990,7 @@ pub(super) fn struct_instance<'b>(
     ty: &'b Ty,
     bindings: &'b Bindings,
 ) -> Result<Option<StructInstance<'b>>, MonoError> {
-    let Ty::Struct(struct_name, struct_args) = ty else {
+    let TyKind::Struct(struct_name, struct_args) = ty.kind() else {
         return Ok(None);
     };
     let Some((template, shape)) = [struct_name.as_str(), nominal_template(struct_name)]
@@ -1025,13 +1026,13 @@ pub(super) fn substitute_ty(ty: &Ty, bindings: &Bindings) -> Result<Ty, MonoErro
         function: None,
         construct: what,
     };
-    Ok(match ty {
-        Ty::Param { binder, .. } => {
+    Ok(match ty.kind() {
+        TyKind::Param { binder, .. } => {
             bindings.types.get(binder).cloned().ok_or_else(|| {
                 unsupported(format!("unresolved type parameter `{}`", binder.name))
             })?
         }
-        Ty::Struct(name, original) => {
+        TyKind::Struct(name, original) => {
             if original.is_empty() {
                 // The bare in-body `self` spelling of a generic owner resolves
                 // to the concrete instance being materialized; other bare
@@ -1046,21 +1047,24 @@ pub(super) fn substitute_ty(ty: &Ty, bindings: &Bindings) -> Result<Ty, MonoErro
                 if mojito_types::types::binds_pack_elementwise(name)
                     && bindings.structs.is_generic(name)
                 {
-                    return Ok(Ty::Struct(
+                    return Ok(TyKind::Struct(
                         mojito_symbol::symbol::instance_symbol(name, &[]),
-                        Vec::new().into(),
-                    ));
+                        Vec::new(),
+                    )
+                    .into());
                 }
-                return Ok(Ty::Struct(name.clone(), Vec::new().into()));
+                return Ok(TyKind::Struct(name.clone(), Vec::new()).into());
             }
             // A spread of a bound pack is a whole argument list: element by
             // element for `Tuple` and `TString`, one bound list for any other
             // struct, as `expand_pack_spread` spells it.
-            let spread = match mojito_types::types::pack_spread_argument(original) {
-                Some(Ty::Param { binder, .. }) => match bindings.types.get(binder) {
-                    Some(Ty::RuntimePack(elements)) => Some(sub_types(elements, bindings)?),
-                    _ => None,
-                },
+            let spread = match (mojito_types::types::pack_spread_argument(original)).map(Ty::kind) {
+                Some(TyKind::Param { binder, .. }) => {
+                    match bindings.types.get(binder).map(Ty::kind) {
+                        Some(TyKind::RuntimePack(elements)) => Some(sub_types(elements, bindings)?),
+                        _ => None,
+                    }
+                }
                 _ => None,
             };
             let args = match spread {
@@ -1068,11 +1072,7 @@ pub(super) fn substitute_ty(ty: &Ty, bindings: &Bindings) -> Result<Ty, MonoErro
                     elements.into_iter().map(TyArg::Ty).collect()
                 }
                 Some(elements) => vec![TyArg::Val(CtValue::Tuple(
-                    elements
-                        .into_iter()
-                        .map(Box::new)
-                        .map(CtValue::Type)
-                        .collect(),
+                    elements.into_iter().map(CtValue::Type).collect(),
                 ))],
                 // A spread of a list computed from packs is that list's
                 // elements under the instance's bindings.
@@ -1129,42 +1129,44 @@ pub(super) fn substitute_ty(ty: &Ty, bindings: &Bindings) -> Result<Ty, MonoErro
                         .collect::<Vec<_>>(),
                 )
             };
-            Ty::Struct(concrete_name, original.reusing(args))
+            ty.reusing(TyKind::Struct(concrete_name, args))
         }
-        Ty::Tuple(v) => Ty::Tuple(sub_spread_types(v, bindings)?),
-        Ty::RuntimePack(v) => Ty::RuntimePack(sub_spread_types(v, bindings)?),
-        Ty::Variant(v) => Ty::Variant(sub_spread_types(v, bindings)?),
-        Ty::Overload(v) => Ty::Overload(sub_types(v, bindings)?),
-        Ty::ComptimeList(v) => Ty::ComptimeList(Box::new(substitute_ty(v, bindings)?)),
+        TyKind::Tuple(v) => TyKind::Tuple(sub_spread_types(v, bindings)?).into(),
+        TyKind::RuntimePack(v) => TyKind::RuntimePack(sub_spread_types(v, bindings)?).into(),
+        TyKind::Variant(v) => TyKind::Variant(sub_spread_types(v, bindings)?).into(),
+        TyKind::Overload(v) => TyKind::Overload(sub_types(v, bindings)?).into(),
+        TyKind::ComptimeList(v) => TyKind::ComptimeList(substitute_ty(v, bindings)?).into(),
         // A collector over a bound type pack is the tuple of its elements.
-        Ty::VariadicPack(v)
-            if let Some(Ty::Param { binder, .. }) =
-                mojito_types::types::pack_spread(std::slice::from_ref(&**v))
-                && let Some(Ty::RuntimePack(elements)) = bindings.types.get(binder) =>
+        TyKind::VariadicPack(v)
+            if let Some(TyKind::Param { binder, .. }) =
+                (mojito_types::types::pack_spread(std::slice::from_ref(v))).map(Ty::kind)
+                && let Some(TyKind::RuntimePack(elements)) =
+                    bindings.types.get(binder).map(Ty::kind) =>
         {
-            Ty::Tuple(sub_types(elements, bindings)?)
+            TyKind::Tuple(sub_types(elements, bindings)?).into()
         }
-        Ty::VariadicPack(v) => {
+        TyKind::VariadicPack(v) => {
             let element = substitute_ty(v, bindings)?;
             match bindings.variadic_arity {
                 // An unspecialized variadic callee instantiates at its
                 // call-site arity: the pack becomes the concrete tuple shape
                 // the body sees once the arguments are matched. The runtime
                 // pack stays the declaration's variadic ABI root alone.
-                Some(arity) => Ty::Tuple(vec![element; arity]),
-                None => Ty::VariadicPack(Box::new(element)),
+                Some(arity) => TyKind::Tuple(vec![element; arity]).into(),
+                None => TyKind::VariadicPack(element).into(),
             }
         }
-        Ty::Pointer { element, origin } => Ty::Pointer {
-            element: Box::new(substitute_ty(element, bindings)?),
+        TyKind::Pointer { element, origin } => TyKind::Pointer {
+            element: substitute_ty(element, bindings)?,
             origin: origin.clone(),
-        },
-        Ty::Ref(value) => {
-            let mut value = value.clone();
-            value.referent = Box::new(substitute_ty(&value.referent, bindings)?);
-            Ty::Ref(value)
         }
-        Ty::Dependent(dependent) => {
+        .into(),
+        TyKind::Ref(value) => {
+            let mut value = value.clone();
+            value.referent = substitute_ty(&value.referent, bindings)?;
+            TyKind::Ref(value).into()
+        }
+        TyKind::Dependent(dependent) => {
             let Some((elements, index)) = dependent.selection() else {
                 // An element of a pack that is still a parameter (`Ts[i]`)
                 // closes once the pack and the index are bound.
@@ -1175,7 +1177,7 @@ pub(super) fn substitute_ty(ty: &Ty, bindings: &Bindings) -> Result<Ty, MonoErro
                     0,
                 )
                 .map_err(|error| unsupported(error.to_string()))?;
-                if !matches!(closed, Ty::Dependent(_)) {
+                if !matches!(closed.kind(), TyKind::Dependent(_)) {
                     return substitute_ty(&closed, bindings);
                 }
                 // An element of a reflected field-type list
@@ -1204,7 +1206,7 @@ pub(super) fn substitute_ty(ty: &Ty, bindings: &Bindings) -> Result<Ty, MonoErro
                 bindings,
             )?
         }
-        Ty::Assoc { base, name, args } => match bindings.associated.get(&ty.to_string()) {
+        TyKind::Assoc { base, name, args } => match bindings.associated.get(&ty.to_string()) {
             Some(solved) => solved.clone(),
             None => declared_associated_type(base, name, args, bindings)?.ok_or_else(|| {
                 unsupported(format!(
@@ -1215,11 +1217,11 @@ pub(super) fn substitute_ty(ty: &Ty, bindings: &Bindings) -> Result<Ty, MonoErro
         // A generic callable remains as a transient storage type until its
         // statically named producer and dependent call sites are rewritten.
         // `ensure_concrete_function` rejects it if any executable use survives.
-        Ty::GenericFunc(_) => ty.clone(),
-        Ty::SelfType | Ty::Infer => {
+        TyKind::GenericFunc(_) => ty.clone(),
+        TyKind::SelfType | TyKind::Infer => {
             return Err(unsupported(format!("unresolved type `{ty}`")));
         }
-        Ty::Func(func) => {
+        TyKind::Func(func) => {
             let FuncTy {
                 environment,
                 params,
@@ -1237,37 +1239,38 @@ pub(super) fn substitute_ty(ty: &Ty, bindings: &Bindings) -> Result<Ty, MonoErro
                 ref_return,
                 transfers,
             } = &**func;
-            Ty::Func(Box::new(FuncTy {
+            TyKind::Func(Box::new(FuncTy {
                 environment: environment.clone(),
                 params: sub_types(params, bindings)?,
                 names: names.clone(),
-                ret: Box::new(substitute_ty(ret, bindings)?),
+                ret: substitute_ty(ret, bindings)?,
                 required: required.clone(),
                 variadic: variadic
                     .as_ref()
-                    .map(|t| substitute_ty(t, bindings).map(Box::new))
+                    .map(|t| substitute_ty(t, bindings))
                     .transpose()?,
                 kw_variadic: kw_variadic
                     .as_ref()
-                    .map(|t| substitute_ty(t, bindings).map(Box::new))
+                    .map(|t| substitute_ty(t, bindings))
                     .transpose()?,
                 positional_only: *positional_only,
                 keyword_only: *keyword_only,
                 raises: *raises,
                 error: error
                     .as_ref()
-                    .map(|t| substitute_ty(t, bindings).map(Box::new))
+                    .map(|t| substitute_ty(t, bindings))
                     .transpose()?,
                 conventions: conventions.clone(),
                 ref_params: ref_params.clone(),
                 ref_return: ref_return.clone(),
                 transfers: transfers.clone(),
             }))
+            .into()
         }
         // A symbolic lane or width the bindings close — a layout application
         // the instance's oracle answers — becomes the known slot; one they do
         // not close stays as spelled, for the concreteness check to name.
-        Ty::Simd { dtype, width } => Ty::Simd {
+        TyKind::Simd { dtype, width } => TyKind::Simd {
             dtype: match dtype {
                 SimdDtype::Expr(expr) => match eval_ct(expr, bindings) {
                     Ok(CtValue::Dtype(known)) => SimdDtype::Known(known),
@@ -1282,8 +1285,9 @@ pub(super) fn substitute_ty(ty: &Ty, bindings: &Bindings) -> Result<Ty, MonoErro
                 },
                 SimdWidth::Known(known) => SimdWidth::Known(*known),
             },
-        },
-        other => other.clone(),
+        }
+        .into(),
+        _ => ty.clone(),
     })
 }
 
@@ -1291,9 +1295,10 @@ pub(super) fn substitute_ty(ty: &Ty, bindings: &Bindings) -> Result<Ty, MonoErro
 /// pack (`__RuntimeTuple[*Self.Ts]`): the spread is the pack's elements, as
 /// `expand_pack_spread` spells it.
 fn sub_spread_types(types: &[Ty], bindings: &Bindings) -> Result<Vec<Ty>, MonoError> {
-    match mojito_types::types::pack_spread(types) {
-        Some(Ty::Param { binder, .. })
-            if let Some(Ty::RuntimePack(elements)) = bindings.types.get(binder) =>
+    match (mojito_types::types::pack_spread(types)).map(Ty::kind) {
+        Some(TyKind::Param { binder, .. })
+            if let Some(TyKind::RuntimePack(elements)) =
+                bindings.types.get(binder).map(Ty::kind) =>
         {
             sub_types(elements, bindings)
         }
@@ -1316,9 +1321,8 @@ pub(super) fn substitute_arg(arg: &TyArg, bindings: &Bindings) -> Result<TyArg, 
                 values
                     .iter()
                     .map(|value| match value {
-                        CtValue::Type(ty) => substitute_ty(ty, bindings).map(|ty| {
-                            CtValue::Type(Box::new(mojito_types::types::default_literal(&ty)))
-                        }),
+                        CtValue::Type(ty) => substitute_ty(ty, bindings)
+                            .map(|ty| CtValue::Type(mojito_types::types::default_literal(&ty))),
                         other => Ok(other.clone()),
                     })
                     .collect::<Result<Vec<_>, _>>()?,
@@ -1342,7 +1346,12 @@ pub(super) fn value_parameter_constant(value: &CtValue, slot_ty: Option<&Ty>) ->
         CtValue::Float(bits) => Some(Const::Float(f64::from_bits(*bits))),
         CtValue::Bool(value) => Some(Const::Bool(*value)),
         CtValue::Dtype(value) => Some(Const::Dtype(*value)),
-        CtValue::Str(value) if matches!(slot_ty, Some(Ty::Func(_) | Ty::GenericFunc(_))) => {
+        CtValue::Str(value)
+            if matches!(
+                slot_ty.map(Ty::kind),
+                Some(TyKind::Func(_) | TyKind::GenericFunc(_))
+            ) =>
+        {
             Some(Const::Function(value.clone()))
         }
         CtValue::Str(value) => Some(Const::Str(value.clone())),
@@ -1359,7 +1368,7 @@ pub(super) fn value_parameter_constant(value: &CtValue, slot_ty: Option<&Ty>) ->
 /// a list read at an `Array`, which owns its storage.
 pub(super) fn constructed_parameter_constant(k: &Const, ty: &Ty) -> Option<CtValue> {
     match k {
-        Const::Str(text) if matches!(ty, Ty::Struct(name, _) if mojito_types::types::is_stdlib_string_struct(name)) => {
+        Const::Str(text) if matches!(ty.kind(), TyKind::Struct(name, _) if mojito_types::types::is_stdlib_string_struct(name)) => {
             Some(CtValue::Str(text.clone()))
         }
         Const::Value(value)
@@ -1460,13 +1469,13 @@ pub(super) fn parameter_value_construction(
         function: None,
         construct: format!("constructing the parameter value `{value}` at `{ty}`"),
     };
-    let (func, parts): (String, Vec<(&CtValue, Ty)>) = match (value, ty) {
-        (CtValue::Str(text), Ty::Struct(name, _))
+    let (func, parts): (String, Vec<(&CtValue, Ty)>) = match (value, ty.kind()) {
+        (CtValue::Str(text), TyKind::Struct(name, _))
             if mojito_types::types::is_stdlib_string_struct(name) =>
         {
             let literal = Reg(*n_regs);
             *n_regs += 1;
-            reg_types.insert(literal.0, Ty::StringLiteral);
+            reg_types.insert(literal.0, Ty::string_literal());
             return Ok(vec![
                 MirInstr::Const {
                     dest: literal,
@@ -1599,7 +1608,7 @@ fn scalar_parameter_ty(value: &CtValue, name: &str, scope: &[ParamDecl]) -> Opti
             ty,
             variadic: false,
             ..
-        } if declared == name => Some(ty.as_ref()),
+        } if declared == name => Some(ty),
         _ => None,
     });
     match (value, declared) {
@@ -1610,15 +1619,24 @@ fn scalar_parameter_ty(value: &CtValue, name: &str, scope: &[ParamDecl]) -> Opti
             | CtValue::Bool(_)
             | CtValue::Dtype(_)
             | CtValue::Str(_),
-            Some(
-                ty @ (Ty::Int | Ty::UInt | Ty::Bool | Ty::Float64 | Ty::StringLiteral | Ty::Dtype),
-            ),
-        ) => Some(ty.clone()),
-        (CtValue::Int(_), _) => Some(Ty::Int),
-        (CtValue::UInt(_), _) => Some(Ty::UInt),
-        (CtValue::Float(_), _) => Some(Ty::Float64),
-        (CtValue::Bool(_), _) => Some(Ty::Bool),
-        (CtValue::Dtype(_), _) => Some(Ty::Dtype),
+            Some(ty),
+        ) if matches!(
+            ty.kind(),
+            TyKind::Int
+                | TyKind::UInt
+                | TyKind::Bool
+                | TyKind::Float64
+                | TyKind::StringLiteral
+                | TyKind::Dtype
+        ) =>
+        {
+            Some(ty.clone())
+        }
+        (CtValue::Int(_), _) => Some(Ty::int()),
+        (CtValue::UInt(_), _) => Some(Ty::uint()),
+        (CtValue::Float(_), _) => Some(Ty::float64()),
+        (CtValue::Bool(_), _) => Some(Ty::bool()),
+        (CtValue::Dtype(_), _) => Some(Ty::dtype()),
         _ => None,
     }
 }
@@ -1665,7 +1683,7 @@ fn constructed_type(
     let Some(element) = element else {
         return Ok((!mojito_types::types::is_symbolic(bound)).then(|| bound.clone()));
     };
-    let Ty::RuntimePack(elements) = bound else {
+    let TyKind::RuntimePack(elements) = bound.kind() else {
         return Err(MonoError {
             kind: MonoErrorKind::Unsupported,
             function: None,
@@ -1712,19 +1730,19 @@ fn default_construction(
 ) -> Result<Vec<MirInstr>, MonoError> {
     use mojito_ast::ast::Dtype;
     use mojito_mir::mir::Const;
-    let zero = match ty {
-        Ty::Int | Ty::IntLiteral | Ty::UInt => Some(Const::Int(0)),
-        Ty::Bool => Some(Const::Bool(false)),
-        Ty::Float64 | Ty::FloatLiteral => Some(Const::Float(0.0)),
-        Ty::StringLiteral => Some(Const::Str(String::new())),
-        Ty::None => Some(Const::None),
+    let zero = match ty.kind() {
+        TyKind::Int | TyKind::IntLiteral | TyKind::UInt => Some(Const::Int(0)),
+        TyKind::Bool => Some(Const::Bool(false)),
+        TyKind::Float64 | TyKind::FloatLiteral => Some(Const::Float(0.0)),
+        TyKind::StringLiteral => Some(Const::Str(String::new())),
+        TyKind::None => Some(Const::None),
         _ => None,
     };
     if let Some(k) = zero {
         return Ok(vec![MirInstr::Const { dest, k }]);
     }
-    match ty {
-        Ty::Simd { dtype, width } => {
+    match ty.kind() {
+        TyKind::Simd { dtype, width } => {
             let (Some(dtype), Some(width)) = (dtype.known(), width.known()) else {
                 return Err(MonoError {
                     kind: MonoErrorKind::Unsupported,
@@ -1733,11 +1751,11 @@ fn default_construction(
                 });
             };
             let (zero, lane_ty) = match dtype {
-                Dtype::Bool => (Const::Bool(false), Ty::Bool),
+                Dtype::Bool => (Const::Bool(false), Ty::bool()),
                 Dtype::Float16 | Dtype::Float32 | Dtype::Float64 => {
-                    (Const::Float(0.0), Ty::Float64)
+                    (Const::Float(0.0), Ty::float64())
                 }
-                _ => (Const::Int(0), Ty::Int),
+                _ => (Const::Int(0), Ty::int()),
             };
             let lane = Reg(*n_regs);
             *n_regs += 1;
@@ -1755,7 +1773,7 @@ fn default_construction(
                 },
             ])
         }
-        Ty::Struct(struct_name, _) => Ok(vec![plain_call(dest, struct_name, Vec::new())]),
+        TyKind::Struct(struct_name, _) => Ok(vec![plain_call(dest, struct_name, Vec::new())]),
         _ => Err(MonoError {
             kind: MonoErrorKind::Unsupported,
             function: None,
@@ -1806,7 +1824,7 @@ fn constructed_parts<'v>(
 /// The element type and length of an `Array` instance, a mono-named one
 /// included.
 fn array_instance_parts(ty: &Ty) -> Option<(&Ty, i64)> {
-    let Ty::Struct(name, arguments) = ty else {
+    let TyKind::Struct(name, arguments) = ty.kind() else {
         return None;
     };
     if nominal_template(name) != mojito_types::types::ARRAY_TYPE_NAME {
@@ -1821,7 +1839,7 @@ fn array_instance_parts(ty: &Ty) -> Option<(&Ty, i64)> {
 /// The element types of a `Tuple` instance, its monomorphized spelling
 /// included.
 fn tuple_instance_parts(ty: &Ty) -> Option<Vec<&Ty>> {
-    let Ty::Struct(name, arguments) = ty else {
+    let TyKind::Struct(name, arguments) = ty.kind() else {
         return None;
     };
     if nominal_template(name) != mojito_types::types::TUPLE_TYPE_NAME {
@@ -1847,8 +1865,8 @@ fn array_literal_construction(
     n_regs: &mut u32,
     reg_types: &mut HashMap<u32, Ty>,
 ) -> Vec<MirInstr> {
-    let none = fresh_register(Ty::None, n_regs, reg_types);
-    let length_reg = fresh_register(Ty::Int, n_regs, reg_types);
+    let none = fresh_register(Ty::none(), n_regs, reg_types);
+    let length_reg = fresh_register(Ty::int(), n_regs, reg_types);
     let unbound = || mojito_mir::mir::MirParamArg {
         name: None,
         value: None,
@@ -1908,10 +1926,10 @@ fn check_reinterpretation_widths(
                     dtype: SimdDtype::Known(target),
                     ..
                 } => {
-                    if let Some(Ty::Simd {
+                    if let Some(TyKind::Simd {
                         dtype: SimdDtype::Known(source),
                         ..
-                    }) = reg_types.get(&value.0)
+                    }) = reg_types.get(&value.0).map(Ty::kind)
                         && target.bit_width() < source.bit_width()
                     {
                         return Err(MonoError {

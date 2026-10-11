@@ -3,6 +3,7 @@
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
+use mojito_types::types::TyKind;
 
 impl FnLowering<'_> {
     /// A structurally lowered `try`: flatten the region mini-CFGs into this
@@ -122,7 +123,7 @@ impl FnLowering<'_> {
                         if let Some(&flag) = self.drop_flags.get(var) {
                             let cont = self.begin_flag_guard(ctx, flag);
                             let slot = self.var_slots[*var as usize];
-                            self.emit_release_storage(ctx, slot, &Ty::Error)?;
+                            self.emit_release_storage(ctx, slot, &Ty::error())?;
                             self.end_flag_guard(ctx, cont);
                         }
                         // The staged error moves into the bound slot; its
@@ -133,7 +134,7 @@ impl FnLowering<'_> {
                     }
                     None => {
                         // No binder: the caught error is dropped on entry.
-                        self.emit_release_storage(ctx, err_slot, &Ty::Error)?;
+                        self.emit_release_storage(ctx, err_slot, &Ty::error())?;
                     }
                 }
                 if let Some(frame) = pseudo_frame.as_ref() {
@@ -432,7 +433,7 @@ impl FnLowering<'_> {
             {
                 let saved = self.current;
                 self.current = Some(error_case);
-                self.emit_release_storage(ctx, pending_err, &Ty::Error)?;
+                self.emit_release_storage(ctx, pending_err, &Ty::error())?;
                 let jump = BrOp::new(ctx, join, vec![]);
                 self.append(ctx, jump.get_operation(), None);
                 self.current = saved;
@@ -683,14 +684,16 @@ impl FnLowering<'_> {
         if let Some(descriptor) = self.str_runtime.get(&reg.0).copied() {
             return Ok((descriptor.data, descriptor.len));
         }
-        match self.func.reg_types.get(&reg.0) {
-            Some(Ty::Struct(name, _)) if mojito_symbol::symbol::is_stdlib_string_struct(name) => {
+        match self.func.reg_types.get(&reg.0).map(Ty::kind) {
+            Some(TyKind::Struct(name, _))
+                if mojito_symbol::symbol::is_stdlib_string_struct(name) =>
+            {
                 let ptr = self.reg_ptr(ctx, reg)?;
                 Ok(self.string_parts(ctx, ptr, dest))
             }
             // An error value displays as its bare message (the VM's
             // `format_value` over `Value::Error`).
-            Some(Ty::Error) => {
+            Some(TyKind::Error) => {
                 let ptr = self.reg_ptr(ctx, reg)?;
                 Ok(self.string_parts(ctx, ptr, dest))
             }
@@ -724,8 +727,8 @@ impl FnLowering<'_> {
                     .get(fname.as_str())
                     .is_some_and(|declaration| {
                         matches!(
-                            declaration.variadic,
-                            Some(mojito_types::types::Ty::RuntimePack(_))
+                            declaration.variadic.as_ref().map(Ty::kind),
+                            Some(mojito_types::types::TyKind::RuntimePack(_))
                         )
                     })
         });

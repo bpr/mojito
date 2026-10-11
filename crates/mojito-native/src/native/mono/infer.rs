@@ -3,6 +3,7 @@
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
+use mojito_types::types::TyKind;
 
 impl Specializer<'_> {
     /// Retarget one checker-selected subscript invocation (the
@@ -24,7 +25,7 @@ impl Specializer<'_> {
             return Ok(());
         };
         let receiver_ty = peel_refs(receiver_ty).clone();
-        let Ty::Struct(receiver_name, _) = &receiver_ty else {
+        let TyKind::Struct(receiver_name, _) = receiver_ty.kind() else {
             return Ok(());
         };
         let method = if dest.is_some() {
@@ -166,7 +167,7 @@ impl Specializer<'_> {
         let mut own_start = 0;
         if let Some(receiver) = receiver {
             let actual_receiver = peel_refs(reg_ty(caller, receiver, owner)?);
-            if let Ty::Struct(receiver_name, arguments) = actual_receiver
+            if let TyKind::Struct(receiver_name, arguments) = actual_receiver.kind()
                 && let Some(struct_decl) = self.structs.get(nominal_template(receiver_name))
             {
                 own_start =
@@ -255,7 +256,7 @@ impl Specializer<'_> {
                 let actual = reg_ty(caller, actual_reg, owner)?;
                 // A callable-bounded method parameter is represented by its
                 // structural callable contract in the runtime signature, so
-                // ordinary `Ty::Param` unification has no binder spelling to
+                // ordinary `TyKind::Param` unification has no binder spelling to
                 // recover. The declaration still carries that spelling;
                 // bind the (unique) callable type parameter from the actual.
                 let unresolved_callable_decls = declaration
@@ -291,9 +292,9 @@ impl Specializer<'_> {
                 // compile-time inputs to instance selection; treating every
                 // statically traceable closure as such would discard captures.
                 if matches!(
-                    peel_refs(&declaration.param_types[index]),
-                    Ty::GenericFunc(_)
-                        | Ty::Param {
+                    peel_refs(&declaration.param_types[index]).kind(),
+                    TyKind::GenericFunc(_)
+                        | TyKind::Param {
                             callable_bound: Some(_),
                             ..
                         }
@@ -316,8 +317,9 @@ impl Specializer<'_> {
             // A type pack binds to the overflow's element types whole, one
             // per position, unless the call's recorded solution bound it.
             Some(element)
-                if let Some(Ty::Param { binder, .. }) =
-                    mojito_types::types::pack_spread(std::slice::from_ref(element)) =>
+                if let Some(TyKind::Param { binder, .. }) =
+                    (mojito_types::types::pack_spread(std::slice::from_ref(element)))
+                        .map(Ty::kind) =>
             {
                 if !bindings.types.contains_key(binder) {
                     let elements = slots
@@ -334,7 +336,9 @@ impl Specializer<'_> {
             // The declaration records the pack ELEMENT type; a concrete
             // `RuntimePack`/`Tuple` spelling means the checker already
             // specialized the pack.
-            Some(element) if !matches!(element, Ty::RuntimePack(_) | Ty::Tuple(_)) => {
+            Some(element)
+                if !matches!(element.kind(), TyKind::RuntimePack(_) | TyKind::Tuple(_)) =>
+            {
                 for index in &slots.positional_overflow {
                     let actual = reg_ty(caller, args[*index], owner)?;
                     unify(element, actual, &mut bindings).map_err(|e| {
@@ -354,8 +358,8 @@ impl Specializer<'_> {
             for index in &slots.keyword_overflow {
                 let (name, reg) = &kwargs[*index];
                 let actual = peel_refs(reg_ty(caller, *reg, owner)?);
-                let actual = match actual {
-                    Ty::Struct(_, arguments) if name == "**" => match arguments.as_slice() {
+                let actual = match actual.kind() {
+                    TyKind::Struct(_, arguments) if name == "**" => match arguments.as_slice() {
                         [TyArg::Ty(collected)] => collected,
                         _ => continue,
                     },
@@ -381,7 +385,7 @@ impl Specializer<'_> {
         }
         if bindings.self_instance.is_none()
             && let Some(receiver_pattern) = receiver_pattern_for_instance.as_ref()
-            && let Ty::Struct(template, arguments) = peel_refs(receiver_pattern)
+            && let TyKind::Struct(template, arguments) = peel_refs(receiver_pattern).kind()
             && !arguments.is_empty()
         {
             let concrete = substitute_ty(peel_refs(receiver_pattern), &bindings)?;
@@ -393,7 +397,8 @@ impl Specializer<'_> {
         }
         if bindings.self_instance.is_none()
             && let Some(receiver) = receiver
-            && let Ty::Struct(receiver_name, _) = peel_refs(reg_ty(caller, receiver, owner)?)
+            && let TyKind::Struct(receiver_name, _) =
+                (peel_refs(reg_ty(caller, receiver, owner)?)).kind()
             && let Some(struct_decl) = self.structs.get(nominal_template(receiver_name))
             && !struct_decl.param_decls.is_empty()
         {
@@ -431,7 +436,7 @@ impl Specializer<'_> {
         receiver: &Ty,
         bindings: &mut Bindings,
     ) -> Result<(), MonoError> {
-        let Ty::Struct(receiver_name, arguments) = receiver else {
+        let TyKind::Struct(receiver_name, arguments) = receiver.kind() else {
             return Ok(());
         };
         let template = nominal_template(receiver_name);
@@ -457,8 +462,10 @@ impl Specializer<'_> {
                 })
                 .collect();
             let instance = mojito_symbol::symbol::instance_symbol(template, &owner_arguments);
-            bindings.self_instance =
-                Some((template.to_string(), Ty::Struct(instance, ty_arguments)));
+            bindings.self_instance = Some((
+                template.to_string(),
+                TyKind::Struct(instance, ty_arguments).into(),
+            ));
         }
         Ok(())
     }
@@ -531,14 +538,14 @@ impl Specializer<'_> {
         // VM's `remove(0)` loop): no nominal protocol resolves. The split
         // slot keeps the pack layout; lowering tracks the advance position
         // in a backend-side shadow slot.
-        if matches!(&current, Ty::RuntimePack(_) | Ty::Tuple(_)) {
+        if matches!(current.kind(), TyKind::RuntimePack(_) | TyKind::Tuple(_)) {
             function.var_tys.insert(dest, current);
             return Ok(());
         }
         // A borrowed named source binds the slot to a reference; follow it to
         // the underlying iterable type, as the VM does for name resolution.
-        if let Ty::Ref(reference) = &current {
-            current = (*reference.referent).clone();
+        if let TyKind::Ref(reference) = current.kind() {
+            current = reference.referent.clone();
         }
         let dispatch = prepare
             .iter()
@@ -581,7 +588,7 @@ impl Specializer<'_> {
         selected: Option<&str>,
         result: Option<&Ty>,
     ) -> Result<(String, Ty), MonoError> {
-        let Ty::Struct(receiver_name, _) = receiver else {
+        let TyKind::Struct(receiver_name, _) = receiver.kind() else {
             return Err(self.error(
                 Some(owner),
                 format!("iterator `{method}` operation applied to non-struct type `{receiver}`"),
@@ -608,7 +615,7 @@ impl Specializer<'_> {
         method: &str,
         selected: Option<&str>,
     ) -> bool {
-        let Ty::Struct(receiver_name, _) = receiver else {
+        let TyKind::Struct(receiver_name, _) = receiver.kind() else {
             return false;
         };
         let target = self.iterator_step_template(receiver_name, method, selected);
@@ -665,7 +672,7 @@ impl Specializer<'_> {
             }
         }
         let mut owner_covered = 0;
-        if let Ty::Struct(receiver_name, arguments) = receiver
+        if let TyKind::Struct(receiver_name, arguments) = receiver.kind()
             && let Some(struct_decl) = self.structs.get(nominal_template(receiver_name))
         {
             bind_ty_args(&struct_decl.param_decls, arguments, &mut bindings).map_err(|e| {
@@ -715,7 +722,7 @@ impl Specializer<'_> {
         }
         apply_defaults(&declaration.param_decls, &mut bindings)?;
         if bindings.self_instance.is_none()
-            && let Ty::Struct(template, arguments) = peel_refs(receiver_pattern)
+            && let TyKind::Struct(template, arguments) = peel_refs(receiver_pattern).kind()
             && !arguments.is_empty()
         {
             let concrete = substitute_ty(peel_refs(receiver_pattern), &bindings)?;
@@ -726,7 +733,7 @@ impl Specializer<'_> {
             }
         }
         if bindings.self_instance.is_none()
-            && let Ty::Struct(receiver_name, _) = receiver
+            && let TyKind::Struct(receiver_name, _) = receiver.kind()
             && let Some(struct_decl) = self.structs.get(nominal_template(receiver_name))
             && !struct_decl.param_decls.is_empty()
         {
@@ -755,7 +762,7 @@ impl Specializer<'_> {
     /// Whether the concrete receiver type resolves a nullary `__next__` — the
     /// VM's runtime convergence test for dynamic iterator normalization.
     pub(super) fn has_iterator_next(&self, receiver: &Ty) -> bool {
-        let Ty::Struct(name, _) = receiver else {
+        let TyKind::Struct(name, _) = receiver.kind() else {
             return false;
         };
         let target = mojito_symbol::symbol::resolve_method_symbol(
@@ -785,8 +792,9 @@ impl Specializer<'_> {
                 // A pack the caller forwarded whole (`show(*args)`) was
                 // recorded as the caller's own pack, which substitution has
                 // bound to its elements.
-                (ParamDecl::Type { variadic: true, .. }, TyArg::Ty(Ty::RuntimePack(elements)))
-                    if !elements.iter().any(is_symbolic) =>
+                (ParamDecl::Type { variadic: true, .. }, TyArg::Ty(pack))
+                    if let TyKind::RuntimePack(elements) = pack.kind()
+                        && !elements.iter().any(is_symbolic) =>
                 {
                     bind_pack(&decl.binder(), elements.clone(), bindings);
                 }

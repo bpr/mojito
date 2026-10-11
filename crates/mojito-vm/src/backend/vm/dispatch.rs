@@ -3,6 +3,7 @@
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
+use mojito_types::types::TyKind;
 
 /// The checked types a named call carries: the compile-time arguments a
 /// builtin reads (`external_call`'s callee) and its argument types.
@@ -40,10 +41,10 @@ impl VmBackend {
         ty: &Ty,
         visited: &mut std::collections::HashSet<String>,
     ) -> bool {
-        match ty {
-            Ty::Ref(_) => true,
-            Ty::Pointer { .. } if super::references::single_pointee_pointer(Some(ty)) => true,
-            Ty::Struct(name, _) => {
+        match ty.kind() {
+            TyKind::Ref(_) => true,
+            TyKind::Pointer { .. } if super::references::single_pointee_pointer(Some(ty)) => true,
+            TyKind::Struct(name, _) => {
                 visited.insert(name.clone())
                     && prog.structs.get(name).is_some_and(|declaration| {
                         declaration.fields.iter().any(|(_, field_ty)| {
@@ -51,7 +52,7 @@ impl VmBackend {
                         })
                     })
             }
-            Ty::Tuple(items) | Ty::RuntimePack(items) | Ty::Variant(items) => items
+            TyKind::Tuple(items) | TyKind::RuntimePack(items) | TyKind::Variant(items) => items
                 .iter()
                 .any(|item| Self::type_carries_reference_handle(prog, item, visited)),
             _ => false,
@@ -162,8 +163,8 @@ impl VmBackend {
         bound: Option<i64>,
         target: Option<&Ty>,
     ) -> Result<Value, RuntimeError> {
-        let declared = target.and_then(|ty| match ty {
-            Ty::Struct(name, _) if prog.structs.contains_key(name) => Some(name.clone()),
+        let declared = target.and_then(|ty| match ty.kind() {
+            TyKind::Struct(name, _) if prog.structs.contains_key(name) => Some(name.clone()),
             _ => None,
         });
         let name = if let Some(name) = declared {
@@ -661,7 +662,7 @@ impl VmBackend {
         // string writer.
         let writes_protocol = prog.sigs.get(&symbol).is_none_or(|sig| {
             sig.param_types.first().is_some_and(|parameter| {
-                *parameter == mojito_types::types::Ty::StringLiteral
+                *parameter == mojito_types::types::TyKind::StringLiteral
                     || mojito_types::types::is_writer_parameter(parameter)
             })
         });

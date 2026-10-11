@@ -3,6 +3,7 @@
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 use mojito_ast::ast::DeclaredParam;
+use mojito_types::types::TyKind;
 use mojito_types::types::{FuncTy, GenericFuncTy};
 
 /// A method body as its check binds and walks it, whether the method was
@@ -252,11 +253,11 @@ pub(super) fn is_string_literal_annotation(annotation: &SourceType) -> bool {
 /// alike for a struct method and a trait requirement, so a witness compares
 /// against its requirement field for field.
 pub(super) struct Collectors {
-    pub(super) variadic: Option<Box<Ty>>,
+    pub(super) variadic: Option<Ty>,
     pub(super) variadic_index: Option<usize>,
     pub(super) variadic_convention: Option<ArgConvention>,
     pub(super) variadic_name: Option<String>,
-    pub(super) kw_variadic: Option<Box<Ty>>,
+    pub(super) kw_variadic: Option<Ty>,
     pub(super) kw_variadic_index: Option<usize>,
     pub(super) keyword_only: Option<usize>,
 }
@@ -269,11 +270,11 @@ impl Collectors {
         let variadic_idx = position(mojito_ast::ast::ParamKind::Variadic);
         let kw_variadic_idx = position(mojito_ast::ast::ParamKind::KwVariadic);
         Self {
-            variadic: variadic_idx.map(|index| Box::new(all_types[index].clone())),
+            variadic: variadic_idx.map(|index| all_types[index].clone()),
             variadic_index: regular_marker_index(params, variadic_idx),
             variadic_convention: variadic_idx.and_then(|index| params[index].convention),
             variadic_name: variadic_idx.map(|index| params[index].name.clone()),
-            kw_variadic: kw_variadic_idx.map(|index| Box::new(all_types[index].clone())),
+            kw_variadic: kw_variadic_idx.map(|index| all_types[index].clone()),
             kw_variadic_index: kw_variadic_idx,
             keyword_only: effective_keyword_only_index(params, keyword_only, variadic_idx),
         }
@@ -562,12 +563,12 @@ impl Checker {
                 Some(ret) => self.resolve_return_annotation(ret)?,
                 None => match named_result {
                     Some(result) => self.ty_from_anno(&result.ty)?,
-                    None => Ty::None,
+                    None => Ty::none(),
                 },
             },
             ret_mlir_index: super::type_resolution::spells_mlir_index(method.ret.as_ref()),
-            raises: error.as_ref().is_some_and(|ty| *ty != Ty::Never),
-            error: error.map(Box::new),
+            raises: error.as_ref().is_some_and(|ty| *ty != TyKind::Never),
+            error,
             self_convention: method.self_convention,
             ref_params: lower_ref_param_sigs(
                 &self.enclosing_type_params,
@@ -684,8 +685,13 @@ impl Checker {
                 && let Some(vty) = scalar_type_name(only)
             {
                 if !matches!(
-                    vty,
-                    Ty::Int | Ty::UInt | Ty::Bool | Ty::StringLiteral | Ty::Float64 | Ty::Dtype
+                    vty.kind(),
+                    TyKind::Int
+                        | TyKind::UInt
+                        | TyKind::Bool
+                        | TyKind::StringLiteral
+                        | TyKind::Float64
+                        | TyKind::Dtype
                 ) {
                     return Err(TypeError::BadValueParamType {
                         name: tp.name.clone(),
@@ -705,8 +711,8 @@ impl Checker {
             if let [only] = tp.bounds.as_slice()
                 && self.structs.contains_key(only)
             {
-                let ty = Ty::Struct(only.clone(), Vec::new().into());
-                decls.push(self.value_param_decl(tp, binder_id(decls.len()), ty)?);
+                let ty = TyKind::Struct(only.clone(), Vec::new());
+                decls.push(self.value_param_decl(tp, binder_id(decls.len()), ty.into())?);
                 continue;
             }
             // A lone bound naming an earlier type binder of this list is a
@@ -743,7 +749,6 @@ impl Checker {
                         .as_ref()
                         .map(|value| self.type_default_from_expr(value))
                         .transpose()?
-                        .map(Box::new)
                 },
                 infer_only: tp.infer_only,
                 variadic: tp.name.starts_with('*'),
@@ -805,7 +810,7 @@ impl Checker {
                     decls[index] = ParamDecl::Value {
                         id: binder_id(index),
                         name: source.name.clone(),
-                        ty: Box::new(checked),
+                        ty: checked,
                         default: None,
                         callable_default,
                         infer_only,
@@ -816,7 +821,7 @@ impl Checker {
                     let ParamDecl::Type { callable_bound, .. } = &mut decls[index] else {
                         unreachable!("callable type parameter changed classification")
                     };
-                    *callable_bound = Some(Box::new(checked));
+                    *callable_bound = Some(checked);
                 }
             }
             Ok(decls)
@@ -835,7 +840,7 @@ impl Checker {
         Ok(ParamDecl::Value {
             id,
             name: tp.name.clone(),
-            ty: Box::new(ty),
+            ty,
             default: tp
                 .default
                 .as_ref()
@@ -926,15 +931,16 @@ impl Checker {
         if decls.is_empty() {
             return Ok(checked);
         }
-        let Ty::Func(func) = checked else {
+        let TyKind::Func(func) = checked.kind() else {
             return Err(TypeError::InvariantViolation(
                 "anonymous callable signature did not lower to a function type".to_string(),
             ));
         };
-        Ok(Ty::GenericFunc(Box::new(GenericFuncTy {
+        Ok(TyKind::GenericFunc(Box::new(GenericFuncTy {
             decls,
-            func: *func,
-        })))
+            func: (**func).clone(),
+        }))
+        .into())
     }
 
     pub(super) fn type_default_from_expr(&self, value: &Expr) -> Result<Ty, TypeError> {
@@ -975,11 +981,11 @@ impl Checker {
                 let is_bool_parameter = earlier.iter().any(|declaration| {
                     matches!(declaration,
                         ParamDecl::Value { name: parameter, ty, .. }
-                            if parameter == name && ty.as_ref() == &Ty::Bool)
+                            if parameter == name && ty == &TyKind::Bool)
                 });
                 if !is_bool_parameter && !self.comptimes.contains_key(name) {
                     return Err(TypeError::TypeMismatch {
-                        expected: Ty::Bool.to_string(),
+                        expected: TyKind::Bool.to_string(),
                         found: format!("compile-time parameter '{name}'"),
                         context: "callable default condition".to_string(),
                     });
@@ -1164,7 +1170,7 @@ impl Checker {
                                 .borrow_mut()
                                 .declarations
                                 .insert(site);
-                        } else if matches!(ty, Ty::Param { .. }) && !positional_pack {
+                        } else if matches!(ty.kind(), TyKind::Param { .. }) && !positional_pack {
                             self.explicit_destroy_deletability
                                 .borrow_mut()
                                 .linear_declarations
@@ -1310,7 +1316,7 @@ impl Checker {
             Some(t) => self.resolve_return_annotation(t)?,
             None => match named_result {
                 Some(result) => self.ty_from_anno(&result.ty)?,
-                None => Ty::None,
+                None => Ty::none(),
             },
         };
         let regular: Vec<&FnParam> = m
@@ -1378,7 +1384,7 @@ impl Checker {
         // once, before any read, on every path) is left for a later refinement.
         if result.is_ok()
             && out_init
-            && let Ty::Struct(sname, _) = self_ty
+            && let TyKind::Struct(sname, _) = self_ty.kind()
         {
             result = self.check_definite_init(sname, &m.name, &m.body);
         }
@@ -1463,9 +1469,9 @@ impl Checker {
                 // A specialized heterogeneous pack (`$pack` → RuntimePack)
                 // binds as the tuple itself; an ordinary variadic collects into
                 // source-inexpressible homogeneous pack storage.
-                mojito_ast::ast::ParamKind::Variadic => match pty {
-                    Ty::RuntimePack(elements) => Ty::Tuple(elements),
-                    _ => Ty::VariadicPack(Box::new(pty)),
+                mojito_ast::ast::ParamKind::Variadic => match pty.kind() {
+                    TyKind::RuntimePack(elements) => TyKind::Tuple(elements.clone()).into(),
+                    _ => TyKind::VariadicPack(pty).into(),
                 },
                 mojito_ast::ast::ParamKind::KwVariadic => {
                     self.kwargs_collector_ty(pty, &format!("keyword collector '{}'", p.name))?
@@ -1559,7 +1565,7 @@ impl Checker {
         if matches!(convention, Some(mojito_ast::ast::ArgConvention::Ref)) {
             self.register_reference_parameter(name, pty.clone(), writable, binder);
         }
-        if !matches!(pty, Ty::Ref(_))
+        if !matches!(pty.kind(), TyKind::Ref(_))
             && self.type_may_carry_loans(pty)
             && let Some(owner) = self.lookup_owner(name)
         {
@@ -1642,7 +1648,7 @@ impl Checker {
                 .iter()
                 .filter_map(|decl| match decl {
                     ParamDecl::Value { name, ty, .. }
-                        if matches!(**ty, Ty::Func(_) | Ty::GenericFunc(_)) =>
+                        if matches!(*ty.kind(), TyKind::Func(_) | TyKind::GenericFunc(_)) =>
                     {
                         Some(name.trim_start_matches('*').to_string())
                     }
@@ -1716,7 +1722,7 @@ impl Checker {
         result?;
         let completes = match named_result {
             Some(result) => definitely_initializes_named_result(body, result.name),
-            None => *ret_ty == Ty::None || definitely_returns(body),
+            None => *ret_ty == TyKind::None || definitely_returns(body),
         };
         if !completes {
             return Err(TypeError::MissingReturn(name.to_string()));
@@ -1831,7 +1837,7 @@ impl Checker {
         };
         let mut nested = Vec::new();
         for (field, ty) in &info.fields {
-            if !matches!(ty, Ty::Struct(..)) {
+            if !matches!(ty.kind(), TyKind::Struct(..)) {
                 continue;
             }
             let position = if info.fieldwise_init {
@@ -1908,7 +1914,7 @@ impl Checker {
             return Ok(());
         };
         let names_pack = |ty: &Ty| {
-            matches!(ty, Ty::Param { binder, .. }
+            matches!(ty.kind(), TyKind::Param { binder, .. }
                 if binder.name.starts_with('*') && binder.name.trim_start_matches('*') == pack)
         };
         if patterns
@@ -1984,7 +1990,7 @@ impl Checker {
         let forwarded = self
             .forwarded_pack_argument(name, args, sig.variadic.is_some())
             .map_err(|_| None)?;
-        let (Some((position, pack)), Some(collector)) = (forwarded, sig.variadic.as_deref()) else {
+        let (Some((position, pack)), Some(collector)) = (forwarded, sig.variadic.as_ref()) else {
             return Ok(None);
         };
         mojito_ast::call::bind_spread(matched, position).map_err(|_| None)?;
@@ -2119,8 +2125,8 @@ impl Checker {
                             &format!("{name}.__init__"),
                             sig,
                             &sig.params,
-                            sig.variadic.as_deref(),
-                            sig.kw_variadic.as_deref(),
+                            sig.variadic.as_ref(),
+                            sig.kw_variadic.as_ref(),
                             param_args,
                             args,
                             kwargs,
@@ -2476,7 +2482,7 @@ impl Checker {
                         sig.conventions.get(index).copied().flatten(),
                     ));
                 }
-                if let Some(element) = sig.variadic.as_deref() {
+                if let Some(element) = sig.variadic.as_ref() {
                     // Each overflow argument scores against the variadic element
                     // (its convention is applied at the `^` transfer site, not
                     // here — mirroring the `decls.is_empty()` variadic path).
@@ -2817,7 +2823,7 @@ impl Checker {
             .map(|(argument, field)| {
                 if self.type_contains_reference(field) {
                     self.infer_storage_value(argument, field)
-                } else if matches!(field, Ty::Func(_) | Ty::GenericFunc(_)) {
+                } else if matches!(field.kind(), TyKind::Func(_) | TyKind::GenericFunc(_)) {
                     // Callable fields keep uncontextualized inference: the
                     // storage rule below must still see a capturing closure's
                     // full environment rather than an adapted contract.
@@ -2876,7 +2882,7 @@ impl Checker {
             let contextual;
             let aty = if !mojito_types::types::is_symbolic(fty)
                 || self.type_contains_reference(fty)
-                || matches!(fty, Ty::Func(_) | Ty::GenericFunc(_))
+                || matches!(fty.kind(), TyKind::Func(_) | TyKind::GenericFunc(_))
             {
                 aty
             } else {
@@ -2895,7 +2901,7 @@ impl Checker {
             if self.type_contains_reference(&expected) {
                 self.mark_reference_storage_uses(&args[i], &expected);
             }
-            if matches!(expected, Ty::Ref(_)) {
+            if matches!(expected.kind(), TyKind::Ref(_)) {
                 continue;
             }
             // A constructor stores each argument in a field by value — a consuming
@@ -2918,7 +2924,7 @@ impl Checker {
                 arguments
                     .into_iter()
                     .filter_map(|argument| match argument {
-                        TyArg::Ty(ty) => Some(CtValue::Type(Box::new(ty))),
+                        TyArg::Ty(ty) => Some(CtValue::Type(ty)),
                         TyArg::Val(_) | TyArg::Origin(_) => None,
                     })
                     .collect()
@@ -2959,7 +2965,8 @@ impl Checker {
             // each element checked against its bound there; unifying it
             // would tie the pack to the first collected argument.
             for (pattern, actual) in patterns.iter().zip(actuals) {
-                if matches!(pattern, Ty::Param { binder, .. } if binder.name.starts_with('*')) {
+                if matches!(pattern.kind(), TyKind::Param { binder, .. } if binder.name.starts_with('*'))
+                {
                     continue;
                 }
                 unify(pattern, actual, &mut subst)?;
@@ -3059,20 +3066,19 @@ impl Checker {
                     let spread: Vec<Ty> = values
                         .iter()
                         .filter_map(|value| match value {
-                            CtValue::Type(ty) => Some((**ty).clone()),
+                            CtValue::Type(ty) => Some(ty.clone()),
                             _ => None,
                         })
                         .collect();
                     Self::reject_mixed_spread(name, &spread)?;
                     if let [CtValue::Type(pack)] = values.as_slice()
-                        && (mojito_types::types::pack_spread(std::slice::from_ref(&**pack))
-                            .is_some()
+                        && (mojito_types::types::pack_spread(std::slice::from_ref(pack)).is_some()
                             || mojito_types::types::list_spread(pack).is_some())
                     {
                         if let ParamDecl::Type { id, .. } = decl {
-                            subst.insert(id.clone(), (**pack).clone());
+                            subst.insert(id.clone(), (*pack).clone());
                         }
-                        tyargs.push(TyArg::Ty((**pack).clone()));
+                        tyargs.push(TyArg::Ty((*pack).clone()));
                         continue;
                     }
                     let value = CtValue::Tuple(values);
@@ -3121,7 +3127,7 @@ impl Checker {
                     default: Some(ty), ..
                 } = decl
                 {
-                    TyArg::Ty((**ty).clone())
+                    TyArg::Ty((*ty).clone())
                 } else {
                     return Err(TypeError::CannotInferTypeParam {
                         name: name.to_string(),
@@ -3156,7 +3162,7 @@ impl Checker {
             );
         }
         for (pat, act) in patterns.iter().zip(actuals) {
-            if let Ty::Param { binder, bounds, .. } = pat
+            if let TyKind::Param { binder, bounds, .. } = pat.kind()
                 && binder.name.starts_with('*')
             {
                 for bound in bounds {
@@ -3190,8 +3196,8 @@ impl Checker {
         let inferred_packs: HashMap<String, Vec<CtValue>> = patterns
             .iter()
             .zip(actuals)
-            .filter_map(|(pattern, actual)| match pattern {
-                Ty::Param { binder, .. }
+            .filter_map(|(pattern, actual)| match pattern.kind() {
+                TyKind::Param { binder, .. }
                     if binder.name.starts_with('*') && !forwards_pack(actual) =>
                 {
                     Some((
@@ -3205,7 +3211,7 @@ impl Checker {
                 packs
                     .entry(name)
                     .or_insert_with(Vec::new)
-                    .push(CtValue::Type(Box::new(materialize_pack_element(ty))));
+                    .push(CtValue::Type(materialize_pack_element(ty)));
                 packs
             });
         let mut tyargs = Vec::with_capacity(decls.len());
@@ -3277,9 +3283,9 @@ impl Checker {
                                     elements
                                         .iter()
                                         .map(|element| match element {
-                                            CtValue::Type(ty) => CtValue::Type(Box::new(
-                                                materialize_pack_element((**ty).clone()),
-                                            )),
+                                            CtValue::Type(ty) => CtValue::Type(
+                                                materialize_pack_element((*ty).clone()),
+                                            ),
                                             other => other.clone(),
                                         })
                                         .collect(),
@@ -3295,7 +3301,7 @@ impl Checker {
                     let solved = subst
                         .get(id)
                         .cloned()
-                        .or_else(|| default.as_ref().map(|default| (**default).clone()))
+                        .or_else(|| default.clone())
                         .ok_or_else(|| TypeError::CannotInferTypeParam {
                             name: name.to_string(),
                             param: pname.clone(),
@@ -3408,7 +3414,7 @@ impl Checker {
                 }
                 // A compile-time string is carried as a literal, which no
                 // `String`-typed read of the binder materializes yet.
-                if matches!(solved, Ty::Struct(name, _)
+                if matches!(solved.kind(), TyKind::Struct(name, _)
                     if mojito_symbol::symbol::is_stdlib_string_struct(name))
                 {
                     return Err(TypeError::Unsupported(format!(
@@ -3488,8 +3494,8 @@ impl Checker {
                 });
             }
             let arg_ty = self.infer(&kwargs[0].value)?;
-            return match &arg_ty {
-                Ty::Struct(actual, _) if actual == name => Ok(arg_ty),
+            return match arg_ty.kind() {
+                TyKind::Struct(actual, _) if actual == name => Ok(arg_ty),
                 _ => Err(TypeError::TypeMismatch {
                     expected: name.to_string(),
                     found: arg_ty.to_string(),
@@ -3531,8 +3537,8 @@ impl Checker {
         }
         // A copy keeps the source's origin tail.
         let mut arguments = tyargs;
-        match &arg_ty {
-            Ty::Struct(actual, actual_arguments) if actual == name => {
+        match arg_ty.kind() {
+            TyKind::Struct(actual, actual_arguments) if actual == name => {
                 arguments.extend_from_slice(info.origin_tail(actual_arguments));
             }
             _ => arguments.extend(partitioned.tail_arguments()),
@@ -3563,15 +3569,15 @@ impl Checker {
         // A parameter naming one of the struct's own origin binders: a
         // pointer or reference over it, or a struct carrying it in its tail.
         let names_origin_binder = |parameter: &Ty| {
-            mojito_types::types::mentions(parameter, &|candidate| match candidate {
-                Ty::Pointer {
+            mojito_types::types::mentions(parameter, &|candidate| match candidate.kind() {
+                TyKind::Pointer {
                     origin: mojito_types::origin::PointerOrigin::Param { .. },
                     ..
                 } => true,
-                Ty::Ref(reference) => {
+                TyKind::Ref(reference) => {
                     matches!(reference.origin, mojito_types::origin::Origin::Param(_))
                 }
-                Ty::Struct(_, arguments) => arguments.iter().any(|argument| {
+                TyKind::Struct(_, arguments) => arguments.iter().any(|argument| {
                     matches!(
                         argument,
                         TyArg::Origin(mojito_types::origin::Origin::Param(_))
@@ -3657,7 +3663,7 @@ impl Checker {
     /// String struct keeps the literal: materializing to an absent struct
     /// would fail every conformance the literal itself satisfies.
     fn materialize_pack_element(&self, ty: Ty) -> Ty {
-        if ty == Ty::StringLiteral
+        if ty == TyKind::StringLiteral
             && !self
                 .structs
                 .contains_key(mojito_symbol::symbol::STDLIB_STRING_STRUCT)
@@ -3682,15 +3688,13 @@ impl Checker {
         let collected = patterns
             .iter()
             .zip(actuals)
-            .filter(|(pattern, _)| matches!(pattern, Ty::Param { binder, .. } if binder.id == *id));
+            .filter(|(pattern, _)| matches!(pattern.kind(), TyKind::Param { binder, .. } if binder.id == *id));
         let mut elements = Vec::new();
         for (_, actual) in collected {
             if forwards_pack(actual) && !binds_pack_itself(actual, id) {
                 return TyArg::Ty(actual.clone());
             }
-            elements.push(CtValue::Type(Box::new(
-                self.materialize_pack_element(actual.clone()),
-            )));
+            elements.push(CtValue::Type(self.materialize_pack_element(actual.clone())));
         }
         TyArg::Val(CtValue::Tuple(elements))
     }
@@ -3719,7 +3723,7 @@ fn collector_takes_bound_pack(
     pack_elements: Option<&(String, Vec<Ty>)>,
     overflow: usize,
 ) -> bool {
-    let spreads_pack = sig.variadic.as_deref().is_some_and(|element| {
+    let spreads_pack = sig.variadic.as_ref().is_some_and(|element| {
         mojito_types::types::pack_spread(std::slice::from_ref(element)).is_some()
     });
     match pack_elements {
@@ -3751,7 +3755,7 @@ fn forwards_pack(actual: &Ty) -> bool {
 /// Whether the pack `bound` is the binder `id` itself, the self-binding a
 /// collected element leaves behind rather than a forward of another pack.
 fn binds_pack_itself(bound: &Ty, id: &mojito_types::param_expr::ParamId) -> bool {
-    matches!(bound, Ty::Param { binder, .. } if binder.id == *id)
+    matches!(bound.kind(), TyKind::Param { binder, .. } if binder.id == *id)
 }
 
 /// Whether a `return` occurs anywhere below. A nested function's own
@@ -3790,7 +3794,7 @@ fn fieldwise_arguments(
         .collect())
 }
 
-/// The `Ty::Param` of the earlier, non-variadic type binder `name` names in a
+/// The `TyKind::Param` of the earlier, non-variadic type binder `name` names in a
 /// list being classified.
 fn sibling_type_binder(decls: &[ParamDecl], name: &str) -> Option<Ty> {
     decls

@@ -3,6 +3,7 @@
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 use crate::checker::call_inference::folded_parameter_arguments;
+use mojito_types::types::TyKind;
 
 impl Checker {
     /// Type a static method on a parameterized built-in type. Currently only
@@ -49,7 +50,7 @@ impl Checker {
                 }
                 for argument in args {
                     let aty = self.infer(argument)?;
-                    if !coerces(&aty, &Ty::Int) {
+                    if !coerces(&aty, &Ty::int()) {
                         return Err(TypeError::TypeMismatch {
                             expected: "Int".to_string(),
                             found: aty.to_string(),
@@ -128,9 +129,12 @@ impl Checker {
                 .ok()
                 .map(|(_, tyargs)| Self::struct_instance_type(sname, tyargs))
         };
-        let compatible = match (&actual, &expected) {
-            (Ty::Struct(name, _), None) => name == sname,
-            (Ty::Struct(name, actual_args), Some(Ty::Struct(expected_name, expected_args))) => {
+        let compatible = match (actual.kind(), expected.as_ref().map(Ty::kind)) {
+            (TyKind::Struct(name, _), None) => name == sname,
+            (
+                TyKind::Struct(name, actual_args),
+                Some(TyKind::Struct(expected_name, expected_args)),
+            ) => {
                 let type_args = |args: &[TyArg]| {
                     args.iter()
                         .filter_map(|arg| match arg {
@@ -194,7 +198,7 @@ impl Checker {
         {
             self.expression_types.borrow_mut().insert(
                 object.source_span(),
-                Ty::Struct(sname.to_string(), arguments.into()),
+                TyKind::Struct(sname.to_string(), arguments).into(),
             );
         }
     }
@@ -349,10 +353,7 @@ impl Checker {
                     result_adapter: None,
                     raises: sig.raises,
                     error: sig.error.as_ref().map(|error| {
-                        Box::new(substitute(
-                            &substitute_at(error, info, &tyargs),
-                            &method_subst,
-                        ))
+                        substitute(&substitute_at(error, info, &tyargs), &method_subst)
                     }),
                     mutates_receiver: false,
                     consumes_receiver: false,
@@ -606,7 +607,7 @@ impl Checker {
                 .insert(span.clone(), target);
         }
         if selected.raises {
-            let error = selected.error.as_deref().cloned().unwrap_or(Ty::Error);
+            let error = selected.error.clone().unwrap_or_else(Ty::error);
             self.record_call_effect(span, error.clone());
             self.require_error(format!("call to raising method '{sname}.{method}'"), error)?;
         }
@@ -661,7 +662,7 @@ impl Checker {
         }
         // A forwarded pack that is still a parameter (`*args`) solves no
         // struct parameter: the collector binds it whole.
-        if let Some(element) = sig.variadic.as_deref() {
+        if let Some(element) = sig.variadic.as_ref() {
             for position in matched.positional_overflow {
                 if self.forwarded_pack(&args[position]).is_some() {
                     continue;
@@ -670,7 +671,7 @@ impl Checker {
                 actuals.push(self.infer(&args[position])?);
             }
         }
-        if let Some(element) = sig.kw_variadic.as_deref() {
+        if let Some(element) = sig.kw_variadic.as_ref() {
             for position in matched.keyword_overflow {
                 patterns.push(element.clone());
                 actuals.push(self.infer(&kwargs[position].value)?);

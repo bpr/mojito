@@ -3,6 +3,7 @@
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
+use mojito_types::types::TyKind;
 
 impl Checker {
     /// Type a `Pointer[T]` instance method: the public `unsafe_*` operation
@@ -82,10 +83,11 @@ impl Checker {
                         origin: target.clone(),
                     },
                 );
-                Ok(Ty::Pointer {
-                    element: Box::new(elem.clone()),
+                Ok(TyKind::Pointer {
+                    element: elem.clone(),
                     origin: target,
-                })
+                }
+                .into())
             }
             // Capability rebind (upstream's `unsafe_mut_cast[target_mut]`): the
             // runtime value is unchanged, as for an origin cast.
@@ -122,10 +124,11 @@ impl Checker {
                         origin: target.clone(),
                     },
                 );
-                Ok(Ty::Pointer {
-                    element: Box::new(elem.clone()),
+                Ok(TyKind::Pointer {
+                    element: elem.clone(),
                     origin: target,
-                })
+                }
+                .into())
             }
             // `Copyable.copy()`: the same pointer, lowered as an origin cast
             // to the receiver's own origin.
@@ -143,10 +146,11 @@ impl Checker {
                         origin: origin.clone(),
                     },
                 );
-                Ok(Ty::Pointer {
-                    element: Box::new(elem.clone()),
+                Ok(TyKind::Pointer {
+                    element: elem.clone(),
                     origin: origin.clone(),
-                })
+                }
+                .into())
             }
             "unsafe_offset" => {
                 if origin.as_origin().is_some() && !origin.multi_element() {
@@ -164,7 +168,7 @@ impl Checker {
                     });
                 }
                 let offset = self.infer(&args[0])?;
-                if !coerces(&offset, &Ty::Int) {
+                if !coerces(&offset, &Ty::int()) {
                     return Err(TypeError::TypeMismatch {
                         expected: "Int".to_string(),
                         found: offset.to_string(),
@@ -175,10 +179,11 @@ impl Checker {
                     span.clone(),
                     mojito_checked::checked::SemanticAdjustment::PointerOffset,
                 );
-                Ok(Ty::Pointer {
-                    element: Box::new(elem.clone()),
+                Ok(TyKind::Pointer {
+                    element: elem.clone(),
                     origin: origin.clone(),
-                })
+                }
+                .into())
             }
             "unsafe_write" => {
                 self.check_pointer_write(object, origin)?;
@@ -215,10 +220,10 @@ impl Checker {
                         context: "value written through 'Pointer.unsafe_write'".to_string(),
                     });
                 }
-                let receiver = Ty::Pointer {
-                    element: Box::new(elem.clone()),
+                let receiver = Ty::new(TyKind::Pointer {
+                    element: elem.clone(),
                     origin: origin.clone(),
-                };
+                });
                 let (name, slot, convention) = if copy {
                     ("copy", ArgSlot::Keyword(0), None)
                 } else {
@@ -253,7 +258,7 @@ impl Checker {
                         copy,
                     },
                 );
-                Ok(Ty::None)
+                Ok(Ty::none())
             }
             "unsafe_take_pointee" | "unsafe_deinit_pointee" => {
                 // Upstream requires only a mutable pointer. An origin-bearing
@@ -312,7 +317,7 @@ impl Checker {
                 Ok(if method == "unsafe_take_pointee" {
                     elem.clone()
                 } else {
-                    Ty::None
+                    Ty::none()
                 })
             }
             "free" | "unsafe_free" => {
@@ -329,11 +334,11 @@ impl Checker {
                         got: args.len(),
                     });
                 }
-                Ok(Ty::None)
+                Ok(Ty::none())
             }
             _ => Err(TypeError::NoSuchMethod {
-                object_type: Ty::Pointer {
-                    element: Box::new(elem.clone()),
+                object_type: TyKind::Pointer {
+                    element: elem.clone(),
                     origin: origin.clone(),
                 }
                 .to_string(),
@@ -391,7 +396,7 @@ impl Checker {
                         element: element.clone(),
                     },
                 );
-                Ok(Ty::None)
+                Ok(Ty::none())
             }
             "take" | "destroy" => {
                 if !args.is_empty() {
@@ -429,7 +434,7 @@ impl Checker {
                 Ok(if method == "take" {
                     element.clone()
                 } else {
-                    Ty::None
+                    Ty::none()
                 })
             }
             _ => Err(TypeError::NoSuchMethod {
@@ -487,7 +492,7 @@ impl Checker {
         name: &str,
         args: &[&Ty],
     ) -> Option<(&'a StructInfo, &'a MethodSig, &'a [TyArg])> {
-        let Ty::Struct(sname, targs) = recv else {
+        let TyKind::Struct(sname, targs) = recv.kind() else {
             return None;
         };
         let info = self.structs.get(sname)?;
@@ -559,11 +564,11 @@ impl Checker {
             "append" => {
                 let tys = self.builtin_args("append", 1, args)?;
                 expect_elem(&tys, 0)?;
-                Ok(Ty::None)
+                Ok(Ty::none())
             }
             "insert" => {
                 let tys = self.builtin_args("insert", 2, args)?;
-                if !coerces(&tys[0], &Ty::Int) {
+                if !coerces(&tys[0], &Ty::int()) {
                     return Err(TypeError::TypeMismatch {
                         expected: "Int".to_string(),
                         found: tys[0].to_string(),
@@ -571,12 +576,12 @@ impl Checker {
                     });
                 }
                 expect_elem(&tys, 1)?;
-                Ok(Ty::None)
+                Ok(Ty::none())
             }
             "remove" => {
                 let tys = self.builtin_args("remove", 1, args)?;
                 expect_elem(&tys, 0)?;
-                Ok(Ty::None)
+                Ok(Ty::none())
             }
             "pop" => {
                 // `pop()` (last) or `pop(i)` — an optional `Int` index.
@@ -589,7 +594,7 @@ impl Checker {
                 }
                 if let Some(a) = args.first() {
                     let ity = self.infer(a)?;
-                    if !coerces(&ity, &Ty::Int) {
+                    if !coerces(&ity, &Ty::int()) {
                         return Err(TypeError::TypeMismatch {
                             expected: "Int".to_string(),
                             found: ity.to_string(),
@@ -601,7 +606,7 @@ impl Checker {
             }
             "clear" | "reverse" => {
                 self.builtin_args(method, 0, args)?;
-                Ok(Ty::None)
+                Ok(Ty::none())
             }
             "extend" => {
                 let tys = self.builtin_args("extend", 1, args)?;
@@ -613,12 +618,12 @@ impl Checker {
                         context: "argument to 'extend'".to_string(),
                     });
                 }
-                Ok(Ty::None)
+                Ok(Ty::none())
             }
             "count" | "index" => {
                 let tys = self.builtin_args(method, 1, args)?;
                 expect_elem(&tys, 0)?;
-                Ok(Ty::Int)
+                Ok(Ty::int())
             }
             _ => Err(no_such()),
         }
@@ -653,7 +658,7 @@ impl Checker {
                 callable: callable.clone(),
             },
         );
-        if let Some(error) = error.filter(|ty| *ty != Ty::Never) {
+        if let Some(error) = error.filter(|ty| *ty != TyKind::Never) {
             self.record_call_effect(span, error.clone());
             self.require_error("call through a stored callable field", error)?;
         }

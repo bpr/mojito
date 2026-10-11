@@ -15,6 +15,7 @@
 
 use crate::origin::{Mutability, OriginParamId};
 use crate::param_expr::{ParamExpr, ParamRef};
+use crate::types::TyKind;
 use crate::types::{
     SimdDtype, SimdWidth, Ty, TyArg, dict_elements, list_element, set_element, tuple_elements,
 };
@@ -117,12 +118,12 @@ pub enum CtValue {
     /// materialization spells that constructor; `None` is the bare display,
     /// which the checker types with the default hasher.
     Dict {
-        spelling: Option<Box<Ty>>,
+        spelling: Option<Ty>,
         entries: Vec<(Self, Self)>,
     },
     /// A compile-time set display (`comptime S = {1, 2, 3}`); see `Dict`.
     Set {
-        spelling: Option<Box<Ty>>,
+        spelling: Option<Ty>,
         elements: Vec<Self>,
     },
     /// A `DType.<dt>` compile-time value — the binding of a `[dtype: DType]`
@@ -160,11 +161,11 @@ pub enum CtValue {
         memory: Option<Vec<Option<Self>>>,
         offset: i64,
     },
-    Type(Box<Ty>),
+    Type(Ty),
     /// The zero-sized compile-time handle produced by current Mojo's
     /// `reflect[T]` API. Field selection returns another handle, allowing
     /// `.field[name]` / `.field_at[index]` chains to terminate in `.T`.
-    Reflected(Box<Ty>),
+    Reflected(Ty),
     /// A residual parameter expression: a declared parameter, or an operator
     /// over one, while a generic declaration is checked. Never a constant — a
     /// folded expression is its ordinary concrete variant
@@ -310,7 +311,7 @@ impl CtValue {
             }
         }
         Self::Dict {
-            spelling: spelling.map(Box::new),
+            spelling,
             entries: deduplicated,
         }
     }
@@ -324,7 +325,7 @@ impl CtValue {
             }
         }
         Self::Set {
-            spelling: spelling.map(Box::new),
+            spelling,
             elements: deduplicated,
         }
     }
@@ -503,25 +504,25 @@ impl CtValue {
     /// Panics if the `List` guard above admits a target without an element
     /// type, which the type lattice forbids.
     pub fn materialize_as(self, ty: &Ty) -> Option<Self> {
-        match (self, ty) {
-            (value @ Self::Int(_), Ty::Int)
-            | (value @ Self::UInt(_), Ty::UInt)
-            | (value @ Self::Float(_), Ty::Float64)
-            | (value @ Self::IntLiteral(_), Ty::IntLiteral)
-            | (value @ Self::FloatLiteral(_), Ty::FloatLiteral)
-            | (value @ Self::Bool(_), Ty::Bool)
-            | (value @ Self::Str(_), Ty::StringLiteral) => Some(value),
+        match (self, ty.kind()) {
+            (value @ Self::Int(_), TyKind::Int)
+            | (value @ Self::UInt(_), TyKind::UInt)
+            | (value @ Self::Float(_), TyKind::Float64)
+            | (value @ Self::IntLiteral(_), TyKind::IntLiteral)
+            | (value @ Self::FloatLiteral(_), TyKind::FloatLiteral)
+            | (value @ Self::Bool(_), TyKind::Bool)
+            | (value @ Self::Str(_), TyKind::StringLiteral) => Some(value),
             // A string literal is the nominal `String`'s compile-time form
             // (`comptime E: Dict[String, Int] = {"a": 1}`).
-            (value @ Self::Str(_), Ty::Struct(name, args))
+            (value @ Self::Str(_), TyKind::Struct(name, args))
                 if args.is_empty() && crate::types::is_stdlib_string_struct(name) =>
             {
                 Some(value)
             }
-            (value @ Self::Dtype(_), Ty::Dtype) => Some(value),
+            (value @ Self::Dtype(_), TyKind::Dtype) => Some(value),
             (
                 value @ Self::Simd { .. },
-                Ty::Simd {
+                TyKind::Simd {
                     dtype: SimdDtype::Known(target),
                     width: SimdWidth::Known(width),
                 },
@@ -533,41 +534,43 @@ impl CtValue {
             }
             // A frozen instance of a generic struct names its
             // backend-monomorphized instance; the target names the template.
-            (value @ Self::Struct { .. }, Ty::Struct(target, _)) => {
+            (value @ Self::Struct { .. }, TyKind::Struct(target, _)) => {
                 let Self::Struct { name, .. } = &value else {
                     unreachable!("guard established a struct value");
                 };
                 (crate::types::struct_template(name) == crate::types::struct_template(target))
                     .then_some(value)
             }
-            (Self::IntLiteral(value), Ty::Int) => value.wrapping_signed(64).map(CtValue::Int),
-            (Self::IntLiteral(value), Ty::UInt) => value.wrapping_unsigned(64).map(CtValue::UInt),
+            (Self::IntLiteral(value), TyKind::Int) => value.wrapping_signed(64).map(CtValue::Int),
+            (Self::IntLiteral(value), TyKind::UInt) => {
+                value.wrapping_unsigned(64).map(CtValue::UInt)
+            }
             // `Float64` is `SIMD[DType.float64, 1]`.
             (
                 Self::Simd {
                     dtype: mojito_ast::ast::Dtype::Float64,
                     lanes,
                 },
-                Ty::Float64,
+                TyKind::Float64,
             ) if lanes.len() == 1 => match lanes[0] {
                 CtLane::Float(bits) => Some(Self::Float(bits)),
                 _ => None,
             },
-            (Self::IntLiteral(value), Ty::Float64) => {
+            (Self::IntLiteral(value), TyKind::Float64) => {
                 value.to_f64().map(|value| Self::Float(value.to_bits()))
             }
-            (Self::FloatLiteral(value), Ty::Float64) => {
+            (Self::FloatLiteral(value), TyKind::Float64) => {
                 value.to_f64().map(|value| Self::Float(value.to_bits()))
             }
-            (Self::Tuple(values), Ty::Tuple(types)) if values.len() == types.len() => values
+            (Self::Tuple(values), TyKind::Tuple(types)) if values.len() == types.len() => values
                 .into_iter()
                 .zip(types)
                 .map(|(value, ty)| value.materialize_as(ty))
                 .collect::<Option<Vec<_>>>()
                 .map(CtValue::Tuple),
             // The nominal `Tuple[...]` holds its elements at its arguments.
-            (Self::Tuple(values), target) if crate::types::tuple_elements(target).is_some() => {
-                let types = crate::types::tuple_elements(target).expect("guard established Tuple");
+            (Self::Tuple(values), _) if crate::types::tuple_elements(ty).is_some() => {
+                let types = crate::types::tuple_elements(ty).expect("guard established Tuple");
                 (values.len() == types.len())
                     .then(|| {
                         values
@@ -579,44 +582,44 @@ impl CtValue {
                     })
                     .flatten()
             }
-            (Self::List(values), Ty::ComptimeList(element)) => values
+            (Self::List(values), TyKind::ComptimeList(element)) => values
                 .into_iter()
                 .map(|value| value.materialize_as(element))
                 .collect::<Option<Vec<_>>>()
                 .map(CtValue::List),
-            (Self::List(values), target) if list_element(target).is_some() => {
-                let element = list_element(target).expect("guard established List element");
+            (Self::List(values), _) if list_element(ty).is_some() => {
+                let element = list_element(ty).expect("guard established List element");
                 values
                     .into_iter()
                     .map(|value| value.materialize_as(element))
                     .collect::<Option<Vec<_>>>()
                     .map(CtValue::List)
             }
-            (Self::Dict { entries, .. }, target) if dict_elements(target).is_some() => {
+            (Self::Dict { entries, .. }, _) if dict_elements(ty).is_some() => {
                 let (key_ty, value_ty) =
-                    dict_elements(target).expect("guard established Dict elements");
+                    dict_elements(ty).expect("guard established Dict elements");
                 let entries = entries
                     .into_iter()
                     .map(|(key, value)| {
                         Some((key.materialize_as(key_ty)?, value.materialize_as(value_ty)?))
                     })
                     .collect::<Option<Vec<_>>>()?;
-                Some(Self::dict(Some(target.clone()), entries))
+                Some(Self::dict(Some(ty.clone()), entries))
             }
-            (Self::Set { elements, .. }, target) if set_element(target).is_some() => {
-                let element_ty = set_element(target).expect("guard established Set element");
+            (Self::Set { elements, .. }, _) if set_element(ty).is_some() => {
+                let element_ty = set_element(ty).expect("guard established Set element");
                 let elements = elements
                     .into_iter()
                     .map(|element| element.materialize_as(element_ty))
                     .collect::<Option<Vec<_>>>()?;
-                Some(Self::set(Some(target.clone()), elements))
+                Some(Self::set(Some(ty.clone()), elements))
             }
-            (Self::Tuple(values), target)
-                if tuple_elements(target).is_some_and(|types| types.len() == values.len()) =>
+            (Self::Tuple(values), _)
+                if tuple_elements(ty).is_some_and(|types| types.len() == values.len()) =>
             {
                 values
                     .into_iter()
-                    .zip(tuple_elements(target).expect("guard established Tuple elements"))
+                    .zip(tuple_elements(ty).expect("guard established Tuple elements"))
                     .map(|(value, ty)| value.materialize_as(ty))
                     .collect::<Option<Vec<_>>>()
                     .map(CtValue::Tuple)
@@ -811,15 +814,15 @@ impl CtValue {
 /// materialized collection type or an initializer list's construction spells
 /// it. Origin arguments and callables have no spelling here.
 pub fn source_type(ty: &Ty, span: Span) -> Option<Type> {
-    Some(match ty {
-        Ty::Int | Ty::IntLiteral => Type::Int,
-        Ty::UInt => Type::UInt,
-        Ty::Bool => Type::Bool,
-        Ty::StringLiteral => Type::StringLiteral,
-        Ty::Float64 | Ty::FloatLiteral => Type::Float64,
-        Ty::None => Type::None,
-        Ty::Dtype => Type::Named("DType".to_string(), Vec::new()),
-        Ty::Simd {
+    Some(match ty.kind() {
+        TyKind::Int | TyKind::IntLiteral => Type::Int,
+        TyKind::UInt => Type::UInt,
+        TyKind::Bool => Type::Bool,
+        TyKind::StringLiteral => Type::StringLiteral,
+        TyKind::Float64 | TyKind::FloatLiteral => Type::Float64,
+        TyKind::None => Type::None,
+        TyKind::Dtype => Type::Named("DType".to_string(), Vec::new()),
+        TyKind::Simd {
             dtype: SimdDtype::Known(dtype),
             width: SimdWidth::Known(width),
         } => Type::Named(
@@ -831,11 +834,11 @@ pub fn source_type(ty: &Ty, span: Span) -> Option<Type> {
         ),
         // A symbolic slot has no source spelling: its declaration is still
         // a template.
-        Ty::Simd { .. } => return None,
+        TyKind::Simd { .. } => return None,
         // A generated public-Tuple specialization keeps its element types
         // behind an argument-less symbol: spell the canonical `Tuple[...]`
         // application, which the checker maps back onto the specialization.
-        Ty::Struct(name, _)
+        TyKind::Struct(name, _)
             if name != crate::types::TUPLE_TYPE_NAME
                 && let Some(elements) = crate::types::tuple_elements(ty) =>
         {
@@ -847,7 +850,7 @@ pub fn source_type(ty: &Ty, span: Span) -> Option<Type> {
                     .collect::<Option<Vec<_>>>()?,
             )
         }
-        Ty::Struct(name, arguments) => Type::Named(
+        TyKind::Struct(name, arguments) => Type::Named(
             name.clone(),
             arguments
                 .iter()

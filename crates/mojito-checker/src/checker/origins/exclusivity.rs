@@ -25,6 +25,7 @@
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 use mojito_types::origin::{Mutability, Origin, OriginPlace, PointerOrigin, places_overlap};
+use mojito_types::types::TyKind;
 
 /// How a callee reaches the origins its argument types carry.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -443,8 +444,8 @@ impl Checker {
     /// symbolic `mut=m` slot as the place allows), pointer provenance, and
     /// reference origins, recursing through type arguments and tuples.
     fn record_carried_places(&self, access: &mut ArgumentAccess, ty: &Ty) {
-        match ty {
-            Ty::Struct(name, arguments) => {
+        match ty.kind() {
+            TyKind::Struct(name, arguments) => {
                 for argument in arguments {
                     if let TyArg::Ty(inner) = argument {
                         self.record_carried_places(access, inner);
@@ -469,13 +470,13 @@ impl Checker {
                     self.record_origin_places(access, origin, mutable);
                 }
             }
-            Ty::Pointer { element, origin } => {
+            TyKind::Pointer { element, origin } => {
                 self.record_carried_places(access, element);
                 if let PointerOrigin::Place { place, mutable } = origin {
                     access.carry(place, *mutable);
                 }
             }
-            Ty::Ref(reference) => {
+            TyKind::Ref(reference) => {
                 self.record_carried_places(access, &reference.referent);
                 self.record_origin_places(
                     access,
@@ -487,7 +488,7 @@ impl Checker {
                     },
                 );
             }
-            Ty::Tuple(elements) => {
+            TyKind::Tuple(elements) => {
                 for element in elements {
                     self.record_carried_places(access, element);
                 }
@@ -532,8 +533,8 @@ impl Checker {
     ) -> Vec<(&'a Expr, Vec<Ty>)> {
         element.map_or_else(Vec::new, |element| {
             let pack = matches!(
-                element,
-                Ty::Param { binder, .. } if binder.name.starts_with('*')
+                element.kind(),
+                TyKind::Param { binder, .. } if binder.name.starts_with('*')
             );
             positions
                 .iter()

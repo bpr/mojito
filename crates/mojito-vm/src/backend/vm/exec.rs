@@ -4,6 +4,7 @@
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
+use mojito_types::types::TyKind;
 
 impl VmBackend {
     /// Execute one straight-line MIR instruction against the current frame.
@@ -159,8 +160,8 @@ impl VmBackend {
                         "the parameter list `{values:?}` has no elements to address"
                     )));
                 };
-                let Some(Ty::Pointer { element, .. }) =
-                    prog.mir.functions[function].1.reg_types.get(&dest.0)
+                let Some(TyKind::Pointer { element, .. }) =
+                    (prog.mir.functions[function].1.reg_types.get(&dest.0)).map(Ty::kind)
                 else {
                     return Err(RuntimeError::Unsupported(
                         "a parameter list's address needs a pointer register".to_string(),
@@ -223,8 +224,8 @@ impl VmBackend {
                     }
                 } else if let Value::Ref { .. } = &vars[slot]
                     && !matches!(
-                        prog.mir.functions[function].1.var_tys.get(var),
-                        Some(Ty::Pointer { .. })
+                        (prog.mir.functions[function].1.var_tys.get(var)).map(Ty::kind),
+                        Some(TyKind::Pointer { .. })
                     )
                 {
                     // A pointer-typed variable holding a place handle (a
@@ -278,8 +279,8 @@ impl VmBackend {
                     // parameter — replaces the slot instead.
                     let writes_through = matches!(&vars[slot], Value::Ref { .. })
                         && !matches!(
-                            prog.mir.functions[function].1.var_tys.get(var),
-                            Some(Ty::Pointer { .. })
+                            (prog.mir.functions[function].1.var_tys.get(var)).map(Ty::kind),
+                            Some(TyKind::Pointer { .. })
                         );
                     let current = if writes_through {
                         self.read_reference(&vars[slot], frame_id, vars)?
@@ -311,7 +312,7 @@ impl VmBackend {
                 // A generic instance types a comparison over its parameter
                 // `Bool`, as its bound declares; sized scalars yield a mask.
                 let declared_bool = matches!(value, Value::Simd { .. })
-                    && prog.mir.functions[function].1.reg_types.get(&dest.0) == Some(&Ty::Bool);
+                    && prog.mir.functions[function].1.reg_types.get(&dest.0) == Some(&Ty::bool());
                 regs[dest.0 as usize] = if declared_bool {
                     crate::runtime::builtin_convert("Bool", value)?
                 } else {
@@ -657,8 +658,8 @@ impl VmBackend {
                     && args.is_empty()
                     && kwargs.is_empty()
                     && matches!(
-                        prog.mir.functions[function].1.reg_types.get(&recv.0),
-                        Some(Ty::Pointer { .. })
+                        (prog.mir.functions[function].1.reg_types.get(&recv.0)).map(Ty::kind),
+                        Some(TyKind::Pointer { .. })
                     );
                 if pointer_copy {
                     regs[dest.0 as usize] = recv_val;
@@ -1474,7 +1475,7 @@ impl VmBackend {
                     } else {
                         self.store_through_handle(frame_id, place, handle, v, vars)?;
                     }
-                } else if !slot && matches!(place.ty, Some(Ty::Ref(_))) {
+                } else if !slot && matches!(place.ty.as_ref().map(Ty::kind), Some(TyKind::Ref(_))) {
                     let reference = load_place(vars, regs, place)?;
                     self.canonicalize_value_references(frame_id, vars, &mut v);
                     self.write_reference(&reference, frame_id, vars, v)?;
@@ -1500,8 +1501,8 @@ impl VmBackend {
                 let pointer_slot = place.is_whole_root()
                     && place.through.is_none()
                     && matches!(
-                        prog.mir.functions[function].1.var_tys.get(&place.root),
-                        Some(Ty::Pointer { .. })
+                        (prog.mir.functions[function].1.var_tys.get(&place.root)).map(Ty::kind),
+                        Some(TyKind::Pointer { .. })
                     );
                 regs[dest.0 as usize] = if pointer_slot {
                     vars[place.root as usize].clone()
@@ -1516,7 +1517,9 @@ impl VmBackend {
                     // already reaches its referent (a directly aliased value) must
                     // keep it, so gate on the loaded value still being a handle.
                     let value = self.read_reference(&reference, frame_id, vars)?;
-                    if matches!(value, Value::Ref { .. }) && matches!(place.ty, Some(Ty::Ref(_))) {
+                    if matches!(value, Value::Ref { .. })
+                        && matches!(place.ty.as_ref().map(Ty::kind), Some(TyKind::Ref(_)))
+                    {
                         self.read_reference(&value, frame_id, vars)?
                     } else {
                         value
@@ -1533,7 +1536,7 @@ impl VmBackend {
                         let composed = Self::reference_to_place_parts(frame_id, regs, vars, place)?;
                         let value = self.read_reference(&composed, frame_id, vars)?;
                         if matches!(value, Value::Ref { .. })
-                            && matches!(place.ty, Some(Ty::Ref(_)))
+                            && matches!(place.ty.as_ref().map(Ty::kind), Some(TyKind::Ref(_)))
                         {
                             self.read_reference(&value, frame_id, vars)?
                         } else {
@@ -1541,7 +1544,7 @@ impl VmBackend {
                         }
                     } else {
                         let value = load_place(vars, regs, place)?;
-                        if matches!(place.ty, Some(Ty::Ref(_))) {
+                        if matches!(place.ty.as_ref().map(Ty::kind), Some(TyKind::Ref(_))) {
                             self.read_reference(&value, frame_id, vars)?
                         } else {
                             value
@@ -1780,10 +1783,10 @@ impl VmBackend {
                     }
                     Err(RuntimeError::Raised(error)) => {
                         let catches_exhaustion = matches!(
-                            (&error, exhaustion),
+                            (&error, exhaustion.kind()),
                             (
                                 Value::Struct { name, .. },
-                                Ty::Struct(expected, arguments)
+                                TyKind::Struct(expected, arguments)
                             ) if arguments.is_empty() && name == expected
                         );
                         if !catches_exhaustion {
@@ -1849,7 +1852,7 @@ impl VmBackend {
             MirInstr::MarkInitialized { place } => {
                 if place.is_whole_root()
                     && matches!(vars[place.root as usize], Value::None)
-                    && let Some(Ty::Struct(name, _)) = &place.ty
+                    && let Some(TyKind::Struct(name, _)) = place.ty.as_ref().map(Ty::kind)
                     && let Some(skeleton) = Self::uninitialized_struct(prog, name)
                 {
                     vars[place.root as usize] = skeleton;

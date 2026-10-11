@@ -3,32 +3,36 @@
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
+use mojito_types::types::TyKind;
 
 impl Checker {
     pub(super) fn infer_prefix(&self, op: PrefixOp, operand: &Expr) -> Result<Ty, TypeError> {
         let t = self.infer(operand)?;
-        match (op, &t) {
+        match (op, t.kind()) {
             // Negation preserves the (possibly literal) numeric type, except UInt.
-            (PrefixOp::Neg, Ty::Int | Ty::Float64 | Ty::IntLiteral | Ty::FloatLiteral) => {
+            (
+                PrefixOp::Neg,
+                TyKind::Int | TyKind::Float64 | TyKind::IntLiteral | TyKind::FloatLiteral,
+            ) => {
                 return Ok(t);
             }
             // Elementwise negation on numeric SIMD lanes preserves the type;
             // a bool mask does not negate.
-            (PrefixOp::Neg, Ty::Simd { dtype, .. }) if dtype.licenses(|d| d != Dtype::Bool) => {
+            (PrefixOp::Neg, TyKind::Simd { dtype, .. }) if dtype.licenses(|d| d != Dtype::Bool) => {
                 return Ok(t);
             }
-            (PrefixOp::Not, Ty::Bool) => return Ok(Ty::Bool),
+            (PrefixOp::Not, TyKind::Bool) => return Ok(Ty::bool()),
             // A numeric scalar is `Boolable`: `not n` over an `Int`, or
             // `not (a == b)` over `UInt64`s.
             (PrefixOp::Not, _) if is_numeric(&t) || is_scalar_simd(&t) => {
-                return Ok(Ty::Bool);
+                return Ok(Ty::bool());
             }
             // Bitwise inversion keeps an integer (or `Bool`) type; float
             // operands and masks have no inversion.
-            (PrefixOp::Invert, Ty::Int | Ty::UInt | Ty::IntLiteral | Ty::Bool) => {
+            (PrefixOp::Invert, TyKind::Int | TyKind::UInt | TyKind::IntLiteral | TyKind::Bool) => {
                 return Ok(t);
             }
-            (PrefixOp::Invert, Ty::Simd { dtype, .. }) if dtype.licenses(|d| !d.is_float()) => {
+            (PrefixOp::Invert, TyKind::Simd { dtype, .. }) if dtype.licenses(|d| !d.is_float()) => {
                 return Ok(t);
             }
             _ => {}
@@ -39,7 +43,7 @@ impl Checker {
         if param_has_bound(&t, prefix_operation_trait(op)) {
             return Ok(match op {
                 PrefixOp::Neg | PrefixOp::Invert => t,
-                PrefixOp::Not => Ty::Bool,
+                PrefixOp::Not => Ty::bool(),
             });
         }
         // A user struct routes through the operator's dunder (`-x` →
@@ -48,7 +52,7 @@ impl Checker {
             let ret = result?;
             return match op {
                 PrefixOp::Neg | PrefixOp::Invert => Ok(ret),
-                PrefixOp::Not => require_dunder_ret(ret, &Ty::Bool, "__bool__"),
+                PrefixOp::Not => require_dunder_ret(ret, &Ty::bool(), "__bool__"),
             };
         }
         Err(TypeError::BadOperator {
@@ -62,9 +66,9 @@ impl Checker {
     /// structs with `__eq__` (the specialization's `__eq__`/`__ne__` run at
     /// the operator).
     pub(in crate::checker) fn tuple_elements_equatable_nominal(&self, elements: &[Ty]) -> bool {
-        elements.iter().all(|element| match element {
-            Ty::Tuple(nested) => self.tuple_elements_equatable_nominal(nested),
-            other => has_equality_bound_or_concrete(self, other),
+        elements.iter().all(|element| match element.kind() {
+            TyKind::Tuple(nested) => self.tuple_elements_equatable_nominal(nested),
+            _ => has_equality_bound_or_concrete(self, element),
         })
     }
 
@@ -96,17 +100,17 @@ impl Checker {
             return self.infer_membership(span, op, left, right, &lt, &rt);
         }
         // SIMD operators are elementwise (handled before the scalar-numeric path).
-        if matches!(lt, Ty::Simd { .. }) || matches!(rt, Ty::Simd { .. }) {
+        if matches!(lt.kind(), TyKind::Simd { .. }) || matches!(rt.kind(), TyKind::Simd { .. }) {
             return self.infer_simd_infix(op, &lt, &rt);
         }
         // Arithmetic and identity comparison reason about allocation layout,
         // which an origin-bearing pointer to a single checked value does not
         // have; Mojo leaves such use undefined, so Mojito rejects it early.
-        let origin_bearing =
-            |ty: &Ty| matches!(ty, Ty::Pointer { origin, .. } if origin.as_origin().is_some());
+        let origin_bearing = |ty: &Ty| matches!(ty.kind(), TyKind::Pointer { origin, .. } if origin.as_origin().is_some());
         if matches!(op, Add | Sub | Eq | Ne)
             && (origin_bearing(&lt) || origin_bearing(&rt))
-            && (matches!(lt, Ty::Pointer { .. }) || matches!(rt, Ty::Pointer { .. }))
+            && (matches!(lt.kind(), TyKind::Pointer { .. })
+                || matches!(rt.kind(), TyKind::Pointer { .. }))
         {
             return Err(TypeError::Unsupported(
                 "pointer arithmetic and comparison are not supported on an \
@@ -114,14 +118,14 @@ impl Checker {
                     .to_string(),
             ));
         }
-        if let Ty::Pointer { element, .. } = &lt {
-            match (op, &rt) {
-                (Add | Sub, Ty::Int | Ty::IntLiteral) => return Ok(lt.clone()),
-                (Sub, Ty::Pointer { element: other, .. }) if element == other => {
-                    return Ok(Ty::Int);
+        if let TyKind::Pointer { element, .. } = lt.kind() {
+            match (op, rt.kind()) {
+                (Add | Sub, TyKind::Int | TyKind::IntLiteral) => return Ok(lt.clone()),
+                (Sub, TyKind::Pointer { element: other, .. }) if element == other => {
+                    return Ok(Ty::int());
                 }
-                (Eq | Ne, Ty::Pointer { element: other, .. }) if element == other => {
-                    return Ok(Ty::Bool);
+                (Eq | Ne, TyKind::Pointer { element: other, .. }) if element == other => {
+                    return Ok(Ty::bool());
                 }
                 _ => {}
             }
@@ -130,7 +134,7 @@ impl Checker {
         // Tuple comparisons are structural. Equality accepts independently
         // equatable element packs (different element types simply compare
         // unequal); ordering requires a lexicographically compatible prefix.
-        if let (Ty::Tuple(left), Ty::Tuple(right)) = (&lt, &rt) {
+        if let (TyKind::Tuple(left), TyKind::Tuple(right)) = (lt.kind(), rt.kind()) {
             // Current Tuple comparison methods take `other: Self`: different
             // arities or element packs are not comparable merely because the VM
             // could walk both vectors. Literal element coercion may still make
@@ -146,10 +150,10 @@ impl Checker {
                 _ => false,
             };
             if supported {
-                return Ok(Ty::Bool);
+                return Ok(Ty::bool());
             }
         }
-        if matches!((&lt, &rt), (Ty::Struct(left, _), Ty::Struct(right, _))
+        if matches!((lt.kind(), rt.kind()), (TyKind::Struct(left, _), TyKind::Struct(right, _))
             if !self.structs.contains_key(left) && !self.structs.contains_key(right))
             && let (Some(left), Some(right)) = (tuple_elements(&lt), tuple_elements(&rt))
         {
@@ -166,17 +170,17 @@ impl Checker {
                 _ => false,
             };
             if supported {
-                return Ok(Ty::Bool);
+                return Ok(Ty::bool());
             }
         }
         // `Slice` is Equatable (upstream `builtin_slice.mojo`); its
         // `ContiguousSlice`/`StridedSlice` sub-kinds are not, so only exact
         // `Slice` operands compare. The VM compares the three bounds.
         if matches!(op, Eq | Ne)
-            && matches!((&lt, &rt), (Ty::Struct(left, left_args), Ty::Struct(right, right_args))
+            && matches!((lt.kind(), rt.kind()), (TyKind::Struct(left, left_args), TyKind::Struct(right, right_args))
                 if left == "Slice" && right == "Slice" && left_args.is_empty() && right_args.is_empty())
         {
-            return Ok(Ty::Bool);
+            return Ok(Ty::bool());
         }
         // Two equal opaque type parameters bounded by an arithmetic, bitwise,
         // or shift operation trait dispatch after erasure
@@ -191,14 +195,15 @@ impl Checker {
             && let Some(trait_name) = infix_operation_trait(op)
             && param_has_bound(&lt, trait_name)
         {
-            return Ok(if matches!(op, Div) { Ty::Float64 } else { lt });
+            return Ok(if matches!(op, Div) { Ty::float64() } else { lt });
         }
 
         // `common` is the unified numeric type when both operands are numeric
         // (literals coerced as needed), else None.
         let common = common_numeric(&lt, &rt);
         if let Some(target) = common.as_ref()
-            && (matches!(target, Ty::Int | Ty::UInt | Ty::Float64) || is_scalar_simd(target))
+            && (matches!(target.kind(), TyKind::Int | TyKind::UInt | TyKind::Float64)
+                || is_scalar_simd(target))
         {
             self.record_literal_materializations(left, &lt, target)?;
             self.record_literal_materializations(right, &rt, target)?;
@@ -208,10 +213,10 @@ impl Checker {
         // does beside a closed one: the instance's lane decides the value.
         if common.is_none() {
             for (literal, literal_ty, lane) in [(right, &rt, &lt), (left, &lt, &rt)] {
-                if let Ty::Simd { dtype, width } = lane
+                if let TyKind::Simd { dtype, width } = lane.kind()
                     && *width == SimdWidth::Known(1)
                     && dtype.is_symbolic()
-                    && matches!(literal_ty, Ty::IntLiteral | Ty::FloatLiteral)
+                    && matches!(literal_ty.kind(), TyKind::IntLiteral | TyKind::FloatLiteral)
                     && splats_to(literal_ty, dtype)
                 {
                     self.record_literal_materializations(literal, literal_ty, lane)?;
@@ -221,23 +226,26 @@ impl Checker {
         // Integer powers of exact literals stay exact. A fractional exponent
         // is not rational in general, so this is the semantic boundary where
         // both operands become Float64 and runtime `powf` takes over.
-        if matches!(op, Pow) && matches!(common.as_ref(), Some(Ty::FloatLiteral)) {
+        if matches!(op, Pow) && matches!(common.as_ref().map(Ty::kind), Some(TyKind::FloatLiteral))
+        {
             let exponent_is_integer = match self.exact_literal_value(right) {
                 Some(CtValue::IntLiteral(_)) => true,
                 Some(CtValue::FloatLiteral(value)) => value.to_int_if_whole().is_some(),
                 _ => false,
             };
             if !exponent_is_integer {
-                self.record_literal_materializations(left, &lt, &Ty::Float64)?;
-                self.record_literal_materializations(right, &rt, &Ty::Float64)?;
-                return Ok(Ty::Float64);
+                self.record_literal_materializations(left, &lt, &Ty::float64())?;
+                self.record_literal_materializations(right, &rt, &Ty::float64())?;
+                return Ok(Ty::float64());
             }
         }
         let result = match op {
             // Short-circuiting boolean logic requires `Bool` operands.
-            And | Or if lt == Ty::Bool && rt == Ty::Bool => Some(Ty::Bool),
+            And | Or if lt == TyKind::Bool && rt == TyKind::Bool => Some(Ty::bool()),
             // `+` concatenates String, or adds numbers (result = common type).
-            Add if lt == Ty::StringLiteral && rt == Ty::StringLiteral => Some(Ty::StringLiteral),
+            Add if lt == TyKind::StringLiteral && rt == TyKind::StringLiteral => {
+                Some(Ty::string_literal())
+            }
             // `**` between equal opaque type parameters bounded by `Powable`
             // (`__pow__(self, Self) -> Self`); the concrete impl runs after
             // erasure. Checked before the numeric arm since a `Param` isn't
@@ -246,19 +254,22 @@ impl Checker {
             // Arithmetic that preserves the operand type.
             Add | Sub | Mul | FloorDiv | Mod | Pow => common,
             Shl | Shr | BitAnd | BitOr | BitXor
-                if common
-                    .as_ref()
-                    .is_some_and(|ty| matches!(ty, Ty::Int | Ty::UInt | Ty::IntLiteral)) =>
+                if common.as_ref().is_some_and(|ty| {
+                    matches!(ty.kind(), TyKind::Int | TyKind::UInt | TyKind::IntLiteral)
+                }) =>
             {
                 common
             }
             // Literal division stays exact until a runtime context chooses
             // Float64; concrete operands perform fixed-width runtime division.
             Div if common.is_some() => Some(
-                if matches!(common.as_ref(), Some(Ty::IntLiteral | Ty::FloatLiteral)) {
-                    Ty::FloatLiteral
+                if matches!(
+                    common.as_ref().map(Ty::kind),
+                    Some(TyKind::IntLiteral | TyKind::FloatLiteral)
+                ) {
+                    Ty::float_literal()
                 } else {
-                    Ty::Float64
+                    Ty::float64()
                 },
             ),
             // Ordering between numbers, or between equal opaque type parameters
@@ -269,7 +280,7 @@ impl Checker {
                         && (has_order_bound(&lt)
                             || self.has_assumed_conformance(&lt, "Comparable"))) =>
             {
-                Some(Ty::Bool)
+                Some(Ty::bool())
             }
             // Equality: between numbers (any common type), or equal non-numeric
             // scalars (Bool/String/None).
@@ -281,7 +292,7 @@ impl Checker {
                             || self.has_assumed_conformance(&lt, "Equatable")
                             || self.has_assumed_conformance(&lt, "Comparable"))) =>
             {
-                Some(Ty::Bool)
+                Some(Ty::bool())
             }
             _ => None,
         };
@@ -289,7 +300,7 @@ impl Checker {
             // A comparison through a bound dispatches the requirement's read
             // dunder (`__eq__(self, other: Self)`), which reads a named
             // operand where it lies, as a struct's own dunder does.
-            if span.is_some() && matches!(lt, Ty::Param { .. }) && lt == rt {
+            if span.is_some() && matches!(lt.kind(), TyKind::Param { .. }) && lt == rt {
                 self.borrow_parameter_place_argument(left, &lt);
                 self.borrow_parameter_place_argument(right, &rt);
             }
@@ -300,21 +311,25 @@ impl Checker {
         // constructor and the operator dispatches the struct's dunder, so
         // `s + "x"`, `"x" + s`, and mixed comparisons all run library code.
         let nominal_string = |ty: &Ty| {
-            matches!(ty, Ty::Struct(name, args)
+            matches!(ty.kind(), TyKind::Struct(name, args)
                 if args.is_empty()
                     && mojito_symbol::symbol::is_stdlib_string_struct(name)
                     && self.structs.contains_key(name))
         };
-        let mixed_string = if nominal_string(&lt) && rt == Ty::StringLiteral {
+        let mixed_string = if nominal_string(&lt) && rt == TyKind::StringLiteral {
             Some((right, lt.clone()))
-        } else if nominal_string(&rt) && lt == Ty::StringLiteral {
+        } else if nominal_string(&rt) && lt == TyKind::StringLiteral {
             Some((left, rt.clone()))
         } else {
             None
         };
         if let Some((literal_operand, nominal_ty)) = mixed_string
             && let Some(dunder) = op.dunder()
-            && self.record_implicit_conversion(literal_operand, &Ty::StringLiteral, &nominal_ty)?
+            && self.record_implicit_conversion(
+                literal_operand,
+                &Ty::string_literal(),
+                &nominal_ty,
+            )?
             && let Some(r) = self.struct_dunder(&nominal_ty, dunder, &[&nominal_ty])
         {
             return r;
@@ -405,7 +420,7 @@ impl Checker {
     ) -> Result<Ty, TypeError> {
         let mut left = first;
         for (index, (op, right)) in rest.iter().enumerate() {
-            if self.infer_infix(None, *op, left, right)? != Ty::Bool {
+            if self.infer_infix(None, *op, left, right)? != TyKind::Bool {
                 return Err(TypeError::BadOperator {
                     op: infix_symbol(*op).to_string(),
                     operands: "a chained comparison must compare to Bool".to_string(),
@@ -425,7 +440,7 @@ impl Checker {
                 self.borrow_chain_end(last)?;
             }
         }
-        Ok(Ty::Bool)
+        Ok(Ty::bool())
     }
 
     /// The dunder `lt OP rt` dispatches on a struct left operand, decided
@@ -478,7 +493,7 @@ impl Checker {
         let Some((info, sig, targs)) = self.struct_dunder_signature_for(lt, dunder, &[rt]) else {
             return Ok(None);
         };
-        let Ty::Struct(sname, _) = lt else {
+        let TyKind::Struct(sname, _) = lt.kind() else {
             unreachable!("dunder signatures resolve on struct receivers")
         };
         let overloaded = info.methods.get(dunder).is_some_and(|sigs| sigs.len() > 1);
@@ -559,7 +574,7 @@ impl Checker {
     ) -> Option<String> {
         let reflected = op.reflected_dunder()?;
         let (info, sig, targs) = self.struct_dunder_signature_for(rt, reflected, &[lt])?;
-        let Ty::Struct(rname, _) = rt else {
+        let TyKind::Struct(rname, _) = rt.kind() else {
             return None;
         };
         if !self.value_coerces(lt, &substitute_at(&sig.params[0], info, targs)) {
@@ -591,8 +606,8 @@ impl Checker {
         lt: &Ty,
         rt: &Ty,
     ) -> Result<Ty, TypeError> {
-        let nominal_ok = match rt {
-            Ty::Struct(name, _) if !self.structs.contains_key(name) => {
+        let nominal_ok = match rt.kind() {
+            TyKind::Struct(name, _) if !self.structs.contains_key(name) => {
                 if let Some(element) = list_element(rt).or_else(|| set_element(rt)) {
                     coerces(lt, element) && is_list_equatable(element)
                 } else if let Some((key, _)) = dict_elements(rt) {
@@ -608,21 +623,21 @@ impl Checker {
             _ => false,
         };
         let ok = nominal_ok
-            || match rt {
-                Ty::Tuple(_) => match lt {
-                    Ty::Tuple(elements) => tuple_elements_equatable(elements),
-                    other => is_list_equatable(other),
+            || match rt.kind() {
+                TyKind::Tuple(_) => match lt.kind() {
+                    TyKind::Tuple(elements) => tuple_elements_equatable(elements),
+                    _ => is_list_equatable(lt),
                 },
-                Ty::StringLiteral => *lt == Ty::StringLiteral,
+                TyKind::StringLiteral => *lt == TyKind::StringLiteral,
                 _ => false,
             };
         if ok {
-            return Ok(Ty::Bool);
+            return Ok(Ty::bool());
         }
         // `x in c` on a user struct dispatches to the container's `__contains__`
         // (`c.__contains__(x)`), which must return `Bool`.
         if let Some(span) = span
-            && matches!(rt, Ty::Struct(name, _) if self.structs.contains_key(name))
+            && matches!(rt.kind(), TyKind::Struct(name, _) if self.structs.contains_key(name))
         {
             let ret = self.infer_method_call(
                 &span,
@@ -630,10 +645,10 @@ impl Checker {
                 "__contains__",
                 MethodCallArguments::ordinary(std::slice::from_ref(left), &[]),
             )?;
-            return require_dunder_ret(ret, &Ty::Bool, "__contains__");
+            return require_dunder_ret(ret, &Ty::bool(), "__contains__");
         }
         if let Some(r) = self.struct_dunder(rt, "__contains__", &[lt]) {
-            return r.and_then(|ret| require_dunder_ret(ret, &Ty::Bool, "__contains__"));
+            return r.and_then(|ret| require_dunder_ret(ret, &Ty::bool(), "__contains__"));
         }
         Err(TypeError::BadOperator {
             op: infix_symbol(op).to_string(),
@@ -660,18 +675,18 @@ impl Checker {
         // Determine the common SIMD type, allowing a numeric literal on one
         // side. The slots may be symbolic: identity is structural, and a
         // dtype gate a symbolic lane cannot answer is the instantiation's.
-        let (dtype, width) = match (lt, rt) {
+        let (dtype, width) = match (lt.kind(), rt.kind()) {
             (
-                Ty::Simd {
+                TyKind::Simd {
                     dtype: d1,
                     width: w1,
                 },
-                Ty::Simd {
+                TyKind::Simd {
                     dtype: d2,
                     width: w2,
                 },
             ) if d1 == d2 && w1 == w2 => (d1.clone(), w1.clone()),
-            (Ty::Simd { dtype, width }, other) | (other, Ty::Simd { dtype, width })
+            (TyKind::Simd { dtype, width }, other) | (other, TyKind::Simd { dtype, width })
                 if splats_to(other, dtype) =>
             {
                 (dtype.clone(), width.clone())
@@ -726,8 +741,8 @@ impl Checker {
         let AliasBody::Type(ty) = &alias.body else {
             return None;
         };
-        match **ty {
-            Ty::Simd {
+        match *ty.kind() {
+            TyKind::Simd {
                 dtype: SimdDtype::Known(dtype),
                 width: SimdWidth::Known(width),
             } if alias.decls.is_empty() => Some((dtype, width)),
@@ -800,10 +815,11 @@ impl Checker {
             });
         }
         self.check_simd_args(&SimdDtype::Known(dtype), &SimdWidth::Known(1), args)?;
-        Ok(Ty::Simd {
+        Ok(TyKind::Simd {
             dtype: SimdDtype::Known(dtype),
             width: SimdWidth::Known(1),
-        })
+        }
+        .into())
     }
 
     /// Check the element arguments of a SIMD construction: none (all lanes
@@ -844,7 +860,7 @@ impl Checker {
             // numeric scalars take the exact `converts_to_lane` matrix, so a
             // float source still spells its truncation explicitly.
             let intable_object = dtype.licenses(|d| d != Dtype::Bool && !d.is_float())
-                && matches!(&aty, Ty::Param { .. } | Ty::Struct(..))
+                && matches!(aty.kind(), TyKind::Param { .. } | TyKind::Struct(..))
                 && self.conforms_to(&aty, "Intable");
             if !converts_to_lane(&aty, dtype) && !intable_object {
                 return Err(TypeError::TypeMismatch {
@@ -867,16 +883,16 @@ impl Checker {
             });
         }
         let aty = self.infer(&args[0])?;
-        let nominal_string = matches!(&aty, Ty::Struct(name, args)
+        let nominal_string = matches!(aty.kind(), TyKind::Struct(name, args)
             if args.is_empty() && mojito_symbol::symbol::is_stdlib_string_struct(name));
-        if aty != Ty::StringLiteral && !nominal_string {
+        if aty != TyKind::StringLiteral && !nominal_string {
             return Err(TypeError::TypeMismatch {
                 expected: "String".to_string(),
                 found: aty.to_string(),
                 context: "argument to 'Error'".to_string(),
             });
         }
-        Ok(Ty::Error)
+        Ok(Ty::error())
     }
 
     pub(super) fn infer_slice_construction(
@@ -901,7 +917,7 @@ impl Checker {
             // A bound is an `Int`, `None`, or an `Optional[Int]` value (the
             // descriptor's own field type, as upstream's `Slice.__init__`
             // declares): the nominal slot is read at construction.
-            if found != Ty::None && !coerces(&found, &Ty::Int) && !is_optional_int(&found) {
+            if found != TyKind::None && !coerces(&found, &Ty::int()) && !is_optional_int(&found) {
                 return Err(TypeError::TypeMismatch {
                     expected: "Int or None".to_string(),
                     found: found.to_string(),
@@ -909,7 +925,7 @@ impl Checker {
                 });
             }
         }
-        Ok(Ty::Struct("Slice".to_string(), Vec::new().into()))
+        Ok(TyKind::Struct("Slice".to_string(), Vec::new()).into())
     }
 
     /// Type `Pointer(to=place)` (also spelled through the deprecated
@@ -953,13 +969,14 @@ impl Checker {
                 span,
                 mojito_checked::checked::SemanticAdjustment::PointerToPlace { mutable },
             );
-            return Ok(Ty::Pointer {
+            return Ok(TyKind::Pointer {
                 element: reference.referent,
                 origin,
-            });
+            }
+            .into());
         }
         if let ExprKind::Identifier(name) = &value.kind
-            && (matches!(self.lookup(name), Some(Ty::Ref(_)))
+            && (matches!(self.lookup(name).map(Ty::kind), Some(TyKind::Ref(_)))
                 || self.lookup_reference_parameter(name).is_some())
         {
             // A `ref` binding names a borrowed region, not owned storage, so
@@ -1007,10 +1024,11 @@ impl Checker {
                 span,
                 mojito_checked::checked::SemanticAdjustment::PointerToPlace { mutable },
             );
-            return Ok(Ty::Pointer {
+            return Ok(TyKind::Pointer {
                 element: reference.referent,
                 origin,
-            });
+            }
+            .into());
         }
         let place = self.origin_place(value).map_err(|error| match error {
             TypeError::UndefinedVariable(_) => error,
@@ -1030,10 +1048,11 @@ impl Checker {
             span,
             mojito_checked::checked::SemanticAdjustment::PointerToPlace { mutable },
         );
-        Ok(Ty::Pointer {
-            element: Box::new(element),
+        Ok(TyKind::Pointer {
+            element,
             origin: mojito_types::origin::PointerOrigin::Place { place, mutable },
-        })
+        }
+        .into())
     }
 
     /// The type an inferred chain operand takes at its link, as
@@ -1062,7 +1081,7 @@ impl Checker {
         right: &Expr,
     ) -> Result<(bool, bool), TypeError> {
         let (lt, rt) = (self.chain_operand_ty(left)?, self.chain_operand_ty(right)?);
-        if matches!(lt, Ty::Param { .. }) && lt == rt {
+        if matches!(lt.kind(), TyKind::Param { .. }) && lt == rt {
             return Ok((true, true));
         }
         Ok(self
@@ -1149,9 +1168,9 @@ pub(super) struct StructInfixDispatch {
 }
 
 fn is_optional_int(ty: &Ty) -> bool {
-    matches!(ty, Ty::Struct(name, args)
+    matches!(ty.kind(), TyKind::Struct(name, args)
         if (name == "Optional" || name.ends_with("$Optional"))
-            && matches!(args.as_slice(), [mojito_types::types::TyArg::Ty(Ty::Int)]))
+            && matches!(args.as_slice(), [mojito_types::types::TyArg::Ty(ty)] if *ty == TyKind::Int))
 }
 
 /// The subtree of the deepest common base of a union of places that share one

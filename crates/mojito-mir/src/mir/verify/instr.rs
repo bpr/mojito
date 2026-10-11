@@ -2,6 +2,7 @@
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
+use mojito_types::types::TyKind;
 
 pub(super) fn verify_instruction(
     name: &str,
@@ -189,8 +190,8 @@ fn verify_reference_instruction(
                     // The runtime chases such handles symmetrically, so a
                     // destination typed as the stored handle is accepted when
                     // the stored capability grants its permission.
-                    let forwarded = match place.ty.as_ref() {
-                        Some(Ty::Ref(stored))
+                    let forwarded = match place.ty.as_ref().map(Ty::kind) {
+                        Some(TyKind::Ref(stored))
                             if !types_compatible(capability.target, target)
                                 && types_compatible(capability.target, &stored.referent) =>
                         {
@@ -265,9 +266,9 @@ fn verify_reference_instruction(
         }
         MirInstr::Store { place, src } => {
             if let (Some(expected), Some(found)) = (place.ty.as_ref(), cx.reg_ty(*src)) {
-                let target = match expected {
-                    Ty::Ref(reference) => reference.referent.as_ref(),
-                    other => other,
+                let target = match expected.kind() {
+                    TyKind::Ref(reference) => &reference.referent,
+                    _ => expected,
                 };
                 // Storage of a reference type (a `List[ref T]` element) takes
                 // a reference; any other store writes through to the referent.
@@ -280,14 +281,14 @@ fn verify_reference_instruction(
         }
         MirInstr::StoreRef { place, reference } => {
             if let Some(storage) = place.ty.as_ref() {
-                let Ty::Ref(storage_reference) = storage else {
+                let TyKind::Ref(storage_reference) = storage.kind() else {
                     errors.push(format!(
                         "{prefix}: StoreRef into non-reference storage of type {storage}"
                     ));
                     return;
                 };
                 if let Some(source) = cx.reg_ty(*reference) {
-                    let Ty::Ref(source_reference) = source else {
+                    let TyKind::Ref(source_reference) = source.kind() else {
                         errors.push(format!(
                             "{prefix}: StoreRef source has non-reference type {source}"
                         ));
@@ -319,8 +320,9 @@ fn verify_value_instruction(cx: &InstrCx<'_>, instruction: &MirInstr, errors: &m
     let prefix = cx.prefix;
     match instruction {
         MirInstr::MaterializeLiteral { value, target, .. } => {
-            let valid_target = matches!(target, Ty::Int | Ty::UInt | Ty::Float64)
-                || mojito_types::types::is_scalar_simd(target);
+            let valid_target =
+                matches!(target.kind(), TyKind::Int | TyKind::UInt | TyKind::Float64)
+                    || mojito_types::types::is_scalar_simd(target);
             if !valid_target {
                 errors.push(format!(
                     "{prefix}: literal materialization has non-scalar target {target}"
@@ -328,12 +330,13 @@ fn verify_value_instruction(cx: &InstrCx<'_>, instruction: &MirInstr, errors: &m
             }
             // A target whose lane dtype is still a parameter expression takes
             // either literal; the instance's dtype decides the value.
-            let symbolic_lane = matches!(target, Ty::Simd { dtype, .. } if dtype.is_symbolic());
+            let symbolic_lane =
+                matches!(target.kind(), TyKind::Simd { dtype, .. } if dtype.is_symbolic());
             if let Some(found) = cx.reg_ty(*value) {
-                let valid_source = match found {
-                    Ty::IntLiteral => valid_target,
-                    Ty::FloatLiteral => {
-                        matches!(target, Ty::Float64)
+                let valid_source = match found.kind() {
+                    TyKind::IntLiteral => valid_target,
+                    TyKind::FloatLiteral => {
+                        matches!(target.kind(), TyKind::Float64)
                             || symbolic_lane
                             || mojito_types::types::scalar_simd_dtype(target)
                                 .is_some_and(mojito_ast::ast::Dtype::is_float)
@@ -366,7 +369,7 @@ fn verify_value_instruction(cx: &InstrCx<'_>, instruction: &MirInstr, errors: &m
                     ));
                 }
                 if let Some(found) = cx.reg_ty(*dest)
-                    && !matches!(found, Ty::Dependent(dependent) if dependent.pack_element().is_some())
+                    && !matches!(found.kind(), TyKind::Dependent(dependent) if dependent.pack_element().is_some())
                 {
                     errors.push(format!(
                         "{prefix}: element construction of pack '{}' has result type {found}",
@@ -384,8 +387,8 @@ fn verify_value_instruction(cx: &InstrCx<'_>, instruction: &MirInstr, errors: &m
                 ));
             }
             if let Some(found) = cx.reg_ty(*dest)
-                && !matches!(found, Ty::Param { binder, .. } if binder == param)
-                && !matches!(found, Ty::Struct(..))
+                && !matches!(found.kind(), TyKind::Param { binder, .. } if binder == param)
+                && !matches!(found.kind(), TyKind::Struct(..))
             {
                 errors.push(format!(
                     "{prefix}: type-parameter construction of '{}' has result type {found}",
@@ -404,8 +407,8 @@ fn verify_value_instruction(cx: &InstrCx<'_>, instruction: &MirInstr, errors: &m
         }
         MirInstr::ParamListAddress { dest, values } => {
             if !matches!(
-                cx.reg_ty(*dest),
-                None | Some(Ty::Pointer {
+                cx.reg_ty(*dest).map(Ty::kind),
+                None | Some(TyKind::Pointer {
                     origin: mojito_types::origin::PointerOrigin::Static,
                     ..
                 })
@@ -426,7 +429,7 @@ fn verify_value_instruction(cx: &InstrCx<'_>, instruction: &MirInstr, errors: &m
         }
         MirInstr::SizeOf { dest, ty } => {
             if let Some(found) = cx.reg_ty(*dest)
-                && found != &Ty::Int
+                && found != &TyKind::Int
             {
                 errors.push(format!(
                     "{prefix}: size_of result register has type {found}, expected Int"
@@ -455,7 +458,7 @@ fn verify_value_instruction(cx: &InstrCx<'_>, instruction: &MirInstr, errors: &m
         }
         MirInstr::TypeName { dest, ty } => {
             if let Some(found) = cx.reg_ty(*dest)
-                && found != &Ty::StringLiteral
+                && found != &TyKind::StringLiteral
             {
                 errors.push(format!(
                     "{prefix}: type name result register has type {found}, expected StringLiteral"
@@ -553,7 +556,7 @@ fn verify_value_instruction(cx: &InstrCx<'_>, instruction: &MirInstr, errors: &m
                 }
             }
             if let Some(found) = cx.reg_ty(*dest)
-                && !matches!(found, Ty::Func(_) | Ty::GenericFunc(_))
+                && !matches!(found.kind(), TyKind::Func(_) | TyKind::GenericFunc(_))
             {
                 errors.push(format!(
                     "{prefix}: closure result has non-callable type {found}"
@@ -579,8 +582,8 @@ fn verify_storage_instruction(cx: &InstrCx<'_>, instruction: &MirInstr, errors: 
             index,
             element,
         } => {
-            match cx.reg_ty(*pointer) {
-                Some(Ty::Pointer {
+            match cx.reg_ty(*pointer).map(Ty::kind) {
+                Some(TyKind::Pointer {
                     element: actual,
                     origin,
                 }) if origin.statically_mutable() != Some(false)
@@ -591,16 +594,17 @@ fn verify_storage_instruction(cx: &InstrCx<'_>, instruction: &MirInstr, errors: 
                 None => {}
             }
             if let Some(found) = cx.reg_ty(*index)
-                && !types_compatible(found, &Ty::Int)
+                && !types_compatible(found, &Ty::int())
             {
                 errors.push(format!(
                     "{prefix}: compiler-private pointer storage index has type {found}, expected Int"
                 ));
             }
+            let none = Ty::none();
             let expected = if matches!(instruction, MirInstr::PointerStorageTake { .. }) {
                 element
             } else {
-                &Ty::None
+                &none
             };
             if let Some(found) = cx.reg_ty(*dest)
                 && !types_compatible(found, expected)
@@ -650,10 +654,11 @@ fn verify_storage_instruction(cx: &InstrCx<'_>, instruction: &MirInstr, errors: 
                     mojito_types::types::UNINIT_STORAGE_TYPE_NAME
                 ));
             }
+            let none = Ty::none();
             let expected = if matches!(instruction, MirInstr::UninitStorageTake { .. }) {
                 element
             } else {
-                &Ty::None
+                &none
             };
             if let Some(found) = cx.reg_ty(*dest)
                 && !types_compatible(found, expected)
@@ -700,7 +705,7 @@ fn verify_simd_instruction(cx: &InstrCx<'_>, instruction: &MirInstr, errors: &mu
                         mask.len()
                     ));
                 }
-                if let Some(Ty::Simd { width, .. }) = cx.reg_ty(*dest)
+                if let Some(TyKind::Simd { width, .. }) = cx.reg_ty(*dest).map(Ty::kind)
                     && let Some(width) = width.known()
                     && width != mask.len() as i64
                 {
@@ -709,7 +714,7 @@ fn verify_simd_instruction(cx: &InstrCx<'_>, instruction: &MirInstr, errors: &mu
                         mask.len()
                     ));
                 }
-                if let Some(Ty::Simd { width, .. }) = cx.reg_ty(*value)
+                if let Some(TyKind::Simd { width, .. }) = cx.reg_ty(*value).map(Ty::kind)
                     && let Some(width) = width.known()
                 {
                     let lanes = if other.is_some() { width * 2 } else { width };

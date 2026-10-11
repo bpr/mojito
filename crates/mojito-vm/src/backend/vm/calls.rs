@@ -2,6 +2,7 @@
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
+use mojito_types::types::TyKind;
 
 /// Const-fold a default-argument expression to a value. Handles the literal forms
 /// (and a unary minus over one) that defaults use in practice; a non-constant
@@ -71,8 +72,8 @@ pub(super) fn bind_args(
     // a List makes `Tuple(*args^)` copy indexed elements instead of relocating
     // the pack, which can destroy a non-Copyable element twice.
     let (out, frame_slots) = if let Some(elem_ty) = &sig.variadic {
-        let packed = match elem_ty {
-            Ty::RuntimePack(element_types) if element_types.len() == overflow.len() => {
+        let packed = match elem_ty.kind() {
+            TyKind::RuntimePack(element_types) if element_types.len() == overflow.len() => {
                 Value::Tuple(
                     overflow
                         .iter()
@@ -81,7 +82,7 @@ pub(super) fn bind_args(
                         .collect(),
                 )
             }
-            Ty::RuntimePack(element_types) => {
+            TyKind::RuntimePack(element_types) => {
                 return Err(RuntimeError::ArityMismatch {
                     name: name.to_string(),
                     expected: element_types.len(),

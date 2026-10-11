@@ -3,6 +3,7 @@
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
+use mojito_types::types::TyKind;
 
 impl VmBackend {
     /// Apply a binary operator, dispatching to a user struct's **dunder** when an
@@ -244,7 +245,7 @@ impl VmBackend {
         mut value: Value,
         vars: &mut [Value],
     ) -> Result<(), RuntimeError> {
-        let target = if matches!(place.ty, Some(Ty::Ref(_))) {
+        let target = if matches!(place.ty.as_ref().map(Ty::kind), Some(TyKind::Ref(_))) {
             match self.read_reference(&handle, frame_id, vars)? {
                 inner @ Value::Ref { .. } => inner,
                 _ => handle,
@@ -866,8 +867,8 @@ fn uninitialized_fields(fields: &[(String, Ty)]) -> Vec<(String, Value)> {
 /// until the initializer assigns it. Compiler-private Tuple storage is built
 /// one element at a time, so it starts as one placeholder per element.
 fn uninitialized_field(ty: &Ty) -> Value {
-    match ty {
-        Ty::Tuple(elements) => Value::Tuple(vec![Value::None; elements.len()]),
+    match ty.kind() {
+        TyKind::Tuple(elements) => Value::Tuple(vec![Value::None; elements.len()]),
         _ => Value::None,
     }
 }

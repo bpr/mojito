@@ -2,6 +2,7 @@
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
+use mojito_types::types::TyKind;
 use mojito_types::types::{FuncTy, GenericFuncTy};
 
 pub(super) fn verify_blocks(
@@ -115,7 +116,7 @@ pub(super) fn verify_call_instruction(
                 && method == "__next__"
                 && reference_result.is_none();
             if let Some(reference) = reference_result {
-                let expected = Ty::Ref((**reference).clone());
+                let expected = Ty::new(TyKind::Ref((**reference).clone()));
                 if cx.function.reg_types.get(&dest.0) != Some(&expected) {
                     errors.push(format!(
                         "{prefix}: method-call reference ABI {expected} does not match its destination type"
@@ -225,9 +226,9 @@ fn verify_pack_spread(
         ));
         return;
     };
-    match function.reg_types.get(&argument.0) {
-        Some(Ty::VariadicPack(element))
-            if mojito_types::types::pack_spread(std::slice::from_ref(&**element)).is_some() => {}
+    match function.reg_types.get(&argument.0).map(Ty::kind) {
+        Some(TyKind::VariadicPack(element))
+            if mojito_types::types::pack_spread(std::slice::from_ref(element)).is_some() => {}
         Some(found) => errors.push(format!(
             "{prefix}: spread argument {position} has type {found}, not a pack collector"
         )),
@@ -297,7 +298,7 @@ pub(super) fn simd_element_type(dtype: &mojito_types::types::SimdDtype) -> Ty {
 }
 
 pub(super) fn slice_descriptor_ty(kind: mojito_types::types::SliceKind) -> Ty {
-    Ty::Struct(kind.type_name().to_string(), Vec::new().into())
+    TyKind::Struct(kind.type_name().to_string(), Vec::new()).into()
 }
 
 pub(super) fn subscript_argument_ty(
@@ -327,9 +328,9 @@ pub(super) fn effective_call_convention_matches(
 }
 
 pub(super) fn generic_callable_decls(ty: &Ty) -> Option<&[mojito_types::types::ParamDecl]> {
-    match ty {
-        Ty::GenericFunc(generic) => Some(&generic.decls),
-        Ty::Param {
+    match ty.kind() {
+        TyKind::GenericFunc(generic) => Some(&generic.decls),
+        TyKind::Param {
             callable_bound: Some(bound),
             ..
         } => generic_callable_decls(bound),
@@ -365,7 +366,7 @@ pub(super) fn validate_dependent_bindings_in(
         if let ParamKind::ListTabulate { count, element } = expr.kind() {
             check_expr(count, frames)?;
             let mut inner = frames.to_vec();
-            inner.push(vec![Some(Ty::Int)]);
+            inner.push(vec![Some(Ty::int())]);
             return check_expr(element, &inner);
         }
         let finding = match expr.kind() {
@@ -409,8 +410,8 @@ pub(super) fn validate_dependent_bindings_in(
         bound: &HashSet<String>,
         frames: &mut Vec<Vec<Option<Ty>>>,
     ) -> Result<(), String> {
-        match ty {
-            Ty::Dependent(dependent) => {
+        match ty.kind() {
+            TyKind::Dependent(dependent) => {
                 let mut referenced = HashSet::new();
                 dependent.expr().referenced_parameters(&mut referenced);
                 let mut unbound: Vec<_> = referenced.difference(bound).cloned().collect();
@@ -429,7 +430,7 @@ pub(super) fn validate_dependent_bindings_in(
                     walk(element, bound, frames)?;
                 }
             }
-            Ty::GenericFunc(generic) => {
+            TyKind::GenericFunc(generic) => {
                 let GenericFuncTy {
                     decls,
                     func:
@@ -448,7 +449,7 @@ pub(super) fn validate_dependent_bindings_in(
                     decls
                         .iter()
                         .map(|declaration| match declaration {
-                            ParamDecl::Value { ty, .. } => Some((**ty).clone()),
+                            ParamDecl::Value { ty, .. } => Some(ty.clone()),
                             ParamDecl::Type { .. } => None,
                         })
                         .collect(),
@@ -492,7 +493,7 @@ pub(super) fn validate_dependent_bindings_in(
                 frames.pop();
                 checked?;
             }
-            Ty::Func(func) => {
+            TyKind::Func(func) => {
                 let FuncTy {
                     params,
                     ret,
@@ -516,11 +517,11 @@ pub(super) fn validate_dependent_bindings_in(
                     walk(error, bound, frames)?;
                 }
             }
-            Ty::Param {
+            TyKind::Param {
                 callable_bound: Some(callable),
                 ..
             } => walk(callable, bound, frames)?,
-            Ty::Struct(_, arguments) => {
+            TyKind::Struct(_, arguments) => {
                 for argument in arguments {
                     match argument {
                         TyArg::Ty(ty) => walk(ty, bound, frames)?,
@@ -531,23 +532,25 @@ pub(super) fn validate_dependent_bindings_in(
                     }
                 }
             }
-            Ty::ComptimeList(element) | Ty::VariadicPack(element) | Ty::Pointer { element, .. } => {
+            TyKind::ComptimeList(element)
+            | TyKind::VariadicPack(element)
+            | TyKind::Pointer { element, .. } => {
                 walk(element, bound, frames)?;
             }
-            Ty::Tuple(elements)
-            | Ty::RuntimePack(elements)
-            | Ty::Variant(elements)
-            | Ty::Overload(elements) => {
+            TyKind::Tuple(elements)
+            | TyKind::RuntimePack(elements)
+            | TyKind::Variant(elements)
+            | TyKind::Overload(elements) => {
                 for element in elements {
                     walk(element, bound, frames)?;
                 }
             }
-            Ty::Assoc { base, .. } => walk(base, bound, frames)?,
-            Ty::Ref(reference) => walk(&reference.referent, bound, frames)?,
+            TyKind::Assoc { base, .. } => walk(base, bound, frames)?,
+            TyKind::Ref(reference) => walk(&reference.referent, bound, frames)?,
             // A symbolic lane or width is a parameter expression like a
             // struct's value argument; `verify/scope.rs` checks its binders
             // and kind, and the concrete mode rejects it.
-            Ty::Simd { dtype, width } => {
+            TyKind::Simd { dtype, width } => {
                 if let mojito_types::types::SimdDtype::Expr(expr) = dtype {
                     check_expr(expr, frames)?;
                 }
@@ -726,15 +729,15 @@ pub(super) fn verify_runtime_pack_abi(declarations: &MirDeclarations, errors: &m
             }
         }
         if let Some(variadic) = &declaration.variadic {
-            match variadic {
-                Ty::RuntimePack(elements) => {
+            match variadic.kind() {
+                TyKind::RuntimePack(elements) => {
                     if elements.iter().any(contains_runtime_pack) {
                         errors.push(format!(
                             "MIR declaration '{name}' has a nested RuntimePack variadic ABI"
                         ));
                     }
                 }
-                other if contains_runtime_pack(other) => errors.push(format!(
+                _ if contains_runtime_pack(variadic) => errors.push(format!(
                     "MIR declaration '{name}' embeds RuntimePack below its variadic ABI root"
                 )),
                 _ => {}
@@ -786,7 +789,7 @@ fn verify_indirect_call(cx: &InstrCx<'_>, instruction: &MirInstr, errors: &mut V
         .and_then(mojito_types::types::callable_contract_ty);
     let mut verified_instantiation = None;
     let contract = match stored_contract {
-        Some(symbolic @ Ty::GenericFunc(_)) => {
+        Some(symbolic) if matches!(symbolic.kind(), TyKind::GenericFunc(_)) => {
             if let Some(found) = instantiated_contract {
                 match instantiate_generic_callable_contract(symbolic, instantiated_args) {
                     Ok(expected) => {
@@ -845,7 +848,7 @@ fn verify_indirect_call(cx: &InstrCx<'_>, instruction: &MirInstr, errors: &mut V
             prefix,
             cx.function,
             contract,
-            raises.as_deref(),
+            raises.as_ref(),
             *dest,
             args,
             kwargs,
@@ -873,8 +876,8 @@ fn verify_indirect_call(cx: &InstrCx<'_>, instruction: &MirInstr, errors: &mut V
             "{prefix}: nongeneric indirect call carries compile-time parameter metadata"
         ));
     }
-    let nominal_name = match cx.reg_ty(*callee) {
-        Some(Ty::Struct(name, _)) => Some(name.as_str()),
+    let nominal_name = match cx.reg_ty(*callee).map(Ty::kind) {
+        Some(TyKind::Struct(name, _)) => Some(name.as_str()),
         _ => None,
     };
     if let Some(target) = resolved {

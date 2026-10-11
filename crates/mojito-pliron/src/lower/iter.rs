@@ -3,6 +3,7 @@
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
+use mojito_types::types::TyKind;
 
 impl FnLowering<'_> {
     /// `GetIter`: normalize the iterable variable through its checker-selected
@@ -28,8 +29,8 @@ impl FnLowering<'_> {
             && let Some(elements) = self.pack_iter_elements(dest)
             && (source == dest
                 || matches!(
-                    self.func.var_tys.get(&source),
-                    Some(Ty::RuntimePack(_) | Ty::Tuple(_))
+                    self.func.var_tys.get(&source).map(Ty::kind),
+                    Some(TyKind::RuntimePack(_) | TyKind::Tuple(_))
                 ))
         {
             return self.lower_pack_iter_init(ctx, source, dest, &elements);
@@ -60,11 +61,11 @@ impl FnLowering<'_> {
                 None,
             )
         })?;
-        let (mut current, mut current_ty) = if let Ty::Ref(reference) = &source_ty {
+        let (mut current, mut current_ty) = if let TyKind::Ref(reference) = source_ty.kind() {
             let handle = ScalarTy::Ptr.handle(ctx);
             let load = LoadOp::new(ctx, self.var_slots[source as usize], handle);
             self.append(ctx, load.get_operation(), None);
-            (load.get_result(ctx), (*reference.referent).clone())
+            (load.get_result(ctx), reference.referent.clone())
         } else {
             (self.var_slots[source as usize], source_ty)
         };
@@ -183,8 +184,8 @@ impl FnLowering<'_> {
     /// The pack element list of `iter`'s split slot, when the monomorphizer
     /// typed it for the compiler-private pack fallback.
     pub(super) fn pack_iter_elements(&self, iter: u32) -> Option<Vec<Ty>> {
-        match self.func.var_tys.get(&iter) {
-            Some(Ty::RuntimePack(elements) | Ty::Tuple(elements)) => Some(elements.clone()),
+        match self.func.var_tys.get(&iter).map(Ty::kind) {
+            Some(TyKind::RuntimePack(elements) | TyKind::Tuple(elements)) => Some(elements.clone()),
             _ => None,
         }
     }
@@ -240,9 +241,10 @@ impl FnLowering<'_> {
         ctx: &mut Context,
         dest: Reg,
     ) -> Result<(), PlironError> {
+        let int = Ty::int();
         match lower_ty(
             self.name,
-            self.func.reg_types.get(&dest.0).unwrap_or(&Ty::Int),
+            self.func.reg_types.get(&dest.0).unwrap_or(&int),
             &self.layout,
             self.reg_span(dest),
         )? {
@@ -373,7 +375,7 @@ impl FnLowering<'_> {
                             || self.stdlib_deinit_temp(&ty)
                             || self.needs_drop(&ty)
                         {
-                            self.mark_owned_temp(dest, *ty)?;
+                            self.mark_owned_temp(dest, ty)?;
                         }
                         Ok(())
                     }
@@ -457,7 +459,7 @@ impl FnLowering<'_> {
         self.append(ctx, branch.get_operation(), Some(dest));
         self.current = Some(exhausted_block);
         let err_address = self.offset_address(ctx, storage, outcome.err_offset);
-        self.emit_release_storage(ctx, err_address, &Ty::Error)?;
+        self.emit_release_storage(ctx, err_address, &Ty::error())?;
         let ok_size = match &outcome.ok {
             LowerTy::ZeroSized => 0,
             _ => {
@@ -598,7 +600,7 @@ impl FnLowering<'_> {
         self.append(ctx, jump.get_operation(), None);
         self.current = Some(exhausted_block);
         let err_address = self.offset_address(ctx, storage, outcome.err_offset);
-        self.emit_release_storage(ctx, err_address, &Ty::Error)?;
+        self.emit_release_storage(ctx, err_address, &Ty::error())?;
         if element_layout.size > 0 {
             self.mem_zero(ctx, temp, element_layout.size);
         }
@@ -611,7 +613,7 @@ impl FnLowering<'_> {
             // `pointer_slot_refs` like `MakeRef`.
             let load = LoadOp::new(ctx, temp, ptr_handle);
             if let Some(reference) = &call.reference_result
-                && matches!(*reference.referent, Ty::Pointer { .. })
+                && matches!(reference.referent.kind(), TyKind::Pointer { .. })
             {
                 self.pointer_slot_refs.insert(dest.0);
             }

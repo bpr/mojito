@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R609**.
+Next free ID: **R611**.
 
 ## Ordered Work
 
@@ -4740,27 +4740,37 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
-- [ ] **R585 A type is an owned tree, not a uniqued handle**
+- [ ] **R609 A type's identity below the check is its structure, not its
+  storage**
 
-  Every `Ty` is cloned per use, so each instruction, place, and register
-  type owns its own copy, while MLIR's `Type` is a pointer to storage its
-  context uniques once.
-  - `Ty` is 72 bytes, `MirPlace` 208 (two inline `Option<Ty>`), and
-    `MirInstr` 296; the size assertions beside each pin them.
-  - The bundled package's register, variable, and parameter type tables
-    hold 19,204 types, of which 672 are distinct.
-  - Decoding all 874 bundled bodies still takes about 18 ms release
-    (`mojito --timings emit-mir assets/ok/hello_world.mojo`,
-    `package.body.decode`), most of it building and first-touching those
-    owned trees.
-  - The first stage interns `Ty` per compilation, as
-    `mojito_types::param_expr::ParamContext` already interns parameter
-    expressions.
-  - The second gives the package a type section that body records refer to
-    by index, as MLIR bytecode holds each type once per file.
-  - Found while landing R584 (2026-10-10).
+  Mono, HIR, MIR lowering, and the MIR text reader build types without the
+  compilation's context, so two equal types there may be distinct nodes and
+  equality keeps a structural fallback where MLIR compares pointers.
+  - Only the checker's recorded types are uniqued
+    (`ParamContext::intern_ty`, at `body_carry`'s handoff); a type built
+    later is a fresh node.
+  - `ParamExpr`'s detached contexts (`ParamContext::detached()`, about 70
+    sites below the check) have the same gap.
+  - The lever: one compilation context reaches every phase that builds a
+    type, carried by `CheckedProgram` across the waist, and `Ty::new`
+    takes it.
+  - Found while landing R585 (2026-10-10).
+  - Depends on R610.
+  - Model: Fable, Not Planned.
+
+- [ ] **R610 A type carries decorations its identity leaves out**
+
+  A callable type's transfer effects and a dictionary or set value
+  argument's display spelling ride inside a `Ty` but take no part in its
+  equality or hash, so a uniquing table must refuse such a type.
+  - `Ty::carries_decorations` reports them, and `ParamContext::intern_ty`
+    and `ParamContext::intern` decline to share such a node.
+  - Upstream's uniqued types carry no payload their identity ignores.
+  - The lever: transfer effects move to the callable value's checked facts,
+    and the display spelling to the display's own record.
+  - Found while landing R585 (2026-10-10).
   - Depends on nothing.
-  - Model: Fable, Planned.
+  - Model: Fable, Not Planned.
 
 - [ ] **R586 A register's type is a hash-map entry, not a register-indexed slot**
 

@@ -19,6 +19,7 @@
 use super::*;
 use mojito_ast::ast::ParamArg;
 use mojito_ast::visit::{MutVisitor, walk_block_mut};
+use mojito_types::types::TyKind;
 use mojito_types::types::is_symbolic;
 
 /// The retypings `erase_rebinds` recorded.
@@ -151,12 +152,13 @@ impl Checker {
             }
             self.rebound_ty(rebind, operand, &statement.source_span())
         };
-        Ok(Some(match target {
-            Ty::Ref(mut reference) => {
-                reference.referent = Box::new(rebound(&reference.referent)?);
-                Ty::Ref(reference)
+        Ok(Some(match target.kind() {
+            TyKind::Ref(reference) => {
+                let mut reference = reference.clone();
+                reference.referent = rebound(&reference.referent)?;
+                TyKind::Ref(reference).into()
             }
-            other => rebound(&other)?,
+            _ => rebound(&target)?,
         }))
     }
 

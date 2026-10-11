@@ -8,6 +8,22 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A type is a handle to shared, immutable storage (R585), as MLIR's `Type`
+  is a pointer to storage its context uniques. `Ty` is one pointer to a
+  node that holds its variant (`TyKind`, which code now matches through
+  `Ty::kind`) and caches its hash and closedness; a node's children are
+  handles too, and `Ty::update` is the one in-place write. The check's
+  `ParamContext` uniques every type it records (`ParamContext::intern_ty`;
+  `--timings` counts `types.interned` and `types.intern_hits`), except a
+  type whose transfer effects or display spelling its equality ignores.
+  The bundled package holds every type once in a type section its records
+  refer to by index, as MLIR bytecode does, decoded the first time a
+  record refers to it: the package is 2.0 MB, from 2.5 MB, and decoding
+  the units takes about 25 ms release, from 30. `Ty` is 8 bytes, from 72,
+  and a MIR place 80, from 208; an instruction stays 296, which its call
+  variants' argument lists set. The package format is `mojito-package
+  29`. No program's output changes.
+
 - Every program imports the standard library's package (R605), as the pin
   always imports its `std.mojoc`: a program that declares a library name
   again, such as `struct List`, `def range`, `struct Slice`, or `struct

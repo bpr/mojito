@@ -2,6 +2,7 @@
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
+use mojito_types::types::TyKind;
 
 impl VmBackend {
     /// Apply an explicit checker-proven abstract-result adapter after runtime
@@ -93,11 +94,11 @@ impl VmBackend {
         value: Value,
         target: Option<&Ty>,
     ) -> Result<Value, RuntimeError> {
-        let Some(target @ Ty::Struct(name, _)) = target else {
-            return Ok(match target {
-                Some(target) => crate::runtime::coerce_checked(value, target),
-                None => value,
-            });
+        let Some(target) = target else {
+            return Ok(value);
+        };
+        let TyKind::Struct(name, _) = target.kind() else {
+            return Ok(crate::runtime::coerce_checked(value, target));
         };
         let Some(public_elements) = mojito_types::types::tuple_elements(target) else {
             return Ok(crate::runtime::coerce_checked(value, target));
@@ -116,7 +117,12 @@ impl VmBackend {
                 "vm: checked public Tuple result targets missing specialization '{name}'"
             ))
         })?;
-        let [(field, Ty::Tuple(storage_elements))] = definition.fields.as_slice() else {
+        let [(field, storage)] = definition.fields.as_slice() else {
+            return Err(RuntimeError::TypeError(format!(
+                "vm: public Tuple specialization '{name}' does not have one private runtime-pack field"
+            )));
+        };
+        let TyKind::Tuple(storage_elements) = storage.kind() else {
             return Err(RuntimeError::TypeError(format!(
                 "vm: public Tuple specialization '{name}' does not have one private runtime-pack field"
             )));
@@ -167,7 +173,7 @@ impl VmBackend {
         use mojito_types::ct::CtValue;
         let materialized = match value {
             CtValue::Pointer { memory, offset } => {
-                let Some(Ty::Pointer { element, .. }) = target else {
+                let Some(TyKind::Pointer { element, .. }) = target.map(Ty::kind) else {
                     return Err(RuntimeError::Unsupported(
                         "frozen pointer has no checked element type".to_string(),
                     ));
@@ -216,18 +222,23 @@ impl VmBackend {
                 }
             }
             CtValue::Tuple(items) => {
-                let storage = match target {
-                    Some(Ty::Struct(name, _)) => prog.structs.get(name).and_then(|definition| {
-                        match definition.fields.as_slice() {
-                            [(field, Ty::Tuple(types))] => Some((name, field, types.as_slice())),
-                            _ => None,
-                        }
-                    }),
+                let storage = match target.map(Ty::kind) {
+                    Some(TyKind::Struct(name, _)) => {
+                        prog.structs.get(name).and_then(|definition| {
+                            match definition.fields.as_slice() {
+                                [(field, storage)] => match storage.kind() {
+                                    TyKind::Tuple(types) => Some((name, field, types.as_slice())),
+                                    _ => None,
+                                },
+                                _ => None,
+                            }
+                        })
+                    }
                     _ => None,
                 };
-                let types = match (storage, target) {
+                let types = match (storage, target.map(Ty::kind)) {
                     (Some((_, _, types)), _) => Some(types),
-                    (None, Some(Ty::Tuple(types) | Ty::RuntimePack(types))) => {
+                    (None, Some(TyKind::Tuple(types) | TyKind::RuntimePack(types))) => {
                         Some(types.as_slice())
                     }
                     _ => None,
@@ -263,7 +274,7 @@ impl VmBackend {
                     _ => self.materialize_checked_result(prog, Value::Tuple(items), target)?,
                 }
             }
-            CtValue::Str(text) if matches!(target, Some(Ty::Struct(name, _)) if mojito_symbol::symbol::is_stdlib_string_struct(name)) => {
+            CtValue::Str(text) if matches!(target.map(Ty::kind), Some(TyKind::Struct(name, _)) if mojito_symbol::symbol::is_stdlib_string_struct(name)) => {
                 self.nominal_string_value(prog, text)?
             }
             _ => crate::crossing::ct_to_vm(value)?,
@@ -323,7 +334,7 @@ impl VmBackend {
         let recv = if parent
             .projection_tys
             .iter()
-            .any(|ty| matches!(ty, mojito_types::types::Ty::Ref(_)))
+            .any(|ty| matches!(ty.kind(), mojito_types::types::TyKind::Ref(_)))
         {
             let composed = Value::Ref {
                 frame: frame_id.0,

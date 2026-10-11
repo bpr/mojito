@@ -15,6 +15,7 @@
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
+use mojito_types::types::TyKind;
 
 impl FnLowering<'_> {
     /// Construct a SIMD value with the VM's per-lane conversions. Width-one
@@ -102,8 +103,8 @@ impl FnLowering<'_> {
         }
         let source = match self.concrete_scalar_ty(elem)? {
             Some(ty) => ty,
-            None => match self.func.reg_types.get(&elem.0) {
-                Some(Ty::FloatLiteral) => ScalarTy::Float64,
+            None => match self.func.reg_types.get(&elem.0).map(Ty::kind) {
+                Some(TyKind::FloatLiteral) => ScalarTy::Float64,
                 _ => ScalarTy::Int,
             },
         };
@@ -119,7 +120,8 @@ impl FnLowering<'_> {
         source: Reg,
         anchor: Reg,
     ) -> Result<Option<Value>, PlironError> {
-        let Some(Ty::Struct(name, _)) = self.func.reg_types.get(&source.0).cloned() else {
+        let register_ty = self.func.reg_types.get(&source.0).cloned();
+        let Some(TyKind::Struct(name, _)) = register_ty.as_ref().map(Ty::kind) else {
             return Ok(None);
         };
         let method = format!("{name}.__int__");

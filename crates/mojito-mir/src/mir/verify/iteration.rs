@@ -2,6 +2,7 @@
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
+use mojito_types::types::TyKind;
 
 pub(super) fn verify_iteration_instruction(
     cx: &InstrCx<'_>,
@@ -95,15 +96,15 @@ pub(super) fn verify_iteration_instruction(
                     "{prefix}: TryNext uses invalid iterator slot {iter}"
                 ));
             }
-            if cx.reg_ty(*yielded).is_some_and(|ty| *ty != Ty::Bool) {
+            if cx.reg_ty(*yielded).is_some_and(|ty| *ty != TyKind::Bool) {
                 errors.push(format!(
                     "{prefix}: TryNext yielded flag has non-Bool type {}",
                     cx.reg_ty(*yielded).expect("checked above")
                 ));
             }
             let is_stop_iteration = matches!(
-                exhaustion,
-                Ty::Struct(name, arguments)
+                exhaustion.kind(),
+                TyKind::Struct(name, arguments)
                     if arguments.is_empty()
                         && (name == "StopIteration" || name.ends_with("$StopIteration"))
             );

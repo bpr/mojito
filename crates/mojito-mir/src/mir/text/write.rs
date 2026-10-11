@@ -12,6 +12,7 @@ use mojito_types::origin::{
     PointerOrigin, RefSig, RefTy, SigMutability, SigOrigin,
 };
 use mojito_types::param_expr::{MetaTy, PackQuery, ParamExpr, ParamKind};
+use mojito_types::types::TyKind;
 use mojito_types::types::{
     CallableDefault, ConstraintOperand, DependentType, FuncTy, GenericConstraint, GenericFuncTy,
     PackPredicateRef, ParamDecl, TrivialLifecycle, Ty, TyArg,
@@ -756,7 +757,7 @@ fn instruction_value(instruction: &MirInstr) -> String {
             &[
                 ("dest", reg_value(*dest)),
                 ("func", symbol(&func.0)),
-                ("raises", option(raises.as_deref().map(ty_value))),
+                ("raises", option(raises.as_ref().map(ty_value))),
                 ("args", regs(args)),
                 ("kwargs", kwargs_value(kwargs)),
                 ("arg_places", places_option(arg_places)),
@@ -766,7 +767,7 @@ fn instruction_value(instruction: &MirInstr) -> String {
                     list(capture_accesses.iter().map(capture_access)),
                 ),
                 ("param_arg_regs", list(param_arg_regs.iter().map(param_arg))),
-                ("receiver", option(receiver.as_deref().map(ty_value))),
+                ("receiver", option(receiver.as_ref().map(ty_value))),
                 (
                     "instantiated_args",
                     list(instantiated_args.iter().map(ty_arg)),
@@ -799,7 +800,7 @@ fn instruction_value(instruction: &MirInstr) -> String {
                 ("dest", reg_value(*dest)),
                 ("callee", reg_value(*callee)),
                 ("resolved", option(resolved.as_ref().map(|v| symbol(v)))),
-                ("raises", option(raises.as_deref().map(ty_value))),
+                ("raises", option(raises.as_ref().map(ty_value))),
                 ("args", regs(args)),
                 ("kwargs", kwargs_value(kwargs)),
                 (
@@ -816,7 +817,7 @@ fn instruction_value(instruction: &MirInstr) -> String {
                 ("param_decls", list(param_decls.iter().map(param_decl))),
                 (
                     "instantiated_contract",
-                    option(instantiated_contract.as_deref().map(ty_value)),
+                    option(instantiated_contract.as_ref().map(ty_value)),
                 ),
                 (
                     "instantiated_args",
@@ -854,7 +855,7 @@ fn instruction_value(instruction: &MirInstr) -> String {
                 ("recv", reg_value(*recv)),
                 ("method", symbol(method)),
                 ("resolved", option(resolved.as_ref().map(|v| symbol(v)))),
-                ("raises", option(raises.as_deref().map(ty_value))),
+                ("raises", option(raises.as_ref().map(ty_value))),
                 (
                     "reference_result",
                     option(reference_result.as_deref().map(ref_ty)),
@@ -1611,21 +1612,21 @@ fn result_adapter_value(value: CheckedResultAdapter) -> String {
 }
 
 fn ty_value(ty: &Ty) -> String {
-    match ty {
-        Ty::Int => "Int".into(),
-        Ty::UInt => "UInt".into(),
-        Ty::Bool => "Bool".into(),
-        Ty::StringLiteral => "StringLiteral".into(),
-        Ty::Float64 => "Float64".into(),
-        Ty::None => "None".into(),
-        Ty::Never => "Never".into(),
-        Ty::IntLiteral => "IntLiteral".into(),
-        Ty::FloatLiteral => "FloatLiteral".into(),
-        Ty::Infer => "Infer".into(),
-        Ty::Dtype => "DType".into(),
-        Ty::SelfType => "Self".into(),
-        Ty::Error => "Error".into(),
-        Ty::Func(func) => {
+    match ty.kind() {
+        TyKind::Int => "Int".into(),
+        TyKind::UInt => "UInt".into(),
+        TyKind::Bool => "Bool".into(),
+        TyKind::StringLiteral => "StringLiteral".into(),
+        TyKind::Float64 => "Float64".into(),
+        TyKind::None => "None".into(),
+        TyKind::Never => "Never".into(),
+        TyKind::IntLiteral => "IntLiteral".into(),
+        TyKind::FloatLiteral => "FloatLiteral".into(),
+        TyKind::Infer => "Infer".into(),
+        TyKind::Dtype => "DType".into(),
+        TyKind::SelfType => "Self".into(),
+        TyKind::Error => "Error".into(),
+        TyKind::Func(func) => {
             let FuncTy {
                 environment,
                 params,
@@ -1651,19 +1652,19 @@ fn ty_value(ty: &Ty) -> String {
                 names,
                 ret,
                 required,
-                variadic.as_deref(),
-                kw_variadic.as_deref(),
+                variadic.as_ref(),
+                kw_variadic.as_ref(),
                 *positional_only,
                 *keyword_only,
                 *raises,
-                error.as_deref(),
+                error.as_ref(),
                 conventions,
                 ref_params,
                 ref_return.as_deref(),
                 transfers,
             )
         }
-        Ty::GenericFunc(generic) => {
+        TyKind::GenericFunc(generic) => {
             let GenericFuncTy {
                 decls,
                 func:
@@ -1693,20 +1694,20 @@ fn ty_value(ty: &Ty) -> String {
                 names,
                 ret,
                 required,
-                variadic.as_deref(),
-                kw_variadic.as_deref(),
+                variadic.as_ref(),
+                kw_variadic.as_ref(),
                 *positional_only,
                 *keyword_only,
                 *raises,
-                error.as_deref(),
+                error.as_ref(),
                 conventions,
                 ref_params,
                 ref_return.as_deref(),
                 transfers,
             )
         }
-        Ty::Overload(values) => positional("overload", &list(values.iter().map(ty_value))),
-        Ty::Param {
+        TyKind::Overload(values) => positional("overload", &list(values.iter().map(ty_value))),
+        TyKind::Param {
             binder,
             bounds,
             callable_bound,
@@ -1719,11 +1720,11 @@ fn ty_value(ty: &Ty) -> String {
                 ("bounds", list(bounds.iter().map(|v| symbol(v)))),
                 (
                     "callable_bound",
-                    option(callable_bound.as_deref().map(ty_value)),
+                    option(callable_bound.as_ref().map(ty_value)),
                 ),
             ],
         ),
-        Ty::Assoc { base, name, args } => record(
+        TyKind::Assoc { base, name, args } => record(
             "assoc",
             &[
                 ("base", ty_value(base)),
@@ -1731,10 +1732,10 @@ fn ty_value(ty: &Ty) -> String {
                 ("arguments", list(args.iter().map(ty_arg))),
             ],
         ),
-        Ty::Dependent(DependentType::Parameter(expr)) => {
+        TyKind::Dependent(DependentType::Parameter(expr)) => {
             positional("dependent_parameter", &param_expr(expr))
         }
-        Ty::Struct(name, args) => record(
+        TyKind::Struct(name, args) => record(
             "struct_type",
             &[
                 ("name", symbol(name)),
@@ -1744,26 +1745,28 @@ fn ty_value(ty: &Ty) -> String {
         // A symbolic slot is spelled as its parameter expression; the
         // verifier keeps one out of every artifact, so the form only serves
         // lossless round trips.
-        Ty::Simd { dtype, width } => record(
+        TyKind::Simd { dtype, width } => record(
             "simd",
             &[
                 ("dtype", simd_dtype_slot(dtype)),
                 ("width", simd_width_slot(width)),
             ],
         ),
-        Ty::ComptimeList(value) => positional("comptime_list", &ty_value(value)),
-        Ty::Tuple(values) => positional("tuple", &list(values.iter().map(ty_value))),
-        Ty::RuntimePack(values) => positional("runtime_pack", &list(values.iter().map(ty_value))),
-        Ty::VariadicPack(value) => positional("variadic_pack", &ty_value(value)),
-        Ty::Variant(values) => positional("variant", &list(values.iter().map(ty_value))),
-        Ty::Pointer { element, origin } => record(
+        TyKind::ComptimeList(value) => positional("comptime_list", &ty_value(value)),
+        TyKind::Tuple(values) => positional("tuple", &list(values.iter().map(ty_value))),
+        TyKind::RuntimePack(values) => {
+            positional("runtime_pack", &list(values.iter().map(ty_value)))
+        }
+        TyKind::VariadicPack(value) => positional("variadic_pack", &ty_value(value)),
+        TyKind::Variant(values) => positional("variant", &list(values.iter().map(ty_value))),
+        TyKind::Pointer { element, origin } => record(
             "pointer",
             &[
                 ("element", ty_value(element)),
                 ("origin", pointer_origin(origin)),
             ],
         ),
-        Ty::Ref(value) => ref_ty(value),
+        TyKind::Ref(value) => ref_ty(value),
     }
 }
 
@@ -1860,9 +1863,9 @@ fn param_decl(value: &ParamDecl) -> String {
                 ("bounds", list(bounds.iter().map(|v| symbol(v)))),
                 (
                     "callable_bound",
-                    option(callable_bound.as_deref().map(ty_value)),
+                    option(callable_bound.as_ref().map(ty_value)),
                 ),
-                ("default", option(default.as_deref().map(ty_value))),
+                ("default", option(default.as_ref().map(ty_value))),
                 ("infer_only", infer_only.to_string()),
                 ("variadic", variadic.to_string()),
                 ("constraints", list(constraints.iter().map(constraint))),

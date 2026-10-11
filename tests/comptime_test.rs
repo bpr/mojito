@@ -4,7 +4,8 @@
 //! the declaration's parameters symbolic before elaboration selects one, and
 //! `comptime for` unrolls with the loop variable substituted as a literal.
 
-use mojito::{Compiler, CtValue, Ty, elaborate, parse};
+use mojito::types::{Ty, TyKind};
+use mojito::{Compiler, CtValue, elaborate, parse};
 
 fn run(src: &str) -> Result<String, String> {
     run_compiled(src)
@@ -27,8 +28,8 @@ fn run_compiled(src: &str) -> Result<String, String> {
 
 #[test]
 fn ct_value_can_carry_a_type_without_runtime_materialization() {
-    let ty = Ty::ComptimeList(Box::new(Ty::Int));
-    let value = CtValue::Type(Box::new(ty));
+    let ty = TyKind::ComptimeList(Ty::int());
+    let value = CtValue::Type(ty.into());
 
     assert_eq!(value.to_string(), "<comptime-list[Int]>");
     assert!(value.materialize((0, 0)).is_none());

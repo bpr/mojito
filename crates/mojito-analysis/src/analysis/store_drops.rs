@@ -9,7 +9,7 @@
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 use mojito_mir::mir::MirDeclarations;
-use mojito_types::types::Ty;
+use mojito_types::types::{Ty, TyKind};
 
 /// Splice a `DropPlace` before every write in function `name` that overwrites
 /// an initialized droppable place: a `Store` into a field or constant-index
@@ -64,8 +64,8 @@ fn initializer_receiver_entry(
     if !is_receiver {
         return None;
     }
-    let fields = match f.var_tys.get(&0) {
-        Some(Ty::Struct(struct_name, _)) => declarations.structure(struct_name).map(|decl| {
+    let fields = match f.var_tys.get(&0).map(Ty::kind) {
+        Some(TyKind::Struct(struct_name, _)) => declarations.structure(struct_name).map(|decl| {
             decl.fields
                 .iter()
                 .map(|(field, _)| field.clone())
@@ -117,7 +117,7 @@ fn overwrites_initialized(state: &[Node], place: &MirPlace, uninitialized_receiv
     let droppable = place
         .ty
         .as_ref()
-        .is_some_and(|ty| !matches!(ty, Ty::Ref(_)) && field_needs_drop(ty));
+        .is_some_and(|ty| !matches!(ty.kind(), TyKind::Ref(_)) && field_needs_drop(ty));
     if !static_subplace || !droppable {
         return false;
     }
@@ -153,7 +153,7 @@ fn overwrites_through_reference(state: &[Node], place: &MirPlace, f: &MirFunctio
         && place
             .ty
             .as_ref()
-            .is_some_and(|ty| !matches!(ty, Ty::Ref(_)) && field_needs_drop(ty))
+            .is_some_and(|ty| !matches!(ty.kind(), TyKind::Ref(_)) && field_needs_drop(ty))
         && matches!(state[root].read(&[]).0, Own::Owned)
 }
 

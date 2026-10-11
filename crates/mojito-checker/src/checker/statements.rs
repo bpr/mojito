@@ -5,6 +5,7 @@
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 use mojito_common::timing;
+use mojito_types::types::TyKind;
 use mojito_types::types::{FuncTy, GenericFuncTy, TransferSet};
 
 impl Checker {
@@ -122,7 +123,7 @@ impl Checker {
             // The constant is bound ahead of its statement, so a body
             // declared before it reads it; the statement binds it again.
             let predeclared = if self.program_constants.own(name).is_some() {
-                Some(Ty::IntLiteral)
+                Some(Ty::int_literal())
             } else if let Some(applied) = self.applied_constant_expr(value) {
                 let ty = applied.meta().as_value().cloned();
                 self.comptime_applied.insert(name.clone(), applied);
@@ -424,7 +425,7 @@ impl Checker {
     /// bound as the call `x.__iadd__(y)` would. A parameter whose bounds do
     /// not keeps the builtin operator path.
     pub(super) fn bound_inplace_operator(&self, ty: &Ty, op: InfixOp) -> bool {
-        let Ty::Param { bounds, .. } = ty else {
+        let TyKind::Param { bounds, .. } = ty.kind() else {
             return false;
         };
         op.inplace_dunder()
@@ -452,8 +453,8 @@ impl Checker {
             ty: operand_ty.to_string(),
         };
         let dunder = op.inplace_dunder().ok_or_else(missing)?;
-        let has_method = match operand_ty {
-            Ty::Struct(name, _) => self
+        let has_method = match operand_ty.kind() {
+            TyKind::Struct(name, _) => self
                 .structs
                 .get(name)
                 .is_some_and(|info| info.methods.contains_key(dunder)),
@@ -469,7 +470,7 @@ impl Checker {
             dunder,
             MethodCallArguments::ordinary(args, &[]),
         )?;
-        if ret != Ty::None {
+        if ret != TyKind::None {
             return Err(TypeError::TypeMismatch {
                 expected: "None".to_string(),
                 found: ret.to_string(),
@@ -621,12 +622,15 @@ impl Checker {
                         allowed.contains(&owner) || self.owner_in_enclosing_scope(owner)
                     })
             });
-        if outward && (self.type_carries_loans(found) || matches!(storage, Some(Ty::Ref(_)))) {
+        if outward
+            && (self.type_carries_loans(found)
+                || matches!(storage.as_ref().map(Ty::kind), Some(TyKind::Ref(_))))
+        {
             let mut origins = self.aggregate_origins(value);
             // A rebinding store's loan roots at the right-hand place
             // itself, which a plain value expression does not surface
             // as an aggregate origin.
-            if matches!(storage, Some(Ty::Ref(_)))
+            if matches!(storage.as_ref().map(Ty::kind), Some(TyKind::Ref(_)))
                 && let Ok(rhs_place) = self.origin_place(value)
             {
                 origins.push(mojito_types::origin::Origin::Place(rhs_place));
@@ -696,16 +700,16 @@ impl Checker {
             for element in &mut plan {
                 element.accessor = Some(format!("{name}.__getitem_param__"));
                 element.param_decls.clone_from(&accessor.decls);
-                let reference = match &element.ty {
+                let reference = match element.ty.kind() {
                     // A reference-valued element forwards its own handle.
-                    Ty::Ref(reference) => reference.clone(),
-                    referent => mojito_types::origin::RefTy {
-                        referent: Box::new(referent.clone()),
+                    TyKind::Ref(reference) => reference.clone(),
+                    _ => mojito_types::origin::RefTy {
+                        referent: element.ty.clone(),
                         origin: source.origin.clone(),
                         mutability: source.mutability,
                     },
                 };
-                element.ty = (*reference.referent).clone();
+                element.ty = reference.referent.clone();
                 element.reference = Some(reference);
             }
         }
@@ -721,7 +725,7 @@ impl Checker {
         &'s self,
         vt: &'s Ty,
     ) -> Option<(&'s str, &'s MethodSig)> {
-        let Ty::Struct(name, _) = vt else {
+        let TyKind::Struct(name, _) = vt.kind() else {
             return None;
         };
         tuple_elements(vt)?;
@@ -750,8 +754,8 @@ impl Checker {
     ) -> Result<(), TypeError> {
         match &stmt.kind {
             StmtKind::RefDecl { name, value } => {
-                let reference = match self.infer(value)? {
-                    Ty::Ref(reference) => reference,
+                let reference = match self.infer(value)?.into_kind() {
+                    TyKind::Ref(reference) => reference,
                     _ => {
                         // Ordinary expression inference reads through a
                         // reference-returning method to its referent.  The
@@ -769,8 +773,7 @@ impl Checker {
                 };
                 // An erased `rebind` retypes the referent the binding views.
                 let mut reference = reference;
-                reference.referent =
-                    Box::new(self.apply_rebind_target(value, (*reference.referent).clone())?);
+                reference.referent = self.apply_rebind_target(value, reference.referent.clone())?;
                 let mutable = reference.mutability == mojito_types::origin::Mutability::Mutable;
                 // A reference to an ordinary projection below a named owned
                 // interior (for example `dict[key].field`) carries the full
@@ -791,7 +794,7 @@ impl Checker {
                 self.reference_value_uses
                     .borrow_mut()
                     .insert(value.source_span(), mutable);
-                let binding_ty = Ty::Ref(reference);
+                let binding_ty = Ty::new(TyKind::Ref(reference));
                 self.binding_types
                     .borrow_mut()
                     .insert(stmt.source_span(), binding_ty.clone());
@@ -876,8 +879,8 @@ impl Checker {
                         // specialization from local-storage context; only an
                         // explicit specialization (`f[...]`) materializes a
                         // generic function as a stored callable value.
-                        if matches!(found, Ty::GenericFunc(_))
-                            && matches!(expected, Ty::Func(_))
+                        if matches!(found.kind(), TyKind::GenericFunc(_))
+                            && matches!(expected.kind(), TyKind::Func(_))
                             && matches!(value.kind, ExprKind::Identifier(_))
                         {
                             return Err(TypeError::Unsupported(format!(
@@ -890,8 +893,8 @@ impl Checker {
                         // A `SIMD[dt, _]` width is solved from the initializer
                         // before the conversion, so the value converts to the
                         // vector the binding declares.
-                        let expected = match &expected {
-                            Ty::Simd { width, .. } if width.is_inferred() => {
+                        let expected = match expected.kind() {
+                            TyKind::Simd { width, .. } if width.is_inferred() => {
                                 Self::bind_unbound_tails(&expected, &found)
                             }
                             _ => expected,
@@ -931,7 +934,7 @@ impl Checker {
                     {
                         // Explicitly specializing an Origin parameter produces
                         // a first-class, non-capturing function value whose
-                        // checked `Ty::Func` contains the bound origin. Plain
+                        // checked `TyKind::Func` contains the bound origin. Plain
                         // inferred function/closure values remain non-escaping.
                         found.clone()
                     }
@@ -939,7 +942,7 @@ impl Checker {
                     // `String`, like the other literal defaults; the wrap
                     // falls back to the compile-time string on seams without
                     // the linked stdlib struct.
-                    None if found == Ty::StringLiteral => {
+                    None if found == TyKind::StringLiteral => {
                         self.nominal_string_wrap(value.source_span())?
                     }
                     None => self.inferred_binding_ty(&found, name)?,
@@ -955,14 +958,16 @@ impl Checker {
                         .borrow_mut()
                         .bindings
                         .insert(value.source_span());
-                } else if matches!(declared, Ty::Param { .. }) {
+                } else if matches!(declared.kind(), TyKind::Param { .. }) {
                     self.explicit_destroy_deletability
                         .borrow_mut()
                         .linear_bindings
                         .insert(value.source_span());
                 }
                 let (aggregate_origins, aggregate_field_origins) =
-                    if !matches!(declared, Ty::Ref(_)) && self.type_may_carry_loans(&declared) {
+                    if !matches!(declared.kind(), TyKind::Ref(_))
+                        && self.type_may_carry_loans(&declared)
+                    {
                         (
                             self.aggregate_origins(value),
                             self.aggregate_field_origins(value),
@@ -1055,17 +1060,17 @@ impl Checker {
                 // stays `List[Int]` for a List-typed variable).
                 let found = match &target {
                     Some(target) => {
-                        let expected = match target {
-                            Ty::Ref(reference) => (*reference.referent).clone(),
-                            other => other.clone(),
+                        let expected = match target.kind() {
+                            TyKind::Ref(reference) => reference.referent.clone(),
+                            _ => target.clone(),
                         };
                         self.infer_with_expected(value, &expected, true)?
                     }
                     None => self.infer(value)?,
                 };
-                let assigned = target.as_ref().map(|target| match target {
-                    Ty::Ref(reference) => (*reference.referent).clone(),
-                    other => other.clone(),
+                let assigned = target.as_ref().map(|target| match target.kind() {
+                    TyKind::Ref(reference) => reference.referent.clone(),
+                    _ => target.clone(),
                 });
                 let conversion_borrows_source =
                     self.storage_conversion_borrows_source(&found, assigned.as_ref());
@@ -1080,8 +1085,8 @@ impl Checker {
                         }
                         // Judged before the old value's invalidation, so the
                         // diagnostic names the aliasing call, not a stale use.
-                        let destination = match &target {
-                            Ty::Ref(reference) => match &reference.origin {
+                        let destination = match target.kind() {
+                            TyKind::Ref(reference) => match &reference.origin {
                                 mojito_types::origin::Origin::Place(place) => Some(place.clone()),
                                 _ => None,
                             },
@@ -1095,14 +1100,14 @@ impl Checker {
                         if let Some(destination) = destination {
                             self.check_result_aliases_destination(&destination, value)?;
                         }
-                        match &target {
+                        match target.kind() {
                             // Assignment to a reference binding writes through
                             // the handle; it does not rebind the handle.  Use
                             // the reference's checked origin so replacing a
                             // whole container also expires references into its
                             // owned interior regions.  The handle itself stays
                             // valid across that write.
-                            Ty::Ref(reference) => {
+                            TyKind::Ref(reference) => {
                                 if let mojito_types::origin::Origin::Place(base) = &reference.origin
                                 {
                                     self.record_origin_invalidation(
@@ -1122,20 +1127,20 @@ impl Checker {
                                 }
                             }
                         }
-                        let target_is_reference = matches!(target, Ty::Ref(_));
-                        if let Ty::Ref(reference) = &target {
+                        let target_is_reference = matches!(target.kind(), TyKind::Ref(_));
+                        if let TyKind::Ref(reference) = target.kind() {
                             self.check_overwritten_referent(name, &reference.referent)?;
                         }
-                        let target = match target {
-                            Ty::Ref(reference) => *reference.referent,
-                            other => other,
+                        let target = match target.kind() {
+                            TyKind::Ref(reference) => reference.referent.clone(),
+                            _ => target,
                         };
                         // Assigning a closure, or an aggregate storing one,
                         // could move it to an outer binding; a thin function
                         // value captures nothing. A named generic or
                         // overloaded callable is not a first-class value here
                         // whatever its environment, as at `return`.
-                        if matches!(found, Ty::GenericFunc(_) | Ty::Overload(_))
+                        if matches!(found.kind(), TyKind::GenericFunc(_) | TyKind::Overload(_))
                             || holds_closure(&found)
                         {
                             return Err(TypeError::ClosureEscape);
@@ -1211,7 +1216,7 @@ impl Checker {
                     ExprKind::Index { object, .. }
                     | ExprKind::Slice { object, .. }
                     | ExprKind::MultiIndex { object, .. } => {
-                        matches!(self.infer(object)?, Ty::Struct(name, _) if self.structs.contains_key(&name))
+                        matches!((self.infer(object)?).kind(), TyKind::Struct(name, _) if self.structs.contains_key(name))
                     }
                     _ => false,
                 };
@@ -1282,7 +1287,8 @@ impl Checker {
                 if !nominal_subscript {
                     self.record_place_write_invalidation(place.source_span(), place);
                 }
-                if let Some(Ty::Ref(reference)) = self.place_storage_ty(place)
+                if let Some(TyKind::Ref(reference)) =
+                    self.place_storage_ty(place).as_ref().map(Ty::kind)
                     && reference.mutability != mojito_types::origin::Mutability::Mutable
                 {
                     return Err(TypeError::ImmutableBinding(
@@ -1293,7 +1299,7 @@ impl Checker {
                 // dedicated in-place dunder (`x += y` → `x.__iadd__(y)`), which
                 // mutates `mut self`; Mojo does not fall back to the binary
                 // operator. Native scalars keep the builtin operator path below.
-                let inplace_operand = matches!(&target, Ty::Struct(name, _) if self.structs.contains_key(name))
+                let inplace_operand = matches!(target.kind(), TyKind::Struct(name, _) if self.structs.contains_key(name))
                     || self.bound_inplace_operator(&target, *op);
                 if !nominal_subscript && inplace_operand {
                     // A reference-returning call's facts share the place's
@@ -1519,7 +1525,7 @@ impl Checker {
                     None if served && !place => {
                         let owner = self.fresh_owner()?;
                         Some(mojito_types::origin::RefTy {
-                            referent: Box::new(vt.clone()),
+                            referent: vt.clone(),
                             origin: mojito_types::origin::Origin::Place(
                                 mojito_types::origin::OriginPlace {
                                     root: owner,
@@ -1589,7 +1595,7 @@ impl Checker {
                                         context: format!("unpacking into '{name}'"),
                                     });
                                 }
-                                if matches!(existing, Ty::Ref(_)) {
+                                if matches!(existing.kind(), TyKind::Ref(_)) {
                                     self.record_place_write_invalidation(
                                         target.source_span(),
                                         target,
@@ -1649,9 +1655,9 @@ impl Checker {
                         // metadata explicitly for checked MIR verification and
                         // for a nested closure that captures the introduction.
                         if let Some(storage_ty) = self.lookup(name).cloned() {
-                            let value_ty = match &storage_ty {
-                                Ty::Ref(reference) => (*reference.referent).clone(),
-                                value => value.clone(),
+                            let value_ty = match storage_ty.kind() {
+                                TyKind::Ref(reference) => reference.referent.clone(),
+                                _ => storage_ty.clone(),
                             };
                             self.expression_types
                                 .borrow_mut()
@@ -1724,7 +1730,7 @@ impl Checker {
                 // not offered by any overload, so no collection store can
                 // install a frame-local handle.
                 self.check_outward_store(place, value, &found, &storage)?;
-                if let Some(Ty::Ref(expected_reference)) = &storage {
+                if let Some(TyKind::Ref(expected_reference)) = storage.as_ref().map(Ty::kind) {
                     let initializes_reference =
                         self.self_initializing && place_root_name(place) == Some("self");
                     if initializes_reference {
@@ -1784,7 +1790,7 @@ impl Checker {
                 // generic parameter to be installed without spelling a second
                 // source-level transfer. Preserve that constructor convention;
                 // this marker is needed only for an actual Copyable place read.
-                if !matches!(storage, Some(Ty::Ref(_)))
+                if !matches!(storage.as_ref().map(Ty::kind), Some(TyKind::Ref(_)))
                     && self.is_copyable(&found)
                     && !self.storage_conversion_borrows_source(&found, Some(&target))
                 {
@@ -1935,7 +1941,9 @@ impl Checker {
                         )
                     })
                     .transpose()?
-                    .filter(|expected| !matches!(expected, Ty::Int | Ty::IntLiteral));
+                    .filter(|expected| {
+                        !matches!(expected.kind(), TyKind::Int | TyKind::IntLiteral)
+                    });
                 // A module constant was folded before any declaration; only a
                 // body's own constant folds here.
                 let folded = if self.function_bases.is_empty() && self.scopes.len() == 1 {
@@ -1960,7 +1968,7 @@ impl Checker {
                     self.declare_immutable(name, expected)?;
                 } else if let Ok(v) = folded {
                     self.comptimes.insert(name.clone(), v);
-                    self.declare_immutable(name, Ty::IntLiteral)?;
+                    self.declare_immutable(name, Ty::int_literal())?;
                 } else {
                     let ty = self.infer(value)?;
                     // A compile-time result is a value of its own, copied
@@ -1970,7 +1978,7 @@ impl Checker {
                     let declared = self.inferred_binding_ty(&ty, name)?;
                     // The binding is read at run time as its `Float64`
                     // storage type, so the folded literal crosses here.
-                    if matches!(ty, Ty::FloatLiteral) {
+                    if matches!(ty.kind(), TyKind::FloatLiteral) {
                         self.record_literal_materializations(value, &ty, &declared)?;
                     }
                     self.declare_immutable(name, declared)?;
@@ -2018,10 +2026,10 @@ impl Checker {
             StmtKind::Raise(expr) => {
                 self.register_named_bindings(expr)?;
                 let ty = self.infer(expr)?;
-                let stringish = ty == Ty::StringLiteral
-                    || matches!(&ty, Ty::Struct(name, args)
+                let stringish = ty == TyKind::StringLiteral
+                    || matches!(ty.kind(), TyKind::Struct(name, args)
                         if args.is_empty() && mojito_symbol::symbol::is_stdlib_string_struct(name));
-                let error = if stringish { Ty::Error } else { ty };
+                let error = if stringish { Ty::error() } else { ty };
                 self.require_error("'raise'", error)?;
                 Ok(())
             }
@@ -2056,7 +2064,7 @@ impl Checker {
                     let error = handled_types
                         .as_ref()
                         .and_then(|types| types.first().cloned())
-                        .unwrap_or(Ty::Error);
+                        .unwrap_or_else(Ty::error);
                     if handled_types
                         .as_ref()
                         .is_some_and(|types| types.iter().any(|candidate| *candidate != error))
@@ -2157,7 +2165,7 @@ impl Checker {
                         .borrow_mut()
                         .bindings
                         .insert(stmt.source_span());
-                } else if matches!(binding_ty, Ty::Param { .. }) {
+                } else if matches!(binding_ty.kind(), TyKind::Param { .. }) {
                     self.explicit_destroy_deletability
                         .borrow_mut()
                         .linear_bindings
@@ -2228,7 +2236,7 @@ impl Checker {
                         expected,
                     )?,
                     None if self.named_result_context.last() == Some(&true) => expected.clone(),
-                    None => Ty::None,
+                    None => Ty::none(),
                 };
                 // Record the return-position conversion before the escape
                 // check: a view-constructor implicit conversion installs the
@@ -2241,7 +2249,7 @@ impl Checker {
                     None => self.value_coerces(&found, expected),
                 };
                 if let Some(expression) = expr
-                    && !matches!(expected, Ty::Ref(_))
+                    && !matches!(expected.kind(), TyKind::Ref(_))
                     && (self.type_may_carry_loans(expected) || self.type_may_carry_loans(&found))
                     && self
                         .aggregate_origins(expression)
@@ -2251,7 +2259,7 @@ impl Checker {
                     // A bare pointer return gets the pointer-specific
                     // diagnostic; an aggregate may mix reference and pointer
                     // loans and keeps the reference wording.
-                    if matches!(found, Ty::Pointer { .. }) {
+                    if matches!(found.kind(), TyKind::Pointer { .. }) {
                         return Err(TypeError::PointerEscapesOrigin);
                     }
                     return Err(TypeError::ReturnsReferenceToLocal);
@@ -2335,8 +2343,10 @@ impl Checker {
                 // indexed accessor exposes a function element while the Tuple
                 // owner remains live.
                 if !returning_reference
-                    && (matches!(found, Ty::Func(_) | Ty::GenericFunc(_) | Ty::Overload(_))
-                        || holds_closure(&found))
+                    && (matches!(
+                        found.kind(),
+                        TyKind::Func(_) | TyKind::GenericFunc(_) | TyKind::Overload(_)
+                    ) || holds_closure(&found))
                 {
                     return Err(TypeError::ClosureEscape);
                 }
@@ -2578,7 +2588,7 @@ impl Checker {
                 }
                 (Some(t), _) => self.resolve_return_annotation(t)?,
                 (None, Some(result)) => self.ty_from_anno(&result.ty)?,
-                (None, None) => Ty::None,
+                (None, None) => Ty::none(),
             };
             Ok::<_, TypeError>((param_tys, ret_ty))
         })();
@@ -2629,7 +2639,9 @@ impl Checker {
         // body, so it can call itself (recursion). A generic `def`
         // becomes a `GenericFunc` (its call sites infer/supply parameters).
         let declared_error = self.declared_error(*raises, raises_type.as_ref())?;
-        let effect_raises = declared_error.as_ref().is_some_and(|ty| *ty != Ty::Never);
+        let effect_raises = declared_error
+            .as_ref()
+            .is_some_and(|ty| *ty != TyKind::Never);
         let parameter_closure = mojito_ast::ast::is_parameter_closure(decorators);
         let initial_environment = if parameter_closure {
             mojito_types::origin::CallableEnvironment::Capturing(
@@ -2670,18 +2682,18 @@ impl Checker {
                 })
                 .map(|(_, ty)| ty.clone())
                 .collect();
-            Ty::Func(Box::new(FuncTy {
+            TyKind::Func(Box::new(FuncTy {
                 environment: initial_environment,
                 params: regular_tys,
                 names: caller_regular.iter().map(|p| p.name.clone()).collect(),
-                ret: Box::new(ret_ty.clone()),
+                ret: ret_ty.clone(),
                 required,
-                variadic: variadic_idx.map(|vi| Box::new(param_tys[vi].clone())),
-                kw_variadic: kw_variadic_idx.map(|index| Box::new(param_tys[index].clone())),
+                variadic: variadic_idx.map(|vi| param_tys[vi].clone()),
+                kw_variadic: kw_variadic_idx.map(|index| param_tys[index].clone()),
                 positional_only: pos_only,
                 keyword_only: kw_only,
                 raises: effect_raises,
-                error: declared_error.clone().map(Box::new),
+                error: declared_error.clone(),
                 conventions: caller_regular.iter().map(|p| p.convention).collect(),
                 ref_params,
                 ref_return: ref_return.clone().map(Box::new),
@@ -2697,20 +2709,20 @@ impl Checker {
                 })
                 .map(|(_, ty)| ty.clone())
                 .collect();
-            Ty::GenericFunc(Box::new(GenericFuncTy {
+            TyKind::GenericFunc(Box::new(GenericFuncTy {
                 decls: decls.clone(),
                 func: FuncTy {
                     environment: initial_environment,
                     params: regular_tys,
                     names: caller_regular.iter().map(|p| p.name.clone()).collect(),
-                    ret: Box::new(ret_ty.clone()),
+                    ret: ret_ty.clone(),
                     required,
-                    variadic: variadic_idx.map(|vi| Box::new(param_tys[vi].clone())),
-                    kw_variadic: kw_variadic_idx.map(|index| Box::new(param_tys[index].clone())),
+                    variadic: variadic_idx.map(|vi| param_tys[vi].clone()),
+                    kw_variadic: kw_variadic_idx.map(|index| param_tys[index].clone()),
                     positional_only: pos_only,
                     keyword_only: kw_only,
                     raises: effect_raises,
-                    error: declared_error.clone().map(Box::new),
+                    error: declared_error.clone(),
                     conventions: caller_regular.iter().map(|p| p.convention).collect(),
                     ref_params,
                     ref_return: ref_return.clone().map(Box::new),
@@ -2718,6 +2730,7 @@ impl Checker {
                 },
             }))
         };
+        let fn_ty = Ty::new(fn_ty);
         self.declaration_types.borrow_mut().insert(
             mojito_checked::checked::AnnotationSite::FunctionType {
                 module: stmt.module.clone(),
@@ -2842,11 +2855,14 @@ impl Checker {
             .map(|(param, ty)| {
                 (!name.contains('$')
                     && param.kind == mojito_ast::ast::ParamKind::Regular
-                    && matches!(ty, Ty::Dependent(_)))
-                .then(|| Ty::Param {
-                    binder: synthetic_binder(&dependent_projection_spelling(&param.ty)),
-                    bounds: vec!["Movable".to_string()],
-                    callable_bound: None,
+                    && matches!(ty.kind(), TyKind::Dependent(_)))
+                .then(|| {
+                    TyKind::Param {
+                        binder: synthetic_binder(&dependent_projection_spelling(&param.ty)),
+                        bounds: vec!["Movable".to_string()],
+                        callable_bound: None,
+                    }
+                    .into()
                 })
             })
             .collect();
@@ -2864,7 +2880,7 @@ impl Checker {
             // variadic pack (`var *values: T`), whose elements upstream
             // destroys implicitly (a `**kwargs` pack stays linear).
             let positional_pack = params[param].kind == mojito_ast::ast::ParamKind::Variadic;
-            if matches!(bound_ty, Ty::Param { .. })
+            if matches!(bound_ty.kind(), TyKind::Param { .. })
                 && !self.is_deinitable(bound_ty)
                 && !positional_pack
             {
@@ -2900,9 +2916,9 @@ impl Checker {
                     result = self.declare_value_parameter(
                         name.trim_start_matches('*'),
                         if matches!(d, ParamDecl::Value { variadic: true, .. }) {
-                            Ty::VariadicPack(ty.clone())
+                            TyKind::VariadicPack(ty.clone()).into()
                         } else {
-                            (**ty).clone()
+                            (*ty).clone()
                         },
                     );
                     if result.is_err() {
@@ -2915,9 +2931,9 @@ impl Checker {
                     // A `*args` parameter is compiler pack storage inside the
                     // body; it must not impersonate the nominal stdlib List.
                     let bind_ty = match param.kind {
-                        mojito_ast::ast::ParamKind::Variadic => match ty {
-                            Ty::RuntimePack(elements) => Ty::Tuple(elements.clone()),
-                            _ => Ty::VariadicPack(Box::new(ty.clone())),
+                        mojito_ast::ast::ParamKind::Variadic => match ty.kind() {
+                            TyKind::RuntimePack(elements) => TyKind::Tuple(elements.clone()).into(),
+                            _ => TyKind::VariadicPack(ty.clone()).into(),
                         },
                         mojito_ast::ast::ParamKind::KwVariadic => self.kwargs_collector_ty(
                             ty.clone(),
@@ -2954,7 +2970,7 @@ impl Checker {
                         );
                     }
                     if result.is_ok()
-                        && !matches!(bind_ty, Ty::Ref(_))
+                        && !matches!(bind_ty.kind(), TyKind::Ref(_))
                         && self.type_carries_loans(&bind_ty)
                         && let Some(owner) = self.lookup_owner(&param.name)
                     {
@@ -3038,7 +3054,10 @@ impl Checker {
                         .iter()
                         .filter_map(|decl| match decl {
                             ParamDecl::Value { name, ty, .. }
-                                if matches!(**ty, Ty::Func(_) | Ty::GenericFunc(_)) =>
+                                if matches!(
+                                    *ty.kind(),
+                                    TyKind::Func(_) | TyKind::GenericFunc(_)
+                                ) =>
                             {
                                 Some(name.trim_start_matches('*').to_string())
                             }
@@ -3102,7 +3121,7 @@ impl Checker {
         // path (falling off the end would yield `None`).
         if result.is_ok()
             && named_result.is_none()
-            && ret_ty != Ty::None
+            && ret_ty != TyKind::None
             && !definitely_returns(body)
         {
             result = Err(TypeError::MissingReturn(name.clone()));
@@ -3148,7 +3167,7 @@ impl Checker {
                 .checked_sub(1)
                 .and_then(|scope| self.scopes.get_mut(scope))
                 .and_then(|scope| scope.get_mut(name))
-                && !matches!(existing, Ty::Overload(_))
+                && !matches!(existing.kind(), TyKind::Overload(_))
             {
                 *existing = finalized.clone();
             }
@@ -3260,7 +3279,10 @@ impl Checker {
         names.0.into_iter().find(|name| {
             self.binding_scope(name).is_some_and(|scope| scope > 0)
                 && self.lookup(name).is_some_and(|ty| {
-                    !matches!(ty, Ty::Func(_) | Ty::GenericFunc(_) | Ty::Overload(_))
+                    !matches!(
+                        ty.kind(),
+                        TyKind::Func(_) | TyKind::GenericFunc(_) | TyKind::Overload(_)
+                    )
                 })
                 && !self.is_compile_time_binding(name)
                 && !self
@@ -3380,7 +3402,7 @@ impl Checker {
         let body = match super::constraints::assoc_body_source_type(value) {
             Ok(source_ty) => {
                 match self.lower_parameterized_member(type_scope(&decls), type_params, &source_ty) {
-                    Ok(template) => AliasBody::Type(Box::new(template)),
+                    Ok(template) => AliasBody::Type(template),
                     Err(type_error) => AliasBody::Predicate(Box::new(
                         self.compile_predicate_alias_body(&decls, value)
                             .map_err(|_| type_error)?,
@@ -3416,18 +3438,18 @@ const RESERVED_FUNCTION_NAMES: &[&str] = &["class", "del", "match", "yield"];
 /// overloaded callable may be assigned or returned at all is the caller's
 /// rule, spelled at each site.
 fn holds_closure(ty: &Ty) -> bool {
-    match ty {
-        Ty::Func(_) | Ty::GenericFunc(_) => ty.callable().is_some_and(|func| {
+    match ty.kind() {
+        TyKind::Func(_) | TyKind::GenericFunc(_) => ty.callable().is_some_and(|func| {
             !matches!(
                 func.environment,
                 mojito_types::origin::CallableEnvironment::Thin
             )
         }),
-        Ty::Overload(_) => true,
-        Ty::Struct(_, arguments) => arguments.iter().any(|argument| {
+        TyKind::Overload(_) => true,
+        TyKind::Struct(_, arguments) => arguments.iter().any(|argument| {
             matches!(argument, mojito_types::types::TyArg::Ty(element) if holds_closure(element))
         }),
-        Ty::Tuple(elements) | Ty::RuntimePack(elements) | Ty::Variant(elements) => {
+        TyKind::Tuple(elements) | TyKind::RuntimePack(elements) | TyKind::Variant(elements) => {
             elements.iter().any(holds_closure)
         }
         _ => false,

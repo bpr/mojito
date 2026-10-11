@@ -38,6 +38,7 @@ use mojito_hir::hir::{self, Cfg, HirInstr, Terminator, VarId};
 use mojito_symbol::symbol::OverloadLookup;
 use mojito_types::ct::CtValue;
 use mojito_types::param_expr::{ParamContext, ParamExpr};
+use mojito_types::types::TyKind;
 use mojito_types::types::{
     ConstraintOperand, GenericConstraint, ParamDecl, Ty, TyArg, dict_elements, tuple_elements,
 };
@@ -273,7 +274,7 @@ pub fn reached_struct_fields(
     while let Some(ty) = pending.pop() {
         let named = std::cell::RefCell::new(Vec::new());
         mojito_types::types::mentions(&ty, &|nested| {
-            if let Ty::Struct(name, _) = nested {
+            if let TyKind::Struct(name, _) = nested.kind() {
                 named.borrow_mut().push(name.clone());
             }
             false
@@ -342,11 +343,11 @@ pub fn materialized_parameter_ty<'a>(
             ..
         } if declared == name
             && matches!(
-                ty.as_ref(),
-                Ty::Param { .. } | Ty::Struct(..) | Ty::Simd { .. }
+                ty.kind(),
+                TyKind::Param { .. } | TyKind::Struct(..) | TyKind::Simd { .. }
             ) =>
         {
-            Some(ty.as_ref())
+            Some(ty)
         }
         _ => None,
     })
@@ -373,8 +374,8 @@ pub fn materialized_parameter_slots(
         .filter(|(_, name)| {
             materialized_parameter_ty(name, scope.iter().copied()).is_some_and(|ty| {
                 !matches!(
-                    ty,
-                    Ty::Param {
+                    ty.kind(),
+                    TyKind::Param {
                         callable_bound: Some(_),
                         ..
                     }
@@ -667,7 +668,7 @@ fn lower_program(
         );
     }
     // The synthetic module initializer returns nothing and never raises.
-    toplevel_fn.ret_ty = Some(Ty::None);
+    toplevel_fn.ret_ty = Some(Ty::none());
     functions.push(("__toplevel__".to_string(), toplevel_fn));
     if let Some(compiled) = package {
         link::link_declarations(&mut declarations, compiled);
@@ -1210,8 +1211,8 @@ fn lower_struct_member<P: DeclaredParam>(
                 ty,
                 variadic: false,
                 ..
-            } if !matches!(ty.as_ref(), Ty::Func(_) | Ty::GenericFunc(_)) => {
-                Some((name.clone(), (**ty).clone()))
+            } if !matches!(ty.kind(), TyKind::Func(_) | TyKind::GenericFunc(_)) => {
+                Some((name.clone(), ty.clone()))
             }
             _ => None,
         })
@@ -1223,10 +1224,10 @@ fn lower_struct_member<P: DeclaredParam>(
                 declaration: name.to_string(),
             })
             .unwrap_or(&[]);
-        Ty::Struct(
+        Ty::new(TyKind::Struct(
             name.to_string(),
             decls.iter().map(ParamDecl::own_argument).collect(),
-        )
+        ))
     });
     let defaults = regular
         .iter()
@@ -1344,7 +1345,7 @@ fn lower_struct_member<P: DeclaredParam>(
     let mut refp: Vec<bool> = Vec::new();
     if m.has_self {
         names.push("self".to_string());
-        ptys.push(Ty::Struct(name.to_string(), Vec::new().into()));
+        ptys.push(TyKind::Struct(name.to_string(), Vec::new()).into());
         owned.push(is_owned(&m.self_convention));
         deinit.push(is_deinit(&m.self_convention));
         refp.push(is_ref(&m.self_convention));
@@ -1700,7 +1701,7 @@ impl ComptimeThunks {
     /// the thunk applied to every binder in scope, equal to `True`.
     fn request(&mut self, condition: &Expr, binders: &EnclosingBinders) -> GenericConstraint {
         GenericConstraint::Eq(
-            ConstraintOperand::Expr(self.request_value(condition, binders, Ty::Bool)),
+            ConstraintOperand::Expr(self.request_value(condition, binders, Ty::bool())),
             ConstraintOperand::Value(CtValue::Bool(true)),
         )
     }
@@ -2142,7 +2143,7 @@ fn checked_type_or_record(
         ty.clone()
     } else {
         invariant_errors.push(format!("missing checked type for {description}"));
-        Ty::None
+        Ty::none()
     }
 }
 
@@ -2155,12 +2156,12 @@ fn callable_parameter_locals(decls: &[ParamDecl]) -> Vec<(String, Ty)> {
         .filter_map(|decl| match decl {
             ParamDecl::Value {
                 name, ty, variadic, ..
-            } if matches!(ty.as_ref(), Ty::Func(_) | Ty::GenericFunc(_)) => Some((
+            } if matches!(ty.kind(), TyKind::Func(_) | TyKind::GenericFunc(_)) => Some((
                 name.trim_start_matches('*').to_string(),
                 if *variadic {
-                    Ty::VariadicPack(ty.clone())
+                    TyKind::VariadicPack(ty.clone()).into()
                 } else {
-                    (**ty).clone()
+                    ty.clone()
                 },
             )),
             ParamDecl::Type { .. } | ParamDecl::Value { .. } => None,
@@ -2178,9 +2179,9 @@ fn mir_place_handle_ty(
 ) -> Option<Ty> {
     let storage = place.ty.clone()?;
     let root = place.root_ty.as_ref()?;
-    let source_mutability = match root {
-        Ty::Ref(reference) => Some(reference.mutability),
-        Ty::Pointer { origin, .. } => match origin {
+    let source_mutability = match root.kind() {
+        TyKind::Ref(reference) => Some(reference.mutability),
+        TyKind::Pointer { origin, .. } => match origin {
             mojito_types::origin::PointerOrigin::Place { mutable, .. } => Some(if *mutable {
                 mojito_types::origin::Mutability::Mutable
             } else {
@@ -2202,13 +2203,16 @@ fn mir_place_handle_ty(
     let mutability = source_mutability
         .or(requested)
         .unwrap_or(mojito_types::origin::Mutability::Mutable);
-    Some(Ty::Ref(mojito_types::origin::RefTy {
-        referent: Box::new(storage),
-        origin: mojito_types::origin::Origin::Untracked {
-            mutable: mutability != mojito_types::origin::Mutability::Immutable,
-        },
-        mutability,
-    }))
+    Some(
+        TyKind::Ref(mojito_types::origin::RefTy {
+            referent: storage,
+            origin: mojito_types::origin::Origin::Untracked {
+                mutable: mutability != mojito_types::origin::Mutability::Immutable,
+            },
+            mutability,
+        })
+        .into(),
+    )
 }
 
 /// Flattens nested `Expr`s into a block's instruction list. `cur` is the block
@@ -2324,12 +2328,12 @@ impl LoopIndex {
             .binder_meta()
             .as_value()
             .cloned()
-            .unwrap_or(Ty::Int);
+            .unwrap_or_else(Ty::int);
         Self {
             declaration: ParamDecl::Value {
                 id: binder.id.clone(),
                 name: binder.name.to_string(),
-                ty: Box::new(ty),
+                ty,
                 default: None,
                 callable_default: None,
                 infer_only: false,
@@ -2539,8 +2543,8 @@ impl Flatten<'_> {
     /// on the binding instead.
     fn is_origin_bearing_pointer(&self, expression: &Expr) -> bool {
         matches!(
-            self.checked_ty(expression),
-            Some(Ty::Pointer { origin, .. })
+            self.checked_ty(expression).as_ref().map(Ty::kind),
+            Some(TyKind::Pointer { origin, .. })
                 if origin.as_origin().is_some() && !origin.multi_element()
         )
     }
@@ -2552,7 +2556,10 @@ impl Flatten<'_> {
     /// `mut p: Pointer[...]` parameter, whose slot is bound with the caller's
     /// pointer rather than aliasing the caller's variable.
     fn pointer_valued_slot(&self, var: VarId) -> bool {
-        matches!(self.var_types.get(&var), Some(Ty::Pointer { .. }))
+        matches!(
+            self.var_types.get(&var).map(Ty::kind),
+            Some(TyKind::Pointer { .. })
+        )
     }
 
     /// The pointer subscript a place expression spells — positional `p[i]` on
@@ -2561,7 +2568,10 @@ impl Flatten<'_> {
     fn pointer_offset_subscript<'a>(&self, e: &'a Expr) -> Option<(&'a Expr, &'a Expr)> {
         match &e.kind {
             ExprKind::Index { object, index }
-                if matches!(self.checked_ty(object), Some(Ty::Pointer { .. })) =>
+                if matches!(
+                    self.checked_ty(object).as_ref().map(Ty::kind),
+                    Some(TyKind::Pointer { .. })
+                ) =>
             {
                 Some((object, index))
             }
@@ -2586,8 +2596,8 @@ impl Flatten<'_> {
         // pointer designates, so its loan place cannot substitute for the
         // deref target; the runtime handle carries the true projection.
         if matches!(
-            self.checked_ty(object),
-            Some(Ty::Pointer { origin, .. }) if origin.subtree()
+            self.checked_ty(object).as_ref().map(Ty::kind),
+            Some(TyKind::Pointer { origin, .. }) if origin.subtree()
         ) {
             return None;
         }
@@ -2617,8 +2627,9 @@ impl Flatten<'_> {
         }
         let pointer_ty = self
             .checked_ty(object)
-            .filter(|ty| matches!(ty, Ty::Pointer { .. }))?;
-        let subtree = matches!(&pointer_ty, Ty::Pointer { origin, .. } if origin.subtree());
+            .filter(|ty| matches!(ty.kind(), TyKind::Pointer { .. }))?;
+        let subtree =
+            matches!(pointer_ty.kind(), TyKind::Pointer { origin, .. } if origin.subtree());
         let loans = self.aggregate_borrows(object);
         let owner = match loans.as_slice() {
             [] => return None,
@@ -2637,7 +2648,7 @@ impl Flatten<'_> {
         let marker = self.fresh_typed(
             object.source_span(),
             loans.first().map(|loan| loan.place.root),
-            Ty::None,
+            Ty::none(),
         );
         self.emit(MirInstr::EstablishLoans {
             reference: variable,
@@ -2725,7 +2736,7 @@ impl Flatten<'_> {
             .or_else(|| recv_place.and_then(|place| place.ty.clone()))
             .or_else(|| self.checked_ty(receiver));
         match ty {
-            Some(ty @ Ty::Struct(..)) => {
+            Some(ty) if matches!(ty.kind(), TyKind::Struct(..)) => {
                 let copied = self.fresh_typed(span(receiver), None, ty);
                 self.emit(MirInstr::CopyValue {
                     dest: copied,
@@ -2793,8 +2804,8 @@ impl Flatten<'_> {
 
     fn literal_materialization(&self, expression: &Expr) -> Option<Ty> {
         if !matches!(
-            self.checked_ty(expression),
-            Some(Ty::IntLiteral | Ty::FloatLiteral)
+            self.checked_ty(expression).as_ref().map(Ty::kind),
+            Some(TyKind::IntLiteral | TyKind::FloatLiteral)
         ) {
             // Checker fact tables are still keyed by source span while HIR owns
             // stable node identities. Comptime expansion can produce several
@@ -2823,8 +2834,8 @@ impl Flatten<'_> {
 
     fn is_slice_descriptor(&self, expression: &Expr) -> bool {
         matches!(
-            self.checked_ty(expression),
-            Some(Ty::Struct(name, args))
+            self.checked_ty(expression).as_ref().map(Ty::kind),
+            Some(TyKind::Struct(name, args))
                 if matches!(name.as_str(), "Slice" | "ContiguousSlice" | "StridedSlice")
                     && args.is_empty()
         )
@@ -2832,17 +2843,17 @@ impl Flatten<'_> {
 
     fn intrinsic_index_dispatch(&self, object: &Expr) -> Option<MirIntrinsicSubscript> {
         let ty = self.checked_ty(object)?;
-        match &ty {
-            Ty::Tuple(_) | Ty::RuntimePack(_) => Some(MirIntrinsicSubscript::TupleStorage),
-            Ty::VariadicPack(_) => Some(MirIntrinsicSubscript::VariadicStorage),
-            Ty::Simd { .. } => Some(MirIntrinsicSubscript::Simd),
-            Ty::Pointer { .. } => Some(MirIntrinsicSubscript::Pointer),
-            Ty::ComptimeList(_) => Some(MirIntrinsicSubscript::ComptimeList),
+        match ty.kind() {
+            TyKind::Tuple(_) | TyKind::RuntimePack(_) => Some(MirIntrinsicSubscript::TupleStorage),
+            TyKind::VariadicPack(_) => Some(MirIntrinsicSubscript::VariadicStorage),
+            TyKind::Simd { .. } => Some(MirIntrinsicSubscript::Simd),
+            TyKind::Pointer { .. } => Some(MirIntrinsicSubscript::Pointer),
+            TyKind::ComptimeList(_) => Some(MirIntrinsicSubscript::ComptimeList),
             // `Slice.indices` has a public nominal Tuple type but crosses the
             // VM intrinsic boundary as compiler-private `Value::Tuple`
             // storage. A checker-selected public Tuple accessor carries a
             // call contract and therefore never consults this fallback.
-            Ty::Struct(..) if tuple_elements(&ty).is_some() => {
+            TyKind::Struct(..) if tuple_elements(&ty).is_some() => {
                 Some(MirIntrinsicSubscript::TupleStorage)
             }
             _ => None,
@@ -2854,14 +2865,17 @@ impl Flatten<'_> {
     /// writing a `List[ref T]` element's referent from replacing the stored
     /// `ref T` handle.
     fn peel_reference_handle_to(&mut self, mut handle: Reg, target: &Ty, site: &SourceSpan) -> Reg {
-        while let Some(Ty::Ref(outer)) = self.f.reg_types.get(&handle.0).cloned() {
-            if outer.referent.as_ref() == target {
+        while let Some(TyKind::Ref(outer)) = (self.f.reg_types.get(&handle.0).cloned())
+            .as_ref()
+            .map(Ty::kind)
+        {
+            if outer.referent == *target {
                 break;
             }
-            let Ty::Ref(inner) = outer.referent.as_ref() else {
+            let TyKind::Ref(inner) = outer.referent.kind() else {
                 break;
             };
-            let dest = self.fresh_typed(site.clone(), None, Ty::Ref(inner.clone()));
+            let dest = self.fresh_typed(site.clone(), None, TyKind::Ref(inner.clone()).into());
             self.emit(MirInstr::ReadRef {
                 dest,
                 reference: handle,
@@ -2924,13 +2938,15 @@ impl Flatten<'_> {
                 let dest = self.fresh_typed(
                     expression.source_span(),
                     Some(place.root),
-                    Ty::Ref(reference),
+                    TyKind::Ref(reference).into(),
                 );
                 self.emit(MirInstr::MakeRef { dest, place });
                 return dest;
             }
             let mut result = self.expr_unconverted(expression);
-            self.f.reg_types.insert(result.0, Ty::Ref(reference));
+            self.f
+                .reg_types
+                .insert(result.0, TyKind::Ref(reference).into());
             // A reference-returning subscript over reference-valued storage has
             // an outer handle to the container slot and an inner handle stored
             // in that slot. Peel only the outer layers that expression typing
@@ -2947,7 +2963,7 @@ impl Flatten<'_> {
                 let handle_ty = self
                     .var_types
                     .get(&var)
-                    .filter(|ty| matches!(ty, Ty::Ref(_)))
+                    .filter(|ty| matches!(ty.kind(), TyKind::Ref(_)))
                     .cloned()
                     .or_else(|| {
                         mir_place_handle_ty(
@@ -2959,7 +2975,7 @@ impl Flatten<'_> {
                             }),
                         )
                     })
-                    .unwrap_or(Ty::Error);
+                    .unwrap_or_else(Ty::error);
                 let dest =
                     self.fresh_typed(expression.source_span(), Some(loan.place.root), handle_ty);
                 self.emit(MirInstr::MakeRef {
@@ -2971,7 +2987,7 @@ impl Flatten<'_> {
             if self.runtime_aliases.contains(&var) {
                 let mut place = MirPlace::root(var, self.var_types.get(&var).cloned());
                 place.through = Some(var);
-                let handle_ty = mir_place_handle_ty(&place, None).unwrap_or(Ty::Error);
+                let handle_ty = mir_place_handle_ty(&place, None).unwrap_or_else(Ty::error);
                 let dest = self.fresh_typed(expression.source_span(), Some(var), handle_ty);
                 self.emit(MirInstr::MakeRef { dest, place });
                 return dest;
@@ -2980,7 +2996,7 @@ impl Flatten<'_> {
             // (a `ref` ctor field fed a bare place); a variable that itself
             // stores a handle instead falls through to the plain load below.
             let var_ty = self.var_types.get(&var).cloned();
-            if !matches!(var_ty, Some(Ty::Ref(_))) {
+            if !matches!(var_ty.as_ref().map(Ty::kind), Some(TyKind::Ref(_))) {
                 let place = MirPlace::root(var, var_ty);
                 let handle_ty = mir_place_handle_ty(
                     &place,
@@ -2992,7 +3008,7 @@ impl Flatten<'_> {
                         }
                     }),
                 )
-                .unwrap_or(Ty::Error);
+                .unwrap_or_else(Ty::error);
                 let dest = self.fresh_typed(expression.source_span(), Some(var), handle_ty);
                 self.emit(MirInstr::MakeRef { dest, place });
                 return dest;
@@ -3020,7 +3036,7 @@ impl Flatten<'_> {
                     }
                 }),
             )
-            .unwrap_or(Ty::Error);
+            .unwrap_or_else(Ty::error);
             let dest = self.fresh_typed(expression.source_span(), Some(place.root), handle_ty);
             self.emit(MirInstr::MakeRef { dest, place });
             return dest;
@@ -3035,7 +3051,7 @@ impl Flatten<'_> {
             // or `mut`/`ref` actual does; rebuilding the syntax as a raw List or
             // Dict place would bypass the checked accessor contract.
             if let Some(place) = self.lower_projected_reference_place(expression) {
-                let handle_ty = mir_place_handle_ty(&place, None).unwrap_or(Ty::Error);
+                let handle_ty = mir_place_handle_ty(&place, None).unwrap_or_else(Ty::error);
                 let dest = self.fresh_typed(expression.source_span(), Some(place.root), handle_ty);
                 self.emit(MirInstr::MakeRef { dest, place });
                 return dest;
@@ -3051,8 +3067,8 @@ impl Flatten<'_> {
                     }
                 }),
             )
-            .unwrap_or(Ty::Error);
-            let stored_ty = place.ty.clone().unwrap_or(Ty::Error);
+            .unwrap_or_else(Ty::error);
+            let stored_ty = place.ty.clone().unwrap_or_else(Ty::error);
             let storage = self.fresh_typed(expression.source_span(), Some(place.root), handle_ty);
             self.emit_interior_invalidations(expression, None);
             self.emit(MirInstr::MakeRef {
@@ -3062,7 +3078,7 @@ impl Flatten<'_> {
             // A slot that stores a handle forwards it (read the stored
             // reference); an owned member/element auto-borrows, so the storage
             // borrow itself is the requested handle.
-            if !matches!(stored_ty, Ty::Ref(_)) {
+            if !matches!(stored_ty.kind(), TyKind::Ref(_)) {
                 return storage;
             }
             let dest = self.fresh_typed(expression.source_span(), None, stored_ty);
@@ -3085,7 +3101,7 @@ impl Flatten<'_> {
 
     /// [`Self::fresh`] for a synthetic register with no checked expression
     /// node: the caller supplies the register's type directly. Loan and
-    /// consumption markers, which never hold a runtime value, use `Ty::None`.
+    /// consumption markers, which never hold a runtime value, use `TyKind::None`.
     fn fresh_typed(&mut self, span: SourceSpan, origin: Option<VarId>, ty: Ty) -> Reg {
         let r = self.fresh(span, origin);
         self.f.reg_types.insert(r.0, ty);
@@ -3302,7 +3318,7 @@ impl Flatten<'_> {
         let (pack, element) = self
             .enclosing_binders
             .value_pack(name.strip_prefix('*')?, of_self)?;
-        let dest = self.fresh_typed(site.clone(), None, Ty::VariadicPack(Box::new(element)));
+        let dest = self.fresh_typed(site.clone(), None, TyKind::VariadicPack(element).into());
         self.emit(MirInstr::Const {
             dest,
             k: Const::Param(pack),
@@ -3487,9 +3503,9 @@ impl Flatten<'_> {
         if displays.is_empty() {
             return None;
         }
-        let ty = match self.checked_ty(expression) {
-            Some(Ty::Int | Ty::IntLiteral) => Ty::Int,
-            Some(Ty::Bool) => Ty::Bool,
+        let ty = match self.checked_ty(expression).as_ref().map(Ty::kind) {
+            Some(TyKind::Int | TyKind::IntLiteral) => Ty::int(),
+            Some(TyKind::Bool) => Ty::bool(),
             _ => {
                 for display in &displays {
                     self.build_display(display);
@@ -3719,7 +3735,7 @@ impl Flatten<'_> {
             dtype,
         )) = expr.kind()
         {
-            let dest = self.fresh_typed(site.clone(), None, Ty::Dtype);
+            let dest = self.fresh_typed(site.clone(), None, Ty::dtype());
             self.emit(MirInstr::Const {
                 dest,
                 k: Const::Dtype(*dtype),
@@ -3741,7 +3757,7 @@ impl Flatten<'_> {
             });
             return Some(dest);
         }
-        if *expr.meta() != mojito_types::param_expr::MetaTy::value(Ty::Int) {
+        if *expr.meta() != mojito_types::param_expr::MetaTy::value(Ty::int()) {
             return None;
         }
         let (op, operands) = match expr.kind() {
@@ -3751,7 +3767,7 @@ impl Flatten<'_> {
                     mojito_types::ct::CtValue::IntLiteral(value) => value.to_i64()?,
                     _ => return None,
                 };
-                let dest = self.fresh_typed(site.clone(), None, Ty::Int);
+                let dest = self.fresh_typed(site.clone(), None, Ty::int());
                 self.emit(MirInstr::Const {
                     dest,
                     k: Const::Int(value),
@@ -3770,7 +3786,7 @@ impl Flatten<'_> {
                     return None;
                 };
                 let a = self.inferred_value_register(operand, site)?;
-                let dest = self.fresh_typed(site.clone(), None, Ty::Int);
+                let dest = self.fresh_typed(site.clone(), None, Ty::int());
                 self.emit(MirInstr::UnOp {
                     op: PrefixOp::Neg,
                     dest,
@@ -3784,7 +3800,7 @@ impl Flatten<'_> {
         let mut accumulated = self.inferred_value_register(first, site)?;
         for operand in rest {
             let b = self.inferred_value_register(operand, site)?;
-            let dest = self.fresh_typed(site.clone(), None, Ty::Int);
+            let dest = self.fresh_typed(site.clone(), None, Ty::int());
             self.emit(MirInstr::BinOp {
                 op: infix,
                 dest,
@@ -4046,21 +4062,24 @@ fn runtime_variadic_index<P: DeclaredParam>(params: &[P], marker: Option<usize>)
 /// ownership, and place typing from having to understand an artificial
 /// source-inexpressible aggregate kind.
 fn body_parameter_ty<P: DeclaredParam>(parameter: &P, ty: Ty) -> Ty {
-    match (parameter.kind(), ty) {
-        (ParamKind::Variadic, Ty::RuntimePack(elements)) => Ty::Tuple(elements),
-        (ParamKind::Variadic, element) => Ty::VariadicPack(Box::new(element)),
-        (ParamKind::KwVariadic, element) => Ty::Struct(
+    match (parameter.kind(), ty.kind()) {
+        (ParamKind::Variadic, TyKind::RuntimePack(elements)) => {
+            TyKind::Tuple(elements.clone()).into()
+        }
+        (ParamKind::Variadic, _) => TyKind::VariadicPack(ty).into(),
+        (ParamKind::KwVariadic, _) => TyKind::Struct(
             "StringDict".to_string(),
-            vec![mojito_types::types::TyArg::Ty(element)].into(),
-        ),
-        (_, ty) => ty,
+            vec![mojito_types::types::TyArg::Ty(ty)],
+        )
+        .into(),
+        _ => ty,
     }
 }
 
 fn generic_callable_param_decls(callable: &Ty) -> Vec<ParamDecl> {
-    match callable {
-        Ty::GenericFunc(generic) => generic.decls.clone(),
-        Ty::Param {
+    match callable.kind() {
+        TyKind::GenericFunc(generic) => generic.decls.clone(),
+        TyKind::Param {
             callable_bound: Some(bound),
             ..
         } => generic_callable_param_decls(bound),
@@ -4280,7 +4299,7 @@ fn region_error_type(blocks: &[MirBlock], reg_types: &HashMap<u32, Ty>) -> Optio
 /// types, slot types, and declaration returns. This pass never re-implements
 /// checker inference — a register whose type cannot be copied from an existing
 /// fact is reported as an invariant error. Synthetic loan/consumption markers
-/// are typed `Ty::None`. Reference-handle permission follows the place root: a
+/// are typed `TyKind::None`. Reference-handle permission follows the place root: a
 /// capability root is forwarded (and projections cannot recover stronger
 /// permission), while borrowing ordinary storage adds an outer reference layer
 /// even when the stored value is itself a reference. Handle loan bookkeeping
@@ -4294,9 +4313,9 @@ fn close_register_types(
     invariant_errors: &mut Vec<String>,
 ) {
     fn deref(ty: Ty) -> Ty {
-        match ty {
-            Ty::Ref(reference) => *reference.referent,
-            other => other,
+        match ty.kind() {
+            TyKind::Ref(reference) => reference.referent.clone(),
+            _ => ty,
         }
     }
     fn declared_return(declarations: &MirDeclarations, callee: &str) -> Option<Ty> {
@@ -4305,7 +4324,7 @@ fn close_register_types(
             .map(|declaration| declaration.ret_ty.clone())
     }
     fn struct_field(declarations: &MirDeclarations, base: &Ty, field: &str) -> Option<Ty> {
-        let Ty::Struct(name, _) = base else {
+        let TyKind::Struct(name, _) = base.kind() else {
             return None;
         };
         declarations
@@ -4338,22 +4357,22 @@ fn close_register_types(
         for block in blocks {
             for instr in &block.instrs {
                 if let MirInstr::TryNext { yielded, .. } = instr {
-                    changed |= record(reg_types, yielded, Some(Ty::Bool));
+                    changed |= record(reg_types, yielded, Some(Ty::bool()));
                 }
                 let derived: Option<(&Reg, Option<Ty>)> = match instr {
                     MirInstr::Const { dest, k } => {
                         let ty = match k {
                             Const::Int(value) => {
                                 const_ints.insert(dest.0, *value);
-                                Some(Ty::Int)
+                                Some(Ty::int())
                             }
-                            Const::Float(_) => Some(Ty::Float64),
-                            Const::IntLiteral(_) => Some(Ty::IntLiteral),
-                            Const::FloatLiteral(_) => Some(Ty::FloatLiteral),
-                            Const::Bool(_) => Some(Ty::Bool),
-                            Const::Str(_) => Some(Ty::StringLiteral),
-                            Const::None => Some(Ty::None),
-                            Const::Dtype(_) => Some(Ty::Dtype),
+                            Const::Float(_) => Some(Ty::float64()),
+                            Const::IntLiteral(_) => Some(Ty::int_literal()),
+                            Const::FloatLiteral(_) => Some(Ty::float_literal()),
+                            Const::Bool(_) => Some(Ty::bool()),
+                            Const::Str(_) => Some(Ty::string_literal()),
+                            Const::None => Some(Ty::none()),
+                            Const::Dtype(_) => Some(Ty::dtype()),
                             // A callable constant's type needs the checked
                             // expression; report rather than reconstruct.
                             Const::Function(_) => None,
@@ -4399,11 +4418,14 @@ fn close_register_types(
                     }
                     MirInstr::ReadRef { dest, reference } => Some((
                         dest,
-                        reg_types.get(&reference.0).cloned().map(|ty| match ty {
-                            Ty::Ref(reference) => *reference.referent,
-                            Ty::Pointer { element, .. } => *element,
-                            other => other,
-                        }),
+                        reg_types
+                            .get(&reference.0)
+                            .cloned()
+                            .map(|ty| match ty.kind() {
+                                TyKind::Ref(reference) => reference.referent.clone(),
+                                TyKind::Pointer { element, .. } => (*element).clone(),
+                                _ => ty,
+                            }),
                     )),
                     MirInstr::CopyValue { dest, value } => {
                         Some((dest, reg_types.get(&value.0).cloned()))
@@ -4411,7 +4433,7 @@ fn close_register_types(
                     MirInstr::UnOp { op, dest, a } => Some((
                         dest,
                         match op {
-                            PrefixOp::Not => Some(Ty::Bool),
+                            PrefixOp::Not => Some(Ty::bool()),
                             _ => reg_types.get(&a.0).cloned(),
                         },
                     )),
@@ -4429,7 +4451,7 @@ fn close_register_types(
                             | InfixOp::In
                             | InfixOp::NotIn
                             | InfixOp::Is
-                            | InfixOp::IsNot => Some(Ty::Bool),
+                            | InfixOp::IsNot => Some(Ty::bool()),
                             _ => reg_types.get(&a.0).or_else(|| reg_types.get(&b.0)).cloned(),
                         },
                     )),
@@ -4444,15 +4466,18 @@ fn close_register_types(
                         dest, base, index, ..
                     } => Some((
                         dest,
-                        reg_types.get(&base.0).and_then(|base| match base {
-                            Ty::Pointer { element, .. } => Some((**element).clone()),
-                            Ty::Simd { dtype, .. } => Some(Ty::Simd {
-                                dtype: dtype.clone(),
-                                width: mojito_types::types::SimdWidth::Known(1),
-                            }),
+                        reg_types.get(&base.0).and_then(|base| match base.kind() {
+                            TyKind::Pointer { element, .. } => Some(element.clone()),
+                            TyKind::Simd { dtype, .. } => Some(
+                                TyKind::Simd {
+                                    dtype: dtype.clone(),
+                                    width: mojito_types::types::SimdWidth::Known(1),
+                                }
+                                .into(),
+                            ),
                             // A tuple element type needs the compile-time
                             // index the checker already validated.
-                            Ty::Tuple(elements) => const_ints
+                            TyKind::Tuple(elements) => const_ints
                                 .get(&index.0)
                                 .and_then(|value| usize::try_from(*value).ok())
                                 .and_then(|value| elements.get(value).cloned())
@@ -4475,8 +4500,8 @@ fn close_register_types(
                         reg_types
                             .get(&callee.0)
                             .and_then(mojito_types::types::callable_contract_ty)
-                            .and_then(|ty| match ty {
-                                Ty::Func(func) => Some((*func.ret).clone()),
+                            .and_then(|ty| match ty.kind() {
+                                TyKind::Func(func) => Some(func.ret.clone()),
                                 _ => None,
                             }),
                     )),
@@ -4484,7 +4509,7 @@ fn close_register_types(
                         dest,
                         element_types: Some(elements),
                         ..
-                    } => Some((dest, Some(Ty::Tuple(elements.clone())))),
+                    } => Some((dest, Some(TyKind::Tuple(elements.clone()).into()))),
                     MirInstr::MakeTuple {
                         dest,
                         elems,
@@ -4496,11 +4521,14 @@ fn close_register_types(
                             .iter()
                             .map(|element| reg_types.get(&element.0).cloned())
                             .collect();
-                        Some((dest, elements.map(Ty::Tuple)))
+                        Some((
+                            dest,
+                            elements.map(|elements| TyKind::Tuple(elements).into()),
+                        ))
                     }
                     MirInstr::MakeVariant {
                         dest, alternatives, ..
-                    } => Some((dest, Some(Ty::Variant(alternatives.clone())))),
+                    } => Some((dest, Some(TyKind::Variant(alternatives.clone()).into()))),
                     MirInstr::MakeSimd {
                         dest, dtype, width, ..
                     }
@@ -4518,21 +4546,24 @@ fn close_register_types(
                     MirInstr::SimdShuffle {
                         dest, value, mask, ..
                     } => {
-                        let dtype = match reg_types.get(&value.0) {
-                            Some(Ty::Simd { dtype, .. }) => Some(dtype.clone()),
+                        let dtype = match reg_types.get(&value.0).map(Ty::kind) {
+                            Some(TyKind::Simd { dtype, .. }) => Some(dtype.clone()),
                             _ => None,
                         };
                         Some((
                             dest,
-                            dtype.zip(mask.known()).map(|(dtype, mask)| Ty::Simd {
-                                dtype,
-                                width: mojito_types::types::SimdWidth::Known(mask.len() as i64),
+                            dtype.zip(mask.known()).map(|(dtype, mask)| {
+                                TyKind::Simd {
+                                    dtype,
+                                    width: mojito_types::types::SimdWidth::Known(mask.len() as i64),
+                                }
+                                .into()
                             }),
                         ))
                     }
-                    MirInstr::VariantIs { dest, .. } => Some((dest, Some(Ty::Bool))),
+                    MirInstr::VariantIs { dest, .. } => Some((dest, Some(Ty::bool()))),
                     MirInstr::VariantSetInitWith { dest, .. }
-                    | MirInstr::VariantDeinitWith { dest, .. } => Some((dest, Some(Ty::None))),
+                    | MirInstr::VariantDeinitWith { dest, .. } => Some((dest, Some(Ty::none()))),
                     MirInstr::VariantGet {
                         dest,
                         variant,
@@ -4545,8 +4576,8 @@ fn close_register_types(
                         ..
                     } => Some((
                         dest,
-                        reg_types.get(&variant.0).and_then(|ty| match ty {
-                            Ty::Variant(alternatives) => index
+                        reg_types.get(&variant.0).and_then(|ty| match ty.kind() {
+                            TyKind::Variant(alternatives) => index
                                 .known()
                                 .and_then(|index| alternatives.get(index))
                                 .cloned(),
@@ -4560,15 +4591,15 @@ fn close_register_types(
                         ..
                     } => Some((
                         dest,
-                        place.ty.as_ref().and_then(|ty| match ty {
-                            Ty::Variant(alternatives) => output_index
+                        place.ty.as_ref().and_then(|ty| match ty.kind() {
+                            TyKind::Variant(alternatives) => output_index
                                 .known()
                                 .and_then(|index| alternatives.get(index))
                                 .cloned(),
                             _ => None,
                         }),
                     )),
-                    MirInstr::HasNext { dest, .. } => Some((dest, Some(Ty::Bool))),
+                    MirInstr::HasNext { dest, .. } => Some((dest, Some(Ty::bool()))),
                     MirInstr::Next { dest, .. } => {
                         // Compiler-private storage has no call contract, so the
                         // element type comes from the slot the element binds.
@@ -4594,7 +4625,7 @@ fn close_register_types(
                     }
                     MirInstr::EstablishLoans { marker, .. }
                     | MirInstr::InvalidateInteriors { marker, .. }
-                    | MirInstr::ConsumePlace { marker, .. } => Some((marker, Some(Ty::None))),
+                    | MirInstr::ConsumePlace { marker, .. } => Some((marker, Some(Ty::none()))),
                     MirInstr::Try {
                         body,
                         handler,
@@ -4876,8 +4907,8 @@ impl EnclosingBinders {
                     variadic: false,
                     callable_default: None,
                     ..
-                } if !matches!(ty.as_ref(), Ty::Func(_) | Ty::GenericFunc(_)) => {
-                    binders.values.push((declaration.binder(), (**ty).clone()));
+                } if !matches!(ty.kind(), TyKind::Func(_) | TyKind::GenericFunc(_)) => {
+                    binders.values.push((declaration.binder(), (*ty).clone()));
                 }
                 // A value pack has no frame local; a thunk reads it through
                 // the parameter constants it binds.
@@ -4886,7 +4917,7 @@ impl EnclosingBinders {
                     variadic: true,
                     callable_default: None,
                     ..
-                } if !matches!(ty.as_ref(), Ty::Func(_) | Ty::GenericFunc(_)) => {}
+                } if !matches!(ty.kind(), TyKind::Func(_) | TyKind::GenericFunc(_)) => {}
                 ParamDecl::Value { .. } => continue,
             }
             binders.declarations.push(declaration.clone());
@@ -4979,10 +5010,10 @@ impl EnclosingBinders {
                 declaration.id().clone(),
                 name,
                 mojito_types::param_expr::MetaTy::ParamList(Box::new(
-                    mojito_types::param_expr::MetaTy::value((**ty).clone()),
+                    mojito_types::param_expr::MetaTy::value((*ty).clone()),
                 )),
             ),
-            (**ty).clone(),
+            (*ty).clone(),
         ))
     }
 

@@ -5,6 +5,7 @@
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
+use mojito_types::types::TyKind;
 
 impl Checker {
     /// Type an initializer list against the type its context expects: the
@@ -81,14 +82,14 @@ impl Checker {
                  to spell"
             ))
         };
-        let kind = match expected {
-            Ty::Param { binder, .. } => ExprKind::Call {
+        let kind = match expected.kind() {
+            TyKind::Param { binder, .. } => ExprKind::Call {
                 name: binder.name.to_string(),
                 param_args: Vec::new(),
                 args,
                 kwargs: Vec::new(),
             },
-            Ty::Dependent(dependent) if let Some((list, index)) = dependent.pack_element() => {
+            TyKind::Dependent(dependent) if let Some((list, index)) = dependent.pack_element() => {
                 let pack = list
                     .as_decl_ref()
                     .map(|reference| reference.name.trim_start_matches('*').to_string())

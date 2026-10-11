@@ -80,6 +80,6 @@ impl Checker {
                 mojito_checked::checked::SemanticAdjustment::MarkDestroyed
             },
         );
-        Ok(Ty::None)
+        Ok(Ty::none())
     }
 }

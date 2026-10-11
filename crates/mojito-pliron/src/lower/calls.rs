@@ -3,6 +3,7 @@
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 use mojito_types::types::FuncTy;
+use mojito_types::types::TyKind;
 
 impl FnLowering<'_> {
     /// Lower a direct call: builtin scalar conversions intercept by name
@@ -117,7 +118,8 @@ impl FnLowering<'_> {
         // constructor path's exact contract.
         if name.contains(".__init__")
             && !params.is_empty()
-            && let Some(struct_ty @ Ty::Struct(..)) = self.func.reg_types.get(&dest.0).cloned()
+            && let Some(struct_ty) = self.func.reg_types.get(&dest.0).cloned()
+            && matches!(struct_ty.kind(), TyKind::Struct(..))
         {
             let lowered = lower_ty(self.name, &struct_ty, &self.layout, self.reg_span(dest))?;
             let LowerTy::Aggregate { ty, layout } = lowered else {
@@ -188,7 +190,7 @@ impl FnLowering<'_> {
                     .get(&dest.0)
                     .is_none_or(|(block, _)| *block == self.position.0)
             {
-                self.mark_owned_temp(dest, (*ty).clone())?;
+                self.mark_owned_temp(dest, ty)?;
             }
             return Ok(());
         }
@@ -302,8 +304,8 @@ impl FnLowering<'_> {
                         dest,
                     ));
                 };
-                let elements = match &pack_ty {
-                    Ty::RuntimePack(elements) | Ty::Tuple(elements) => elements.clone(),
+                let elements = match pack_ty.kind() {
+                    TyKind::RuntimePack(elements) | TyKind::Tuple(elements) => elements.clone(),
                     other => {
                         return Err(self.unsupported_reg(
                             format!("variadic call to `{name}` over unspecialized `{other}`"),
@@ -489,7 +491,7 @@ impl FnLowering<'_> {
         let LowerTy::Aggregate { ty, layout } = collector else {
             return Err(self.unsupported_reg("keyword pack lacks aggregate storage".into(), dest));
         };
-        let Ty::Struct(struct_name, _) = ty.as_ref() else {
+        let TyKind::Struct(struct_name, _) = ty.kind() else {
             return Err(self.unsupported_reg("keyword pack is not a StringDict".into(), dest));
         };
         let (Some(init), Some(setitem)) = (
@@ -592,7 +594,7 @@ impl FnLowering<'_> {
         // constructor, and reads as text rather than as a construction, so it
         // is matched before the general converting-constructor form.
         if let LowerTy::Aggregate { ty, .. } = expected
-            && let Ty::Struct(struct_name, _) = &**ty
+            && let TyKind::Struct(struct_name, _) = ty.kind()
             && let Some(text) = string_default_text(default)
         {
             if mojito_symbol::symbol::is_stdlib_string_struct(struct_name) {
@@ -696,7 +698,7 @@ impl FnLowering<'_> {
         let call = CallOp::new(ctx, callable, func_ty, vec![storage]);
         self.append(ctx, call.get_operation(), Some(dest));
         if !owned && ((self.owns_heap(ty) && self.releasable(ty)) || self.stdlib_deinit_temp(ty)) {
-            self.default_temps.push((storage, (**ty).clone()));
+            self.default_temps.push((storage, ty.clone()));
         }
         Ok(storage)
     }
@@ -799,7 +801,7 @@ impl FnLowering<'_> {
         storage
     }
 
-    /// Derive the physical indirect-call ABI from a checked `Ty::Func`
+    /// Derive the physical indirect-call ABI from a checked `TyKind::Func`
     /// contract, by the same classification rules `declare_function` applies
     /// to a compiled callee (a raising contract returns through a prepended
     /// outcome out-pointer, an aggregate return through prepended sret
@@ -831,8 +833,8 @@ impl FnLowering<'_> {
             ..
         }) = contract.as_func()
         else {
-            let construct = match contract {
-                Ty::GenericFunc(_) => "generic callable value invocation".to_string(),
+            let construct = match contract.kind() {
+                TyKind::GenericFunc(_) => "generic callable value invocation".to_string(),
                 other => format!("indirect call through `{other}`"),
             };
             return Err(self.unsupported_reg(construct, dest));
@@ -899,12 +901,12 @@ impl FnLowering<'_> {
         }
         let kw_pack_index = if let Some(element) = kw_variadic {
             let index = lowered_params.len();
-            let arguments = vec![mojito_symbol::symbol::InstanceArg::Ty((**element).clone())];
+            let arguments = vec![mojito_symbol::symbol::InstanceArg::Ty(element.clone())];
             let instance = mojito_symbol::symbol::instance_symbol("StringDict", &arguments);
-            let ty = Ty::Struct(
+            let ty = Ty::new(TyKind::Struct(
                 instance,
-                vec![mojito_types::types::TyArg::Ty((**element).clone())].into(),
-            );
+                vec![mojito_types::types::TyArg::Ty(element.clone())],
+            ));
             let lowered = lower_ty(self.name, &ty, &self.layout, self.reg_span(dest))?;
             param_handles.push(ptr_ty);
             lowered_params.push(lowered);

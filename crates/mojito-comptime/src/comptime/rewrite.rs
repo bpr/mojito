@@ -3,6 +3,7 @@
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 use mojito_ast::ast::FnParam;
+use mojito_types::types::TyKind;
 
 // --- Substitution / materialization -----------------------------------------
 //
@@ -138,13 +139,13 @@ pub(super) fn rewrite_expr(e: &mut Expr, subs: Subs) {
             if let Some(CtValue::Type(bound)) = subs(name)
                 && param_args.is_empty()
             {
-                match &*bound {
-                    Ty::Struct(struct_name, struct_args) if struct_args.is_empty() => {
+                match bound.kind() {
+                    TyKind::Struct(struct_name, struct_args) if struct_args.is_empty() => {
                         name.clone_from(struct_name);
                     }
                     // A bound vector type is concrete (the elaborator binds
                     // no symbolic slot), so a symbolic one is left as it is.
-                    Ty::Simd { dtype, width } => {
+                    TyKind::Simd { dtype, width } => {
                         if let (Some(mut dtype), Some(mut width)) = (
                             dtype
                                 .known()
@@ -209,8 +210,8 @@ pub(super) fn rewrite_expr(e: &mut Expr, subs: Subs) {
                 && kwargs.is_empty()
                 && let Some(CtValue::Type(bound)) = subs(method)
             {
-                match &*bound {
-                    Ty::Struct(name, parameters) if parameters.is_empty() => {
+                match bound.kind() {
+                    TyKind::Struct(name, parameters) if parameters.is_empty() => {
                         e.kind = ExprKind::Call {
                             name: name.clone(),
                             param_args: Vec::new(),
@@ -219,7 +220,7 @@ pub(super) fn rewrite_expr(e: &mut Expr, subs: Subs) {
                         };
                         return;
                     }
-                    Ty::Simd { dtype, width } => {
+                    TyKind::Simd { dtype, width } => {
                         let Some(dtype) = dtype
                             .known()
                             .and_then(|dtype| CtValue::Dtype(dtype).materialize(e.span))
@@ -1877,7 +1878,7 @@ fn pack_element_default_construction(
 fn default_constructor_call(ty: &Type, semantic: &Ty, span: Span) -> Option<Expr> {
     // A SIMD element default-constructs to zero lanes: the checker accepts one
     // lane to splat, not a nullary construction, so spell the zero explicitly.
-    if let (Ty::Simd { dtype, .. }, Type::Named(name, arguments)) = (semantic, ty) {
+    if let (TyKind::Simd { dtype, .. }, Type::Named(name, arguments)) = (semantic.kind(), ty) {
         let zero = match dtype.known() {
             Some(mojito_ast::ast::Dtype::Bool) => ExprKind::Bool(false),
             Some(dtype) if dtype.is_float() => ExprKind::Float(0.0.into()),

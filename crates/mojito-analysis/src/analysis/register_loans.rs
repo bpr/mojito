@@ -64,17 +64,17 @@ pub(super) fn active_register_loan_roots(
 /// self-hosted `String`/`List` shape). Scalars and compile-time values own
 /// their bits; a bare `Pointer` read aliases by design (the `unsafe_*`
 /// vocabulary makes its lifetime the user's obligation).
-pub(super) const fn may_alias_owned_storage(ty: &mojito_types::types::Ty) -> bool {
-    use mojito_types::types::Ty;
+pub(super) fn may_alias_owned_storage(ty: &mojito_types::types::Ty) -> bool {
+    use mojito_types::types::TyKind;
     matches!(
-        ty,
-        Ty::Struct(..)
-            | Ty::Tuple(_)
-            | Ty::RuntimePack(_)
-            | Ty::Variant(_)
-            | Ty::ComptimeList(_)
-            | Ty::Param { .. }
-            | Ty::Assoc { .. }
+        ty.kind(),
+        TyKind::Struct(..)
+            | TyKind::Tuple(_)
+            | TyKind::RuntimePack(_)
+            | TyKind::Variant(_)
+            | TyKind::ComptimeList(_)
+            | TyKind::Param { .. }
+            | TyKind::Assoc { .. }
     )
 }
 
@@ -192,8 +192,8 @@ fn tracked_pointer_result(
     dest: &Reg,
 ) -> bool {
     matches!(
-        register_types.get(&dest.0),
-        Some(mojito_types::types::Ty::Pointer { origin, .. }) if origin.as_origin().is_some()
+        register_types.get(&dest.0).map(mojito_types::types::Ty::kind),
+        Some(mojito_types::types::TyKind::Pointer { origin, .. }) if origin.as_origin().is_some()
     )
 }
 
@@ -298,8 +298,10 @@ impl RegisterLoanStep {
                 object_place: Some(place),
                 ..
             } if matches!(
-                register_types.get(&dest.0),
-                Some(mojito_types::types::Ty::Ref(_))
+                register_types
+                    .get(&dest.0)
+                    .map(mojito_types::types::Ty::kind),
+                Some(mojito_types::types::TyKind::Ref(_))
             ) =>
             {
                 Some(place)

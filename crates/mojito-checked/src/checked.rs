@@ -84,8 +84,8 @@ pub enum CheckedCallValueAdjustment {
     ResolveCallable { target: String },
     ImplicitConversion { target: String },
     IndexNormalization { target: String },
-    MaterializeLiteral { target: Box<Ty> },
-    SplatScalar { target: Box<Ty> },
+    MaterializeLiteral { target: Ty },
+    SplatScalar { target: Ty },
 }
 
 /// Call-boundary facts for one supplied argument.
@@ -260,7 +260,7 @@ pub struct CheckedIterationBinding {
 /// Exact checked contract for one iterator `__next__` call.
 ///
 /// The result type is the type produced by the call itself, so a
-/// reference-yielding iterator keeps its `Ty::Ref` handle type rather than
+/// reference-yielding iterator keeps its `TyKind::Ref` handle type rather than
 /// collapsing to the referent.  The parallel reference fact carries the
 /// executable origin/capability contract needed by lowering, while `raises`
 /// records the selected exhaustion effect.
@@ -523,14 +523,14 @@ impl ComptimeSequence {
                             .or_else(|| mojito_types::types::set_element(ty))
                             .or_else(|| mojito_types::types::dict_elements(ty).map(|(key, _)| key))
                     })
-                    .map_or_else(MetaTy::int, |element| match element {
-                        mojito_types::types::Ty::Struct(name, args)
+                    .map_or_else(MetaTy::int, |element| match element.kind() {
+                        mojito_types::types::TyKind::Struct(name, args)
                             if args.is_empty()
                                 && mojito_types::types::is_stdlib_string_struct(name) =>
                         {
-                            MetaTy::value(mojito_types::types::Ty::StringLiteral)
+                            MetaTy::value(Ty::new(mojito_types::types::TyKind::StringLiteral))
                         }
-                        element => MetaTy::value(element.clone()),
+                        _ => MetaTy::value(element.clone()),
                     }),
             },
         }
@@ -1169,7 +1169,7 @@ pub struct CheckedExpr {
     pub syntax: Expr,
     pub ty: Option<Ty>,
     /// Type physically stored at this place. For a reference-valued field this
-    /// is `Ty::Ref`, while `ty` is the referent produced by an ordinary read.
+    /// is `TyKind::Ref`, while `ty` is the referent produced by an ordinary read.
     pub place_ty: Option<Ty>,
     /// Resolved destination type when this expression initializes an annotated
     /// or inferred binding. Lowering must not re-resolve its source annotation.
@@ -1754,9 +1754,8 @@ impl ExplicitDestroyInfo {
     /// The message of a struct `name` that is not `Deinitable` without
     /// declaring `@explicit_destroy`.
     pub fn default_message(name: &str) -> String {
-        let shown = mojito_types::types::unqualified_type_name(&mojito_types::types::Ty::Struct(
-            name.to_string(),
-            mojito_types::types::TyArgs::default(),
+        let shown = mojito_types::types::unqualified_type_name(&Ty::new(
+            mojito_types::types::TyKind::Struct(name.to_string(), Vec::new()),
         ));
         format!("type '{shown}' does not conform to 'Deinitable' and must be explicitly destroyed")
     }

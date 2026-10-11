@@ -5,6 +5,7 @@
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 use mojito_types::types::FuncTy;
+use mojito_types::types::TyKind;
 
 impl Checker {
     /// Allocate a stable identity for a source binding's storage (or for a
@@ -83,9 +84,9 @@ impl Checker {
             } => self.declare_value_parameter(
                 name.trim_start_matches('*'),
                 if *variadic {
-                    Ty::VariadicPack(ty.clone())
+                    TyKind::VariadicPack(ty.clone()).into()
                 } else {
-                    (**ty).clone()
+                    (*ty).clone()
                 },
             ),
             ParamDecl::Type { .. } => Ok(()),
@@ -149,7 +150,7 @@ impl Checker {
                     return Err(TypeError::Redeclaration(name.to_string()));
                 }
                 candidates.push(ty);
-                *existing = Ty::Overload(candidates);
+                *existing = TyKind::Overload(candidates).into();
                 return Ok(());
             }
             return Err(TypeError::Redeclaration(name.to_string()));
@@ -278,8 +279,8 @@ impl Checker {
         reason = "TODO: make an associated function or use the receiver"
     )]
     pub(super) fn inferred_binding_ty(&self, value_ty: &Ty, _name: &str) -> Result<Ty, TypeError> {
-        match value_ty {
-            Ty::Func(func)
+        match value_ty.kind() {
+            TyKind::Func(func)
                 if let FuncTy {
                     environment: mojito_types::origin::CallableEnvironment::Thin,
                     ..
@@ -287,8 +288,10 @@ impl Checker {
             {
                 Ok(value_ty.clone())
             }
-            Ty::Func(_) | Ty::GenericFunc(_) | Ty::Overload(_) => Err(TypeError::ClosureEscape),
-            other => Ok(default_literal(other)),
+            TyKind::Func(_) | TyKind::GenericFunc(_) | TyKind::Overload(_) => {
+                Err(TypeError::ClosureEscape)
+            }
+            _ => Ok(default_literal(value_ty)),
         }
     }
 

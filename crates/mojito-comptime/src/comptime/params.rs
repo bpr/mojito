@@ -3,6 +3,7 @@
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
+use mojito_types::types::TyKind;
 
 /// Whether a source parameter is semantic metadata/runtime callable input rather
 /// than a value the compile-time evaluator may inspect.  These parameters stay
@@ -44,7 +45,7 @@ pub(super) fn classify_ct_param(
     let value = |ty: Ty| ParamDecl::Value {
         id: elaborated_binder(tp, siblings, owner),
         name: tp.name.clone(),
-        ty: Box::new(ty),
+        ty,
         default: tp
             .default
             .as_ref()
@@ -71,8 +72,8 @@ pub(super) fn classify_ct_param(
         bounds: tp.bounds.clone(),
         callable_bound: None,
         default: tp.default.as_ref().and_then(|value| match &value.kind {
-            ExprKind::Identifier(name) => scalar_type_name(name).map(Box::new),
-            ExprKind::TypeValue(ty) => ct_param_source_type(ty).map(Box::new),
+            ExprKind::Identifier(name) => scalar_type_name(name),
+            ExprKind::TypeValue(ty) => ct_param_source_type(ty),
             _ => None,
         }),
         infer_only: tp.infer_only,
@@ -103,7 +104,7 @@ pub(super) fn decode_ct_origin_marker(value: &CtValue) -> Option<mojito_types::o
     };
     Some(mojito_types::origin::RefTy {
         // Filled by `type_from_anno` after the marker establishes provenance.
-        referent: Box::new(Ty::None),
+        referent: Ty::none(),
         origin: mojito_types::origin::Origin::Param(id),
         mutability,
     })
@@ -111,21 +112,21 @@ pub(super) fn decode_ct_origin_marker(value: &CtValue) -> Option<mojito_types::o
 
 pub(super) fn ct_value_param_type(name: &str) -> Option<Ty> {
     Some(match name {
-        "Int" => Ty::Int,
+        "Int" => Ty::int(),
         // A `DType` value, and the type of a `[dtype: DType]` value parameter.
-        "DType" => Ty::Dtype,
+        "DType" => Ty::dtype(),
         // A SIMD width parameter is a compile-time Int value parameter (the
         // removed `SIMDSize` spelling rejects).
-        "SIMDLength" => Ty::Int,
-        "Bool" => Ty::Bool,
-        "String" => Ty::StringLiteral,
-        "StringLiteral" => Ty::StringLiteral,
-        "UInt" => Ty::UInt,
-        "Float64" => Ty::Float64,
+        "SIMDLength" => Ty::int(),
+        "Bool" => Ty::bool(),
+        "String" => Ty::string_literal(),
+        "StringLiteral" => Ty::string_literal(),
+        "UInt" => Ty::uint(),
+        "Float64" => Ty::float64(),
         // The prelude rewrite qualifies `String` bounds like any other name;
         // a `[text: String]` value parameter keeps the compile-time string
         // type regardless of the nominal stdlib struct.
-        _ if mojito_symbol::symbol::is_stdlib_string_struct(name) => Ty::StringLiteral,
+        _ if mojito_symbol::symbol::is_stdlib_string_struct(name) => Ty::string_literal(),
         _ => return None,
     })
 }
@@ -158,7 +159,7 @@ pub(super) fn simd_source_dims(args: &[ParamArg]) -> Option<(mojito_ast::ast::Dt
     (width >= 1 && (width & (width - 1)) == 0).then_some((dtype, width))
 }
 
-/// The `Ty::Param` of the type binder `name` when it is a non-variadic
+/// The `TyKind::Param` of the type binder `name` when it is a non-variadic
 /// sibling declared before `tp`: a value parameter of that type
 /// (`[T: AnyType, //, v: T]`), as the checker classifies it.
 fn sibling_type_binder(
@@ -182,12 +183,15 @@ fn sibling_type_binder(
     else {
         return None;
     };
-    Some(Ty::Param {
-        binder: mojito_types::param_expr::ParamRef {
-            id,
-            name: std::sync::Arc::from(name),
-        },
-        bounds,
-        callable_bound: None,
-    })
+    Some(
+        TyKind::Param {
+            binder: mojito_types::param_expr::ParamRef {
+                id,
+                name: std::sync::Arc::from(name),
+            },
+            bounds,
+            callable_bound: None,
+        }
+        .into(),
+    )
 }

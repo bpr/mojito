@@ -3,6 +3,7 @@
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
+use mojito_types::types::TyKind;
 
 pub(in crate::checker) fn lower_sig_origin_expression(
     expression: &Expr,
@@ -357,9 +358,9 @@ pub(in crate::checker) fn field_carries_origin_param(
     id: mojito_types::origin::OriginParamId,
 ) -> bool {
     use mojito_types::origin::{Origin, PointerOrigin};
-    match ty {
-        Ty::Ref(reference) => matches!(reference.origin, Origin::Param(k) if k == id),
-        Ty::Pointer { origin, .. } => {
+    match ty.kind() {
+        TyKind::Ref(reference) => matches!(reference.origin, Origin::Param(k) if k == id),
+        TyKind::Pointer { origin, .. } => {
             matches!(origin, PointerOrigin::Param { id: k, .. } if *k == id)
         }
         _ => false,
@@ -377,9 +378,9 @@ pub(in crate::checker) fn substitute_pointer_origin_params(
     bindings: &HashMap<mojito_types::origin::OriginParamId, mojito_types::origin::PointerOrigin>,
 ) -> Ty {
     use mojito_types::origin::PointerOrigin;
-    match ty {
-        Ty::Pointer { element, origin } => {
-            let element = Box::new(substitute_pointer_origin_params(element, bindings));
+    match ty.kind() {
+        TyKind::Pointer { element, origin } => {
+            let element = substitute_pointer_origin_params(element, bindings);
             let origin = match origin {
                 PointerOrigin::Param {
                     id,
@@ -400,35 +401,32 @@ pub(in crate::checker) fn substitute_pointer_origin_params(
                 }
                 other => other.clone(),
             };
-            Ty::Pointer { element, origin }
+            TyKind::Pointer { element, origin }.into()
         }
-        Ty::Struct(name, arguments) => Ty::Struct(
+        TyKind::Struct(name, arguments) => ty.reusing(TyKind::Struct(
             name.clone(),
-            arguments.reusing(
-                arguments
-                    .iter()
-                    .map(|argument| match argument {
-                        TyArg::Ty(ty) => TyArg::Ty(substitute_pointer_origin_params(ty, bindings)),
-                        other => other.clone(),
-                    })
-                    .collect(),
-            ),
-        ),
-        Ty::Ref(reference) => Ty::Ref(mojito_types::origin::RefTy {
-            referent: Box::new(substitute_pointer_origin_params(
-                &reference.referent,
-                bindings,
-            )),
+            arguments
+                .iter()
+                .map(|argument| match argument {
+                    TyArg::Ty(ty) => TyArg::Ty(substitute_pointer_origin_params(ty, bindings)),
+                    other => other.clone(),
+                })
+                .collect(),
+        )),
+        TyKind::Ref(reference) => TyKind::Ref(mojito_types::origin::RefTy {
+            referent: substitute_pointer_origin_params(&reference.referent, bindings),
             origin: reference.origin.clone(),
             mutability: reference.mutability,
-        }),
-        Ty::Tuple(elements) => Ty::Tuple(
+        })
+        .into(),
+        TyKind::Tuple(elements) => TyKind::Tuple(
             elements
                 .iter()
                 .map(|element| substitute_pointer_origin_params(element, bindings))
                 .collect(),
-        ),
-        other => other.clone(),
+        )
+        .into(),
+        _ => ty.clone(),
     }
 }
 
@@ -445,35 +443,35 @@ pub(in crate::checker) fn substitute_struct_origin_tails(
         return ty.clone();
     }
     let recur = |ty: &Ty| substitute_struct_origin_tails(ty, bindings);
-    match ty {
-        Ty::Struct(name, arguments) => Ty::Struct(
+    match ty.kind() {
+        TyKind::Struct(name, arguments) => ty.reusing(TyKind::Struct(
             name.clone(),
-            arguments.reusing(
-                arguments
-                    .iter()
-                    .map(|argument| match argument {
-                        TyArg::Ty(ty) => TyArg::Ty(recur(ty)),
-                        TyArg::Origin(origin) => {
-                            TyArg::Origin(substitute_origin_params(origin.clone(), &|id| {
-                                bindings.get(&id).cloned()
-                            }))
-                        }
-                        TyArg::Val(_) => argument.clone(),
-                    })
-                    .collect(),
-            ),
-        ),
-        Ty::Pointer { element, origin } => Ty::Pointer {
-            element: Box::new(recur(element)),
+            arguments
+                .iter()
+                .map(|argument| match argument {
+                    TyArg::Ty(ty) => TyArg::Ty(recur(ty)),
+                    TyArg::Origin(origin) => {
+                        TyArg::Origin(substitute_origin_params(origin.clone(), &|id| {
+                            bindings.get(&id).cloned()
+                        }))
+                    }
+                    TyArg::Val(_) => argument.clone(),
+                })
+                .collect(),
+        )),
+        TyKind::Pointer { element, origin } => TyKind::Pointer {
+            element: recur(element),
             origin: origin.clone(),
-        },
-        Ty::Ref(reference) => Ty::Ref(mojito_types::origin::RefTy {
-            referent: Box::new(recur(&reference.referent)),
+        }
+        .into(),
+        TyKind::Ref(reference) => TyKind::Ref(mojito_types::origin::RefTy {
+            referent: recur(&reference.referent),
             origin: reference.origin.clone(),
             mutability: reference.mutability,
-        }),
-        Ty::Tuple(elements) => Ty::Tuple(elements.iter().map(recur).collect()),
-        other => other.clone(),
+        })
+        .into(),
+        TyKind::Tuple(elements) => TyKind::Tuple(elements.iter().map(recur).collect()).into(),
+        _ => ty.clone(),
     }
 }
 

@@ -1,6 +1,7 @@
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 use crate::mir::text::write;
+use mojito_types::types::TyKind;
 use mojito_types::types::{FuncTy, GenericFuncTy, LaneMask, VariantIndex};
 
 fn int_parameter(owner: &str, slot: usize, name: &str) -> ParamExpr {
@@ -50,7 +51,7 @@ fn function_with(reg_types: Vec<Ty>, instrs: Vec<MirInstr>) -> MirFunction {
         ref_params: Vec::new(),
         returns_reference: false,
         var_tys: HashMap::new(),
-        ret_ty: Some(Ty::None),
+        ret_ty: Some(Ty::none()),
         raises: false,
         error_ty: None,
         spans: SpanTable(HashMap::new()),
@@ -107,18 +108,18 @@ fn type_families_reprint_byte_identically() {
             access: CaptureAccess::Read,
         },
     ]));
-    let func_ty = Ty::Func(Box::new(FuncTy {
+    let func_ty = Ty::new(TyKind::Func(Box::new(FuncTy {
         environment: capturing,
-        params: vec![Ty::Int],
+        params: vec![Ty::int()],
         names: vec!["value".into()],
-        ret: Box::new(Ty::Bool),
+        ret: Ty::bool(),
         required: vec![true],
-        variadic: Some(Box::new(Ty::Int)),
+        variadic: Some(Ty::int()),
         kw_variadic: None,
         positional_only: Some(0),
         keyword_only: None,
         raises: true,
-        error: Some(Box::new(Ty::Error)),
+        error: Some(Ty::error()),
         conventions: vec![Some(mojito_ast::ast::ArgConvention::Mut)],
         ref_params: vec![Some(RefSig {
             origin: SigOrigin::Projected(
@@ -137,15 +138,15 @@ fn type_families_reprint_byte_identically() {
             src_is_place: true,
             mutable: false,
         }]),
-    }));
-    let generic_ty = Ty::GenericFunc(Box::new(GenericFuncTy {
+    })));
+    let generic_ty = TyKind::GenericFunc(Box::new(GenericFuncTy {
         decls: vec![
             ParamDecl::Type {
                 id: test_id("T"),
                 name: "T".into(),
                 bounds: vec!["Copyable".into()],
                 callable_bound: None,
-                default: Some(Box::new(Ty::Int)),
+                default: Some(Ty::int()),
                 infer_only: true,
                 variadic: false,
                 constraints: vec![
@@ -183,7 +184,7 @@ fn type_families_reprint_byte_identically() {
                     },
                     GenericConstraint::PackContains {
                         param: test_binder("Ts"),
-                        element: ConstraintOperand::Type(Ty::Int),
+                        element: ConstraintOperand::Type(Ty::int()),
                     },
                     GenericConstraint::Le(
                         ConstraintOperand::Value(CtValue::Int(3)),
@@ -191,14 +192,14 @@ fn type_families_reprint_byte_identically() {
                     ),
                     GenericConstraint::Ne(
                         ConstraintOperand::Param(test_binder("T")),
-                        ConstraintOperand::Type(Ty::Bool),
+                        ConstraintOperand::Type(Ty::bool()),
                     ),
                 ],
             },
             ParamDecl::Value {
                 id: test_id("width"),
                 name: "width".into(),
-                ty: Box::new(Ty::Int),
+                ty: Ty::int(),
                 default: Some(
                     ParamContext::detached()
                         .infix(
@@ -222,10 +223,10 @@ fn type_families_reprint_byte_identically() {
             environment: CallableEnvironment::Thin,
             params: Vec::new(),
             names: Vec::new(),
-            ret: Box::new(Ty::None),
+            ret: Ty::none(),
             required: Vec::new(),
             variadic: None,
-            kw_variadic: Some(Box::new(Ty::Int)),
+            kw_variadic: Some(Ty::int()),
             positional_only: None,
             keyword_only: Some(0),
             raises: false,
@@ -236,10 +237,10 @@ fn type_families_reprint_byte_identically() {
             transfers: TransferSet(Vec::new()),
         },
     }));
-    let struct_ty = Ty::Struct(
+    let struct_ty = TyKind::Struct(
         "Fancy".into(),
         vec![
-            TyArg::Ty(Ty::Tuple(vec![Ty::Int, Ty::Bool])),
+            TyArg::Ty(TyKind::Tuple(vec![Ty::int(), Ty::bool()]).into()),
             TyArg::Val(CtValue::Struct {
                 name: "Layout".into(),
                 fields: vec![
@@ -256,8 +257,8 @@ fn type_families_reprint_byte_identically() {
                 CtValue::FloatLiteral(FloatLiteral::parse_exact("157/50").unwrap()),
                 CtValue::Dtype(Dtype::Float32),
                 CtValue::Dtype(Dtype::Float16),
-                CtValue::Type(Box::new(Ty::Int)),
-                CtValue::Reflected(Box::new(Ty::Bool)),
+                CtValue::Type(Ty::int()),
+                CtValue::Reflected(Ty::bool()),
                 CtValue::Expr(int_parameter("Holder", 1, "N")),
                 CtValue::Deferred(test_binder("callback")),
                 CtValue::Marker(CtMarker::RuntimeLocal),
@@ -267,7 +268,7 @@ fn type_families_reprint_byte_identically() {
                     mutability: Mutability::Param(OriginParamId(2)),
                 }),
                 CtValue::Dict {
-                    spelling: Some(Box::new(mojito_types::types::dict_type(Ty::Int, Ty::Bool))),
+                    spelling: Some(mojito_types::types::dict_type(Ty::int(), Ty::bool())),
                     entries: vec![(CtValue::Int(1), CtValue::Bool(true))],
                 },
                 CtValue::Set {
@@ -279,28 +280,30 @@ fn type_families_reprint_byte_identically() {
                 Origin::Param(OriginParamId(0)),
                 Origin::SelfParam,
             ])),
-        ]
-        .into(),
+        ],
     );
     let program = program_with(vec![(
         "types".into(),
         function_with(
             vec![
-                Ty::Overload(vec![Ty::Int, Ty::Bool]),
-                Ty::Param {
+                TyKind::Overload(vec![Ty::int(), Ty::bool()]).into(),
+                TyKind::Param {
                     binder: test_binder("T"),
                     bounds: vec!["Copyable".into(), "Movable".into()],
-                    callable_bound: Some(Box::new(func_ty.clone())),
-                },
-                Ty::Assoc {
-                    base: Box::new(Ty::Param {
+                    callable_bound: Some(func_ty.clone()),
+                }
+                .into(),
+                TyKind::Assoc {
+                    base: TyKind::Param {
                         binder: test_binder("C"),
                         bounds: vec!["Iterable".into()],
                         callable_bound: None,
-                    }),
+                    }
+                    .into(),
                     name: "IteratorType".into(),
                     args: vec![TyArg::Origin(Origin::SelfParam)],
-                },
+                }
+                .into(),
                 {
                     let context = ParamContext::detached();
                     let negated = context
@@ -311,21 +314,21 @@ fn type_families_reprint_byte_identically() {
                         .expect("Int // Int builds");
                     DependentType::resolve(
                         context
-                            .select(vec![Ty::Int, Ty::Bool], &index)
+                            .select(vec![Ty::int(), Ty::bool()], &index)
                             .expect("an Int index selects"),
                     )
                 },
                 func_ty,
-                generic_ty,
-                struct_ty,
+                generic_ty.into(),
+                struct_ty.into(),
                 mojito_types::types::canonical_simd_ty(Dtype::Float32, 4),
                 mojito_types::types::canonical_simd_ty(Dtype::Float16, 2),
-                Ty::ComptimeList(Box::new(Ty::Int)),
-                Ty::RuntimePack(vec![Ty::Int, Ty::Bool]),
-                Ty::VariadicPack(Box::new(Ty::Int)),
-                Ty::Variant(vec![Ty::Int, Ty::None]),
-                Ty::Pointer {
-                    element: Box::new(Ty::Int),
+                TyKind::ComptimeList(Ty::int()).into(),
+                TyKind::RuntimePack(vec![Ty::int(), Ty::bool()]).into(),
+                TyKind::VariadicPack(Ty::int()).into(),
+                TyKind::Variant(vec![Ty::int(), Ty::none()]).into(),
+                TyKind::Pointer {
+                    element: Ty::int(),
                     origin: PointerOrigin::Place {
                         place: OriginPlace {
                             root: OwnerId(0),
@@ -333,41 +336,48 @@ fn type_families_reprint_byte_identically() {
                         },
                         mutable: true,
                     },
-                },
-                Ty::Pointer {
-                    element: Box::new(Ty::Int),
+                }
+                .into(),
+                TyKind::Pointer {
+                    element: Ty::int(),
                     origin: PointerOrigin::Param {
                         id: OriginParamId(2),
                         mutability: Mutability::Param(OriginParamId(3)),
                         interior: vec!["element".into()],
                         subtree: true,
                     },
-                },
-                Ty::Pointer {
-                    element: Box::new(Ty::Int),
+                }
+                .into(),
+                TyKind::Pointer {
+                    element: Ty::int(),
                     origin: PointerOrigin::SelfPlace {
                         mutability: Mutability::Immutable,
                         interior: Vec::new(),
                         subtree: false,
                     },
-                },
-                Ty::Pointer {
-                    element: Box::new(Ty::Int),
+                }
+                .into(),
+                TyKind::Pointer {
+                    element: Ty::int(),
                     origin: PointerOrigin::Static,
-                },
-                Ty::Pointer {
-                    element: Box::new(Ty::Int),
+                }
+                .into(),
+                TyKind::Pointer {
+                    element: Ty::int(),
                     origin: PointerOrigin::Untracked { mutable: false },
-                },
-                Ty::Pointer {
-                    element: Box::new(Ty::Int),
+                }
+                .into(),
+                TyKind::Pointer {
+                    element: Ty::int(),
                     origin: PointerOrigin::UnsafeAny { mutable: true },
-                },
-                Ty::Ref(RefTy {
-                    referent: Box::new(Ty::Struct("List".into(), vec![TyArg::Ty(Ty::Int)].into())),
+                }
+                .into(),
+                TyKind::Ref(RefTy {
+                    referent: TyKind::Struct("List".into(), vec![TyArg::Ty(Ty::int())]).into(),
                     origin: Origin::Untracked { mutable: true },
                     mutability: Mutability::Mutable,
-                }),
+                })
+                .into(),
             ],
             Vec::new(),
         ),
@@ -390,7 +400,7 @@ fn constant_families_reprint_byte_identically() {
         Const::Dtype(Dtype::UInt16),
         Const::None,
     ];
-    let reg_types = vec![Ty::Int; constants.len()];
+    let reg_types = vec![Ty::int(); constants.len()];
     let instrs = constants
         .into_iter()
         .enumerate()
@@ -423,7 +433,7 @@ fn const_param_round_trips() {
     ];
     let program = program_with(vec![(
         "consts".into(),
-        function_with(vec![Ty::Int, Ty::Bool], instrs),
+        function_with(vec![Ty::int(), Ty::bool()], instrs),
     )]);
     assert!(write::program(&program).contains("param(param_pack_query"));
     assert_reprints(&program);
@@ -454,7 +464,7 @@ fn param_list_concat_round_trips() {
         mojito_types::param_expr::MetaTy::type_list(),
     );
     let closed = context
-        .type_list(vec![Ty::Int, Ty::Bool])
+        .type_list(vec![Ty::int(), Ty::bool()])
         .expect("closed types are a list");
     let joined = context
         .list_concat(&[closed, pack])
@@ -465,17 +475,16 @@ fn param_list_concat_round_trips() {
 /// A program whose one register has the type `Tuple[*list]`, asserting the
 /// canonical text spells `list` as the node `tag`.
 fn program_with_spread(list: ParamExpr, tag: &str) -> MirProgram {
-    let spread = Ty::Struct(
+    let spread = TyKind::Struct(
         "Tuple".into(),
-        vec![mojito_types::types::TyArg::Ty(Ty::Dependent(
-            mojito_types::types::DependentType::Parameter(list),
-        ))]
-        .into(),
+        vec![mojito_types::types::TyArg::Ty(
+            TyKind::Dependent(mojito_types::types::DependentType::Parameter(list)).into(),
+        )],
     );
     let program = program_with(vec![(
         "spread".into(),
         function_with(
-            vec![spread],
+            vec![spread.into()],
             vec![MirInstr::Const {
                 dest: Reg(0),
                 k: Const::None,
@@ -490,7 +499,7 @@ fn program_with_spread(list: ParamExpr, tag: &str) -> MirProgram {
 /// and a field of a symbolic struct parameter as a `param_field` node.
 #[test]
 fn const_value_and_param_field_round_trip() {
-    let extent = Ty::Struct("Extent".into(), Vec::new().into());
+    let extent = Ty::new(TyKind::Struct("Extent".into(), Vec::new()));
     let base = ParamContext::detached().decl_ref(
         test_binder("e").id,
         "e",
@@ -525,13 +534,13 @@ fn const_value_and_param_field_round_trip() {
             k: Const::Param(rows),
         },
     ];
-    let vector = Ty::Simd {
+    let vector = TyKind::Simd {
         dtype: mojito_types::types::SimdDtype::Known(Dtype::UInt64),
         width: mojito_types::types::SimdWidth::Known(2),
     };
     let program = program_with(vec![(
         "consts".into(),
-        function_with(vec![vector, extent, Ty::Int], instrs),
+        function_with(vec![vector.into(), extent, Ty::int()], instrs),
     )]);
     let text = write::program(&program);
     assert!(text.contains("value(ct_simd"));
@@ -563,8 +572,8 @@ fn frozen_pointer_constant_round_trip() {
             offset: 1,
         },
     ];
-    let ty = Ty::Pointer {
-        element: Box::new(Ty::Int),
+    let ty = TyKind::Pointer {
+        element: Ty::int(),
         origin: mojito_types::origin::PointerOrigin::Untracked { mutable: true },
     };
     let instructions = values
@@ -577,7 +586,7 @@ fn frozen_pointer_constant_round_trip() {
         .collect();
     let program = program_with(vec![(
         "frozen".into(),
-        function_with(vec![ty; 3], instructions),
+        function_with(vec![ty.into(); 3], instructions),
     )]);
     let text = write::program(&program);
     assert!(text.contains("ct_pointer"));
@@ -624,7 +633,7 @@ fn unknown_value_grammar_tags_are_diagnosed() {
 fn sample_place(root: u32) -> MirPlace {
     MirPlace {
         root,
-        root_ty: Some(Ty::Struct("List".into(), vec![TyArg::Ty(Ty::Int)].into())),
+        root_ty: Some(TyKind::Struct("List".into(), vec![TyArg::Ty(Ty::int())]).into()),
         proj: vec![
             Proj::Field("data".into()),
             Proj::Index(Reg(7)),
@@ -633,8 +642,15 @@ fn sample_place(root: u32) -> MirPlace {
             Proj::UninitPayload,
             Proj::Rebind,
         ],
-        projection_tys: vec![Ty::Int, Ty::Int, Ty::Int, Ty::Int, Ty::Int, Ty::Bool],
-        ty: Some(Ty::Bool),
+        projection_tys: vec![
+            Ty::int(),
+            Ty::int(),
+            Ty::int(),
+            Ty::int(),
+            Ty::int(),
+            Ty::bool(),
+        ],
+        ty: Some(Ty::bool()),
         through: Some(9),
     }
 }
@@ -642,26 +658,26 @@ fn sample_place(root: u32) -> MirPlace {
 fn sample_subscript_call() -> MirSubscriptCall {
     MirSubscriptCall {
         target: "List::__getitem__".into(),
-        raises: Some(Ty::Error),
-        result_ty: Ty::Int,
+        raises: Some(Ty::error()),
+        result_ty: Ty::int(),
         receiver_requires_place: true,
         receiver_convention: Some(ArgConvention::Mut),
         arguments: vec![
             CheckedCallArgument {
                 source: CheckedCallArgumentSource::Positional(0),
-                parameter_ty: Ty::Int,
+                parameter_ty: Ty::int(),
                 requires_place: false,
                 convention: None,
             },
             CheckedCallArgument {
                 source: CheckedCallArgumentSource::Keyword(1),
-                parameter_ty: Ty::Bool,
+                parameter_ty: Ty::bool(),
                 requires_place: true,
                 convention: Some(ArgConvention::Ref),
             },
             CheckedCallArgument {
                 source: CheckedCallArgumentSource::Default,
-                parameter_ty: Ty::Int,
+                parameter_ty: Ty::int(),
                 requires_place: false,
                 convention: Some(ArgConvention::Imm),
             },
@@ -672,7 +688,7 @@ fn sample_subscript_call() -> MirSubscriptCall {
             access: CaptureAccess::Write,
         }],
         reference_result: Some(RefTy {
-            referent: Box::new(Ty::Int),
+            referent: Ty::int(),
             origin: Origin::Place(OriginPlace {
                 root: OwnerId(3),
                 path: vec![OriginSeg::Interior("element".into())],
@@ -707,13 +723,13 @@ fn sample_subscript_call() -> MirSubscriptCall {
 fn sample_iterator_call() -> CheckedIteratorCall {
     CheckedIteratorCall {
         target: "_ListIter::__next__".into(),
-        result_ty: Ty::Int,
+        result_ty: Ty::int(),
         reference_result: Some(RefTy {
-            referent: Box::new(Ty::Int),
+            referent: Ty::int(),
             origin: Origin::SelfParam,
             mutability: Mutability::Immutable,
         }),
-        raises: Some(Ty::Error),
+        raises: Some(Ty::error()),
         result_adapter: Some(CheckedResultAdapter::CopyIteratorReference),
     }
 }
@@ -794,7 +810,7 @@ fn instruction_families_reprint_byte_identically() {
         MirInstr::DefVar {
             var: 2,
             src: Reg(6),
-            binding_ty: Some(Ty::Int),
+            binding_ty: Some(Ty::int()),
         },
         MirInstr::DefVar {
             var: 2,
@@ -821,7 +837,7 @@ fn instruction_families_reprint_byte_identically() {
         MirInstr::Call {
             dest: Reg(10),
             func: FuncRef("std::print".into()),
-            raises: Some(Box::new(Ty::Error)),
+            raises: Some(Ty::error()),
             args: vec![Reg(1), Reg(2)],
             kwargs: vec![("sep".into(), Reg(3))],
             arg_places: vec![None, Some(place(1))],
@@ -855,31 +871,34 @@ fn instruction_families_reprint_byte_identically() {
             param_decls: vec![ParamDecl::Value {
                 id: test_id("n"),
                 name: "n".into(),
-                ty: Box::new(Ty::Int),
+                ty: Ty::int(),
                 default: None,
                 callable_default: None,
                 infer_only: false,
                 variadic: false,
                 constraints: Vec::new(),
             }],
-            instantiated_contract: Some(Box::new(Ty::Func(Box::new(FuncTy {
-                environment: CallableEnvironment::Default,
-                params: vec![Ty::Int],
-                names: vec!["x".into()],
-                ret: Box::new(Ty::Int),
-                required: vec![true],
-                variadic: None,
-                kw_variadic: None,
-                positional_only: None,
-                keyword_only: None,
-                raises: false,
-                error: None,
-                conventions: vec![None],
-                ref_params: vec![None],
-                ref_return: None,
-                transfers: TransferSet(Vec::new()),
-            })))),
-            instantiated_args: vec![TyArg::Ty(Ty::Int)],
+            instantiated_contract: Some(
+                TyKind::Func(Box::new(FuncTy {
+                    environment: CallableEnvironment::Default,
+                    params: vec![Ty::int()],
+                    names: vec!["x".into()],
+                    ret: Ty::int(),
+                    required: vec![true],
+                    variadic: None,
+                    kw_variadic: None,
+                    positional_only: None,
+                    keyword_only: None,
+                    raises: false,
+                    error: None,
+                    conventions: vec![None],
+                    ref_params: vec![None],
+                    ref_return: None,
+                    transfers: TransferSet(Vec::new()),
+                }))
+                .into(),
+            ),
+            instantiated_args: vec![TyArg::Ty(Ty::int())],
             spread: None,
         },
         MirInstr::MethodCall {
@@ -889,7 +908,7 @@ fn instruction_families_reprint_byte_identically() {
             resolved: Some("List::append".into()),
             raises: None,
             reference_result: Some(Box::new(RefTy {
-                referent: Box::new(Ty::Int),
+                referent: Ty::int(),
                 origin: Origin::Static,
                 mutability: Mutability::Param(OriginParamId(0)),
             })),
@@ -903,20 +922,20 @@ fn instruction_families_reprint_byte_identically() {
             capture_accesses: Vec::new(),
             param_arg_regs: Vec::new(),
             param_decls: Vec::new(),
-            instantiated_args: vec![TyArg::Ty(Ty::Int)],
+            instantiated_args: vec![TyArg::Ty(Ty::int())],
             spread: Some(0),
         },
         MirInstr::PointerStorageTake {
             dest: Reg(13),
             pointer: Reg(1),
             index: Reg(2),
-            element: Ty::Int,
+            element: Ty::int(),
         },
         MirInstr::PointerStorageDestroy {
             dest: Reg(14),
             pointer: Reg(1),
             index: Reg(2),
-            element: Ty::Int,
+            element: Ty::int(),
         },
         MirInstr::UninitStorage {
             dest: Reg(15),
@@ -929,12 +948,12 @@ fn instruction_families_reprint_byte_identically() {
         MirInstr::UninitStorageTake {
             dest: Reg(17),
             storage: Reg(15),
-            element: Ty::Int,
+            element: Ty::int(),
         },
         MirInstr::UninitStorageDestroy {
             dest: Reg(18),
             storage: Reg(15),
-            element: Ty::Int,
+            element: Ty::int(),
         },
         MirInstr::GetField {
             dest: Reg(19),
@@ -1014,7 +1033,7 @@ fn instruction_families_reprint_byte_identically() {
         MirInstr::MakeTuple {
             dest: Reg(25),
             elems: vec![Reg(1), Reg(2)],
-            element_types: Some(vec![Ty::Int, Ty::Bool]),
+            element_types: Some(vec![Ty::int(), Ty::bool()]),
         },
         MirInstr::MakeTuple {
             dest: Reg(26),
@@ -1023,7 +1042,7 @@ fn instruction_families_reprint_byte_identically() {
         },
         MirInstr::MakeVariant {
             dest: Reg(27),
-            alternatives: vec![Ty::Int, Ty::None],
+            alternatives: vec![Ty::int(), Ty::none()],
             index: VariantIndex::Known(1),
             value: Reg(1),
         },
@@ -1151,10 +1170,10 @@ fn instruction_families_reprint_byte_identically() {
             yielded: Reg(42),
             iter: 1,
             call: Box::new(sample_iterator_call()),
-            exhaustion: Ty::Struct("StopIteration".into(), Vec::new().into()),
+            exhaustion: TyKind::Struct("StopIteration".into(), Vec::new()).into(),
         },
     ];
-    let mut function = function_with(vec![Ty::Int; 43], instrs);
+    let mut function = function_with(vec![Ty::int(); 43], instrs);
     function.blocks.push(MirBlock {
         instrs: Vec::new(),
         term: MirTerm::ReturnWithCleanup {
@@ -1185,7 +1204,7 @@ fn instruction_families_reprint_byte_identically() {
 #[test]
 fn comptime_branch_terminator_reprints() {
     use mojito_types::types::{ConstraintOperand, GenericConstraint};
-    let mut function = function_with(vec![Ty::Int], Vec::new());
+    let mut function = function_with(vec![Ty::int()], Vec::new());
     function.blocks[0].term = MirTerm::ComptimeBranch {
         cond: Box::new(GenericConstraint::And(
             Box::new(GenericConstraint::Eq(
@@ -1214,7 +1233,7 @@ fn comptime_for_terminator_reprints() {
     use mojito_types::param_expr::{ParamContext, ParamId, ParamRef};
     let context = ParamContext::detached();
     let constant = |value: i64| context.constant(CtValue::Int(value)).expect("a constant");
-    let mut function = function_with(vec![Ty::Int], Vec::new());
+    let mut function = function_with(vec![Ty::int()], Vec::new());
     function.n_vars = 1;
     function.var_names = vec!["i".to_string()];
     function.blocks[0].term = MirTerm::ComptimeFor {
@@ -1250,7 +1269,7 @@ fn comptime_for_elements_terminator_reprints() {
     let elements = context
         .constant(CtValue::List(vec![CtValue::Int(1), CtValue::Int(3)]))
         .expect("a constant");
-    let mut function = function_with(vec![Ty::Int], Vec::new());
+    let mut function = function_with(vec![Ty::int()], Vec::new());
     function.n_vars = 1;
     function.var_names = vec!["x".to_string()];
     function.blocks[0].term = MirTerm::ComptimeFor {
@@ -1376,7 +1395,7 @@ fn malformed_instruction_payloads_are_diagnosed() {
 fn declaration_metadata_reprints_byte_identically() {
     let boxed = MirStructDeclaration {
         name: "Box".into(),
-        fields: vec![("value".into(), Ty::Int), ("tag".into(), Ty::Bool)],
+        fields: vec![("value".into(), Ty::int()), ("tag".into(), Ty::bool())],
         mut_self_methods: HashSet::from(["append".into(), "clear".into()]),
         fieldwise_init: true,
         param_decls: vec![ParamDecl::Type {
@@ -1429,25 +1448,29 @@ fn declaration_metadata_reprints_byte_identically() {
         ],
         associated_types: vec![(
             "Element".into(),
-            Ty::Param {
+            TyKind::Param {
                 binder: ParamRef {
                     id: test_id("T"),
                     name: "T".into(),
                 },
                 bounds: Vec::new(),
                 callable_bound: None,
-            },
+            }
+            .into(),
         )],
         associated_values: vec![
             ("K".into(), constant(CtValue::Int(7))),
             (
                 "Size".into(),
                 ParamContext::detached().type_member(
-                    &ParamContext::detached().type_shape(Ty::Param {
-                        binder: test_binder("T"),
-                        bounds: vec!["HasK".into()],
-                        callable_bound: None,
-                    }),
+                    &ParamContext::detached().type_shape(
+                        TyKind::Param {
+                            binder: test_binder("T"),
+                            bounds: vec!["HasK".into()],
+                            callable_bound: None,
+                        }
+                        .into(),
+                    ),
                     "K",
                     MetaTy::int(),
                 ),
@@ -1470,7 +1493,7 @@ fn declaration_metadata_reprints_byte_identically() {
     let add = MirFunctionDeclaration {
         lowered_name: "add".into(),
         param_names: vec!["lhs".into(), "rhs".into(), "scale".into()],
-        param_types: vec![Ty::Int, Ty::Int, Ty::Float64],
+        param_types: vec![Ty::int(), Ty::int(), Ty::float64()],
         defaults: vec![
             None,
             Some(CheckedConst::Int(parse_int_literal("-7").unwrap())),
@@ -1479,10 +1502,10 @@ fn declaration_metadata_reprints_byte_identically() {
             )),
         ],
         required: vec![true, false, false],
-        variadic: Some(Ty::Int),
+        variadic: Some(Ty::int()),
         variadic_convention: Some(ArgConvention::Var),
         variadic_index: Some(3),
-        kw_variadic: Some(Ty::Bool),
+        kw_variadic: Some(Ty::bool()),
         kw_variadic_convention: Some(ArgConvention::Imm),
         kw_variadic_index: Some(4),
         positional_only: Some(1),
@@ -1490,7 +1513,7 @@ fn declaration_metadata_reprints_byte_identically() {
         param_decls: vec![ParamDecl::Value {
             id: test_id("n"),
             name: "n".into(),
-            ty: Box::new(Ty::Int),
+            ty: Ty::int(),
             default: Some(constant(CtValue::Int(2))),
             callable_default: None,
             infer_only: false,
@@ -1500,10 +1523,10 @@ fn declaration_metadata_reprints_byte_identically() {
         has_receiver: true,
         receiver_convention: Some(ArgConvention::Mut),
         param_conventions: vec![None, Some(ArgConvention::Imm), Some(ArgConvention::Ref)],
-        ret_ty: Ty::Int,
+        ret_ty: Ty::int(),
         returns_reference: true,
         raises: true,
-        error_ty: Some(Ty::Error),
+        error_ty: Some(Ty::error()),
         ref_params: vec![false, false, true],
         param_writes: vec![false, false, true],
         availability: vec![GenericConstraint::WithMessage(
@@ -1528,7 +1551,7 @@ fn declaration_metadata_reprints_byte_identically() {
             "made".into(),
             "applied".into(),
         ],
-        param_types: vec![Ty::Bool, Ty::None, Ty::Dtype, Ty::Int, Ty::Int],
+        param_types: vec![Ty::bool(), Ty::none(), Ty::dtype(), Ty::int(), Ty::int()],
         defaults: vec![
             Some(CheckedConst::Bool(true)),
             Some(CheckedConst::None),
@@ -1540,7 +1563,7 @@ fn declaration_metadata_reprints_byte_identically() {
             Some(CheckedConst::Evaluate {
                 function: "$default$T.g$x".into(),
                 arguments: vec![
-                    TyArg::Ty(Ty::Struct("A".into(), Vec::new().into())),
+                    TyArg::Ty(TyKind::Struct("A".into(), Vec::new()).into()),
                     TyArg::Val(CtValue::Int(4)),
                 ],
             }),
@@ -1558,7 +1581,7 @@ fn declaration_metadata_reprints_byte_identically() {
         has_receiver: false,
         receiver_convention: None,
         param_conventions: vec![None, None, None, None, None],
-        ret_ty: Ty::None,
+        ret_ty: Ty::none(),
         returns_reference: false,
         raises: false,
         error_ty: None,
@@ -1569,7 +1592,7 @@ fn declaration_metadata_reprints_byte_identically() {
         region_binders: vec![ParamDecl::Value {
             id: ParamId::new("$comptime_for@main.mojo:10..20", 0),
             name: "i".into(),
-            ty: Box::new(Ty::Int),
+            ty: Ty::int(),
             default: None,
             callable_default: None,
             infer_only: false,
@@ -1694,11 +1717,11 @@ fn symbolic_simd_slots_round_trip() {
     let width = context
         .infix(InfixOp::Mul, &n, &constant(CtValue::Int(2)))
         .expect("Int * Int builds");
-    let dtype = context.decl_ref(ParamId::new("f", 1), "dt", MetaTy::value(Ty::Dtype));
-    let symbolic = Ty::Simd {
+    let dtype = context.decl_ref(ParamId::new("f", 1), "dt", MetaTy::value(Ty::dtype()));
+    let symbolic = Ty::new(TyKind::Simd {
         dtype: mojito_types::types::SimdDtype::Expr(dtype),
         width: mojito_types::types::SimdWidth::Expr(width),
-    };
+    });
     let program = program_with(vec![(
         "main".into(),
         function_with(vec![symbolic.clone()], Vec::new()),
@@ -1710,7 +1733,7 @@ fn symbolic_simd_slots_round_trip() {
     let folded = only_register_type(&artifact_with_register_type(
         "simd { dtype: ct_expr(param_constant(ct_dtype(float64))), width: 1 }",
     ));
-    assert_eq!(folded, Ty::Float64);
+    assert_eq!(folded, Ty::float64());
 }
 
 /// Schema 1.1 round trips every constant form and the symbolic forms, a 1.0
@@ -1748,36 +1771,36 @@ fn param_expr_mir_round_trip() {
             name: "Extent".into(),
             fields: vec![("w".into(), CtValue::Int(2)), ("h".into(), CtValue::Int(3))],
         },
-        CtValue::Type(Box::new(Ty::Bool)),
-        CtValue::Reflected(Box::new(Ty::Int)),
+        CtValue::Type(Ty::bool()),
+        CtValue::Reflected(Ty::int()),
     ];
     assert_eq!(constants.len(), 16);
     let mut register_types: Vec<Ty> = constants
         .into_iter()
-        .map(|value| Ty::Struct("Holder".into(), vec![TyArg::Val(value)].into()))
+        .map(|value| Ty::new(TyKind::Struct("Holder".into(), vec![TyArg::Val(value)])))
         .collect();
     // Residual value arguments, a nested signature slot, and a finite
     // dependent type over a residual index.
-    register_types.push(Ty::Struct(
-        "Buf".into(),
-        vec![TyArg::Val(CtValue::Expr(sum.clone()))].into(),
-    ));
-    register_types.push(Ty::Struct(
-        "Buf".into(),
-        vec![TyArg::Val(CtValue::Expr(
-            context
-                .infix(
-                    InfixOp::Mul,
-                    &context.index_ref(1, 0, MetaTy::int()),
-                    &context.index_ref(0, 2, MetaTy::int()),
-                )
-                .expect("Int * Int builds"),
-        ))]
+    register_types
+        .push(TyKind::Struct("Buf".into(), vec![TyArg::Val(CtValue::Expr(sum.clone()))]).into());
+    register_types.push(
+        TyKind::Struct(
+            "Buf".into(),
+            vec![TyArg::Val(CtValue::Expr(
+                context
+                    .infix(
+                        InfixOp::Mul,
+                        &context.index_ref(1, 0, MetaTy::int()),
+                        &context.index_ref(0, 2, MetaTy::int()),
+                    )
+                    .expect("Int * Int builds"),
+            ))],
+        )
         .into(),
-    ));
+    );
     register_types.push(DependentType::resolve(
         context
-            .select(vec![Ty::Int, Ty::Bool], &sum)
+            .select(vec![Ty::int(), Ty::bool()], &sum)
             .expect("an Int index selects"),
     ));
     let program = program_with(vec![(
@@ -1802,7 +1825,7 @@ fn param_expr_mir_round_trip() {
     };
     assert_eq!(
         params[0],
-        Ty::Struct("Buf".into(), vec![TyArg::Val(CtValue::Expr(sum))].into())
+        TyKind::Struct("Buf".into(), vec![TyArg::Val(CtValue::Expr(sum))])
     );
 
     // Schema 1.0: the name resolves through the artifact's declared binder,
@@ -1816,7 +1839,7 @@ fn param_expr_mir_round_trip() {
     else {
         panic!("a generic callable")
     };
-    let Ty::Struct(_, arguments) = &params[0] else {
+    let TyKind::Struct(_, arguments) = (params[0]).kind() else {
         panic!("a struct parameter")
     };
     let TyArg::Val(CtValue::Expr(reference)) = &arguments[0] else {
@@ -1835,12 +1858,11 @@ fn param_expr_mir_round_trip() {
     };
     assert_eq!(
         params[0],
-        Ty::Struct(
+        TyKind::Struct(
             "Buf".into(),
             vec![TyArg::Val(CtValue::Deferred(
                 mojito_types::param_expr::ParamRef::unbound("callback")
             ))]
-            .into()
         )
     );
 
@@ -1884,7 +1906,7 @@ fn param_expr_mir_round_trip() {
 #[test]
 fn binder_operands_round_trip_and_read_from_older_artifacts() {
     let binder = test_binder("H");
-    let parameter = Ty::Param {
+    let parameter = TyKind::Param {
         binder: binder.clone(),
         bounds: vec!["Hasher".into()],
         callable_bound: None,
@@ -1918,7 +1940,7 @@ fn binder_operands_round_trip_and_read_from_older_artifacts() {
     ];
     let program = program_with(vec![(
         "main".into(),
-        function_with(vec![parameter, Ty::UInt], instrs),
+        function_with(vec![parameter.into(), Ty::uint()], instrs),
     )]);
     assert_reprints(&program);
     let text = write::program(&program);
@@ -1968,7 +1990,7 @@ fn pack_element_constructions_round_trip_and_read_from_older_artifacts() {
         program_with(vec![(
             "main".into(),
             function_with(
-                vec![Ty::Int, Ty::Int],
+                vec![Ty::int(), Ty::int()],
                 vec![MirInstr::ConstructTypeParam {
                     dest: Reg(1),
                     param: pack.clone(),
@@ -2009,16 +2031,19 @@ fn type_expression_constructions_round_trip() {
     use mojito_types::param_expr::ReflectQuery;
     let context = ParamContext::detached();
     let types = context.reflect_query(
-        &context.type_shape(Ty::Param {
-            binder: test_binder("T"),
-            bounds: vec!["AnyType".into()],
-            callable_bound: None,
-        }),
+        &context.type_shape(
+            TyKind::Param {
+                binder: test_binder("T"),
+                bounds: vec!["AnyType".into()],
+                callable_bound: None,
+            }
+            .into(),
+        ),
         ReflectQuery::FieldTypes,
     );
     let i = int_parameter("f", 1, "i");
     let element = context.list_get(&types, &i).expect("element builds");
-    let ty = Ty::Dependent(DependentType::Parameter(element));
+    let ty = Ty::new(TyKind::Dependent(DependentType::Parameter(element)));
     let program = program_with(vec![(
         "main".into(),
         function_with(
@@ -2048,10 +2073,10 @@ fn param_list_addresses_round_trip() {
         "values",
         MetaTy::ParamList(Box::new(MetaTy::int())),
     );
-    let pointer = Ty::Pointer {
-        element: Box::new(Ty::Int),
+    let pointer = Ty::new(TyKind::Pointer {
+        element: Ty::int(),
         origin: mojito_types::origin::PointerOrigin::Static,
-    };
+    });
     for values in [
         Const::Param(list),
         Const::Value(mojito_types::ct::CtValue::Tuple(vec![
@@ -2089,7 +2114,7 @@ fn method_instantiated_arguments_round_trip_and_read_from_older_artifacts() {
         program_with(vec![(
             "main".into(),
             function_with(
-                vec![Ty::Int, Ty::Int],
+                vec![Ty::int(), Ty::int()],
                 vec![MirInstr::MethodCall {
                     dest: Reg(1),
                     recv: Reg(0),
@@ -2122,11 +2147,11 @@ fn method_instantiated_arguments_round_trip_and_read_from_older_artifacts() {
             other => panic!("expected a method call, read {other:?}"),
         }
     };
-    let program = call(vec![TyArg::Ty(Ty::Int)]);
+    let program = call(vec![TyArg::Ty(Ty::int())]);
     assert_reprints(&program);
     assert_eq!(
         recorded(&write::program(&program)),
-        vec![TyArg::Ty(Ty::Int)]
+        vec![TyArg::Ty(Ty::int())]
     );
 
     let older = write::program(&call(Vec::new()))
@@ -2161,7 +2186,7 @@ fn value_argument_expressions_round_trip_and_read_from_older_artifacts() {
         program_with(vec![(
             "main".into(),
             function_with(
-                vec![Ty::Int, Ty::Int],
+                vec![Ty::int(), Ty::int()],
                 vec![MirInstr::Call {
                     dest: Reg(1),
                     func: FuncRef::named("successor"),
@@ -2205,12 +2230,12 @@ fn value_argument_expressions_round_trip_and_read_from_older_artifacts() {
 /// struct; an older artifact, which has no such field, records none.
 #[test]
 fn static_call_receivers_round_trip_and_read_from_older_artifacts() {
-    let receiver = Ty::Struct("Pair".into(), vec![TyArg::Ty(Ty::Int)].into());
+    let receiver = Ty::new(TyKind::Struct("Pair".into(), vec![TyArg::Ty(Ty::int())]));
     let call = |receiver: Option<Ty>| {
         program_with(vec![(
             "main".into(),
             function_with(
-                vec![Ty::Int],
+                vec![Ty::int()],
                 vec![MirInstr::Call {
                     dest: Reg(0),
                     func: FuncRef::named("Pair.count"),
@@ -2221,7 +2246,7 @@ fn static_call_receivers_round_trip_and_read_from_older_artifacts() {
                     kwarg_places: Vec::new(),
                     capture_accesses: Vec::new(),
                     param_arg_regs: Vec::new(),
-                    receiver: receiver.map(Box::new),
+                    receiver,
                     instantiated_args: Vec::new(),
                     spread: None,
                 }],
@@ -2237,10 +2262,7 @@ fn static_call_receivers_round_trip_and_read_from_older_artifacts() {
     };
     let program = call(Some(receiver.clone()));
     assert_reprints(&program);
-    assert_eq!(
-        recorded(&write::program(&program)),
-        Some(Box::new(receiver))
-    );
+    assert_eq!(recorded(&write::program(&program)), Some(receiver));
 
     let older = write::program(&call(None))
         .replacen("mojito-mir 1.10", "mojito-mir 1.7", 1)
@@ -2254,7 +2276,7 @@ fn static_call_receivers_round_trip_and_read_from_older_artifacts() {
 /// which is the binder of that spelling in the declaring parameter list.
 #[test]
 fn constraint_binders_round_trip_and_read_from_older_artifacts() {
-    let generic = Ty::GenericFunc(Box::new(GenericFuncTy {
+    let generic = TyKind::GenericFunc(Box::new(GenericFuncTy {
         decls: vec![
             ParamDecl::Type {
                 id: test_id("T"),
@@ -2269,7 +2291,7 @@ fn constraint_binders_round_trip_and_read_from_older_artifacts() {
             ParamDecl::Value {
                 id: test_id("F"),
                 name: "F".into(),
-                ty: Box::new(Ty::Int),
+                ty: Ty::int(),
                 default: None,
                 callable_default: Some(CallableDefault::Parameter(test_binder("T"))),
                 infer_only: false,
@@ -2292,7 +2314,7 @@ fn constraint_binders_round_trip_and_read_from_older_artifacts() {
             environment: CallableEnvironment::Thin,
             params: Vec::new(),
             names: Vec::new(),
-            ret: Box::new(Ty::None),
+            ret: Ty::none(),
             required: Vec::new(),
             variadic: None,
             kw_variadic: None,
@@ -2308,14 +2330,14 @@ fn constraint_binders_round_trip_and_read_from_older_artifacts() {
     }));
     let program = program_with(vec![(
         "main".into(),
-        function_with(vec![generic], Vec::new()),
+        function_with(vec![generic.into()], Vec::new()),
     )]);
     assert_reprints(&program);
     let text = write::program(&program);
     let read_decls = |text: &str| {
         let parsed = artifact(text.as_bytes(), "unit.mir".to_string()).expect("parse artifact");
-        match &parsed.program.functions[0].1.reg_types[&0] {
-            Ty::GenericFunc(generic) => generic.decls.clone(),
+        match (parsed.program.functions[0].1.reg_types[&0]).kind() {
+            TyKind::GenericFunc(generic) => generic.decls.clone(),
             other => panic!("expected a generic function type, read {other}"),
         }
     };
@@ -2363,10 +2385,10 @@ fn constraint_binders_round_trip_and_read_from_older_artifacts() {
 #[test]
 fn deferred_slots_round_trip_and_read_from_older_artifacts() {
     let holder = |values: Vec<CtValue>| {
-        Ty::Struct(
+        Ty::new(TyKind::Struct(
             "Buf".into(),
-            (values.into_iter().map(TyArg::Val).collect::<Vec<_>>()).into(),
-        )
+            values.into_iter().map(TyArg::Val).collect::<Vec<_>>(),
+        ))
     };
     let program = program_with(vec![(
         "main".into(),
@@ -2384,7 +2406,8 @@ fn deferred_slots_round_trip_and_read_from_older_artifacts() {
         let parsed = artifact(text.as_bytes(), "unit.mir".to_string()).expect("parse artifact");
         parsed.program.functions[0].1.reg_types[&0].clone()
     };
-    let Ty::Struct(_, arguments) = read(&text) else {
+    let current = read(&text);
+    let TyKind::Struct(_, arguments) = current.kind() else {
         panic!("expected a struct type");
     };
     assert!(matches!(
@@ -2400,7 +2423,8 @@ fn deferred_slots_round_trip_and_read_from_older_artifacts() {
         )
         .replace("ct_marker(marker_local)", "ct_deferred(\"$local\")");
     assert_ne!(older.replacen("mojito-mir 1.4", "mojito-mir 1.10", 1), text);
-    let Ty::Struct(_, arguments) = read(&older) else {
+    let earlier = read(&older);
+    let TyKind::Struct(_, arguments) = earlier.kind() else {
         panic!("expected a struct type");
     };
     assert!(matches!(
@@ -2421,10 +2445,7 @@ fn pack_queries_round_trip_and_read_from_older_artifacts() {
     let program = program_with(vec![(
         "main".into(),
         function_with(
-            vec![Ty::Struct(
-                "Buf".into(),
-                vec![TyArg::Val(CtValue::Expr(query))].into(),
-            )],
+            vec![TyKind::Struct("Buf".into(), vec![TyArg::Val(CtValue::Expr(query))]).into()],
             Vec::new(),
         ),
     )]);
@@ -2432,7 +2453,8 @@ fn pack_queries_round_trip_and_read_from_older_artifacts() {
     let text = write::program(&program);
     let read_pack = |text: &str| {
         let parsed = artifact(text.as_bytes(), "unit.mir".to_string()).expect("parse artifact");
-        let Ty::Struct(_, arguments) = parsed.program.functions[0].1.reg_types[&0].clone() else {
+        let ty = parsed.program.functions[0].1.reg_types[&0].clone();
+        let TyKind::Struct(_, arguments) = ty.kind() else {
             panic!("expected a struct type");
         };
         let [TyArg::Val(CtValue::Expr(expression))] = arguments.as_slice() else {
@@ -2462,20 +2484,23 @@ fn pack_queries_round_trip_and_read_from_older_artifacts() {
 #[test]
 fn symbolic_variant_index_round_trips() {
     let context = ParamContext::detached();
-    let element = context.type_shape(Ty::Param {
-        binder: test_binder("T"),
-        bounds: Vec::new(),
-        callable_bound: None,
-    });
+    let element = context.type_shape(
+        TyKind::Param {
+            binder: test_binder("T"),
+            bounds: Vec::new(),
+            callable_bound: None,
+        }
+        .into(),
+    );
     let index =
         VariantIndex::Expr(context.pack_query(&test_binder("*Ts"), PackQuery::IndexOf(element)));
     let mut projected = sample_place(0);
     projected.proj = vec![Proj::Variant(index.clone())];
-    projected.projection_tys = vec![Ty::Int];
+    projected.projection_tys = vec![Ty::int()];
     let program = program_with(vec![(
         "main".into(),
         function_with(
-            vec![Ty::Bool, Ty::Int],
+            vec![Ty::bool(), Ty::int()],
             vec![
                 MirInstr::VariantIs {
                     dest: Reg(0),
@@ -2510,31 +2535,41 @@ fn param_apply_list_get_and_reflect_round_trip() {
     let i = int_parameter("Bag.first", 0, "i");
     let element = context.list_get(&pack, &i).expect("element builds");
     let reflected = context.reflect_query(
-        &context.type_shape(Ty::Param {
-            binder: mojito_types::param_expr::ParamRef {
-                id: ParamId::new("f", 0),
-                name: "T".into(),
-            },
-            bounds: vec!["AnyType".into()],
-            callable_bound: None,
-        }),
+        &context.type_shape(
+            TyKind::Param {
+                binder: mojito_types::param_expr::ParamRef {
+                    id: ParamId::new("f", 0),
+                    name: "T".into(),
+                },
+                bounds: vec!["AnyType".into()],
+                callable_bound: None,
+            }
+            .into(),
+        ),
         ReflectQuery::FieldNamed("x".into()),
     );
     let applied = context.apply("f", std::slice::from_ref(&i), MetaTy::int());
-    let dt = context.decl_ref(ParamId::new("Bag.first", 1), "dt", MetaTy::value(Ty::Dtype));
+    let dt = context.decl_ref(
+        ParamId::new("Bag.first", 1),
+        "dt",
+        MetaTy::value(Ty::dtype()),
+    );
     let static_method = context.dtype_float_query("mantissa_width", &dt);
     let types = vec![
-        Ty::Dependent(DependentType::Parameter(element)),
-        Ty::Dependent(DependentType::Parameter(reflected)),
-        Ty::Simd {
+        TyKind::Dependent(DependentType::Parameter(element)),
+        TyKind::Dependent(DependentType::Parameter(reflected)),
+        TyKind::Simd {
             dtype: mojito_types::types::SimdDtype::Known(Dtype::Float32),
             width: mojito_types::types::SimdWidth::Expr(applied),
         },
-        Ty::Simd {
+        TyKind::Simd {
             dtype: mojito_types::types::SimdDtype::Known(Dtype::Float32),
             width: mojito_types::types::SimdWidth::Expr(static_method),
         },
-    ];
+    ]
+    .into_iter()
+    .map(Ty::new)
+    .collect::<Vec<_>>();
     let program = program_with(vec![(
         "main".into(),
         function_with(types.clone(), Vec::new()),

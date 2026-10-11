@@ -4,6 +4,7 @@
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
+use mojito_types::types::TyKind;
 
 /// The implicit `__iter__` calls a protocol selection found raising: each
 /// operation's description and its error type.
@@ -81,7 +82,7 @@ impl Checker {
         use mojito_checked::checked::{CheckedIterationBinding, IterationBindingAction};
         use mojito_types::origin::Mutability;
 
-        if let Ty::Ref(reference) = yielded_ty {
+        if let TyKind::Ref(reference) = yielded_ty.kind() {
             return match mode {
                 LoopBindingMode::Immutable => {
                     let mut binding = reference.clone();
@@ -90,7 +91,7 @@ impl Checker {
                         mode,
                         action: IterationBindingAction::BorrowReference,
                         yielded_ty: yielded_ty.clone(),
-                        binding_ty: Ty::Ref(binding),
+                        binding_ty: TyKind::Ref(binding).into(),
                         mutable: false,
                     })
                 }
@@ -108,7 +109,7 @@ impl Checker {
                         mode,
                         action: IterationBindingAction::CopyReference,
                         yielded_ty: yielded_ty.clone(),
-                        binding_ty: (*reference.referent).clone(),
+                        binding_ty: reference.referent.clone(),
                         mutable: true,
                     })
                 }
@@ -191,7 +192,7 @@ impl Checker {
         // intrinsic protocol above: an unregistered bundled collection keeps
         // the historical `element` interior loan. Linked production programs
         // register the collections and never take this branch.
-        if let Ty::Struct(name, _) = iter_ty
+        if let TyKind::Struct(name, _) = iter_ty.kind()
             && !self.structs.contains_key(name)
             && (list_element(iter_ty).is_some()
                 || set_element(iter_ty).is_some()
@@ -206,7 +207,7 @@ impl Checker {
         }
         if protocol.borrowed_origin.is_none()
             && !protocol.prepare.is_empty()
-            && matches!(iter_ty, Ty::Struct(..) | Ty::Param { .. })
+            && matches!(iter_ty.kind(), TyKind::Struct(..) | TyKind::Param { .. })
             && let Some(mut origin) = source.cloned()
         {
             // Loan granularity is the iterator's declared yielded-origin
@@ -269,7 +270,7 @@ impl Checker {
         if !resolved {
             return None;
         }
-        let yielded = Ty::Ref(reference.clone());
+        let yielded = Ty::new(TyKind::Ref(reference.clone()));
         next.result_ty = yielded.clone();
         Some(yielded)
     }
@@ -280,14 +281,14 @@ impl Checker {
     /// other unplaced String source. Seams without the linked stdlib struct
     /// keep the literal (and reject downstream).
     pub(super) fn convert_literal_iterable(&self, iter: &Expr, iter_ty: Ty) -> Ty {
-        if iter_ty != Ty::StringLiteral {
+        if iter_ty != TyKind::StringLiteral {
             return iter_ty;
         }
-        let nominal = Ty::Struct(
+        let nominal = Ty::new(TyKind::Struct(
             mojito_symbol::symbol::STDLIB_STRING_STRUCT.to_string(),
-            Vec::new().into(),
-        );
-        match self.implicit_conversion_target(&Ty::StringLiteral, &nominal) {
+            Vec::new(),
+        ));
+        match self.implicit_conversion_target(&Ty::string_literal(), &nominal) {
             Ok(Some((target, _))) => {
                 self.implicit_conversions
                     .borrow_mut()
@@ -328,11 +329,11 @@ impl Checker {
         // Preserve the old intrinsic proof only in that compatibility mode;
         // linked production programs have registered nominal declarations and
         // must resolve their ordinary `__iter__`/`__next__` contracts below.
-        if let Ty::Struct(name, _) = ty
+        if let TyKind::Struct(name, _) = ty.kind()
             && self.is_abstract_struct(name)
         {
             if mojito_types::types::is_range_type(ty) {
-                return Ok(builtin(Ty::Int));
+                return Ok(builtin(Ty::int()));
             }
             // A discovery-round abstract scalar range iterates its scalar
             // element; the fixpoint rewrite constructs the linked struct
@@ -348,10 +349,10 @@ impl Checker {
                 return Ok(builtin(key.clone()));
             }
         }
-        match ty {
-            Ty::VariadicPack(element) => Ok(builtin((**element).clone())),
-            Ty::Struct(..) => self.struct_iteration_protocol(ty, mode, 0, raises),
-            Ty::Param { bounds, .. } => {
+        match ty.kind() {
+            TyKind::VariadicPack(element) => Ok(builtin((*element).clone())),
+            TyKind::Struct(..) => self.struct_iteration_protocol(ty, mode, 0, raises),
+            TyKind::Param { bounds, .. } => {
                 let owned = mode == IterationMode::Owned;
                 let required = if owned { "IterableOwned" } else { "Iterable" };
                 if !bounds
@@ -379,11 +380,11 @@ impl Checker {
                         ),
                     });
                 }
-                let element = Ty::Assoc {
-                    base: Box::new(ty.clone()),
+                let element = Ty::new(TyKind::Assoc {
+                    base: ty.clone(),
                     name: "Element".to_string(),
                     args: Vec::new(),
-                };
+                });
                 let exhaustion = self.generic_iterator_exhaustion(bounds, required)?;
                 Ok((
                     element.clone(),
@@ -440,7 +441,7 @@ impl Checker {
                 "iterator normalization exceeded eight __iter__ steps".to_string(),
             ));
         }
-        let Ty::Struct(cname, ctargs) = c_ty else {
+        let TyKind::Struct(cname, ctargs) = c_ty.kind() else {
             return Err(no_method(c_ty, "__iter__"));
         };
         let cinfo = self.structs.get(cname).ok_or_else(|| {
@@ -522,7 +523,7 @@ impl Checker {
             found: it_ty.to_string(),
             context: "__iter__ return type".to_string(),
         };
-        let Ty::Struct(iname, itargs) = it_ty else {
+        let TyKind::Struct(iname, itargs) = it_ty.kind() else {
             return Err(bad_iter());
         };
         let iinfo = self.structs.get(iname).ok_or_else(bad_iter)?;
@@ -606,7 +607,7 @@ impl Checker {
             }
             _ => Vec::new(),
         };
-        let exhaustion = next_error.clone().unwrap_or(Ty::Error);
+        let exhaustion = next_error.clone().unwrap_or_else(Ty::error);
         if !names_iteration_decl(&exhaustion, "StopIteration") {
             return Err(TypeError::TypeMismatch {
                 expected: "an '__next__' that raises StopIteration".to_string(),
@@ -634,8 +635,8 @@ impl Checker {
     /// appended to residual-abandonment diagnostics so the rejection names
     /// what each abandoned element still requires; empty when undeclared.
     pub(super) fn residual_obligation_suffix(&self, ty: &Ty) -> String {
-        match ty {
-            Ty::Struct(name, _) => self
+        match ty.kind() {
+            TyKind::Struct(name, _) => self
                 .structs
                 .get(name)
                 .and_then(|info| info.explicit_destroy_message.clone())
@@ -692,11 +693,11 @@ impl Checker {
             .collect::<Vec<_>>();
         let receiver_variadic = signature
             .variadic
-            .as_deref()
+            .as_ref()
             .map(|ty| substitute(ty, &receiver_subst));
         let receiver_kw_variadic = signature
             .kw_variadic
-            .as_deref()
+            .as_ref()
             .map(|ty| substitute(ty, &receiver_subst));
         let (_, variadic, kw_variadic, method_subst, method_arguments) = self
             .instantiate_method_generics(
@@ -745,15 +746,16 @@ impl Checker {
                 signature.self_convention == Some(mojito_ast::ast::ArgConvention::Mut),
             )
         });
-        let result = reference_result
-            .as_ref()
-            .map_or_else(|| referent.clone(), |reference| Ty::Ref(reference.clone()));
+        let result = reference_result.as_ref().map_or_else(
+            || referent.clone(),
+            |reference| TyKind::Ref(reference.clone()).into(),
+        );
         Some((
             result,
             reference_result,
             signature
                 .raises
-                .then(|| signature.error.as_deref().map_or(Ty::Error, instantiate)),
+                .then(|| signature.error.as_ref().map_or_else(Ty::error, instantiate)),
         ))
     }
 
@@ -776,8 +778,7 @@ impl Checker {
                 .get("__next__")?
                 .first()?
                 .error
-                .as_deref()
-                .cloned()
+                .clone()
         };
         let mut pending: Vec<&str> = bounds.iter().map(String::as_str).collect();
         let mut visited: Vec<&str> = Vec::new();
@@ -836,7 +837,7 @@ fn names_iteration_trait(bound: &str, trait_name: &str) -> bool {
 /// Whether a type is the argument-free nominal declaration `name`, in either
 /// spelling [`names_iteration_trait`] accepts.
 fn names_iteration_decl(ty: &Ty, name: &str) -> bool {
-    matches!(ty, Ty::Struct(declared, arguments)
+    matches!(ty.kind(), TyKind::Struct(declared, arguments)
         if arguments.is_empty() && names_iteration_trait(declared, name))
 }
 
@@ -849,7 +850,7 @@ fn struct_may_refer_elsewhere(info: &StructInfo) -> bool {
     }) || info
         .fields
         .iter()
-        .any(|(_, ty)| matches!(ty, Ty::Ref(_) | Ty::Pointer { .. }))
+        .any(|(_, ty)| matches!(ty.kind(), TyKind::Ref(_) | TyKind::Pointer { .. }))
 }
 
 fn instantiate_iterator_reference(
@@ -880,7 +881,7 @@ fn instantiate_iterator_reference(
         },
     };
     RefTy {
-        referent: Box::new(referent),
+        referent,
         origin,
         mutability,
     }

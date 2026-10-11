@@ -1,5 +1,6 @@
 use super::*;
 use crate::origin::CallableEnvironment;
+use crate::types::TyKind;
 use crate::types::{DependentType, FuncTy, TransferEffect, TransferSet, TyArg};
 use std::collections::hash_map::DefaultHasher;
 
@@ -26,11 +27,11 @@ fn hash_of(value: &impl Hash) -> u64 {
 }
 
 fn callable(transfers: TransferSet) -> Ty {
-    Ty::Func(Box::new(FuncTy {
+    TyKind::Func(Box::new(FuncTy {
         environment: CallableEnvironment::default(),
-        params: vec![Ty::Int],
+        params: vec![Ty::int()],
         names: vec!["x".to_string()],
-        ret: Box::new(Ty::Int),
+        ret: Ty::int(),
         required: vec![true],
         variadic: None,
         kw_variadic: None,
@@ -43,6 +44,7 @@ fn callable(transfers: TransferSet) -> Ty {
         ref_return: None,
         transfers,
     }))
+    .into()
 }
 
 fn one_transfer() -> TransferSet {
@@ -192,7 +194,7 @@ fn replacement_folds_and_is_order_independent() {
 fn literal_and_machine_arguments_agree_after_contextual_conversion() {
     let context = ParamContext::new();
     let from_literal = context
-        .constant_as(CtValue::IntLiteral(IntLiteral::from(3_i64)), &Ty::Int)
+        .constant_as(CtValue::IntLiteral(IntLiteral::from(3_i64)), &Ty::int())
         .expect("a literal converts to Int");
     let from_machine = context.constant(CtValue::Int(3)).expect("a constant");
     assert_eq!(from_literal, from_machine);
@@ -266,11 +268,14 @@ fn constants_keep_bits_order_and_field_identity() {
     );
     assert_eq!(
         context.constant(point(1, 2)).expect("constant").meta(),
-        &MetaTy::value(Ty::Struct("Point".to_string(), Vec::new().into()))
+        &MetaTy::value(TyKind::Struct("Point".to_string(), Vec::new()).into())
     );
     // A display's spelling is materialization metadata, not identity.
     let bare = CtValue::set(None, vec![CtValue::Int(1)]);
-    let spelled = CtValue::set(Some(crate::types::set_type(Ty::Int)), vec![CtValue::Int(1)]);
+    let spelled = CtValue::set(
+        Some(crate::types::set_type(Ty::int())),
+        vec![CtValue::Int(1)],
+    );
     assert!(identity_eq(&bare, &spelled));
     assert_eq!(
         hash_of(&TyArg::Val(bare.clone())),
@@ -291,8 +296,8 @@ fn equal_types_hash_equally_and_interning_keeps_decorations() {
     let second = context.type_shape(decorated);
     assert_eq!(first, second);
     let effects = |expr: &ParamExpr| match expr.as_constant() {
-        Some(CtValue::Type(ty)) => match &**ty {
-            Ty::Func(func) => func.transfers.0.len(),
+        Some(CtValue::Type(ty)) => match ty.kind() {
+            TyKind::Func(func) => func.transfers.0.len(),
             _ => unreachable!("a callable type"),
         },
         _ => unreachable!("a closed type constant"),
@@ -470,15 +475,15 @@ fn finite_selection_folds_to_its_type() {
     let context = ParamContext::new();
     let index = int_param(&context, "f", 0, "i");
     let selection = context
-        .select(vec![Ty::Int, Ty::Bool], &index)
+        .select(vec![Ty::int(), Ty::bool()], &index)
         .expect("selection builds");
     let dependent = DependentType::resolve(selection);
-    assert!(matches!(dependent, Ty::Dependent(_)));
+    assert!(matches!(dependent.kind(), TyKind::Dependent(_)));
     let mut bindings = ParamBindings::new();
     bindings.bind_name("i", literal(&context, 1));
     let resolved =
         crate::types::replace_parameters(&context, &dependent, &bindings, 0).expect("replacement");
-    assert_eq!(resolved, Ty::Bool);
+    assert_eq!(resolved, TyKind::Bool);
     // Holes never prove each other equal.
     assert_ne!(
         context.hole(HoleKind::Unknown, MetaTy::int()),
@@ -535,16 +540,13 @@ fn pack_element_resolves_as_its_pack_and_index_bind() {
     assert_eq!(element.meta(), &MetaTy::Type);
     assert_eq!(element.to_string(), "Ts[i]");
     let dependent = DependentType::resolve(element.clone());
-    let Ty::Dependent(wrapper) = &dependent else {
+    let TyKind::Dependent(wrapper) = dependent.kind() else {
         panic!("an unbound pack element stays dependent: {dependent}");
     };
     assert!(wrapper.pack_element().is_some());
     assert_eq!(element, context.list_get(&pack, &index).expect("rebuilds"));
 
-    let types = CtValue::Tuple(vec![
-        CtValue::Type(Box::new(Ty::Int)),
-        CtValue::Type(Box::new(Ty::Bool)),
-    ]);
+    let types = CtValue::Tuple(vec![CtValue::Type(Ty::int()), CtValue::Type(Ty::bool())]);
     let mut pack_only = ParamBindings::new();
     pack_only.bind_name("Ts", context.constant(types).expect("constant"));
     let selected = context.replace(&element, &pack_only).expect("replacement");
@@ -557,7 +559,7 @@ fn pack_element_resolves_as_its_pack_and_index_bind() {
     both.bind_name("i", literal(&context, 1));
     assert_eq!(
         crate::types::replace_parameters(&context, &dependent, &both, 0),
-        Ok(Ty::Bool)
+        Ok(Ty::bool())
     );
 
     // One pack forwarded as another keeps the residual element.
@@ -621,8 +623,8 @@ fn param_apply_is_structural_and_unfolded() {
         context.replace(&over_n, &bindings).expect("replacement"),
         context.apply("f", &[three], MetaTy::int())
     );
-    assert_eq!(context.size_of(Ty::Int).to_string(), "size_of[Int]()");
-    assert_eq!(*context.size_of(Ty::Int).meta(), MetaTy::int());
+    assert_eq!(context.size_of(Ty::int()).to_string(), "size_of[Int]()");
+    assert_eq!(*context.size_of(Ty::int()).meta(), MetaTy::int());
 }
 
 /// A `DType` float query over a binder is an application `replace` keeps
@@ -631,7 +633,7 @@ fn param_apply_is_structural_and_unfolded() {
 #[test]
 fn dtype_float_query_answers_only_a_required_value() {
     let context = ParamContext::new();
-    let dt = context.register(ParamId::new("f", 0), "dt", MetaTy::value(Ty::Dtype));
+    let dt = context.register(ParamId::new("f", 0), "dt", MetaTy::value(Ty::dtype()));
     let query = context.dtype_float_query("mantissa_width", &dt);
     assert_eq!(query.to_string(), "DType.mantissa_width(dt)");
     let bound = |dtype| {
@@ -682,10 +684,10 @@ fn dtype_float_query_answers_only_a_required_value() {
 fn answered_reflection_closes_its_enclosing_expression() {
     let context = ParamContext::new();
     let subject = context.register(ParamId::new("count", 0), "T", MetaTy::Type);
-    let pair = Ty::Struct("Pair".to_string(), Vec::new().into());
+    let pair = Ty::new(TyKind::Struct("Pair".to_string(), Vec::new()));
     let fields = [
-        ("left".to_string(), Ty::Int),
-        ("right".to_string(), Ty::Int),
+        ("left".to_string(), Ty::int()),
+        ("right".to_string(), Ty::int()),
     ];
     let mut oracle = |_: &ParamExpr, query: &ReflectQuery| {
         query
@@ -754,7 +756,7 @@ fn answered_type_member_closes_its_enclosing_expression() {
     let mut bindings = ParamBindings::new();
     bindings.bind_type(
         ParamId::new("read", 0),
-        Ty::Struct("A".to_string(), Vec::new().into()),
+        TyKind::Struct("A".to_string(), Vec::new()).into(),
     );
     let replaced = context.replace(&member, &bindings).expect("replaces");
     assert!(matches!(replaced.kind(), ParamKind::TypeMember { name, .. } if name == "K"));

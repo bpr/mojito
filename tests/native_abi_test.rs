@@ -3,12 +3,12 @@
 //! owner's pinned representations. Runs in the default (LLVM-free) lane; the
 //! LLVM-side halves of these checks live in `tests/pliron_backend_test.rs`.
 
+use mojito::types::{Ty, TyKind};
 use std::mem::{align_of, offset_of, size_of};
 
 use mojito::native::layout::{Layout, LayoutCx, StructFieldIndex};
 use mojito::native::rt_abi::{self, CAbiTy};
 use mojito::native::target::{NativeTarget, Triple};
-use mojito::types::Ty;
 
 /// Maps a Rust parameter/result type onto its contract-table primitive.
 trait HasCAbi {
@@ -222,7 +222,7 @@ fn outcome_layout_matches_repr_c_composition() {
         target: &target,
         structs: &structs,
     };
-    let outcome = cx.outcome_layout(&Ty::Int).unwrap();
+    let outcome = cx.outcome_layout(&Ty::int()).unwrap();
     assert_eq!(
         (outcome.layout.size, outcome.layout.align),
         (
@@ -251,7 +251,7 @@ fn checked_types_with_specified_runtime_representations_agree() {
     };
     // StringLiteral lowers to the MjStrDesc descriptor.
     assert_eq!(
-        cx.layout_of(&Ty::StringLiteral),
+        cx.layout_of(&Ty::string_literal()),
         Ok(Layout::new(
             size_of::<mojito_runtime::MjStrDesc>() as u64,
             align_of::<mojito_runtime::MjStrDesc>() as u64
@@ -259,7 +259,7 @@ fn checked_types_with_specified_runtime_representations_agree() {
     );
     // The built-in Error value is MjError.
     assert_eq!(
-        cx.layout_of(&Ty::Error),
+        cx.layout_of(&Ty::error()),
         Ok(Layout::new(
             size_of::<mojito_runtime::MjError>() as u64,
             align_of::<mojito_runtime::MjError>() as u64
@@ -270,12 +270,13 @@ fn checked_types_with_specified_runtime_representations_agree() {
     structs.insert(
         "String".to_string(),
         vec![
-            Ty::Pointer {
-                element: Box::new(Ty::UInt),
+            TyKind::Pointer {
+                element: Ty::uint(),
                 origin: mojito::origin::PointerOrigin::Static,
-            },
-            Ty::Int,
-            Ty::Int,
+            }
+            .into(),
+            Ty::int(),
+            Ty::int(),
         ],
     );
     let cx = LayoutCx {
@@ -283,7 +284,7 @@ fn checked_types_with_specified_runtime_representations_agree() {
         structs: &structs,
     };
     assert_eq!(
-        cx.layout_of(&Ty::Struct("String".to_string(), vec![].into())),
+        cx.layout_of(&Ty::new(TyKind::Struct("String".to_string(), vec![]))),
         Ok(Layout::new(
             size_of::<mojito_runtime::MjString>() as u64,
             align_of::<mojito_runtime::MjString>() as u64

@@ -5,6 +5,7 @@
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
+use mojito_types::types::TyKind;
 
 impl Checker {
     /// Evaluate a compile-time `Int` expression: literals, `comptime` constants,
@@ -124,7 +125,7 @@ impl Checker {
                     .to_string(),
             ));
         }
-        Ok(CtMemberReq::Value(Box::new(self.ty_from_anno(ty)?)))
+        Ok(CtMemberReq::Value(self.ty_from_anno(ty)?))
     }
 
     /// `conformance_conditions` are the struct's conditional conformances: a
@@ -139,8 +140,8 @@ impl Checker {
         let mut out = HashMap::new();
         let mut constraints = HashMap::new();
         let mut parameterized = HashMap::new();
-        let struct_name = match &self.self_ty {
-            Some(Ty::Struct(name, _)) => name.clone(),
+        let struct_name = match self.self_ty.as_ref().map(Ty::kind) {
+            Some(TyKind::Struct(name, _)) => name.clone(),
             _ => "Self".to_string(),
         };
         for member in associated {
@@ -233,7 +234,7 @@ impl Checker {
     /// Lower the type-valued body of a parameterized associated type — or a
     /// generic top-level comptime alias — to its symbolic template. The
     /// declaration's own parameters are put in scope (any enclosing struct's
-    /// parameters already are), so type parameters resolve to `Ty::Param`, value
+    /// parameters already are), so type parameters resolve to `TyKind::Param`, value
     /// parameters to `CtValue::Expr`, and origin parameters to `Origin::Param`;
     /// concrete resolution substitutes an application's arguments into the result.
     pub(super) fn lower_parameterized_member(
@@ -242,7 +243,7 @@ impl Checker {
         params: &[mojito_ast::ast::TypeParam],
         source_ty: &SourceType,
     ) -> Result<Ty, TypeError> {
-        // Member type parameters resolve as `Ty::Param` (via the `tparams` scope
+        // Member type parameters resolve as `TyKind::Param` (via the `tparams` scope
         // the caller built, like a generic def's parameters); origin parameters
         // resolve to `Origin::Param` via `enclosing_type_params`; value
         // parameters resolve to a symbolic `CtValue::Expr`.
@@ -269,7 +270,7 @@ impl Checker {
             ExprKind::Float(value) => Ok(CtValue::FloatLiteral(value.clone())),
             ExprKind::Bool(b) => Ok(CtValue::Bool(*b)),
             ExprKind::Str(s) => Ok(CtValue::Str(s.clone())),
-            ExprKind::TypeValue(ty) => self.ty_from_anno(ty).map(Box::new).map(CtValue::Type),
+            ExprKind::TypeValue(ty) => self.ty_from_anno(ty).map(CtValue::Type),
             ExprKind::Identifier(name) => {
                 // A value parameter of an enclosing declaration is its typed
                 // reference: `Buf[n + 1]` stays symbolic in the template.
@@ -330,8 +331,8 @@ impl Checker {
                 && param_args.is_empty()
                 && args.len() == 1
                 && matches!(
-                    scalar_type_name(name),
-                    Some(Ty::Int | Ty::UInt | Ty::Float64 | Ty::Bool)
+                    scalar_type_name(name).as_ref().map(Ty::kind),
+                    Some(TyKind::Int | TyKind::UInt | TyKind::Float64 | TyKind::Bool)
                 ) =>
             {
                 let target = scalar_type_name(name).expect("guard established a scalar type");
@@ -554,14 +555,14 @@ impl Checker {
             if param_args.len() != 2 {
                 return None;
             }
-            return mojito_types::types::simd_shape(&self.simd_type(param_args).ok()?);
+            return mojito_types::types::simd_shape(&self.simd_type(param_args).ok()?.into_kind());
         }
         if !param_args.is_empty() {
             return None;
         }
         match self.ty_value_from_name(name, &[]).ok().flatten()? {
-            CtValue::Type(ty) => match *ty {
-                Ty::Simd { .. } => mojito_types::types::simd_shape(&ty),
+            CtValue::Type(ty) => match *ty.kind() {
+                TyKind::Simd { .. } => mojito_types::types::simd_shape(&ty),
                 _ => None,
             },
             _ => None,
@@ -636,9 +637,10 @@ impl Checker {
         };
         let arm = |branch: &Expr| {
             let value = match self.eval_associated_ct(branch, associated)? {
-                literal @ CtValue::IntLiteral(_) => {
-                    literal.clone().materialize_as(&Ty::Int).unwrap_or(literal)
-                }
+                literal @ CtValue::IntLiteral(_) => literal
+                    .clone()
+                    .materialize_as(&Ty::int())
+                    .unwrap_or(literal),
                 value => value,
             };
             self.param_context.constant(value).map_err(param_error)
@@ -684,7 +686,7 @@ impl Checker {
         let declared = |value: CtValue| {
             let context = &self.param_context;
             match self.lookup(name) {
-                Some(ty) if !matches!(ty, Ty::IntLiteral) => context
+                Some(ty) if !matches!(ty.kind(), TyKind::IntLiteral) => context
                     .constant_as(value.clone(), ty)
                     .or_else(|_| context.constant(value)),
                 _ => context.constant(value),
@@ -836,7 +838,7 @@ impl Checker {
     /// per-instantiation clone, else the template's own symbolic binder
     /// ([`Self::self_param_ct_value`]).
     pub(super) fn self_param_value(&self, name: &str) -> Option<CtValue> {
-        if let Some(Ty::Struct(_, arguments)) = &self.self_ty
+        if let Some(TyKind::Struct(_, arguments)) = self.self_ty.as_ref().map(Ty::kind)
             && arguments.len() >= self.self_decls.len()
             && let Some(index) = self
                 .self_decls
@@ -865,7 +867,7 @@ impl Checker {
             ParamDecl::Type {
                 name: n, variadic, ..
             } if n == name || (*variadic && n.trim_start_matches('*') == name) => {
-                type_parameter(decl).map(|ty| CtValue::Type(Box::new(ty)))
+                type_parameter(decl).map(CtValue::Type)
             }
             _ => None,
         })
@@ -882,15 +884,15 @@ impl Checker {
         if args.is_empty() {
             // A type value names the nominal `String`, not the compile-time
             // literal type a `[text: String]` value parameter binds.
-            if let Some(ty) = scalar_type_name(name).filter(|ty| *ty != Ty::StringLiteral) {
-                return Ok(Some(CtValue::Type(Box::new(ty))));
+            if let Some(ty) = scalar_type_name(name).filter(|ty| *ty != TyKind::StringLiteral) {
+                return Ok(Some(CtValue::Type(ty)));
             }
             if name == "None" {
-                return Ok(Some(CtValue::Type(Box::new(Ty::None))));
+                return Ok(Some(CtValue::Type(Ty::none())));
             }
         }
         match self.ty_from_anno(&SourceType::Named(name.to_string(), args.to_vec())) {
-            Ok(ty) => Ok(Some(CtValue::Type(Box::new(ty)))),
+            Ok(ty) => Ok(Some(CtValue::Type(ty))),
             Err(TypeError::UnknownType(_)) => Ok(None),
             Err(error) => Err(error),
         }
@@ -908,7 +910,7 @@ impl Checker {
         if declares(&self.self_decls) {
             return true;
         }
-        let Some(Ty::Struct(struct_name, _)) = &self.self_ty else {
+        let Some(TyKind::Struct(struct_name, _)) = self.self_ty.as_ref().map(Ty::kind) else {
             return false;
         };
         mojito_symbol::symbol::specialization_template(struct_name)
@@ -920,7 +922,7 @@ impl Checker {
     /// the enclosing struct declares that field, and a field needs an
     /// instance.
     pub(super) fn instance_field_without_instance(&self, field: &str) -> Option<TypeError> {
-        let Some(self_ty @ Ty::Struct(name, _)) = &self.self_ty else {
+        let Some(self_ty @ TyKind::Struct(name, _)) = self.self_ty.as_ref().map(Ty::kind) else {
             return None;
         };
         self.structs
@@ -1131,7 +1133,7 @@ impl Checker {
         field: &str,
     ) -> Option<Result<ParamExpr, TypeError>> {
         let base = self.compile_dependent_ct_expr(object).ok()?;
-        let Some(Ty::Struct(owner, _)) = base.meta().as_value() else {
+        let Some(TyKind::Struct(owner, _)) = base.meta().as_value().map(Ty::kind) else {
             return None;
         };
         let field_ty = self
@@ -1165,8 +1167,8 @@ impl Checker {
         field: &str,
     ) -> Option<Result<ParamExpr, TypeError>> {
         let subject = self.member_subject(object)?;
-        match &subject {
-            Ty::Param { bounds, .. } => {
+        match subject.kind() {
+            TyKind::Param { bounds, .. } => {
                 if let Some(ty) = self.lookup_trait_assoc_value_ty(bounds, field) {
                     let subject = self.param_context.type_shape(subject.clone());
                     return Some(Ok(self.param_context.type_member(
@@ -1193,7 +1195,7 @@ impl Checker {
                     })
                 })
             }
-            Ty::Struct(name, arguments) => {
+            TyKind::Struct(name, arguments) => {
                 let info = self.structs.get(name)?;
                 let value = info
                     .associated
@@ -1224,14 +1226,14 @@ impl Checker {
             let ExprKind::Identifier(name) = &object.kind else {
                 return None;
             };
-            let pack = match self.lookup(name)? {
-                Ty::VariadicPack(element) => {
+            let pack = match (self.lookup(name)?).kind() {
+                TyKind::VariadicPack(element) => {
                     mojito_types::types::pack_spread(std::slice::from_ref(element))
                 }
-                Ty::Tuple(elements) => mojito_types::types::pack_spread(elements),
+                TyKind::Tuple(elements) => mojito_types::types::pack_spread(elements),
                 _ => None,
             }?;
-            let Ty::Param { binder, .. } = pack else {
+            let TyKind::Param { binder, .. } = pack.kind() else {
                 return None;
             };
             self.pack_reference(&binder.name)
@@ -2098,9 +2100,9 @@ impl Checker {
                     .find_map(|scope| scope.get(name))
                     .or_else(|| self.installed_type_alias(name)) =>
             {
-                match ty {
-                    Ty::Param { binder, .. } => ConstraintOperand::Param(binder.clone()),
-                    ty => ConstraintOperand::Type(ty.clone()),
+                match ty.kind() {
+                    TyKind::Param { binder, .. } => ConstraintOperand::Param(binder.clone()),
+                    _ => ConstraintOperand::Type(ty.clone()),
                 }
             }
             ExprKind::Identifier(name) => ConstraintOperand::Param(ParamRef::unbound(name)),
@@ -2337,7 +2339,7 @@ impl Checker {
         // A pack bound to another declaration's pack that is still a
         // parameter (`Tuple[*Self.Ts]`): its elements are that pack's.
         let forwarded = |param: &ParamRef| match environment.get(param) {
-            Some(TyArg::Ty(pack @ Ty::Param { binder, .. })) if binder.name.starts_with('*') => {
+            Some(TyArg::Ty(pack)) if matches!(pack.kind(), TyKind::Param { binder, .. } if binder.name.starts_with('*')) => {
                 Some(pack)
             }
             _ => None,
@@ -2559,8 +2561,8 @@ impl Checker {
             types
                 .get(spelling)
                 .or_else(|| types.get(&format!("*{spelling}")))
-                .and_then(|ty| match ty {
-                    Ty::Param { binder, .. } => Some(binder.id.clone()),
+                .and_then(|ty| match ty.kind() {
+                    TyKind::Param { binder, .. } => Some(binder.id.clone()),
                     _ => None,
                 })
                 .or_else(|| self.vparams.get(level)?.get(spelling).and_then(declared))
@@ -2624,7 +2626,7 @@ impl Checker {
             }
             ExprKind::Member { object, field } if matches!(&object.kind, ExprKind::Identifier(name) if name == "Self") => {
                 match self.self_param_ct_value(field)? {
-                    CtValue::Type(ty) => Some(*ty),
+                    CtValue::Type(ty) => Some(ty),
                     _ => None,
                 }
             }
@@ -2684,7 +2686,7 @@ fn bound_pack_types(environment: &ConstraintEnvironment<'_>, param: &ParamRef) -
     values
         .iter()
         .map(|value| match value {
-            CtValue::Type(ty) => Some((**ty).clone()),
+            CtValue::Type(ty) => Some(ty.clone()),
             _ => None,
         })
         .collect()
@@ -2845,7 +2847,7 @@ fn type_list_receiver(list: ParamExpr) -> TypeListReceiver {
         Some(CtValue::Tuple(values)) => values
             .iter()
             .map(|value| match value {
-                CtValue::Type(ty) => Some((**ty).clone()),
+                CtValue::Type(ty) => Some(ty.clone()),
                 _ => None,
             })
             .collect::<Option<Vec<_>>>(),

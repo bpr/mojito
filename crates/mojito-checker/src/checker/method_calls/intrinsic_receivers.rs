@@ -2,6 +2,7 @@
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
+use mojito_types::types::TyKind;
 
 impl Checker {
     /// Type a call the receiver's type answers without a declared signature:
@@ -26,7 +27,7 @@ impl Checker {
             kwargs,
             ..
         } = call;
-        if let Ty::Struct(name, _) = obj_ty
+        if let TyKind::Struct(name, _) = obj_ty.kind()
             && !self.structs.contains_key(name)
             && let Some(ty) = self.infer_unregistered_collection_method(site)?
         {
@@ -40,22 +41,25 @@ impl Checker {
         if method == "to_bits"
             && args.is_empty()
             && param_args.len() <= 1
-            && !matches!(obj_ty, Ty::Bool | Ty::IntLiteral | Ty::FloatLiteral)
+            && !matches!(
+                obj_ty.kind(),
+                TyKind::Bool | TyKind::IntLiteral | TyKind::FloatLiteral
+            )
             && let Some((source, width)) = simd_slots(obj_ty)
         {
             return self.infer_simd_to_bits(site, &source, width).map(Some);
         }
-        if *obj_ty == Ty::Dtype && mojito_ast::ast::DTYPE_PREDICATES.contains(&method) {
+        if *obj_ty == TyKind::Dtype && mojito_ast::ast::DTYPE_PREDICATES.contains(&method) {
             return self.infer_dtype_predicate(site).map(Some);
         }
         // `__hash__` is the builtin hashable-leaf arm's, shared with the
         // other builtin scalars.
-        if let Ty::Simd { dtype, width } = obj_ty
+        if let TyKind::Simd { dtype, width } = obj_ty.kind()
             && method != "__hash__"
         {
             return self.infer_simd_method(site, dtype, width).map(Some);
         }
-        if let Ty::Struct(kind, targs) = obj_ty
+        if let TyKind::Struct(kind, targs) = obj_ty.kind()
             && matches!(kind.as_str(), "Slice" | "ContiguousSlice" | "StridedSlice")
             && targs.is_empty()
         {
@@ -63,7 +67,7 @@ impl Checker {
         }
         // Raw-seam compatibility only: with the linked stdlib present the
         // nominal prelude `Optional` owns its full method surface below.
-        if matches!(obj_ty, Ty::Struct(name, args) if name == "Optional" && matches!(args.as_slice(), [TyArg::Ty(Ty::Int)]))
+        if matches!(obj_ty.kind(), TyKind::Struct(name, args) if name == "Optional" && matches!(args.as_slice(), [TyArg::Ty(ty)] if *ty == TyKind::Int))
             && !self.structs.contains_key("Optional")
         {
             return self.infer_raw_optional_method(site).map(Some);
@@ -84,34 +88,35 @@ impl Checker {
             && kwargs.is_empty()
             && param_args.is_empty()
             && !matches!(
-                match obj_ty {
-                    Ty::Ref(reference) => &*reference.referent,
-                    other => other,
-                },
-                Ty::Struct(name, targs)
+                (match obj_ty.kind() {
+                    TyKind::Ref(reference) => &reference.referent,
+                    _ => obj_ty,
+                })
+                .kind(),
+                TyKind::Struct(name, targs)
                     if !(targs.is_empty() && mojito_symbol::symbol::is_stdlib_string_struct(name))
             )
-            && (matches!(obj_ty, Ty::Struct(name, args)
+            && (matches!(obj_ty.kind(), TyKind::Struct(name, args)
                     if matches!(name.as_str(), "Slice" | "ContiguousSlice" | "StridedSlice")
                         && args.is_empty())
                 || self.conforms_to(obj_ty, "Writable"))
         {
             return self.infer_inverted_write(site).map(Some);
         }
-        if matches!(obj_ty, Ty::Param { bounds, .. } if bounds.iter().any(|bound| bound == "Hasher"))
+        if matches!(obj_ty.kind(), TyKind::Param { bounds, .. } if bounds.iter().any(|bound| bound == "Hasher"))
             && let Some(ty) = self.infer_hasher_bound_method(site)?
         {
             return Ok(Some(ty));
         }
         if method == STRING_FORMAT
-            && *obj_ty == Ty::StringLiteral
+            && *obj_ty == TyKind::StringLiteral
             && self
                 .structs
                 .contains_key(mojito_symbol::symbol::STDLIB_FORMAT_UTILS_STRUCT)
         {
             return self.infer_literal_format(site).map(Some);
         }
-        if *obj_ty == Ty::StringLiteral
+        if *obj_ty == TyKind::StringLiteral
             && args.is_empty()
             && let Some(ty) = string_literal_primitive(method)
         {
@@ -131,16 +136,16 @@ impl Checker {
                 &pack,
                 mojito_types::param_expr::PackQuery::Length,
             );
-            return Ok(Some(Ty::Int));
+            return Ok(Some(Ty::int()));
         }
         // A heterogeneous pack that is still a parameter answers its length;
         // any other member waits for the specialization's concrete storage.
-        if let Ty::VariadicPack(element) = obj_ty
+        if let TyKind::VariadicPack(element) = obj_ty.kind()
             && mojito_types::types::pack_spread(std::slice::from_ref(element)).is_some()
         {
             reject_kwargs(kwargs)?;
             if method == "__len__" && args.is_empty() && param_args.is_empty() {
-                return Ok(Some(Ty::Int));
+                return Ok(Some(Ty::int()));
             }
             return Err(TypeError::SymbolicBoundary(format!(
                 "method '{method}' of an unbound pack"
@@ -149,10 +154,10 @@ impl Checker {
         // Built-in `Pointer` methods: the public unsafe_* operation
         // vocabulary. `unsafe_write(copy=v)` is the one keyword shape; every
         // other pointer method rejects kwargs inside.
-        if let Ty::Pointer {
+        if let TyKind::Pointer {
             element: elem,
             origin,
-        } = obj_ty
+        } = obj_ty.kind()
         {
             return self
                 .infer_pointer_method(span, object, method, elem, origin, param_args, args, kwargs)
@@ -223,7 +228,7 @@ impl Checker {
                     });
                 }
                 self.check_consuming(&args[0], &values[0], "Set.add value")?;
-                Ok(Ty::None)
+                Ok(Ty::none())
             }
             _ => Err(TypeError::NoSuchMethod {
                 object_type: obj_ty.to_string(),
@@ -255,14 +260,15 @@ impl Checker {
         // `Slice.__eq__`/`__ne__` (only `Slice` is Equatable upstream).
         if matches!(method, "__eq__" | "__ne__") && kind == "Slice" {
             let types = self.builtin_args(&format!("Slice.{method}"), 1, args)?;
-            if !matches!(&types[0], Ty::Struct(name, args) if name == "Slice" && args.is_empty()) {
+            if !matches!((types[0]).kind(), TyKind::Struct(name, args) if name == "Slice" && args.is_empty())
+            {
                 return Err(TypeError::TypeMismatch {
                     expected: "Slice".to_string(),
                     found: types[0].to_string(),
                     context: format!("Slice.{method} operand"),
                 });
             }
-            return Ok(Ty::Bool);
+            return Ok(Ty::bool());
         }
         if matches!(method, "write_to" | "write_repr_to")
             && args.len() == 1
@@ -289,7 +295,7 @@ impl Checker {
                     mojito_checked::checked::SemanticAdjustment::InvertedWrite
                 },
             );
-            return Ok(Ty::None);
+            return Ok(Ty::none());
         }
         if method != "indices" {
             return Err(TypeError::NoSuchMethod {
@@ -298,7 +304,7 @@ impl Checker {
             });
         }
         let types = self.builtin_args("Slice.indices", 1, args)?;
-        if !coerces(&types[0], &Ty::Int) {
+        if !coerces(&types[0], &Ty::int()) {
             return Err(TypeError::TypeMismatch {
                 expected: "Int".to_string(),
                 found: types[0].to_string(),
@@ -308,12 +314,12 @@ impl Checker {
         // Upstream `ContiguousSlice.indices` yields `(start, end)`; the
         // strided family keeps the three-element normalization.
         if kind == "ContiguousSlice" {
-            return Ok(mojito_types::types::tuple_type(vec![Ty::Int, Ty::Int]));
+            return Ok(mojito_types::types::tuple_type(vec![Ty::int(), Ty::int()]));
         }
         Ok(mojito_types::types::tuple_type(vec![
-            Ty::Int,
-            Ty::Int,
-            Ty::Int,
+            Ty::int(),
+            Ty::int(),
+            Ty::int(),
         ]))
     }
 
@@ -330,8 +336,8 @@ impl Checker {
         match method {
             "or_else" => {
                 let types = self.builtin_args("Optional.or_else", 1, args)?;
-                if coerces(&types[0], &Ty::Int) {
-                    Ok(Ty::Int)
+                if coerces(&types[0], &Ty::int()) {
+                    Ok(Ty::int())
                 } else {
                     Err(TypeError::TypeMismatch {
                         expected: "Int".to_string(),
@@ -379,7 +385,7 @@ impl Checker {
                 mojito_checked::checked::SemanticAdjustment::InvertedWrite
             },
         );
-        Ok(Ty::None)
+        Ok(Ty::none())
     }
 
     /// `"…".format(args)`: a string literal declares no methods yet, so the
@@ -441,19 +447,19 @@ impl Checker {
                         .borrow_mut()
                         .insert(args[0].source_span());
                 }
-                return Ok(Some(Ty::None));
+                return Ok(Some(Ty::none()));
             }
             "_update_with_bytes" => {
                 self.check_place(object)?;
                 let tys = self.builtin_args("Hasher._update_with_bytes", 1, args)?;
-                if !matches!(&tys[0], Ty::Struct(name, _) if name.ends_with("Span")) {
+                if !matches!((tys[0]).kind(), TyKind::Struct(name, _) if name.ends_with("Span")) {
                     return Err(TypeError::TypeMismatch {
                         expected: "Span[Byte, _]".to_string(),
                         found: tys[0].to_string(),
                         context: "Hasher._update_with_bytes".to_string(),
                     });
                 }
-                return Ok(Some(Ty::None));
+                return Ok(Some(Ty::none()));
             }
             "finish" if args.is_empty() => {
                 return Ok(Some(canonical_simd_ty(Dtype::UInt64, 1)));
@@ -469,11 +475,14 @@ impl Checker {
 /// program, so the pointer carries the static origin.
 fn string_literal_primitive(method: &str) -> Option<Ty> {
     match method {
-        "byte_length" => Some(Ty::Int),
-        "ptr" | "unsafe_ptr" => Some(Ty::Pointer {
-            element: Box::new(canonical_simd_ty(Dtype::UInt8, 1)),
-            origin: mojito_types::origin::PointerOrigin::Static,
-        }),
+        "byte_length" => Some(Ty::int()),
+        "ptr" | "unsafe_ptr" => Some(
+            TyKind::Pointer {
+                element: canonical_simd_ty(Dtype::UInt8, 1),
+                origin: mojito_types::origin::PointerOrigin::Static,
+            }
+            .into(),
+        ),
         _ => None,
     }
 }

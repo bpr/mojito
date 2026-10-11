@@ -662,7 +662,7 @@ impl PointerOrigin {
 #[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 /// Checked reference type: referent, storage origin, and access permission.
 pub struct RefTy {
-    pub referent: Box<crate::types::Ty>,
+    pub referent: crate::types::Ty,
     pub origin: Origin,
     pub mutability: Mutability,
 }
@@ -696,7 +696,7 @@ pub enum SigOrigin {
     /// are bound: the source of a transfer effect whose body stores a value
     /// of a type over those binders. It is never a reference contract's
     /// origin.
-    Carried(Box<crate::types::Ty>),
+    Carried(crate::types::Ty),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]

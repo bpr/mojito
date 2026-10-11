@@ -32,6 +32,7 @@ use mojito_ast::ast::{
     StructComptime, TStringPart, Type, TypeParam, WithItem,
 };
 pub use mojito_symbol::symbol::mangle;
+use mojito_types::types::TyKind;
 
 use mojito_checker::checker::{ElaboratedConstant, ElaboratedConstants, InstalledInterfaces};
 use mojito_common::token::Span;
@@ -665,12 +666,12 @@ fn ct_expr_from_ast(expr: &Expr, siblings: &[TypeParam], owner: &str) -> Option<
 
 fn ct_param_source_type(source: &Type) -> Option<Ty> {
     match source {
-        Type::Int => Some(Ty::Int),
-        Type::UInt => Some(Ty::UInt),
-        Type::Bool => Some(Ty::Bool),
-        Type::StringLiteral | Type::ClosedStringLiteral => Some(Ty::StringLiteral),
-        Type::Float64 => Some(Ty::Float64),
-        Type::None => Some(Ty::None),
+        Type::Int => Some(Ty::int()),
+        Type::UInt => Some(Ty::uint()),
+        Type::Bool => Some(Ty::bool()),
+        Type::StringLiteral | Type::ClosedStringLiteral => Some(Ty::string_literal()),
+        Type::Float64 => Some(Ty::float64()),
+        Type::None => Some(Ty::none()),
         Type::Named(name, args) if name == "List" && args.len() == 1 => {
             let ParamArg::Type(element) = &args[0] else {
                 return None;
@@ -687,9 +688,12 @@ fn ct_param_source_type(source: &Type) -> Option<Ty> {
             .map(tuple_type),
         // A vector-typed value parameter (`[key: SIMD[DType.uint64, 4]]`).
         Type::Named(name, args) if name == "SIMD" => {
-            simd_source_dims(args).map(|(dtype, width)| Ty::Simd {
-                dtype: mojito_types::types::SimdDtype::Known(dtype),
-                width: mojito_types::types::SimdWidth::Known(width),
+            simd_source_dims(args).map(|(dtype, width)| {
+                TyKind::Simd {
+                    dtype: mojito_types::types::SimdDtype::Known(dtype),
+                    width: mojito_types::types::SimdWidth::Known(width),
+                }
+                .into()
             })
         }
         _ => None,
@@ -700,24 +704,24 @@ fn source_type_from_ty_with_origins(
     ty: &Ty,
     origin_names: &HashMap<mojito_types::origin::OriginParamId, String>,
 ) -> Option<Type> {
-    Some(match ty {
-        Ty::Int | Ty::IntLiteral => Type::Int,
-        Ty::UInt => Type::UInt,
-        Ty::Bool => Type::Bool,
-        Ty::StringLiteral => Type::ClosedStringLiteral,
-        Ty::Float64 | Ty::FloatLiteral => Type::Float64,
-        Ty::None => Type::None,
-        Ty::Dtype => Type::Named("DType".to_string(), Vec::new()),
+    Some(match ty.kind() {
+        TyKind::Int | TyKind::IntLiteral => Type::Int,
+        TyKind::UInt => Type::UInt,
+        TyKind::Bool => Type::Bool,
+        TyKind::StringLiteral => Type::ClosedStringLiteral,
+        TyKind::Float64 | TyKind::FloatLiteral => Type::Float64,
+        TyKind::None => Type::None,
+        TyKind::Dtype => Type::Named("DType".to_string(), Vec::new()),
         // A callable has no source spelling a clone could carry.
-        Ty::Func(_) | Ty::GenericFunc(_) => return None,
-        Ty::ComptimeList(element) => Type::Named(
+        TyKind::Func(_) | TyKind::GenericFunc(_) => return None,
+        TyKind::ComptimeList(element) => Type::Named(
             "List".to_string(),
             vec![ParamArg::Type(source_type_from_ty_with_origins(
                 element,
                 origin_names,
             )?)],
         ),
-        Ty::Tuple(elements) => Type::Named(
+        TyKind::Tuple(elements) => Type::Named(
             "__RuntimeTuple".to_string(),
             elements
                 .iter()
@@ -732,7 +736,7 @@ fn source_type_from_ty_with_origins(
         // canonical `Tuple[...]` application, which the checker maps back onto
         // the discovered specialization, instead of applying the retained
         // arguments to the erased symbol.
-        Ty::Struct(name, _)
+        TyKind::Struct(name, _)
             if name != mojito_types::types::TUPLE_TYPE_NAME
                 && let Some(elements) = mojito_types::types::tuple_elements(ty) =>
         {
@@ -747,7 +751,7 @@ fn source_type_from_ty_with_origins(
                     .collect(),
             )
         }
-        Ty::Struct(name, arguments) => Type::Named(
+        TyKind::Struct(name, arguments) => Type::Named(
             name.clone(),
             arguments
                 .iter()
@@ -778,14 +782,14 @@ fn source_type_from_ty_with_origins(
         ),
         // A symbolic slot has no source spelling; the elaborator only spells
         // bound instances.
-        Ty::Simd { dtype, width } => Type::Named(
+        TyKind::Simd { dtype, width } => Type::Named(
             "SIMD".to_string(),
             vec![
                 ParamArg::Value(CtValue::Dtype(dtype.known()?).materialize((0, 0))?),
                 ParamArg::Value(CtValue::Int(width.known()?).materialize((0, 0))?),
             ],
         ),
-        Ty::Ref(reference) => {
+        TyKind::Ref(reference) => {
             let origin_name = match &reference.origin {
                 mojito_types::origin::Origin::Param(id) => origin_names.get(id)?.clone(),
                 mojito_types::origin::Origin::Untracked { mutable: false } => {
@@ -1020,26 +1024,29 @@ fn substitute_source_param_arg_bindings(argument: &mut ParamArg, subs: rewrite::
 
 fn scalar_type_name(name: &str) -> Option<Ty> {
     match name {
-        "Int" => Some(Ty::Int),
+        "Int" => Some(Ty::int()),
         // A `DType` value, and the type of a `[dtype: DType]` value parameter.
-        "DType" => Some(Ty::Dtype),
+        "DType" => Some(Ty::dtype()),
         // A SIMD width parameter is a compile-time Int value parameter (the
         // removed `SIMDSize` spelling rejects).
-        "SIMDLength" => Some(Ty::Int),
-        "UInt" => Some(Ty::UInt),
-        "Bool" => Some(Ty::Bool),
-        "StringLiteral" => Some(Ty::StringLiteral),
-        "Float64" => Some(Ty::Float64),
-        "None" | "NoneType" => Some(Ty::None),
+        "SIMDLength" => Some(Ty::int()),
+        "UInt" => Some(Ty::uint()),
+        "Bool" => Some(Ty::bool()),
+        "StringLiteral" => Some(Ty::string_literal()),
+        "Float64" => Some(Ty::float64()),
+        "None" | "NoneType" => Some(Ty::none()),
         // The (qualified) `String` spelling deliberately falls through to
         // ordinary struct resolution: in type-argument and type-value
         // positions it denotes the nominal stdlib struct. Value-parameter
         // classification keeps the literal type via `ct_value_param_type`.
         // The sized scalar aliases (`Int8`, `UInt64`, `Float32`, ...) are
         // width-1 SIMD types, so `comptime c_int = Int32` is a type value.
-        _ => mojito_ast::ast::Dtype::from_scalar_alias(name).map(|dtype| Ty::Simd {
-            dtype: mojito_types::types::SimdDtype::Known(dtype),
-            width: mojito_types::types::SimdWidth::Known(1),
+        _ => mojito_ast::ast::Dtype::from_scalar_alias(name).map(|dtype| {
+            TyKind::Simd {
+                dtype: mojito_types::types::SimdDtype::Known(dtype),
+                width: mojito_types::types::SimdWidth::Known(1),
+            }
+            .into()
         }),
     }
 }

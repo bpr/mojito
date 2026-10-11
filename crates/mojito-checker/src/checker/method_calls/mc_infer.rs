@@ -2,6 +2,7 @@
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
+use mojito_types::types::TyKind;
 
 impl Checker {
     /// Infer a method call. An element of an unbound pack dispatches through
@@ -29,7 +30,7 @@ impl Checker {
             .structs_declaring(method)
             .filter(|(name, info)| {
                 let implementation =
-                    Ty::Struct((*name).clone(), params_as_args(&info.decls).into());
+                    Ty::new(TyKind::Struct((*name).clone(), params_as_args(&info.decls)));
                 bounds
                     .iter()
                     .all(|bound| self.conforms_to(&implementation, bound))
@@ -39,7 +40,7 @@ impl Checker {
                 if signatures.len() == 1 {
                     return vec![format!("{name}.{method}")];
                 }
-                let self_ty = Ty::Struct(name.clone(), params_as_args(&info.decls).into());
+                let self_ty = Ty::new(TyKind::Struct(name.clone(), params_as_args(&info.decls)));
                 signatures
                     .iter()
                     .map(|signature| method_lowered_name(name, method, signature, Some(&self_ty)))
@@ -110,9 +111,12 @@ impl Checker {
             && args.is_empty()
             && kwargs.is_empty()
             && param_args.is_empty()
-            && matches!(obj_ty, Ty::Int | Ty::IntLiteral | Ty::UInt)
+            && matches!(
+                obj_ty.kind(),
+                TyKind::Int | TyKind::IntLiteral | TyKind::UInt
+            )
         {
-            return Ok(Ty::Int);
+            return Ok(Ty::int());
         }
         // A receiver borrows a reference result for the call rather than
         // reading the referent out as an owned value; a consuming receiver
@@ -171,17 +175,20 @@ impl Checker {
         self.record_selected_method_conversions(method, &resolved, args, kwargs)?;
         let call_error = resolved
             .raises
-            .then(|| resolved.error.as_deref().cloned().unwrap_or(Ty::Error));
+            .then(|| resolved.error.clone().unwrap_or_else(Ty::error));
         if let Some(error) = &call_error {
             self.record_call_effect(span.clone(), error.clone());
             self.require_error(format!("call to raising method '{method}'"), error.clone())?;
         }
-        let selected_target = resolved.lowered_name.clone().or_else(|| match obj_ty {
-            Ty::Struct(name, _) if self.structs.contains_key(name) => {
-                Some(format!("{name}.{method}"))
-            }
-            _ => None,
-        });
+        let selected_target = resolved
+            .lowered_name
+            .clone()
+            .or_else(|| match obj_ty.kind() {
+                TyKind::Struct(name, _) if self.structs.contains_key(name) => {
+                    Some(format!("{name}.{method}"))
+                }
+                _ => None,
+            });
         if let Some(target) = &selected_target {
             self.overload_targets
                 .borrow_mut()
@@ -217,7 +224,7 @@ impl Checker {
                     self.rebase_self_place_pointer(resolved.return_type, object),
                 )
             },
-            |reference| *reference.referent,
+            |reference| reference.referent,
         ))
     }
 }

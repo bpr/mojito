@@ -3,16 +3,17 @@
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
+use mojito_types::types::TyKind;
 
 impl FnLowering<'_> {
     /// Whether the invisible-release rule can free every heap buffer a value
     /// of `ty` owns without running user code: the nominal String (one
     /// buffer), and byte-copied aggregates over such fields.
     pub(super) fn releasable(&self, ty: &Ty) -> bool {
-        match ty {
-            Ty::Error => true,
-            Ty::Struct(name, _) if mojito_symbol::symbol::is_stdlib_string_struct(name) => true,
-            Ty::Struct(name, _) => {
+        match ty.kind() {
+            TyKind::Error => true,
+            TyKind::Struct(name, _) if mojito_symbol::symbol::is_stdlib_string_struct(name) => true,
+            TyKind::Struct(name, _) => {
                 !self
                     .declarations
                     .contains_key(&format!("{name}.__copyinit__"))
@@ -22,10 +23,10 @@ impl FnLowering<'_> {
                             .all(|(_, field)| !self.owns_heap(field) || self.releasable(field))
                     })
             }
-            Ty::Tuple(elements) | Ty::RuntimePack(elements) => elements
+            TyKind::Tuple(elements) | TyKind::RuntimePack(elements) => elements
                 .iter()
                 .all(|element| !self.owns_heap(element) || self.releasable(element)),
-            Ty::Variant(alternatives) => alternatives
+            TyKind::Variant(alternatives) => alternatives
                 .iter()
                 .all(|alternative| !self.owns_heap(alternative) || self.releasable(alternative)),
             _ => !self.owns_heap(ty),
@@ -35,17 +36,17 @@ impl FnLowering<'_> {
     /// Whether a value of `ty` semantically owns heap memory (the nominal
     /// String's buffer; raw pointers are not owned).
     pub(super) fn owns_heap(&self, ty: &Ty) -> bool {
-        match ty {
-            Ty::Error => true,
-            Ty::Struct(name, _) if mojito_symbol::symbol::is_stdlib_string_struct(name) => true,
-            Ty::Struct(name, _) => self
+        match ty.kind() {
+            TyKind::Error => true,
+            TyKind::Struct(name, _) if mojito_symbol::symbol::is_stdlib_string_struct(name) => true,
+            TyKind::Struct(name, _) => self
                 .struct_decls
                 .get(name.as_str())
                 .is_some_and(|decl| decl.fields.iter().any(|(_, field)| self.owns_heap(field))),
-            Ty::Tuple(elements) | Ty::RuntimePack(elements) => {
+            TyKind::Tuple(elements) | TyKind::RuntimePack(elements) => {
                 elements.iter().any(|element| self.owns_heap(element))
             }
-            Ty::Variant(alternatives) => alternatives
+            TyKind::Variant(alternatives) => alternatives
                 .iter()
                 .any(|alternative| self.owns_heap(alternative)),
             _ => false,
@@ -67,7 +68,7 @@ impl FnLowering<'_> {
     /// block would need liveness analysis — reject instead of leaking.
     pub(super) fn mark_owned_temp(&mut self, dest: Reg, ty: Ty) -> Result<(), PlironError> {
         if !self.owns_heap(&ty)
-            && !matches!(ty, Ty::StringLiteral)
+            && !matches!(ty.kind(), TyKind::StringLiteral)
             && !self.stdlib_deinit_temp(&ty)
             && !self.needs_drop(&ty)
         {
@@ -122,7 +123,7 @@ impl FnLowering<'_> {
         reg: u32,
         ty: &Ty,
     ) -> Result<(), PlironError> {
-        if matches!(ty, Ty::StringLiteral) {
+        if matches!(ty.kind(), TyKind::StringLiteral) {
             let Some(descriptor) = self.str_runtime.get(&reg).copied() else {
                 return Ok(());
             };
@@ -147,7 +148,7 @@ impl FnLowering<'_> {
         // separately owned Pointer value. MaybeUninit is deliberately
         // excluded: its trivial wrapper destructor must never reach a live
         // user payload held in its compiler-private storage.
-        let uninit_wrapper = matches!(ty, Ty::Struct(name, _)
+        let uninit_wrapper = matches!(ty.kind(), TyKind::Struct(name, _)
             if name.contains("MaybeUninit")
                 || mojito_types::types::uninit_storage_element(ty).is_some());
         if self.stdlib_deinit_temp(ty) && !self.owns_heap(ty) && !uninit_wrapper {
@@ -168,7 +169,7 @@ impl FnLowering<'_> {
     /// release a discarded temporary: the destructor chain is
     /// stdlib-authored (pure frees, nothing user-observable).
     pub(super) fn stdlib_deinit_temp(&self, ty: &Ty) -> bool {
-        let Ty::Struct(name, _) = ty else {
+        let TyKind::Struct(name, _) = ty.kind() else {
             return false;
         };
         let template = name.split("$mono").next().unwrap_or(name);
@@ -188,8 +189,8 @@ impl FnLowering<'_> {
         ptr: Value,
         ty: &Ty,
     ) -> Result<(), PlironError> {
-        match ty {
-            Ty::Pointer { .. } => {
+        match ty.kind() {
+            TyKind::Pointer { .. } => {
                 let handle = ScalarTy::Ptr.handle(ctx);
                 let data = LoadOp::new(ctx, ptr, handle);
                 self.append(ctx, data.get_operation(), None);
@@ -198,21 +199,21 @@ impl FnLowering<'_> {
             }
             // A String's buffer and an error's message buffer both sit at
             // offset 0 (MjString/MjError agree on the data-first layout).
-            Ty::Error => {
+            TyKind::Error => {
                 let handle = ScalarTy::Ptr.handle(ctx);
                 let data = LoadOp::new(ctx, ptr, handle);
                 self.append(ctx, data.get_operation(), None);
                 self.emit_free(ctx, data.get_result(ctx));
                 Ok(())
             }
-            Ty::Struct(name, _) if mojito_symbol::symbol::is_stdlib_string_struct(name) => {
+            TyKind::Struct(name, _) if mojito_symbol::symbol::is_stdlib_string_struct(name) => {
                 let handle = ScalarTy::Ptr.handle(ctx);
                 let data = LoadOp::new(ctx, ptr, handle);
                 self.append(ctx, data.get_operation(), None);
                 self.emit_free(ctx, data.get_result(ctx));
                 Ok(())
             }
-            Ty::Struct(name, _) => {
+            TyKind::Struct(name, _) => {
                 let Some(decl) = self.struct_decls.get(name.as_str()).copied() else {
                     return Ok(());
                 };
@@ -240,7 +241,7 @@ impl FnLowering<'_> {
                 }
                 Ok(())
             }
-            Ty::Tuple(elements) | Ty::RuntimePack(elements) => {
+            TyKind::Tuple(elements) | TyKind::RuntimePack(elements) => {
                 let elements = elements.clone();
                 let composed = self
                     .layout
@@ -260,7 +261,7 @@ impl FnLowering<'_> {
                 }
                 Ok(())
             }
-            Ty::Variant(alternatives) => {
+            TyKind::Variant(alternatives) => {
                 let layout = self.layout.variant_layout(alternatives).map_err(|error| {
                     self.unsupported(format!("Variant drop layout ({error})"), None)
                 })?;

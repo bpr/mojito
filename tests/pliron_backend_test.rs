@@ -1066,7 +1066,7 @@ mod native_abi_cross_checks {
     use mojito::native::layout::{LayoutCx, StructFieldIndex, StructLayout};
     use mojito::native::rt_abi::{self, CAbiTy, RtFieldTy};
     use mojito::native::target::{NativeTarget, Triple};
-    use mojito::types::{Ty, canonical_simd_ty, simd_shape};
+    use mojito::types::{Ty, TyKind, canonical_simd_ty, simd_shape};
 
     use super::{EXE_MAIN, FIXTURE_NAME, host_target};
 
@@ -1125,29 +1125,31 @@ mod native_abi_cross_checks {
         /// nominal structs; Variant's overlay is realized only in Stage 4).
         fn ty(&self, structs: &StructFieldIndex, ty: &Ty) -> LLVMTypeRef {
             unsafe {
-                match ty {
-                    Ty::Int | Ty::UInt => LLVMInt64TypeInContext(self.ctx),
-                    Ty::Bool => LLVMInt1TypeInContext(self.ctx),
-                    Ty::Float64 => LLVMDoubleTypeInContext(self.ctx),
-                    Ty::None => self.strukt(&[]),
-                    Ty::Pointer { .. } | Ty::Ref(_) => LLVMPointerTypeInContext(self.ctx, 0),
-                    Ty::StringLiteral => {
+                match ty.kind() {
+                    TyKind::Int | TyKind::UInt => LLVMInt64TypeInContext(self.ctx),
+                    TyKind::Bool => LLVMInt1TypeInContext(self.ctx),
+                    TyKind::Float64 => LLVMDoubleTypeInContext(self.ctx),
+                    TyKind::None => self.strukt(&[]),
+                    TyKind::Pointer { .. } | TyKind::Ref(_) => {
+                        LLVMPointerTypeInContext(self.ctx, 0)
+                    }
+                    TyKind::StringLiteral => {
                         let ptr = LLVMPointerTypeInContext(self.ctx, 0);
                         let len = LLVMInt64TypeInContext(self.ctx);
                         self.strukt(&[ptr, len])
                     }
-                    Ty::Error => {
+                    TyKind::Error => {
                         let string = self.rt_type(rt_abi::find_type("MjString").expect("known"));
                         self.strukt(&[string])
                     }
-                    Ty::Tuple(elements) | Ty::RuntimePack(elements) => {
+                    TyKind::Tuple(elements) | TyKind::RuntimePack(elements) => {
                         let fields: Vec<LLVMTypeRef> = elements
                             .iter()
                             .map(|element| self.ty(structs, element))
                             .collect();
                         self.strukt(&fields)
                     }
-                    Ty::Struct(name, _) => {
+                    TyKind::Struct(name, _) => {
                         let fields: Vec<LLVMTypeRef> = structs
                             .get(name)
                             .expect("struct in index")
@@ -1160,7 +1162,7 @@ mod native_abi_cross_checks {
                     // alignment, byte-per-lane Bool), never an LLVM vector
                     // type: the backend computes in vectors but stores in
                     // this shape.
-                    Ty::Simd { .. } => {
+                    TyKind::Simd { .. } => {
                         let (dtype, width) =
                             simd_shape(ty).expect("a layout test names a concrete SIMD type");
                         let lane = match dtype {
@@ -1235,13 +1237,13 @@ mod native_abi_cross_checks {
         }
 
         let mut structs = StructFieldIndex::default();
-        structs.insert("Pair".to_string(), vec![Ty::Int, Ty::Bool]);
+        structs.insert("Pair".to_string(), vec![Ty::int(), Ty::bool()]);
         structs.insert(
             "Outer".to_string(),
             vec![
-                Ty::Struct("Pair".to_string(), vec![].into()),
-                Ty::Bool,
-                Ty::Float64,
+                TyKind::Struct("Pair".to_string(), vec![]).into(),
+                Ty::bool(),
+                Ty::float64(),
             ],
         );
         let cx = LayoutCx {
@@ -1249,24 +1251,24 @@ mod native_abi_cross_checks {
             structs: &structs,
         };
         let aggregate_cases: &[(&str, Vec<Ty>)] = &[
-            ("bool_int_bool", vec![Ty::Bool, Ty::Int, Ty::Bool]),
-            ("bool_bool_int", vec![Ty::Bool, Ty::Bool, Ty::Int]),
+            ("bool_int_bool", vec![Ty::bool(), Ty::int(), Ty::bool()]),
+            ("bool_bool_int", vec![Ty::bool(), Ty::bool(), Ty::int()]),
             ("empty", vec![]),
             (
                 "mixed",
                 vec![
-                    Ty::Float64,
-                    Ty::Bool,
-                    Ty::StringLiteral,
-                    Ty::Struct("Outer".to_string(), vec![].into()),
+                    Ty::float64(),
+                    Ty::bool(),
+                    Ty::string_literal(),
+                    TyKind::Struct("Outer".to_string(), vec![]).into(),
                 ],
             ),
             (
                 "simd_fields_lane_aligned",
                 vec![
-                    Ty::Bool,
+                    Ty::bool(),
                     canonical_simd_ty(Dtype::Int32, 4),
-                    Ty::Bool,
+                    Ty::bool(),
                     canonical_simd_ty(Dtype::Float64, 2),
                     canonical_simd_ty(Dtype::Bool, 8),
                     canonical_simd_ty(Dtype::UInt8, 16),
@@ -1276,7 +1278,7 @@ mod native_abi_cross_checks {
         ];
         for (label, fields) in aggregate_cases {
             let expected = cx.struct_layout(fields).expect("layout");
-            let llvm_ty = td.ty(&structs, &Ty::Tuple(fields.clone()));
+            let llvm_ty = td.ty(&structs, &Ty::new(TyKind::Tuple(fields.clone())));
             td.assert_agrees(label, llvm_ty, &expected);
         }
         let scalar_cases = [
@@ -1285,13 +1287,13 @@ mod native_abi_cross_checks {
             canonical_simd_ty(Dtype::Float32, 16),
             canonical_simd_ty(Dtype::Int, 2),
             canonical_simd_ty(Dtype::Bool, 1),
-            Ty::Int,
-            Ty::UInt,
-            Ty::Bool,
-            Ty::Float64,
-            Ty::StringLiteral,
-            Ty::Error,
-            Ty::Struct("Outer".to_string(), vec![].into()),
+            Ty::int(),
+            Ty::uint(),
+            Ty::bool(),
+            Ty::float64(),
+            Ty::string_literal(),
+            Ty::error(),
+            TyKind::Struct("Outer".to_string(), vec![]).into(),
         ];
         for ty in scalar_cases {
             let expected = cx.layout_of(&ty).expect("layout");

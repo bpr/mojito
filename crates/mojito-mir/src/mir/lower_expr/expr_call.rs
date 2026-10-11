@@ -2,6 +2,7 @@
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
+use mojito_types::types::TyKind;
 
 use mojito_ast::ast::KwArg;
 impl Flatten<'_> {
@@ -82,7 +83,7 @@ impl Flatten<'_> {
             // A symbolic type has no layout to take the size of; the
             // elaborator substitutes the instance's type, and only the
             // erased oracle reaches the template's own instruction.
-            let dest = self.fresh_typed(span(e), None, Ty::Int);
+            let dest = self.fresh_typed(span(e), None, Ty::int());
             self.emit(MirInstr::SizeOf { dest, ty });
             return dest;
         }
@@ -107,7 +108,7 @@ impl Flatten<'_> {
             // A type naming a compile-time parameter is spelled per
             // instance, so the template carries the type to the elaborator.
             if mojito_types::types::is_symbolic(&ty) {
-                let dest = self.fresh_typed(span(e), None, Ty::StringLiteral);
+                let dest = self.fresh_typed(span(e), None, Ty::string_literal());
                 self.emit(MirInstr::TypeName { dest, ty });
                 return dest;
             }
@@ -293,7 +294,7 @@ impl Flatten<'_> {
                 dest,
                 callee,
                 resolved: self.resolved_callable(e),
-                raises: self.checked_raises(e).map(Box::new),
+                raises: self.checked_raises(e),
                 args: regs,
                 kwargs: kw,
                 callee_place: callee_place.map(Box::new),
@@ -302,7 +303,7 @@ impl Flatten<'_> {
                 capture_accesses,
                 param_arg_regs,
                 param_decls,
-                instantiated_contract: instantiated_contract.map(Box::new),
+                instantiated_contract,
                 instantiated_args,
                 spread: spread_position(args),
             });
@@ -328,8 +329,8 @@ impl Flatten<'_> {
                 return self.expr(spread);
             }
             let regs = self.args(args);
-            let element_types = match self.checked_ty(e) {
-                Some(Ty::Tuple(elements)) => Some(elements),
+            let element_types = match self.checked_ty(e).as_ref().map(Ty::kind) {
+                Some(TyKind::Tuple(elements)) => Some(elements.clone()),
                 _ => None,
             };
             let dest = self.fresh(span(e), None);
@@ -553,7 +554,7 @@ impl Flatten<'_> {
         // implicit-conversion wrap materializes the nominal struct.
         let stringify = mojito_symbol::symbol::is_stdlib_string_struct(name)
             && (self.resolved_callable(e).as_deref() == Some("String")
-                || self.checked_ty(e) == Some(Ty::StringLiteral));
+                || self.checked_ty(e) == Some(Ty::string_literal()));
         // A call's argument list anchors nested loan-carrying
         // temporaries unless another channel already carries their
         // loans (see `call_anchors_arguments`). A construction's
@@ -566,24 +567,24 @@ impl Flatten<'_> {
         let saved_anchor_permission = self.allow_argument_anchors;
         self.allow_argument_anchors = (stringify
             || !matches!(
-                self.checked_ty(e),
-                Some(Ty::Struct(constructed, _)) if constructed == *name
+                self.checked_ty(e).as_ref().map(Ty::kind),
+                Some(TyKind::Struct(constructed, _)) if *constructed == *name
             ))
             && self.call_anchors_arguments(e);
         let (regs, arg_places) = self.lower_call_arguments(args, view_result);
         self.allow_argument_anchors = saved_anchor_permission;
         let copy_construction = args.is_empty()
             && matches!(
-                self.checked_ty(e),
-                Some(Ty::Struct(constructed, _)) if constructed == *name
+                self.checked_ty(e).as_ref().map(Ty::kind),
+                Some(TyKind::Struct(constructed, _)) if *constructed == *name
             );
         let (kw, kwarg_places) = copy_construction
             .then(|| self.copy_construction_keywords(kwargs))
             .flatten()
             .unwrap_or_else(|| self.lower_call_keywords(kwargs, view_result));
-        let (regs, arg_places, kw, kwarg_places) = match self.checked_ty(e) {
-            Some(Ty::Struct(constructed, _)) if constructed == *name => self
-                .fieldwise_keywords_positional(&constructed, (regs, arg_places, kw, kwarg_places)),
+        let (regs, arg_places, kw, kwarg_places) = match self.checked_ty(e).as_ref().map(Ty::kind) {
+            Some(TyKind::Struct(constructed, _)) if *constructed == *name => self
+                .fieldwise_keywords_positional(constructed, (regs, arg_places, kw, kwarg_places)),
             _ => (regs, arg_places, kw, kwarg_places),
         };
         // Builtin string producers wrapped by the nominal-String
@@ -598,7 +599,7 @@ impl Flatten<'_> {
                 .unwrap_or_else(|| self.overloaded_name(name, args.len()))
         };
         let d = if literal_result {
-            self.fresh_typed(span(e), None, Ty::StringLiteral)
+            self.fresh_typed(span(e), None, Ty::string_literal())
         } else {
             self.fresh(span(e), None)
         };
@@ -609,7 +610,7 @@ impl Flatten<'_> {
         self.emit(MirInstr::Call {
             dest: d,
             func: FuncRef::named(&target),
-            raises: self.checked_raises(e).map(Box::new),
+            raises: self.checked_raises(e),
             args: regs,
             kwargs: kw,
             arg_places,
@@ -812,14 +813,14 @@ impl Flatten<'_> {
             self.emit(MirInstr::Call {
                 dest,
                 func: FuncRef::named(&target),
-                raises: self.checked_raises(e).map(Box::new),
+                raises: self.checked_raises(e),
                 args: regs,
                 kwargs: kw,
                 arg_places,
                 kwarg_places,
                 capture_accesses: self.checked_call_capture_accesses(e),
                 param_arg_regs,
-                receiver: receiver.map(Box::new),
+                receiver,
                 instantiated_args,
                 spread: spread_position(args),
             });
@@ -864,7 +865,7 @@ impl Flatten<'_> {
             recv,
             method: field.clone(),
             resolved: self.resolved_callable(e),
-            raises: self.checked_raises(e).map(Box::new),
+            raises: self.checked_raises(e),
             reference_result: (self
                 .checked_call_contract(e)
                 .and_then(|contract| contract.reference_result))
@@ -951,10 +952,11 @@ impl Flatten<'_> {
         let dest = self.fresh_typed(
             span(e),
             None,
-            Ty::Pointer {
-                element: Box::new(element),
+            TyKind::Pointer {
+                element,
                 origin: mojito_types::origin::PointerOrigin::Static,
-            },
+            }
+            .into(),
         );
         self.emit(MirInstr::ParamListAddress {
             dest,

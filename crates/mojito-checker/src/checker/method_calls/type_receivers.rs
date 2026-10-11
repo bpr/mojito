@@ -3,6 +3,7 @@
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 use crate::checker::call_inference::folded_parameter_arguments;
+use mojito_types::types::TyKind;
 
 impl Checker {
     /// Type a call whose receiver spells a type rather than a value:
@@ -33,7 +34,7 @@ impl Checker {
                 .iter()
                 .filter(|declaration| declaration.name() == method)
                 .find_map(type_parameter)
-            && let Ty::Param { binder, .. } = &ty
+            && let TyKind::Param { binder, .. } = ty.kind()
         {
             if !(param_args.is_empty() && args.is_empty() && kwargs.is_empty()) {
                 return self
@@ -68,7 +69,7 @@ impl Checker {
         // parameters (`Grid[Self.n].width()`).
         if let ExprKind::Identifier(name) = &object.kind
             && name == "Self"
-            && let Some(Ty::Struct(instance, _)) = &self.self_ty
+            && let Some(TyKind::Struct(instance, _)) = self.self_ty.as_ref().map(Ty::kind)
             && let owner =
                 mojito_symbol::symbol::specialization_template(instance).unwrap_or(instance)
             && let Some(info) = self.structs.get(owner)
@@ -228,8 +229,8 @@ impl Checker {
                     &format!("{sname}.{method}"),
                     sig,
                     &sig.params,
-                    sig.variadic.as_deref(),
-                    sig.kw_variadic.as_deref(),
+                    sig.variadic.as_ref(),
+                    sig.kw_variadic.as_ref(),
                     param_args,
                     args,
                     kwargs,
@@ -295,7 +296,7 @@ impl Checker {
                     error: sig
                         .error
                         .as_ref()
-                        .map(|error| Box::new(substitute(error, &method_subst))),
+                        .map(|error| substitute(error, &method_subst)),
                     mutates_receiver: false,
                     consumes_receiver: false,
                     lowered_name: if signatures.len() > 1 {

@@ -8,6 +8,7 @@
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 use crate::mir::{Const, MirParamArg, MirSubscriptCall};
+use mojito_types::types::TyKind;
 
 /// The concreteness findings for one function body.
 ///
@@ -108,7 +109,9 @@ pub(super) fn verify_concrete_program(program: &MirProgram, errors: &mut Vec<Str
 /// with no runtime ABI.
 fn is_parametric(ty: &Ty) -> bool {
     mojito_types::types::is_symbolic(ty)
-        || mojito_types::types::mentions_open(ty, &|inner| matches!(inner, Ty::GenericFunc(_)))
+        || mojito_types::types::mentions_open(ty, &|inner| {
+            matches!(inner.kind(), TyKind::GenericFunc(_))
+        })
 }
 
 fn require_concrete(head: &str, role: &str, ty: &Ty, errors: &mut Vec<String>) {

@@ -8,6 +8,7 @@
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 use mojito_types::ffi::{self, CType, FfiCallee};
+use mojito_types::types::TyKind;
 
 impl FnLowering<'_> {
     /// Lower `external_call["callee", Ret, ...](args)`: the callee name is
@@ -108,16 +109,18 @@ impl FnLowering<'_> {
         dest: Reg,
     ) -> Result<Value, PlironError> {
         let ty = self.func.reg_types.get(&reg.0).cloned();
-        match ty {
-            Some(Ty::Pointer { .. }) => self.reg_value(ctx, reg, ScalarTy::Ptr),
-            Some(ty @ Ty::Struct(..)) => {
-                let Ty::Struct(name, _) = &ty else {
+        match ty.as_ref() {
+            Some(ty) if matches!(ty.kind(), TyKind::Pointer { .. }) => {
+                self.reg_value(ctx, reg, ScalarTy::Ptr)
+            }
+            Some(ty) if matches!(ty.kind(), TyKind::Struct(..)) => {
+                let TyKind::Struct(name, _) = ty.kind() else {
                     unreachable!("matched above");
                 };
                 let field = self.struct_decls.get(name.as_str()).and_then(|decl| {
                     decl.fields
                         .iter()
-                        .find(|(_, field_ty)| matches!(field_ty, Ty::Pointer { .. }))
+                        .find(|(_, field_ty)| matches!(field_ty.kind(), TyKind::Pointer { .. }))
                         .map(|(field, _)| field.clone())
                 });
                 let Some(field) = field else {
@@ -127,7 +130,7 @@ impl FnLowering<'_> {
                     ));
                 };
                 let storage = self.reg_ptr(ctx, reg)?;
-                let (offset, _) = self.field_offset(&ty, &field, dest)?;
+                let (offset, _) = self.field_offset(ty, &field, dest)?;
                 let address = self.gep_byte(ctx, storage, offset, dest);
                 let ptr_handle = ScalarTy::Ptr.handle(ctx);
                 let load = LoadOp::new(ctx, address, ptr_handle);
@@ -152,8 +155,8 @@ impl FnLowering<'_> {
     ) -> Result<Value, PlironError> {
         let signed = matches!(kind, CType::Int | CType::SSizeT | CType::OffT);
         let from = (kind.bits(), signed);
-        let to = match self.func.reg_types.get(&dest.0) {
-            Some(Ty::Int | Ty::UInt) => 64,
+        let to = match self.func.reg_types.get(&dest.0).map(Ty::kind) {
+            Some(TyKind::Int | TyKind::UInt) => 64,
             Some(ty) if let Some(dtype) = scalar_simd_dtype(ty) => {
                 match mojito_vm::runtime::integer_dtype_bits(dtype) {
                     Some((bits, _)) => bits,

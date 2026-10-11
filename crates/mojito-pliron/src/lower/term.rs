@@ -3,6 +3,7 @@
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
+use mojito_types::types::TyKind;
 
 impl FnLowering<'_> {
     pub(super) fn lower_term(
@@ -258,8 +259,8 @@ impl FnLowering<'_> {
     /// pointed-to elements through its compiled chain). Stdlib-authored
     /// chains are exempt: pure frees/relocations, nothing user-observable.
     pub(super) fn chain_runs_user_lifecycle(&self, ty: &Ty, method: &str) -> bool {
-        match ty {
-            Ty::Struct(name, _) => {
+        match ty.kind() {
+            TyKind::Struct(name, _) => {
                 let template = name.split("$mono").next().unwrap_or(name);
                 let stdlib = template.starts_with("__module$std$")
                     || mojito_symbol::symbol::is_stdlib_string_struct(name)
@@ -276,10 +277,10 @@ impl FnLowering<'_> {
                         .any(|(_, field)| self.chain_runs_user_lifecycle(field, method))
                 })
             }
-            Ty::Tuple(elements) | Ty::RuntimePack(elements) => elements
+            TyKind::Tuple(elements) | TyKind::RuntimePack(elements) => elements
                 .iter()
                 .any(|element| self.chain_runs_user_lifecycle(element, method)),
-            Ty::Pointer { element, .. } => self.chain_runs_user_lifecycle(element, method),
+            TyKind::Pointer { element, .. } => self.chain_runs_user_lifecycle(element, method),
             _ => false,
         }
     }

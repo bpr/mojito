@@ -1,6 +1,6 @@
 //! The binder scope and kind of every parametric type a function names.
 //!
-//! Parametric MIR names a type parameter (`Ty::Param`), a dependent type, a
+//! Parametric MIR names a type parameter (`TyKind::Param`), a dependent type, a
 //! symbolic vector slot, and a symbolic struct argument through the binders
 //! of the declaration that owns the body. A binder is in scope when the
 //! function's own declaration or, for a method, its struct declares it, when
@@ -18,6 +18,7 @@ use super::*;
 use crate::mir::Const;
 use mojito_types::ct::CtValue;
 use mojito_types::param_expr::{MetaTy, ParamExpr, ParamId, ParamKind};
+use mojito_types::types::TyKind;
 use mojito_types::types::{
     ConstraintOperand, DependentType, FuncTy, GenericConstraint, GenericFuncTy, SimdDtype,
     SimdWidth,
@@ -97,9 +98,9 @@ pub fn instruction_named_types(instruction: &MirInstr) -> Vec<(&'static str, &Ty
         } => {
             types.extend(
                 raises
-                    .as_deref()
+                    .as_ref()
                     .into_iter()
-                    .chain(receiver.as_deref())
+                    .chain(receiver.as_ref())
                     .map(|ty| ("instruction", ty)),
             );
             types.extend(
@@ -130,9 +131,9 @@ pub fn instruction_named_types(instruction: &MirInstr) -> Vec<(&'static str, &Ty
         } => {
             types.extend(
                 raises
-                    .as_deref()
+                    .as_ref()
                     .into_iter()
-                    .chain(instantiated_contract.as_deref())
+                    .chain(instantiated_contract.as_ref())
                     .map(|ty| ("callable contract", ty)),
             );
             types.extend(
@@ -149,7 +150,7 @@ pub fn instruction_named_types(instruction: &MirInstr) -> Vec<(&'static str, &Ty
             instantiated_args,
             ..
         } => {
-            types.extend(raises.as_deref().map(|ty| ("error contract", ty)));
+            types.extend(raises.as_ref().map(|ty| ("error contract", ty)));
             types.extend(
                 instantiated_args
                     .iter()
@@ -282,8 +283,8 @@ pub fn declared_kind(decl: &ParamDecl) -> MetaTy {
     match decl {
         ParamDecl::Value {
             ty, variadic: true, ..
-        } => MetaTy::ParamList(Box::new(MetaTy::value((**ty).clone()))),
-        ParamDecl::Value { ty, .. } => MetaTy::value((**ty).clone()),
+        } => MetaTy::ParamList(Box::new(MetaTy::value((*ty).clone()))),
+        ParamDecl::Value { ty, .. } => MetaTy::value((*ty).clone()),
         ParamDecl::Type { variadic: true, .. } => MetaTy::type_list(),
         ParamDecl::Type { .. } => MetaTy::Type,
     }
@@ -337,10 +338,10 @@ impl ScopeCx<'_> {
                 | MirInstr::SimdCast { dtype, width, .. }
                 | MirInstr::SimdBitcast { dtype, width, .. } = instruction
                 {
-                    let built = Ty::Simd {
+                    let built = Ty::new(TyKind::Simd {
                         dtype: dtype.clone(),
                         width: width.clone(),
-                    };
+                    });
                     self.walk(&format!("block {index} vector slots"), &built);
                 }
                 let projected = instruction_places(instruction)
@@ -469,8 +470,8 @@ impl ScopeCx<'_> {
     }
 
     fn walk_in(&mut self, role: &str, ty: &Ty, nested: &mut Vec<(ParamId, MetaTy)>) {
-        match ty {
-            Ty::Param {
+        match ty.kind() {
+            TyKind::Param {
                 binder,
                 callable_bound,
                 ..
@@ -480,29 +481,29 @@ impl ScopeCx<'_> {
                     self.walk_in(role, callable, nested);
                 }
             }
-            Ty::Assoc { base, args, .. } => {
+            TyKind::Assoc { base, args, .. } => {
                 self.walk_in(role, base, nested);
                 self.arguments(role, None, args, nested);
             }
-            Ty::Dependent(DependentType::Parameter(expr)) => {
+            TyKind::Dependent(DependentType::Parameter(expr)) => {
                 self.expr(role, "dependent type", expr, &MetaTy::Type, nested);
             }
-            Ty::Simd { dtype, width } => {
+            TyKind::Simd { dtype, width } => {
                 if let SimdDtype::Expr(expr) = dtype {
-                    self.expr(role, "lane", expr, &MetaTy::value(Ty::Dtype), nested);
+                    self.expr(role, "lane", expr, &MetaTy::value(Ty::dtype()), nested);
                 }
                 if let SimdWidth::Expr(expr) = width {
                     self.expr(role, "width", expr, &MetaTy::int(), nested);
                 }
             }
-            Ty::Struct(name, args) => {
+            TyKind::Struct(name, args) => {
                 let declared = self
                     .declarations
                     .structure(name)
                     .map(|declaration| &declaration.param_decls[..]);
                 self.arguments(role, declared, args, nested);
             }
-            Ty::GenericFunc(generic) => {
+            TyKind::GenericFunc(generic) => {
                 let GenericFuncTy {
                     decls,
                     func:
@@ -538,16 +539,16 @@ impl ScopeCx<'_> {
                 }
                 for ty in params
                     .iter()
-                    .chain(std::iter::once(&**ret))
-                    .chain(variadic.iter().map(|ty| &**ty))
-                    .chain(kw_variadic.iter().map(|ty| &**ty))
-                    .chain(error.iter().map(|ty| &**ty))
+                    .chain(std::iter::once(ret))
+                    .chain(variadic.iter())
+                    .chain(kw_variadic.iter())
+                    .chain(error.iter())
                 {
                     self.walk_in(role, ty, nested);
                 }
                 nested.truncate(mark);
             }
-            Ty::Func(func) => {
+            TyKind::Func(func) => {
                 let FuncTy {
                     params,
                     ret,
@@ -559,39 +560,41 @@ impl ScopeCx<'_> {
 
                 for ty in params
                     .iter()
-                    .chain(std::iter::once(&**ret))
-                    .chain(variadic.iter().map(|ty| &**ty))
-                    .chain(kw_variadic.iter().map(|ty| &**ty))
-                    .chain(error.iter().map(|ty| &**ty))
+                    .chain(std::iter::once(ret))
+                    .chain(variadic.iter())
+                    .chain(kw_variadic.iter())
+                    .chain(error.iter())
                 {
                     self.walk_in(role, ty, nested);
                 }
             }
-            Ty::Overload(types)
-            | Ty::Tuple(types)
-            | Ty::RuntimePack(types)
-            | Ty::Variant(types) => {
+            TyKind::Overload(types)
+            | TyKind::Tuple(types)
+            | TyKind::RuntimePack(types)
+            | TyKind::Variant(types) => {
                 for ty in types {
                     self.walk_in(role, ty, nested);
                 }
             }
-            Ty::ComptimeList(element) | Ty::VariadicPack(element) | Ty::Pointer { element, .. } => {
+            TyKind::ComptimeList(element)
+            | TyKind::VariadicPack(element)
+            | TyKind::Pointer { element, .. } => {
                 self.walk_in(role, element, nested);
             }
-            Ty::Ref(reference) => self.walk_in(role, &reference.referent, nested),
-            Ty::Int
-            | Ty::UInt
-            | Ty::Bool
-            | Ty::StringLiteral
-            | Ty::Float64
-            | Ty::None
-            | Ty::Never
-            | Ty::IntLiteral
-            | Ty::FloatLiteral
-            | Ty::Infer
-            | Ty::Dtype
-            | Ty::SelfType
-            | Ty::Error => {}
+            TyKind::Ref(reference) => self.walk_in(role, &reference.referent, nested),
+            TyKind::Int
+            | TyKind::UInt
+            | TyKind::Bool
+            | TyKind::StringLiteral
+            | TyKind::Float64
+            | TyKind::None
+            | TyKind::Never
+            | TyKind::IntLiteral
+            | TyKind::FloatLiteral
+            | TyKind::Infer
+            | TyKind::Dtype
+            | TyKind::SelfType
+            | TyKind::Error => {}
         }
     }
 
@@ -631,8 +634,8 @@ impl ScopeCx<'_> {
                         .and_then(|decl| match decl {
                             ParamDecl::Value {
                                 ty, variadic: true, ..
-                            } => Some(MetaTy::ParamList(Box::new(MetaTy::value((**ty).clone())))),
-                            ParamDecl::Value { ty, .. } => Some(MetaTy::value((**ty).clone())),
+                            } => Some(MetaTy::ParamList(Box::new(MetaTy::value((*ty).clone())))),
+                            ParamDecl::Value { ty, .. } => Some(MetaTy::value((*ty).clone())),
                             ParamDecl::Type { .. } => None,
                         })
                         .map(|expected| expected.substitute(&types));
@@ -766,7 +769,7 @@ impl ScopeCx<'_> {
                 self.head, id.owner
             )),
             Some(declared) => {
-                // A pack spread is the pack's own `Ty::Param`
+                // A pack spread is the pack's own `TyKind::Param`
                 // (`types::pack_spread`), so a type reference to a variadic
                 // binder is well-kinded.
                 if let Some(meta) = meta
@@ -813,7 +816,7 @@ mod tests {
             ref_params: Vec::new(),
             returns_reference: false,
             var_tys: HashMap::new(),
-            ret_ty: Some(Ty::None),
+            ret_ty: Some(Ty::none()),
             raises: false,
             error_ty: None,
             spans: crate::mir::SpanTable(HashMap::new()),
@@ -846,7 +849,7 @@ mod tests {
                 has_receiver: false,
                 receiver_convention: None,
                 param_conventions: Vec::new(),
-                ret_ty: Ty::None,
+                ret_ty: Ty::none(),
                 returns_reference: false,
                 raises: false,
                 error_ty: None,
@@ -865,7 +868,7 @@ mod tests {
         ParamDecl::Value {
             id: ParamId::new(owner, slot),
             name: name.to_string(),
-            ty: Box::new(ty),
+            ty,
             default: None,
             callable_default: None,
             infer_only: false,
@@ -885,18 +888,18 @@ mod tests {
     #[test]
     fn scope_accepts_a_symbolic_vector_over_declared_binders() {
         let context = ParamContext::detached();
-        let dt = context.decl_ref(ParamId::new("f", 0), "dt", MetaTy::value(Ty::Dtype));
+        let dt = context.decl_ref(ParamId::new("f", 0), "dt", MetaTy::value(Ty::dtype()));
         let width = context.decl_ref(ParamId::new("f", 1), "width", MetaTy::int());
-        let symbolic = Ty::Simd {
+        let symbolic = TyKind::Simd {
             dtype: SimdDtype::Expr(dt),
             width: SimdWidth::Expr(width),
         };
-        let function = function_with(vec![symbolic]);
+        let function = function_with(vec![symbolic.into()]);
         let declarations = declarations(
             "f",
             vec![
-                value_decl("f", 0, "dt", Ty::Dtype),
-                value_decl("f", 1, "width", Ty::Int),
+                value_decl("f", 0, "dt", Ty::dtype()),
+                value_decl("f", 1, "width", Ty::int()),
             ],
         );
         assert_eq!(findings(&function, &declarations), Vec::<String>::new());
@@ -916,30 +919,39 @@ mod tests {
         let context = ParamContext::detached();
         let foreign = context.decl_ref(ParamId::new("g", 0), "n", MetaTy::int());
         let flag = context.decl_ref(ParamId::new("f", 0), "flag", MetaTy::bool());
-        let declarations = declarations("f", vec![value_decl("f", 0, "flag", Ty::Bool)]);
-        let unbound = function_with(vec![Ty::Simd {
-            dtype: SimdDtype::Known(mojito_ast::ast::Dtype::Int32),
-            width: SimdWidth::Expr(foreign),
-        }]);
+        let declarations = declarations("f", vec![value_decl("f", 0, "flag", Ty::bool())]);
+        let unbound = function_with(vec![
+            TyKind::Simd {
+                dtype: SimdDtype::Known(mojito_ast::ast::Dtype::Int32),
+                width: SimdWidth::Expr(foreign),
+            }
+            .into(),
+        ]);
         assert!(
             findings(&unbound, &declarations)
                 .iter()
                 .any(|finding| finding.contains("no enclosing declaration binds")),
         );
-        let mistyped = function_with(vec![Ty::Simd {
-            dtype: SimdDtype::Known(mojito_ast::ast::Dtype::Int32),
-            width: SimdWidth::Expr(flag),
-        }]);
+        let mistyped = function_with(vec![
+            TyKind::Simd {
+                dtype: SimdDtype::Known(mojito_ast::ast::Dtype::Int32),
+                width: SimdWidth::Expr(flag),
+            }
+            .into(),
+        ]);
         assert!(
             findings(&mistyped, &declarations)
                 .iter()
                 .any(|finding| finding.contains("of kind `Bool`, not `Int`")),
         );
-        let misdeclared = function_with(vec![Ty::Param {
-            binder: binder("f", 0, "flag"),
-            bounds: Vec::new(),
-            callable_bound: None,
-        }]);
+        let misdeclared = function_with(vec![
+            TyKind::Param {
+                binder: binder("f", 0, "flag"),
+                bounds: Vec::new(),
+                callable_bound: None,
+            }
+            .into(),
+        ]);
         assert!(
             findings(&misdeclared, &declarations)
                 .iter()
@@ -954,7 +966,7 @@ mod tests {
     #[test]
     fn scope_rejects_a_method_argument_over_an_unbound_binder() {
         let declarations = declarations("f", Vec::new());
-        let mut function = function_with(vec![Ty::None, Ty::None]);
+        let mut function = function_with(vec![Ty::none(), Ty::none()]);
         function.blocks[0].instrs.push(MirInstr::MethodCall {
             dest: Reg(1),
             recv: Reg(0),
@@ -972,11 +984,14 @@ mod tests {
             capture_accesses: Vec::new(),
             param_arg_regs: Vec::new(),
             param_decls: Vec::new(),
-            instantiated_args: vec![TyArg::Ty(Ty::Param {
-                binder: binder("g", 0, "T"),
-                bounds: Vec::new(),
-                callable_bound: None,
-            })],
+            instantiated_args: vec![TyArg::Ty(
+                TyKind::Param {
+                    binder: binder("g", 0, "T"),
+                    bounds: Vec::new(),
+                    callable_bound: None,
+                }
+                .into(),
+            )],
             spread: None,
         });
         assert!(
@@ -999,14 +1014,17 @@ mod tests {
         let element = context.list_get(&pack, &index).expect("element builds");
         let callable = context.decl_ref(ParamId::new("$callable", 0), "index", MetaTy::int());
         let function = function_with(vec![
-            Ty::Dependent(DependentType::Parameter(element)),
-            Ty::Simd {
+            TyKind::Dependent(DependentType::Parameter(element)).into(),
+            TyKind::Simd {
                 dtype: SimdDtype::Known(mojito_ast::ast::Dtype::Int32),
                 width: SimdWidth::Expr(callable),
-            },
+            }
+            .into(),
         ]);
-        let mut declarations =
-            declarations("Bag.first", vec![value_decl("Bag.first", 0, "i", Ty::Int)]);
+        let mut declarations = declarations(
+            "Bag.first",
+            vec![value_decl("Bag.first", 0, "i", Ty::int())],
+        );
         declarations.structs.push(MirStructDeclaration {
             name: "Bag".into(),
             fields: Vec::new(),

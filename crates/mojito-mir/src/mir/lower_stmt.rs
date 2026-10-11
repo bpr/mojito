@@ -4,6 +4,7 @@
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
+use mojito_types::types::TyKind;
 
 impl Flatten<'_> {
     /// Lower one straight-line HIR instruction into `self.cur`. `outer_map` is the
@@ -94,8 +95,11 @@ impl Flatten<'_> {
                     });
                     let aggregate_loans = self.aggregate_borrows(expr);
                     if let Some(first) = aggregate_loans.first() {
-                        let marker =
-                            self.fresh_typed(expr.source_span(), Some(first.place.root), Ty::None);
+                        let marker = self.fresh_typed(
+                            expr.source_span(),
+                            Some(first.place.root),
+                            Ty::none(),
+                        );
                         self.emit(MirInstr::EstablishLoans {
                             reference: *dest,
                             loans: aggregate_loans.clone(),
@@ -292,7 +296,7 @@ impl Flatten<'_> {
                 self.emit(MirInstr::DefVar {
                     var: *yielded,
                     src: has_element,
-                    binding_ty: Some(Ty::Bool),
+                    binding_ty: Some(Ty::bool()),
                 });
             }
             HirInstr::BindIteration {
@@ -434,11 +438,11 @@ impl Flatten<'_> {
         // The slot holds only a handle: `GetIter` reads it to normalize the
         // iterator (re-rooting a `ref self` `__iter__` at the source), after
         // which dropping the handle is a no-op. The source is never copied.
-        let ref_ty = Ty::Ref(mojito_types::origin::RefTy {
-            referent: Box::new(value_ty),
+        let ref_ty = Ty::new(TyKind::Ref(mojito_types::origin::RefTy {
+            referent: value_ty,
             origin: mojito_types::origin::Origin::Place(ref_origin),
             mutability: mojito_types::origin::Mutability::Immutable,
-        });
+        }));
         self.var_types.insert(dest, ref_ty.clone());
         let handle = self.fresh_typed(span.clone(), Some(place.root), ref_ty.clone());
         self.emit(MirInstr::MakeRef {
@@ -456,7 +460,7 @@ impl Flatten<'_> {
             interior,
             shared: false,
         }];
-        let marker = self.fresh_typed(span, Some(loans[0].place.root), Ty::None);
+        let marker = self.fresh_typed(span, Some(loans[0].place.root), Ty::none());
         self.emit(MirInstr::EstablishLoans {
             reference: dest,
             loans: loans.clone(),
@@ -516,7 +520,7 @@ impl Flatten<'_> {
             let marker = self.fresh_typed(
                 SourceSpan::new(None, DUMMY_SPAN),
                 Some(first.place.root),
-                Ty::None,
+                Ty::none(),
             );
             self.emit(MirInstr::EstablishLoans {
                 reference,
@@ -618,9 +622,10 @@ impl Flatten<'_> {
                 }
                 // A literal index into compiler-private heterogeneous Tuple
                 // storage is the element's static place, as in `try_place`.
-                if let (Some(Ty::Tuple(_)), Some(index)) =
-                    (&object_ty, exact_nonnegative_index(index))
-                {
+                if let (Some(TyKind::Tuple(_)), Some(index)) = (
+                    object_ty.as_ref().map(Ty::kind),
+                    exact_nonnegative_index(index),
+                ) {
                     let element = self
                         .checked_place_ty(e)
                         .or_else(|| self.checked_ty(e))
@@ -723,7 +728,7 @@ impl Flatten<'_> {
                 .expect("augmented in-place operator has an in-place dunder")
                 .to_string(),
             resolved: Some(contract.target.clone()),
-            raises: contract.raises.clone().map(Box::new),
+            raises: contract.raises.clone(),
             reference_result: contract.reference_result.clone().map(Box::new),
             result_adapter: contract.result_adapter,
             args: vec![rhs],
@@ -785,7 +790,7 @@ impl Flatten<'_> {
             recv,
             method,
             resolved: Some(contract.target.clone()),
-            raises: contract.raises.clone().map(Box::new),
+            raises: contract.raises.clone(),
             reference_result: contract.reference_result.clone().map(Box::new),
             result_adapter: contract.result_adapter,
             args,
@@ -1855,8 +1860,8 @@ impl Flatten<'_> {
                     // The checker rejects a try whose body can raise more than
                     // one error type, so copying the first propagating raising
                     // fact types the handler binding without re-inference.
-                    let error =
-                        region_error_type(&body_blocks, &self.f.reg_types).unwrap_or(Ty::Error);
+                    let error = region_error_type(&body_blocks, &self.f.reg_types)
+                        .unwrap_or_else(Ty::error);
                     self.var_types.entry(slot).or_insert(error);
                 }
                 let blocks = self.lower_region(ex_body, ext_loops, outer_map);
@@ -2021,8 +2026,8 @@ impl Flatten<'_> {
                 // out of a register lets ownership distinguish element 0 from
                 // element 1 while every dynamic/nominal subscript retains the
                 // ordinary single-evaluation Index(Reg) path.
-                let projection = match self.checked_ty(object) {
-                    Some(Ty::Tuple(_)) => exact_nonnegative_index(index)
+                let projection = match self.checked_ty(object).as_ref().map(Ty::kind) {
+                    Some(TyKind::Tuple(_)) => exact_nonnegative_index(index)
                         .map_or_else(|| Proj::Index(self.expr(index)), Proj::ConstIndex),
                     _ => Proj::Index(self.expr(index)),
                 };
@@ -2136,7 +2141,7 @@ impl Flatten<'_> {
                     let source = self.expr(value);
                     self.runtime_aliases.insert(reference);
                     // A reference-producing expression stores a runtime handle
-                    // in this local slot. Carry its checked `Ty::Ref` onto the
+                    // in this local slot. Carry its checked `TyKind::Ref` onto the
                     // slot immediately: later aggregate construction may need
                     // to forward the handle before any ordinary read has had a
                     // chance to seed `var_types` incidentally.
@@ -2144,9 +2149,12 @@ impl Flatten<'_> {
                         .f
                         .reg_types
                         .get(&source.0)
-                        .filter(|ty| matches!(ty, Ty::Ref(_)))
+                        .filter(|ty| matches!(ty.kind(), TyKind::Ref(_)))
                         .cloned()
-                        .or_else(|| self.reference_result(value).map(Ty::Ref))
+                        .or_else(|| {
+                            self.reference_result(value)
+                                .map(|inner| Ty::new(TyKind::Ref(inner)))
+                        })
                         .or_else(|| self.checked_ty(value));
                     if let Some(ty) = binding_ty.clone() {
                         self.var_types.insert(reference, ty);
@@ -2223,7 +2231,7 @@ impl Flatten<'_> {
                     }
                     if let Some(first) = loans.first() {
                         let marker =
-                            self.fresh_typed(s.source_span(), Some(first.place.root), Ty::None);
+                            self.fresh_typed(s.source_span(), Some(first.place.root), Ty::none());
                         self.aggregate_loans.insert(reference, loans.clone());
                         self.emit(MirInstr::EstablishLoans {
                             reference,
@@ -2290,13 +2298,13 @@ impl Flatten<'_> {
                         .iter()
                         .find(|declaration| declaration.binding == Some(binding))
                         .and_then(|declaration| declaration.ty.clone())
-                        .filter(|ty| matches!(ty, Ty::Ref(_)))
+                        .filter(|ty| matches!(ty.kind(), TyKind::Ref(_)))
                 }) {
                     self.var_types.insert(reference, reference_ty);
                 }
                 self.aliases.insert(reference, loans[0].clone());
                 self.aggregate_loans.insert(reference, loans.clone());
-                let marker = self.fresh_typed(s.source_span(), Some(place.root), Ty::None);
+                let marker = self.fresh_typed(s.source_span(), Some(place.root), Ty::none());
                 self.emit(MirInstr::EstablishLoans {
                     reference,
                     loans,
@@ -2344,7 +2352,7 @@ impl Flatten<'_> {
                 let p = self
                     .lower_projected_reference_place(place)
                     .unwrap_or_else(|| self.place(place));
-                let stores_reference = matches!(p.ty, Some(Ty::Ref(_)))
+                let stores_reference = matches!(p.ty.as_ref().map(Ty::kind), Some(TyKind::Ref(_)))
                     && self.checked_adjustments(value).iter().any(|adjustment| {
                         matches!(
                             adjustment,
@@ -2361,7 +2369,7 @@ impl Flatten<'_> {
                     // A checked Copyable write-through runs the referent's
                     // copy lifecycle before the store, so the written value
                     // owns its storage instead of sharing the source's.
-                    let src = if matches!(p.ty, Some(Ty::Ref(_)))
+                    let src = if matches!(p.ty.as_ref().map(Ty::kind), Some(TyKind::Ref(_)))
                         && self.checked_adjustments(value).iter().any(|adjustment| {
                             matches!(
                                 adjustment,
@@ -2491,7 +2499,10 @@ impl Flatten<'_> {
                         reference,
                         value: res,
                     });
-                } else if matches!(self.checked_place_ty(place), Some(Ty::Ref(_))) {
+                } else if matches!(
+                    self.checked_place_ty(place).as_ref().map(Ty::kind),
+                    Some(TyKind::Ref(_))
+                ) {
                     // A projected ref-valued slot (for example an element of
                     // `List[ref T]`) is two distinct places: the container slot
                     // stores the handle, while augmented assignment reads and
@@ -2679,15 +2690,15 @@ impl Flatten<'_> {
                         continue;
                     }
                     let carries_loans = extraction.carries_loans;
-                    let idx = self.fresh_typed(span(target), None, Ty::Int);
+                    let idx = self.fresh_typed(span(target), None, Ty::int());
                     self.emit(MirInstr::Const {
                         dest: idx,
                         k: Const::Int(i as i64),
                     });
-                    let raw_ty = extraction
-                        .reference
-                        .clone()
-                        .map_or_else(|| extraction.ty.clone(), Ty::Ref);
+                    let raw_ty = extraction.reference.clone().map_or_else(
+                        || extraction.ty.clone(),
+                        |reference| Ty::new(TyKind::Ref(reference)),
+                    );
                     let raw = self.fresh_typed(span(target), None, raw_ty.clone());
                     let call = extraction.accessor.clone().map(|target| MirSubscriptCall {
                         target,
@@ -2764,7 +2775,7 @@ impl Flatten<'_> {
                         });
                         if carries_loans && let Some(first) = loans.first() {
                             let marker =
-                                self.fresh_typed(span(value), Some(first.place.root), Ty::None);
+                                self.fresh_typed(span(value), Some(first.place.root), Ty::none());
                             self.aggregate_loans.insert(var, loans.clone());
                             self.emit(MirInstr::EstablishLoans {
                                 reference: var,
@@ -2988,8 +2999,8 @@ impl Flatten<'_> {
             // handle. Borrowing the ref-valued slot would manufacture `ref ref T`
             // at runtime.
             let forwards_handle = matches!(
-                expression.place.as_ref().map(|place| &place.ty),
-                Some(Ty::Ref(_))
+                (expression.place.as_ref().map(|place| &place.ty)).map(Ty::kind),
+                Some(TyKind::Ref(_))
             ) || expression.adjustments.iter().any(|adjustment| {
                 matches!(
                     adjustment,
@@ -3098,7 +3109,7 @@ impl Flatten<'_> {
                                         self.comptime_thunks.request_value(
                                             written,
                                             binders,
-                                            Ty::Int,
+                                            Ty::int(),
                                         )
                                     })
                                 })

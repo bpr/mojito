@@ -3,6 +3,7 @@
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
+use mojito_types::types::TyKind;
 use mojito_types::types::{FuncTy, GenericFuncTy};
 
 pub(super) fn verify_intrinsic_index(
@@ -14,22 +15,22 @@ pub(super) fn verify_intrinsic_index(
     errors: &mut Vec<String>,
 ) {
     if let Some(index) = index
-        && !types_compatible(index, &Ty::Int)
-        && !matches!(index, Ty::UInt)
+        && !types_compatible(index, &Ty::int())
+        && !matches!(index.kind(), TyKind::UInt)
     {
         errors.push(format!(
             "{prefix}: intrinsic index has non-Indexer register type {index}"
         ));
     }
 
-    let result_candidates = match (intrinsic, base) {
+    let result_candidates = match (intrinsic, base.map(Ty::kind)) {
         (
             MirIntrinsicSubscript::TupleStorage,
-            Some(Ty::Tuple(elements) | Ty::RuntimePack(elements)),
+            Some(TyKind::Tuple(elements) | TyKind::RuntimePack(elements)),
         ) => Some(elements.iter().collect::<Vec<_>>()),
         (MirIntrinsicSubscript::TupleStorage, Some(base)) => tuple_elements(base),
-        (MirIntrinsicSubscript::VariadicStorage, Some(Ty::VariadicPack(element))) => {
-            Some(vec![element.as_ref()])
+        (MirIntrinsicSubscript::VariadicStorage, Some(TyKind::VariadicPack(element))) => {
+            Some(vec![element])
         }
         // An elaborated pack is the tuple its call site collected: the
         // elaborator rewrites the pack's type at the instance's arity and
@@ -37,9 +38,9 @@ pub(super) fn verify_intrinsic_index(
         // check against; its every read is out of range and traps.
         (
             MirIntrinsicSubscript::VariadicStorage,
-            Some(Ty::Tuple(elements) | Ty::RuntimePack(elements)),
+            Some(TyKind::Tuple(elements) | TyKind::RuntimePack(elements)),
         ) => (!elements.is_empty()).then(|| elements.iter().collect::<Vec<_>>()),
-        (MirIntrinsicSubscript::Simd, Some(Ty::Simd { dtype, .. })) => {
+        (MirIntrinsicSubscript::Simd, Some(TyKind::Simd { dtype, .. })) => {
             let scalar = simd_element_type(dtype);
             if let Some(dest) = dest
                 && !types_compatible(dest, &scalar)
@@ -50,9 +51,9 @@ pub(super) fn verify_intrinsic_index(
             }
             return;
         }
-        (MirIntrinsicSubscript::Pointer, Some(Ty::Pointer { element, .. }))
-        | (MirIntrinsicSubscript::ComptimeList, Some(Ty::ComptimeList(element))) => {
-            Some(vec![element.as_ref()])
+        (MirIntrinsicSubscript::Pointer, Some(TyKind::Pointer { element, .. }))
+        | (MirIntrinsicSubscript::ComptimeList, Some(TyKind::ComptimeList(element))) => {
+            Some(vec![element])
         }
         (_, Some(base)) => {
             errors.push(format!(
@@ -66,7 +67,7 @@ pub(super) fn verify_intrinsic_index(
     if let (Some(dest), Some(candidates)) = (dest, result_candidates)
         && !candidates.iter().any(|candidate| {
             types_compatible(dest, candidate)
-                || matches!(candidate, Ty::Ref(reference) if types_compatible(dest, &reference.referent))
+                || matches!(candidate.kind(), TyKind::Ref(reference) if types_compatible(dest, &reference.referent))
         })
     {
         errors.push(format!(
@@ -81,12 +82,12 @@ pub(super) fn verify_intrinsic_index(
 /// only for the narrow compiler-owned storage bridge already represented by a
 /// projection place.
 pub(super) fn indexed_place_element_types(base: &Ty) -> Option<Vec<Ty>> {
-    match base {
-        Ty::Tuple(elements) | Ty::RuntimePack(elements) => Some(elements.clone()),
-        Ty::VariadicPack(element) | Ty::ComptimeList(element) | Ty::Pointer { element, .. } => {
-            Some(vec![(**element).clone()])
-        }
-        Ty::Simd { dtype, .. } => Some(vec![simd_element_type(dtype)]),
+    match base.kind() {
+        TyKind::Tuple(elements) | TyKind::RuntimePack(elements) => Some(elements.clone()),
+        TyKind::VariadicPack(element)
+        | TyKind::ComptimeList(element)
+        | TyKind::Pointer { element, .. } => Some(vec![(*element).clone()]),
+        TyKind::Simd { dtype, .. } => Some(vec![simd_element_type(dtype)]),
         other => tuple_elements(other).map(|elements| elements.into_iter().cloned().collect()),
     }
 }
@@ -150,13 +151,13 @@ pub(in crate::mir) fn instantiate_generic_callable_contract(
     let mut instantiate = |ty: &Ty| {
         // A collector typed by a solved pack (`*args: *Ts`) collects its
         // elements; a spread of it elsewhere (`Tuple[*Ts]`) lists them.
-        let expanded = match ty {
-            Ty::Param { binder, .. } => packs
+        let expanded = match ty.kind() {
+            TyKind::Param { binder, .. } => packs
                 .iter()
                 .find(|(pack, _)| *pack == binder.name.trim_start_matches('*'))
                 .map_or_else(
                     || ty.clone(),
-                    |(_, elements)| Ty::RuntimePack(elements.clone()),
+                    |(_, elements)| TyKind::RuntimePack(elements.clone()).into(),
                 ),
             _ => packs.iter().fold(ty.clone(), |ty, (pack, elements)| {
                 mojito_types::types::expand_pack_spread(&ty, pack, elements)
@@ -169,35 +170,26 @@ pub(in crate::mir) fn instantiate_generic_callable_contract(
             &bound,
         )
     };
-    let instantiated = Ty::Func(Box::new(FuncTy {
+    let instantiated = Ty::new(TyKind::Func(Box::new(FuncTy {
         environment: environment.clone(),
         params: params
             .iter()
             .map(&mut instantiate)
             .collect::<Result<Vec<_>, _>>()?,
         names: names.clone(),
-        ret: Box::new(instantiate(ret)?),
+        ret: instantiate(ret)?,
         required: required.clone(),
-        variadic: variadic
-            .as_ref()
-            .map(|ty| instantiate(ty).map(Box::new))
-            .transpose()?,
-        kw_variadic: kw_variadic
-            .as_ref()
-            .map(|ty| instantiate(ty).map(Box::new))
-            .transpose()?,
+        variadic: variadic.as_ref().map(&instantiate).transpose()?,
+        kw_variadic: kw_variadic.as_ref().map(&instantiate).transpose()?,
         positional_only: *positional_only,
         keyword_only: *keyword_only,
         raises: *raises,
-        error: error
-            .as_ref()
-            .map(|ty| instantiate(ty).map(Box::new))
-            .transpose()?,
+        error: error.as_ref().map(instantiate).transpose()?,
         conventions: conventions.clone(),
         ref_params: ref_params.clone(),
         ref_return: ref_return.clone(),
         transfers: transfers.clone(),
-    }));
+    })));
     validate_dependent_bindings(&instantiated)?;
     Ok(instantiated)
 }
@@ -242,7 +234,7 @@ pub(super) fn generic_argument_maps(
 
 /// Verify an indirect call whose callee register carries a checked anonymous
 /// callable contract. Unlike nominal dispatch, there is no concrete MIR
-/// declaration to consult: the `Ty::Func` retained on the bounded parameter is
+/// declaration to consult: the `TyKind::Func` retained on the bounded parameter is
 /// the declaration and must be checked directly.
 #[allow(
     clippy::too_many_arguments,
@@ -279,7 +271,7 @@ pub(super) fn verify_callable_contract_call(
         errors.push(format!(
             "{prefix}: indirect-call raising metadata does not match its callable contract"
         ));
-    } else if let (Some(found), Some(expected)) = (call_raises, error.as_deref())
+    } else if let (Some(found), Some(expected)) = (call_raises, error.as_ref())
         && !types_compatible(found, expected)
     {
         errors.push(format!(
@@ -325,8 +317,8 @@ pub(super) fn verify_callable_contract_call(
         }
     }
     if let Some(found) = function.reg_types.get(&dest.0) {
-        let found_value = match (ref_return.is_some(), found) {
-            (true, Ty::Ref(reference)) => {
+        let found_value = match (ref_return.is_some(), found.kind()) {
+            (true, TyKind::Ref(reference)) => {
                 if let Some(signature) = ref_return.as_deref() {
                     let mutability_matches = match signature.mutability {
                         mojito_types::origin::SigMutability::Immutable => {
@@ -368,21 +360,21 @@ pub(super) fn verify_callable_contract_call(
                         ));
                     }
                 }
-                reference.referent.as_ref()
+                &reference.referent
             }
-            (true, other) => {
+            (true, _) => {
                 errors.push(format!(
-                    "{prefix}: indirect-call result has type {other}, contract returns a reference to {ret}"
+                    "{prefix}: indirect-call result has type {found}, contract returns a reference to {ret}"
                 ));
                 return;
             }
-            (false, Ty::Ref(_)) => {
+            (false, TyKind::Ref(_)) => {
                 errors.push(format!(
                     "{prefix}: indirect-call result is a reference, contract returns {ret} by value"
                 ));
                 return;
             }
-            (false, other) => other,
+            (false, _) => &found.clone(),
         };
         if !types_compatible(found_value, ret) {
             errors.push(format!(
@@ -402,7 +394,7 @@ fn solved_packs<'a>(declarations: &'a [ParamDecl], arguments: &[TyArg]) -> Vec<(
             (ParamDecl::Type { variadic: true, .. }, TyArg::Val(CtValue::Tuple(values))) => values
                 .iter()
                 .map(|value| match value {
-                    CtValue::Type(ty) => Some((**ty).clone()),
+                    CtValue::Type(ty) => Some(ty.clone()),
                     _ => None,
                 })
                 .collect::<Option<Vec<_>>>()

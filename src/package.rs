@@ -343,15 +343,16 @@ fn build(root: &Path, header: &PackageHeader) -> Result<Vec<u8>, CompilerError> 
         program.functions.push((name.clone(), function.clone()));
     }
     let units = packaged_units(&compiled, &exports.facts);
-    let records = exports
-        .interfaces
-        .records(
+    // The checker encodes its residues inside the package's type encoding,
+    // so they refer to the package's type section as its other records do.
+    let records = || {
+        exports.interfaces.records(
             modules,
             program.declarations.structs.clone(),
             program.declarations.functions.clone(),
             program.declarations.traits.clone(),
         )
-        .map_err(|error| CompilerError::Verify(vec![error]))?;
+    };
     let bytes = write_package(header, &library, &program, &units, records)
         .map_err(|error| CompilerError::Verify(vec![error.to_string()]))?;
     refuse_install_paths(&bytes, &library)?;
@@ -532,14 +533,16 @@ mod tests {
                 invariant_errors: Vec::new(),
             },
             &[],
-            crate::mir::text::package::DeclarationRecords {
-                modules: vec![PackagedModule {
-                    name: "std.x".to_string(),
-                    canonical: path.clone(),
-                    path,
-                    link: Vec::new(),
-                }],
-                ..Default::default()
+            || {
+                Ok(crate::mir::text::package::DeclarationRecords {
+                    modules: vec![PackagedModule {
+                        name: "std.x".to_string(),
+                        canonical: path.clone(),
+                        path,
+                        link: Vec::new(),
+                    }],
+                    ..Default::default()
+                })
             },
         )
         .expect("write")

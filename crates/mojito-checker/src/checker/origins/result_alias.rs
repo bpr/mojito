@@ -4,6 +4,7 @@
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
+use mojito_types::types::TyKind;
 
 impl Checker {
     /// Reject `D = f(args)` when a direct argument of the outermost call — the
@@ -101,7 +102,7 @@ impl Checker {
             .get(&expression.source_span())
             .cloned();
         if checked.is_some_and(|ty| {
-            !matches!(ty, Ty::Pointer { .. })
+            !matches!(ty.kind(), TyKind::Pointer { .. })
                 && !self.type_may_carry_loans(&ty)
                 && !self.type_contains_reference(&ty)
         }) {

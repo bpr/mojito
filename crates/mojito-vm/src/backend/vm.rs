@@ -25,6 +25,7 @@ use mojito_mir::mir::{
 };
 use mojito_types::ct::CtValue;
 use mojito_types::types::Ty;
+use mojito_types::types::TyKind;
 #[allow(clippy::wildcard_imports, reason = "pages of this split module")]
 use places::*;
 use std::collections::HashMap;
@@ -621,7 +622,7 @@ fn specialized_witness_symbol(prog: &Prog, sname: &str, method: &str) -> Option<
 /// handle describes the same instance as the value behind it.
 fn peel_references(ty: &mojito_types::types::Ty) -> &mojito_types::types::Ty {
     let mut ty = ty;
-    while let mojito_types::types::Ty::Ref(reference) = ty {
+    while let mojito_types::types::TyKind::Ref(reference) = ty.kind() {
         ty = &reference.referent;
     }
     ty
@@ -689,8 +690,8 @@ impl Prog {
         let mut instances = self.mir.functions.iter().filter(|(fname, function)| {
             fname.starts_with(&prefix)
                 && matches!(
-                    function.param_types.get(1).map(peel_references),
-                    Some(mojito_types::types::Ty::Struct(name, _)) if name == hasher
+                    (function.param_types.get(1).map(peel_references)).map(Ty::kind),
+                    Some(mojito_types::types::TyKind::Struct(name, _)) if name == hasher
                 )
         });
         match (instances.next(), instances.next()) {
@@ -730,7 +731,7 @@ impl Prog {
             mojito_symbol::symbol::is_overload_of(fname, &init)
                 && self.sigs.get(fname.as_str()).is_some_and(|signature| {
                     signature.variadic.as_ref().is_some_and(|element| {
-                        matches!(element, Ty::RuntimePack(_))
+                        matches!(element.kind(), TyKind::RuntimePack(_))
                             || mojito_types::types::pack_spread(std::slice::from_ref(element))
                                 .is_some()
                     })
@@ -818,7 +819,7 @@ fn arg1(name: &str, args: Vec<Value>) -> Result<Value, RuntimeError> {
 /// positional + keyword arguments to parameter slots — filling defaults and
 /// collecting a trailing `*args`. Covers only the *regular* parameters;
 /// `variadic` is either the homogeneous element type or an explicit
-/// `Ty::RuntimePack` sequence for a specialized heterogeneous collector.
+/// `TyKind::RuntimePack` sequence for a specialized heterogeneous collector.
 struct FnSig {
     param_names: Vec<String>,
     param_types: Vec<Ty>,
@@ -1410,10 +1411,10 @@ mod pointer_storage_tests {
                 offset: 1
             }
         );
-        let ty = Ty::Pointer {
-            element: Box::new(Ty::Int),
+        let ty = Ty::new(TyKind::Pointer {
+            element: Ty::int(),
             origin: mojito_types::origin::PointerOrigin::Untracked { mutable: true },
-        };
+        });
         let first = vm.thaw(&empty_program(), &frozen, Some(&ty)).expect("thaw");
         let second = vm
             .thaw(&empty_program(), &frozen, Some(&ty))
@@ -1568,13 +1569,13 @@ mod pointer_storage_tests {
     fn uninit_payload_store_initializes_and_overwrites_without_drop() {
         let place = |root_ty: Ty| {
             let mut place = MirPlace::root(0, Some(root_ty));
-            place.project(Proj::UninitPayload, Ty::Int);
+            place.project(Proj::UninitPayload, Ty::int());
             place
         };
-        let storage_ty = Ty::Struct(
+        let storage_ty = Ty::new(TyKind::Struct(
             mojito_types::types::UNINIT_STORAGE_TYPE_NAME.to_string(),
-            vec![mojito_types::types::TyArg::Ty(Ty::Int)].into(),
-        );
+            vec![mojito_types::types::TyArg::Ty(Ty::int())],
+        ));
         let mut vars = vec![Value::UninitStorage(None)];
 
         // Reading the payload of uninitialized storage traps.

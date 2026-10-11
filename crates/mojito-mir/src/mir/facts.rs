@@ -4,6 +4,7 @@
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
+use mojito_types::types::TyKind;
 
 #[allow(clippy::too_many_lines, reason = "TODO: split this pass")]
 impl Flatten<'_> {
@@ -208,13 +209,15 @@ impl Flatten<'_> {
         matches!(
             argument.kind,
             ExprKind::Identifier(_) | ExprKind::Member { .. }
-        ) && (matches!(self.checked_ty(argument), Some(Ty::Struct(..)))
-            || self.checked_adjustments(argument).iter().any(|adjustment| {
-                matches!(
-                    adjustment,
-                    mojito_checked::checked::SemanticAdjustment::RetainCallPlace
-                )
-            }))
+        ) && (matches!(
+            self.checked_ty(argument).as_ref().map(Ty::kind),
+            Some(TyKind::Struct(..))
+        ) || self.checked_adjustments(argument).iter().any(|adjustment| {
+            matches!(
+                adjustment,
+                mojito_checked::checked::SemanticAdjustment::RetainCallPlace
+            )
+        }))
     }
 
     /// The container a subscripted view receiver (`ys[0]`, `ps[0].name`,
@@ -644,10 +647,10 @@ impl Flatten<'_> {
                         .first()
                         .expect("checked pointer construction has a 'to=' argument")
                         .value;
-                    if let Some(Ty::Pointer {
+                    if let Some(TyKind::Pointer {
                         origin: mojito_types::origin::PointerOrigin::Place { place, .. },
                         ..
-                    }) = self.checked_ty(expression)
+                    }) = self.checked_ty(expression).as_ref().map(Ty::kind)
                         && matches!(
                             place.path.last(),
                             Some(mojito_types::origin::OriginSeg::Subtree)
@@ -658,7 +661,7 @@ impl Flatten<'_> {
                         // place and link instead of competing with the
                         // binding's own loan.
                         let source = self.place(source);
-                        return self.pointer_place_loan(&place, mutable, Some(source), true);
+                        return self.pointer_place_loan(place, mutable, Some(source), true);
                     }
                     let place = self.place(source);
                     return vec![MirLoan {
@@ -804,10 +807,10 @@ impl Flatten<'_> {
                 // shared alias, as `Pointer(to=place)` does: copies of the
                 // returned pointer coexist.
                 if let Some(contract) = self.checked_call_contract(expression)
-                    && let Ty::Pointer {
+                    && let TyKind::Pointer {
                         origin: mojito_types::origin::PointerOrigin::Place { place, mutable },
                         ..
-                    } = &contract.result_ty
+                    } = contract.result_ty.kind()
                 {
                     return self.pointer_place_loan(&place.clone(), *mutable, None, true);
                 }

@@ -2,6 +2,7 @@
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
+use mojito_types::types::TyKind;
 
 impl FnLowering<'_> {
     pub(super) fn lower_binop(
@@ -34,7 +35,10 @@ impl FnLowering<'_> {
         let string_shaped = |lowering: &Self, reg: Reg| {
             lowering.str_consts.contains_key(&reg.0)
                 || lowering.str_runtime.contains_key(&reg.0)
-                || matches!(lowering.func.reg_types.get(&reg.0), Some(Ty::StringLiteral))
+                || matches!(
+                    lowering.func.reg_types.get(&reg.0).map(Ty::kind),
+                    Some(TyKind::StringLiteral)
+                )
         };
         if matches!(op, InfixOp::Eq | InfixOp::Ne)
             && string_shaped(self, a)
@@ -48,14 +52,17 @@ impl FnLowering<'_> {
         // `pointer + i` — provenance-preserving element arithmetic (the MIR
         // form of `unsafe_offset`): the address `i * sizeof(element)` bytes
         // on (the VM adds `i` to its element-counted offset).
-        if let Some(Ty::Pointer { element, .. }) = self.func.reg_types.get(&a.0).cloned() {
+        if let Some(TyKind::Pointer { element, .. }) = (self.func.reg_types.get(&a.0).cloned())
+            .as_ref()
+            .map(Ty::kind)
+        {
             if !matches!(op, InfixOp::Add) {
                 return Err(
                     self.unsupported_reg(format!("operator `{op:?}` on Pointer operands"), dest)
                 );
             }
             let ptr = self.reg_value(ctx, a, ScalarTy::Ptr)?;
-            let address = self.pointer_element_address(ctx, ptr, b, &element, dest)?;
+            let address = self.pointer_element_address(ctx, ptr, b, element, dest)?;
             self.reg_values.insert(dest.0, address);
             return Ok(());
         }

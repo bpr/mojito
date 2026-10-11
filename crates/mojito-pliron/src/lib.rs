@@ -18,6 +18,7 @@
 //! Pins, divergence policies, and design notes: `docs/notes/pliron-stage4.md`
 //! (earlier stages: `pliron-stage1.md` through `pliron-stage3.md`).
 
+use mojito_types::types::TyKind;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::fmt;
 
@@ -526,20 +527,20 @@ pub enum JitValue {
 /// checked MIR return type. Drives the typed JIT harness.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RetKind {
-    /// `Ty::None` — no return value.
+    /// `TyKind::None` — no return value.
     Void,
-    /// `Ty::Int` — signed i64.
+    /// `TyKind::Int` — signed i64.
     I64,
-    /// `Ty::UInt` — the i64 bits reinterpret as u64.
+    /// `TyKind::UInt` — the i64 bits reinterpret as u64.
     U64,
-    /// `Ty::Float64` — f64.
+    /// `TyKind::Float64` — f64.
     F64,
-    /// `Ty::Bool` — i1 (read as u8, low bit significant).
+    /// `TyKind::Bool` — i1 (read as u8, low bit significant).
     Bool,
-    /// `Ty::Pointer` — an opaque pointer. Compiles; the value-comparing JIT
+    /// `TyKind::Pointer` — an opaque pointer. Compiles; the value-comparing JIT
     /// harness refuses to read it (a raw address has no VM display analog).
     Ptr,
-    /// A width-1 SIMD scalar alias (`Ty::Simd { dtype, width: 1 }`): the
+    /// A width-1 SIMD scalar alias (`TyKind::Simd { dtype, width: 1 }`): the
     /// native return is the lane type; the JIT reads it back as the VM's
     /// mathematical lane value (sign/zero-extended integer, f64 view of a
     /// `Float32`; a `Float16` return is refused).
@@ -1014,7 +1015,8 @@ fn visit_call_edges<'p>(
                     if matches!(func.0.as_str(), "print" | "String") =>
                 {
                     for arg in args {
-                        if let Some(Ty::Struct(name, _)) = function.reg_types.get(&arg.0)
+                        if let Some(TyKind::Struct(name, _)) =
+                            function.reg_types.get(&arg.0).map(Ty::kind)
                             && !mojito_symbol::symbol::is_stdlib_string_struct(name)
                         {
                             let prefix = format!("{name}.write_to");
@@ -1041,7 +1043,9 @@ fn visit_call_edges<'p>(
                 // instance in the lowered expansion.
                 MirInstr::Call { func, args, .. } if func.0 == "repr" => {
                     for arg in args {
-                        if let Some(Ty::Struct(name, _)) = function.reg_types.get(&arg.0) {
+                        if let Some(TyKind::Struct(name, _)) =
+                            function.reg_types.get(&arg.0).map(Ty::kind)
+                        {
                             let prefix = format!("{name}.write_repr_to");
                             for fname in functions.keys() {
                                 if fname.starts_with(prefix.as_str()) {
@@ -1070,7 +1074,10 @@ fn visit_call_edges<'p>(
                     resolved: Some(resolved),
                     ..
                 } => {
-                    if !matches!(function.reg_types.get(&recv.0), Some(Ty::Pointer { .. })) {
+                    if !matches!(
+                        function.reg_types.get(&recv.0).map(Ty::kind),
+                        Some(TyKind::Pointer { .. })
+                    ) {
                         push_named(&mut targets, resolved);
                     }
                 }
@@ -1089,12 +1096,19 @@ fn visit_call_edges<'p>(
                     "write" | mojito_symbol::symbol::WRITE_FORMATTED
                 ) =>
                 {
-                    if let Some(Ty::Struct(name, _)) = function.reg_types.get(&recv.0) {
+                    if let Some(TyKind::Struct(name, _)) =
+                        function.reg_types.get(&recv.0).map(Ty::kind)
+                    {
                         push_named(&mut targets, &format!("{name}.write_string"));
                     }
-                    if matches!(function.reg_types.get(&recv.0), Some(Ty::StringLiteral)) {
+                    if matches!(
+                        function.reg_types.get(&recv.0).map(Ty::kind),
+                        Some(TyKind::StringLiteral)
+                    ) {
                         for arg in args {
-                            if let Some(Ty::Struct(name, _)) = function.reg_types.get(&arg.0) {
+                            if let Some(TyKind::Struct(name, _)) =
+                                function.reg_types.get(&arg.0).map(Ty::kind)
+                            {
                                 let prefix = format!("{name}.write_to");
                                 for fname in functions.keys() {
                                     if fname.starts_with(prefix.as_str()) {
@@ -1115,29 +1129,33 @@ fn visit_call_edges<'p>(
                     args,
                     ..
                 } if method == "__hash__" && args.len() == 1 => {
-                    let hasher = function.reg_types.get(&args[0].0).map(|ty| match ty {
-                        Ty::Ref(reference) => &reference.referent,
-                        other => other,
-                    });
-                    if let Some(Ty::Struct(hasher, _)) = hasher {
+                    let hasher = function
+                        .reg_types
+                        .get(&args[0].0)
+                        .map(|ty| match ty.kind() {
+                            TyKind::Ref(reference) => &reference.referent,
+                            _ => ty,
+                        });
+                    if let Some(TyKind::Struct(hasher, _)) = hasher.map(Ty::kind) {
                         let prefix = format!("{hasher}._update_with_simd");
                         for fname in functions.keys() {
                             if fname.starts_with(prefix.as_str()) {
                                 targets.push(*fname);
                             }
                         }
-                        let receiver = function.reg_types.get(&recv.0).map(|ty| match ty {
-                            Ty::Ref(reference) => &reference.referent,
-                            other => other,
+                        let receiver = function.reg_types.get(&recv.0).map(|ty| match ty.kind() {
+                            TyKind::Ref(reference) => &reference.referent,
+                            _ => ty,
                         });
                         // A Variant leaf dispatches the active alternative's
                         // `__hash__` under a tag switch: every nominal
                         // alternative's instances are edges.
                         let mut nominal_alternatives: Vec<&str> = Vec::new();
-                        let mut string_leaf = matches!(receiver, Some(Ty::StringLiteral));
-                        if let Some(Ty::Variant(alternatives)) = receiver {
+                        let mut string_leaf =
+                            matches!(receiver.map(Ty::kind), Some(TyKind::StringLiteral));
+                        if let Some(TyKind::Variant(alternatives)) = receiver.map(Ty::kind) {
                             for alternative in alternatives {
-                                if let Ty::Struct(name, _) = alternative {
+                                if let TyKind::Struct(name, _) = alternative.kind() {
                                     if mojito_symbol::symbol::is_stdlib_string_struct(name) {
                                         string_leaf = true;
                                     } else {
@@ -1177,13 +1195,13 @@ fn visit_call_edges<'p>(
                     a,
                     ..
                 } => {
-                    let operand = function.reg_types.get(&a.0).map(|ty| match ty {
-                        Ty::Ref(reference) => &reference.referent,
-                        other => other,
+                    let operand = function.reg_types.get(&a.0).map(|ty| match ty.kind() {
+                        TyKind::Ref(reference) => &reference.referent,
+                        _ => ty,
                     });
-                    if let Some(Ty::Variant(alternatives)) = operand {
+                    if let Some(TyKind::Variant(alternatives)) = operand.map(Ty::kind) {
                         for alternative in alternatives {
-                            let Ty::Struct(name, _) = alternative else {
+                            let TyKind::Struct(name, _) = alternative.kind() else {
                                 continue;
                             };
                             if mojito_symbol::symbol::is_stdlib_string_struct(name) {
@@ -1246,7 +1264,9 @@ fn visit_call_edges<'p>(
                 // expansion, so retain that implicit edge.
                 MirInstr::MakeSimd { elems, .. } => {
                     for elem in elems {
-                        if let Some(Ty::Struct(name, _)) = function.reg_types.get(&elem.0) {
+                        if let Some(TyKind::Struct(name, _)) =
+                            function.reg_types.get(&elem.0).map(Ty::kind)
+                        {
                             push_named(&mut targets, &format!("{name}.__int__"));
                         }
                     }
@@ -1259,7 +1279,7 @@ fn visit_call_edges<'p>(
                     mode: mojito_mir::mir::UseMode::Move,
                     ..
                 } => {
-                    if let Some(Ty::Struct(name, _)) = function.var_tys.get(var) {
+                    if let Some(TyKind::Struct(name, _)) = function.var_tys.get(var).map(Ty::kind) {
                         push_named(&mut targets, &format!("{name}.__moveinit__"));
                     }
                 }
@@ -1311,8 +1331,8 @@ fn constructor_init_target<'p>(
         mojito_symbol::symbol::is_overload_of(fname, &init)
             && function.n_params == 2
             && matches!(
-                function.param_types.get(1),
-                Some(Ty::Tuple(_) | Ty::RuntimePack(_))
+                function.param_types.get(1).map(Ty::kind),
+                Some(TyKind::Tuple(_) | TyKind::RuntimePack(_))
             )
     });
     let first = *packs.next()?.0;
@@ -1328,8 +1348,8 @@ fn collect_struct_types<'p>(
     seen: &mut HashSet<&'p str>,
     discovered: &mut Vec<&'p str>,
 ) {
-    match ty {
-        Ty::Struct(name, args) => {
+    match ty.kind() {
+        TyKind::Struct(name, args) => {
             if let Some((key, decl)) = structs.get_key_value(name.as_str())
                 && seen.insert(*key)
             {
@@ -1344,13 +1364,13 @@ fn collect_struct_types<'p>(
                 }
             }
         }
-        Ty::Tuple(elements) | Ty::RuntimePack(elements) | Ty::Variant(elements) => {
+        TyKind::Tuple(elements) | TyKind::RuntimePack(elements) | TyKind::Variant(elements) => {
             for element in elements {
                 collect_struct_types(element, structs, seen, discovered);
             }
         }
-        Ty::Pointer { element, .. } => collect_struct_types(element, structs, seen, discovered),
-        Ty::Ref(ref_ty) => collect_struct_types(&ref_ty.referent, structs, seen, discovered),
+        TyKind::Pointer { element, .. } => collect_struct_types(element, structs, seen, discovered),
+        TyKind::Ref(ref_ty) => collect_struct_types(&ref_ty.referent, structs, seen, discovered),
         _ => {}
     }
 }
@@ -1451,7 +1471,7 @@ mod tests {
                 ref_params: vec![false; n_params],
                 returns_reference: false,
                 var_tys: HashMap::new(),
-                ret_ty: Some(mojito_types::types::Ty::None),
+                ret_ty: Some(Ty::none()),
                 raises: false,
                 error_ty: None,
                 spans: mojito_mir::mir::SpanTable::default(),
@@ -1459,11 +1479,11 @@ mod tests {
             }
         }
 
-        let point = Ty::Struct("Point".to_string(), Vec::new().into());
+        let point = Ty::new(TyKind::Struct("Point".to_string(), Vec::new()));
         let init_symbol = mojito_symbol::symbol::method_symbol(
             "Point",
             "__init__",
-            &mojito_symbol::symbol::SignatureKey::from_tys([&Ty::Int]),
+            &mojito_symbol::symbol::SignatureKey::from_tys([&Ty::int()]),
         );
         let constructor_call = MirInstr::Call {
             dest: Reg(0),
@@ -1487,7 +1507,7 @@ mod tests {
                 ),
                 (
                     init_symbol.clone(),
-                    test_function(vec![point.clone(), Ty::Int], Vec::new()),
+                    test_function(vec![point.clone(), Ty::int()], Vec::new()),
                 ),
                 (
                     "Point.__deinit__".to_string(),
@@ -1505,7 +1525,7 @@ mod tests {
             declarations: MirDeclarations {
                 structs: vec![MirStructDeclaration {
                     name: "Point".to_string(),
-                    fields: vec![("x".to_string(), Ty::Int)],
+                    fields: vec![("x".to_string(), Ty::int())],
                     mut_self_methods: HashSet::default(),
                     fieldwise_init: false,
                     param_decls: Vec::new(),

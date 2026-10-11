@@ -3,6 +3,7 @@
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 use mojito_types::types::FuncTy;
+use mojito_types::types::TyKind;
 pub use mojito_types::types::{
     builtin_copy_is_value_read, callable_environment_coerces, callable_environment_value_coerces,
     coerces,
@@ -21,26 +22,26 @@ pub(super) use mojito_types::types::default_literal;
 pub(super) fn hasher_simd_update_requirement() -> MethodSig {
     let (dtype, width) = hasher_simd_update_binders();
     let context = ParamContext::detached();
-    let value = Ty::Simd {
+    let value = TyKind::Simd {
         dtype: SimdDtype::Expr(context.decl_ref(
             dtype.id.clone(),
             &dtype.name,
-            MetaTy::value(Ty::Dtype),
+            MetaTy::value(Ty::dtype()),
         )),
         width: SimdWidth::Expr(context.decl_ref(width.id.clone(), &width.name, MetaTy::int())),
     };
     let binder = |binder: ParamRef, ty: Ty| ParamDecl::Value {
         id: binder.id,
         name: binder.name.to_string(),
-        ty: Box::new(ty),
+        ty,
         default: None,
         callable_default: None,
         infer_only: true,
         variadic: false,
         constraints: Vec::new(),
     };
-    let mut signature = MethodSig::intrinsic(vec![value], Ty::None);
-    signature.decls = vec![binder(dtype, Ty::Dtype), binder(width, Ty::Int)];
+    let mut signature = MethodSig::intrinsic(vec![value.into()], Ty::none());
+    signature.decls = vec![binder(dtype, Ty::dtype()), binder(width, Ty::int())];
     signature.self_convention = Some(ArgConvention::Mut);
     signature
 }
@@ -61,8 +62,8 @@ pub(super) fn hasher_simd_update_binders() -> (ParamRef, ParamRef) {
 /// equality (roadmap milestone 4), so it counts too; `Hashable` deliberately does **not**
 /// (a hash-backed key bounds `K: Hashable & Equatable` when it needs both).
 pub(super) fn has_equality_bound(ty: &Ty) -> bool {
-    match ty {
-        Ty::Param { bounds, .. } => bounds.iter().any(|b| {
+    match ty.kind() {
+        TyKind::Param { bounds, .. } => bounds.iter().any(|b| {
             matches!(
                 b.as_str(),
                 "Equatable" | "Comparable" | "EqualityComparable"
@@ -73,10 +74,10 @@ pub(super) fn has_equality_bound(ty: &Ty) -> bool {
 }
 
 pub(super) fn has_equality_bound_or_concrete(checker: &Checker, ty: &Ty) -> bool {
-    match ty {
+    match ty.kind() {
         // A conditional conformance (`Equatable where conforms_to(T,
         // Equatable)`) is judged against the struct's arguments.
-        Ty::Struct(name, args) => checker.struct_conformance_applies(name, args, "Equatable"),
+        TyKind::Struct(name, args) => checker.struct_conformance_applies(name, args, "Equatable"),
         _ => has_equality_bound(ty) || is_scalar(ty) || is_numeric_like(ty) || is_scalar_simd(ty),
     }
 }
@@ -86,8 +87,8 @@ pub(super) fn has_equality_bound_or_concrete(checker: &Checker, ty: &Ty) -> bool
 /// permits `==`/`!=` but *not* ordering (see `has_equality_bound`). In current
 /// Mojo `Comparable` also implies equality, which `has_equality_bound` reflects.
 pub(super) fn has_order_bound(ty: &Ty) -> bool {
-    match ty {
-        Ty::Param { bounds, .. } => bounds.iter().any(|b| b.as_str() == "Comparable"),
+    match ty.kind() {
+        TyKind::Param { bounds, .. } => bounds.iter().any(|b| b.as_str() == "Comparable"),
         _ => false,
     }
 }
@@ -101,10 +102,10 @@ pub(super) fn has_order_bound(ty: &Ty) -> bool {
 /// is ambiguous between bytes, codepoints, and grapheme clusters, so
 /// `String`, `StringSpan`, and a literal name the unit instead.
 pub(super) fn string_len_unavailable(ty: &Ty) -> Option<String> {
-    let name = match ty {
-        Ty::StringLiteral => "StringLiteral",
-        Ty::Struct(name, _) if mojito_types::types::is_stdlib_string_struct(name) => "String",
-        Ty::Struct(name, _) if name == mojito_types::types::STDLIB_STRING_SPAN_STRUCT => {
+    let name = match ty.kind() {
+        TyKind::StringLiteral => "StringLiteral",
+        TyKind::Struct(name, _) if mojito_types::types::is_stdlib_string_struct(name) => "String",
+        TyKind::Struct(name, _) if name == mojito_types::types::STDLIB_STRING_SPAN_STRUCT => {
             "StringSpan"
         }
         _ => return None,
@@ -137,15 +138,15 @@ pub(super) fn not_writable(ty: &Ty) -> TypeError {
 pub(super) fn print_keyword(name: &str, ty: &Ty) -> Option<(bool, &'static str)> {
     match name {
         "sep" | "end" => Some((
-            *ty == Ty::StringLiteral
-                || matches!(ty, Ty::Struct(name, targs)
+            *ty == TyKind::StringLiteral
+                || matches!(ty.kind(), TyKind::Struct(name, targs)
                     if (targs.is_empty() && mojito_symbol::symbol::is_stdlib_string_struct(name))
                         || mojito_types::types::is_stdlib_string_span_struct(name)),
             "String",
         )),
-        "flush" => Some((*ty == Ty::Bool, "Bool")),
+        "flush" => Some((*ty == TyKind::Bool, "Bool")),
         "file" => Some((
-            matches!(ty, Ty::Struct(name, _)
+            matches!(ty.kind(), TyKind::Struct(name, _)
                 if mojito_types::types::is_stdlib_file_descriptor_struct(name)),
             "FileDescriptor",
         )),
@@ -154,8 +155,8 @@ pub(super) fn print_keyword(name: &str, ty: &Ty) -> Option<(bool, &'static str)>
 }
 
 pub(super) fn has_len_bound(ty: &Ty) -> bool {
-    match ty {
-        Ty::Param { bounds, .. } => bounds
+    match ty.kind() {
+        TyKind::Param { bounds, .. } => bounds
             .iter()
             .any(|b| matches!(b.as_str(), "Sized" | "SizedRaising")),
         _ => false,
@@ -166,11 +167,11 @@ pub(super) fn has_len_bound(ty: &Ty) -> bool {
 /// conversion built-in `target` (`Int(x)` reads `__int__` and needs
 /// `Intable`, `Float64(x)` `__float__` and `Floatable`, `Bool(x)`
 /// `__bool__` and `Boolable`).
-pub(super) const fn conversion_protocol(target: &Ty) -> Option<(&'static str, &'static str)> {
-    match target {
-        Ty::Int => Some(("__int__", "Intable")),
-        Ty::Float64 => Some(("__float__", "Floatable")),
-        Ty::Bool => Some(("__bool__", "Boolable")),
+pub(super) fn conversion_protocol(target: &Ty) -> Option<(&'static str, &'static str)> {
+    match target.kind() {
+        TyKind::Int => Some(("__int__", "Intable")),
+        TyKind::Float64 => Some(("__float__", "Floatable")),
+        TyKind::Bool => Some(("__bool__", "Boolable")),
         _ => None,
     }
 }
@@ -181,7 +182,7 @@ pub(super) const fn conversion_protocol(target: &Ty) -> Option<(&'static str, &'
 /// or operator on an opaque `T` this way: the concrete type's implementation
 /// runs after type erasure.
 pub(super) fn param_has_bound(ty: &Ty, bound: &str) -> bool {
-    matches!(ty, Ty::Param { bounds, .. } if bounds.iter().any(|b| b == bound))
+    matches!(ty.kind(), TyKind::Param { bounds, .. } if bounds.iter().any(|b| b == bound))
 }
 
 pub(super) fn builtin_trait_operation(trait_name: &str) -> Option<&'static str> {
@@ -319,7 +320,10 @@ pub(super) fn require_dunder_ret(ret: Ty, expected: &Ty, name: &str) -> Result<T
 /// `List.remove`/`count`/`index`) — the same scalar set `==`/`!=` accept.
 pub(super) fn is_list_equatable(ty: &Ty) -> bool {
     is_numeric(ty)
-        || matches!(ty, Ty::Bool | Ty::StringLiteral | Ty::None | Ty::Dtype)
+        || matches!(
+            ty.kind(),
+            TyKind::Bool | TyKind::StringLiteral | TyKind::None | TyKind::Dtype
+        )
         || has_equality_bound(ty)
 }
 
@@ -327,9 +331,9 @@ pub(super) fn is_list_equatable(ty: &Ty) -> bool {
 /// tuple comparisons and membership stay structural without making `List`
 /// equality part of this compiler-known subset.
 pub(super) fn tuple_elements_equatable(elements: &[Ty]) -> bool {
-    elements.iter().all(|ty| match ty {
-        Ty::Tuple(nested) => tuple_elements_equatable(nested),
-        other => is_list_equatable(other),
+    elements.iter().all(|ty| match ty.kind() {
+        TyKind::Tuple(nested) => tuple_elements_equatable(nested),
+        _ => is_list_equatable(ty),
     })
 }
 
@@ -347,22 +351,22 @@ pub(super) fn tuple_order_compatible(left: &[Ty], right: &[Ty]) -> bool {
 /// Whether a value of type `ty` can be `print`ed (has a user-facing display).
 /// Functions, ranges, and opaque type parameters are not printable.
 pub(super) fn is_printable(ty: &Ty) -> bool {
-    match ty {
-        Ty::Int
-        | Ty::UInt
-        | Ty::Bool
-        | Ty::StringLiteral
-        | Ty::Float64
-        | Ty::None
-        | Ty::IntLiteral
-        | Ty::FloatLiteral
-        | Ty::Struct(_, _)
-        | Ty::Simd { .. }
-        | Ty::Dtype
-        | Ty::Error
-        | Ty::ComptimeList(_) => true,
+    match ty.kind() {
+        TyKind::Int
+        | TyKind::UInt
+        | TyKind::Bool
+        | TyKind::StringLiteral
+        | TyKind::Float64
+        | TyKind::None
+        | TyKind::IntLiteral
+        | TyKind::FloatLiteral
+        | TyKind::Struct(_, _)
+        | TyKind::Simd { .. }
+        | TyKind::Dtype
+        | TyKind::Error
+        | TyKind::ComptimeList(_) => true,
         // A tuple prints if every element prints.
-        Ty::Tuple(elems) => elems.iter().all(is_printable),
+        TyKind::Tuple(elems) => elems.iter().all(is_printable),
         _ => false,
     }
 }
@@ -390,9 +394,11 @@ pub(super) fn callable_mismatch_is_environment_only(from: &Ty, to: &Ty) -> bool 
         return false;
     }
     let mut aligned = from.clone();
-    if let Some(FuncTy { environment, .. }) = aligned.as_func_mut() {
-        *environment = to_environment.clone();
-    }
+    aligned.update(|kind| {
+        if let Some(FuncTy { environment, .. }) = kind.as_func_mut() {
+            *environment = to_environment.clone();
+        }
+    });
     coerces(&aligned, to)
 }
 
@@ -413,11 +419,10 @@ pub(super) fn common_elem(a: &Ty, b: &Ty) -> Option<Ty> {
 /// that differ only in which elements are still literals join their
 /// materialized form (`[(1, 2), (3, n)]` is a list of `Tuple[Int, Int]`).
 pub(super) fn common_display_element(a: &Ty, b: &Ty) -> Option<Ty> {
-    match (a, b) {
-        (Ty::StringLiteral, string) | (string, Ty::StringLiteral) if is_nominal_string(string) => {
-            Some(string.clone())
-        }
-        (Ty::Struct(..), Ty::Struct(..)) if a != b => {
+    match (a.kind(), b.kind()) {
+        (TyKind::StringLiteral, _) if is_nominal_string(b) => Some(b.clone()),
+        (_, TyKind::StringLiteral) if is_nominal_string(a) => Some(a.clone()),
+        (TyKind::Struct(..), TyKind::Struct(..)) if a != b => {
             let materialized = mojito_types::types::default_literal(a);
             (materialized == mojito_types::types::default_literal(b)).then_some(materialized)
         }
@@ -427,7 +432,7 @@ pub(super) fn common_display_element(a: &Ty, b: &Ty) -> Option<Ty> {
 
 /// Whether `ty` is the nominal `String`.
 pub(super) fn is_nominal_string(ty: &Ty) -> bool {
-    matches!(ty, Ty::Struct(name, args)
+    matches!(ty.kind(), TyKind::Struct(name, args)
         if args.is_empty() && mojito_symbol::symbol::is_stdlib_string_struct(name))
 }
 
@@ -525,14 +530,14 @@ impl Checker {
                 return Err(not_writable(&ty));
             }
         }
-        Ok(Ty::None)
+        Ok(Ty::none())
     }
 
     /// Whether a value of type `ty` may be handed to `print` or a `Writer`: a
     /// printable built-in, a built-in aggregate of printable elements, a
     /// slice, or a struct or parameter that is `Writable`.
     pub(super) fn printable_argument(&self, ty: &Ty) -> bool {
-        if let Ty::Struct(name, _) = ty
+        if let TyKind::Struct(name, _) = ty.kind()
             && !self.structs.contains_key(name)
             && (list_element(ty).is_some_and(is_printable)
                 || set_element(ty).is_some_and(is_printable)
@@ -543,13 +548,15 @@ impl Checker {
         {
             return true;
         }
-        if matches!(ty, Ty::Struct(name, args)
+        if matches!(ty.kind(), TyKind::Struct(name, args)
             if matches!(name.as_str(), "Slice" | "ContiguousSlice" | "StridedSlice")
                 && args.is_empty())
         {
             return true;
         }
-        if matches!(ty, Ty::Struct(..) | Ty::Param { .. }) || self.opaque_element(ty).is_some() {
+        if matches!(ty.kind(), TyKind::Struct(..) | TyKind::Param { .. })
+            || self.opaque_element(ty).is_some()
+        {
             return self.conforms_to(ty, "Writable");
         }
         is_printable(ty)
@@ -560,11 +567,11 @@ impl Checker {
     /// the nominal `String`, and the call raises `Error` at end of input.
     pub(super) fn infer_input(&self, span: SourceSpan, args: &[Expr]) -> Result<Ty, TypeError> {
         let tys = self.builtin_args("input", 1, args)?;
-        let nominal_prompt = matches!(&tys[0], Ty::Struct(name, args)
+        let nominal_prompt = matches!((tys[0]).kind(), TyKind::Struct(name, args)
             if args.is_empty() && mojito_symbol::symbol::is_stdlib_string_struct(name));
-        if tys[0] == Ty::StringLiteral || nominal_prompt {
-            self.record_call_effect(span.clone(), Ty::Error);
-            self.require_error("call to raising function 'input'", Ty::Error)?;
+        if tys[0] == TyKind::StringLiteral || nominal_prompt {
+            self.record_call_effect(span.clone(), Ty::error());
+            self.require_error("call to raising function 'input'", Ty::error())?;
             self.nominal_string_wrap(span)
         } else {
             Err(TypeError::TypeMismatch {
@@ -618,7 +625,7 @@ impl Checker {
     /// slots an `unsafe_uninit_length` construction left unwritten).
     pub(super) fn borrow_nominal_place_argument(&self, argument: &Expr, ty: &Ty) {
         if matches!(argument.kind, ExprKind::Identifier(_))
-            && let Ty::Struct(name, _) = ty
+            && let TyKind::Struct(name, _) = ty.kind()
             && self.structs.contains_key(name)
         {
             self.borrowed_read_call_places
@@ -636,7 +643,7 @@ impl Checker {
         let named = matches!(argument.kind, ExprKind::Identifier(_));
         let element = matches!(argument.kind, ExprKind::Index { .. })
             && self.infer_reference_value(argument).is_some();
-        if (named || element) && matches!(ty, Ty::Param { .. }) {
+        if (named || element) && matches!(ty.kind(), TyKind::Param { .. }) {
             self.borrowed_read_call_places
                 .borrow_mut()
                 .insert(argument.source_span());
@@ -648,7 +655,10 @@ impl Checker {
     /// length copies no element.
     pub(super) fn borrow_storage_place_argument(&self, argument: &Expr, ty: &Ty) {
         if matches!(argument.kind, ExprKind::Identifier(_))
-            && matches!(ty, Ty::Tuple(_) | Ty::RuntimePack(_) | Ty::VariadicPack(_))
+            && matches!(
+                ty.kind(),
+                TyKind::Tuple(_) | TyKind::RuntimePack(_) | TyKind::VariadicPack(_)
+            )
         {
             self.borrowed_read_call_places
                 .borrow_mut()
@@ -664,8 +674,8 @@ impl Checker {
         };
         let storage = matches!(object.kind, ExprKind::Identifier(_))
             && matches!(
-                self.expression_types.borrow().get(&object.source_span()),
-                Some(Ty::Tuple(_) | Ty::RuntimePack(_) | Ty::VariadicPack(_))
+                (self.expression_types.borrow().get(&object.source_span())).map(Ty::kind),
+                Some(TyKind::Tuple(_) | TyKind::RuntimePack(_) | TyKind::VariadicPack(_))
             );
         if storage {
             self.borrowed_read_call_places
@@ -677,12 +687,12 @@ impl Checker {
     /// Type `String(x)`: stringify a numeric, `Bool`, or `String` value.
     pub(super) fn infer_stringify(&self, args: &[Expr]) -> Result<Ty, TypeError> {
         let tys = self.builtin_args("String", 1, args)?;
-        if is_numeric(&tys[0]) || tys[0] == Ty::Bool || tys[0] == Ty::StringLiteral {
+        if is_numeric(&tys[0]) || tys[0] == TyKind::Bool || tys[0] == TyKind::StringLiteral {
             let runtime_ty = default_literal(&tys[0]);
             if runtime_ty != tys[0] {
                 self.record_literal_materializations(&args[0], &tys[0], &runtime_ty)?;
             }
-            return Ok(Ty::StringLiteral);
+            return Ok(Ty::string_literal());
         }
         if self.conforms_to(&tys[0], "Writable") {
             // Like `print`, nominal String conversion formats through a
@@ -691,7 +701,7 @@ impl Checker {
             self.call_place_uses
                 .borrow_mut()
                 .insert(args[0].source_span());
-            return Ok(Ty::StringLiteral);
+            return Ok(Ty::string_literal());
         }
         Err(TypeError::TypeMismatch {
             expected: "Writable".to_string(),
@@ -734,8 +744,8 @@ impl Checker {
     /// concrete impl runs after type erasure).
     pub(super) fn infer_round(&self, args: &[Expr]) -> Result<Ty, TypeError> {
         let tys = self.builtin_args("round", 1, args)?;
-        if matches!(tys[0], Ty::Float64 | Ty::FloatLiteral) {
-            Ok(Ty::Float64)
+        if matches!((tys[0]).kind(), TyKind::Float64 | TyKind::FloatLiteral) {
+            Ok(Ty::float64())
         } else if param_has_bound(&tys[0], "Roundable") {
             Ok(tys[0].clone())
         } else if let Some(result) = self.struct_dunder(&tys[0], "__round__", &[]) {
@@ -751,33 +761,33 @@ impl Checker {
     }
 
     pub(super) fn len_result_for_type(&self, ty: &Ty) -> Result<Option<Ty>, TypeError> {
-        if let Ty::Dependent(dependent) = ty
+        if let TyKind::Dependent(dependent) = ty.kind()
             && let Some((elements, _)) = dependent.selection()
         {
             for element in elements {
-                match self.len_result_for_type(element)? {
-                    Some(Ty::Int) => {}
+                match self.len_result_for_type(element)?.as_ref().map(Ty::kind) {
+                    Some(TyKind::Int) => {}
                     _ => return Ok(None),
                 }
             }
-            return Ok(Some(Ty::Int));
+            return Ok(Some(Ty::int()));
         }
         if string_len_unavailable(ty).is_some() {
             return Ok(None);
         }
         // `SIMD.__len__` returns the lane count; `Float64` is `SIMD[DType.float64, 1]`.
         if matches!(
-            ty,
-            Ty::ComptimeList(_)
-                | Ty::Tuple(_)
-                | Ty::RuntimePack(_)
-                | Ty::VariadicPack(_)
-                | Ty::Simd { .. }
-                | Ty::Float64
+            ty.kind(),
+            TyKind::ComptimeList(_)
+                | TyKind::Tuple(_)
+                | TyKind::RuntimePack(_)
+                | TyKind::VariadicPack(_)
+                | TyKind::Simd { .. }
+                | TyKind::Float64
         ) {
-            return Ok(Some(Ty::Int));
+            return Ok(Some(Ty::int()));
         }
-        if let Ty::Struct(name, _) = ty
+        if let TyKind::Struct(name, _) = ty.kind()
             && !self.structs.contains_key(name)
             && (list_element(ty).is_some()
                 || set_element(ty).is_some()
@@ -786,20 +796,20 @@ impl Checker {
                 || mojito_types::types::is_range_type(ty)
                 || mojito_types::types::scalar_range_parts(ty).is_some())
         {
-            return Ok(Some(Ty::Int));
+            return Ok(Some(Ty::int()));
         }
         // `len(c)` on a user struct dispatches to `c.__len__()` (`Sized`), which
         // must return `Int`.
         if let Some(result) = self.struct_dunder(ty, "__len__", &[]) {
             return result
-                .and_then(|ret| require_dunder_ret(ret, &Ty::Int, "__len__"))
+                .and_then(|ret| require_dunder_ret(ret, &Ty::int(), "__len__"))
                 .map(Some);
         }
         // `len(x)` on an opaque type parameter is permitted when its bound
         // promises a length (`T: Sized`) — the concrete type's `__len__` runs at
         // runtime after type erasure.
         if has_len_bound(ty) {
-            return Ok(Some(Ty::Int));
+            return Ok(Some(Ty::int()));
         }
         Ok(None)
     }
@@ -812,14 +822,14 @@ impl Checker {
             && let Some(pack) = self.unbound_pack_named(pack)
         {
             self.record_pack_query_value(span, &pack, mojito_types::param_expr::PackQuery::Length);
-            return Ok(Ty::Int);
+            return Ok(Ty::int());
         }
         // `len(values)` of a value pack that is still a parameter.
         if let [pack] = args
             && let Some(pack) = self.value_pack_named(pack)
         {
             self.record_pack_query_value(span, &pack, mojito_types::param_expr::PackQuery::Length);
-            return Ok(Ty::Int);
+            return Ok(Ty::int());
         }
         let tys = self.builtin_args("len", 1, args)?;
         if let Some(message) = string_len_unavailable(&tys[0]) {
@@ -855,14 +865,14 @@ impl Checker {
         }
         for (i, arg) in args.iter().enumerate() {
             let arg_ty = self.infer(arg)?;
-            if !coerces(&arg_ty, &Ty::Int) {
+            if !coerces(&arg_ty, &Ty::int()) {
                 return Err(TypeError::TypeMismatch {
                     expected: "Int".to_string(),
                     found: arg_ty.to_string(),
                     context: format!("argument {} to 'range'", i + 1),
                 });
             }
-            self.record_literal_materializations(arg, &arg_ty, &Ty::Int)?;
+            self.record_literal_materializations(arg, &arg_ty, &Ty::int())?;
         }
         Ok(range_type())
     }
@@ -892,16 +902,16 @@ impl Checker {
         let mut dtype: Option<Dtype> = None;
         let mut triggered = false;
         for ty in &tys {
-            let this = match ty {
-                Ty::Float64 => {
+            let this = match ty.kind() {
+                TyKind::Float64 => {
                     triggered = true;
                     Some(Dtype::Float64)
                 }
-                Ty::Int => Some(Dtype::Int),
-                Ty::IntLiteral | Ty::FloatLiteral => None,
+                TyKind::Int => Some(Dtype::Int),
+                TyKind::IntLiteral | TyKind::FloatLiteral => None,
                 // Not a scalar-range shape at all (a symbolic lane included);
                 // the ordinary no-matching-overload diagnostic stands.
-                ty => match scalar_simd_dtype(ty) {
+                _ => match scalar_simd_dtype(ty) {
                     Some(dtype) => {
                         triggered = true;
                         Some(dtype)
@@ -1028,8 +1038,8 @@ impl Checker {
         // `Int(pointer)` is the address conversion (upstream `Pointer.__int__`);
         // a null pointer converts to 0, which is how the libc-facing stdlib
         // tests an optional result.
-        if target == Ty::Int && matches!(arg_ty, Ty::Pointer { .. }) {
-            return Ok(Ty::Int);
+        if target == TyKind::Int && matches!(arg_ty.kind(), TyKind::Pointer { .. }) {
+            return Ok(Ty::int());
         }
         // A concrete value routes through its conversion dunder
         // (`Int(x)` → `x.__int__() -> Int`, `Float64`/`Bool` likewise); the
@@ -1045,7 +1055,7 @@ impl Checker {
             if let Some((_, sig, _)) = self.struct_dunder_signature_for(&arg_ty, dunder, &[])
                 && sig.raises
             {
-                let error = sig.error.as_deref().cloned().unwrap_or(Ty::Error);
+                let error = sig.error.clone().unwrap_or_else(Ty::error);
                 self.record_call_effect(span.clone(), error.clone());
                 self.require_error(format!("call to raising conversion '{target}'"), error)?;
             }
@@ -1055,7 +1065,7 @@ impl Checker {
         // A width-1 SIMD value is a scalar alias (`UInt8`, `Byte`, ...);
         // Mojo's scalar conversions accept it.
         let simd_scalar = is_scalar_simd(&arg_ty);
-        if !(is_numeric(&arg_ty) || arg_ty == Ty::Bool || bounded || simd_scalar) {
+        if !(is_numeric(&arg_ty) || arg_ty == TyKind::Bool || bounded || simd_scalar) {
             return Err(TypeError::TypeMismatch {
                 expected: "a numeric or Bool value".to_string(),
                 found: arg_ty.to_string(),
@@ -1094,10 +1104,10 @@ fn tuple_elements_comparable(elements: &[Ty]) -> bool {
 }
 
 fn tuple_element_comparable(ty: &Ty) -> bool {
-    match ty {
-        Ty::Tuple(nested) => tuple_elements_comparable(nested),
-        Ty::StringLiteral => true,
-        other => is_numeric(other) || has_order_bound(other) || is_scalar_simd(other),
+    match ty.kind() {
+        TyKind::Tuple(nested) => tuple_elements_comparable(nested),
+        TyKind::StringLiteral => true,
+        _ => is_numeric(ty) || has_order_bound(ty) || is_scalar_simd(ty),
     }
 }
 
@@ -1105,9 +1115,9 @@ fn tuple_order_pair_compatible(left: &Ty, right: &Ty) -> bool {
     if common_numeric(left, right).is_some() {
         return true;
     }
-    match (left, right) {
-        (Ty::StringLiteral, Ty::StringLiteral) => true,
-        (Ty::Tuple(left), Ty::Tuple(right)) => tuple_order_compatible(left, right),
+    match (left.kind(), right.kind()) {
+        (TyKind::StringLiteral, TyKind::StringLiteral) => true,
+        (TyKind::Tuple(left), TyKind::Tuple(right)) => tuple_order_compatible(left, right),
         _ => left == right && (has_order_bound(left) || is_scalar_simd(left)),
     }
 }

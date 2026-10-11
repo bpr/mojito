@@ -2,6 +2,7 @@
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
+use mojito_types::types::TyKind;
 
 /// What `infer_method_call` solved about a selected call beyond its
 /// resolution, recorded into the checked call contract.
@@ -92,9 +93,10 @@ impl Checker {
             mojito_checked::checked::CheckedCallContract {
                 target,
                 raises,
-                result_ty: reference_result
-                    .clone()
-                    .map_or_else(|| return_type.clone(), Ty::Ref),
+                result_ty: reference_result.clone().map_or_else(
+                    || return_type.clone(),
+                    |reference| TyKind::Ref(reference).into(),
+                ),
                 result_adapter: resolved.result_adapter,
                 receiver_requires_place: matches!(
                     resolved.self_convention,
@@ -116,8 +118,8 @@ impl Checker {
     /// lowering evaluates the receiver for its effect and calls the static
     /// symbol with the arguments alone.
     fn receiver_is_elided(&self, obj_ty: &Ty, method: &str, target: &str) -> bool {
-        match obj_ty {
-            Ty::Struct(name, _) => self.structs.get(name).is_some_and(|info| {
+        match obj_ty.kind() {
+            TyKind::Struct(name, _) => self.structs.get(name).is_some_and(|info| {
                 info.methods.get(method).is_some_and(|signatures| {
                     // The target spells the overload symbol only when
                     // the name is overloaded (see `lowered_name` above).
@@ -197,7 +199,7 @@ impl Checker {
         } = site;
         let MethodCallArguments { args, kwargs, .. } = call;
         let lends_receiver = !resolved.consumes_receiver
-            && matches!(return_type, Ty::Struct(..))
+            && matches!(return_type.kind(), TyKind::Struct(..))
             && self.type_carries_loans(return_type)
             && resolved
                 .declared_return
@@ -264,7 +266,7 @@ fn checked_call_arguments(
                 .param_types
                 .get(index)
                 .cloned()
-                .unwrap_or(Ty::Error),
+                .unwrap_or_else(Ty::error),
             requires_place: matches!(
                 resolved.conventions.get(index).copied().flatten(),
                 Some(ArgConvention::Mut | ArgConvention::Ref)
@@ -276,9 +278,9 @@ fn checked_call_arguments(
         arguments.extend(resolved.positional_overflow.iter().enumerate().map(
             |(pack_index, position)| CheckedCallArgument {
                 source: CheckedCallArgumentSource::Positional(*position),
-                parameter_ty: match element {
-                    Ty::RuntimePack(elements) => {
-                        elements.get(pack_index).cloned().unwrap_or(Ty::Error)
+                parameter_ty: match element.kind() {
+                    TyKind::RuntimePack(elements) => {
+                        elements.get(pack_index).cloned().unwrap_or_else(Ty::error)
                     }
                     _ => element.clone(),
                 },

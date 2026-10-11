@@ -8,6 +8,7 @@
 use super::{Const, MirInstr, MirIntrinsicSubscript, MirProgram, MirTerm, Proj, UseMode};
 use mojito_common::token::Span;
 use mojito_types::types::Ty;
+use mojito_types::types::TyKind;
 use std::collections::BTreeMap;
 use std::fmt;
 
@@ -454,36 +455,36 @@ pub const fn constant_spelling(constant: &Const) -> &'static str {
     }
 }
 
-pub const fn type_spelling(ty: &Ty) -> &'static str {
-    match ty {
-        Ty::Int => "Int",
-        Ty::UInt => "UInt",
-        Ty::Bool => "Bool",
-        Ty::StringLiteral => "StringLiteral",
-        Ty::Float64 => "Float64",
-        Ty::None => "None",
-        Ty::Never => "Never",
-        Ty::IntLiteral => "IntLiteral",
-        Ty::FloatLiteral => "FloatLiteral",
-        Ty::Infer => "Infer",
-        Ty::Dtype => "DType",
-        Ty::Func(_) => "func",
-        Ty::GenericFunc(_) => "generic_func",
-        Ty::Overload(_) => "overload",
-        Ty::Param { .. } => "param",
-        Ty::Assoc { .. } => "assoc",
-        Ty::Dependent(_) => "dependent_parameter",
-        Ty::SelfType => "Self",
-        Ty::Struct(_, _) => "struct_type",
-        Ty::Simd { .. } => "simd",
-        Ty::Error => "Error",
-        Ty::ComptimeList(_) => "comptime_list",
-        Ty::Tuple(_) => "tuple",
-        Ty::RuntimePack(_) => "runtime_pack",
-        Ty::VariadicPack(_) => "variadic_pack",
-        Ty::Variant(_) => "variant",
-        Ty::Pointer { .. } => "pointer",
-        Ty::Ref(_) => "ref",
+pub fn type_spelling(ty: &Ty) -> &'static str {
+    match ty.kind() {
+        TyKind::Int => "Int",
+        TyKind::UInt => "UInt",
+        TyKind::Bool => "Bool",
+        TyKind::StringLiteral => "StringLiteral",
+        TyKind::Float64 => "Float64",
+        TyKind::None => "None",
+        TyKind::Never => "Never",
+        TyKind::IntLiteral => "IntLiteral",
+        TyKind::FloatLiteral => "FloatLiteral",
+        TyKind::Infer => "Infer",
+        TyKind::Dtype => "DType",
+        TyKind::Func(_) => "func",
+        TyKind::GenericFunc(_) => "generic_func",
+        TyKind::Overload(_) => "overload",
+        TyKind::Param { .. } => "param",
+        TyKind::Assoc { .. } => "assoc",
+        TyKind::Dependent(_) => "dependent_parameter",
+        TyKind::SelfType => "Self",
+        TyKind::Struct(_, _) => "struct_type",
+        TyKind::Simd { .. } => "simd",
+        TyKind::Error => "Error",
+        TyKind::ComptimeList(_) => "comptime_list",
+        TyKind::Tuple(_) => "tuple",
+        TyKind::RuntimePack(_) => "runtime_pack",
+        TyKind::VariadicPack(_) => "variadic_pack",
+        TyKind::Variant(_) => "variant",
+        TyKind::Pointer { .. } => "pointer",
+        TyKind::Ref(_) => "ref",
     }
 }
 

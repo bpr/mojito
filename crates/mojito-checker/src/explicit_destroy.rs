@@ -7,6 +7,7 @@ use mojito_checked::fact_store::FactSet;
 use mojito_common::error::TypeError;
 use mojito_common::token::SourceSpan;
 use mojito_types::types::Ty;
+use mojito_types::types::TyKind;
 use std::collections::HashMap;
 use std::collections::HashSet;
 
@@ -764,8 +765,8 @@ fn type_at_path(
 }
 
 fn ty_explicit_name(ty: &Ty, types: &DeclarationTable<ExplicitDestroyInfo>) -> Option<String> {
-    match ty {
-        Ty::Struct(name, _) if types.contains_key(name) => Some(name.clone()),
+    match ty.kind() {
+        TyKind::Struct(name, _) if types.contains_key(name) => Some(name.clone()),
         _ => None,
     }
 }

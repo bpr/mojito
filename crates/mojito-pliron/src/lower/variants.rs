@@ -3,6 +3,7 @@
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
+use mojito_types::types::TyKind;
 use mojito_types::types::VariantIndex;
 
 impl FnLowering<'_> {
@@ -56,9 +57,9 @@ impl FnLowering<'_> {
             Some(ty) => ty,
             // A runtime literal-typed value converts at its storage kind
             // (its constant was range-checked when it entered storage).
-            None => match self.func.reg_types.get(&arg.0) {
-                Some(Ty::FloatLiteral) => ScalarTy::Float64,
-                Some(Ty::IntLiteral) => ScalarTy::Int,
+            None => match self.func.reg_types.get(&arg.0).map(Ty::kind) {
+                Some(TyKind::FloatLiteral) => ScalarTy::Float64,
+                Some(TyKind::IntLiteral) => ScalarTy::Int,
                 _ => return Err(self.unsupported_reg("untyped conversion operand".into(), dest)),
             },
         };
@@ -193,7 +194,7 @@ impl FnLowering<'_> {
         self.copy_reg_into(ctx, payload, selected, value, dest)?;
         self.reg_values.insert(dest.0, storage);
         if self.needs_drop(selected) {
-            self.mark_owned_temp(dest, Ty::Variant(alternatives.to_vec()))?;
+            self.mark_owned_temp(dest, TyKind::Variant(alternatives.to_vec()).into())?;
         }
         Ok(())
     }
@@ -244,15 +245,16 @@ impl FnLowering<'_> {
         variant: Reg,
         anchor: Reg,
     ) -> Result<(Value, Vec<Ty>, mojito_native::native::layout::VariantLayout), PlironError> {
-        let Some(Ty::Variant(alternatives)) = self.func.reg_types.get(&variant.0).cloned() else {
+        let register_ty = self.func.reg_types.get(&variant.0).cloned();
+        let Some(TyKind::Variant(alternatives)) = register_ty.as_ref().map(Ty::kind) else {
             return Err(self.unsupported_reg("Variant operand type".into(), anchor));
         };
         let layout = self
             .layout
-            .variant_layout(&alternatives)
+            .variant_layout(alternatives)
             .map_err(|error| self.unsupported_reg(format!("Variant layout ({error})"), anchor))?;
         let ptr = self.reg_ptr(ctx, variant)?;
-        Ok((ptr, alternatives, layout))
+        Ok((ptr, alternatives.clone(), layout))
     }
 
     pub(super) fn lower_variant_is(
@@ -367,7 +369,7 @@ impl FnLowering<'_> {
         value: Reg,
     ) -> Result<(), PlironError> {
         let (address, ty) = self.place_address(ctx, place, dest)?;
-        let Ty::Variant(alternatives) = ty else {
+        let TyKind::Variant(alternatives) = ty.kind() else {
             return Err(self.unsupported_reg("Variant.set place type".into(), dest));
         };
         let Some(selected) = alternatives.get(index) else {
@@ -375,9 +377,9 @@ impl FnLowering<'_> {
         };
         let layout = self
             .layout
-            .variant_layout(&alternatives)
+            .variant_layout(alternatives)
             .map_err(|error| self.unsupported_reg(format!("Variant layout ({error})"), dest))?;
-        self.emit_drop_variant_payload(ctx, address, &alternatives, layout.payload_offset)?;
+        self.emit_drop_variant_payload(ctx, address, alternatives, layout.payload_offset)?;
         let tag = self.tag_constant(ctx, index as u32);
         let store = StoreOp::new(ctx, tag, address);
         self.append(ctx, store.get_operation(), Some(dest));
@@ -399,7 +401,7 @@ impl FnLowering<'_> {
         checked: bool,
     ) -> Result<(), PlironError> {
         let (address, ty) = self.place_address(ctx, place, dest)?;
-        let Ty::Variant(alternatives) = ty else {
+        let TyKind::Variant(alternatives) = ty.kind() else {
             return Err(self.unsupported_reg("Variant.replace place type".into(), dest));
         };
         let Some(input) = alternatives.get(input_index).cloned() else {
@@ -413,7 +415,7 @@ impl FnLowering<'_> {
         }
         let layout = self
             .layout
-            .variant_layout(&alternatives)
+            .variant_layout(alternatives)
             .map_err(|error| self.unsupported_reg(format!("Variant layout ({error})"), dest))?;
         let payload = self.offset_address(ctx, address, layout.payload_offset);
         match lower_ty(self.name, &output, &self.layout, self.reg_span(dest))? {

@@ -7,6 +7,7 @@
 //! class.
 
 use mojito::mir::verify::verify;
+use mojito::types::TyKind;
 use mojito::{check_program, parse};
 use std::path::Path;
 
@@ -37,7 +38,7 @@ fn function(blocks: Vec<MirBlock>, n_regs: u32, reg_types: &[(u32, Ty)]) -> MirF
         ref_params: Vec::new(),
         returns_reference: false,
         var_tys: HashMap::new(),
-        ret_ty: Some(Ty::Int),
+        ret_ty: Some(Ty::int()),
         raises: false,
         error_ty: None,
         spans: SpanTable::default(),
@@ -77,18 +78,19 @@ fn lower_source(source: &str) -> MirProgram {
 }
 
 fn reference_ty(referent: Ty, mutability: mojito::Mutability) -> Ty {
-    Ty::Ref(mojito::RefTy {
-        referent: Box::new(referent),
+    TyKind::Ref(mojito::RefTy {
+        referent,
         origin: mojito::Origin::Untracked {
             mutable: !matches!(mutability, mojito::Mutability::Immutable),
         },
         mutability,
     })
+    .into()
 }
 
 fn tracked_pointer_ty(element: Ty, mutable: bool) -> Ty {
-    Ty::Pointer {
-        element: Box::new(element),
+    TyKind::Pointer {
+        element,
         origin: mojito::PointerOrigin::Place {
             place: mojito::OriginPlace {
                 root: mojito::OwnerId(0),
@@ -97,6 +99,7 @@ fn tracked_pointer_ty(element: Ty, mutable: bool) -> Ty {
             mutable,
         },
     }
+    .into()
 }
 
 fn first_index_call(program: &mut MirProgram) -> &mut mojito::mir::MirSubscriptCall {
@@ -180,7 +183,7 @@ fn verifier_rejects_corrupt_projected_reference_handle_metadata() {
         .1
         .var_tys
         .iter()
-        .find_map(|(slot, ty)| (!matches!(ty, Ty::Ref(_))).then_some(*slot))
+        .find_map(|(slot, ty)| (!matches!(ty.kind(), TyKind::Ref(_))).then_some(*slot))
         .expect("ordinary local slot");
     projected_reference_loan_place(&mut non_reference_through).through = Some(non_reference_slot);
     expect_finding(
@@ -189,7 +192,7 @@ fn verifier_rejects_corrupt_projected_reference_handle_metadata() {
     );
 
     let mut wrong_root_type = lower_source(source);
-    projected_reference_loan_place(&mut wrong_root_type).root_ty = Some(Ty::Int);
+    projected_reference_loan_place(&mut wrong_root_type).root_ty = Some(Ty::int());
     expect_finding(&wrong_root_type, "place root slot");
 
     let mut wrong_field_type = lower_source(source);
@@ -199,14 +202,14 @@ fn verifier_rejects_corrupt_projected_reference_handle_metadata() {
         .iter()
         .position(|projection| matches!(projection, Proj::Field(name) if name == "value"))
         .expect("value projection");
-    place.projection_tys[field] = Ty::StringLiteral;
+    place.projection_tys[field] = Ty::string_literal();
     expect_finding(&wrong_field_type, "field 'value'");
     expect_finding(&wrong_field_type, "typed StringLiteral, declared Int");
 }
 
 #[test]
 fn verifier_checks_make_ref_capability_types() {
-    let place = MirPlace::root(0, Some(Ty::Int));
+    let place = MirPlace::root(0, Some(Ty::int()));
 
     let non_capability = function(
         vec![block(
@@ -217,7 +220,7 @@ fn verifier_checks_make_ref_capability_types() {
             MirTerm::Return(None),
         )],
         1,
-        &[(0, Ty::Int)],
+        &[(0, Ty::int())],
     );
     expect_finding(
         &program(non_capability),
@@ -235,7 +238,7 @@ fn verifier_checks_make_ref_capability_types() {
         1,
         &[(
             0,
-            reference_ty(Ty::StringLiteral, mojito::Mutability::Mutable),
+            reference_ty(Ty::string_literal(), mojito::Mutability::Mutable),
         )],
     );
     expect_finding(
@@ -254,10 +257,11 @@ fn verifier_checks_make_ref_capability_types() {
         1,
         &[(
             0,
-            Ty::Pointer {
-                element: Box::new(Ty::Int),
+            TyKind::Pointer {
+                element: Ty::int(),
                 origin: mojito::PointerOrigin::Untracked { mutable: true },
-            },
+            }
+            .into(),
         )],
     );
     expect_finding(
@@ -274,7 +278,7 @@ fn verifier_checks_make_ref_capability_types() {
             MirTerm::Return(None),
         )],
         1,
-        &[(0, tracked_pointer_ty(Ty::Int, true))],
+        &[(0, tracked_pointer_ty(Ty::int(), true))],
     );
     assert_eq!(verify(&program(tracked_pointer)), Vec::<String>::new());
 }
@@ -285,11 +289,13 @@ fn verifier_accepts_forwarding_make_ref_through_stored_reference() {
     // interpretation: the destination is typed as the stored handle itself
     // (`ref s = self.src` reborrows), not as a borrow of the field slot.
     let stored_ref_place = |mutability: mojito::Mutability| {
-        let mut place =
-            MirPlace::root(0, Some(Ty::Struct("Holder".to_string(), Vec::new().into())));
+        let mut place = MirPlace::root(
+            0,
+            Some(TyKind::Struct("Holder".to_string(), Vec::new()).into()),
+        );
         place.project(
             Proj::Field("src".to_string()),
-            reference_ty(Ty::Int, mutability),
+            reference_ty(Ty::int(), mutability),
         );
         place
     };
@@ -303,7 +309,7 @@ fn verifier_accepts_forwarding_make_ref_through_stored_reference() {
             MirTerm::Return(None),
         )],
         1,
-        &[(0, reference_ty(Ty::Int, mojito::Mutability::Immutable))],
+        &[(0, reference_ty(Ty::int(), mojito::Mutability::Immutable))],
     );
     assert_eq!(verify(&program(forwarded)), Vec::<String>::new());
 
@@ -318,7 +324,7 @@ fn verifier_accepts_forwarding_make_ref_through_stored_reference() {
         1,
         &[(
             0,
-            reference_ty(Ty::StringLiteral, mojito::Mutability::Immutable),
+            reference_ty(Ty::string_literal(), mojito::Mutability::Immutable),
         )],
     );
     expect_finding(
@@ -335,7 +341,7 @@ fn verifier_accepts_forwarding_make_ref_through_stored_reference() {
             MirTerm::Return(None),
         )],
         1,
-        &[(0, reference_ty(Ty::Int, mojito::Mutability::Mutable))],
+        &[(0, reference_ty(Ty::int(), mojito::Mutability::Mutable))],
     );
     expect_finding(
         &program(stolen_mutability),
@@ -354,7 +360,7 @@ fn verifier_checks_read_and_write_reference_capabilities() {
             MirTerm::Return(None),
         )],
         2,
-        &[(0, Ty::Int), (1, Ty::Int)],
+        &[(0, Ty::int()), (1, Ty::int())],
     );
     expect_finding(
         &program(read_non_capability),
@@ -371,8 +377,8 @@ fn verifier_checks_read_and_write_reference_capabilities() {
         )],
         2,
         &[
-            (0, Ty::StringLiteral),
-            (1, reference_ty(Ty::Int, mojito::Mutability::Immutable)),
+            (0, Ty::string_literal()),
+            (1, reference_ty(Ty::int(), mojito::Mutability::Immutable)),
         ],
     );
     expect_finding(
@@ -390,8 +396,8 @@ fn verifier_checks_read_and_write_reference_capabilities() {
         )],
         2,
         &[
-            (0, reference_ty(Ty::Int, mojito::Mutability::Immutable)),
-            (1, Ty::Int),
+            (0, reference_ty(Ty::int(), mojito::Mutability::Immutable)),
+            (1, Ty::int()),
         ],
     );
     expect_finding(
@@ -408,7 +414,7 @@ fn verifier_checks_read_and_write_reference_capabilities() {
             MirTerm::Return(None),
         )],
         2,
-        &[(0, tracked_pointer_ty(Ty::Int, false)), (1, Ty::Int)],
+        &[(0, tracked_pointer_ty(Ty::int(), false)), (1, Ty::int())],
     );
     expect_finding(&program(write_immutable_pointer), "is immutable");
 
@@ -422,8 +428,8 @@ fn verifier_checks_read_and_write_reference_capabilities() {
         )],
         2,
         &[
-            (0, tracked_pointer_ty(Ty::Int, true)),
-            (1, Ty::StringLiteral),
+            (0, tracked_pointer_ty(Ty::int(), true)),
+            (1, Ty::string_literal()),
         ],
     );
     expect_finding(
@@ -440,15 +446,15 @@ fn verifier_checks_read_and_write_reference_capabilities() {
             MirTerm::Return(None),
         )],
         2,
-        &[(0, Ty::Int), (1, tracked_pointer_ty(Ty::Int, false))],
+        &[(0, Ty::int()), (1, tracked_pointer_ty(Ty::int(), false))],
     );
     assert_eq!(verify(&program(read_pointer)), Vec::<String>::new());
 }
 
 #[test]
 fn verifier_checks_store_ref_source_type_and_permission() {
-    let mutable_int = reference_ty(Ty::Int, mojito::Mutability::Mutable);
-    let immutable_int = reference_ty(Ty::Int, mojito::Mutability::Immutable);
+    let mutable_int = reference_ty(Ty::int(), mojito::Mutability::Mutable);
+    let immutable_int = reference_ty(Ty::int(), mojito::Mutability::Immutable);
 
     let store = |source: Ty| {
         function(
@@ -465,12 +471,12 @@ fn verifier_checks_store_ref_source_type_and_permission() {
     };
 
     expect_finding(
-        &program(store(Ty::Int)),
+        &program(store(Ty::int())),
         "StoreRef source has non-reference type Int",
     );
     expect_finding(
         &program(store(reference_ty(
-            Ty::StringLiteral,
+            Ty::string_literal(),
             mojito::Mutability::Mutable,
         ))),
         "StoreRef source referent StringLiteral is incompatible with storage referent Int",
@@ -489,7 +495,7 @@ fn value_parameter(name: &str, ty: Ty) -> ParamDecl {
     ParamDecl::Value {
         id: mojito::param_expr::ParamId::new(&format!("$test:{name}"), 0),
         name: name.to_string(),
-        ty: Box::new(ty),
+        ty,
         default: None,
         callable_default: None,
         infer_only: false,
@@ -499,13 +505,13 @@ fn value_parameter(name: &str, ty: Ty) -> ParamDecl {
 }
 
 fn generic_callable(decls: Vec<ParamDecl>) -> Ty {
-    Ty::GenericFunc(Box::new(GenericFuncTy {
+    TyKind::GenericFunc(Box::new(GenericFuncTy {
         decls,
         func: FuncTy {
             environment: mojito::CallableEnvironment::Thin,
             params: Vec::new(),
             names: Vec::new(),
-            ret: Box::new(Ty::Int),
+            ret: Ty::int(),
             required: Vec::new(),
             variadic: None,
             kw_variadic: None,
@@ -519,17 +525,18 @@ fn generic_callable(decls: Vec<ParamDecl>) -> Ty {
             transfers: TransferSet::default(),
         },
     }))
+    .into()
 }
 
 fn dependent_generic_callable(index: &str) -> Ty {
-    Ty::GenericFunc(Box::new(GenericFuncTy {
-        decls: vec![value_parameter("index", Ty::Int)],
+    TyKind::GenericFunc(Box::new(GenericFuncTy {
+        decls: vec![value_parameter("index", Ty::int())],
         func: FuncTy {
             environment: mojito::CallableEnvironment::Thin,
             params: vec![DependentType::resolve(
                 ParamContext::detached()
                     .select(
-                        vec![Ty::Int, Ty::StringLiteral],
+                        vec![Ty::int(), Ty::string_literal()],
                         &ParamContext::detached().decl_ref(
                             ParamId::new(&format!("$test:{index}"), 0),
                             index,
@@ -539,7 +546,7 @@ fn dependent_generic_callable(index: &str) -> Ty {
                     .expect("an Int index selects"),
             )],
             names: vec!["element".to_string()],
-            ret: Box::new(Ty::None),
+            ret: Ty::none(),
             required: vec![true],
             variadic: None,
             kw_variadic: None,
@@ -553,14 +560,15 @@ fn dependent_generic_callable(index: &str) -> Ty {
             transfers: TransferSet::default(),
         },
     }))
+    .into()
 }
 
 fn concrete_callable(parameter: Ty) -> Ty {
-    Ty::Func(Box::new(FuncTy {
+    TyKind::Func(Box::new(FuncTy {
         environment: mojito::CallableEnvironment::Thin,
         params: vec![parameter],
         names: vec!["element".to_string()],
-        ret: Box::new(Ty::None),
+        ret: Ty::none(),
         required: vec![true],
         variadic: None,
         kw_variadic: None,
@@ -573,6 +581,7 @@ fn concrete_callable(parameter: Ty) -> Ty {
         ref_return: None,
         transfers: TransferSet::default(),
     }))
+    .into()
 }
 
 #[test]
@@ -608,7 +617,7 @@ fn verifier_rejects_a_subscript_receiver_place_with_the_wrong_type() {
                     dest: Reg(2),
                     base: Reg(0),
                     index: Reg(1),
-                    base_place: Some(Box::new(MirPlace::root(0, Some(Ty::StringLiteral)))),
+                    base_place: Some(Box::new(MirPlace::root(0, Some(Ty::string_literal())))),
                     index_place: None,
                     call: None,
                     intrinsic: Some(MirIntrinsicSubscript::Pointer),
@@ -617,7 +626,7 @@ fn verifier_rejects_a_subscript_receiver_place_with_the_wrong_type() {
             MirTerm::Return(Some(Reg(2))),
         )],
         3,
-        &[(0, Ty::Int), (1, Ty::Int), (2, Ty::Int)],
+        &[(0, Ty::int()), (1, Ty::int()), (2, Ty::int())],
     );
     expect_finding(&program(f), "subscript receiver place type StringLiteral");
 }
@@ -650,7 +659,7 @@ fn verifier_rejects_corrupt_subscript_argument_contracts() {
     );
 
     let mut wrong_type = lower_source(SOURCE);
-    first_index_call(&mut wrong_type).arguments[0].parameter_ty = Ty::StringLiteral;
+    first_index_call(&mut wrong_type).arguments[0].parameter_ty = Ty::string_literal();
     expect_finding(&wrong_type, "subscript source has type Int");
     expect_finding(
         &wrong_type,
@@ -658,7 +667,7 @@ fn verifier_rejects_corrupt_subscript_argument_contracts() {
     );
 
     let mut wrong_result = lower_source(SOURCE);
-    first_index_call(&mut wrong_result).result_ty = Ty::StringLiteral;
+    first_index_call(&mut wrong_result).result_ty = Ty::string_literal();
     expect_finding(&wrong_result, "subscript result has type Int");
     expect_finding(
         &wrong_result,
@@ -753,7 +762,7 @@ fn verifier_rejects_missing_conflicting_and_mistyped_intrinsic_subscripts() {
                 MirTerm::Return(Some(Reg(1))),
             )],
             2,
-            &[(0, Ty::StringLiteral), (1, Ty::StringLiteral)],
+            &[(0, Ty::string_literal()), (1, Ty::string_literal())],
         ))
     };
     let missing = slice(None, None);
@@ -809,11 +818,11 @@ fn verifier_rejects_cross_receiver_and_fabricated_reference_subscript_contracts(
     expect_finding(&wrong_family, "is not in the __getitem__ method family");
 
     let mut wrong_referent = lower_source(source);
-    *first_index_call(&mut wrong_referent)
+    first_index_call(&mut wrong_referent)
         .reference_result
         .as_mut()
         .expect("reference-returning contract")
-        .referent = Ty::StringLiteral;
+        .referent = Ty::string_literal();
     expect_finding(
         &wrong_referent,
         "reference-result referent StringLiteral does not match 'Box.__getitem__' declaration Item",
@@ -861,8 +870,11 @@ fn verifier_classifies_every_raising_subscript_instruction() {
 
 #[test]
 fn verifier_rejects_an_invalid_constant_tuple_projection() {
-    let mut place = MirPlace::root(0, Some(Ty::Tuple(vec![Ty::Int, Ty::StringLiteral])));
-    place.project(Proj::ConstIndex(2), Ty::Int);
+    let mut place = MirPlace::root(
+        0,
+        Some(TyKind::Tuple(vec![Ty::int(), Ty::string_literal()]).into()),
+    );
+    place.project(Proj::ConstIndex(2), Ty::int());
     let f = function(
         vec![block(
             vec![MirInstr::LoadPlace {
@@ -872,20 +884,20 @@ fn verifier_rejects_an_invalid_constant_tuple_projection() {
             MirTerm::Return(None),
         )],
         1,
-        &[(0, Ty::Int)],
+        &[(0, Ty::int())],
     );
     expect_finding(&program(f), "projects Tuple element 2 out of 2");
 }
 
 #[test]
 fn verifier_rejects_malformed_dynamic_place_projections() {
-    let pointer = Ty::Pointer {
-        element: Box::new(Ty::Int),
+    let pointer = Ty::new(TyKind::Pointer {
+        element: Ty::int(),
         origin: mojito::PointerOrigin::Untracked { mutable: true },
-    };
+    });
 
     let mut wrong_element = MirPlace::root(0, Some(pointer.clone()));
-    wrong_element.project(Proj::Index(Reg(0)), Ty::StringLiteral);
+    wrong_element.project(Proj::Index(Reg(0)), Ty::string_literal());
     let wrong_element = function(
         vec![block(
             vec![MirInstr::LoadPlace {
@@ -895,7 +907,7 @@ fn verifier_rejects_malformed_dynamic_place_projections() {
             MirTerm::Return(None),
         )],
         2,
-        &[(0, Ty::Int), (1, Ty::StringLiteral)],
+        &[(0, Ty::int()), (1, Ty::string_literal())],
     );
     expect_finding(
         &program(wrong_element),
@@ -903,7 +915,7 @@ fn verifier_rejects_malformed_dynamic_place_projections() {
     );
 
     let mut wrong_index = MirPlace::root(0, Some(pointer));
-    wrong_index.project(Proj::Index(Reg(0)), Ty::Int);
+    wrong_index.project(Proj::Index(Reg(0)), Ty::int());
     let wrong_index = function(
         vec![block(
             vec![MirInstr::LoadPlace {
@@ -913,12 +925,12 @@ fn verifier_rejects_malformed_dynamic_place_projections() {
             MirTerm::Return(None),
         )],
         2,
-        &[(0, Ty::StringLiteral), (1, Ty::Int)],
+        &[(0, Ty::string_literal()), (1, Ty::int())],
     );
     expect_finding(&program(wrong_index), "has non-Indexer type StringLiteral");
 
-    let mut non_indexed = MirPlace::root(0, Some(Ty::Int));
-    non_indexed.project(Proj::Index(Reg(0)), Ty::Int);
+    let mut non_indexed = MirPlace::root(0, Some(Ty::int()));
+    non_indexed.project(Proj::Index(Reg(0)), Ty::int());
     let non_indexed = function(
         vec![block(
             vec![MirInstr::LoadPlace {
@@ -928,7 +940,7 @@ fn verifier_rejects_malformed_dynamic_place_projections() {
             MirTerm::Return(None),
         )],
         2,
-        &[(0, Ty::Int), (1, Ty::Int)],
+        &[(0, Ty::int()), (1, Ty::int())],
     );
     expect_finding(
         &program(non_indexed),
@@ -949,7 +961,7 @@ fn verifier_rejects_malformed_interior_loan_metadata() {
             MirTerm::Return(None),
         )],
         1,
-        &[(0, Ty::None)],
+        &[(0, Ty::none())],
     );
     expect_finding(&program(empty), "loan generation has no owner loans");
 
@@ -958,7 +970,7 @@ fn verifier_rejects_malformed_interior_loan_metadata() {
             vec![MirInstr::EstablishLoans {
                 reference: 0,
                 loans: vec![MirLoan {
-                    place: MirPlace::root(0, Some(Ty::Int)),
+                    place: MirPlace::root(0, Some(Ty::int())),
                     mutable: true,
                     interior: Some(MirInteriorOrigin {
                         root: 0,
@@ -972,11 +984,11 @@ fn verifier_rejects_malformed_interior_loan_metadata() {
             MirTerm::Return(None),
         )],
         1,
-        &[(0, Ty::None)],
+        &[(0, Ty::none())],
     );
     expect_finding(&program(malformed), "has no interior segment");
 
-    let immutable = reference_ty(Ty::Int, mojito::Mutability::Immutable);
+    let immutable = reference_ty(Ty::int(), mojito::Mutability::Immutable);
     let mut escalated = function(
         vec![block(
             vec![MirInstr::EstablishLoans {
@@ -993,7 +1005,7 @@ fn verifier_rejects_malformed_interior_loan_metadata() {
             MirTerm::Return(None),
         )],
         1,
-        &[(0, Ty::None)],
+        &[(0, Ty::none())],
     );
     escalated.var_tys.insert(0, immutable);
     expect_finding(
@@ -1006,7 +1018,7 @@ fn verifier_rejects_malformed_interior_loan_metadata() {
             vec![MirInstr::EstablishLoans {
                 reference: 0,
                 loans: vec![MirLoan {
-                    place: MirPlace::root(0, Some(Ty::Int)),
+                    place: MirPlace::root(0, Some(Ty::int())),
                     mutable: false,
                     interior: Some(MirInteriorOrigin {
                         root: 1,
@@ -1020,7 +1032,7 @@ fn verifier_rejects_malformed_interior_loan_metadata() {
             MirTerm::Return(None),
         )],
         1,
-        &[(0, Ty::None)],
+        &[(0, Ty::none())],
     );
     expect_finding(
         &program(mismatched_root),
@@ -1041,7 +1053,7 @@ fn verifier_rejects_malformed_interior_loan_metadata() {
             MirTerm::Return(None),
         )],
         1,
-        &[(0, Ty::None)],
+        &[(0, Ty::none())],
     );
     expect_finding(
         &program(unnamed_refresh),
@@ -1061,7 +1073,7 @@ fn verifier_rejects_an_undeclared_lifted_closure_target() {
             MirTerm::Return(None),
         )],
         1,
-        &[(0, Ty::Int)],
+        &[(0, Ty::int())],
     );
     expect_finding(&program(f), "undeclared lifted function 'missing$nested'");
 }
@@ -1108,7 +1120,7 @@ fn verifier_rejects_non_bool_branch_conditions() {
             block(Vec::new(), MirTerm::Return(None)),
         ],
         1,
-        &[(0, Ty::Int)],
+        &[(0, Ty::int())],
     );
     expect_finding(&program(f), "branch condition has type Int");
 }
@@ -1124,7 +1136,7 @@ fn verifier_rejects_return_type_mismatches() {
             MirTerm::Return(Some(Reg(0))),
         )],
         1,
-        &[(0, Ty::StringLiteral)],
+        &[(0, Ty::string_literal())],
     );
     expect_finding(
         &program(f),
@@ -1136,9 +1148,11 @@ fn verifier_rejects_return_type_mismatches() {
 fn verifier_rejects_runtime_pack_types_in_function_body_slots() {
     let mut f = function(vec![block(Vec::new(), MirTerm::Return(None))], 0, &[]);
     f.n_params = 1;
-    f.param_types = vec![Ty::RuntimePack(vec![Ty::Int, Ty::StringLiteral])];
-    f.var_tys
-        .insert(0, Ty::RuntimePack(vec![Ty::Int, Ty::StringLiteral]));
+    f.param_types = vec![TyKind::RuntimePack(vec![Ty::int(), Ty::string_literal()]).into()];
+    f.var_tys.insert(
+        0,
+        TyKind::RuntimePack(vec![Ty::int(), Ty::string_literal()]).into(),
+    );
     expect_finding(&program(f), "retains ABI-only RuntimePack type");
 }
 
@@ -1156,7 +1170,7 @@ fn verifier_rejects_unprotected_raises_in_nonraising_functions() {
             MirTerm::Return(None),
         )],
         1,
-        &[(0, Ty::StringLiteral)],
+        &[(0, Ty::string_literal())],
     );
     expect_finding(&program(f), "unprotected raise in nonraising function");
 }
@@ -1189,13 +1203,13 @@ fn verifier_rejects_mismatched_declared_call_arguments() {
             MirTerm::Return(None),
         )],
         2,
-        &[(0, Ty::StringLiteral), (1, Ty::Int)],
+        &[(0, Ty::string_literal()), (1, Ty::int())],
     );
     let mut prog = program(f);
     prog.declarations.functions.push(MirFunctionDeclaration {
         lowered_name: "callee".to_string(),
         param_names: vec!["x".to_string()],
-        param_types: vec![Ty::Int],
+        param_types: vec![Ty::int()],
         defaults: vec![None],
         required: vec![true],
         variadic: None,
@@ -1210,7 +1224,7 @@ fn verifier_rejects_mismatched_declared_call_arguments() {
         has_receiver: false,
         receiver_convention: None,
         param_conventions: vec![None],
-        ret_ty: Ty::Int,
+        ret_ty: Ty::int(),
         returns_reference: false,
         raises: false,
         error_ty: None,
@@ -1231,7 +1245,7 @@ fn verifier_rejects_mismatched_declared_call_arguments() {
 #[test]
 fn verifier_rejects_malformed_direct_compile_time_arguments() {
     use mojito::mir::MirFunctionDeclaration;
-    let declaration = value_parameter("n", Ty::Int);
+    let declaration = value_parameter("n", Ty::int());
     let f = function(
         vec![block(
             vec![MirInstr::Call {
@@ -1255,7 +1269,7 @@ fn verifier_rejects_malformed_direct_compile_time_arguments() {
             MirTerm::Return(None),
         )],
         2,
-        &[(0, Ty::StringLiteral), (1, Ty::Int)],
+        &[(0, Ty::string_literal()), (1, Ty::int())],
     );
     let mut prog = program(f);
     prog.declarations.functions.push(MirFunctionDeclaration {
@@ -1276,7 +1290,7 @@ fn verifier_rejects_malformed_direct_compile_time_arguments() {
         has_receiver: false,
         receiver_convention: None,
         param_conventions: Vec::new(),
-        ret_ty: Ty::Int,
+        ret_ty: Ty::int(),
         returns_reference: false,
         raises: false,
         error_ty: None,
@@ -1300,7 +1314,7 @@ fn verifier_rejects_malformed_direct_compile_time_arguments() {
 
 #[test]
 fn verifier_rejects_malformed_indirect_compile_time_arguments() {
-    let declarations = vec![value_parameter("n", Ty::Int)];
+    let declarations = vec![value_parameter("n", Ty::int())];
     let callable = generic_callable(declarations.clone());
     let f = function(
         vec![block(
@@ -1328,7 +1342,7 @@ fn verifier_rejects_malformed_indirect_compile_time_arguments() {
             MirTerm::Return(None),
         )],
         3,
-        &[(0, callable), (1, Ty::StringLiteral), (2, Ty::Int)],
+        &[(0, callable), (1, Ty::string_literal()), (2, Ty::int())],
     );
     let mut prog = program(f);
     expect_finding(&prog, "register type StringLiteral, declared Int");
@@ -1351,7 +1365,7 @@ fn verifier_rejects_malformed_indirect_compile_time_arguments() {
 
 #[test]
 fn verifier_substitutes_retained_dependent_callable_arguments() {
-    let declarations = vec![value_parameter("index", Ty::Int)];
+    let declarations = vec![value_parameter("index", Ty::int())];
     let f = function(
         vec![block(
             vec![MirInstr::CallIndirect {
@@ -1371,7 +1385,7 @@ fn verifier_substitutes_retained_dependent_callable_arguments() {
                     expr: None,
                 }],
                 param_decls: declarations,
-                instantiated_contract: Some(Box::new(concrete_callable(Ty::Int))),
+                instantiated_contract: Some(concrete_callable(Ty::int())),
                 instantiated_args: vec![TyArg::Val(CtValue::Int(0))],
                 spread: None,
             }],
@@ -1380,9 +1394,9 @@ fn verifier_substitutes_retained_dependent_callable_arguments() {
         4,
         &[
             (0, dependent_generic_callable("index")),
-            (1, Ty::Int),
-            (2, Ty::Int),
-            (3, Ty::None),
+            (1, Ty::int()),
+            (2, Ty::int()),
+            (3, Ty::none()),
         ],
     );
     let prog = program(f);
@@ -1391,7 +1405,7 @@ fn verifier_substitutes_retained_dependent_callable_arguments() {
 
 #[test]
 fn verifier_rejects_corrupt_or_unbound_dependent_callable_indices() {
-    let declarations = vec![value_parameter("index", Ty::Int)];
+    let declarations = vec![value_parameter("index", Ty::int())];
     let f = function(
         vec![block(
             vec![MirInstr::CallIndirect {
@@ -1411,7 +1425,7 @@ fn verifier_rejects_corrupt_or_unbound_dependent_callable_indices() {
                     expr: None,
                 }],
                 param_decls: declarations,
-                instantiated_contract: Some(Box::new(concrete_callable(Ty::Int))),
+                instantiated_contract: Some(concrete_callable(Ty::int())),
                 instantiated_args: vec![TyArg::Val(CtValue::Int(1))],
                 spread: None,
             }],
@@ -1420,9 +1434,9 @@ fn verifier_rejects_corrupt_or_unbound_dependent_callable_indices() {
         4,
         &[
             (0, dependent_generic_callable("index")),
-            (1, Ty::Int),
-            (2, Ty::Int),
-            (3, Ty::None),
+            (1, Ty::int()),
+            (2, Ty::int()),
+            (3, Ty::none()),
         ],
     );
     let mut prog = program(f);
@@ -1453,18 +1467,18 @@ fn verifier_rejects_corrupt_or_unbound_dependent_callable_indices() {
 
 #[test]
 fn verifier_rejects_corrupt_indirect_effect_and_reference_result_metadata() {
-    let contract = Ty::Func(Box::new(FuncTy {
+    let contract = TyKind::Func(Box::new(FuncTy {
         environment: mojito::CallableEnvironment::Thin,
         params: Vec::new(),
         names: Vec::new(),
-        ret: Box::new(Ty::Int),
+        ret: Ty::int(),
         required: Vec::new(),
         variadic: None,
         kw_variadic: None,
         positional_only: None,
         keyword_only: None,
         raises: true,
-        error: Some(Box::new(Ty::StringLiteral)),
+        error: Some(Ty::string_literal()),
         conventions: Vec::new(),
         ref_params: Vec::new(),
         ref_return: Some(Box::new(mojito::origin::RefSig {
@@ -1473,8 +1487,8 @@ fn verifier_rejects_corrupt_indirect_effect_and_reference_result_metadata() {
         })),
         transfers: TransferSet::default(),
     }));
-    let result = Ty::Ref(mojito::RefTy {
-        referent: Box::new(Ty::Int),
+    let result = TyKind::Ref(mojito::RefTy {
+        referent: Ty::int(),
         origin: mojito::Origin::Untracked { mutable: false },
         mutability: mojito::Mutability::Immutable,
     });
@@ -1500,7 +1514,7 @@ fn verifier_rejects_corrupt_indirect_effect_and_reference_result_metadata() {
             MirTerm::Return(None),
         )],
         2,
-        &[(0, contract), (1, result)],
+        &[(0, contract.into()), (1, result.into())],
     );
     let prog = program(f);
     expect_finding(&prog, "raising metadata does not match");
@@ -1535,7 +1549,7 @@ fn verifier_rejects_misaligned_call_place_metadata() {
             MirTerm::Return(None),
         )],
         2,
-        &[(0, Ty::Int), (1, Ty::None)],
+        &[(0, Ty::int()), (1, Ty::none())],
     );
     expect_finding(&program(f), "call place metadata is not aligned");
 }
@@ -1544,8 +1558,8 @@ fn verifier_rejects_misaligned_call_place_metadata() {
 fn verifier_rejects_a_mismatched_iterator_exhaustion_contract() {
     use mojito::mir::MirFunctionDeclaration;
 
-    let other_error = Ty::Struct("OtherError".to_string(), Vec::new().into());
-    let stop_iteration = Ty::Struct("StopIteration".to_string(), Vec::new().into());
+    let other_error = Ty::new(TyKind::Struct("OtherError".to_string(), Vec::new()));
+    let stop_iteration = TyKind::Struct("StopIteration".to_string(), Vec::new());
     let mut f = function(
         vec![block(
             vec![MirInstr::TryNext {
@@ -1554,7 +1568,7 @@ fn verifier_rejects_a_mismatched_iterator_exhaustion_contract() {
                 iter: 0,
                 call: Box::new(mojito::checked::CheckedIteratorCall {
                     target: "Iterator.__next__".to_string(),
-                    result_ty: Ty::Int,
+                    result_ty: Ty::int(),
                     reference_result: None,
                     raises: Some(other_error.clone()),
                     result_adapter: None,
@@ -1564,11 +1578,11 @@ fn verifier_rejects_a_mismatched_iterator_exhaustion_contract() {
             MirTerm::Return(None),
         )],
         2,
-        &[(0, Ty::Int), (1, Ty::Bool)],
+        &[(0, Ty::int()), (1, Ty::bool())],
     );
     f.var_names[0] = "iterator".to_string();
     f.var_tys
-        .insert(0, Ty::Struct("Iterator".to_string(), Vec::new().into()));
+        .insert(0, TyKind::Struct("Iterator".to_string(), Vec::new()).into());
 
     let mut prog = program(f);
     prog.declarations.functions.push(MirFunctionDeclaration {
@@ -1589,10 +1603,10 @@ fn verifier_rejects_a_mismatched_iterator_exhaustion_contract() {
         has_receiver: true,
         receiver_convention: Some(mojito::ast::ArgConvention::Mut),
         param_conventions: Vec::new(),
-        ret_ty: Ty::Int,
+        ret_ty: Ty::int(),
         returns_reference: false,
         raises: true,
-        error_ty: Some(stop_iteration),
+        error_ty: Some(stop_iteration.into()),
         ref_params: Vec::new(),
         param_writes: Vec::new(),
         availability: Vec::new(),
@@ -1608,10 +1622,10 @@ fn verifier_rejects_a_mismatched_iterator_exhaustion_contract() {
 fn verifier_rejects_an_iterator_reference_result_abi_mismatch() {
     use mojito::mir::MirFunctionDeclaration;
 
-    let stop_iteration = Ty::Struct("StopIteration".to_string(), Vec::new().into());
-    let result_ty = reference_ty(Ty::Int, mojito::Mutability::Immutable);
-    let Ty::Ref(reference_result) = &result_ty else {
-        unreachable!("reference_ty constructs Ty::Ref")
+    let stop_iteration = Ty::new(TyKind::Struct("StopIteration".to_string(), Vec::new()));
+    let result_ty = reference_ty(Ty::int(), mojito::Mutability::Immutable);
+    let TyKind::Ref(reference_result) = result_ty.kind() else {
+        unreachable!("reference_ty constructs TyKind::Ref")
     };
     let mut f = function(
         vec![block(
@@ -1631,11 +1645,11 @@ fn verifier_rejects_an_iterator_reference_result_abi_mismatch() {
             MirTerm::Return(None),
         )],
         2,
-        &[(0, result_ty), (1, Ty::Bool)],
+        &[(0, result_ty), (1, Ty::bool())],
     );
     f.var_names[0] = "iterator".to_string();
     f.var_tys
-        .insert(0, Ty::Struct("Iterator".to_string(), Vec::new().into()));
+        .insert(0, TyKind::Struct("Iterator".to_string(), Vec::new()).into());
 
     let mut prog = program(f);
     prog.declarations.functions.push(MirFunctionDeclaration {
@@ -1656,7 +1670,7 @@ fn verifier_rejects_an_iterator_reference_result_abi_mismatch() {
         has_receiver: true,
         receiver_convention: Some(mojito::ast::ArgConvention::Mut),
         param_conventions: Vec::new(),
-        ret_ty: Ty::Int,
+        ret_ty: Ty::int(),
         // Deliberately corrupt: the checked operation returns a reference, but
         // the retained declaration claims an owned-value ABI.
         returns_reference: false,
@@ -1758,9 +1772,9 @@ fn verifier_rejects_a_missing_abstract_next_method_adapter() {
 // residue.
 #[test]
 fn verifier_distinguishes_method_result_abi_from_a_reference_shaped_value() {
-    let result_ty = reference_ty(Ty::Int, mojito::Mutability::Immutable);
-    let Ty::Ref(reference) = &result_ty else {
-        unreachable!("reference_ty constructs Ty::Ref")
+    let result_ty = reference_ty(Ty::int(), mojito::Mutability::Immutable);
+    let TyKind::Ref(reference) = result_ty.kind() else {
+        unreachable!("reference_ty constructs TyKind::Ref")
     };
     let abstract_next = |reference_result, result_adapter| {
         function(
@@ -1791,7 +1805,7 @@ fn verifier_distinguishes_method_result_abi_from_a_reference_shaped_value() {
             &[
                 (
                     0,
-                    Ty::Struct("OpaqueIterator".to_string(), Vec::new().into()),
+                    TyKind::Struct("OpaqueIterator".to_string(), Vec::new()).into(),
                 ),
                 (1, result_ty.clone()),
             ],
@@ -1849,9 +1863,9 @@ fn verifier_rejects_corrupt_concrete_method_result_abis() {
             _ => None,
         })
         .expect("value-returning method call");
-    *reference_result = match reference_ty(Ty::Int, mojito::Mutability::Immutable) {
-        Ty::Ref(reference) => Some(Box::new(reference)),
-        _ => unreachable!("reference_ty constructs Ty::Ref"),
+    *reference_result = match (reference_ty(Ty::int(), mojito::Mutability::Immutable)).kind() {
+        TyKind::Ref(reference) => Some(Box::new(reference.clone())),
+        _ => unreachable!("reference_ty constructs TyKind::Ref"),
     };
     expect_finding(
         &fabricated,
@@ -1889,13 +1903,15 @@ fn verifier_rejects_a_loan_destination_domain_with_a_foreign_root() {
 #[test]
 fn verifier_checks_stores_into_erased_instance_storage() {
     let with_environment = |environment| {
-        let mut ty = concrete_callable(Ty::Int);
-        if let Some(FuncTy {
-            environment: slot, ..
-        }) = ty.as_func_mut()
-        {
-            *slot = environment;
-        }
+        let mut ty = concrete_callable(Ty::int());
+        ty.update(|kind| {
+            if let Some(FuncTy {
+                environment: slot, ..
+            }) = kind.as_func_mut()
+            {
+                *slot = environment;
+            }
+        });
         ty
     };
     let store = |storage: Ty, source: Ty| {
@@ -1915,17 +1931,19 @@ fn verifier_checks_stores_into_erased_instance_storage() {
 
     // A `ref` element slot takes a reference of any origin, or writes
     // through to its referent.
-    let slot = reference_ty(Ty::Int, mojito::Mutability::Mutable);
+    let slot = reference_ty(Ty::int(), mojito::Mutability::Mutable);
     let mut elsewhere = slot.clone();
-    if let Ty::Ref(reference) = &mut elsewhere {
-        reference.origin = mojito::Origin::Unbound;
-    }
+    elsewhere.update(|kind| {
+        if let TyKind::Ref(reference) = kind {
+            reference.origin = mojito::Origin::Unbound;
+        }
+    });
     clean(&store(slot.clone(), elsewhere));
-    clean(&store(slot.clone(), Ty::Int));
+    clean(&store(slot.clone(), Ty::int()));
     expect_finding(
         &store(
             slot,
-            reference_ty(Ty::StringLiteral, mojito::Mutability::Mutable),
+            reference_ty(Ty::string_literal(), mojito::Mutability::Mutable),
         ),
         "store of ref StringLiteral into storage of type Int",
     );
@@ -1969,9 +1987,9 @@ fn verifier_rejects_a_method_call_spread_of_a_non_pack_register() {
             )],
             3,
             &[
-                (0, Ty::Struct("Sink".to_string(), Vec::new().into())),
-                (1, Ty::Int),
-                (2, Ty::None),
+                (0, TyKind::Struct("Sink".to_string(), Vec::new()).into()),
+                (1, Ty::int()),
+                (2, Ty::none()),
             ],
         ))
     };

@@ -20,6 +20,7 @@
 //! as the checker before formatting, so `FixedBuffer[N]` and `FixedBuffer[2+6]`
 //! name the same `FixedBuffer[8]` specialization selected at a call site.
 
+use mojito_types::types::TyKind;
 use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
 use std::fmt::Write as _;
@@ -81,8 +82,12 @@ pub const SCALAR_SPLAT_CONVERSION: &str = "SIMD.__init__$splat";
 /// backend's reachable set declares it on exactly this rule, so the two
 /// cannot drift.
 pub fn calls_pow_int(left: Option<&Ty>, right: Option<&Ty>) -> bool {
-    let floating =
-        |ty: Option<&Ty>| matches!(ty, Some(Ty::Float64 | Ty::FloatLiteral | Ty::Simd { .. }));
+    let floating = |ty: Option<&Ty>| {
+        matches!(
+            ty.map(Ty::kind),
+            Some(TyKind::Float64 | TyKind::FloatLiteral | TyKind::Simd { .. })
+        )
+    };
     !floating(left) && !floating(right)
 }
 
@@ -176,10 +181,9 @@ pub fn resolve_method_symbol(
 pub fn materialized_instantiation_argument(argument: &TyArg) -> TyArg {
     use mojito_types::types::erase_origin_arguments;
     match argument {
-        TyArg::Ty(Ty::StringLiteral) => TyArg::Ty(Ty::Struct(
-            STDLIB_STRING_STRUCT.to_string(),
-            Vec::new().into(),
-        )),
+        TyArg::Ty(ty) if *ty == TyKind::StringLiteral => {
+            TyArg::Ty(TyKind::Struct(STDLIB_STRING_STRUCT.to_string(), Vec::new()).into())
+        }
         TyArg::Ty(ty) => TyArg::Ty(erase_origin_arguments(&erase_capture_environment(
             &default_literal(ty),
         ))),
@@ -188,7 +192,7 @@ pub fn materialized_instantiation_argument(argument: &TyArg) -> TyArg {
             elements
                 .iter()
                 .map(|element| match element {
-                    CtValue::Type(ty) => CtValue::Type(Box::new(erase_origin_arguments(ty))),
+                    CtValue::Type(ty) => CtValue::Type(erase_origin_arguments(ty)),
                     other => other.clone(),
                 })
                 .collect(),
@@ -228,7 +232,7 @@ pub fn instance_symbol(template: &str, arguments: &[InstanceArg]) -> String {
             // Overload keys intentionally collapse StringLiteral and nominal
             // String, but generic instances cannot: their native layouts are
             // a 16-byte borrowed descriptor versus a 24-byte owning value.
-            InstanceArg::Ty(Ty::StringLiteral) => "TStringLiteral".to_string(),
+            InstanceArg::Ty(ty) if *ty == TyKind::StringLiteral => "TStringLiteral".to_string(),
             InstanceArg::Ty(ty) => format!("T{}", ty_raw_in(ty, None, KeyMode::Instance)),
             InstanceArg::Value(value) => format!("V{value}"),
         };
@@ -256,7 +260,7 @@ impl TypeKey {
 
     /// Mangle a declared parameter annotation in the scope of the
     /// declaration's own compile-time parameters, so an annotation naming one
-    /// of them carries its bounds exactly as the checker's `Ty::Param` does
+    /// of them carries its bounds exactly as the checker's `TyKind::Param` does
     /// (`T$Copyable`). [`Self::from_ast`] spells such an annotation bare,
     /// which is right for a lowered symbol but does not compare against a
     /// checker-resolved type.
@@ -347,7 +351,7 @@ impl SignatureKey {
     /// type to `Self` in every parameter (see [`TypeKey::from_ty_with_self`]).
     /// `self_ty` is `None` for callables without an enclosing struct (free
     /// functions and abstract trait dispatch, whose parameters already carry
-    /// `Ty::SelfType` and so spell `Self` regardless).
+    /// `TyKind::SelfType` and so spell `Self` regardless).
     pub fn from_tys_with_self<'a>(
         tys: impl IntoIterator<Item = &'a Ty>,
         self_ty: Option<&Ty>,
@@ -478,7 +482,7 @@ impl VariadicKey {
     /// keyword-only index is the collector's position.
     pub fn from_callable(ty: &Ty) -> Option<Self> {
         let func = ty.callable()?;
-        let element = func.variadic.as_deref()?;
+        let element = func.variadic.as_ref()?;
         Some(Self {
             position: func.keyword_only.unwrap_or(func.params.len()),
             element: TypeKey::from_ty(element),
@@ -946,7 +950,7 @@ impl<'a> MethodShape<'a> {
 /// (`Type.method`): signature-qualified when overloaded, unchanged otherwise.
 ///
 /// The key spells every binder in scope — the struct's `type_params`, then
-/// the method's own — with its bounds, exactly as the checker's `Ty::Param`
+/// the method's own — with its bounds, exactly as the checker's `TyKind::Param`
 /// spells a call's selected overload, so the symbol a call names is the one
 /// MIR declares. A module integer constant spells as [`lowered_def_name`]
 /// spells one.
@@ -1299,15 +1303,15 @@ fn ty_raw_in(ty: &Ty, self_ty: Option<&Ty>, mode: KeyMode) -> String {
     }) {
         return "Self".to_string();
     }
-    match ty {
-        Ty::Int | Ty::IntLiteral => "Int".to_string(),
-        Ty::UInt => "UInt".to_string(),
-        Ty::Float64 | Ty::FloatLiteral => "Float64".to_string(),
-        Ty::Bool => "Bool".to_string(),
-        Ty::StringLiteral => "StringLiteral".to_string(),
-        Ty::None => "None".to_string(),
-        Ty::ComptimeList(elem) => format!("__ComptimeList${}", ty_raw_in(elem, self_ty, mode)),
-        Ty::Tuple(elems) => format!(
+    match ty.kind() {
+        TyKind::Int | TyKind::IntLiteral => "Int".to_string(),
+        TyKind::UInt => "UInt".to_string(),
+        TyKind::Float64 | TyKind::FloatLiteral => "Float64".to_string(),
+        TyKind::Bool => "Bool".to_string(),
+        TyKind::StringLiteral => "StringLiteral".to_string(),
+        TyKind::None => "None".to_string(),
+        TyKind::ComptimeList(elem) => format!("__ComptimeList${}", ty_raw_in(elem, self_ty, mode)),
+        TyKind::Tuple(elems) => format!(
             "Tuple${}",
             elems
                 .iter()
@@ -1315,7 +1319,7 @@ fn ty_raw_in(ty: &Ty, self_ty: Option<&Ty>, mode: KeyMode) -> String {
                 .collect::<Vec<_>>()
                 .join("$")
         ),
-        Ty::RuntimePack(elems) => format!(
+        TyKind::RuntimePack(elems) => format!(
             "$pack${}",
             elems
                 .iter()
@@ -1323,8 +1327,8 @@ fn ty_raw_in(ty: &Ty, self_ty: Option<&Ty>, mode: KeyMode) -> String {
                 .collect::<Vec<_>>()
                 .join("$")
         ),
-        Ty::VariadicPack(element) => format!("$variadic${}", ty_raw_in(element, self_ty, mode)),
-        Ty::Variant(alternatives) => format!(
+        TyKind::VariadicPack(element) => format!("$variadic${}", ty_raw_in(element, self_ty, mode)),
+        TyKind::Variant(alternatives) => format!(
             "Variant${}",
             alternatives
                 .iter()
@@ -1336,19 +1340,19 @@ fn ty_raw_in(ty: &Ty, self_ty: Option<&Ty>, mode: KeyMode) -> String {
         // spelling while the compile-time literal spells `StringLiteral`, so
         // the two are distinct overload keys (as upstream: a literal argument
         // selects the exact `StringLiteral` overload beside a `String` one).
-        Ty::Struct(name, args) if args.is_empty() && is_stdlib_string_struct(name) => {
+        TyKind::Struct(name, args) if args.is_empty() && is_stdlib_string_struct(name) => {
             "String".to_string()
         }
         // A minted generic instance (`W$mono$TInt`) spells as its own symbol:
         // that symbol already carries every argument, so re-encoding it and
         // appending the arguments again would make a nested instance's name
         // grow with its nesting depth.
-        Ty::Struct(name, _) if mode == KeyMode::Instance && is_instance_struct_symbol(name) => {
+        TyKind::Struct(name, _) if mode == KeyMode::Instance && is_instance_struct_symbol(name) => {
             name.clone()
         }
         // A struct type spells as its annotation does (`Point`, `Pair$Int`) —
         // no `Struct$` marker, so the MIR definition name matches.
-        Ty::Struct(name, args) => {
+        TyKind::Struct(name, args) => {
             let mut s = encode_identifier(name);
             for arg in args {
                 match arg {
@@ -1363,14 +1367,14 @@ fn ty_raw_in(ty: &Ty, self_ty: Option<&Ty>, mode: KeyMode) -> String {
                     // The origin tail erases from the runtime ABI, exactly as
                     // the annotation side (`ast_raw`) erases origin arguments:
                     // origin-differing types share a specialization and a
-                    // lowering, like `Ty::Pointer` origins.
+                    // lowering, like `TyKind::Pointer` origins.
                     TyArg::Origin(_) => {}
                 }
             }
             s
         }
         // A type parameter spells as the bare annotation `T` does.
-        Ty::Param {
+        TyKind::Param {
             binder,
             bounds,
             callable_bound,
@@ -1392,13 +1396,13 @@ fn ty_raw_in(ty: &Ty, self_ty: Option<&Ty>, mode: KeyMode) -> String {
         // user-facing name is `Pointer`: this string is internal callable
         // identity, and renaming it would churn every symbol golden for no
         // user-visible gain.
-        Ty::Pointer { element, .. } => {
+        TyKind::Pointer { element, .. } => {
             format!("UnsafePointer${}", ty_raw_in(element, self_ty, mode))
         }
         // Application arguments participate in the mangled identity (so
         // `IteratorType[a]` and `IteratorType[b]` are distinct), except origins,
-        // which erase from the runtime ABI like `Ty::Pointer` origins above.
-        Ty::Assoc { base, name, args } => {
+        // which erase from the runtime ABI like `TyKind::Pointer` origins above.
+        TyKind::Assoc { base, name, args } => {
             let mut s = format!(
                 "Assoc${}${}",
                 ty_raw_in(base, self_ty, mode),
@@ -1411,13 +1415,13 @@ fn ty_raw_in(ty: &Ty, self_ty: Option<&Ty>, mode: KeyMode) -> String {
                     TyArg::Val(v) => s.push_str(&format!("V{v}")),
                     // Origins erase from the runtime ABI: every origin argument
                     // mangles to one marker so origin-differing types share a
-                    // specialization and a lowering, like `Ty::Pointer` origins.
+                    // specialization and a lowering, like `TyKind::Pointer` origins.
                     TyArg::Origin(_) => s.push('O'),
                 }
             }
             s
         }
-        Ty::SelfType => "Self".to_string(),
+        TyKind::SelfType => "Self".to_string(),
         other => other.to_string(),
     }
 }
@@ -1477,12 +1481,12 @@ fn ast_raw(
             // stable `String` spelling.
             "String".to_string()
         }
-        // Mirror `ty_raw`: the `NoneType` annotation resolves to `Ty::None`,
+        // Mirror `ty_raw`: the `NoneType` annotation resolves to `TyKind::None`,
         // which mangles as `None`.
         Type::Named(name, args) if args.is_empty() && name == "NoneType" => "None".to_string(),
         // `Scalar[DType.x]` / `SIMD[DType.x, N]` annotations mangle as their
         // canonical checked spelling (`Scalar[DType.float32]` is the width-1
-        // `Float32`), matching `ty_raw`'s display of the resolved `Ty::Simd`.
+        // `Float32`), matching `ty_raw`'s display of the resolved `TyKind::Simd`.
         Type::Named(name, args)
             if name == "Scalar" && args.len() == 1 && param_arg_dtype(&args[0]).is_some() =>
         {
@@ -1502,7 +1506,7 @@ fn ast_raw(
         // Mirror `ty_raw`: every pointer annotation (`UnsafePointer[T]`,
         // `Pointer[T, origin]`, the `ImmPointer`/`MutPointer` permission
         // aliases) mangles as `UnsafePointer$<element>` — the origin argument
-        // erases from the runtime ABI, so a call site's `Ty::Pointer` key and
+        // erases from the runtime ABI, so a call site's `TyKind::Pointer` key and
         // the declaration agree.
         Type::Named(name, args)
             if matches!(
@@ -1520,7 +1524,7 @@ fn ast_raw(
         }
         // A vector over a binder of the signature (`Scalar[dt]`,
         // `SIMD[dt, width]`) spells as the checker displays the symbolic
-        // `Ty::Simd`.
+        // `TyKind::Simd`.
         Type::Named(name, args)
             if (name == "Scalar" && args.len() == 1 || name == "SIMD" && args.len() == 2)
                 && args
@@ -1566,7 +1570,7 @@ fn ast_raw(
         }
         // The runtime-pack collector of a specialized variadic (`*args: *Ts`
         // after `Ts` is bound) is the `$pack` annotation over its element
-        // types; mirror `ty_raw`'s `Ty::RuntimePack` spelling so the
+        // types; mirror `ty_raw`'s `TyKind::RuntimePack` spelling so the
         // declaration and its call sites agree.
         Type::Named(name, args) if name == "$pack" => format!(
             "$pack${}",
@@ -1600,7 +1604,7 @@ fn ast_raw(
                     // The parser cannot tell a type parameter from a value
                     // in argument position (`List[T]` arrives as a value
                     // identifier); one naming a declared parameter of the
-                    // signature spells as the checker's `Ty::Param` does, so
+                    // signature spells as the checker's `TyKind::Param` does, so
                     // the declaration and its call sites agree.
                     ParamArg::Value(v)
                         if matches!(&v.kind, mojito_ast::ast::ExprKind::Identifier(name)
@@ -1631,7 +1635,7 @@ fn ast_raw(
             s
         }
         // `Self.T` names the same parameter a bare `T` does inside the struct,
-        // and the checker resolves both to the same `Ty::Param` — spell them
+        // and the checker resolves both to the same `TyKind::Param` — spell them
         // identically so the two sides agree.
         Type::SelfParam(name) => parameter_raw(name, type_bounds),
         Type::Assoc { base, name, .. } => format!(
@@ -1798,7 +1802,7 @@ fn param_arg_width(
 
 /// The canonical checked spelling of a scalar/SIMD annotation: width-1
 /// `int`/`float64` canonicalize to the native scalars, everything else uses
-/// the `Ty::Simd` display (the scalar alias where one exists).
+/// the `TyKind::Simd` display (the scalar alias where one exists).
 fn simd_annotation_raw(dtype: mojito_ast::ast::Dtype, width: i64) -> String {
     canonical_simd_ty(dtype, width).to_string()
 }
@@ -1850,12 +1854,18 @@ fn sanitize(raw: &str) -> String {
 fn erase_capture_environment(ty: &Ty) -> Ty {
     use mojito_types::origin::CallableEnvironment;
     let mut erased = ty.clone();
-    if let Some(FuncTy {
-        environment: environment @ CallableEnvironment::Capturing(_),
-        ..
-    }) = erased.as_func_mut()
-    {
-        *environment = CallableEnvironment::Default;
+    if matches!(
+        erased.as_func(),
+        Some(FuncTy {
+            environment: CallableEnvironment::Capturing(_),
+            ..
+        })
+    ) {
+        erased.update(|kind| {
+            if let Some(func) = kind.as_func_mut() {
+                func.environment = CallableEnvironment::Default;
+            }
+        });
     }
     erased
 }
@@ -1892,7 +1902,7 @@ fn simd_binder_slot<'a>(
 
 /// A declared compile-time parameter as its annotation spells in an overload
 /// key: its trait bounds, and a callable bound (`F: def(Int) -> Int`) as the
-/// checker's `Ty::Param` spells its `callable_bound`.
+/// checker's `TyKind::Param` spells its `callable_bound`.
 struct BinderSpelling {
     bounds: Vec<String>,
     callable: Option<String>,
@@ -2078,7 +2088,7 @@ fn signature_from_ast(
 
 /// The `ty_raw` mangling of a struct's own instance type, reconstructed from its
 /// name and type parameters — the declaration-side spelling of `Self`. Mirrors
-/// `ty_raw(Ty::Struct(name, decls.map(param_as_arg)))`: the struct name followed
+/// `ty_raw(TyKind::Struct(name, decls.map(param_as_arg)))`: the struct name followed
 /// by each type parameter (`Pair`, `List$T$AnyType`). Origin parameters and
 /// the infer-only `Bool` binders of their mutability are erased exactly as the
 /// checker erases them from the struct's declarations, so a view struct such
@@ -2197,9 +2207,8 @@ pub fn callable_contract_target(ty: &Ty) -> Option<String> {
         kw_variadic,
         ..
     } = contract.as_func()?;
-    let signature_types = params.iter().chain(variadic.iter().map(Box::as_ref));
-    let signature =
-        SignatureKey::from_tys(signature_types).with_kw_variadic(kw_variadic.as_deref());
+    let signature_types = params.iter().chain(variadic.iter());
+    let signature = SignatureKey::from_tys(signature_types).with_kw_variadic(kw_variadic.as_ref());
     Some(method_symbol(TRAIT_DISPATCH, "__call__", &signature))
 }
 
@@ -2207,34 +2216,39 @@ pub fn callable_contract_target(ty: &Ty) -> Option<String> {
 /// stands for spells as the first clone binder, at every depth.
 pub fn canonical_specialization_type(ty: &Ty) -> Ty {
     let respell = |inner: &Ty| canonical_specialization_type(inner);
-    match ty {
-        Ty::Struct(name, args) => Ty::Struct(
+    match ty.kind() {
+        TyKind::Struct(name, args) => ty.reusing(TyKind::Struct(
             name.clone(),
-            args.reusing(mojito_types::types::map_tyargs(args, respell)),
-        ),
-        Ty::ComptimeList(element) => Ty::ComptimeList(Box::new(respell(element))),
-        Ty::Tuple(elements) => Ty::Tuple(elements.iter().map(respell).collect()),
-        Ty::RuntimePack(elements) => Ty::RuntimePack(elements.iter().map(respell).collect()),
-        Ty::VariadicPack(element) => Ty::VariadicPack(Box::new(respell(element))),
-        Ty::Variant(alternatives) => Ty::Variant(alternatives.iter().map(respell).collect()),
+            mojito_types::types::map_tyargs(args, respell),
+        )),
+        TyKind::ComptimeList(element) => TyKind::ComptimeList(respell(element)).into(),
+        TyKind::Tuple(elements) => TyKind::Tuple(elements.iter().map(respell).collect()).into(),
+        TyKind::RuntimePack(elements) => {
+            TyKind::RuntimePack(elements.iter().map(respell).collect()).into()
+        }
+        TyKind::VariadicPack(element) => TyKind::VariadicPack(respell(element)).into(),
+        TyKind::Variant(alternatives) => {
+            TyKind::Variant(alternatives.iter().map(respell).collect()).into()
+        }
         // A caller place a clone binder stands for spells as the first
         // clone binder (`Elab::clone_binding`): one clone serves every place
         // of the shape, as an erased struct origin tail does.
-        Ty::Pointer { element, origin } => Ty::Pointer {
-            element: Box::new(respell(element)),
+        TyKind::Pointer { element, origin } => TyKind::Pointer {
+            element: respell(element),
             origin: origin.clone_bindable_place().map_or_else(
                 || origin.clone(),
                 |projection| {
                     projection.binder_origin(mojito_types::origin::OriginParamId(u32::MAX))
                 },
             ),
-        },
-        Ty::Ref(reference) => {
-            let mut reference = reference.clone();
-            reference.referent = Box::new(respell(&reference.referent));
-            Ty::Ref(reference)
         }
-        other => other.clone(),
+        .into(),
+        TyKind::Ref(reference) => {
+            let mut reference = reference.clone();
+            reference.referent = respell(&reference.referent);
+            TyKind::Ref(reference).into()
+        }
+        _ => ty.clone(),
     }
 }
 
@@ -2252,8 +2266,8 @@ pub fn unqualified_instance_name(ty: &Ty) -> String {
         CtValue::Type(ty) => unqualified_instance_name(ty),
         other => unqualified_value_argument(other),
     };
-    match ty {
-        Ty::Struct(name, arguments) => {
+    match ty.kind() {
+        TyKind::Struct(name, arguments) => {
             if let Some(elements) = mojito_types::types::tuple_elements(ty) {
                 let elements = elements
                     .into_iter()
@@ -2267,11 +2281,14 @@ pub fn unqualified_instance_name(ty: &Ty) -> String {
             let name = mojito_types::types::struct_template(name);
             let (base, baked) = match demangle_specialization(name) {
                 Some((template, values)) => (
-                    unqualified_type_name(&Ty::Struct(template.to_string(), Vec::new().into())),
+                    unqualified_type_name(&Ty::new(TyKind::Struct(
+                        template.to_string(),
+                        Vec::new(),
+                    ))),
                     values,
                 ),
                 None => (
-                    unqualified_type_name(&Ty::Struct(name.to_string(), Vec::new().into())),
+                    unqualified_type_name(&Ty::new(TyKind::Struct(name.to_string(), Vec::new()))),
                     Vec::new(),
                 ),
             };
@@ -2300,7 +2317,7 @@ pub fn unqualified_instance_name(ty: &Ty) -> String {
                 format!("{base}[{}]", spelled.join(", "))
             }
         }
-        Ty::Variant(alternatives) => format!(
+        TyKind::Variant(alternatives) => format!(
             "Variant[{}]",
             alternatives
                 .iter()
@@ -2308,7 +2325,7 @@ pub fn unqualified_instance_name(ty: &Ty) -> String {
                 .collect::<Vec<_>>()
                 .join(", ")
         ),
-        other => unqualified_type_name(other),
+        _ => unqualified_type_name(ty),
     }
 }
 

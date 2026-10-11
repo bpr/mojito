@@ -6,6 +6,7 @@
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 use mojito_types::conformance::{LIFECYCLE_TRAITS, StructTraitRule, struct_trait_rule};
+use mojito_types::types::TyKind;
 
 /// How a consuming position takes its value: an ownership **move** into new
 /// storage (gated on `Movable`), or a **deinit** binding — consumption by a
@@ -47,7 +48,7 @@ impl Checker {
     }
 
     /// Register and check a `trait`: its method requirements (each typed with
-    /// `Self` as the abstract conforming type, `Ty::SelfType`).
+    /// `Self` as the abstract conforming type, `TyKind::SelfType`).
     pub(super) fn check_trait(
         &mut self,
         name: &str,
@@ -117,8 +118,8 @@ impl Checker {
                 ct_members.insert(member.name.clone(), requirement);
             }
         }
-        // Requirement signatures resolve `Self` to the abstract `Ty::SelfType`.
-        let saved_self_ty = self.self_ty.replace(Ty::SelfType);
+        // Requirement signatures resolve `Self` to the abstract `TyKind::SelfType`.
+        let saved_self_ty = self.self_ty.replace(Ty::self_type());
         let saved_self_decls = std::mem::take(&mut self.self_decls);
         self.trait_self_comptime.push(ct_members.clone());
         let result = (|| {
@@ -199,7 +200,7 @@ impl Checker {
                                 self.ty_from_anno(referent)?
                             }
                             Some(t) => self.ty_from_anno(t)?,
-                            None => Ty::None,
+                            None => Ty::none(),
                         },
                         self.declared_error(m.raises, m.raises_type.as_ref())?,
                     ))
@@ -261,8 +262,8 @@ impl Checker {
                     conventions: regular.iter().map(|(_, param)| param.convention).collect(),
                     ret,
                     ret_mlir_index: super::type_resolution::spells_mlir_index(m.ret.as_ref()),
-                    raises: error.as_ref().is_some_and(|ty| *ty != Ty::Never),
-                    error: error.map(Box::new),
+                    raises: error.as_ref().is_some_and(|ty| *ty != TyKind::Never),
+                    error,
                     self_convention: m.self_convention,
                     ref_params: lower_ref_param_sigs(&m.type_params, &regular_params, 0)?,
                     ref_return,
@@ -322,7 +323,7 @@ impl Checker {
 
     /// Register a struct and check its method bodies. A generic struct's type
     /// parameters are validated and kept in scope (as `Self.T`) for its fields
-    /// and methods; field/method types referring to them become `Ty::Param`.
+    /// and methods; field/method types referring to them become `TyKind::Param`.
     /// Declared trait conformances are verified once the members are known.
     /// Check a struct declaration completely: shell, member types, method
     /// signatures, then conformance and bodies. `check_program` runs the first
@@ -424,7 +425,7 @@ impl Checker {
     }
 
     /// Enter the member-resolution scope of a shelled struct: its parameters
-    /// are in scope as `Self.T` / `Self.n` (type parameters as `Ty::Param`,
+    /// are in scope as `Self.T` / `Self.n` (type parameters as `TyKind::Param`,
     /// value parameters as symbolic `CtValue::Expr`) and bare `Self` is the
     /// struct type. Returns the `Self` type and the saved outer scope for
     /// `exit_struct_scope`.
@@ -439,7 +440,7 @@ impl Checker {
             ))
         })?;
         let decls = info.decls.clone();
-        let self_ty = Ty::Struct(name.to_string(), info.self_arguments().into());
+        let self_ty = Ty::new(TyKind::Struct(name.to_string(), info.self_arguments()));
         let saved = SavedStructScope {
             type_params: std::mem::replace(
                 &mut self.enclosing_type_params,
@@ -530,7 +531,7 @@ impl Checker {
         ) = resolved?;
         if callable_conformance
             .as_ref()
-            .is_some_and(|ty| !matches!(ty, Ty::Func(_)))
+            .is_some_and(|ty| !matches!(ty.kind(), TyKind::Func(_)))
         {
             return Err(TypeError::Unsupported(
                 "callable conformance must be a def(...) function type".to_string(),
@@ -623,17 +624,19 @@ impl Checker {
             if !declaration.name.contains('$')
                 && !declaration.conforms.iter().any(|tr| tr == "Deinitable")
             {
-                let undestroyable = match &ty {
-                    Ty::Param { binder, bounds, .. } if !self.bounds_prove_deinitable(bounds) => {
+                let undestroyable = match ty.kind() {
+                    TyKind::Param { binder, bounds, .. }
+                        if !self.bounds_prove_deinitable(bounds) =>
+                    {
                         Some(binder.name.trim_start_matches('*').to_string())
                     }
-                    Ty::Struct(name, arguments)
+                    TyKind::Struct(name, arguments)
                         if mojito_types::types::is_nominal_instance(
                             name,
                             mojito_types::types::TUPLE_TYPE_NAME,
                         ) && matches!(
-                            mojito_types::types::pack_spread_argument(arguments),
-                            Some(Ty::Param { bounds, .. })
+                            (mojito_types::types::pack_spread_argument(arguments)).map(Ty::kind),
+                            Some(TyKind::Param { bounds, .. })
                                 if !self.bounds_prove_deinitable(bounds)
                         ) =>
                     {
@@ -782,7 +785,7 @@ impl Checker {
                 },
                 mojito_checked::checked::DeclarationEffect {
                     raises: sig.raises,
-                    error: sig.raises.then(|| sig.error.as_deref().cloned()).flatten(),
+                    error: sig.raises.then(|| sig.error.clone()).flatten(),
                     returns_reference: sig.ref_return.is_some(),
                     param_writes: mojito_checked::checked::DeclarationEffect::param_writes(
                         &sig.conventions,
@@ -894,7 +897,7 @@ impl Checker {
                 .callable_target = Some(target);
         }
         // Method bodies, each with `self` bound to this struct at its own type
-        // parameters (so `self.field : Ty::Param` inside a generic struct).
+        // parameters (so `self.field : TyKind::Param` inside a generic struct).
         let mut overload_indices = HashMap::<String, usize>::new();
         for (method_index, m) in methods.iter().enumerate() {
             let method_name = lifecycle_method_name(m).to_string();
@@ -926,7 +929,7 @@ impl Checker {
             current: &Ty,
             visiting: &mut HashSet<String>,
         ) -> Result<(), TypeError> {
-            let Ty::Struct(current_name, args) = current else {
+            let TyKind::Struct(current_name, args) = current.kind() else {
                 return Ok(());
             };
             if current_name == root {
@@ -952,9 +955,9 @@ impl Checker {
             ty: &Ty,
             visiting: &mut HashSet<String>,
         ) -> Result<(), TypeError> {
-            match ty {
+            match ty.kind() {
                 // A handle or pointer breaks the by-value containment chain.
-                Ty::Ref(_) | Ty::Pointer { .. } => Ok(()),
+                TyKind::Ref(_) | TyKind::Pointer { .. } => Ok(()),
                 _ => visit_struct(checker, root, ty, visiting),
             }
         }
@@ -1120,11 +1123,14 @@ impl Checker {
                                 mutable: false,
                             }))
                         }
-                        constraints::AssocParamKind::Type => Some(TyArg::Ty(Ty::Param {
-                            binder: synthetic_binder(&format!("$placeholder:{}", param.name)),
-                            bounds: param.bounds.clone(),
-                            callable_bound: None,
-                        })),
+                        constraints::AssocParamKind::Type => Some(TyArg::Ty(
+                            TyKind::Param {
+                                binder: synthetic_binder(&format!("$placeholder:{}", param.name)),
+                                bounds: param.bounds.clone(),
+                                callable_bound: None,
+                            }
+                            .into(),
+                        )),
                         constraints::AssocParamKind::Value => None,
                     })
                     .collect::<Option<Vec<_>>>();
@@ -1229,14 +1235,14 @@ impl Checker {
             variadic: req_sig
                 .variadic
                 .as_ref()
-                .map(|ty| Box::new(self.resolve_assoc_ty(&substitute_self(ty, self_ty)))),
+                .map(|ty| self.resolve_assoc_ty(&substitute_self(ty, self_ty))),
             variadic_index: req_sig.variadic_index,
             variadic_convention: req_sig.variadic_convention,
             variadic_name: req_sig.variadic_name.clone(),
             kw_variadic: req_sig
                 .kw_variadic
                 .as_ref()
-                .map(|ty| Box::new(self.resolve_assoc_ty(&substitute_self(ty, self_ty)))),
+                .map(|ty| self.resolve_assoc_ty(&substitute_self(ty, self_ty))),
             kw_variadic_index: req_sig.kw_variadic_index,
             positional_only: req_sig.positional_only,
             keyword_only: req_sig.keyword_only,
@@ -1247,7 +1253,7 @@ impl Checker {
             error: req_sig
                 .error
                 .as_ref()
-                .map(|error| Box::new(self.resolve_assoc_ty(&substitute_self(error, self_ty)))),
+                .map(|error| self.resolve_assoc_ty(&substitute_self(error, self_ty))),
             self_convention: req_sig.self_convention,
             ref_params: req_sig.ref_params.clone(),
             ref_return: req_sig.ref_return.clone(),
@@ -1271,23 +1277,23 @@ impl Checker {
         ty: &Ty,
         assumption: Option<&GenericConstraint>,
     ) -> bool {
-        match ty {
-            Ty::ComptimeList(element) => self.is_copyable_under_assumption(element, assumption),
-            Ty::Tuple(elements) | Ty::RuntimePack(elements) => elements
+        match ty.kind() {
+            TyKind::ComptimeList(element) => self.is_copyable_under_assumption(element, assumption),
+            TyKind::Tuple(elements) | TyKind::RuntimePack(elements) => elements
                 .iter()
                 .all(|element| self.is_copyable_under_assumption(element, assumption)),
-            Ty::Variant(alternatives) => alternatives
+            TyKind::Variant(alternatives) => alternatives
                 .iter()
                 .all(|alternative| self.is_copyable_under_assumption(alternative, assumption)),
-            Ty::Param { binder, bounds, .. } => {
+            TyKind::Param { binder, bounds, .. } => {
                 bounds.iter().any(|bound| {
                     matches!(bound.as_str(), "Copyable" | "ImplicitlyCopyable")
                         || self.trait_refines(bound, "Copyable")
                 }) || assumption
                     .is_some_and(|known| binder_conformance_assumed(binder, "Copyable", known))
             }
-            Ty::Assoc { .. } => self.assoc_member_bound_proves(ty, "Copyable"),
-            Ty::Struct(name, arguments) => {
+            TyKind::Assoc { .. } => self.assoc_member_bound_proves(ty, "Copyable"),
+            TyKind::Struct(name, arguments) => {
                 let Some(info) = self.structs.get(name) else {
                     // A compatibility spelling may produce an opaque nominal
                     // type without registering its declaration. That is not a
@@ -1330,12 +1336,12 @@ impl Checker {
                     )
                 })
             }
-            Ty::VariadicPack(element) => self.is_copyable_under_assumption(element, assumption),
+            TyKind::VariadicPack(element) => self.is_copyable_under_assumption(element, assumption),
             // These types still depend on substitution or trait context. The
             // ordinary capability helper defaults unknown concrete spellings to
             // copyable for compatibility, but that is not a proof strong enough
             // to change an abstract method ABI.
-            Ty::Dependent(_) | Ty::SelfType | Ty::Infer => false,
+            TyKind::Dependent(_) | TyKind::SelfType | TyKind::Infer => false,
             _ => self.is_copyable(ty),
         }
     }
@@ -1370,7 +1376,7 @@ impl Checker {
                     methods.iter().any(|method| {
                         method.self_convention == Some(ArgConvention::Mut)
                             && method.params.len() == 1
-                            && method.ret == Ty::None
+                            && method.ret == TyKind::None
                     })
                 });
                 let finishes = info.methods.get("finish").is_some_and(|methods| {
@@ -1388,19 +1394,22 @@ impl Checker {
                         method.self_convention == Some(ArgConvention::Mut)
                             && matches!(
                                 method.params.as_slice(),
-                                [Ty::Simd {
-                                    dtype: SimdDtype::Expr(_),
-                                    width: SimdWidth::Expr(_),
-                                }]
+                                [param] if matches!(
+                                    param.kind(),
+                                    TyKind::Simd {
+                                        dtype: SimdDtype::Expr(_),
+                                        width: SimdWidth::Expr(_),
+                                    }
+                                )
                             )
-                            && method.ret == Ty::None
+                            && method.ret == TyKind::None
                     })
                 });
                 let byte_updates = info.methods.get("_update_with_bytes").is_some_and(|methods| {
                     methods.iter().any(|method| {
                         method.self_convention == Some(ArgConvention::Mut)
                             && method.params.len() == 1
-                            && method.ret == Ty::None
+                            && method.ret == TyKind::None
                     })
                 });
                 initializes && updates && simd_updates && byte_updates && finishes
@@ -1412,8 +1421,8 @@ impl Checker {
                             && method.self_convention.is_none()
                             && method.params.len() == 1
                             && method.conventions == [Some(ArgConvention::Mut)]
-                            && matches!(&method.params[0], Ty::Param { bounds, .. } if bounds.iter().any(|bound| bound == "Hasher"))
-                            && method.ret == Ty::None
+                            && matches!((method.params[0]).kind(), TyKind::Param { bounds, .. } if bounds.iter().any(|bound| bound == "Hasher"))
+                            && method.ret == TyKind::None
                     })
                 })
             }),
@@ -1493,14 +1502,14 @@ impl Checker {
         if self.conforms_to(ty, required) {
             return true;
         }
-        if let Ty::Param { binder, .. } = ty {
+        if let TyKind::Param { binder, .. } = ty.kind() {
             let needed = GenericConstraint::Conforms {
                 param: binder.clone(),
                 trait_name: required.to_string(),
             };
             return assumption.is_some_and(|known| generic_constraint_implies(known, &needed));
         }
-        let Ty::Struct(name, args) = ty else {
+        let TyKind::Struct(name, args) = ty.kind() else {
             return false;
         };
         let key = (name.clone(), required.to_string());
@@ -1572,7 +1581,10 @@ impl Checker {
                     // A pack bound to another declaration's pack that is
                     // still a parameter (`Tuple[*Self.Ts]`): its elements
                     // are that pack's, whose bound or the premise decides.
-                    TyArg::Ty(pack @ Ty::Param { binder, .. }) if binder.name.starts_with('*') => {
+                    TyArg::Ty(pack)
+                        if let TyKind::Param { binder, .. } = pack.kind()
+                            && binder.name.starts_with('*') =>
+                    {
                         self.conforms_to(pack, trait_name)
                             || assumption.is_some_and(|known| {
                                 binder_conformance_assumed(binder, trait_name, known)
@@ -1608,30 +1620,30 @@ impl Checker {
 
     pub(super) fn ct_value_ty(&self, value: &CtValue, self_ty: &Ty) -> Option<Ty> {
         match value {
-            CtValue::Int(_) | CtValue::Deferred(_) | CtValue::Marker(_) => Some(Ty::Int),
+            CtValue::Int(_) | CtValue::Deferred(_) | CtValue::Marker(_) => Some(Ty::int()),
             CtValue::Expr(expr) => match expr.meta() {
-                mojito_types::param_expr::MetaTy::Value(ty) => Some((**ty).clone()),
+                mojito_types::param_expr::MetaTy::Value(ty) => Some((*ty).clone()),
                 _ => None,
             },
-            CtValue::UInt(_) => Some(Ty::UInt),
-            CtValue::Float(_) => Some(Ty::Float64),
-            CtValue::IntLiteral(_) => Some(Ty::IntLiteral),
-            CtValue::FloatLiteral(_) => Some(Ty::FloatLiteral),
-            CtValue::Bool(_) => Some(Ty::Bool),
-            CtValue::Str(_) => Some(Ty::StringLiteral),
-            CtValue::Dtype(_) => Some(Ty::Dtype),
+            CtValue::UInt(_) => Some(Ty::uint()),
+            CtValue::Float(_) => Some(Ty::float64()),
+            CtValue::IntLiteral(_) => Some(Ty::int_literal()),
+            CtValue::FloatLiteral(_) => Some(Ty::float_literal()),
+            CtValue::Bool(_) => Some(Ty::bool()),
+            CtValue::Str(_) => Some(Ty::string_literal()),
+            CtValue::Dtype(_) => Some(Ty::dtype()),
             CtValue::Simd { dtype, lanes } => Some(mojito_types::types::canonical_simd_ty(
                 *dtype,
                 lanes.len() as i64,
             )),
-            CtValue::Struct { name, .. } => Some(Ty::Struct(name.clone(), Vec::new().into())),
+            CtValue::Struct { name, .. } => Some(TyKind::Struct(name.clone(), Vec::new()).into()),
             CtValue::Tuple(values) => values
                 .iter()
                 .map(|v| self.ct_value_ty(v, self_ty))
                 .collect::<Option<Vec<_>>>()
                 .map(|elements| {
-                    if matches!(self_ty, Ty::Tuple(_) | Ty::RuntimePack(_)) {
-                        Ty::Tuple(elements)
+                    if matches!(self_ty.kind(), TyKind::Tuple(_) | TyKind::RuntimePack(_)) {
+                        TyKind::Tuple(elements).into()
                     } else {
                         nominal_tuple_type(elements)
                     }
@@ -1653,7 +1665,7 @@ impl Checker {
             // default hasher; an explicit spelling is the type itself.
             CtValue::Dict { spelling, entries } => {
                 if let Some(ty) = spelling {
-                    Some((**ty).clone())
+                    Some((*ty).clone())
                 } else {
                     let (first_key, first_value) = entries.first()?;
                     let key = self.ct_value_ty(first_key, self_ty)?;
@@ -1673,7 +1685,7 @@ impl Checker {
             }
             CtValue::Set { spelling, elements } => {
                 if let Some(ty) = spelling {
-                    Some((**ty).clone())
+                    Some((*ty).clone())
                 } else {
                     let element = self.ct_value_ty(elements.first()?, self_ty)?;
                     elements
@@ -1706,7 +1718,7 @@ impl Checker {
         if self.has_assumed_conformance(ty, tr) {
             return true;
         }
-        if let Ty::Param { bounds, .. } = ty
+        if let TyKind::Param { bounds, .. } = ty.kind()
             && bounds.iter().any(|bound| bound == tr)
         {
             return true;
@@ -1729,10 +1741,10 @@ impl Checker {
                 "Movable" => self.is_movable(ty),
                 "Deinitable" => self.is_deinitable(ty),
                 "Hashable" => self.is_hashable(ty),
-                "Writable" => match ty {
+                "Writable" => match ty.kind() {
                     // The intrinsic slice descriptors write as
                     // `Slice(start, end, step)` (upstream's `Writable`).
-                    Ty::Struct(name, args)
+                    TyKind::Struct(name, args)
                         if args.is_empty()
                             && matches!(
                                 name.as_str(),
@@ -1741,43 +1753,43 @@ impl Checker {
                     {
                         true
                     }
-                    Ty::Struct(name, args) => self.struct_conformance_applies(name, args, tr),
-                    Ty::Param { bounds, .. } => bounds.iter().any(|bound| bound == tr),
-                    Ty::Func(_) | Ty::GenericFunc(_) | Ty::Overload(_) => false,
+                    TyKind::Struct(name, args) => self.struct_conformance_applies(name, args, tr),
+                    TyKind::Param { bounds, .. } => bounds.iter().any(|bound| bound == tr),
+                    TyKind::Func(_) | TyKind::GenericFunc(_) | TyKind::Overload(_) => false,
                     _ => true,
                 },
-                "Hasher" => match ty {
-                    Ty::Struct(name, args) => self.struct_conformance_applies(name, args, tr),
-                    Ty::Param { bounds, .. } => bounds.iter().any(|bound| bound == tr),
+                "Hasher" => match ty.kind() {
+                    TyKind::Struct(name, args) => self.struct_conformance_applies(name, args, tr),
+                    TyKind::Param { bounds, .. } => bounds.iter().any(|bound| bound == tr),
                     _ => false,
                 },
                 // Default construction is a declared conformance on structs
                 // (current `Tuple`/`Array` default-construct their elements
                 // through it); the scalar built-ins and `None` answer
                 // structurally.
-                "Defaultable" => match ty {
-                    Ty::Int
-                    | Ty::IntLiteral
-                    | Ty::UInt
-                    | Ty::Float64
-                    | Ty::FloatLiteral
-                    | Ty::Bool
-                    | Ty::StringLiteral
-                    | Ty::None
-                    | Ty::Simd { .. } => true,
-                    Ty::Tuple(elements) | Ty::RuntimePack(elements) => {
+                "Defaultable" => match ty.kind() {
+                    TyKind::Int
+                    | TyKind::IntLiteral
+                    | TyKind::UInt
+                    | TyKind::Float64
+                    | TyKind::FloatLiteral
+                    | TyKind::Bool
+                    | TyKind::StringLiteral
+                    | TyKind::None
+                    | TyKind::Simd { .. } => true,
+                    TyKind::Tuple(elements) | TyKind::RuntimePack(elements) => {
                         elements.iter().all(|element| self.conforms_to(element, tr))
                     }
-                    Ty::Struct(name, args) => self.struct_conformance_applies(name, args, tr),
-                    Ty::Param { bounds, .. } => bounds
+                    TyKind::Struct(name, args) => self.struct_conformance_applies(name, args, tr),
+                    TyKind::Param { bounds, .. } => bounds
                         .iter()
                         .any(|bound| bound == tr || self.trait_refines(bound, tr)),
                     _ => false,
                 },
-                "Indexer" => match ty {
-                    Ty::Int | Ty::IntLiteral => true,
-                    Ty::Struct(name, args) => self.struct_conformance_applies(name, args, tr),
-                    Ty::Param { bounds, .. } => bounds.iter().any(|bound| bound == tr),
+                "Indexer" => match ty.kind() {
+                    TyKind::Int | TyKind::IntLiteral => true,
+                    TyKind::Struct(name, args) => self.struct_conformance_applies(name, args, tr),
+                    TyKind::Param { bounds, .. } => bounds.iter().any(|bound| bound == tr),
                     _ => false,
                 },
                 "Equatable" => has_equality_bound_or_concrete(self, ty),
@@ -1796,22 +1808,22 @@ impl Checker {
                 // value.
                 "Intable" => {
                     is_numeric_like(ty)
-                        || *ty == Ty::Bool
-                        || matches!(ty, Ty::Struct(name, args)
+                        || *ty == TyKind::Bool
+                        || matches!(ty.kind(), TyKind::Struct(name, args)
                             if self.struct_conformance_applies(name, args, tr))
                 }
                 "Floatable" => {
                     is_numeric_like(ty)
-                        || matches!(ty, Ty::Struct(name, args)
+                        || matches!(ty.kind(), TyKind::Struct(name, args)
                             if self.struct_conformance_applies(name, args, tr))
                 }
                 // Layout/backend markers and future operation traits stay shallow.
                 _ => true,
             };
         }
-        match ty {
-            Ty::Struct(name, args) => self.struct_conformance_applies(name, args, tr),
-            Ty::Param { bounds, .. } => bounds
+        match ty.kind() {
+            TyKind::Struct(name, args) => self.struct_conformance_applies(name, args, tr),
+            TyKind::Param { bounds, .. } => bounds
                 .iter()
                 .any(|bound| bound == tr || self.trait_refines(bound, tr)),
             _ => false,
@@ -1823,7 +1835,7 @@ impl Checker {
     /// identity, while its body is checked. No negative or disjunctive fact
     /// reaches this table (see `guaranteed_conformance_atoms`).
     pub(super) fn has_assumed_conformance(&self, ty: &Ty, required: &str) -> bool {
-        let Ty::Param { binder, .. } = ty else {
+        let TyKind::Param { binder, .. } = ty.kind() else {
             return false;
         };
         let subject = AssumedSubject::Binder(binder.id.clone());
@@ -1895,7 +1907,7 @@ impl Checker {
                     .associated
                     .iter()
                     .filter_map(|(member, value)| match value {
-                        CtValue::Type(ty) => Some((member.clone(), (**ty).clone())),
+                        CtValue::Type(ty) => Some((member.clone(), ty.clone())),
                         _ => None,
                     })
                     .collect();
@@ -1967,14 +1979,17 @@ impl Checker {
         let always = || vec![GenericConstraint::Bool(true)];
         let trivial = mojito_types::types::trivial_predicate_name(required);
         if info.decls.is_empty() {
-            let self_ty = Ty::Struct(name.to_string(), Vec::new().into());
+            let self_ty = Ty::new(TyKind::Struct(name.to_string(), Vec::new()));
             let holds = trivial.map_or_else(
                 || self.conforms_to(&self_ty, required),
                 |kind| self.is_trivially(kind, &self_ty),
             );
             return Some(if holds { always() } else { Vec::new() });
         }
-        let self_ty = Ty::Struct(name.to_string(), params_as_args(&info.decls).into());
+        let self_ty = Ty::new(TyKind::Struct(
+            name.to_string(),
+            params_as_args(&info.decls),
+        ));
         if mojito_types::types::uninit_storage_element(&self_ty).is_some() {
             return None;
         }
@@ -2149,7 +2164,7 @@ impl Checker {
         reason = "TODO: write! into the buffer instead"
     )]
     pub(super) fn trait_failure_reason(&self, ty: &Ty, tr: &str) -> Option<String> {
-        let Ty::Struct(name, arguments) = ty else {
+        let TyKind::Struct(name, arguments) = ty.kind() else {
             return builtin_trait_operation(tr)
                 .map(|operation| format!("missing required operation '{operation}'"));
         };
@@ -2282,8 +2297,8 @@ impl Checker {
         {
             return true;
         }
-        match ty {
-            Ty::Struct(name, args) => self.structs.get(name).is_none_or(|s| {
+        match ty.kind() {
+            TyKind::Struct(name, args) => self.structs.get(name).is_none_or(|s| {
                 // A declared Copyable-family conformance is the contract
                 // and its condition decides: `Array[T]` declares
                 // `Copyable where conforms_to(T, Copyable)` beside a
@@ -2310,7 +2325,7 @@ impl Checker {
                     s.methods.contains_key("__copyinit__")
                 }
             }),
-            Ty::Param { bounds, .. } => bounds.iter().any(|bound| {
+            TyKind::Param { bounds, .. } => bounds.iter().any(|bound| {
                 matches!(
                     bound.as_str(),
                     "Copyable" | "ImplicitlyCopyable" | "TrivialRegisterPassable"
@@ -2319,7 +2334,7 @@ impl Checker {
             // An abstract associated type (`C.Element`) is copyable only when
             // the bound trait's member declaration proves it — never
             // vacuously.
-            Ty::Assoc { .. } => self.assoc_member_bound_proves(ty, "Copyable"),
+            TyKind::Assoc { .. } => self.assoc_member_bound_proves(ty, "Copyable"),
             // Scalars, `String`, `List`/`Tuple`/`Simd`/`Range`, `Error`, closures,
             // and `Self` are treated as copyable (element-wise copyability of
             // aggregates is not modeled).
@@ -2349,8 +2364,8 @@ impl Checker {
         if mojito_types::types::uninit_storage_element(ty).is_some() {
             return true;
         }
-        match ty {
-            Ty::Struct(name, args) => self.structs.get(name).map_or_else(
+        match ty.kind() {
+            TyKind::Struct(name, args) => self.structs.get(name).map_or_else(
                 || {
                     mojito_types::types::list_element(ty).is_none()
                         && mojito_types::types::dict_elements(ty).is_none()
@@ -2372,15 +2387,15 @@ impl Checker {
                     })
                 },
             ),
-            Ty::Param { bounds, .. } => bounds.iter().any(|bound| {
+            TyKind::Param { bounds, .. } => bounds.iter().any(|bound| {
                 matches!(
                     bound.as_str(),
                     "ImplicitlyCopyable" | "TrivialRegisterPassable"
                 ) || self.trait_refines(bound, "ImplicitlyCopyable")
             }),
             // An abstract associated type is implicitly copyable only when its
-            // declared member bounds say so, mirroring the `Ty::Param` rule.
-            Ty::Assoc { .. } => self.assoc_member_bound_proves(ty, "ImplicitlyCopyable"),
+            // declared member bounds say so, mirroring the `TyKind::Param` rule.
+            TyKind::Assoc { .. } => self.assoc_member_bound_proves(ty, "ImplicitlyCopyable"),
             // Every other type answers by its shape, an aggregate by its
             // elements.
             _ => mojito_types::conformance::leaf_conforms(
@@ -2422,19 +2437,19 @@ impl Checker {
     /// (including `String`) as overlapping reads even when their type conforms
     /// to `ImplicitlyCopyable`; register-like values may be disarmed as copies.
     pub(super) fn call_read_is_independent_copy(&self, ty: &Ty) -> bool {
-        self.is_implicitly_copyable(ty) && !matches!(ty, Ty::Struct(..))
+        self.is_implicitly_copyable(ty) && !matches!(ty.kind(), TyKind::Struct(..))
     }
 
     /// Whether an associated type projected off a bounded parameter
     /// (`C.Element`) proves `required` through the bound trait's declared
     /// member bounds. `Copyable` is satisfied by `Copyable`,
     /// `ImplicitlyCopyable`, or a refining trait; `ImplicitlyCopyable`
-    /// requires the exact marker, matching the `Ty::Param` rule.
+    /// requires the exact marker, matching the `TyKind::Param` rule.
     fn assoc_member_bound_proves(&self, ty: &Ty, required: &str) -> bool {
-        let Ty::Assoc { base, name, .. } = ty else {
+        let TyKind::Assoc { base, name, .. } = ty.kind() else {
             return false;
         };
-        let Ty::Param { bounds, .. } = base.as_ref() else {
+        let TyKind::Param { bounds, .. } = base.kind() else {
             return false;
         };
         self.lookup_trait_assoc_type(bounds, name)
@@ -2461,15 +2476,15 @@ impl Checker {
         if self.has_assumed_conformance(ty, "Movable") {
             return true;
         }
-        match ty {
-            Ty::Struct(name, args) => self.structs.get(name).is_none_or(|info| {
+        match ty.kind() {
+            TyKind::Struct(name, args) => self.structs.get(name).is_none_or(|info| {
                 if info.conforms.iter().any(|tr| tr == "Movable") {
                     self.struct_conformance_applies(name, args, "Movable")
                 } else {
                     true
                 }
             }),
-            Ty::Param {
+            TyKind::Param {
                 bounds,
                 callable_bound: None,
                 ..
@@ -2504,13 +2519,13 @@ impl Checker {
             return self.is_trivial_register_passable(&element);
         }
         super::builtins::is_numeric(ty)
-            || matches!(ty, Ty::Bool | Ty::Dtype)
+            || matches!(ty.kind(), TyKind::Bool | TyKind::Dtype)
             || super::builtins::simd_valued_ty(ty)
-            || match ty {
-                Ty::Struct(name, args) => {
+            || match ty.kind() {
+                TyKind::Struct(name, args) => {
                     self.struct_conformance_applies(name, args, "TrivialRegisterPassable")
                 }
-                Ty::Param { bounds, .. } => {
+                TyKind::Param { bounds, .. } => {
                     bounds
                         .iter()
                         .any(|bound| bound == "TrivialRegisterPassable")
@@ -2551,11 +2566,11 @@ impl Checker {
         // The general `conforms_to` treats marker traits shallowly (everything
         // conforms), so consult only a declared conformance or a parameter
         // bound; primitives already prove triviality structurally below.
-        let trp_conforms = match ty {
-            Ty::Struct(name, args) => {
+        let trp_conforms = match ty.kind() {
+            TyKind::Struct(name, args) => {
                 self.struct_conformance_applies(name, args, "TrivialRegisterPassable")
             }
-            Ty::Param { bounds, .. } => {
+            TyKind::Param { bounds, .. } => {
                 bounds
                     .iter()
                     .any(|bound| bound == "TrivialRegisterPassable")
@@ -2586,15 +2601,15 @@ impl Checker {
                 }
             };
         }
-        match ty {
-            Ty::ComptimeList(element) => self.trivial_lifecycle(kind, element, visiting),
-            Ty::Tuple(elements) | Ty::RuntimePack(elements) => elements
+        match ty.kind() {
+            TyKind::ComptimeList(element) => self.trivial_lifecycle(kind, element, visiting),
+            TyKind::Tuple(elements) | TyKind::RuntimePack(elements) => elements
                 .iter()
                 .all(|element| self.trivial_lifecycle(kind, element, visiting)),
-            Ty::Variant(alternatives) => alternatives
+            TyKind::Variant(alternatives) => alternatives
                 .iter()
                 .all(|alternative| self.trivial_lifecycle(kind, alternative, visiting)),
-            Ty::Struct(name, args) => {
+            TyKind::Struct(name, args) => {
                 if !visiting.insert(name.clone()) {
                     // A cycle can only occur through indirection; the pointer
                     // value itself is trivial.
@@ -2615,7 +2630,7 @@ impl Checker {
             }
             // Generic parameters and associated members have no structural
             // proof; comptime sites see concrete types after specialization.
-            Ty::Param { .. } | Ty::SelfType | Ty::Infer => false,
+            TyKind::Param { .. } | TyKind::SelfType | TyKind::Infer => false,
             // Scalars, literals, pointers-as-values, and the remaining
             // primitive representations move/copy bitwise and drop as no-ops.
             _ => true,
@@ -2629,15 +2644,15 @@ impl Checker {
         if self.has_assumed_conformance(ty, "Deinitable") {
             return true;
         }
-        match ty {
-            Ty::Struct(name, args) => self.structs.get(name).is_none_or(|info| {
+        match ty.kind() {
+            TyKind::Struct(name, args) => self.structs.get(name).is_none_or(|info| {
                 if info.conforms.iter().any(|tr| tr == "Deinitable") {
                     self.struct_conformance_applies(name, args, "Deinitable")
                 } else {
                     true
                 }
             }),
-            Ty::Param { bounds, .. } => self.bounds_prove_deinitable(bounds),
+            TyKind::Param { bounds, .. } => self.bounds_prove_deinitable(bounds),
             // Every other type answers by its shape, an aggregate by its
             // elements.
             _ => mojito_types::conformance::leaf_conforms(ty, "Deinitable", &mut |element, _| {
@@ -2664,9 +2679,9 @@ impl Checker {
         if self.has_assumed_conformance(ty, "Hashable") {
             return true;
         }
-        match ty {
-            Ty::Struct(name, args) => self.struct_conformance_applies(name, args, "Hashable"),
-            Ty::Param { bounds, .. } => bounds.iter().any(|b| b == "Hashable"),
+        match ty.kind() {
+            TyKind::Struct(name, args) => self.struct_conformance_applies(name, args, "Hashable"),
+            TyKind::Param { bounds, .. } => bounds.iter().any(|b| b == "Hashable"),
             _ => builtin_hashable_ty(ty),
         }
     }
@@ -2675,9 +2690,9 @@ impl Checker {
         if self.has_assumed_conformance(ty, "Comparable") {
             return true;
         }
-        match ty {
-            Ty::Struct(name, args) => self.struct_conformance_applies(name, args, "Comparable"),
-            Ty::Param { bounds, .. } => bounds.iter().any(|b| b == "Comparable"),
+        match ty.kind() {
+            TyKind::Struct(name, args) => self.struct_conformance_applies(name, args, "Comparable"),
+            TyKind::Param { bounds, .. } => bounds.iter().any(|b| b == "Comparable"),
             _ => is_numeric_like(ty) || is_scalar_simd(ty),
         }
     }
@@ -2699,7 +2714,7 @@ impl Checker {
                     // `List[Int]`/`Tuple[*Ts]` field as an unregistered
                     // nominal spelling; the ordinary capability helper's
                     // compatibility default answers for it.
-                    || matches!(ty, Ty::Struct(field_struct, _)
+                    || matches!(ty.kind(), TyKind::Struct(field_struct, _)
                         if !self.structs.contains_key(field_struct) && self.is_copyable(ty))
             })
     }
@@ -2718,9 +2733,9 @@ impl Checker {
                     // Private pack storage (`__RuntimeTuple[*Self.Ts]`,
                     // copies as its elements do, which the conformance's own
                     // `where` clause states.
-                    || matches!(ty, Ty::Tuple(elements) | Ty::Variant(elements)
-                        if matches!(mojito_types::types::pack_spread(elements),
-                            Some(Ty::Param { binder, .. }) if assumption.is_some_and(|known| {
+                    || matches!(ty.kind(), TyKind::Tuple(elements) | TyKind::Variant(elements)
+                        if matches!((mojito_types::types::pack_spread(elements)).map(Ty::kind),
+                            Some(TyKind::Param { binder, .. }) if assumption.is_some_and(|known| {
                                 binder_conformance_assumed(binder, "ImplicitlyCopyable", known)
                             })))
             })
@@ -2781,7 +2796,7 @@ impl Checker {
             && matches!(source.kind, ExprKind::Transfer(_))
             && !self.is_movable(ty)
         {
-            let reason = if matches!(ty, Ty::Param { .. }) {
+            let reason = if matches!(ty.kind(), TyKind::Param { .. }) {
                 "a value of a parameter type transfers only where a bound proves 'Movable'"
             } else {
                 "its 'Movable' conformance condition is false"
@@ -2866,12 +2881,15 @@ impl Checker {
         let mut methods = Vec::new();
         if method == "__hash__" && argc == 1 && bounds.iter().any(|b| b == "Hashable") {
             let mut signature = MethodSig::intrinsic(
-                vec![Ty::Param {
-                    binder: synthetic_binder("Some[Hasher]"),
-                    bounds: vec!["Hasher".to_string()],
-                    callable_bound: None,
-                }],
-                Ty::None,
+                vec![
+                    TyKind::Param {
+                        binder: synthetic_binder("Some[Hasher]"),
+                        bounds: vec!["Hasher".to_string()],
+                        callable_bound: None,
+                    }
+                    .into(),
+                ],
+                Ty::none(),
             );
             signature.conventions[0] = Some(ArgConvention::Mut);
             methods.push(signature);
@@ -2879,18 +2897,18 @@ impl Checker {
         if bounds.iter().any(|bound| bound == "Hasher") {
             let signature = match (method, argc) {
                 ("update", 1) => Some((
-                    Ty::Param {
+                    TyKind::Param {
                         binder: synthetic_binder("Some[Hashable]"),
                         bounds: vec!["Hashable".to_string()],
                         callable_bound: None,
                     },
-                    Ty::None,
+                    TyKind::None,
                     Some(ArgConvention::Mut),
                 )),
                 _ => None,
             };
             if let Some((param, ret, convention)) = signature {
-                let mut signature = MethodSig::intrinsic(vec![param], ret);
+                let mut signature = MethodSig::intrinsic(vec![param.into()], ret.into());
                 signature.self_convention = convention;
                 methods.push(signature);
             }
@@ -2916,7 +2934,7 @@ impl Checker {
                 .iter()
                 .any(|b| matches!(b.as_str(), "Copyable" | "ImplicitlyCopyable"))
         {
-            methods.push(MethodSig::intrinsic(vec![], Ty::SelfType));
+            methods.push(MethodSig::intrinsic(vec![], Ty::self_type()));
         }
         // The built-in numeric-rounding traits contribute a `-> Self` dunder
         // (roadmap milestone 7), used by the self-hosted `math` module: `Floorable`/
@@ -2925,11 +2943,11 @@ impl Checker {
         let accepts = math_dunder_bound(method, argc);
         if !accepts.is_empty() && bounds.iter().any(|b| accepts.contains(&b.as_str())) {
             let params = if argc == 1 {
-                vec![Ty::SelfType]
+                vec![Ty::self_type()]
             } else {
                 vec![]
             };
-            methods.push(MethodSig::intrinsic(params, Ty::SelfType));
+            methods.push(MethodSig::intrinsic(params, Ty::self_type()));
         }
         for bound in bounds {
             let Some(signatures) = self
@@ -2992,7 +3010,7 @@ impl Checker {
             .iter()
             .filter_map(|b| self.traits.get(b))
             .find_map(|info| match info.comptime_members.get(member) {
-                Some(CtMemberReq::Value(ty)) => Some((**ty).clone()),
+                Some(CtMemberReq::Value(ty)) => Some(ty.clone()),
                 _ => None,
             })
     }
@@ -3111,10 +3129,10 @@ fn parametric_origin_writes_in_body(
             match &stmt.kind {
                 StmtKind::AugAssign { place, .. } | StmtKind::SetPlace { place, value: _ } => {
                     if let Some(field) = written_self_field(place)
-                        && let Some((_, Ty::Ref(reference))) =
-                            fields.iter().find(|(name, _)| name == field)
+                        && let Some((_, field_ty)) = fields.iter().find(|(name, _)| name == field)
+                        && let TyKind::Ref(reference) = field_ty.kind()
                         && matches!(reference.mutability, Mutability::Param(_))
-                        && let Origin::Param(id) = reference.origin
+                        && let Origin::Param(id) = reference.origin.clone()
                         && !out.contains(&id)
                     {
                         out.push(id);
@@ -3189,7 +3207,10 @@ type StructMemberTypes = (
 /// Whether a method satisfies upstream's `Indexer` requirement:
 /// `def __mlir_index__(self) -> __mlir_type.index`.
 pub(super) fn is_indexer_requirement(method: &MethodSig) -> bool {
-    method.has_self && method.params.is_empty() && method.ret == Ty::Int && method.ret_mlir_index
+    method.has_self
+        && method.params.is_empty()
+        && method.ret == TyKind::Int
+        && method.ret_mlir_index
 }
 
 /// Whether a default is a literal, or a negated numeric one: an expression

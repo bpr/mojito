@@ -17,6 +17,7 @@ use mojito_checked::checked::{
 };
 use mojito_common::token::DUMMY_SPAN;
 use mojito_types::types::Ty;
+use mojito_types::types::TyKind;
 use petgraph::stable_graph::{NodeIndex, StableGraph};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -915,10 +916,10 @@ impl Lower {
                 let ty = node.place_ty.clone()?;
                 Some(HirPlace {
                     owner: node.binding?,
-                    root_ty: Ty::Variant(alternatives.clone()),
+                    root_ty: TyKind::Variant(alternatives.clone()).into(),
                     projections: vec![HirPlaceProjection {
                         kind: HirPlaceProjectionKind::Variant(index),
-                        base_ty: Ty::Variant(alternatives.clone()),
+                        base_ty: TyKind::Variant(alternatives.clone()).into(),
                         ty: ty.clone(),
                     }],
                     ty,

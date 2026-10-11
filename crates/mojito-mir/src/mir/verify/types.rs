@@ -4,6 +4,7 @@
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 use mojito_types::param_expr::{ParamBindings, ParamContext};
+use mojito_types::types::TyKind;
 use mojito_types::types::{FuncTy, TySubst};
 
 /// Compatibility for verification purposes: either direction of the checker's
@@ -47,9 +48,11 @@ pub(super) fn types_compatible(found: &Ty, expected: &Ty) -> bool {
         && found_environment != expected_environment
     {
         let mut respelled = found.clone();
-        if let Some(func) = respelled.callable_mut() {
-            func.environment = expected_environment.clone();
-        }
+        respelled.update(|kind| {
+            if let Some(func) = kind.callable_mut() {
+                func.environment = expected_environment.clone();
+            }
+        });
         return types_compatible(&respelled, expected);
     }
     // Two residual sizes over the same binders are one type only when they
@@ -75,22 +78,22 @@ pub(super) fn types_compatible(found: &Ty, expected: &Ty) -> bool {
     // receiver register), so ABI compatibility compares elements only. The
     // checker and ownership analysis own origin discipline.
     if let (
-        Ty::Pointer {
+        TyKind::Pointer {
             element: found_element,
             ..
         },
-        Ty::Pointer {
+        TyKind::Pointer {
             element: expected_element,
             ..
         },
-    ) = (found, expected)
+    ) = (found.kind(), expected.kind())
     {
         return types_compatible(found_element, expected_element);
     }
     // So do a callable's signature origins: a function value specialized at
     // a caller's origin (`borrow[origin_of(x)]`) and one relative to its
     // argument slots are one runtime value.
-    if let (Ty::Func(_), Ty::Func(_)) = (found, expected)
+    if let (TyKind::Func(_), TyKind::Func(_)) = (found.kind(), expected.kind())
         && signature_origins_erased(found) == signature_origins_erased(expected)
     {
         return true;
@@ -98,7 +101,8 @@ pub(super) fn types_compatible(found: &Ty, expected: &Ty) -> bool {
     // So does a reference's: a specialized instance erases the origins of
     // its type arguments, so a `ref T` element slot holds a reference of any
     // origin with the same mutability.
-    if let (Ty::Ref(found_reference), Ty::Ref(expected_reference)) = (found, expected)
+    if let (TyKind::Ref(found_reference), TyKind::Ref(expected_reference)) =
+        (found.kind(), expected.kind())
         && found_reference.mutability == expected_reference.mutability
     {
         return types_compatible(&found_reference.referent, &expected_reference.referent);
@@ -108,8 +112,8 @@ pub(super) fn types_compatible(found: &Ty, expected: &Ty) -> bool {
     // Otherwise the origin tail erases from the runtime ABI like a pointer
     // origin: the checker owns origin identity, so two instantiations that
     // differ only in their origin arguments are one type here.
-    if let (Ty::Struct(found_name, found_args), Ty::Struct(expected_name, expected_args)) =
-        (found, expected)
+    if let (TyKind::Struct(found_name, found_args), TyKind::Struct(expected_name, expected_args)) =
+        (found.kind(), expected.kind())
         && found_name == expected_name
     {
         if found_args.is_empty() || expected_args.is_empty() {
@@ -130,7 +134,7 @@ pub(super) fn types_compatible(found: &Ty, expected: &Ty) -> bool {
         }
     }
     // A contextual selection narrows an overload set to one member.
-    if let Ty::Overload(members) = found {
+    if let TyKind::Overload(members) = found.kind() {
         return members
             .iter()
             .any(|member| types_compatible(member, expected));
@@ -138,7 +142,7 @@ pub(super) fn types_compatible(found: &Ty, expected: &Ty) -> bool {
     // A struct may nominally conform to a `def(...)` callable trait; the
     // conformance is checker-verified and not yet recorded in MIR
     // declarations, so the verifier does not re-check it here.
-    if matches!(found, Ty::Struct(..)) && matches!(expected, Ty::Func(_)) {
+    if matches!(found.kind(), TyKind::Struct(..)) && matches!(expected.kind(), TyKind::Func(_)) {
         return true;
     }
     mojito_types::types::value_coerces(found, expected)
@@ -148,14 +152,14 @@ pub(super) fn types_compatible(found: &Ty, expected: &Ty) -> bool {
 /// Whether `actual` fits the vector `pattern` when one of the pattern's
 /// slots is symbolic; `None` when the pattern is not such a vector.
 fn symbolic_simd_compatible(pattern: &Ty, actual: &Ty) -> Option<bool> {
-    let Ty::Simd { dtype, width } = pattern else {
+    let TyKind::Simd { dtype, width } = pattern.kind() else {
         return None;
     };
     if !dtype.is_symbolic() && !width.is_symbolic() {
         return None;
     }
-    let (actual_dtype, actual_width) = match actual {
-        Ty::Bool => (
+    let (actual_dtype, actual_width) = match actual.kind() {
+        TyKind::Bool => (
             mojito_types::types::SimdDtype::Known(mojito_ast::ast::Dtype::Bool),
             mojito_types::types::SimdWidth::Known(1),
         ),
@@ -196,14 +200,14 @@ pub(super) fn iterator_result_matches_declaration(
             && call.reference_result.is_none()
             && types_compatible(&call.result_ty, &declaration.ret_ty);
     }
-    match (&call.reference_result, &call.result_ty) {
-        (Some(reference), Ty::Ref(result_reference)) => {
+    match (&call.reference_result, call.result_ty.kind()) {
+        (Some(reference), TyKind::Ref(result_reference)) => {
             declaration.returns_reference
                 && reference == result_reference
                 && types_compatible(&reference.referent, &declaration.ret_ty)
         }
-        (None, result) => {
-            !declaration.returns_reference && types_compatible(result, &declaration.ret_ty)
+        (None, _) => {
+            !declaration.returns_reference && types_compatible(&call.result_ty, &declaration.ret_ty)
         }
         _ => false,
     }
@@ -232,21 +236,21 @@ pub(super) fn verify_iterator_result_adapter(
 }
 
 pub(super) fn contains_runtime_pack(ty: &Ty) -> bool {
-    match ty {
-        Ty::RuntimePack(_) => true,
-        Ty::ComptimeList(inner) | Ty::Pointer { element: inner, .. } => {
+    match ty.kind() {
+        TyKind::RuntimePack(_) => true,
+        TyKind::ComptimeList(inner) | TyKind::Pointer { element: inner, .. } => {
             contains_runtime_pack(inner)
         }
-        Ty::Tuple(elements) | Ty::Variant(elements) | Ty::Overload(elements) => {
+        TyKind::Tuple(elements) | TyKind::Variant(elements) | TyKind::Overload(elements) => {
             elements.iter().any(contains_runtime_pack)
         }
-        Ty::Ref(reference) => contains_runtime_pack(&reference.referent),
-        Ty::Struct(_, arguments) => arguments.iter().any(|argument| match argument {
+        TyKind::Ref(reference) => contains_runtime_pack(&reference.referent),
+        TyKind::Struct(_, arguments) => arguments.iter().any(|argument| match argument {
             mojito_types::types::TyArg::Ty(inner) => contains_runtime_pack(inner),
             mojito_types::types::TyArg::Val(_) | mojito_types::types::TyArg::Origin(_) => false,
         }),
-        Ty::Assoc { base, .. } => contains_runtime_pack(base),
-        Ty::Func(_) | Ty::GenericFunc(_) => ty
+        TyKind::Assoc { base, .. } => contains_runtime_pack(base),
+        TyKind::Func(_) | TyKind::GenericFunc(_) => ty
             .callable()
             .is_some_and(|func| func.types().any(contains_runtime_pack)),
         _ => false,
@@ -259,20 +263,20 @@ pub(super) fn instantiate_checked_type(
     value_arguments: &HashMap<String, CtValue>,
     bound_values: &HashSet<String>,
 ) -> Result<Ty, String> {
-    Ok(match ty {
-        Ty::Param {
+    Ok(match ty.kind() {
+        TyKind::Param {
             binder,
             bounds,
             callable_bound,
-        } => type_arguments
-            .get(&binder.id)
-            .cloned()
-            .unwrap_or_else(|| Ty::Param {
+        } => type_arguments.get(&binder.id).cloned().unwrap_or_else(|| {
+            TyKind::Param {
                 binder: binder.clone(),
                 bounds: bounds.clone(),
                 callable_bound: callable_bound.clone(),
-            }),
-        Ty::Dependent(dependent) => {
+            }
+            .into()
+        }),
+        TyKind::Dependent(dependent) => {
             let context = ParamContext::detached();
             let bindings = ParamBindings::from_named_values(&context, value_arguments);
             let expr = match dependent.selection() {
@@ -297,7 +301,7 @@ pub(super) fn instantiate_checked_type(
             }
             .map_err(|error| error.to_string())?;
             let instantiated = DependentType::resolve(expr);
-            if let Ty::Dependent(residual) = &instantiated {
+            if let TyKind::Dependent(residual) = instantiated.kind() {
                 let mut referenced = HashSet::new();
                 residual.expr().referenced_parameters(&mut referenced);
                 if referenced.is_empty() {
@@ -316,99 +320,92 @@ pub(super) fn instantiate_checked_type(
             }
             instantiated
         }
-        Ty::Struct(name, arguments) => Ty::Struct(
+        TyKind::Struct(name, arguments) => ty.reusing(TyKind::Struct(
             name.clone(),
-            arguments.reusing(
-                arguments
-                    .iter()
-                    .map(|argument| match argument {
-                        TyArg::Ty(ty) => instantiate_checked_type(
-                            ty,
-                            type_arguments,
-                            value_arguments,
-                            bound_values,
-                        )
-                        .map(TyArg::Ty),
-                        // A residual value argument binds through the same
-                        // replacement the checker used, so an erased instance
-                        // compares canonical expressions, not spellings.
-                        TyArg::Val(value) => {
-                            let context = ParamContext::detached();
-                            let bindings =
-                                ParamBindings::from_named_values(&context, value_arguments);
-                            mojito_types::types::replace_value_parameters(
-                                &context, value, &bindings,
-                            )
+            arguments
+                .iter()
+                .map(|argument| match argument {
+                    TyArg::Ty(ty) => {
+                        instantiate_checked_type(ty, type_arguments, value_arguments, bound_values)
+                            .map(TyArg::Ty)
+                    }
+                    // A residual value argument binds through the same
+                    // replacement the checker used, so an erased instance
+                    // compares canonical expressions, not spellings.
+                    TyArg::Val(value) => {
+                        let context = ParamContext::detached();
+                        let bindings = ParamBindings::from_named_values(&context, value_arguments);
+                        mojito_types::types::replace_value_parameters(&context, value, &bindings)
                             .map(TyArg::Val)
                             .map_err(|error| error.to_string())
-                        }
-                        TyArg::Origin(origin) => Ok(TyArg::Origin(origin.clone())),
-                    })
-                    .collect::<Result<Vec<_>, String>>()?,
-            ),
-        ),
-        Ty::ComptimeList(element) => Ty::ComptimeList(Box::new(instantiate_checked_type(
+                    }
+                    TyArg::Origin(origin) => Ok(TyArg::Origin(origin.clone())),
+                })
+                .collect::<Result<Vec<_>, String>>()?,
+        )),
+        TyKind::ComptimeList(element) => TyKind::ComptimeList(instantiate_checked_type(
             element,
             type_arguments,
             value_arguments,
             bound_values,
-        )?)),
-        Ty::Tuple(elements) => Ty::Tuple(
+        )?)
+        .into(),
+        TyKind::Tuple(elements) => TyKind::Tuple(
             elements
                 .iter()
                 .map(|ty| {
                     instantiate_checked_type(ty, type_arguments, value_arguments, bound_values)
                 })
                 .collect::<Result<Vec<_>, _>>()?,
-        ),
-        Ty::RuntimePack(elements) => Ty::RuntimePack(
+        )
+        .into(),
+        TyKind::RuntimePack(elements) => TyKind::RuntimePack(
             elements
                 .iter()
                 .map(|ty| {
                     instantiate_checked_type(ty, type_arguments, value_arguments, bound_values)
                 })
                 .collect::<Result<Vec<_>, _>>()?,
-        ),
-        Ty::VariadicPack(element) => Ty::VariadicPack(Box::new(instantiate_checked_type(
+        )
+        .into(),
+        TyKind::VariadicPack(element) => TyKind::VariadicPack(instantiate_checked_type(
             element,
             type_arguments,
             value_arguments,
             bound_values,
-        )?)),
-        Ty::Variant(elements) => Ty::Variant(
+        )?)
+        .into(),
+        TyKind::Variant(elements) => TyKind::Variant(
             elements
                 .iter()
                 .map(|ty| {
                     instantiate_checked_type(ty, type_arguments, value_arguments, bound_values)
                 })
                 .collect::<Result<Vec<_>, _>>()?,
-        ),
-        Ty::Pointer { element, origin } => Ty::Pointer {
-            element: Box::new(instantiate_checked_type(
+        )
+        .into(),
+        TyKind::Pointer { element, origin } => TyKind::Pointer {
+            element: instantiate_checked_type(
                 element,
                 type_arguments,
                 value_arguments,
                 bound_values,
-            )?),
+            )?,
             origin: origin.clone(),
-        },
-        Ty::Ref(reference) => {
+        }
+        .into(),
+        TyKind::Ref(reference) => {
             let mut reference = reference.clone();
-            reference.referent = Box::new(instantiate_checked_type(
+            reference.referent = instantiate_checked_type(
                 &reference.referent,
                 type_arguments,
                 value_arguments,
                 bound_values,
-            )?);
-            Ty::Ref(reference)
+            )?;
+            TyKind::Ref(reference).into()
         }
-        Ty::Assoc { base, name, args } => Ty::Assoc {
-            base: Box::new(instantiate_checked_type(
-                base,
-                type_arguments,
-                value_arguments,
-                bound_values,
-            )?),
+        TyKind::Assoc { base, name, args } => TyKind::Assoc {
+            base: instantiate_checked_type(base, type_arguments, value_arguments, bound_values)?,
             name: name.clone(),
             args: args
                 .iter()
@@ -423,16 +420,18 @@ pub(super) fn instantiate_checked_type(
                     TyArg::Origin(origin) => Ok(TyArg::Origin(origin.clone())),
                 })
                 .collect::<Result<Vec<_>, String>>()?,
-        },
-        Ty::Overload(candidates) => Ty::Overload(
+        }
+        .into(),
+        TyKind::Overload(candidates) => TyKind::Overload(
             candidates
                 .iter()
                 .map(|ty| {
                     instantiate_checked_type(ty, type_arguments, value_arguments, bound_values)
                 })
                 .collect::<Result<Vec<_>, _>>()?,
-        ),
-        Ty::Func(func) => {
+        )
+        .into(),
+        TyKind::Func(func) => {
             let FuncTy {
                 environment,
                 params,
@@ -450,7 +449,7 @@ pub(super) fn instantiate_checked_type(
                 ref_return,
                 transfers,
             } = &**func;
-            Ty::Func(Box::new(FuncTy {
+            TyKind::Func(Box::new(FuncTy {
                 environment: environment.clone(),
                 params: params
                     .iter()
@@ -459,25 +458,18 @@ pub(super) fn instantiate_checked_type(
                     })
                     .collect::<Result<Vec<_>, _>>()?,
                 names: names.clone(),
-                ret: Box::new(instantiate_checked_type(
-                    ret,
-                    type_arguments,
-                    value_arguments,
-                    bound_values,
-                )?),
+                ret: instantiate_checked_type(ret, type_arguments, value_arguments, bound_values)?,
                 required: required.clone(),
                 variadic: variadic
                     .as_ref()
                     .map(|ty| {
                         instantiate_checked_type(ty, type_arguments, value_arguments, bound_values)
-                            .map(Box::new)
                     })
                     .transpose()?,
                 kw_variadic: kw_variadic
                     .as_ref()
                     .map(|ty| {
                         instantiate_checked_type(ty, type_arguments, value_arguments, bound_values)
-                            .map(Box::new)
                     })
                     .transpose()?,
                 positional_only: *positional_only,
@@ -487,7 +479,6 @@ pub(super) fn instantiate_checked_type(
                     .as_ref()
                     .map(|ty| {
                         instantiate_checked_type(ty, type_arguments, value_arguments, bound_values)
-                            .map(Box::new)
                     })
                     .transpose()?,
                 conventions: conventions.clone(),
@@ -495,11 +486,12 @@ pub(super) fn instantiate_checked_type(
                 ref_return: ref_return.clone(),
                 transfers: transfers.clone(),
             }))
+            .into()
         }
         // Nested generic callable contracts own their own binder scope. The
         // outer verifier validates that scope recursively; retaining it is
         // sound and avoids capturing same-spelled outer substitution names.
-        Ty::GenericFunc(_) => ty.clone(),
+        TyKind::GenericFunc(_) => ty.clone(),
         _ => ty.clone(),
     })
 }
@@ -519,8 +511,8 @@ pub(super) fn residual_arguments_conflict(found: &Ty, expected: &Ty) -> bool {
         expr.visit(&mut |node| pattern |= matches!(node.kind(), ParamKind::TypeShape(_)));
         pattern
     }
-    let (Ty::Struct(found_name, found_args), Ty::Struct(expected_name, expected_args)) =
-        (found, expected)
+    let (TyKind::Struct(found_name, found_args), TyKind::Struct(expected_name, expected_args)) =
+        (found.kind(), expected.kind())
     else {
         return false;
     };
@@ -539,14 +531,16 @@ pub(super) fn residual_arguments_conflict(found: &Ty, expected: &Ty) -> bool {
 }
 
 pub(super) fn contains_type_param(ty: &Ty) -> bool {
-    match ty {
-        Ty::Param { .. } | Ty::Assoc { .. } | Ty::Dependent(_) => true,
-        Ty::ComptimeList(inner) | Ty::Pointer { element: inner, .. } => contains_type_param(inner),
-        Ty::Tuple(elements) | Ty::RuntimePack(elements) | Ty::Variant(elements) => {
+    match ty.kind() {
+        TyKind::Param { .. } | TyKind::Assoc { .. } | TyKind::Dependent(_) => true,
+        TyKind::ComptimeList(inner) | TyKind::Pointer { element: inner, .. } => {
+            contains_type_param(inner)
+        }
+        TyKind::Tuple(elements) | TyKind::RuntimePack(elements) | TyKind::Variant(elements) => {
             elements.iter().any(contains_type_param)
         }
-        Ty::Ref(reference) => contains_type_param(&reference.referent),
-        Ty::Struct(_, arguments) => arguments.iter().any(|argument| match argument {
+        TyKind::Ref(reference) => contains_type_param(&reference.referent),
+        TyKind::Struct(_, arguments) => arguments.iter().any(|argument| match argument {
             mojito_types::types::TyArg::Ty(inner) => contains_type_param(inner),
             // A symbolic value argument (`Counter[Self.length]` in an erased
             // method's signature) is an ABI slot the instance binds.
@@ -560,7 +554,7 @@ pub(super) fn contains_type_param(ty: &Ty) -> bool {
             }
             mojito_types::types::TyArg::Origin(_) => false,
         }),
-        Ty::Func(_) | Ty::GenericFunc(_) => ty
+        TyKind::Func(_) | TyKind::GenericFunc(_) => ty
             .callable()
             .is_some_and(|func| func.types().any(contains_type_param)),
         _ => false,
@@ -571,20 +565,25 @@ pub(super) fn contains_type_param(ty: &Ty) -> bool {
 /// keeping each reference's mutability.
 fn signature_origins_erased(ty: &Ty) -> Ty {
     let mut erased = ty.clone();
-    if let Some(FuncTy {
-        ref_params,
-        ref_return,
-        ..
-    }) = erased.as_func_mut()
-    {
-        for signature in ref_params
-            .iter_mut()
-            .flatten()
-            .chain(ref_return.iter_mut().map(AsMut::as_mut))
-        {
-            signature.origin = mojito_types::origin::SigOrigin::Static;
-        }
+    if erased.as_func().is_none() {
+        return erased;
     }
+    erased.update(|kind| {
+        if let Some(FuncTy {
+            ref_params,
+            ref_return,
+            ..
+        }) = kind.as_func_mut()
+        {
+            for signature in ref_params
+                .iter_mut()
+                .flatten()
+                .chain(ref_return.iter_mut().map(AsMut::as_mut))
+            {
+                signature.origin = mojito_types::origin::SigOrigin::Static;
+            }
+        }
+    });
     erased
 }
 
@@ -597,7 +596,7 @@ mod tests {
     use mojito_types::types::TyArg;
 
     fn sized(size: ParamExpr) -> Ty {
-        Ty::Struct("Buf".into(), vec![TyArg::Val(size.into_value())].into())
+        TyKind::Struct("Buf".into(), vec![TyArg::Val(size.into_value())]).into()
     }
 
     fn plus(context: &ParamContext, parameter: &ParamExpr, offset: i64) -> ParamExpr {
@@ -643,7 +642,7 @@ mod tests {
         .expect("instantiation");
         assert_eq!(
             bound,
-            Ty::Struct("Buf".into(), vec![TyArg::Val(CtValue::Int(4))].into())
+            TyKind::Struct("Buf".into(), vec![TyArg::Val(CtValue::Int(4))])
         );
     }
 
@@ -662,9 +661,11 @@ mod tests {
         );
         // A symbolic lane width crosses as a parameter expression; a hole
         // in it is the same boundary error as anywhere else.
-        let symbolic = |width: mojito_types::param_expr::ParamExpr| Ty::Simd {
-            dtype: mojito_types::types::SimdDtype::Known(mojito_ast::ast::Dtype::Int32),
-            width: mojito_types::types::SimdWidth::Expr(width),
+        let symbolic = |width: mojito_types::param_expr::ParamExpr| {
+            Ty::new(TyKind::Simd {
+                dtype: mojito_types::types::SimdDtype::Known(mojito_ast::ast::Dtype::Int32),
+                width: mojito_types::types::SimdWidth::Expr(width),
+            })
         };
         assert!(
             super::super::calls::validate_dependent_bindings(&symbolic(context.decl_ref(

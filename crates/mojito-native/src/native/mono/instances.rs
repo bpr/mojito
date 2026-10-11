@@ -3,13 +3,14 @@
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
+use mojito_types::types::TyKind;
 
 impl Specializer<'_> {
     /// The constant a value-parameter member read (`Self.length`) resolves
     /// to, when `field` names a value parameter (not a declared field) of
     /// the receiver's template and the instance type carries its solution.
     pub(super) fn value_param_constant(&self, receiver: &Ty, field: &str) -> Option<Const> {
-        let Ty::Struct(name, type_args) = peel_refs(receiver) else {
+        let TyKind::Struct(name, type_args) = peel_refs(receiver).kind() else {
             return None;
         };
         let struct_decl = self.structs.get(nominal_template(name))?;
@@ -59,11 +60,11 @@ impl Specializer<'_> {
             return Ok(());
         };
         let hasher_ty = peel_refs(hasher_ty).clone();
-        if !matches!(hasher_ty, Ty::Struct(..)) {
+        if !matches!(hasher_ty.kind(), TyKind::Struct(..)) {
             return Ok(());
         }
         if mojito_types::types::simd_shape(receiver).is_some()
-            || matches!(receiver, Ty::Bool | Ty::Dtype)
+            || matches!(receiver.kind(), TyKind::Bool | TyKind::Dtype)
         {
             let leaf = mojito_types::types::hash_leaf_ty(receiver);
             self.nominal_method_instance(
@@ -76,11 +77,11 @@ impl Specializer<'_> {
             )?;
             return Ok(());
         }
-        if matches!(receiver, Ty::StringLiteral) {
-            let string = Ty::Struct(
+        if matches!(receiver.kind(), TyKind::StringLiteral) {
+            let string = Ty::new(TyKind::Struct(
                 mojito_symbol::symbol::STDLIB_STRING_STRUCT.to_string(),
-                Vec::new().into(),
-            );
+                Vec::new(),
+            ));
             self.enqueue_nominal_method_instance(
                 owner,
                 &string,
@@ -89,9 +90,9 @@ impl Specializer<'_> {
                 std::slice::from_ref(&hasher_ty),
             )?;
         }
-        if let Ty::Variant(alternatives) = receiver {
+        if let TyKind::Variant(alternatives) = receiver.kind() {
             for alternative in alternatives {
-                if matches!(alternative, Ty::Struct(..)) {
+                if matches!(alternative.kind(), TyKind::Struct(..)) {
                     self.enqueue_nominal_method_instance(
                         owner,
                         alternative,
@@ -225,7 +226,7 @@ impl Specializer<'_> {
             return Ok(());
         };
         let ty = peel_refs(ty).clone();
-        let Ty::Struct(name, arguments) = &ty else {
+        let TyKind::Struct(name, arguments) = ty.kind() else {
             return Ok(());
         };
         let exact = format!("{name}.{method}");
@@ -277,16 +278,16 @@ impl Specializer<'_> {
             if let ParamDecl::Type { .. } = decl
                 && !bindings.types.contains_key(&decl.binder())
             {
-                bindings.types.insert(decl.binder(), Ty::StringLiteral);
+                bindings.types.insert(decl.binder(), Ty::string_literal());
             }
         }
         // The `Some[Writer]` sugar parameter is infer-only (absent from
         // `param_decls`); bind its spelling from the declared type.
         for ty in &declaration.param_types {
-            if let Ty::Param { binder, .. } = ty
+            if let TyKind::Param { binder, .. } = ty.kind()
                 && !bindings.types.contains_key(binder)
             {
-                bindings.types.insert(binder.clone(), Ty::StringLiteral);
+                bindings.types.insert(binder.clone(), Ty::string_literal());
             }
         }
         let mut arguments = ordered_arguments(&declaration.param_decls, &bindings, &target)?;
@@ -305,7 +306,10 @@ impl Specializer<'_> {
         function: &MirFunction,
         arg: Reg,
     ) -> Result<(), MonoError> {
-        let Some(ty @ Ty::Struct(name, _)) = function.reg_types.get(&arg.0) else {
+        let Some(ty) = function.reg_types.get(&arg.0) else {
+            return Ok(());
+        };
+        let TyKind::Struct(name, _) = ty.kind() else {
             return Ok(());
         };
         let target = mojito_symbol::symbol::resolve_method_symbol(
@@ -365,7 +369,7 @@ impl Specializer<'_> {
         method_bindings: &[Ty],
         argument_types: &[Ty],
     ) -> Result<Option<String>, MonoError> {
-        let Ty::Struct(name, arguments) = receiver else {
+        let TyKind::Struct(name, arguments) = receiver.kind() else {
             return Ok(None);
         };
         let target = mojito_symbol::symbol::resolve_method_symbol(
@@ -415,14 +419,14 @@ impl Specializer<'_> {
             if let ParamDecl::Type { .. } = decl
                 && !bindings.types.contains_key(&decl.binder())
             {
-                bindings.types.insert(decl.binder(), Ty::StringLiteral);
+                bindings.types.insert(decl.binder(), Ty::string_literal());
             }
         }
         for ty in &declaration.param_types {
-            if let Ty::Param { binder, .. } = ty
+            if let TyKind::Param { binder, .. } = ty.kind()
                 && !bindings.types.contains_key(binder)
             {
-                bindings.types.insert(binder.clone(), Ty::StringLiteral);
+                bindings.types.insert(binder.clone(), Ty::string_literal());
             }
         }
         let mut arguments = ordered_arguments(&declaration.param_decls, &bindings, &target)?;
@@ -435,19 +439,20 @@ impl Specializer<'_> {
 /// `ty` with a one-bound binder renamed to the existential spelling of its
 /// bound (`H: Hasher` as `Some[Hasher]`).
 fn existential_spelling(ty: &Ty) -> Ty {
-    match ty {
-        Ty::Param {
+    match ty.kind() {
+        TyKind::Param {
             binder,
             bounds,
             callable_bound: None,
-        } if bounds.len() == 1 => Ty::Param {
+        } if bounds.len() == 1 => TyKind::Param {
             binder: mojito_types::param_expr::ParamRef {
                 name: format!("Some[{}]", bounds[0]).into(),
                 ..binder.clone()
             },
             bounds: bounds.clone(),
             callable_bound: None,
-        },
-        other => other.clone(),
+        }
+        .into(),
+        _ => ty.clone(),
     }
 }

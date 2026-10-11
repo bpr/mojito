@@ -3,6 +3,7 @@
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
+use mojito_types::types::TyKind;
 
 impl Checker {
     /// Convert a source place into the stable, projection-sensitive identity
@@ -26,7 +27,7 @@ impl Checker {
         }
         match &expr.kind {
             ExprKind::Identifier(name) => {
-                if let Some(Ty::Ref(reference)) = self.lookup(name)
+                if let Some(TyKind::Ref(reference)) = self.lookup(name).map(Ty::kind)
                     && let mojito_types::origin::Origin::Place(place) = &reference.origin
                 {
                     return Ok(place.clone());
@@ -40,7 +41,10 @@ impl Checker {
                 })
             }
             ExprKind::Member { object, field } => {
-                if matches!(self.place_storage_ty(expr), Some(Ty::Ref(_))) {
+                if matches!(
+                    self.place_storage_ty(expr).as_ref().map(Ty::kind),
+                    Some(TyKind::Ref(_))
+                ) {
                     fn collect_places(
                         origin: mojito_types::origin::Origin,
                         places: &mut Vec<OriginPlace>,
@@ -151,10 +155,10 @@ impl Checker {
         // exact `ref[ImmUntrackedOrigin]` clause binds — while a tracked one
         // keeps the holder's place identity for loans.
         if let Some(pointer) = dereferenced_pointer(expr)
-            && let Ok(Ty::Pointer { origin, .. }) = self.infer(pointer)
+            && let Ok(TyKind::Pointer { origin, .. }) = self.infer(pointer).as_ref().map(Ty::kind)
         {
             use mojito_types::origin::PointerOrigin;
-            let mutability = match (self.pointer_write_capability(pointer, &origin), &origin) {
+            let mutability = match (self.pointer_write_capability(pointer, origin), &origin) {
                 (Some(true), _) => Mutability::Mutable,
                 (Some(false), _) => Mutability::Immutable,
                 (None, PointerOrigin::Param { id, .. }) => Mutability::Param(*id),
@@ -163,7 +167,7 @@ impl Checker {
             self.materialize_temporary_holder(pointer, mutability == Mutability::Mutable);
             let origin = match origin {
                 PointerOrigin::Untracked { mutable } | PointerOrigin::UnsafeAny { mutable } => {
-                    Origin::Untracked { mutable }
+                    Origin::Untracked { mutable: *mutable }
                 }
                 PointerOrigin::Static => Origin::Static,
                 PointerOrigin::Place { .. }
@@ -171,7 +175,7 @@ impl Checker {
                 | PointerOrigin::SelfPlace { .. } => Origin::Place(self.origin_place(expr)?),
             };
             return Ok(RefTy {
-                referent: Box::new(self.infer(expr)?),
+                referent: self.infer(expr)?,
                 origin,
                 mutability,
             });
@@ -184,7 +188,7 @@ impl Checker {
             Mutability::Immutable
         };
         Ok(RefTy {
-            referent: Box::new(self.infer(expr)?),
+            referent: self.infer(expr)?,
             origin: Origin::Place(place),
             mutability,
         })
@@ -213,7 +217,7 @@ impl Checker {
         {
             let owner = self.materialize_borrow_owner(expr, false)?;
             return Ok(RefTy {
-                referent: Box::new(referent),
+                referent,
                 origin: Origin::Place(OriginPlace {
                     root: owner,
                     path: Vec::new(),
@@ -228,7 +232,7 @@ impl Checker {
                 let referent = self.infer(expr)?;
                 let owner = self.materialize_borrow_owner(expr, true)?;
                 Ok(RefTy {
-                    referent: Box::new(referent),
+                    referent,
                     origin: Origin::Place(OriginPlace {
                         root: owner,
                         path: Vec::new(),
@@ -257,7 +261,7 @@ impl Checker {
             self.is_requested_binding_read(expr)
         };
         if read
-            && matches!(ty, Ty::Struct(..))
+            && matches!(ty.kind(), TyKind::Struct(..))
             && self.is_materialized_parameter_read(expr)
             && !self
                 .parameter_field_objects
@@ -312,27 +316,26 @@ impl Checker {
     /// `View[origin_of(h)]` at the call site. A slot the contract did not
     /// resolve keeps its declared entry.
     pub(in crate::checker) fn bind_call_result_tail(&self, span: &SourceSpan, ty: Ty) -> Ty {
-        let Ty::Struct(name, mut arguments) = ty else {
+        let TyKind::Struct(name, arguments) = ty.kind() else {
             return ty;
         };
         let recorded = self.call_result_origins.borrow();
-        let (Some(slots), Some(info)) = (recorded.get(span), self.structs.get(&name)) else {
-            return Ty::Struct(name, arguments);
+        let (Some(slots), Some(info)) = (recorded.get(span), self.structs.get(name)) else {
+            return ty;
         };
+        let mut arguments = arguments.clone();
         let origin_slots = info.origin_slots();
         for (slot, origin, _) in slots {
             let Some(position) = origin_slots.iter().position(|(id, _)| id == slot) else {
                 continue;
             };
-            arguments.update(|arguments| {
-                if let Some(argument @ TyArg::Origin(_)) =
-                    arguments.get_mut(info.decls.len() + position)
-                {
-                    *argument = TyArg::Origin(origin.clone());
-                }
-            });
+            if let Some(argument @ TyArg::Origin(_)) =
+                arguments.get_mut(info.decls.len() + position)
+            {
+                *argument = TyArg::Origin(origin.clone());
+            }
         }
-        Ty::Struct(name, arguments)
+        TyKind::Struct(name.clone(), arguments).into()
     }
 
     /// Resolve a view-returning call's [`ViewReturnOrigin`] contract against
@@ -469,8 +472,10 @@ impl Checker {
         if matches!(
             root.kind,
             ExprKind::Call { .. } | ExprKind::MethodCall { .. } | ExprKind::Invoke { .. }
-        ) && matches!(self.infer(root), Ok(Ty::Struct(..)))
-        {
+        ) && matches!(
+            self.infer(root).as_ref().map(Ty::kind),
+            Ok(TyKind::Struct(..))
+        ) {
             let _ = self.materialize_borrow_owner(root, mutable);
         }
     }
@@ -595,12 +600,12 @@ impl Checker {
             // the parameter directly from its declared origin; the VM re-roots the
             // returned handle at the pointee and forwards the offset-0 index.
             ExprKind::Index { object, .. } => {
-                if let Ok(Ty::Pointer {
+                if let Ok(TyKind::Pointer {
                     origin: mojito_types::origin::PointerOrigin::Param { id, .. },
                     ..
-                }) = self.infer(object)
+                }) = self.infer(object).as_ref().map(Ty::kind)
                 {
-                    return Some(Origin::Param(id));
+                    return Some(Origin::Param(*id));
                 }
                 self.returned_reference_parameter_origin(object)
             }
@@ -608,12 +613,12 @@ impl Checker {
                 if let Some((object, _)) =
                     crate::checker::places::pointer_offset_keyword_subscript(expr) =>
             {
-                if let Ok(Ty::Pointer {
+                if let Ok(TyKind::Pointer {
                     origin: mojito_types::origin::PointerOrigin::Param { id, .. },
                     ..
-                }) = self.infer(object)
+                }) = self.infer(object).as_ref().map(Ty::kind)
                 {
-                    return Some(Origin::Param(id));
+                    return Some(Origin::Param(*id));
                 }
                 self.returned_reference_parameter_origin(object)
             }
@@ -641,10 +646,11 @@ impl Checker {
                 if let Some(origin) = recorded.filter(is_abstract) {
                     return Some(origin);
                 }
-                let Ok(Ty::Struct(name, arguments)) = self.infer(object) else {
+                let inferred = self.infer(object).ok()?;
+                let TyKind::Struct(name, arguments) = inferred.kind() else {
                     return None;
                 };
-                let info = self.structs.get(&name)?;
+                let info = self.structs.get(name)?;
                 let signature = info
                     .methods
                     .get(method)?
@@ -667,10 +673,8 @@ impl Checker {
                     ))
                     .filter(is_abstract);
                 }
-                let mut origin = instantiate_sig_origin(
-                    &declared.origin,
-                    &info.tail_origin_bindings(&arguments),
-                );
+                let mut origin =
+                    instantiate_sig_origin(&declared.origin, &info.tail_origin_bindings(arguments));
                 // Origin arguments erase from struct type identity, so the
                 // callee's origin binder usually stays symbolic in its own
                 // namespace; remap it through the field application's
@@ -741,10 +745,13 @@ impl Checker {
         origin: mojito_types::origin::Origin,
         object: &Expr,
     ) -> mojito_types::origin::Origin {
-        let Ok(Ty::Struct(name, arguments)) = self.infer(object) else {
+        let Ok(inferred) = self.infer(object) else {
             return origin;
         };
-        let Some(info) = self.structs.get(&name) else {
+        let TyKind::Struct(name, arguments) = inferred.kind() else {
+            return origin;
+        };
+        let Some(info) = self.structs.get(name) else {
             return origin;
         };
         // The receiver type's own origin tail binds the struct's binders
@@ -753,7 +760,7 @@ impl Checker {
         // `Span[T, Self.iterable_origin]`) names that binder. An unbound slot,
         // or a call result's not-yet-resolved `origin_of(self)`, falls back to
         // the aggregate's construction-time facts.
-        let tail = info.tail_origin_bindings(&arguments);
+        let tail = info.tail_origin_bindings(arguments);
         let field_origins = self.aggregate_field_origins(object);
         let flat = self.aggregate_origins(object);
         // The concrete origin(s) the receiver's field carrying origin parameter

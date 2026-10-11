@@ -77,7 +77,7 @@ pub use parser::{ParseReport, Parser};
 pub use runtime::RuntimeError;
 pub use runtime::Value;
 pub use token::{SourceSpan, SyntaxId, Token};
-pub use types::{ParamDecl, Ty, TyArg};
+pub use types::{ParamDecl, Ty, TyArg, TyKind};
 
 /// Lex `source` into its full token stream (a convenience for the **lex-only**
 /// use of mojito as a syntax-analysis tool). Stops at the first `LexError`.

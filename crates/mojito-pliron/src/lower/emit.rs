@@ -3,6 +3,7 @@
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
+use mojito_types::types::TyKind;
 
 impl FnLowering<'_> {
     /// Mask a shift amount with `& 63`, matching the VM's
@@ -331,8 +332,13 @@ impl FnLowering<'_> {
                 return Ok(ty);
             }
         }
-        let float = matches!(self.func.reg_types.get(&a.0), Some(Ty::FloatLiteral))
-            || matches!(self.func.reg_types.get(&b.0), Some(Ty::FloatLiteral));
+        let float = matches!(
+            self.func.reg_types.get(&a.0).map(Ty::kind),
+            Some(TyKind::FloatLiteral)
+        ) || matches!(
+            self.func.reg_types.get(&b.0).map(Ty::kind),
+            Some(TyKind::FloatLiteral)
+        );
         Ok(if float {
             ScalarTy::Float64
         } else {
@@ -346,7 +352,7 @@ impl FnLowering<'_> {
         let Some(ty) = self.func.reg_types.get(&reg.0) else {
             return Err(self.unsupported(format!("untyped register %r{}", reg.0), None));
         };
-        if matches!(ty, Ty::IntLiteral | Ty::FloatLiteral) {
+        if matches!(ty.kind(), TyKind::IntLiteral | TyKind::FloatLiteral) {
             return Ok(None);
         }
         scalar_type(self.name, ty, self.reg_span(reg)).map(Some)
@@ -356,15 +362,15 @@ impl FnLowering<'_> {
     /// no reference or its referent is a pointer or an aggregate, which
     /// stay handles.
     pub(super) fn referent_scalar_ty(&self, reg: Reg) -> Result<Option<ScalarTy>, PlironError> {
-        let Some(Ty::Ref(reference)) = self.func.reg_types.get(&reg.0) else {
+        let Some(TyKind::Ref(reference)) = self.func.reg_types.get(&reg.0).map(Ty::kind) else {
             return Ok(None);
         };
-        match *reference.referent {
-            Ty::Int | Ty::UInt | Ty::Float64 | Ty::Bool => {
+        match reference.referent.kind() {
+            TyKind::Int | TyKind::UInt | TyKind::Float64 | TyKind::Bool => {
                 scalar_type(self.name, &reference.referent, self.reg_span(reg)).map(Some)
             }
-            ref referent if scalar_simd_dtype(referent).is_some() => {
-                scalar_type(self.name, referent, self.reg_span(reg)).map(Some)
+            referent if scalar_simd_dtype(referent).is_some() => {
+                scalar_type(self.name, &reference.referent, self.reg_span(reg)).map(Some)
             }
             _ => Ok(None),
         }

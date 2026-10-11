@@ -4,6 +4,7 @@
 //! function (no drift between the two manglings), and scan the source tree so a
 //! hand-built overload symbol outside the module is caught.
 
+use mojito::Ty;
 use std::collections::HashSet;
 
 use mojito::checker::resolve_overload_targets;
@@ -82,7 +83,7 @@ fn generic_keyword_variadic_role_is_part_of_callable_identity() {
 fn parameterized_annotation_type_parameters_spell_their_bounds() {
     // `Box[T]` in argument position arrives from the parser as a value
     // identifier; a declared type parameter there mangles as the checker's
-    // `Ty::Param` does, so the overloaded generic member is the symbol its
+    // `TyKind::Param` does, so the overloaded generic member is the symbol its
     // call names.
     let source = "struct Box[T: Copyable & Movable & Deinitable]:\n    var item: Self.T\n\n    def __init__(out self, var item: Self.T):\n        self.item = item^\n\ndef pick[T: Copyable & Movable & Deinitable](b: Box[T]) -> Int:\n    return 1\n\ndef pick(x: Int) -> Int:\n    return x\n\ndef main():\n    print(pick(Box(7)))\n    print(pick(5))\n";
     let names = lowered_names(source);
@@ -526,7 +527,7 @@ fn param_expr_closed_specialization_keys() {
     use mojito::ct::CtLane;
     use mojito::param_expr::{MetaTy, ParamContext, ParamId};
     use mojito::symbol::{SpecializationKeyPart, mangle, mangle_parts};
-    use mojito::{CtValue, Ty, TyArg};
+    use mojito::{CtValue, TyArg, TyKind};
 
     let float_literal = mojito::literal::FloatLiteral::parse_exact("157/50").expect("exact");
     let rendered = float_literal.to_string();
@@ -575,11 +576,8 @@ fn param_expr_closed_specialization_keys() {
             },
             "S6:Extent{i2;i3;}".to_string(),
         ),
-        (CtValue::Type(Box::new(Ty::Int)), "y3:Int".to_string()),
-        (
-            CtValue::Reflected(Box::new(Ty::Bool)),
-            "r4:Bool".to_string(),
-        ),
+        (CtValue::Type(Ty::int()), "y3:Int".to_string()),
+        (CtValue::Reflected(Ty::bool()), "r4:Bool".to_string()),
     ];
     assert_eq!(concrete.len(), 16);
     for (value, encoding) in &concrete {
@@ -594,7 +592,7 @@ fn param_expr_closed_specialization_keys() {
         mangle_parts(
             "Holder",
             &[
-                SpecializationKeyPart::Value(&CtValue::Type(Box::new(Ty::Int))),
+                SpecializationKeyPart::Value(&CtValue::Type(Ty::int())),
                 SpecializationKeyPart::ErasedOrigin,
             ],
         ),
@@ -612,10 +610,7 @@ fn param_expr_closed_specialization_keys() {
             name: "Extent".into(),
             fields: vec![("w".into(), n.clone())],
         },
-        CtValue::Type(Box::new(Ty::Struct(
-            "Buf".into(),
-            vec![TyArg::Val(n)].into(),
-        ))),
+        CtValue::Type(TyKind::Struct("Buf".into(), vec![TyArg::Val(n)]).into()),
     ];
     for value in &open {
         let error = mangle("f", &[CtValue::Int(1), value.clone()]).expect_err("a residual key");
@@ -662,8 +657,7 @@ fn a_template_name_is_recovered_from_a_key_whose_values_are_text_only() {
 
     // A type key renders a `Ty` no parser here reads back, so only the
     // template name is recoverable — and a binder belongs to the template.
-    let type_keyed = mangle("List.__hash__", &[CtValue::Type(Box::new(mojito::Ty::Int))])
-        .expect("a constant key");
+    let type_keyed = mangle("List.__hash__", &[CtValue::Type(Ty::int())]).expect("a constant key");
     assert_eq!(type_keyed, "List.__hash__$y3:Int");
     assert_eq!(demangle_specialization(&type_keyed), None);
     assert_eq!(specialization_template(&type_keyed), Some("List.__hash__"));
@@ -673,7 +667,7 @@ fn a_template_name_is_recovered_from_a_key_whose_values_are_text_only() {
         "f",
         &[CtValue::Tuple(vec![
             CtValue::Int(1),
-            CtValue::Type(Box::new(mojito::Ty::Bool)),
+            CtValue::Type(Ty::bool()),
         ])],
     )
     .expect("a constant key");
@@ -688,10 +682,10 @@ fn a_template_name_is_recovered_from_a_key_whose_values_are_text_only() {
 #[test]
 fn a_nested_instance_argument_spells_as_its_own_symbol() {
     use mojito::symbol::{InstanceArg, instance_symbol};
-    use mojito::{Ty, TyArg};
+    use mojito::{TyArg, TyKind};
     // Each level spells the level below once, as the symbol minted for it,
     // so the name of `W[W[…]]` grows linearly with its nesting.
-    let mut ty = Ty::Int;
+    let mut ty = Ty::int();
     let mut previous = String::new();
     for _ in 0..4 {
         let name = instance_symbol("W", &[InstanceArg::Ty(ty.clone())]);
@@ -700,7 +694,7 @@ fn a_nested_instance_argument_spells_as_its_own_symbol() {
             "{name}"
         );
         previous.clone_from(&name);
-        ty = Ty::Struct(name, vec![TyArg::Ty(ty)].into());
+        ty = TyKind::Struct(name, vec![TyArg::Ty(ty)]).into();
     }
     assert_eq!(previous, "W$mono$TW$mono$TW$mono$TW$mono$TInt");
 }

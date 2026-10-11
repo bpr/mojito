@@ -3,6 +3,7 @@
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 use mojito_types::types::LaneMask;
+use mojito_types::types::TyKind;
 
 impl Checker {
     /// `v.to_bits[DType.target]()`: the target must be unsigned and at least
@@ -72,7 +73,7 @@ impl Checker {
             });
         }
         self.builtin_args(&format!("DType.{method}"), 0, args)?;
-        Ok(Ty::Bool)
+        Ok(Ty::bool())
     }
 
     /// The compiler-known methods of a `SIMD` value.
@@ -141,19 +142,19 @@ impl Checker {
                 let false_case = self.infer(&args[1])?;
                 // Both cases share one dtype at the mask's width; a
                 // scalar/literal case splats, like an infix operand.
-                let payload = match (&true_case, &false_case) {
+                let payload = match (true_case.kind(), false_case.kind()) {
                     (
-                        Ty::Simd {
+                        TyKind::Simd {
                             dtype: d1,
                             width: w1,
                         },
-                        Ty::Simd {
+                        TyKind::Simd {
                             dtype: d2,
                             width: w2,
                         },
                     ) if d1 == d2 && w1 == w2 && *w1 == width => Some(d1.clone()),
-                    (Ty::Simd { dtype: d, width: w }, other)
-                    | (other, Ty::Simd { dtype: d, width: w })
+                    (TyKind::Simd { dtype: d, width: w }, other)
+                    | (other, TyKind::Simd { dtype: d, width: w })
                         if *w == width && splats_to(other, d) =>
                     {
                         Some(d.clone())
@@ -187,9 +188,9 @@ impl Checker {
             // vectors, so a mask comes from these methods.
             "lt" | "le" | "gt" | "ge" | "eq" | "ne" if args.len() == 1 => {
                 let other = self.infer(&args[0])?;
-                let compatible = match &other {
-                    Ty::Simd { dtype: d, width: w } => *d == dtype && *w == width,
-                    other => splats_to(other, &dtype),
+                let compatible = match other.kind() {
+                    TyKind::Simd { dtype: d, width: w } => *d == dtype && *w == width,
+                    _ => splats_to(&other, &dtype),
                 };
                 if !compatible {
                     return Err(TypeError::TypeMismatch {
@@ -208,7 +209,7 @@ impl Checker {
             "reduce_and" | "reduce_or"
                 if dtype.licenses(|d| d == Dtype::Bool) && args.is_empty() =>
             {
-                Ok(Ty::Bool)
+                Ok(Ty::bool())
             }
             // A float scalar's rounding dunders and its
             // fused multiply-add (`k.__fma__(step, start)`, a float range

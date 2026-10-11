@@ -389,7 +389,7 @@ mod interior_origin_tests {
             ref_params: Vec::new(),
             returns_reference: false,
             var_tys: HashMap::new(),
-            ret_ty: Some(Ty::None),
+            ret_ty: Some(Ty::none()),
             raises: false,
             error_ty: None,
             spans: span_table,

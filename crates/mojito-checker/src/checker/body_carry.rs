@@ -553,18 +553,18 @@ fn carried_result(checker: &Checker) -> DiscoveryResult {
         struct_instantiations: checker.struct_instantiations.take(),
         call_transfers: checker.call_transfers.take(),
         implicit_conversions: checker.implicit_conversions.take(),
-        implicit_conversion_types: checker.implicit_conversion_types.take(),
+        implicit_conversion_types: uniqued(checker, checker.implicit_conversion_types.take()),
         conversion_source_borrows: checker.conversion_source_borrows.take(),
-        conversion_raises: checker.implicit_conversion_raises.take(),
-        checked_types: checker.declaration_types.take(),
+        conversion_raises: uniqued(checker, checker.implicit_conversion_raises.take()),
+        checked_types: uniqued(checker, checker.declaration_types.take()),
         generic_parameters: checker.generic_parameters.take(),
-        expression_types: checker.expression_types.take(),
+        expression_types: uniqued(checker, checker.expression_types.take()),
         expression_bindings: checker.expression_bindings.take(),
         statement_bindings: checker.statement_bindings.take(),
         declaration_captures: checker.declaration_captures.take(),
         comprehension_bindings: checker.comprehension_bindings.take(),
-        expression_place_types: checker.expression_place_types.take(),
-        binding_types: checker.binding_types.take(),
+        expression_place_types: uniqued(checker, checker.expression_place_types.take()),
+        binding_types: uniqued(checker, checker.binding_types.take()),
         expression_effects: checker.expression_effects.take(),
         selected_calls: checker.selected_calls.take(),
         subscript_descriptors: checker.subscript_descriptors.take(),
@@ -588,6 +588,21 @@ fn carried_result(checker: &Checker) -> DiscoveryResult {
         default_wrappers: checker.checked_default_wrappers(),
         trait_members: Vec::new(),
     }
+}
+
+/// `types` with each type the check's context's own node for it, so the
+/// lowering that clones them into registers shares one node per distinct
+/// type, as MLIR's context uniques the types its operations hold.
+fn uniqued<K: Eq + Hash + Clone>(
+    checker: &Checker,
+    mut types: FactMap<K, mojito_types::types::Ty>,
+) -> FactMap<K, mojito_types::types::Ty> {
+    let context = &checker.param_context;
+    types.retain(|_, ty| {
+        *ty = context.intern_ty(ty);
+        true
+    });
+    types
 }
 
 fn copy_map<K: Eq + Hash + Clone, V: Clone>(

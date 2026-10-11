@@ -2,6 +2,7 @@
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
+use mojito_types::types::TyKind;
 
 // --- Nested `def` (closure) lifting -----------------------------------------
 
@@ -505,7 +506,7 @@ fn lower_nested_node(
         let return_ty = checked
             .checked_type_at(&return_site)
             .cloned()
-            .unwrap_or(Ty::None);
+            .unwrap_or_else(Ty::none);
         let effect = checked
             .declaration_effect_at(&return_site)
             .cloned()
@@ -546,11 +547,11 @@ fn lower_nested_node(
                         .map(|(_, parameter)| parameter.default.is_none()),
                 )
                 .collect(),
-            variadic: variadic_idx.map(|index| collector_ty(index).unwrap_or(Ty::None)),
+            variadic: variadic_idx.map(|index| collector_ty(index).unwrap_or_else(Ty::none)),
             variadic_convention: variadic_idx.and_then(|index| dparams[index].convention),
             variadic_index: runtime_variadic_index(dparams, variadic_idx)
                 .map(|index| capture_count + index),
-            kw_variadic: kw_variadic_idx.map(|index| collector_ty(index).unwrap_or(Ty::None)),
+            kw_variadic: kw_variadic_idx.map(|index| collector_ty(index).unwrap_or_else(Ty::none)),
             kw_variadic_convention: kw_variadic_idx.and_then(|index| dparams[index].convention),
             kw_variadic_index: runtime_parameter_index(dparams, kw_variadic_idx)
                 .map(|index| capture_count + index),
@@ -711,10 +712,17 @@ fn materialize_named_result_return(function: &mut MirFunction, result: &str) {
 /// register, so erase that declaration-only discriminator to the Tuple storage
 /// actually carried by the lifted function's single collector slot.
 fn mir_nested_callable_ty(mut ty: Ty) -> Ty {
-    if let Some(element) = ty.callable_mut().and_then(|func| func.variadic.as_mut())
-        && let Ty::RuntimePack(elements) = &mut **element
+    if let Some(TyKind::RuntimePack(elements)) = ty
+        .callable()
+        .and_then(|func| func.variadic.as_ref())
+        .map(Ty::kind)
     {
-        **element = Ty::Tuple(std::mem::take(elements));
+        let storage = Ty::new(TyKind::Tuple(elements.clone()));
+        ty.update(|kind| {
+            if let Some(func) = kind.callable_mut() {
+                func.variadic = Some(storage);
+            }
+        });
     }
     ty
 }

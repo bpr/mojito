@@ -162,11 +162,11 @@ impl CalleeOracle for super::Checker {
         let shadowed = self.binding_scope(name).is_some_and(|scope| scope != 0);
         let function = self.overload_sets.is_function(name)
             || matches!(
-                self.lookup(name),
+                self.lookup(name).map(mojito_types::types::Ty::kind),
                 Some(
-                    mojito_types::types::Ty::Func(_)
-                        | mojito_types::types::Ty::GenericFunc(_)
-                        | mojito_types::types::Ty::Overload(_)
+                    mojito_types::types::TyKind::Func(_)
+                        | mojito_types::types::TyKind::GenericFunc(_)
+                        | mojito_types::types::TyKind::Overload(_)
                 )
             );
         if shadowed {

@@ -2,6 +2,7 @@
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
+use mojito_types::types::TyKind;
 
 impl Flatten<'_> {
     pub(in crate::mir) fn expr_unconverted(&mut self, e: &Expr) -> Reg {
@@ -51,7 +52,7 @@ impl Flatten<'_> {
                 // call so the negation is scalar on both backends.
                 let ra = if *op == PrefixOp::Not
                     && self.checked_ty(a).is_some_and(|ty| {
-                        matches!(ty, Ty::Struct(..))
+                        matches!(ty.kind(), TyKind::Struct(..))
                             || mojito_types::conformance::is_numeric(&ty)
                             || mojito_types::types::is_scalar_simd(&ty)
                     }) {
@@ -80,7 +81,10 @@ impl Flatten<'_> {
             // (value before container), the selected overload, and the normal
             // method-call place/capture contract.
             ExprKind::Infix(op @ (InfixOp::In | InfixOp::NotIn), value, container)
-                if matches!(self.checked_ty(container), Some(Ty::Struct(..))) =>
+                if matches!(
+                    self.checked_ty(container).as_ref().map(Ty::kind),
+                    Some(TyKind::Struct(..))
+                ) =>
             {
                 self.contains_call(e, *op, value, container)
             }
@@ -358,8 +362,10 @@ impl Flatten<'_> {
                 adjustment,
                 mojito_checked::checked::SemanticAdjustment::CopyPlaceValue
             )
-        }) && !matches!(self.checked_ty(e), Some(Ty::Ref(_)))
-        {
+        }) && !matches!(
+            self.checked_ty(e).as_ref().map(Ty::kind),
+            Some(TyKind::Ref(_))
+        ) {
             // The copy has the read register's exact type: the
             // variable's recorded type can keep a literal element
             // (`var t = 4, "four"` binds `Tuple[IntLiteral, ...]`)
@@ -371,7 +377,7 @@ impl Flatten<'_> {
                 .get(&d.0)
                 .cloned()
                 .or_else(|| self.checked_ty(e))
-                .unwrap_or(Ty::Error);
+                .unwrap_or_else(Ty::error);
             let copied = self.fresh_typed(span(e), Some(var), ty);
             self.emit(MirInstr::CopyValue {
                 dest: copied,
@@ -396,7 +402,7 @@ impl Flatten<'_> {
                 let ty = self.var_types.get(&var).cloned();
                 if !ty.as_ref().is_some_and(|ty| {
                     crate::mir::calls::owns_droppable_storage(ty)
-                        || matches!(ty, Ty::VariadicPack(_))
+                        || matches!(ty.kind(), TyKind::VariadicPack(_))
                 }) {
                     return self.expr(inner);
                 }
@@ -418,7 +424,10 @@ impl Flatten<'_> {
             self.emit(MirInstr::MovePlace { dest: d, place });
             d
         } else if let ExprKind::Index { object, .. } = &inner.kind
-            && matches!(self.checked_ty(object), Some(Ty::Tuple(_)))
+            && matches!(
+                self.checked_ty(object).as_ref().map(Ty::kind),
+                Some(TyKind::Tuple(_))
+            )
             && let Some(place) = self.try_place(inner)
         {
             let d = self.fresh(span(e), Some(place.root));
@@ -438,7 +447,7 @@ impl Flatten<'_> {
     ) -> Reg {
         let (argument, arg_place) = self.lower_call_argument(value);
         let (recv, recv_place) = self.lower_call_receiver(container);
-        let contains = self.fresh_typed(span(e), None, Ty::Bool);
+        let contains = self.fresh_typed(span(e), None, Ty::bool());
         // A generic `__contains__[T]` binds its own parameters from the
         // call's solved arguments, as a spelled method call's does.
         let param_decls = self
@@ -457,7 +466,7 @@ impl Flatten<'_> {
             recv,
             method: "__contains__".to_string(),
             resolved: self.resolved_callable(e),
-            raises: self.checked_raises(e).map(Box::new),
+            raises: self.checked_raises(e),
             reference_result: None,
             result_adapter: None,
             args: vec![argument],
@@ -474,7 +483,7 @@ impl Flatten<'_> {
         });
         self.emit_nested_closure_argument_keepalives(std::slice::from_ref(value), &[]);
         if matches!(op, InfixOp::NotIn) {
-            let dest = self.fresh_typed(span(e), None, Ty::Bool);
+            let dest = self.fresh_typed(span(e), None, Ty::bool());
             self.emit(MirInstr::UnOp {
                 op: PrefixOp::Not,
                 dest,
@@ -510,7 +519,7 @@ impl Flatten<'_> {
                 )
             })
         {
-            let equal = self.fresh_typed(span(e), None, Ty::Bool);
+            let equal = self.fresh_typed(span(e), None, Ty::bool());
             self.emit(MirInstr::BinOp {
                 op: InfixOp::Eq,
                 dest: equal,
@@ -518,7 +527,7 @@ impl Flatten<'_> {
                 b: rb,
                 resolved,
             });
-            let dest = self.fresh_typed(span(e), None, Ty::Bool);
+            let dest = self.fresh_typed(span(e), None, Ty::bool());
             self.emit(MirInstr::UnOp {
                 op: PrefixOp::Not,
                 dest,
@@ -544,14 +553,14 @@ impl Flatten<'_> {
             // literal overload, and the `length` parameter argument
             // reifies the constructed value's `value_params`.
             let regs = self.args(elems);
-            let none = self.fresh_typed(span(e), None, Ty::None);
+            let none = self.fresh_typed(span(e), None, Ty::none());
             self.emit(MirInstr::Const {
                 dest: none,
                 k: Const::None,
             });
             let length = mojito_types::types::array_parts(&target)
                 .map_or(elems.len() as i64, |(_, length)| length);
-            let length_reg = self.fresh_typed(span(e), None, Ty::Int);
+            let length_reg = self.fresh_typed(span(e), None, Ty::int());
             self.emit(MirInstr::Const {
                 dest: length_reg,
                 k: Const::Int(length),
@@ -673,7 +682,7 @@ impl Flatten<'_> {
 
     pub(super) fn tuple_literal(&mut self, e: &Expr, elems: &[Expr]) -> Reg {
         if let Some((target, None)) = self.collection_plan(e)
-            && let Ty::Struct(name, _) = &target
+            && let TyKind::Struct(name, _) = target.kind()
         {
             let regs = self.args(elems);
             let dest = self.fresh_typed(span(e), None, target.clone());

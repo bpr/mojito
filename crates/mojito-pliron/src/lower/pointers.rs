@@ -3,6 +3,7 @@
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
+use mojito_types::types::TyKind;
 
 impl FnLowering<'_> {
     /// `p[i]` over the pointer subscript intrinsic: load the element at
@@ -14,14 +15,15 @@ impl FnLowering<'_> {
         base: Reg,
         index: Reg,
     ) -> Result<(), PlironError> {
-        let Some(Ty::Pointer { element, .. }) = self.func.reg_types.get(&base.0).cloned() else {
+        let register_ty = self.func.reg_types.get(&base.0).cloned();
+        let Some(TyKind::Pointer { element, .. }) = register_ty.as_ref().map(Ty::kind) else {
             return Err(
                 self.unsupported_reg("pointer subscript on a non-pointer base".into(), dest)
             );
         };
         let ptr = self.reg_value(ctx, base, ScalarTy::Ptr)?;
-        let address = self.pointer_element_address(ctx, ptr, index, &element, dest)?;
-        self.load_from(ctx, address, &element, dest)
+        let address = self.pointer_element_address(ctx, ptr, index, element, dest)?;
+        self.load_from(ctx, address, element, dest)
     }
 
     /// `pointer + index * sizeof(element)` as an opaque address.
@@ -187,7 +189,7 @@ impl FnLowering<'_> {
         let storage = self.entry_alloca(ctx, layout.size, layout.align);
         let fields = self
             .layout
-            .struct_layout(&[Ty::Bool, element.clone()])
+            .struct_layout(&[Ty::bool(), element.clone()])
             .map_err(|error| self.unsupported_reg(format!("uninit storage ({error})"), dest))?;
         let initialized = self.bool_constant(ctx, init.is_some());
         let flag_store = StoreOp::new(ctx, initialized, storage);
@@ -213,7 +215,7 @@ impl FnLowering<'_> {
         self.guard_uninit_present(ctx, ptr, TrapCategory::UninitTake, dest)?;
         let fields = self
             .layout
-            .struct_layout(&[Ty::Bool, element.clone()])
+            .struct_layout(&[Ty::bool(), element.clone()])
             .map_err(|error| self.unsupported_reg(format!("uninit storage ({error})"), dest))?;
         let payload = self.offset_address(ctx, ptr, fields.offsets[1]);
         self.load_moved_from(ctx, payload, element, dest)?;
@@ -236,7 +238,7 @@ impl FnLowering<'_> {
         self.guard_uninit_present(ctx, ptr, TrapCategory::UninitDestroy, dest)?;
         let fields = self
             .layout
-            .struct_layout(&[Ty::Bool, element.clone()])
+            .struct_layout(&[Ty::bool(), element.clone()])
             .map_err(|error| self.unsupported_reg(format!("uninit storage ({error})"), dest))?;
         let payload = self.offset_address(ctx, ptr, fields.offsets[1]);
         self.emit_drop_value(ctx, payload, element, false)?;
@@ -280,7 +282,7 @@ impl FnLowering<'_> {
         src_ptr: Value,
         span: Reg,
     ) -> Result<(), PlironError> {
-        if let Ty::Struct(name, _) = ty
+        if let TyKind::Struct(name, _) = ty.kind()
             && mojito_symbol::symbol::is_stdlib_string_struct(name)
         {
             let (src_data, src_size) = self.string_parts(ctx, src_ptr, span);
@@ -290,14 +292,14 @@ impl FnLowering<'_> {
             self.store_string_fields(ctx, dst, new_data, src_size, src_cap, span);
             return Ok(());
         }
-        if matches!(ty, Ty::Error) {
+        if matches!(ty.kind(), TyKind::Error) {
             let (src_data, src_size) = self.string_parts(ctx, src_ptr, span);
             let new_data = self.emit_alloc(ctx, src_size, 1, span);
             self.mem_copy_dynamic(ctx, new_data, src_data, src_size, span);
             self.store_string_fields(ctx, dst, new_data, src_size, src_size, span);
             return Ok(());
         }
-        if let Ty::Struct(name, _) = ty
+        if let TyKind::Struct(name, _) = ty.kind()
             && self
                 .declarations
                 .contains_key(&format!("{name}.__copyinit__"))
@@ -305,7 +307,7 @@ impl FnLowering<'_> {
             let name = name.clone();
             return self.emit_copyinit_call(ctx, &name, dst, src_ptr, span);
         }
-        if let Ty::Variant(alternatives) = ty {
+        if let TyKind::Variant(alternatives) = ty.kind() {
             self.mem_copy(ctx, dst, src_ptr, layout.size, span);
             let variant = self.layout.variant_layout(alternatives).map_err(|error| {
                 self.unsupported_reg(format!("Variant fork layout ({error})"), span)
@@ -363,8 +365,8 @@ impl FnLowering<'_> {
             self.current = Some(continuation);
             return Ok(());
         }
-        let elements: Vec<(Ty, u64)> = match ty {
-            Ty::Struct(name, _) => {
+        let elements: Vec<(Ty, u64)> = match ty.kind() {
+            TyKind::Struct(name, _) => {
                 let Some(decl) = self.struct_decls.get(name.as_str()) else {
                     return Err(self.unsupported_reg(format!("fork of undeclared `{ty}`"), span));
                 };
@@ -372,7 +374,7 @@ impl FnLowering<'_> {
                 let composed = self.struct_layout_of(&fields, span)?;
                 fields.into_iter().zip(composed.offsets).collect()
             }
-            Ty::Tuple(elements) | Ty::RuntimePack(elements) => {
+            TyKind::Tuple(elements) | TyKind::RuntimePack(elements) => {
                 let elements = elements.clone();
                 let composed = self.struct_layout_of(&elements, span)?;
                 elements.into_iter().zip(composed.offsets).collect()
