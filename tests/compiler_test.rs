@@ -3911,7 +3911,9 @@ fn a_package_reads_back_to_the_bytes_it_was_written_as() {
     use mojito::checked_package::{
         DeclarationRecords, DeclaringModules, InterfaceTable, PackagedModule,
     };
-    use mojito::mir::text::package::{PackageBytes, PackageHeader, read_package, write_package};
+    use mojito::mir::text::package::{
+        LibraryRoot, PackageBytes, PackageHeader, read_package, write_package,
+    };
     let compiled = Compiler::default()
         .with_std_package(false)
         .compile_source(
@@ -3975,12 +3977,17 @@ fn a_package_reads_back_to_the_bytes_it_was_written_as() {
     let header = PackageHeader {
         package: "probe".to_string(),
         compiler: "test".to_string(),
-        root: "/probe".to_string(),
+    };
+    // The modules span the probe and the bundled library, so the root is
+    // the file system's: every path is named relative to `/`.
+    let root = LibraryRoot {
+        stamped: String::new(),
+        canonical: String::new(),
     };
     let interface = mojito::interface::PackageInterface::default();
     let modules = records().modules;
-    let bytes = write_package(&header, &interface, program, records()).expect("write");
-    let package = read_package(PackageBytes::Owned(bytes.clone())).expect("read");
+    let bytes = write_package(&header, &root, &interface, program, records()).expect("write");
+    let package = read_package(PackageBytes::Owned(bytes.clone()), &root).expect("read");
     assert!(!modules.is_empty());
     assert_eq!(package.declarations.modules().len(), modules.len());
     for (position, (read, written)) in package.declarations.modules().zip(&modules).enumerate() {
@@ -4011,9 +4018,9 @@ fn a_package_reads_back_to_the_bytes_it_was_written_as() {
     assert!(package.bodies.failures().is_empty());
     assert!(package.declarations.failures().is_empty());
     assert_eq!(
-        write_package(&header, &package.interface, &again, records()).expect("rewrite"),
+        write_package(&header, &root, &package.interface, &again, records()).expect("rewrite"),
         bytes
     );
     let truncated = bytes[..bytes.len() - 4].to_vec();
-    assert!(read_package(PackageBytes::Owned(truncated)).is_err());
+    assert!(read_package(PackageBytes::Owned(truncated), &root).is_err());
 }

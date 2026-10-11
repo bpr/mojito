@@ -326,13 +326,22 @@ import (every compilation that links the bundled library):
   destructors (the checks run at package build time but keep no rewrite),
   and its importer runs those passes on each body it materializes
   (`docs/notes/upstream-package-contents.md`).
-- **Identity.** A package names its modules by stamped path and its
-  declarations by linked name. The build id (`MOJITO_BUILD_ID`, a digest of
-  the compiler's sources and the bundled library's source, stamped by the
-  root `build.rs`) and the library's root key the cache
-  (`target/mojito-cache` in the development tree), so the importer reads
-  no library source to find its package, as upstream's imports its
-  installed `std.mojoc`. Editing the library takes a compiler rebuild,
+- **Identity.** A package names each library file relative to the
+  library's root (`std/collections/list.mojo`), as upstream's names
+  `Mojo/stdlib/std/…`, and its declarations by linked name; the importer
+  joins its own root back on when it reads the module table and decodes a
+  unit (`checked_package::LibraryRoot`), and the build refuses a package
+  whose bytes name the root it was built under, so a package reads the
+  same wherever it is installed. The build id (`MOJITO_BUILD_ID`, a digest
+  of the compiler's sources and the bundled library's source, stamped by
+  the root `build.rs`) alone keys it, so the importer reads no library
+  source to find its package, as upstream's imports its installed
+  `std.mojoc`. An installed compiler (`module::installed_prefix`) reads
+  `<prefix>/lib/mojito/std.mojoc`, which `mojito precompile` writes and
+  `scripts/package-pliron` ships, and refuses to compile when it is
+  missing or another build's, as upstream's does; a development build
+  writes its package to `target/mojito-cache` the first time it needs it,
+  as upstream's build system builds `std.mojoc`. Editing the library takes a compiler rebuild,
   which every `cargo` command does, as an upstream toolchain keeps its
   package until the library is rebuilt. A program that declares
   one of the package's names again, as a second copy of a bundled module

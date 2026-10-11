@@ -893,17 +893,19 @@ lowering unit, one record per library declaration, and one module table
 holding each module's link record, one file per package. The bundled library's is the
 only producer today (`src/package.rs`). No part of a package is MIR text:
 it is a header followed by bytecode records, as upstream's package is
-MLIR bytecode throughout. The format line is `mojito-package 26`.
+MLIR bytecode throughout. The format line is `mojito-package 27`.
 
 ```text
-mojito-package 26
+mojito-package 27
 <the header's length, 8 bytes little-endian>
 <the header, as bytecode>
 <the payload: every record, as bytecode>
 ```
 
 - The header (`PackageDirectory`, `postcard`) holds the package's identity
-  (`package`, `compiler`, `root`), the payload's length, and the payload
+  (`package`, `compiler`; no library root, since the package names each
+  file relative to its library's root and the reader joins its own,
+  `mojito_checked::package::LibraryRoot`), the payload's length, and the payload
   range of the interface and of the declaration directory. A reader refuses a header whose ranges leave the payload or
   whose payload length differs.
 - The declaration directory (`mojito_checked::package::DeclarationDirectory`)
@@ -913,8 +915,9 @@ mojito-package 26
   tables follow, each table's row count first, then each table's rows of
   little-endian `u32` words, a name being its string's index:
   - the module table: each library module the build's link recorded,
-    sorted by dotted name, with its source file's canonical path, the path
-    its declarations are stamped with, its link record's range, and the
+    sorted by dotted name, with its source file's canonical path and the
+    path its declarations are stamped with, each relative to the library's
+    root, its link record's range, and the
     span of its module bindings, as upstream's package holds one module
     tree its importer's link and front end both read;
   - each library declaration, sorted by linked name, with its module's
@@ -1007,7 +1010,9 @@ mojito-package 26
 - The interface is `postcard` of `PackageInterface`: the names of the
   declarations the package's modules make.
 - A unit's record is `postcard` of its file table (each file id's optional
-  path) and of its `checked_unit::CheckedUnit`: the lowering unit's kind,
+  path, relative to the library's root; every statement's module, every
+  expression's source, and every checked site's and default wrapper's
+  module is a file id) and of its `checked_unit::CheckedUnit`: the lowering unit's kind,
   its syntax (a module `def`, a trait default's declaration, a module
   constant, or a struct holding only its name, its compile-time
   parameters, and the one method, or for a wrapper none, beside the

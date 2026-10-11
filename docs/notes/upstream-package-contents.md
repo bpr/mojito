@@ -67,6 +67,28 @@ elaborator first reaches it. What remains is representation: Mojito's
 checked body is syntax beside side tables, upstream's typed `lit` ops
 (R604).
 
+## Finding: the package names no install path
+
+Verified against the same pin on 2026-10-10, while landing R566.
+
+- The toolchain ships `lib/mojo/std.mojoc` (3.25 MB) built, and no `std`
+  source: the environment holds no `.mojo` file. `mojo --help` lists
+  `precompile`, not `package`; `mojo precompile --help` says the output
+  must end in `.mojoc` or `.mojopkg`, its stem is the package's name, and
+  a package another compiler version wrote "will error".
+- Decompressed, the package names every source file relative to the
+  library's build tree (`Mojo/stdlib/std/collections/list.mojo`; 253
+  such names), and no absolute path but two in docstrings, so it is valid
+  wherever it is installed.
+
+Mojito matches it: its package names each file relative to the library's
+root, its importer joins its own root back on
+(`checked_package::LibraryRoot`), its build refuses a package naming the
+root it was built under, an installed compiler reads
+`<prefix>/lib/mojito/std.mojoc` (written by `mojito precompile`) and errors
+without it. What remains is that the bundle still ships the library's
+source, for a program that redeclares a library name (R605).
+
 ## Recipe
 
 To read what a pinned package holds:

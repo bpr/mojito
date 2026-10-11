@@ -3339,7 +3339,7 @@ fn comptime_index_binder(var: &str, iter: &Expr, element: &Ty) -> ParamExpr {
     let owner = format!(
         "{}{}:{}..{}",
         mojito_types::param_expr::COMPTIME_FOR_OWNER,
-        span.source.as_deref().unwrap_or_default(),
+        super::overload_support::library_relative(span.source.as_deref().unwrap_or_default()),
         span.span.0,
         span.span.1
     );

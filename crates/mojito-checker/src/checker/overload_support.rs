@@ -556,6 +556,20 @@ pub fn is_bundled_module_source(source: Option<&str>) -> bool {
     Path::new(stamped_source_module(source)).starts_with(root.join("stdlib"))
 }
 
+/// `source` as a compiled package spells it wherever it is installed:
+/// relative to the bundled library's root when it is a library source, as
+/// is.
+pub(super) fn library_relative(source: &str) -> std::borrow::Cow<'_, str> {
+    mojito_module::module::bundled_root()
+        .and_then(|root| {
+            Path::new(source)
+                .strip_prefix(root.join("stdlib"))
+                .ok()
+                .map(|relative| relative.display().to_string().into())
+        })
+        .unwrap_or_else(|| source.into())
+}
+
 /// The module path beneath a specialization source tag: a specialized
 /// variadic struct, its unrolled accessors, and a per-instantiation method
 /// clone are stamped `<module>$<instance>…`, and keep the module's

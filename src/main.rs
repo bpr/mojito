@@ -59,8 +59,8 @@ fn main() -> ExitCode {
         eprintln!("--emit is only valid with the compile command");
         return ExitCode::FAILURE;
     }
-    if !matches!(command, Some("compile" | "link")) && cli.output.is_some() {
-        eprintln!("--output is only valid with the compile and link commands");
+    if !matches!(command, Some("compile" | "link" | "precompile")) && cli.output.is_some() {
+        eprintln!("--output is only valid with the compile, link, and precompile commands");
         return ExitCode::FAILURE;
     }
     if command != Some("compile") && cli.print_toolchain {
@@ -111,6 +111,7 @@ fn run_command(command: Option<&str>, file: Option<&str>, cli: &CliArgs) -> Exit
         Some("emit-mir") => stage_emit_mir(file, &cli.link_options),
         Some("compile") => stage_compile(file, cli),
         Some("link") => stage_link(file, cli),
+        Some("precompile") => stage_precompile(file, cli),
         Some("exec") => stage_exec(file, cli),
         Some("-h" | "--help" | "help") => {
             print_usage();
@@ -131,7 +132,7 @@ struct CliArgs {
     /// `--emit KIND` for `compile` (parsed by the backend; raw here so the
     /// default build carries no backend types).
     emit: Option<String>,
-    /// `-o`/`--output PATH` for `compile`.
+    /// `-o`/`--output PATH` for `compile`, `link`, and `precompile`.
     output: Option<String>,
     /// `--native-opt LEVEL` for `compile`/`run --backend pliron` (parsed by
     /// the backend; raw here so the default build carries no backend types).
@@ -622,6 +623,30 @@ fn stage_link(file: Option<&str>, cli: &CliArgs) -> ExitCode {
     }
 }
 
+/// `precompile DIR [-o PATH]`: write the package of the bundled library
+/// directory `DIR` (its `std`), to `PATH` or `./std.mojoc`, as `mojo
+/// precompile` writes `<DIR name>.mojoc` by default.
+fn stage_precompile(file: Option<&str>, cli: &CliArgs) -> ExitCode {
+    let result = (|| -> Result<(), String> {
+        let directory = file.ok_or("precompile requires a package directory")?;
+        if cli.link_options.search_roots != LinkOptions::default().search_roots {
+            return Err(
+                "precompile takes no --module-path or --stdlib: it packages the bundled library"
+                    .to_string(),
+            );
+        }
+        let output = cli.output.as_deref().unwrap_or("std.mojoc");
+        mojito::package::precompile(Path::new(directory), Path::new(output))
+    })();
+    match result {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(e) => {
+            eprintln!("precompile error: {e}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
 #[cfg(not(feature = "backend-pliron"))]
 fn stage_link(_file: Option<&str>, _cli: &CliArgs) -> ExitCode {
     eprintln!(
@@ -739,7 +764,7 @@ fn print_usage() {
          \x20 --stdlib PATH          add a stdlib search root (repeatable)\n\
          \x20 --backend NAME         select the run backend\n\
          \x20 --emit KIND            compile output: plir|ll|bc|obj|exe (default ll)\n\
-         \x20 -o, --output PATH      compile output path (required for bc|obj|exe)\n\
+         \x20 -o, --output PATH      compile or precompile output path (required for bc|obj|exe)\n\
          \x20 --native-opt LEVEL     native optimization profile: 0|release (alias: 1; default 0)\n\
          \x20 --target TRIPLE        native target triple (default: the host)\n\
          \x20 --native-debug LEVEL   native debug info: none|lines (default lines)\n\
@@ -756,6 +781,7 @@ fn print_usage() {
          \x20 compile [FILE] native-compile via --backend pliron\n\
          \x20 link  OBJ      link a saved object via its .link.tsv manifest (--backend pliron)\n\
          \x20 exec  [FILE]   execute a verified textual MIR artifact\n\
+         \x20 precompile DIR write the bundled library DIR's package (default ./std.mojoc)\n\
          \x20 demo           run the built-in showcase (default)\n\n\
          FILE defaults to '-' (standard input).\n"
     );
@@ -937,6 +963,19 @@ mod cli_tests {
                 PathBuf::from("third")
             ]
         );
+    }
+
+    #[test]
+    fn precompile_takes_an_output() {
+        let cli = parse_cli_args(vec![
+            "precompile".into(),
+            "stdlib/std".into(),
+            "-o".into(),
+            "lib/mojito/std.mojoc".into(),
+        ])
+        .unwrap();
+        assert_eq!(cli.args, ["precompile", "stdlib/std"]);
+        assert_eq!(cli.output.as_deref(), Some("lib/mojito/std.mojoc"));
     }
 
     #[test]

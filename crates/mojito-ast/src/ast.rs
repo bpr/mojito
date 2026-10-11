@@ -2513,11 +2513,13 @@ fn decoded_source() -> Option<String> {
     DECODING_SOURCE.with_borrow(Clone::clone)
 }
 
-/// [`Stmt::module`] as its encoding carries it: the module's file index
-/// inside an occurrence encoding
-/// ([`mojito_common::token::encoding_occurrences`]), and nothing outside
-/// one.
-mod statement_module {
+/// [`Stmt::module`] as its encoding carries it.
+///
+/// Inside an occurrence encoding
+/// ([`mojito_common::token::encoding_occurrences`]) it is the module's file
+/// index, and outside one nothing. Any other field naming a statement's
+/// module encodes through it too.
+pub mod statement_module {
     use serde::{Deserialize, Serialize};
 
     pub fn serialize<S: serde::Serializer>(

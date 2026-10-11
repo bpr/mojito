@@ -2,7 +2,7 @@
 # Build the versioned release bundle for the supported Linux target
 # (docs/notes/pliron-stage6-plan.md, S6.5): bin/mojito (backend-pliron,
 # path-remapped), lib/libmojito_runtime.a + its public link manifest,
-# license/compat notes, a smoke fixture, per-file checksums, a bundle
+# lib/mojito/std.mojoc (the precompiled standard library), license/compat notes, a smoke fixture, per-file checksums, a bundle
 # manifest, and a deterministic tar. Output: dist/<bundle>/ and
 # dist/<bundle>.tar.gz.
 set -euo pipefail
@@ -30,12 +30,20 @@ RUSTFLAGS="${RUSTFLAGS:-} ${REMAP}" cargo build --release --features backend-pli
 
 echo "==> assembling ${OUT}"
 rm -rf "${OUT}"
-mkdir -p "${OUT}/bin" "${OUT}/lib" "${OUT}/share/mojito/smoke" "${OUT}/share/doc"
+mkdir -p "${OUT}/bin" "${OUT}/lib/mojito" "${OUT}/share/mojito/smoke" "${OUT}/share/doc"
 cp target/release/mojito "${OUT}/bin/mojito"
 cp target/release/libmojito_runtime.a "${OUT}/lib/libmojito_runtime.a"
-# The compiler's bundled-support fallback resolves `<exe>/../share/mojito/
-# stdlib` when no development tree exists, making the bundle self-contained.
+# An installed compiler resolves its bundled support files at
+# `<exe>/../share/mojito/` before any development tree, and imports the
+# standard library from `<exe>/../lib/mojito/std.mojoc`, which it refuses to
+# compile without, as upstream ships `lib/mojo/std.mojoc` built by `mojo
+# precompile`. The package names its files relative to the library's root,
+# so it reads wherever the bundle is unpacked. The library's source still
+# ships: a program that redeclares a library name compiles it from source.
 cp -r stdlib "${OUT}/share/mojito/stdlib"
+echo "==> precompiling the standard library"
+env -u MOJITO_STD_PACKAGE -u MOJITO_CACHE_DIR "${OUT}/bin/mojito" precompile \
+    "${OUT}/share/mojito/stdlib/std" -o "${OUT}/lib/mojito/std.mojoc"
 cp LICENSE "${OUT}/share/doc/LICENSE"
 cat > "${OUT}/share/doc/COMPAT.md" <<EOF
 # Toolchain compatibility
@@ -70,11 +78,15 @@ printf 'schema\t1\nversion\t%s\ngit-rev\t%s\ntarget\t%s\nabi-version\t%s\nrustc\
 (cd "${OUT}" && find . -type f ! -name checksums.sha256 -print0 \
     | sort -z | xargs -0 sha256sum > checksums.sha256)
 
-echo "==> compile-and-run smoke from the assembled bundle"
+echo "==> compile-and-run smoke from a relocated copy of the bundle"
 SMOKE_DIR=$(mktemp -d)
 trap 'rm -rf "${SMOKE_DIR}"' EXIT
-env -u MOJITO_RUNTIME_LIB "${OUT}/bin/mojito" compile --backend pliron \
-    --emit exe -o "${SMOKE_DIR}/hello" "${OUT}/share/mojito/smoke/hello.mojo"
+# A copy elsewhere proves the package reads where it was not built, and that
+# the installed layout, not this development tree, is what the binary reads.
+cp -r "${OUT}" "${SMOKE_DIR}/bundle"
+env -u MOJITO_RUNTIME_LIB -u MOJITO_STD_PACKAGE -u MOJITO_CACHE_DIR \
+    "${SMOKE_DIR}/bundle/bin/mojito" compile --backend pliron \
+    --emit exe -o "${SMOKE_DIR}/hello" "${SMOKE_DIR}/bundle/share/mojito/smoke/hello.mojo"
 OUTPUT=$(env -i "${SMOKE_DIR}/hello")
 test "${OUTPUT}" = "mojito bundle ok" || { echo "smoke output mismatch: ${OUTPUT}"; exit 1; }
 

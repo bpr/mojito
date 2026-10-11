@@ -77,6 +77,62 @@ impl Deref for PackageBytes {
     }
 }
 
+/// Where a package's library sits, as one compilation reaches it: the
+/// root its link stamps on the library's locations, and that root's
+/// canonical path.
+///
+/// A package names each library file relative to its root, as upstream's
+/// names `Mojo/stdlib/std/…`, so it names no install path and reads the
+/// same wherever it is installed: its build strips the root from every
+/// path it writes, and its importer joins its own root back on.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LibraryRoot {
+    pub stamped: String,
+    pub canonical: String,
+}
+
+impl LibraryRoot {
+    /// The library under `root`.
+    pub fn new(root: &std::path::Path) -> Self {
+        Self {
+            stamped: root.display().to_string(),
+            canonical: root
+                .canonicalize()
+                .unwrap_or_else(|_| root.to_path_buf())
+                .display()
+                .to_string(),
+        }
+    }
+
+    /// The stamped `path` relative to the root.
+    ///
+    /// # Errors
+    ///
+    /// When `path` is not under the root.
+    pub fn relative(&self, path: &str) -> Result<String, String> {
+        relative_to(&self.stamped, path)
+    }
+
+    /// The canonical `path` relative to the canonical root.
+    ///
+    /// # Errors
+    ///
+    /// When `path` is not under the canonical root.
+    pub fn relative_canonical(&self, path: &str) -> Result<String, String> {
+        relative_to(&self.canonical, path)
+    }
+
+    /// The stamped path of the file `relative` names.
+    pub fn join(&self, relative: &str) -> String {
+        format!("{}/{relative}", self.stamped)
+    }
+
+    /// The canonical path of the file `relative` names.
+    pub fn join_canonical(&self, relative: &str) -> String {
+        format!("{}/{relative}", self.canonical)
+    }
+}
+
 /// A package's payload, shared by its declarations and its bodies.
 #[derive(Debug, Clone)]
 pub struct Payload {
@@ -670,23 +726,43 @@ pub struct PackagedBody {
 #[derive(Debug)]
 pub struct PackageDeclarations {
     directory: DeclarationDirectory,
+    /// Each module's canonical and stamped path, under its importer's
+    /// root, in module table order.
+    modules: Vec<(String, String)>,
     decoded: Vec<OnceLock<Option<LoweredDeclaration>>>,
     failures: Mutex<Vec<String>>,
 }
 
 impl PackageDeclarations {
-    /// The declarations the directory at `range` of `payload` places.
+    /// The declarations the directory at `range` of `payload` places, its
+    /// module paths joined to `root` when the directory names them
+    /// relative to one.
     ///
     /// # Errors
     ///
     /// A directory whose string section or tables overrun it.
-    pub fn read(payload: Payload, range: &Range<usize>) -> Result<Self, String> {
+    pub fn read(
+        payload: Payload,
+        range: &Range<usize>,
+        root: Option<&LibraryRoot>,
+    ) -> Result<Self, String> {
         let directory = DeclarationDirectory::read(payload, range)?;
         let decoded = (0..directory.declaration_count())
             .map(|_| OnceLock::new())
             .collect();
+        let modules = directory
+            .modules()
+            .map(|module| match root {
+                Some(root) => (
+                    root.join_canonical(module.canonical),
+                    root.join(module.path),
+                ),
+                None => (module.canonical.to_string(), module.path.to_string()),
+            })
+            .collect();
         Ok(Self {
             directory,
+            modules,
             decoded,
             failures: Mutex::new(Vec::new()),
         })
@@ -700,12 +776,12 @@ impl PackageDeclarations {
     /// A record that does not encode.
     pub fn of_records(records: DeclarationRecords) -> Result<Self, String> {
         let mut payload = Vec::new();
-        let range = records.encode(None, &mut |bytes| {
+        let range = records.encode(None, None, &mut |bytes| {
             let start = payload.len();
             payload.extend_from_slice(bytes);
             start..payload.len()
         })?;
-        Self::read(Payload::new(PackageBytes::Owned(payload), 0), &range)
+        Self::read(Payload::new(PackageBytes::Owned(payload), 0), &range, None)
     }
 
     /// The struct declaration `name`, decoded on first use; `None` when the
@@ -870,9 +946,17 @@ impl PackageDeclarations {
         &self.directory
     }
 
-    /// The package's module table, sorted by dotted name.
+    /// The package's module table, sorted by dotted name, each module's
+    /// paths under its importer's root.
     pub fn modules(&self) -> impl ExactSizeIterator<Item = ModuleEntry<'_>> + '_ {
-        self.directory.modules()
+        self.directory
+            .modules()
+            .zip(&self.modules)
+            .map(|(module, (canonical, path))| ModuleEntry {
+                canonical,
+                path,
+                ..module
+            })
     }
 
     /// The encoded link record of the module at `position` in the module
@@ -885,7 +969,7 @@ impl PackageDeclarations {
     /// Whether a declaration stamped with `module` comes from one of the
     /// package's modules, so its body is in the package.
     pub fn compiles(&self, module: Option<&str>) -> bool {
-        module.is_some_and(|module| self.modules().any(|entry| entry.path == module))
+        module.is_some_and(|module| self.modules.iter().any(|(_, path)| path == module))
     }
 
     /// The lowered part of the declaration at `entry`, decoded on first
@@ -1343,17 +1427,20 @@ impl DeclarationRecords {
     ///
     /// `bodies` are the package's function bodies in lowering order, each
     /// joined to its function's declaration; `None` encodes a package of
-    /// declarations alone.
+    /// declarations alone. The module table names each module's paths
+    /// relative to `root`, when there is one.
     ///
     /// # Errors
     ///
     /// A record that does not encode, or whose names or masks would not
-    /// join back from the directory, a module recorded twice, a
-    /// declaration of no recorded module, a name two declarations hold, a
-    /// body no declaration declares, or a declared function with no body.
+    /// join back from the directory, a module recorded twice or not under
+    /// `root`, a declaration of no recorded module, a name two
+    /// declarations hold, a body no declaration declares, or a declared
+    /// function with no body.
     pub fn encode(
         mut self,
         bodies: Option<Vec<PackagedBody>>,
+        root: Option<&LibraryRoot>,
         append: &mut impl FnMut(&[u8]) -> Range<usize>,
     ) -> Result<Range<usize>, String> {
         self.modules
@@ -1535,10 +1622,17 @@ impl DeclarationRecords {
                 let name = writer.string(name);
                 writer.row(Section::Bindings, &[name]);
             }
+            let (canonical, path) = match root {
+                Some(root) => (
+                    root.relative_canonical(&module.canonical)?,
+                    root.relative(&module.path)?,
+                ),
+                None => (module.canonical, module.path),
+            };
             let row = [
                 writer.string(&module.name),
-                writer.string(&module.canonical),
-                writer.string(&module.path),
+                writer.string(&canonical),
+                writer.string(&path),
                 offset(link.start)?,
                 offset(link.end)?,
                 offset(first_binding)?,
@@ -1818,6 +1912,14 @@ impl DirectoryWriter {
 
 /// The first row of `rows` `before` is false of, `before` being true of a
 /// prefix of them.
+/// `path` relative to the directory `root`.
+fn relative_to(root: &str, path: &str) -> Result<String, String> {
+    path.strip_prefix(root)
+        .and_then(|rest| rest.strip_prefix('/'))
+        .map(str::to_string)
+        .ok_or_else(|| format!("`{path}` is not under the library root `{root}`"))
+}
+
 fn partition_point(rows: Range<usize>, before: impl Fn(usize) -> bool) -> usize {
     let (mut low, mut high) = (rows.start, rows.end);
     while low < high {

@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R605**.
+Next free ID: **R606**.
 
 ## Ordered Work
 
@@ -50,20 +50,18 @@ Scope: what remains of the plan's stages, and what the pipeline order still
 leaves to close. A defect found on the way is filed by its kind; a
 divergence from the pin goes to a catch-up track, however small.
 
-- [ ] **R566 (P6) An installed compiler builds its library package on
-  first use**
+- [ ] **R605 (P6) A program that redeclares a library name compiles the
+  library from source**
 
-  The package is written into a cache by the first compilation that needs
-  it, so an installed bundle ships the library's source and compiles it
-  once per user.
-  - `scripts/package-pliron` copies `stdlib/` into `share/mojito`, and the
-    bundle's first compile builds the package into the user's cache.
-  - Upstream ships `std.mojoc` built, and writes a package with
-    `mojo package`.
-  - The lever: a `mojito package` subcommand that writes the package, run
-    by the bundle script into `share/mojito`, and `bundled_std_package`
-    opening that file first.
-  - Found while landing R562 (2026-10-10).
+  Problem: when a program's link replays a library module, or its own
+  statements reuse a name the package declares, Mojito drops the package
+  and compiles the whole library from source, where the pin imports its
+  `std.mojoc` regardless and never compiles `std`.
+  - `compiler.rs::imports_cleanly` decides the fallback.
+  - This fallback and `MOJITO_STD_PACKAGE=0` are why the installed bundle
+    still ships `share/mojito/stdlib`; upstream's toolchain ships no `std`
+    source.
+  - Found while landing R566 (2026-10-10).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

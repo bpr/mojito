@@ -385,14 +385,16 @@ impl Compiler {
     }
 
     /// The bundled library's compiled package, when this compiler imports
-    /// it.
-    fn std_package(&self) -> Option<Arc<ImportedPackage>> {
-        self.std_package
-            .unwrap_or_else(|| {
-                std::env::var_os("MOJITO_STD_PACKAGE").is_none_or(|value| value != "0")
-            })
-            .then(crate::package::bundled_std_package)
-            .flatten()
+    /// it; an installed compiler's missing or unreadable package is an
+    /// error.
+    fn std_package(&self) -> Result<Option<Arc<ImportedPackage>>, CompilerError> {
+        let imports = self.std_package.unwrap_or_else(|| {
+            std::env::var_os("MOJITO_STD_PACKAGE").is_none_or(|value| value != "0")
+        });
+        if !imports {
+            return Ok(None);
+        }
+        crate::package::bundled_std_package().map_err(CompilerError::Module)
     }
 
     /// Link with `link` and compile the result: importing the bundled
@@ -403,7 +405,7 @@ impl Compiler {
         &self,
         link: impl Fn(Option<&ImportedPackage>) -> Result<LinkedProgram, ModuleError>,
     ) -> Result<CompiledProgram, CompilerError> {
-        if let Some(package) = self.std_package()
+        if let Some(package) = self.std_package()?
             && let Ok(linked) = link(Some(&package))
             && imports_cleanly(&linked.statements, &package)
         {

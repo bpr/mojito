@@ -8,20 +8,28 @@
 //! module's record (`module::package`), and it lowers a body's unit and
 //! inserts the body's drops when its elaboration first reaches it, as
 //! upstream's importer lowers and runs its lifetime pass on each body it
-//! materializes from a package that holds each body as checked. The package is
-//! written to a cache the first time a build needs it, keyed by the
-//! build's identity, which covers the library's source, and the library's
-//! root: like upstream's, the importer reads no library source to find it.
+//! materializes from a package that holds each body as checked.
+//!
+//! Like upstream's, the package names each library file relative to the
+//! library's root, so it reads the same wherever it is installed, and is
+//! keyed by the build's identity alone, which covers the library's source.
+//! An installed compiler reads the package its bundle ships at
+//! `<prefix>/lib/mojito/std.mojoc`, which `mojito precompile` writes, as
+//! upstream's toolchain ships `lib/mojo/std.mojoc` built by `mojo
+//! precompile`, and refuses to compile without it. A development build
+//! writes the package to `target/mojito-cache` the first time it needs it.
 
 use crate::checked_package::PackagedModule;
 use crate::compiler::{Compiler, CompilerError};
 use crate::interface::PackageInterface;
 use crate::mir::MirProgram;
 use crate::mir::text::package::{
-    PackageBodies, PackageBytes, PackageDeclarations, PackageHeader, read_package, same_body,
-    write_package,
+    LibraryRoot, PackageBodies, PackageBytes, PackageDeclarations, PackageHeader, read_package,
+    same_body, write_package,
 };
-use crate::module::{LinkOptions, bundled_root, link_source_recording};
+use crate::module::{
+    LinkOptions, ModuleError, bundled_root, installed_prefix, link_source_recording,
+};
 use crate::module_package::{ModuleIdentity, PackageModules};
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
@@ -49,32 +57,114 @@ pub const BUILD_ID: &str = env!("MOJITO_BUILD_ID");
 
 /// The bundled library's package for this build, read once per process.
 ///
-/// It comes from the cache when this build already wrote it, else it is
-/// built and cached now. `None` when there is no bundled library, or
-/// packaging it failed (then the library compiles from source, after one
+/// An installed compiler maps the package its bundle ships
+/// (`<prefix>/lib/mojito/std.mojoc`). A development build's comes from
+/// the cache when this build already wrote it, else it is built and cached
+/// now.
+///
+/// `Ok(None)` when there is no bundled library, or a development build
+/// failed to package it (then the library compiles from source, after one
 /// warning).
-pub fn bundled_std_package() -> Option<Arc<ImportedPackage>> {
-    static PACKAGE: OnceLock<Option<Arc<ImportedPackage>>> = OnceLock::new();
+///
+/// # Errors
+///
+/// An installed compiler whose package is missing, unreadable, or another
+/// build's, as upstream's refuses a missing or mismatched `std.mojoc`.
+pub fn bundled_std_package() -> Result<Option<Arc<ImportedPackage>>, ModuleError> {
+    static PACKAGE: OnceLock<BundledPackage> = OnceLock::new();
     PACKAGE
         .get_or_init(|| {
-            let root = bundled_root()?.join("stdlib");
-            let header = PackageHeader {
-                package: "std".to_string(),
-                compiler: BUILD_ID.to_string(),
-                root: root.display().to_string(),
+            let Some(root) = bundled_root().map(|root| root.join("stdlib")) else {
+                return Ok(None);
             };
+            let header = std_header();
+            if let Some(prefix) = installed_prefix() {
+                let path = installed_package(&prefix);
+                return std::fs::File::open(&path)
+                    .and_then(|file| PackageBytes::map(&file))
+                    .map_err(|error| error.to_string())
+                    .and_then(|bytes| import(bytes, &header, &LibraryRoot::new(&root)))
+                    .map(|package| Some(Arc::new(package)))
+                    .map_err(|reason| (path, reason));
+            }
             match load_or_build(&root, &header) {
-                Ok(package) => Some(Arc::new(package)),
+                Ok(package) => Ok(Some(Arc::new(package))),
                 Err(error) => {
                     eprintln!(
                         "warning: the bundled standard library could not be packaged ({error}); \
                          it is compiled from source"
                     );
-                    None
+                    Ok(None)
                 }
             }
         })
         .clone()
+        .map_err(|(path, reason)| ModuleError::InstalledPackage { path, reason })
+}
+
+/// Write the package of the library directory `directory` to `output`, as
+/// `mojo precompile <directory> -o <output>` writes upstream's.
+///
+/// Only the bundled library precompiles: `directory` must be its `std`,
+/// and `output` must name a `std.mojoc` or `std.mojopkg`, since the file's
+/// stem is the package's name.
+///
+/// # Errors
+///
+/// Any other directory or output name, a library that does not package,
+/// or an output that cannot be written.
+pub fn precompile(directory: &Path, output: &Path) -> Result<(), String> {
+    const UNSUPPORTED: &str =
+        "precompiling a package other than the bundled `std` is not supported";
+    let root = bundled_root()
+        .map(|root| root.join("stdlib"))
+        .ok_or("there is no bundled standard library")?;
+    let same = |left: &Path, right: &Path| {
+        left.canonicalize()
+            .is_ok_and(|left| right.canonicalize().is_ok_and(|right| left == right))
+    };
+    if !same(directory, &root.join("std")) {
+        return Err(format!("{UNSUPPORTED}: `{}`", directory.display()));
+    }
+    let extension = output.extension().and_then(|extension| extension.to_str());
+    if !matches!(extension, Some("mojoc" | "mojopkg")) {
+        return Err(format!(
+            "the output `{}` must end in `.mojoc` or `.mojopkg`",
+            output.display()
+        ));
+    }
+    if output.file_stem().and_then(|stem| stem.to_str()) != Some("std") {
+        return Err(format!(
+            "{UNSUPPORTED}: the output `{}` names another package",
+            output.display()
+        ));
+    }
+    let bytes = build(&root, &std_header()).map_err(|error| error.to_string())?;
+    let partial = output.with_extension(format!("{}.partial", std::process::id()));
+    std::fs::write(&partial, bytes)
+        .and_then(|()| std::fs::rename(&partial, output))
+        .map_err(|error| {
+            let _ = std::fs::remove_file(&partial);
+            format!("cannot write `{}`: {error}", output.display())
+        })
+}
+
+/// Where the installation at `prefix` ships its standard library's
+/// package.
+pub fn installed_package(prefix: &Path) -> PathBuf {
+    prefix.join("lib").join("mojito").join("std.mojoc")
+}
+
+/// The bundled library's package as [`bundled_std_package`] keeps it: an
+/// installed package's failure as its file and the reason.
+type BundledPackage = Result<Option<Arc<ImportedPackage>>, (PathBuf, String)>;
+
+/// The header of this build's `std` package.
+fn std_header() -> PackageHeader {
+    PackageHeader {
+        package: "std".to_string(),
+        compiler: BUILD_ID.to_string(),
+    }
 }
 
 /// Map the cached package `header` names, or build and cache it. One
@@ -82,8 +172,9 @@ pub fn bundled_std_package() -> Option<Arc<ImportedPackage>> {
 /// it, under a lock file a crashed builder leaves stale after a while.
 fn load_or_build(root: &Path, header: &PackageHeader) -> Result<ImportedPackage, String> {
     const STALE: std::time::Duration = std::time::Duration::from_mins(5);
+    let library = LibraryRoot::new(root);
     let cache = cache_dir();
-    let stem = format!("std-{}-{}", header.compiler, root_key(&header.root));
+    let stem = format!("std-{}", header.compiler);
     let path = cache.join(format!("{stem}.mojoc"));
     let lock = cache.join(format!(".{stem}.lock"));
     loop {
@@ -91,7 +182,7 @@ fn load_or_build(root: &Path, header: &PackageHeader) -> Result<ImportedPackage,
         let bytes = std::fs::File::open(&path).and_then(|file| PackageBytes::map(&file));
         drop(map);
         if let Ok(bytes) = bytes
-            && let Ok(package) = import(bytes, header)
+            && let Ok(package) = import(bytes, header, &library)
         {
             return Ok(package);
         }
@@ -115,7 +206,7 @@ fn load_or_build(root: &Path, header: &PackageHeader) -> Result<ImportedPackage,
                     prune(&cache, &path);
                 }
                 let _ = std::fs::remove_file(&lock);
-                return import(PackageBytes::Owned(built?), header);
+                return import(PackageBytes::Owned(built?), header, &library);
             }
             Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
                 let stale = std::fs::metadata(&lock)
@@ -136,16 +227,21 @@ fn load_or_build(root: &Path, header: &PackageHeader) -> Result<ImportedPackage,
     import(
         PackageBytes::Owned(build(root, header).map_err(|error| error.to_string())?),
         header,
+        &library,
     )
 }
 
-/// Read `bytes` as the package `header` names.
-fn import(bytes: PackageBytes, header: &PackageHeader) -> Result<ImportedPackage, String> {
-    let package = read_package(bytes).map_err(|error| error.to_string())?;
+/// Read `bytes` as the package `header` names, its library under `root`.
+fn import(
+    bytes: PackageBytes,
+    header: &PackageHeader,
+    root: &LibraryRoot,
+) -> Result<ImportedPackage, String> {
+    let package = read_package(bytes, root).map_err(|error| error.to_string())?;
     if package.header != *header {
         return Err(format!(
-            "the package was built by compiler `{}` for library root `{}`, not this one",
-            package.header.compiler, package.header.root
+            "the package was built by compiler `{}`, not this one",
+            package.header.compiler
         ));
     }
     // The link records are copied out of the mapping, since the linker that
@@ -164,7 +260,7 @@ fn import(bytes: PackageBytes, header: &PackageHeader) -> Result<ImportedPackage
             (identity, bytes.to_vec())
         });
     Ok(ImportedPackage {
-        modules: PackageModules::new(&package.header.root, modules),
+        modules: PackageModules::new(&root.stamped, modules),
         interface: Arc::new(package.interface),
         checked: Arc::new(crate::checker::DeclarationInterfaces::new(Arc::clone(
             &package.declarations,
@@ -179,8 +275,13 @@ fn import(bytes: PackageBytes, header: &PackageHeader) -> Result<ImportedPackage
 /// Build the package of the library under `root`: compile a program that
 /// imports every one of its modules, keep each module's link record, its
 /// checked effect summaries, the MIR declarations of its declarations, and
-/// each lowering unit as the check left it, and write them.
+/// each lowering unit as the check left it, and write them, every file
+/// named relative to `root`.
+///
+/// The build refuses a package that names `root` itself anywhere, so that
+/// it reads the same wherever it is installed.
 fn build(root: &Path, header: &PackageHeader) -> Result<Vec<u8>, CompilerError> {
+    let library = LibraryRoot::new(root);
     let modules = module_paths(&root.join("std"), "std");
     let mut source = String::new();
     for module in &modules {
@@ -259,10 +360,28 @@ fn build(root: &Path, header: &PackageHeader) -> Result<Vec<u8>, CompilerError> 
             program.declarations.traits.clone(),
         )
         .map_err(|error| CompilerError::Verify(vec![error]))?;
-    let bytes = write_package(header, &interface, &program, &units, records)
+    let bytes = write_package(header, &library, &interface, &program, &units, records)
         .map_err(|error| CompilerError::Verify(vec![error.to_string()]))?;
-    refuse_unequal_units(&bytes, &program)?;
+    refuse_install_paths(&bytes, &library)?;
+    refuse_unequal_units(&bytes, &program, &library)?;
     Ok(bytes)
+}
+
+/// Refuse the package `bytes` if they name the library `root` it was built
+/// from, in either its stamped or its canonical spelling.
+fn refuse_install_paths(bytes: &[u8], root: &LibraryRoot) -> Result<(), CompilerError> {
+    let named = [&root.stamped, &root.canonical]
+        .into_iter()
+        .find(|spelling| {
+            bytes
+                .windows(spelling.len())
+                .any(|window| window == spelling.as_bytes())
+        });
+    named.map_or(Ok(()), |spelling| {
+        Err(CompilerError::Verify(vec![format!(
+            "the package names its library root `{spelling}`, so it reads only where it was built"
+        )]))
+    })
 }
 
 /// Each lowering unit of the library's checked program, with its share of
@@ -295,8 +414,12 @@ fn packaged_units(
 /// Refuse the package `bytes` unless each of its units, lowered alone as
 /// an importer lowers it, gives every function it places exactly as the
 /// library's `program` holds it, so importing the package changes no body.
-fn refuse_unequal_units(bytes: &[u8], program: &MirProgram) -> Result<(), CompilerError> {
-    let package = read_package(PackageBytes::Owned(bytes.to_vec()))
+fn refuse_unequal_units(
+    bytes: &[u8],
+    program: &MirProgram,
+    root: &LibraryRoot,
+) -> Result<(), CompilerError> {
+    let package = read_package(PackageBytes::Owned(bytes.to_vec()), root)
         .map_err(|error| CompilerError::Verify(vec![error.to_string()]))?;
     let findings: Vec<String> = program
         .functions
@@ -360,23 +483,19 @@ fn module_paths(directory: &Path, prefix: &str) -> BTreeSet<String> {
     modules
 }
 
-/// Where compiled packages are cached: `MOJITO_CACHE_DIR`, else the
-/// development tree's `target/mojito-cache`, else the user's cache
-/// directory.
+/// Where a development build caches its package: `MOJITO_CACHE_DIR`, else
+/// the development tree's `target/mojito-cache`, as upstream's build
+/// system builds its `std.mojoc` into its build tree.
 fn cache_dir() -> PathBuf {
-    if let Some(dir) = std::env::var_os("MOJITO_CACHE_DIR") {
-        return PathBuf::from(dir);
-    }
-    if let Some(root) = bundled_root()
-        && root.join("Cargo.toml").is_file()
-    {
-        return root.join("target").join("mojito-cache");
-    }
-    std::env::var_os("XDG_CACHE_HOME")
-        .map(PathBuf::from)
-        .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".cache")))
-        .unwrap_or_else(std::env::temp_dir)
-        .join("mojito")
+    std::env::var_os("MOJITO_CACHE_DIR").map_or_else(
+        || {
+            bundled_root()
+                .unwrap_or_default()
+                .join("target")
+                .join("mojito-cache")
+        },
+        PathBuf::from,
+    )
 }
 
 /// Remove cached packages other builds wrote, keeping `current` and the
@@ -414,26 +533,18 @@ fn declared_name(statement: &crate::ast::Stmt) -> Option<String> {
     }
 }
 
-/// A file-name key for the library `root`, since a package names its
-/// modules by path: a 64-bit FNV-1a of the path.
-fn root_key(root: &str) -> String {
-    let digest = root
-        .bytes()
-        .fold(0xcbf2_9ce4_8422_2325_u64, |digest, byte| {
-            (digest ^ u64::from(byte)).wrapping_mul(0x0100_0000_01b3)
-        });
-    format!("{digest:016x}")
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::mir::MirDeclarations;
 
-    /// An empty package `header` names.
+    /// A package `header` names, of the library under `/a/stdlib`, holding
+    /// one empty module.
     fn empty_package(header: &PackageHeader) -> Vec<u8> {
+        let path = "/a/stdlib/std/x.mojo".to_string();
         write_package(
             header,
+            &library("/a/stdlib"),
             &PackageInterface::default(),
             &MirProgram {
                 functions: Vec::new(),
@@ -441,41 +552,51 @@ mod tests {
                 invariant_errors: Vec::new(),
             },
             &[],
-            crate::mir::text::package::DeclarationRecords::default(),
+            crate::mir::text::package::DeclarationRecords {
+                modules: vec![PackagedModule {
+                    name: "std.x".to_string(),
+                    canonical: path.clone(),
+                    path,
+                    link: Vec::new(),
+                }],
+                ..Default::default()
+            },
         )
         .expect("write")
     }
 
+    fn library(root: &str) -> LibraryRoot {
+        LibraryRoot {
+            stamped: root.to_string(),
+            canonical: root.to_string(),
+        }
+    }
+
     #[test]
     fn a_package_another_build_wrote_is_refused() {
-        let header = PackageHeader {
-            package: "std".to_string(),
-            compiler: BUILD_ID.to_string(),
-            root: "/std".to_string(),
-        };
+        let header = std_header();
         let text = empty_package(&header);
-        assert!(import(PackageBytes::Owned(text.clone()), &header).is_ok());
+        let root = library("/a/stdlib");
+        assert!(import(PackageBytes::Owned(text.clone()), &header, &root).is_ok());
         let other = PackageHeader {
             compiler: "another-build".to_string(),
             ..header
         };
-        assert!(import(PackageBytes::Owned(text), &other).is_err());
+        assert!(import(PackageBytes::Owned(text), &other, &root).is_err());
     }
 
     #[test]
-    fn a_package_built_for_another_root_is_refused() {
-        let header = PackageHeader {
-            package: "std".to_string(),
-            compiler: BUILD_ID.to_string(),
-            root: "/std".to_string(),
-        };
+    fn a_package_reads_under_any_root() {
+        let header = std_header();
         let text = empty_package(&header);
-        assert!(import(PackageBytes::Owned(text.clone()), &header).is_ok());
-        let other = PackageHeader {
-            root: "/elsewhere/std".to_string(),
-            ..header
-        };
-        assert!(import(PackageBytes::Owned(text), &other).is_err());
+        assert!(refuse_install_paths(&text, &library("/a/stdlib")).is_ok());
+        let package = import(PackageBytes::Owned(text), &header, &library("/b/stdlib"))
+            .expect("imports under another root");
+        let module = package.declarations.modules().next().expect("one module");
+        assert_eq!(module.path, "/b/stdlib/std/x.mojo");
+        assert_eq!(module.canonical, "/b/stdlib/std/x.mojo");
+        assert!(package.declarations.compiles(Some("/b/stdlib/std/x.mojo")));
+        assert!(!package.declarations.compiles(Some("/a/stdlib/std/x.mojo")));
     }
 
     #[test]
@@ -597,7 +718,9 @@ mod tests {
     #[test]
     fn a_package_links_what_its_source_links() {
         use crate::module::{link_source_with_options, link_source_with_package};
-        let package = bundled_std_package().expect("the bundled library packages");
+        let package = bundled_std_package()
+            .expect("the installed package reads")
+            .expect("the bundled library packages");
         let root = bundled_root().expect("a bundled root").join("stdlib");
         let mut source = String::new();
         for module in module_paths(&root.join("std"), "std") {
@@ -630,7 +753,9 @@ mod tests {
 
     #[test]
     fn every_library_module_has_an_interface() {
-        let package = bundled_std_package().expect("the bundled library packages");
+        let package = bundled_std_package()
+            .expect("the installed package reads")
+            .expect("the bundled library packages");
         let directory = package.declarations.directory();
         let list = directory
             .modules()

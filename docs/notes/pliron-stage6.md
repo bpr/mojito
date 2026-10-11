@@ -94,14 +94,17 @@ packaged compiler and runtime carry no build-tree paths.
 
 `scripts/package-pliron` produces `dist/mojito-<version>-<triple>/`
 (`bin/mojito`, `lib/libmojito_runtime.a` + `lib/runtime-link.tsv`,
-`share/mojito/stdlib` — the compiler's bundled-support fallback resolves
-`<exe>/../share/mojito` when no development tree exists —
+`lib/mojito/std.mojoc` — the standard library's package, which the
+bundle's own `mojito precompile` writes and an installed compiler
+refuses to compile without, as upstream ships `lib/mojo/std.mojoc` —
+`share/mojito/stdlib` — an installed compiler resolves
+`<exe>/../share/mojito` before any development tree —
 `share/mojito/smoke`, `share/doc`, `manifest.tsv`, `checksums.sha256`)
 plus a deterministic tar (`--sort=name --mtime=@0 --owner=0 --group=0`,
-`gzip -n`), and smoke-compiles and runs a program from the assembled
-bundle in a clean environment. `pliron_dist_test` proves relocated-bundle
-discovery (paths with spaces/non-ASCII), bundle-stdlib service with the
-development tree hidden behind a mount namespace, `--runtime-lib`
+`gzip -n`), and smoke-compiles and runs a program from a relocated copy
+of the assembled bundle in a clean environment. `pliron_dist_test` proves relocated-bundle
+discovery (paths with spaces/non-ASCII), bundle-stdlib and package
+service with the development tree hidden behind a mount namespace, `--runtime-lib`
 precedence, empty-environment execution, and actionable rejection of
 missing, corrupt, and ABI-mismatched runtimes.
 

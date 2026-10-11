@@ -106,8 +106,9 @@ fn pliron_dist_relocated_bundle_compiles_and_runs_compiler_free() {
 }
 
 /// With the development tree hidden behind a private mount namespace, the
-/// bundle's `share/mojito/stdlib` serves the prelude — the relocation
-/// proof for the compiler's bundled-support fallback. Skips where
+/// bundle's `share/mojito/stdlib` serves the prelude and the package its
+/// own `precompile` wrote to `lib/mojito/std.mojoc` serves the library —
+/// the relocation proof for an installed compiler. Skips where
 /// unprivileged user namespaces are unavailable.
 #[test]
 fn pliron_dist_bundle_ships_a_usable_stdlib() {
@@ -123,6 +124,21 @@ fn pliron_dist_bundle_ships_a_usable_stdlib() {
     let bundle = fake_bundle(dir.path());
     let dev_stdlib = Path::new(env!("CARGO_MANIFEST_DIR")).join("stdlib");
     copy_tree(&dev_stdlib, &bundle.join("share/mojito/stdlib"));
+    std::fs::create_dir_all(bundle.join("lib/mojito")).expect("package dir");
+    let precompile = Command::new(bundle.join("bin/mojito"))
+        .arg("precompile")
+        .arg(bundle.join("share/mojito/stdlib/std"))
+        .arg("-o")
+        .arg(bundle.join("lib/mojito/std.mojoc"))
+        .env_remove("MOJITO_STD_PACKAGE")
+        .env_remove("MOJITO_CACHE_DIR")
+        .output()
+        .expect("precompile runs");
+    assert!(
+        precompile.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&precompile.stderr)
+    );
     let source = dir.path().join("uses_stdlib.mojo");
     std::fs::write(
         &source,

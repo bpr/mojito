@@ -32,6 +32,9 @@ pub enum ModuleError {
     SelfImport { module: String },
     /// An empty module path used with a form other than named sibling imports.
     EmptyModulePath,
+    /// An installed compiler's standard-library package is missing, or is
+    /// not one this compiler can read.
+    InstalledPackage { path: PathBuf, reason: String },
 }
 
 /// A link that read the modules a compiled package records from their
@@ -90,6 +93,11 @@ impl std::fmt::Display for ModuleError {
                     "an empty relative module path requires named sibling imports"
                 )
             }
+            Self::InstalledPackage { path, reason } => write!(
+                f,
+                "cannot import the standard library package '{}': {reason}",
+                path.display()
+            ),
         }
     }
 }
@@ -1670,8 +1678,8 @@ fn bundled_path(relative: &str) -> Option<PathBuf> {
 /// The root holding the compiler's bundled support files (the directory
 /// containing `stdlib/`).
 ///
-/// The development source tree when it exists, else the installation bundle's
-/// `share/mojito/` next to the running executable.
+/// The installation's `share/mojito/` when the running executable is
+/// installed ([`installed_prefix`]), else the development source tree.
 ///
 /// Resolved once per process.
 pub fn bundled_root() -> Option<PathBuf> {
@@ -1679,6 +1687,9 @@ pub fn bundled_root() -> Option<PathBuf> {
     // The prelude is the existence probe: a root without it cannot serve
     // the bundled stdlib, whatever directories it has.
     ROOT.get_or_init(|| {
+        if let Some(prefix) = installed_prefix() {
+            return Some(installed_share(&prefix));
+        }
         if let Some(manifest) = option_env!("CARGO_MANIFEST_DIR") {
             // This crate lives at `crates/mojito-module/`, so the development
             // tree's `stdlib/` sits two levels above its manifest; probe the
@@ -1690,11 +1701,28 @@ pub fn bundled_root() -> Option<PathBuf> {
                 }
             }
         }
-        let exe = std::env::current_exe().ok()?;
-        let share = exe.parent()?.parent()?.join("share").join("mojito");
-        share.join(PRELUDE_PATH).is_file().then_some(share)
+        None
     })
     .clone()
+}
+
+/// The installation prefix of the running executable: `<exe>/..` when
+/// `<exe>/../share/mojito/` holds the bundled library, as an installed
+/// bundle lays it out (`bin/`, `lib/`, `share/mojito/stdlib/`).
+///
+/// Resolved once per process.
+pub fn installed_prefix() -> Option<PathBuf> {
+    static PREFIX: std::sync::OnceLock<Option<PathBuf>> = std::sync::OnceLock::new();
+    PREFIX
+        .get_or_init(|| {
+            let exe = std::env::current_exe().ok()?;
+            let prefix = exe.parent()?.parent()?.to_path_buf();
+            installed_share(&prefix)
+                .join(PRELUDE_PATH)
+                .is_file()
+                .then_some(prefix)
+        })
+        .clone()
 }
 
 /// The declared name of a top-level declaration statement (`def`/`struct`/`trait`/
@@ -2004,6 +2032,11 @@ fn read_and_parse_named(path: &Path, module_name: &str) -> Result<Vec<Stmt>, Mod
 }
 
 const PRELUDE_PATH: &str = "stdlib/std/prelude.mojo";
+
+/// The support-file root of the installation at `prefix`.
+fn installed_share(prefix: &Path) -> PathBuf {
+    prefix.join("share").join("mojito")
+}
 
 /// Compiler-bundled declarations whose public identity is intentionally stable
 /// and unqualified. Their implementation helpers remain module-qualified.

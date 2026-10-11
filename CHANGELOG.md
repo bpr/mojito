@@ -8,6 +8,19 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- An installed compiler reads the standard library's package its bundle
+  ships at `<prefix>/lib/mojito/std.mojoc` (R566), as upstream's toolchain
+  ships `lib/mojo/std.mojoc`, and refuses to compile when it is missing or
+  another build's; it no longer builds a package into the user's cache.
+  The new `mojito precompile <stdlib>/std -o <path>/std.mojoc` writes it,
+  as `mojo precompile` does, and `scripts/package-pliron` runs it. The
+  package names every library file relative to the library's root and no
+  longer records the root, so it reads wherever it is installed, and the
+  build refuses one that names its root; it is keyed by the build id
+  alone. The package format is `mojito-package 27`, and the package is
+  2.5 MB, from 3.0 MB. A program that redeclares a library name still
+  compiles the library from source (R605).
+
 - The bundled library's package holds each body as checked (R546), as
   upstream's `.mojoc` holds each body's IR as its checks validated it: one
   record per lowering unit (`checked_unit::CheckedUnit`) holding the

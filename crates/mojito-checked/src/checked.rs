@@ -1340,6 +1340,7 @@ pub struct RebindAssertion {
 /// `getTraitFunctionSignature` gives the wrapper its trait function's.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct CheckedDefaultWrapper {
+    #[serde(with = "mojito_ast::ast::statement_module")]
     pub module: Option<String>,
     /// The struct that inherits the default.
     pub declaration: String,
@@ -1370,6 +1371,7 @@ pub struct CheckedDefaultWrapper {
 /// `GenericSite::Function`; a conformer's wrapper calls it.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct CheckedTraitMember {
+    #[serde(with = "mojito_ast::ast::statement_module")]
     pub module: Option<String>,
     pub trait_name: String,
     /// Its position among its trait's methods.
@@ -1766,6 +1768,7 @@ impl ExplicitDestroyInfo {
 #[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum AnnotationSite {
     FunctionParam {
+        #[serde(with = "mojito_ast::ast::statement_module")]
         module: Option<String>,
         declaration: Span,
         syntax: mojito_common::token::SyntaxId,
@@ -1775,11 +1778,13 @@ pub enum AnnotationSite {
     /// span: compile-time struct specializations share their template's span
     /// (correct provenance), so spans cannot distinguish the declarations.
     StructField {
+        #[serde(with = "mojito_ast::ast::statement_module")]
         module: Option<String>,
         declaration: String,
         field: usize,
     },
     MethodParam {
+        #[serde(with = "mojito_ast::ast::statement_module")]
         module: Option<String>,
         declaration: String,
         method: usize,
@@ -1787,6 +1792,7 @@ pub enum AnnotationSite {
     },
     /// The checked return type of a free function declaration.
     FunctionReturn {
+        #[serde(with = "mojito_ast::ast::statement_module")]
         module: Option<String>,
         declaration: Span,
         syntax: mojito_common::token::SyntaxId,
@@ -1795,12 +1801,14 @@ pub enum AnnotationSite {
     /// `Func`/`GenericFunc` type the checker binds the name to. Lowering uses
     /// it to type closure values without reconstructing signatures.
     FunctionType {
+        #[serde(with = "mojito_ast::ast::statement_module")]
         module: Option<String>,
         declaration: Span,
         syntax: mojito_common::token::SyntaxId,
     },
     /// The checked return type of a struct method declaration.
     MethodReturn {
+        #[serde(with = "mojito_ast::ast::statement_module")]
         module: Option<String>,
         declaration: String,
         method: usize,
@@ -1813,15 +1821,18 @@ pub enum AnnotationSite {
 #[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum GenericSite {
     Function {
+        #[serde(with = "mojito_ast::ast::statement_module")]
         module: Option<String>,
         declaration: Span,
         syntax: mojito_common::token::SyntaxId,
     },
     Struct {
+        #[serde(with = "mojito_ast::ast::statement_module")]
         module: Option<String>,
         declaration: String,
     },
     Method {
+        #[serde(with = "mojito_ast::ast::statement_module")]
         module: Option<String>,
         declaration: String,
         method: usize,

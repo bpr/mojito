@@ -21,7 +21,7 @@
 //! The container is a header followed by records:
 //!
 //! ```text
-//! mojito-package 26
+//! mojito-package 27
 //! <the header's length, 8 bytes little-endian>
 //! <the header, as bytecode>
 //! <the payload: every record, as bytecode>
@@ -42,7 +42,9 @@
 
 use crate::mir::{MirDeclarations, MirFunction, MirProgram};
 use mojito_checked::interface::PackageInterface;
-pub use mojito_checked::package::{DeclarationRecords, PackageBytes, PackageDeclarations};
+pub use mojito_checked::package::{
+    DeclarationRecords, LibraryRoot, PackageBytes, PackageDeclarations,
+};
 use mojito_checked::package::{
     LoweredDeclaration, PackageScope, PackagedBody, Payload, ProgramConstants, ProgramOverloads,
 };
@@ -54,18 +56,19 @@ use std::ops::Range;
 use std::sync::{Arc, Mutex, OnceLock};
 
 /// The container format this compiler writes and reads.
-pub const PACKAGE_FORMAT: &str = "mojito-package 26";
+pub const PACKAGE_FORMAT: &str = "mojito-package 27";
 
 /// Who built a package from what: an importer refuses a package another
-/// compiler built, or one built from other sources.
+/// compiler built, whose identity covers the library's sources.
+///
+/// It names no library root: a package names each file relative to its
+/// library's root ([`LibraryRoot`]), and its importer joins its own.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct PackageHeader {
     /// The package's name (`std`).
     pub package: String,
     /// The identity of the compiler build that wrote it.
     pub compiler: String,
-    /// The library root its modules' stamped paths name.
-    pub root: String,
 }
 
 /// A read package: its header, its checker interface, and its modules,
@@ -85,6 +88,8 @@ pub struct Package {
 #[derive(Debug)]
 pub struct PackageBodies {
     payload: Payload,
+    /// The library root its importer reads its units' files under.
+    root: LibraryRoot,
     /// The package's declarations, whose function table places each
     /// function's unit.
     package: Arc<PackageDeclarations>,
@@ -245,7 +250,7 @@ impl PackageBodies {
     fn lower(&self, range: &Range<usize>) -> LoweredUnit {
         let unit = {
             let _decode = timing::span("package.unit.decode");
-            CheckedUnit::decode(self.payload.get(range))?
+            CheckedUnit::decode(self.payload.get(range), &self.root)?
         };
         let _lower = timing::span("package.unit.lower");
         let program = unit.program(Arc::clone(&self.overloads), Arc::clone(&self.constants));
@@ -273,7 +278,8 @@ impl fmt::Display for PackageError {
 impl std::error::Error for PackageError {}
 
 /// Write a package of `program`, its verified, ownership-checked MIR, as
-/// the checked `units` it was lowered from.
+/// the checked `units` it was lowered from, naming every file relative to
+/// the library `root`.
 ///
 /// The package holds its interface, its declaration `records`, which hold
 /// its module table and every struct and function declaration of
@@ -283,6 +289,7 @@ impl std::error::Error for PackageError {}
 /// Verification runs first, so an error never leaves a partial package.
 pub fn write_package(
     header: &PackageHeader,
+    root: &LibraryRoot,
     interface: &PackageInterface,
     program: &MirProgram,
     units: &[(CheckedUnit, Vec<String>)],
@@ -372,7 +379,7 @@ pub fn write_package(
         if names.is_empty() {
             continue;
         }
-        let range = record(&unit.encode().map_err(|error| {
+        let range = record(&unit.encode(root).map_err(|error| {
             PackageError(format!(
                 "the unit of `{}` does not encode: {error}",
                 names[0]
@@ -398,7 +405,7 @@ pub fn write_package(
         )));
     }
     let declarations = records
-        .encode(Some(bodies), &mut record)
+        .encode(Some(bodies), Some(root), &mut record)
         .map_err(PackageError)?;
     let directory = bytecode(&PackageDirectory {
         header: header.clone(),
@@ -420,8 +427,9 @@ pub fn same_body(left: &MirFunction, right: &MirFunction) -> bool {
 }
 
 /// Read a package: its header and interface now, and its directory of
-/// modules, declarations, and bodies, which decode on demand.
-pub fn read_package(bytes: PackageBytes) -> Result<Package, PackageError> {
+/// modules, declarations, and bodies, which decode on demand, every file
+/// it names under the library `root`.
+pub fn read_package(bytes: PackageBytes, root: &LibraryRoot) -> Result<Package, PackageError> {
     let rest = bytes
         .strip_prefix(format!("{PACKAGE_FORMAT}\n").as_bytes())
         .ok_or_else(|| PackageError(format!("expected `{PACKAGE_FORMAT}`")))?;
@@ -449,7 +457,7 @@ pub fn read_package(bytes: PackageBytes) -> Result<Package, PackageError> {
     let interface = from_bytecode(payload.get(&directory.interface), "interface")?;
     drop(decoding);
     let declarations = Arc::new(
-        PackageDeclarations::read(payload.clone(), &directory.declarations)
+        PackageDeclarations::read(payload.clone(), &directory.declarations, Some(root))
             .map_err(PackageError)?,
     );
     // A unit's lowering reads the package's own declarations, as its
@@ -464,6 +472,7 @@ pub fn read_package(bytes: PackageBytes) -> Result<Package, PackageError> {
         declarations: Arc::clone(&declarations),
         bodies: PackageBodies {
             payload,
+            root: root.clone(),
             decoded: (0..declarations.body_count())
                 .map(|_| OnceLock::new())
                 .collect(),

@@ -14,7 +14,7 @@ use crate::checked::{
     MethodInstantiation, RebindAssertion, SemanticAdjustment,
 };
 use crate::fact_store::{FactMap, FactSet, FactVec};
-use crate::package::{ProgramConstants, ProgramOverloads};
+use crate::package::{LibraryRoot, ProgramConstants, ProgramOverloads};
 use mojito_ast::ast::{Expr, Method, Stmt, StmtKind};
 use mojito_common::token::{SourceSpan, SyntaxId};
 use mojito_types::origin::{OriginPlace, OwnerId, encoding_packaged_owners};
@@ -207,29 +207,40 @@ impl CheckedUnit {
         }
     }
 
-    /// The unit as package bytecode: its file table, then the unit, whose
-    /// syntax keeps its occurrence identities and binding owners.
+    /// The unit as package bytecode: its file table, which names each file
+    /// relative to the library `root`, then the unit, whose syntax keeps
+    /// its occurrence identities and binding owners.
     ///
     /// # Errors
     ///
-    /// When a fact does not encode.
-    pub fn encode(&self) -> Result<Vec<u8>, String> {
+    /// When a fact does not encode, or the unit names a file outside
+    /// `root`.
+    pub fn encode(&self, root: &LibraryRoot) -> Result<Vec<u8>, String> {
         let (bytes, files) = mojito_common::token::encoding_occurrences(|| {
             encoding_packaged_owners(|| postcard::to_stdvec(self))
         });
         let bytes = bytes.map_err(|error| error.to_string())?;
+        let files = files
+            .into_iter()
+            .map(|file| file.map(|file| root.relative(&file)).transpose())
+            .collect::<Result<Vec<_>, _>>()?;
         postcard::to_stdvec(&(files, bytes)).map_err(|error| error.to_string())
     }
 
-    /// Decode a unit [`Self::encode`] wrote. Its syntax draws fresh
-    /// identities, one per identity the encoding held.
+    /// Decode a unit [`Self::encode`] wrote, its files under the library
+    /// `root`. Its syntax draws fresh identities, one per identity the
+    /// encoding held.
     ///
     /// # Errors
     ///
     /// When the bytes do not decode.
-    pub fn decode(bytes: &[u8]) -> Result<Self, String> {
+    pub fn decode(bytes: &[u8], root: &LibraryRoot) -> Result<Self, String> {
         let (files, bytes): (Vec<Option<String>>, Vec<u8>) =
             postcard::from_bytes(bytes).map_err(|error| error.to_string())?;
+        let files = files
+            .into_iter()
+            .map(|file| file.map(|file| root.join(&file)))
+            .collect();
         mojito_common::token::decoding_occurrences(files, || {
             encoding_packaged_owners(|| postcard::from_bytes(&bytes))
         })
@@ -620,5 +631,48 @@ unit_facts! {
         read_temporary_arguments,
         implicitly_copied_consuming_receivers,
         truthiness_conditions,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use mojito_ast::ast::ExprKind;
+
+    #[test]
+    fn a_unit_decodes_under_another_root() {
+        let mut statement = Stmt::new(
+            StmtKind::Expr(Expr::new(ExprKind::Bool(true), (4, 8))),
+            (4, 8),
+        );
+        mojito_ast::ast::stamp_source(std::slice::from_mut(&mut statement), "/a/stdlib/std/x.mojo");
+        let unit = CheckedUnit::syntax(LoweringUnit::Function(&statement));
+        let built = LibraryRoot {
+            stamped: "/a/stdlib".to_string(),
+            canonical: "/a/stdlib".to_string(),
+        };
+        let bytes = unit.encode(&built).expect("encodes");
+        assert!(
+            !bytes.windows(2).any(|window| window == b"/a"),
+            "the unit names its build's root"
+        );
+        let installed = LibraryRoot {
+            stamped: "/b/stdlib".to_string(),
+            canonical: "/b/stdlib".to_string(),
+        };
+        let decoded = CheckedUnit::decode(&bytes, &installed).expect("decodes");
+        assert_eq!(decoded.statements.len(), 1);
+        let statement = &decoded.statements[0];
+        assert_eq!(statement.module.as_deref(), Some("/b/stdlib/std/x.mojo"));
+        let source = match &statement.kind {
+            StmtKind::Expr(expression) => expression.source.as_deref(),
+            _ => None,
+        };
+        assert_eq!(source, Some("/b/stdlib/std/x.mojo"));
+        let elsewhere = LibraryRoot {
+            stamped: "/c/stdlib".to_string(),
+            canonical: "/c/stdlib".to_string(),
+        };
+        assert!(unit.encode(&elsewhere).is_err());
     }
 }
