@@ -1005,15 +1005,14 @@ impl Checker {
                 reason: "an overloaded function value requires a contextual callable type"
                     .to_string(),
             })?;
+            // Each candidate is specialized inside a probe; the one that
+            // fits is specialized again below, which alone keeps its facts.
             let mut matches = candidates
                 .iter()
                 .enumerate()
                 .filter_map(|(index, candidate)| {
-                    // Only a fitting candidate keeps the facts its
-                    // compile-time arguments recorded.
-                    let saved_argument_facts = self.compile_time_argument_facts(arguments);
-                    let fitting = self
-                        .specialize_callable_value_candidate(
+                    self.probe(|| {
+                        self.specialize_callable_value_candidate(
                             name,
                             arguments,
                             candidate.clone(),
@@ -1021,14 +1020,12 @@ impl Checker {
                         )
                         .ok()
                         .filter(|specialized| self.value_coerces(specialized, expected))
-                        .zip(callable_lowered_name(name, candidate));
-                    if fitting.is_none() {
-                        self.restore_compile_time_argument_facts(saved_argument_facts);
-                    }
-                    fitting
+                    })
+                    .and_then(|_| callable_lowered_name(name, candidate))
+                    .map(|target| (index, target))
                 })
                 .collect::<Vec<_>>();
-            match matches.len() {
+            let (index, target) = match matches.len() {
                 0 => {
                     return Err(TypeError::TypeMismatch {
                         expected: expected.to_string(),
@@ -1045,7 +1042,14 @@ impl Checker {
                         ),
                     });
                 }
-            }
+            };
+            let specialized = self.specialize_callable_value_candidate(
+                name,
+                arguments,
+                candidates[index].clone(),
+                signatures.get(index),
+            )?;
+            (specialized, target)
         } else {
             let specialized = self.specialize_callable_value_candidate(
                 name,

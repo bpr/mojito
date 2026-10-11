@@ -1693,9 +1693,15 @@ executable and never reaches HIR or MIR.
 The passes of one check hand each other a `PassCarry`: the pass's fact
 stores, one record per body site, and its binding-identity watermark. The
 checker's own stores stay one table per fact, logged as a body writes
-them, since an overload probe saves and restores single tables per
-candidate; the handoff gathers them into the per-occurrence records once
-(`body_carry.rs`'s `HandoffStores::into_discovery`). Every
+them (R613); the handoff gathers them into the per-occurrence records once
+(`body_carry.rs`'s `HandoffStores::into_discovery`). An overload
+candidate — of a free call or of an overloaded function value — is
+checked inside `Checker::probe` (`checker/probe.rs`): every store
+journals what a write displaces while a probe is open, and closing it
+restores those values and truncates the log, so a losing candidate leaves
+neither a fact nor a logged key, and only the selected candidate's re-run
+writes for good. A probe costs what the candidate writes, and probes
+nest. Every
 fact store the checker writes during a body is a logged store
 (`mojito-checked`'s `fact_store.rs`: a map, set, or vector plus the log of
 keys written), so a site — a module-level `def` or a struct method —

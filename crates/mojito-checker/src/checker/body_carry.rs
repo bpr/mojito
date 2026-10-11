@@ -434,6 +434,7 @@ macro_rules! define_marks {
         }
     };
 }
+pub(super) use carried_stores;
 carried_stores!(define_marks);
 
 macro_rules! copy_store {

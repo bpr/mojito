@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R626**.
+Next free ID: **R628**.
 
 ## Ordered Work
 
@@ -4718,30 +4718,46 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
-- [ ] **R612 An overload probe records each candidate's facts and rolls
-  them back by cloning whole tables**
+- [ ] **R626 A method overload's losing candidates leave their argument
+  facts in the checker's stores**
 
-  Checking a call to an overload set checks every candidate in turn into
-  the checker's shared fact stores, so a losing candidate's facts must be
-  undone afterwards.
-  - `call_inference.rs` (the `TyKind::Overload` loop) clones eight whole
-    tables before each candidate and assigns them back after it: a cost
-    that grows with the whole program, per candidate of every overloaded
-    call.
-  - The other tables are not restored: a loser's types and operation
-    records stay until the winner's re-run overwrites them, and a loser's
-    generic instantiation is removed by hand.
-  - It keeps the checker's stores one table per fact: merged into one
-    record per occurrence, as the handoff's are (R613), a probe would
-    clone every record.
-  - Upstream's checked IR holds the chosen call's ops alone; recording a
-    loser's facts into shared stores and undoing them is Mojito's own
-    arrangement.
-  - The lever: probe a candidate into a scratch layer over the stores and
-    commit only the winner's layer.
-  - Found while landing R604's handoff record (2026-10-11).
+  Selecting among a method's overloads scores every candidate by inferring
+  its arguments into the shared fact stores, with no probe around it.
+  - `score_method_call` (`method_calls/selection.rs`) is called per
+    candidate from `method_calls/resolution.rs` (two loops),
+    `method_calls/statics.rs`, `method_calls/type_receivers.rs`,
+    `indexing.rs`, and `declarations.rs`.
+  - A loser's facts at an argument stay unless the winner writes the same
+    span: the last candidate scored, not the selected one, may own them.
+  - Upstream's checked IR holds the chosen call's ops alone.
+  - The lever: score each candidate inside `Checker::probe`, as the
+    free-call overload loop does, and re-run the selected one so its facts
+    alone are kept.
+  - First check which of the winner's argument facts are written today only
+    by its scoring, since those must come from the re-run.
+  - Found while landing R612 (2026-10-11).
   - Depends on nothing.
-  - Model: Fable, Not Planned.
+  - Model: Opus, Not Planned.
+
+- [ ] **R627 An overload probe leaves the lifting memo, effect
+  observations, and parametric write frames a losing candidate wrote**
+
+  `Checker::probe` undoes every fact store, but a losing candidate's writes
+  to the checker's other state survive it.
+  - `lifted_applications`/`lifted_counts`/`lifted_displays`
+    (`comptime_validation.rs`): a compile-time expression only a loser
+    lifted still becomes a `$comptime$$N` function.
+  - `effect_observations` and `call_through_observations`: a loser's reads
+    only make a body re-infer instead of copying its facts.
+  - `parametric_write_frames` (`method_calls/receiver_effects.rs`): a
+    loser's mutating method call on a parametric origin counts as a write.
+  - The owner-identity cursors advance: a loser's identities go unused,
+    which is harmless.
+  - The lever: give each a probe mark (truncate, or journal the map), and
+    open it in `ProbeMarks` beside the fact stores.
+  - Found while landing R612 (2026-10-11).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
 
 - [ ] **R613 The checker keeps one logged table per fact, where the
   handoff holds one record per occurrence**

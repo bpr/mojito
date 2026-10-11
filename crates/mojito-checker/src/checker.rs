@@ -415,6 +415,7 @@ pub use interface::{
     InterfaceExport,
 };
 mod overload_support;
+mod probe;
 pub use body_carry::PassCarry;
 pub use overload_support::is_bundled_module_source;
 mod trait_defaults;
@@ -779,7 +780,7 @@ pub struct Checker {
         RefCell<FactMap<SourceSpan, mojito_checked::checked::GenericInstantiation>>,
     /// The types a generic `def` call solved for the callee's binders, held
     /// from the call's typing until its transfer replay takes them.
-    call_bindings: RefCell<HashMap<SourceSpan, TySubst>>,
+    call_bindings: RefCell<FactMap<SourceSpan, TySubst>>,
     /// The resolved compile-time arguments per generic *method* call site
     /// (receiver struct + method + declaration-order arguments), retained for
     /// per-call method specialization discovery.
@@ -1161,7 +1162,7 @@ impl Checker {
             simd_length_binders: HashSet::from([builtins::hasher_simd_update_binders().1.id]),
             contextual_bases: RefCell::new(FactMap::default()),
             generic_instantiations: RefCell::new(FactMap::default()),
-            call_bindings: RefCell::new(HashMap::new()),
+            call_bindings: RefCell::new(FactMap::default()),
             method_instantiations: RefCell::new(FactMap::default()),
             struct_instantiations: RefCell::new(FactVec::default()),
             transfer_frames: RefCell::new(Vec::new()),

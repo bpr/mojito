@@ -375,13 +375,20 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   returns (the `HandoffStores` the `DiscoveryResult` is gathered from by
   `HandoffStores::into_discovery`, the checker-internal stores, one
   `BodyRecord` per site, the identity watermark); `carried_stores!` lists
-  every store a site is measured and copied over; `Checker::carry_body`
+  every store a site is measured and copied over, and is also the store
+  list `checker/probe.rs` rolls back; `Checker::carry_body`
   serves a site whose record is clean and whose effect reads (recorded by
   `note_body_effect_read` beside each `effect_observations` write) are still
   current, and `enter_body_site`/`leave_body_site` bracket an inferred one
   (from `statements.rs:check_def` at module level and
   `declarations.rs:check_method_inner`); the carry is private to the
   passes of one check (`checker.rs:check_program_carrying`).
+- `checker/probe.rs` owns `Checker::probe`: it opens a `ProbeMark` on every
+  carried store, the deletability sets, and `call_bindings` (`ProbeMarks`),
+  runs a speculative check, and rolls every store back. Its callers are
+  `call_inference.rs`'s `TyKind::Overload` loop and `generics.rs`'s
+  overloaded callable-value branch; each re-runs the selected candidate
+  outside the probe.
 - `checker/comptime_validation.rs` owns the check of compile-time control
   flow in the one check, over every function body with its declaration's
   parameters symbolic: `check_comptime_condition` types a `comptime if`
@@ -511,8 +518,11 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   node's facts from its occurrence's record.
 - `fact_store.rs` owns `FactMap`, `FactSet`, and `FactVec`: a `HashMap`,
   `HashSet`, or `Vec` that logs every key written, read through `Deref`,
-  with `mark`/`logged` for a range of the log. Every checker fact store is
-  one, so `checker/body_carry.rs` can copy exactly what a body wrote.
+  with `mark`/`logged` for a range of the log, and `ProbeMark` with
+  `open_probe`/`roll_back`, which journal every write while a probe is open
+  and undo it. Every checker fact store is one, so `checker/body_carry.rs`
+  can copy exactly what a body wrote and `checker/probe.rs` can undo what
+  an overload candidate wrote.
 - `explicit_destroy.rs` owns the explicit-destruction analysis, run from
   `checker.rs`'s `run_explicit_destroy` once over the elaborated program,
   where `check_comptime_if` joins the arms of a condition naming a parameter as

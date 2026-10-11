@@ -72,6 +72,427 @@ impl Checker {
             })
     }
 
+    /// A call of a built-in or a struct construction: a name no binding
+    /// shadows.
+    fn infer_unbound_call(
+        &self,
+        span: SourceSpan,
+        name: &str,
+        param_args: &[mojito_ast::ast::ParamArg],
+        args: &[Expr],
+        kwargs: &[mojito_ast::ast::KwArg],
+    ) -> Result<Ty, TypeError> {
+        match name {
+            _ if self.structs.contains_key(name) => {
+                // `String(x)` on a non-literal argument stringifies through
+                // the builtin conversion and materializes the result as the
+                // nominal struct: the call routes to the `"String"` builtin
+                // (a `ResolveCallable` adjustment) and the recorded
+                // implicit literal-constructor wrap builds the struct from
+                // the buffered text. A single string-literal argument (or a
+                // keyword construction such as `String(copy: s)`) is the
+                // ordinary constructor path.
+                if mojito_symbol::symbol::is_stdlib_string_struct(name)
+                    && !args.is_empty()
+                    && kwargs.is_empty()
+                    && param_args.is_empty()
+                    && !(args.len() == 1
+                        && matches!((self.infer(&args[0])?).kind(), TyKind::StringLiteral))
+                {
+                    self.infer_stringify(args)?;
+                    return self.retarget_string_result(span, name);
+                }
+                let constructed = self.infer_construction(&span, name, param_args, args, kwargs)?;
+                self.type_runtime_param_args(param_args)?;
+                Ok(constructed)
+            }
+            "Pointer" | "UnsafePointer" if !kwargs.is_empty() => {
+                self.infer_pointer_to(span, param_args, args, kwargs)
+            }
+            // Compiler-private tagged-union storage:
+            // `__VariantStorage[T0, ...](value^)` selects the alternative
+            // by the payload's type; `(init_with=factory)` by the
+            // factory's result type.
+            _ if name == mojito_types::types::VARIANT_STORAGE_TYPE_NAME => {
+                if !self.bundled_stdlib_declaration {
+                    return Err(TypeError::Unsupported(format!(
+                        "'{name}' is compiler-private storage; use Variant from std.utils"
+                    )));
+                }
+                self.infer_variant_construction(span, param_args, args, kwargs)
+            }
+            // Compiler-private inline uninit storage: `__UninitStorage[T]()`
+            // (uninitialized) or `__UninitStorage[T](value^)` (initialized),
+            // reachable only from the bundled crossing module.
+            _ if name == mojito_types::types::UNINIT_STORAGE_TYPE_NAME => {
+                reject_kwargs(kwargs)?;
+                self.infer_uninit_storage_construction(span, param_args, args)
+            }
+            "print" => self.infer_print(args, kwargs),
+            // A well-formed `rebind` was erased before checking; one
+            // that reaches here is malformed.
+            "rebind" => Err(Self::rebind_shape_error(param_args, args)),
+            // One the elaborator left is over a binder of a template
+            // body (`materialize[names[i]]()`): the runtime value of its
+            // compile-time operand, which MIR lowers in its place.
+            "materialize" if args.is_empty() && kwargs.is_empty() => {
+                self.infer_template_materialize(&span, param_args)
+            }
+            // One the elaborator left is over a binder of a template
+            // body (`comptime(len(L))`): the runtime value of its
+            // compile-time operand, as `materialize[...]()` is.
+            "comptime" if args.len() == 1 && param_args.is_empty() && kwargs.is_empty() => {
+                self.infer_template_comptime(&args[0])
+            }
+            // `Int(copy=x)`: a built-in value type's `Copyable`
+            // initializer.
+            _ if args.is_empty()
+                && matches!(kwargs, [keyword] if keyword.name == "copy")
+                && let Some(ty) = self.builtin_copy_constructed(name, param_args) =>
+            {
+                self.infer_builtin_copy_construction(span, name, &ty, &kwargs[0])
+            }
+            // `SIMD[DType.bool, N](fill=b)`: a mask's splat takes its one
+            // lane by keyword.
+            "SIMD" if !kwargs.is_empty() => self.infer_simd_fill(param_args, args, kwargs),
+            _ if !kwargs.is_empty() => Err(TypeError::BadCall {
+                func: name.to_string(),
+                reason: "keyword arguments are not supported here".to_string(),
+            }),
+            // Upstream's libc FFI spelling over Mojito's closed callee
+            // table (`mojito_types::ffi`); the backends read the callee
+            // from the call's instantiated arguments and the result type
+            // from the destination register.
+            "external_call" => self.infer_external_call(&span, param_args, args),
+            // The static address of a parameter list's elements, spelled
+            // only by the bundled `ParameterList` (upstream's
+            // `global_constant` over `#pop.variadic_to_array`).
+            PARAM_LIST_ADDRESS
+                if super::overload_support::is_bundled_variadics_source(span.source.as_deref()) =>
+            {
+                self.infer_param_list_address(span, param_args, args)
+            }
+            "size_of" => {
+                let ty = self.size_of_operand(param_args, args)?;
+                self.operation_adjustments.borrow_mut().insert(
+                    span,
+                    mojito_checked::checked::SemanticAdjustment::SizeOf { ty },
+                );
+                Ok(Ty::int())
+            }
+            // `_unqualified_type_name[T]()` (upstream `std.reflection`):
+            // the unqualified spelling of one checked type, a compile-time
+            // string. Recorded for every resolution — a still-generic
+            // spelling names the parameter, which only the specialized
+            // re-check's constant ever reaches a backend.
+            "_unqualified_type_name" => {
+                if param_args.len() != 1 {
+                    return Err(TypeError::WrongTypeArgCount {
+                        name: "_unqualified_type_name".to_string(),
+                        expected: 1,
+                        got: param_args.len(),
+                    });
+                }
+                if !args.is_empty() {
+                    return Err(TypeError::ArityMismatch {
+                        name: "_unqualified_type_name".to_string(),
+                        expected: 0,
+                        got: args.len(),
+                    });
+                }
+                let ty = self.type_param_argument(&param_args[0], "_unqualified_type_name")?;
+                self.operation_adjustments.borrow_mut().insert(
+                    span,
+                    mojito_checked::checked::SemanticAdjustment::TypeName {
+                        text: mojito_symbol::symbol::unqualified_instance_name(&ty),
+                        ty,
+                    },
+                );
+                Ok(Ty::string_literal())
+            }
+            // Compiler-private crossing for `std.os.abort`: an uncatchable
+            // VM trap carrying a nominal String message. Typed as returning
+            // None — the call never returns at runtime, and stdlib call
+            // sites keep a normal control-flow path after it rather than
+            // relying on bottom-type flow analysis.
+            // The `with` desugar's liveness anchor: a named local kept
+            // alive to this statement without a copy or a move (HIR
+            // lowers the statement to `KeepAlive`).
+            name if name == with_stmt::KEEP_ALIVE_BUILTIN => {
+                let [argument] = args else {
+                    return Err(TypeError::ArityMismatch {
+                        name: name.to_string(),
+                        expected: 1,
+                        got: args.len(),
+                    });
+                };
+                let ExprKind::Identifier(local) = &argument.kind else {
+                    return Err(TypeError::BadCall {
+                        func: name.to_string(),
+                        reason: "the argument must name a local variable".to_string(),
+                    });
+                };
+                if self.lookup(local).is_none() {
+                    return Err(TypeError::UndefinedVariable(local.clone()));
+                }
+                self.infer(argument)?;
+                Ok(Ty::none())
+            }
+            "_mojito_abort" => {
+                let tys = self.builtin_args("_mojito_abort", 1, args)?;
+                match (tys[0]).kind() {
+                    // A literal message avoids an os-module import cycle
+                    // for stdlib-internal trap sites; the VM reads either
+                    // spelling.
+                    TyKind::StringLiteral => Ok(Ty::none()),
+                    TyKind::Struct(name, targs)
+                        if targs.is_empty()
+                            && mojito_symbol::symbol::is_stdlib_string_struct(name) =>
+                    {
+                        Ok(Ty::none())
+                    }
+                    other => Err(TypeError::TypeMismatch {
+                        expected: "String".to_string(),
+                        found: other.to_string(),
+                        context: "argument to '_mojito_abort'".to_string(),
+                    }),
+                }
+            }
+            // The body of a method clone whose instantiation failed: the
+            // elaborator reports the literal message if a reachable call
+            // instantiates it.
+            "_mojito_instantiation_failed" => {
+                let tys = self.builtin_args("_mojito_instantiation_failed", 1, args)?;
+                if tys[0] != TyKind::StringLiteral {
+                    return Err(TypeError::TypeMismatch {
+                        expected: "StringLiteral".to_string(),
+                        found: tys[0].to_string(),
+                        context: "argument to '_mojito_instantiation_failed'".to_string(),
+                    });
+                }
+                Ok(Ty::none())
+            }
+            // Positional `String(x)` is the stringify intrinsic; the
+            // zero-argument form is the nominal empty constructor
+            // (2026-08 stabilization) and falls through to it.
+            "String" if !args.is_empty() => self.infer_stringify(args),
+            "repr" => {
+                let tys = self.builtin_args("repr", 1, args)?;
+                if self.conforms_to(&tys[0], "Writable") {
+                    self.call_place_uses
+                        .borrow_mut()
+                        .insert(args[0].source_span());
+                    return self.nominal_string_wrap(span);
+                }
+                Err(TypeError::TypeMismatch {
+                    expected: "Writable".to_string(),
+                    found: tys[0].to_string(),
+                    context: "argument to 'repr'".to_string(),
+                })
+            }
+            "abs" => self.infer_abs(args),
+            "min" | "max" => self.infer_min_max(name, args),
+            "round" => self.infer_round(args),
+            "input" => self.infer_input(span, args),
+            "len" => self.infer_len(span, args),
+            "range" => self.infer_range(args),
+            "Slice" | "slice" => self.infer_slice_construction(name, args),
+            "Int" => self.infer_conversion(&span, Ty::int(), args),
+            "UInt" => self.infer_conversion(&span, Ty::uint(), args),
+            "Float64" => self.infer_conversion(&span, Ty::float64(), args),
+            "Bool" => self.infer_conversion(&span, Ty::bool(), args),
+            "divmod" => self.infer_divmod(args),
+            "SIMD" => self.infer_simd_construction(param_args, args),
+            _ if param_args.is_empty() && self.vector_alias(name).is_some() => {
+                self.infer_vector_alias_construction(name, args)
+            }
+            "Scalar" => {
+                if param_args.len() != 1 {
+                    return Err(TypeError::WrongTypeArgCount {
+                        name: "Scalar".to_string(),
+                        expected: 1,
+                        got: param_args.len(),
+                    });
+                }
+                let dtype = self.dtype_from_arg(&param_args[0])?;
+                self.check_simd_args(&dtype, &SimdWidth::Known(1), args)?;
+                simd_of(dtype, SimdWidth::Known(1))
+            }
+            "List" => self.infer_list_construction(param_args, args),
+            "Set" => {
+                let collection = self.set_type(param_args)?;
+                let element = set_element(&collection)
+                    .expect("Set type helper returns a nominal Set")
+                    .clone();
+                for argument in args {
+                    let actual = self.infer(argument)?;
+                    if !coerces(&actual, &element) {
+                        return Err(TypeError::TypeMismatch {
+                            expected: element.to_string(),
+                            found: actual.to_string(),
+                            context: "Set construction element".to_string(),
+                        });
+                    }
+                    self.record_literal_materializations(argument, &actual, &element)?;
+                    self.check_consuming(argument, &actual, "Set construction element")?;
+                }
+                Ok(self.nominal_set(element))
+            }
+            "Dict" => {
+                if !args.is_empty() {
+                    return Err(TypeError::ArityMismatch {
+                        name: "Dict".to_string(),
+                        expected: 0,
+                        got: args.len(),
+                    });
+                }
+                self.dict_type(param_args)
+            }
+            "Tuple" => {
+                let tuple = self.infer_tuple_construction(param_args, args)?;
+                if let TyKind::Struct(target, _) = tuple.kind()
+                    && target != mojito_types::types::TUPLE_TYPE_NAME
+                {
+                    self.overload_targets
+                        .borrow_mut()
+                        .insert(span, target.clone());
+                }
+                Ok(tuple)
+            }
+            "Error" => self.infer_error_construction(args),
+            _ if Dtype::from_scalar_alias(name).is_some() => {
+                let dtype =
+                    Dtype::from_scalar_alias(name).expect("match guard established a scalar alias");
+                self.infer_simd_alias_construction(dtype, param_args, args)
+            }
+            _ => Err(TypeError::UndefinedVariable(name.to_string())),
+        }
+    }
+
+    /// Check every member of a free-function overload set against the
+    /// call, each inside a probe: whatever a candidate records is undone,
+    /// and only the selected candidate's re-run leaves facts.
+    fn probe_overload_candidates(
+        &self,
+        call: &OverloadCall<'_>,
+        candidates: &[Ty],
+        origin_signatures: &[CallableOriginSignature],
+    ) -> OverloadProbes {
+        let mut probes = OverloadProbes {
+            matches: Vec::new(),
+            availability_failures: Vec::new(),
+            bound_failures: Vec::new(),
+        };
+        for (index, candidate) in candidates.iter().enumerate() {
+            match self.probe(|| {
+                self.check_overload_candidate(call, index, candidate, origin_signatures.get(index))
+            }) {
+                CandidateOutcome::Match(found) => probes.matches.push(found),
+                CandidateOutcome::Unavailable(reason) => probes.availability_failures.push(reason),
+                CandidateOutcome::Bound(failure) => probes.bound_failures.push(failure),
+                CandidateOutcome::Rejected => {}
+            }
+        }
+        probes
+    }
+
+    /// Check one member of a free-function overload set against the call.
+    fn check_overload_candidate(
+        &self,
+        call: &OverloadCall<'_>,
+        index: usize,
+        candidate: &Ty,
+        signature: Option<&CallableOriginSignature>,
+    ) -> CandidateOutcome {
+        let Ok((prepared, ordinary_param_args)) = self.prepare_callable_specialization(
+            call.name,
+            call.param_args,
+            candidate.clone(),
+            signature,
+        ) else {
+            return CandidateOutcome::Rejected;
+        };
+        match self.infer_callable_ty(
+            call.span,
+            call.name,
+            prepared.clone(),
+            &ordinary_param_args,
+            call.args,
+            call.kwargs,
+        ) {
+            Ok((ret, score, error, bool_bindings, simd_erasures)) => {
+                let Some(target) = callable_lowered_name(call.name, candidate) else {
+                    return CandidateOutcome::Rejected;
+                };
+                match signature {
+                    Some(signature)
+                        if !self.erased_origin_constraint_applies(signature, &bool_bindings) =>
+                    {
+                        CandidateOutcome::Unavailable(
+                            self.first_failing_erased_origin_message(signature, &bool_bindings),
+                        )
+                    }
+                    _ => CandidateOutcome::Match(CallableOverloadMatch {
+                        ret,
+                        score,
+                        target,
+                        index,
+                        error,
+                        owned: owned_parameters(candidate),
+                        owned_arguments: owned_arguments(candidate, call.args, call.kwargs),
+                        simd_erasures,
+                    }),
+                }
+            }
+            Err(TypeError::BadCall { reason, .. })
+                if reason.starts_with("constraint failed: ")
+                    || reason.starts_with("violated constraint; ") =>
+            {
+                // Generic constraints are validated while solving type
+                // arguments, before the final coercion and alias checks.
+                // Probe the same candidate without those availability
+                // predicates so only an otherwise call-compatible shape
+                // can contribute a retained diagnostic.
+                let mut unconstrained = prepared;
+                unconstrained.update(|kind| {
+                    if let Some(GenericFuncTy { decls, .. }) = kind.as_generic_func_mut() {
+                        for decl in decls {
+                            match decl {
+                                ParamDecl::Type { constraints, .. }
+                                | ParamDecl::Value { constraints, .. } => {
+                                    constraints.clear();
+                                }
+                            }
+                        }
+                    }
+                });
+                if self
+                    .infer_callable_ty(
+                        call.span,
+                        call.name,
+                        unconstrained,
+                        &ordinary_param_args,
+                        call.args,
+                        call.kwargs,
+                    )
+                    .is_ok()
+                {
+                    CandidateOutcome::Unavailable(
+                        reason.starts_with("constraint failed: ").then_some(reason),
+                    )
+                } else {
+                    CandidateOutcome::Rejected
+                }
+            }
+            // A candidate whose only failure is a trait bound on a solved
+            // type argument (`hash(x)` over a non-Hashable `x` against
+            // `hash[T: Hashable, //, ...]`) keeps its conformance
+            // diagnostic, like a single callable's.
+            Err(failure @ TypeError::TraitNotSatisfied { .. }) => CandidateOutcome::Bound(failure),
+            Err(_) => CandidateOutcome::Rejected,
+        }
+    }
+
     fn validate_erased_origin_constraint(
         &self,
         name: &str,
@@ -345,304 +766,8 @@ impl Checker {
             }
         }
         self.reject_nested_self_reference(name)?;
-        let ty = match self.lookup(name) {
-            Some(ty) => ty.clone(),
-            // Built-ins and struct construction, resolved only when the name
-            // isn't shadowed by a binding.
-            None => match name {
-                _ if self.structs.contains_key(name) => {
-                    // `String(x)` on a non-literal argument stringifies through
-                    // the builtin conversion and materializes the result as the
-                    // nominal struct: the call routes to the `"String"` builtin
-                    // (a `ResolveCallable` adjustment) and the recorded
-                    // implicit literal-constructor wrap builds the struct from
-                    // the buffered text. A single string-literal argument (or a
-                    // keyword construction such as `String(copy: s)`) is the
-                    // ordinary constructor path.
-                    if mojito_symbol::symbol::is_stdlib_string_struct(name)
-                        && !args.is_empty()
-                        && kwargs.is_empty()
-                        && param_args.is_empty()
-                        && !(args.len() == 1
-                            && matches!((self.infer(&args[0])?).kind(), TyKind::StringLiteral))
-                    {
-                        self.infer_stringify(args)?;
-                        return self.retarget_string_result(span, name);
-                    }
-                    let constructed =
-                        self.infer_construction(&span, name, param_args, args, kwargs)?;
-                    self.type_runtime_param_args(param_args)?;
-                    return Ok(constructed);
-                }
-                "Pointer" | "UnsafePointer" if !kwargs.is_empty() => {
-                    return self.infer_pointer_to(span, param_args, args, kwargs);
-                }
-                // Compiler-private tagged-union storage:
-                // `__VariantStorage[T0, ...](value^)` selects the alternative
-                // by the payload's type; `(init_with=factory)` by the
-                // factory's result type.
-                _ if name == mojito_types::types::VARIANT_STORAGE_TYPE_NAME => {
-                    if !self.bundled_stdlib_declaration {
-                        return Err(TypeError::Unsupported(format!(
-                            "'{name}' is compiler-private storage; use Variant from std.utils"
-                        )));
-                    }
-                    return self.infer_variant_construction(span, param_args, args, kwargs);
-                }
-                // Compiler-private inline uninit storage: `__UninitStorage[T]()`
-                // (uninitialized) or `__UninitStorage[T](value^)` (initialized),
-                // reachable only from the bundled crossing module.
-                _ if name == mojito_types::types::UNINIT_STORAGE_TYPE_NAME => {
-                    reject_kwargs(kwargs)?;
-                    return self.infer_uninit_storage_construction(span, param_args, args);
-                }
-                "print" => return self.infer_print(args, kwargs),
-                // A well-formed `rebind` was erased before checking; one
-                // that reaches here is malformed.
-                "rebind" => return Err(Self::rebind_shape_error(param_args, args)),
-                // One the elaborator left is over a binder of a template
-                // body (`materialize[names[i]]()`): the runtime value of its
-                // compile-time operand, which MIR lowers in its place.
-                "materialize" if args.is_empty() && kwargs.is_empty() => {
-                    return self.infer_template_materialize(&span, param_args);
-                }
-                // One the elaborator left is over a binder of a template
-                // body (`comptime(len(L))`): the runtime value of its
-                // compile-time operand, as `materialize[...]()` is.
-                "comptime" if args.len() == 1 && param_args.is_empty() && kwargs.is_empty() => {
-                    return self.infer_template_comptime(&args[0]);
-                }
-                // `Int(copy=x)`: a built-in value type's `Copyable`
-                // initializer.
-                _ if args.is_empty()
-                    && matches!(kwargs, [keyword] if keyword.name == "copy")
-                    && let Some(ty) = self.builtin_copy_constructed(name, param_args) =>
-                {
-                    return self.infer_builtin_copy_construction(span, name, &ty, &kwargs[0]);
-                }
-                // `SIMD[DType.bool, N](fill=b)`: a mask's splat takes its one
-                // lane by keyword.
-                "SIMD" if !kwargs.is_empty() => {
-                    return self.infer_simd_fill(param_args, args, kwargs);
-                }
-                _ if !kwargs.is_empty() => {
-                    return Err(TypeError::BadCall {
-                        func: name.to_string(),
-                        reason: "keyword arguments are not supported here".to_string(),
-                    });
-                }
-                // Upstream's libc FFI spelling over Mojito's closed callee
-                // table (`mojito_types::ffi`); the backends read the callee
-                // from the call's instantiated arguments and the result type
-                // from the destination register.
-                "external_call" => return self.infer_external_call(&span, param_args, args),
-                // The static address of a parameter list's elements, spelled
-                // only by the bundled `ParameterList` (upstream's
-                // `global_constant` over `#pop.variadic_to_array`).
-                PARAM_LIST_ADDRESS
-                    if super::overload_support::is_bundled_variadics_source(
-                        span.source.as_deref(),
-                    ) =>
-                {
-                    return self.infer_param_list_address(span, param_args, args);
-                }
-                "size_of" => {
-                    let ty = self.size_of_operand(param_args, args)?;
-                    self.operation_adjustments.borrow_mut().insert(
-                        span,
-                        mojito_checked::checked::SemanticAdjustment::SizeOf { ty },
-                    );
-                    return Ok(Ty::int());
-                }
-                // `_unqualified_type_name[T]()` (upstream `std.reflection`):
-                // the unqualified spelling of one checked type, a compile-time
-                // string. Recorded for every resolution — a still-generic
-                // spelling names the parameter, which only the specialized
-                // re-check's constant ever reaches a backend.
-                "_unqualified_type_name" => {
-                    if param_args.len() != 1 {
-                        return Err(TypeError::WrongTypeArgCount {
-                            name: "_unqualified_type_name".to_string(),
-                            expected: 1,
-                            got: param_args.len(),
-                        });
-                    }
-                    if !args.is_empty() {
-                        return Err(TypeError::ArityMismatch {
-                            name: "_unqualified_type_name".to_string(),
-                            expected: 0,
-                            got: args.len(),
-                        });
-                    }
-                    let ty = self.type_param_argument(&param_args[0], "_unqualified_type_name")?;
-                    self.operation_adjustments.borrow_mut().insert(
-                        span,
-                        mojito_checked::checked::SemanticAdjustment::TypeName {
-                            text: mojito_symbol::symbol::unqualified_instance_name(&ty),
-                            ty,
-                        },
-                    );
-                    return Ok(Ty::string_literal());
-                }
-                // Compiler-private crossing for `std.os.abort`: an uncatchable
-                // VM trap carrying a nominal String message. Typed as returning
-                // None — the call never returns at runtime, and stdlib call
-                // sites keep a normal control-flow path after it rather than
-                // relying on bottom-type flow analysis.
-                // The `with` desugar's liveness anchor: a named local kept
-                // alive to this statement without a copy or a move (HIR
-                // lowers the statement to `KeepAlive`).
-                name if name == with_stmt::KEEP_ALIVE_BUILTIN => {
-                    let [argument] = args else {
-                        return Err(TypeError::ArityMismatch {
-                            name: name.to_string(),
-                            expected: 1,
-                            got: args.len(),
-                        });
-                    };
-                    let ExprKind::Identifier(local) = &argument.kind else {
-                        return Err(TypeError::BadCall {
-                            func: name.to_string(),
-                            reason: "the argument must name a local variable".to_string(),
-                        });
-                    };
-                    if self.lookup(local).is_none() {
-                        return Err(TypeError::UndefinedVariable(local.clone()));
-                    }
-                    self.infer(argument)?;
-                    return Ok(Ty::none());
-                }
-                "_mojito_abort" => {
-                    let tys = self.builtin_args("_mojito_abort", 1, args)?;
-                    match (tys[0]).kind() {
-                        // A literal message avoids an os-module import cycle
-                        // for stdlib-internal trap sites; the VM reads either
-                        // spelling.
-                        TyKind::StringLiteral => return Ok(Ty::none()),
-                        TyKind::Struct(name, targs)
-                            if targs.is_empty()
-                                && mojito_symbol::symbol::is_stdlib_string_struct(name) =>
-                        {
-                            return Ok(Ty::none());
-                        }
-                        other => {
-                            return Err(TypeError::TypeMismatch {
-                                expected: "String".to_string(),
-                                found: other.to_string(),
-                                context: "argument to '_mojito_abort'".to_string(),
-                            });
-                        }
-                    }
-                }
-                // The body of a method clone whose instantiation failed: the
-                // elaborator reports the literal message if a reachable call
-                // instantiates it.
-                "_mojito_instantiation_failed" => {
-                    let tys = self.builtin_args("_mojito_instantiation_failed", 1, args)?;
-                    if tys[0] != TyKind::StringLiteral {
-                        return Err(TypeError::TypeMismatch {
-                            expected: "StringLiteral".to_string(),
-                            found: tys[0].to_string(),
-                            context: "argument to '_mojito_instantiation_failed'".to_string(),
-                        });
-                    }
-                    return Ok(Ty::none());
-                }
-                // Positional `String(x)` is the stringify intrinsic; the
-                // zero-argument form is the nominal empty constructor
-                // (2026-08 stabilization) and falls through to it.
-                "String" if !args.is_empty() => return self.infer_stringify(args),
-                "repr" => {
-                    let tys = self.builtin_args("repr", 1, args)?;
-                    if self.conforms_to(&tys[0], "Writable") {
-                        self.call_place_uses
-                            .borrow_mut()
-                            .insert(args[0].source_span());
-                        return self.nominal_string_wrap(span);
-                    }
-                    return Err(TypeError::TypeMismatch {
-                        expected: "Writable".to_string(),
-                        found: tys[0].to_string(),
-                        context: "argument to 'repr'".to_string(),
-                    });
-                }
-                "abs" => return self.infer_abs(args),
-                "min" | "max" => return self.infer_min_max(name, args),
-                "round" => return self.infer_round(args),
-                "input" => return self.infer_input(span, args),
-                "len" => return self.infer_len(span, args),
-                "range" => return self.infer_range(args),
-                "Slice" | "slice" => return self.infer_slice_construction(name, args),
-                "Int" => return self.infer_conversion(&span, Ty::int(), args),
-                "UInt" => return self.infer_conversion(&span, Ty::uint(), args),
-                "Float64" => return self.infer_conversion(&span, Ty::float64(), args),
-                "Bool" => return self.infer_conversion(&span, Ty::bool(), args),
-                "divmod" => return self.infer_divmod(args),
-                "SIMD" => return self.infer_simd_construction(param_args, args),
-                _ if param_args.is_empty() && self.vector_alias(name).is_some() => {
-                    return self.infer_vector_alias_construction(name, args);
-                }
-                "Scalar" => {
-                    if param_args.len() != 1 {
-                        return Err(TypeError::WrongTypeArgCount {
-                            name: "Scalar".to_string(),
-                            expected: 1,
-                            got: param_args.len(),
-                        });
-                    }
-                    let dtype = self.dtype_from_arg(&param_args[0])?;
-                    self.check_simd_args(&dtype, &SimdWidth::Known(1), args)?;
-                    return simd_of(dtype, SimdWidth::Known(1));
-                }
-                "List" => return self.infer_list_construction(param_args, args),
-                "Set" => {
-                    let collection = self.set_type(param_args)?;
-                    let element = set_element(&collection)
-                        .expect("Set type helper returns a nominal Set")
-                        .clone();
-                    for argument in args {
-                        let actual = self.infer(argument)?;
-                        if !coerces(&actual, &element) {
-                            return Err(TypeError::TypeMismatch {
-                                expected: element.to_string(),
-                                found: actual.to_string(),
-                                context: "Set construction element".to_string(),
-                            });
-                        }
-                        self.record_literal_materializations(argument, &actual, &element)?;
-                        self.check_consuming(argument, &actual, "Set construction element")?;
-                    }
-                    return Ok(self.nominal_set(element));
-                }
-                "Dict" => {
-                    if !args.is_empty() {
-                        return Err(TypeError::ArityMismatch {
-                            name: "Dict".to_string(),
-                            expected: 0,
-                            got: args.len(),
-                        });
-                    }
-                    return self.dict_type(param_args);
-                }
-                "Tuple" => {
-                    let tuple = self.infer_tuple_construction(param_args, args)?;
-                    if let TyKind::Struct(target, _) = tuple.kind()
-                        && target != mojito_types::types::TUPLE_TYPE_NAME
-                    {
-                        self.overload_targets
-                            .borrow_mut()
-                            .insert(span, target.clone());
-                    }
-                    return Ok(tuple);
-                }
-                "Error" => return self.infer_error_construction(args),
-                _ if Dtype::from_scalar_alias(name).is_some() => {
-                    let dtype = Dtype::from_scalar_alias(name)
-                        .expect("match guard established a scalar alias");
-                    return self.infer_simd_alias_construction(dtype, param_args, args);
-                }
-                _ => return Err(TypeError::UndefinedVariable(name.to_string())),
-            },
+        let Some(ty) = self.lookup(name).cloned() else {
+            return self.infer_unbound_call(span, name, param_args, args, kwargs);
         };
         self.record_permitted_call_capture(name);
         if let Some(owner) = self.lookup_owner(name) {
@@ -652,136 +777,26 @@ impl Checker {
         }
         let origin_signatures = self.lookup_callable_origins(name).unwrap_or_default();
         if let TyKind::Overload(candidates) = ty.kind() {
-            let mut matches = Vec::new();
-            let mut availability_failures = Vec::new();
-            let mut bound_failures = Vec::new();
-            for (index, candidate) in candidates.iter().enumerate() {
-                let saved_conversions = self.implicit_conversions.borrow().clone();
-                let saved_conversion_borrows = self.conversion_source_borrows.borrow().clone();
-                let saved_invalidations = self.interior_invalidations.borrow().clone();
-                let saved_call_place_uses = self.call_place_uses.borrow().clone();
-                let saved_borrowed_read_places = self.borrowed_read_call_places.borrow().clone();
-                let saved_read_temporaries = self.read_temporary_arguments.borrow().clone();
-                let saved_copy_place_value_uses = self.copy_place_value_uses.borrow().clone();
-                let saved_consuming_receivers =
-                    self.implicitly_copied_consuming_receivers.borrow().clone();
-                let saved_argument_facts = self.compile_time_argument_facts(param_args);
-                if let Ok((prepared, ordinary_param_args)) = self.prepare_callable_specialization(
+            let OverloadProbes {
+                matches,
+                availability_failures,
+                bound_failures,
+            } = self.probe_overload_candidates(
+                &OverloadCall {
+                    span: &span,
                     name,
                     param_args,
-                    candidate.clone(),
-                    origin_signatures.get(index),
-                ) {
-                    match self.infer_callable_ty(
-                        &span,
-                        name,
-                        prepared.clone(),
-                        &ordinary_param_args,
-                        args,
-                        kwargs,
-                    ) {
-                        Ok((ret, score, error, bool_bindings, simd_erasures)) => {
-                            if let Some(target) = callable_lowered_name(name, candidate) {
-                                match origin_signatures.get(index) {
-                                    Some(signature)
-                                        if !self.erased_origin_constraint_applies(
-                                            signature,
-                                            &bool_bindings,
-                                        ) =>
-                                    {
-                                        availability_failures.push(
-                                            self.first_failing_erased_origin_message(
-                                                signature,
-                                                &bool_bindings,
-                                            ),
-                                        );
-                                    }
-                                    _ => matches.push(CallableOverloadMatch {
-                                        ret,
-                                        score,
-                                        target,
-                                        index,
-                                        error,
-                                        owned: owned_parameters(candidate),
-                                        owned_arguments: owned_arguments(candidate, args, kwargs),
-                                        simd_erasures,
-                                    }),
-                                }
-                            }
-                        }
-                        Err(TypeError::BadCall { reason, .. })
-                            if reason.starts_with("constraint failed: ")
-                                || reason.starts_with("violated constraint; ") =>
-                        {
-                            // Generic constraints are validated while solving type
-                            // arguments, before the final coercion and alias checks.
-                            // Probe the same candidate without those availability
-                            // predicates so only an otherwise call-compatible shape
-                            // can contribute a retained diagnostic.
-                            let mut unconstrained = prepared;
-                            unconstrained.update(|kind| {
-                                if let Some(GenericFuncTy { decls, .. }) =
-                                    kind.as_generic_func_mut()
-                                {
-                                    for decl in decls {
-                                        match decl {
-                                            ParamDecl::Type { constraints, .. }
-                                            | ParamDecl::Value { constraints, .. } => {
-                                                constraints.clear();
-                                            }
-                                        }
-                                    }
-                                }
-                            });
-                            if self
-                                .infer_callable_ty(
-                                    &span,
-                                    name,
-                                    unconstrained,
-                                    &ordinary_param_args,
-                                    args,
-                                    kwargs,
-                                )
-                                .is_ok()
-                            {
-                                availability_failures.push(
-                                    reason.starts_with("constraint failed: ").then_some(reason),
-                                );
-                            }
-                        }
-                        // A candidate whose only failure is a trait bound on a
-                        // solved type argument (`hash(x)` over a non-Hashable
-                        // `x` against `hash[T: Hashable, //, ...]`) keeps its
-                        // conformance diagnostic, like a single callable's.
-                        Err(failure @ TypeError::TraitNotSatisfied { .. }) => {
-                            bound_failures.push(failure);
-                        }
-                        Err(_) => {}
-                    }
-                }
-                *self.implicit_conversions.borrow_mut() = saved_conversions;
-                *self.conversion_source_borrows.borrow_mut() = saved_conversion_borrows;
-                *self.interior_invalidations.borrow_mut() = saved_invalidations;
-                *self.call_place_uses.borrow_mut() = saved_call_place_uses;
-                *self.borrowed_read_call_places.borrow_mut() = saved_borrowed_read_places;
-                *self.read_temporary_arguments.borrow_mut() = saved_read_temporaries;
-                *self.copy_place_value_uses.borrow_mut() = saved_copy_place_value_uses;
-                *self.implicitly_copied_consuming_receivers.borrow_mut() =
-                    saved_consuming_receivers;
-                self.restore_compile_time_argument_facts(saved_argument_facts);
-            }
+                    args,
+                    kwargs,
+                },
+                candidates,
+                &origin_signatures,
+            );
             return match select_callable_overload(matches) {
                 Ok((ret, target, selected_index, error)) => {
                     self.overload_targets
                         .borrow_mut()
                         .insert(span.clone(), target);
-                    // Only the selected candidate's re-run below may leave an
-                    // instantiation at this occurrence. A losing generic
-                    // candidate wrote one while it was being probed, and a
-                    // non-generic winner never overwrites it — which would
-                    // hand the elaborator a request for a callee this call
-                    // does not make.
-                    self.generic_instantiations.borrow_mut().remove(&span);
                     if let Some((index, selected)) = candidates
                         .get(selected_index)
                         .map(|selected| (selected_index, selected))
@@ -1013,56 +1028,6 @@ impl Checker {
 
     /// Record a direct callable's runtime parameters for the call at `span`;
     /// a callable struct value records none.
-    /// The adjustments recorded at a call's compile-time argument
-    /// expressions, so an overload probe can put them back: a candidate that
-    /// resolves an argument and is then rejected must not leave its reading
-    /// of that argument on the call the winner makes.
-    pub(super) fn compile_time_argument_facts(
-        &self,
-        param_args: &[mojito_ast::ast::ParamArg],
-    ) -> Vec<(
-        SourceSpan,
-        Option<mojito_checked::checked::SemanticAdjustment>,
-    )> {
-        fn value(argument: &mojito_ast::ast::ParamArg) -> Option<&Expr> {
-            match argument {
-                mojito_ast::ast::ParamArg::Type(_) => None,
-                mojito_ast::ast::ParamArg::Value(expression) => Some(expression),
-                mojito_ast::ast::ParamArg::Named { value: named, .. } => value(named),
-            }
-        }
-        let adjustments = self.operation_adjustments.borrow();
-        param_args
-            .iter()
-            .filter_map(value)
-            .map(|expression| {
-                let span = expression.source_span();
-                let fact = adjustments.get(&span).cloned();
-                (span, fact)
-            })
-            .collect()
-    }
-
-    pub(super) fn restore_compile_time_argument_facts(
-        &self,
-        saved: Vec<(
-            SourceSpan,
-            Option<mojito_checked::checked::SemanticAdjustment>,
-        )>,
-    ) {
-        let mut adjustments = self.operation_adjustments.borrow_mut();
-        for (span, fact) in saved {
-            match fact {
-                Some(fact) => {
-                    adjustments.insert(span, fact);
-                }
-                None => {
-                    adjustments.remove(&span);
-                }
-            }
-        }
-    }
-
     pub(super) fn record_call_parameter_names(&self, span: &SourceSpan, callee: &Ty) {
         if let Some(FuncTy {
             names,
@@ -1870,8 +1835,8 @@ impl Checker {
         // discovery round minted it for another occurrence) retargets to it
         // by exact name instead of requesting a round of its own; otherwise
         // retain the resolved application for instantiation discovery.
-        // Speculative overload attempts overwrite the same span; the selected
-        // candidate's re-run writes last.
+        // An overload candidate's write here is undone with its probe; the
+        // selected candidate's re-run is the only one kept.
         if param_args.is_empty()
             && let Some(clone) = self.existing_def_clone(name, decls, &tyargs)
         {
@@ -2300,6 +2265,35 @@ struct CalleeOriginArguments<'a> {
     overflow: &'a [usize],
     args: &'a [Expr],
     kwargs: &'a [mojito_ast::ast::KwArg],
+}
+
+/// A free call whose callee is an overload set, as each candidate is
+/// checked against it.
+struct OverloadCall<'a> {
+    span: &'a SourceSpan,
+    name: &'a str,
+    param_args: &'a [mojito_ast::ast::ParamArg],
+    args: &'a [Expr],
+    kwargs: &'a [mojito_ast::ast::KwArg],
+}
+
+/// What probing an overload set's candidates found: the call-compatible
+/// ones, the failed availability clauses, and the failed trait bounds.
+struct OverloadProbes {
+    matches: Vec<CallableOverloadMatch>,
+    availability_failures: Vec<Option<String>>,
+    bound_failures: Vec<TypeError>,
+}
+
+/// What checking one overload candidate contributes to the selection.
+enum CandidateOutcome {
+    Match(CallableOverloadMatch),
+    /// Call-compatible, but an availability clause failed, with the
+    /// clause's message when it declared one.
+    Unavailable(Option<String>),
+    /// Rejected only by a trait bound on a solved type argument.
+    Bound(TypeError),
+    Rejected,
 }
 
 const PARAM_LIST_ADDRESS: &str = "__param_list_address";

@@ -8,6 +8,17 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- An overload candidate is checked inside a probe (R612): every checker
+  fact store journals what a probed write displaces, and closing the probe
+  restores it and drops the keys it logged, so only the selected
+  candidate's re-run leaves facts. The free-call overload loop no longer
+  clones eight whole tables per candidate, and a losing candidate no
+  longer leaves its types, records, or generic instantiation behind; an
+  overloaded function value probes its candidates the same way. The
+  package's bytes and every program's output are unchanged. A method's
+  overload scoring is not yet probed (R626), and the checker's lifting
+  memo and effect observations are not rolled back (R627).
+
 - The check hands its facts over as one record per occurrence (R604, the
   handoff's half of its next stage): `DiscoveryResult` holds a `NodeFacts`
   per occurrence where it held 35 span-keyed tables, `CheckedProgram::new`
