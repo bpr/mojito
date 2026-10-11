@@ -524,11 +524,18 @@ mod tests {
         }
         // A module's own name is spelled through its module once linked.
         let constant = "__module$std$io$file$O_CREAT";
-        assert_eq!(imported.comptime(constant), whole.comptime(constant));
+        let (imported_constants, whole_constants) = (
+            from_package.checked().constants(),
+            from_source.checked().constants(),
+        );
+        assert_eq!(
+            imported_constants.get(constant),
+            whole_constants.get(constant)
+        );
         assert!(imported.function_is_overloaded("range", 2));
         assert_eq!(
-            imported.comptime("__module$std$io$file$O_CREAT"),
-            Some(0x40)
+            imported_constants.get(constant),
+            Some(crate::IntLiteral::from(0x40_i64))
         );
     }
 

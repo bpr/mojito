@@ -47,6 +47,27 @@ impl Checker {
         }
     }
 
+    /// Fold every top-level integer constant of `stmts` once, in source
+    /// order, into the module's constants and the program's table every
+    /// symbol speller reads.
+    pub(super) fn fold_module_constants(&mut self, stmts: &[Stmt]) {
+        for statement in stmts {
+            if let StmtKind::Comptime {
+                name,
+                type_params,
+                value,
+                ..
+            } = &statement.kind
+                && type_params.is_empty()
+                && let Ok(constant) = self.eval_ct(value)
+            {
+                self.comptimes.insert(name.clone(), constant.clone());
+                std::sync::Arc::make_mut(&mut self.program_constants)
+                    .declare(name.clone(), constant);
+            }
+        }
+    }
+
     /// Classify a trait comptime-member annotation. In Mojo terms,
     /// `comptime count: Int` requires an integer compile-time value, while
     /// `comptime Element: AnyType` requires a type-valued member whose type

@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R600**.
+Next free ID: **R601**.
 
 ## Ordered Work
 
@@ -49,20 +49,6 @@ belongs to is named in its title.
 Scope: what remains of the plan's stages, and what the pipeline order still
 leaves to close. A defect found on the way is filed by its kind; a
 divergence from the pin goes to a catch-up track, however small.
-
-- [ ] **R599 (P6) A module integer constant is folded twice, by the
-  overload scan and by the check**
-
-  MIR's name lowering spells signatures from a pre-check scan
-  (`OverloadSets::scan`), which folds every module integer constant again
-  beside the check's fold.
-  - Upstream folds a constant once, in its declaration.
-  - Both folds now use `fold_infix`, and the package build refuses a
-    library whose two folds differ, so the copy is redundant, not wrong.
-  - The lever: MIR name lowering reads the check's constants instead of
-    the scan's.
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
 
 - [ ] **R598 (P6) A package record's method residues, constants, and effect
   summaries are keyed by names the directory holds**
@@ -4743,6 +4729,25 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     sites (`check_method_body`), and resolve the wrapper's call through
     the trait's record.
   - Depends on R594.
+  - Model: Fable, Not Planned.
+
+- [ ] **R600 An overloaded declaration's symbol is spelled from its
+  syntax, and its call's from its checked type**
+
+  The declaration side re-spells an overloaded `def` or method's symbol
+  from its AST signature, while the call side spells it from the checked
+  `FuncTy`, and upstream mangles a declaration once, from its resolved
+  signature.
+  - `lowered_def_name`/`lowered_method_name` (`mojito-symbol`) run
+    `signature_from_ast`, which still folds an annotation's own arithmetic
+    (`SIMD[d, N * 2]`) over the check's constants.
+  - The call side is `overload_support::callable_lowered_name`/
+    `method_lowered_name`; the two agree only because both spell alike.
+  - The check needs the owner before the signature is typed
+    (`check_def` classifies binders under it), so the lever restructures
+    binder ownership: type the signature, then name its declaration.
+  - Found while landing R599 (2026-10-10).
+  - Depends on nothing.
   - Model: Fable, Not Planned.
 
 - [ ] **R561 A package body's types name the package check's binding

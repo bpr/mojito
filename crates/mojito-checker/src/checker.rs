@@ -509,6 +509,10 @@ pub struct Checker {
     /// own, and an imported package's, answered from the package's
     /// declarations. Shared with the checked program it carries to MIR.
     overload_sets: std::sync::Arc<mojito_checked::package::ProgramOverloads>,
+    /// The program's module integer constants, each folded once before any
+    /// declaration's symbol spells it: its own, and an imported package's.
+    /// Shared with the checked program it carries to MIR.
+    program_constants: std::sync::Arc<mojito_checked::package::ProgramConstants>,
     /// The binder owner of each struct method, shared with the elaborator.
     method_binder_owners: mojito_symbol::symbol::MethodBinderOwners,
     /// The wrapper of every trait default a top-level struct inherits, in
@@ -1066,6 +1070,7 @@ impl Checker {
             structs: declaration_table::DeclarationTable::default(),
             declared_structs: declaration_table::DeclarationSet::default(),
             overload_sets: std::sync::Arc::default(),
+            program_constants: std::sync::Arc::default(),
             method_binder_owners: mojito_symbol::symbol::MethodBinderOwners::default(),
             default_wrappers: Vec::new(),
             trait_members: Vec::new(),

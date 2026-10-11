@@ -210,9 +210,14 @@ import (every compilation that links the bundled library):
   one exact value (`package::LoweredDeclaration::constants`), which the
   residue's integer row and elaborated value are joined back from, as
   upstream holds a constant once in its declaration's op; the build
-  refuses a library whose overload scan, check, or elaboration folds a
-  constant to other values (`InterfaceExport::checked_constants`,
-  `DeclarationInterface::project`). It holds no overload set: as
+  refuses a library whose check and elaboration fold a constant to other
+  values (`InterfaceExport::checked_constants`,
+  `DeclarationInterface::project`). In every compilation the check folds
+  each module integer constant once, first, before any declaration's
+  symbol is spelled (`Checker::fold_module_constants`), and every symbol
+  speller — the checker's binder owners, the conformance oracle, and MIR's
+  name lowering — reads that value (`checked::package::ProgramConstants`,
+  `CheckedProgram::constants`); the overload scan folds nothing. It holds no overload set: as
   upstream's package holds none, an importer's name's overload set is the
   reached declarations a lookup finds under it, the plain name and its
   `$ov$` run of the by-name function table (`PackageScope`'s

@@ -545,6 +545,7 @@ fn carried_result(checker: &Checker) -> DiscoveryResult {
             .collect(),
         conformances: mojito_checked::checked::ConformanceFacts::default(),
         overloads: std::sync::Arc::clone(&checker.overload_sets),
+        constants: std::sync::Arc::clone(&checker.program_constants),
         overload_targets: checker.overload_targets.take(),
         contextual_bases: checker.contextual_bases.take(),
         generic_instantiations: checker.generic_instantiations.take(),

@@ -700,8 +700,6 @@ pub struct OverloadSets {
     #[serde(serialize_with = "sorted_arities")]
     methods: HashMap<String, HashSet<usize>>,
     #[serde(serialize_with = "sorted_map")]
-    comptimes: HashMap<String, IntLiteral>,
-    #[serde(serialize_with = "sorted_map")]
     fieldwise_constructors: HashMap<String, Vec<String>>,
 }
 
@@ -727,37 +725,23 @@ pub trait OverloadLookup {
     /// constructor (its field names, in order); `None` when the struct has no
     /// such constructor.
     fn fieldwise_parameters(&self, name: &str) -> Option<Cow<'_, [String]>>;
-
-    /// The value of the module integer constant `name`, which a signature's
-    /// spelling folds.
-    fn comptime(&self, name: &str) -> Option<IntLiteral>;
 }
 
 impl OverloadSets {
     pub fn scan(program: &[Stmt]) -> Self {
         let mut sets = Self::default();
-        sets.scan_more(program, |_| None);
+        sets.scan_more(program);
         sets
     }
 
     /// Add the declarations of `program`, which declares none of the names
-    /// already here and may read the constants already here or those
-    /// `outer` answers: an importer's own statements over its package.
-    pub fn scan_more(&mut self, program: &[Stmt], outer: impl Fn(&str) -> Option<IntLiteral>) {
+    /// already here: an importer's own statements over its package.
+    pub fn scan_more(&mut self, program: &[Stmt]) {
         let mut functions: HashMap<String, Vec<usize>> = HashMap::new();
         let mut methods: HashMap<String, Vec<usize>> = HashMap::new();
-        let comptimes = &mut self.comptimes;
         let fieldwise_constructors = &mut self.fieldwise_constructors;
         for stmt in program {
             match &stmt.kind {
-                StmtKind::Comptime { name, value, .. } => {
-                    let folded = eval_comptime_int(value, &|name| {
-                        comptimes.get(name).cloned().or_else(|| outer(name))
-                    });
-                    if let Some(value) = folded {
-                        comptimes.insert(name.clone(), value);
-                    }
-                }
                 StmtKind::Def { name, params, .. } => {
                     functions
                         .entry(name.clone())
@@ -823,7 +807,7 @@ impl OverloadSets {
     /// The sets the declarations `members` imply, each a function's
     /// overload family and source arity, beside the parameter names of each
     /// struct's synthesized fieldwise constructor: what [`Self::scan`] finds
-    /// of a program, but its constants.
+    /// of a program.
     pub fn declared<'a>(
         members: impl IntoIterator<Item = (OverloadFamily<'a>, usize)>,
         fieldwise: impl IntoIterator<Item = (String, Vec<String>)>,
@@ -841,24 +825,12 @@ impl OverloadSets {
             all_functions: functions.keys().cloned().collect(),
             functions: keep_overloaded(functions),
             methods: keep_overloaded(methods),
-            comptimes: HashMap::new(),
             fieldwise_constructors: fieldwise.into_iter().collect(),
         }
     }
 
-    /// Every integer constant, by name, sorted.
-    pub fn constants(&self) -> Vec<(String, IntLiteral)> {
-        let mut constants: Vec<(String, IntLiteral)> = self
-            .comptimes
-            .iter()
-            .map(|(name, value)| (name.clone(), value.clone()))
-            .collect();
-        constants.sort();
-        constants
-    }
-
-    /// The first name, sorted, whose facts here differ from `other`'s,
-    /// constants aside; `None` when the two agree.
+    /// The first name, sorted, whose facts here differ from `other`'s;
+    /// `None` when the two agree.
     pub fn differing_name(&self, other: &Self) -> Option<String> {
         fn differing<V: PartialEq>(
             left: &HashMap<String, V>,
@@ -910,19 +882,19 @@ impl OverloadLookup for OverloadSets {
             .get(name)
             .map(|names| Cow::Borrowed(names.as_slice()))
     }
-
-    fn comptime(&self, name: &str) -> Option<IntLiteral> {
-        self.comptimes.get(name).cloned()
-    }
 }
 
 /// The name a top-level `def` lowers to: signature-qualified when the name is
 /// overloaded, the plain source name otherwise.
+///
+/// A module integer constant the signature names spells as the value
+/// `constants` answers, its declaration's.
 pub fn lowered_def_name(
     name: &str,
     type_params: &[TypeParam],
     params: &[FnParam],
     sets: &impl OverloadLookup,
+    constants: &dyn Fn(&str) -> Option<IntLiteral>,
 ) -> String {
     if sets.function_is_overloaded(name, params.len()) {
         function_symbol(
@@ -931,7 +903,7 @@ pub fn lowered_def_name(
             // The parameters after a `*args` collector are keyword-only, and
             // their names tell `f(a: Int, *rest: Int)` from
             // `f(*rest: Int, a: Int)`, whose type sequences agree.
-            &signature_from_ast(params, type_params, &|name| sets.comptime(name), None)
+            &signature_from_ast(params, type_params, constants, None)
                 .with_keyword_names(keyword_only_names(params, None))
                 .with_owned_params(
                     &params
@@ -976,12 +948,14 @@ impl<'a> MethodShape<'a> {
 /// The key spells every binder in scope — the struct's `type_params`, then
 /// the method's own — with its bounds, exactly as the checker's `Ty::Param`
 /// spells a call's selected overload, so the symbol a call names is the one
-/// MIR declares.
+/// MIR declares. A module integer constant spells as [`lowered_def_name`]
+/// spells one.
 pub fn lowered_method_name(
     source_name: &str,
     type_params: &[TypeParam],
     method: MethodShape<'_>,
     sets: &impl OverloadLookup,
+    constants: &dyn Fn(&str) -> Option<IntLiteral>,
 ) -> String {
     let MethodShape {
         type_params: method_type_params,
@@ -1001,13 +975,8 @@ pub fn lowered_method_name(
             .chain(method_type_params)
             .cloned()
             .collect();
-        let signature = signature_from_ast(
-            params,
-            &scope,
-            &|name| sets.comptime(name),
-            self_spelling.as_deref(),
-        )
-        .with_keyword_names(keyword_only_names(params, keyword_only));
+        let signature = signature_from_ast(params, &scope, constants, self_spelling.as_deref())
+            .with_keyword_names(keyword_only_names(params, keyword_only));
         match split_method_symbol(source_name)
             .filter(|(_, method)| receiver_overloaded_method(method))
         {
@@ -1055,7 +1024,11 @@ pub struct MethodBinderOwners {
 }
 
 impl MethodBinderOwners {
-    pub fn scan(program: &[Stmt], sets: &impl OverloadLookup) -> Self {
+    pub fn scan(
+        program: &[Stmt],
+        sets: &impl OverloadLookup,
+        constants: &dyn Fn(&str) -> Option<IntLiteral>,
+    ) -> Self {
         let overloaded = program
             .iter()
             .filter_map(|statement| match &statement.kind {
@@ -1073,8 +1046,13 @@ impl MethodBinderOwners {
                     .filter(|m| specialization_template(&m.name).is_none())
                     .filter_map(move |m| {
                         let source = format!("{name}.{}", lifecycle_method_name(m));
-                        let lowered =
-                            lowered_method_name(&source, type_params, MethodShape::of(m), sets);
+                        let lowered = lowered_method_name(
+                            &source,
+                            type_params,
+                            MethodShape::of(m),
+                            sets,
+                            constants,
+                        );
                         (lowered != source)
                             .then(|| (name.clone(), (OverloadDeclaration::of(m), lowered)))
                     })
@@ -1818,9 +1796,10 @@ fn simd_annotation_raw(dtype: mojito_ast::ast::Dtype, width: i64) -> String {
     canonical_simd_ty(dtype, width).to_string()
 }
 
-/// The exact value of a module integer constant's expression, folded as the
-/// check folds it (`fold_infix` over `IntLiteral`s); `None` for anything the
-/// check would not fold to an integer.
+/// The exact value of a signature's integer argument, folded as the check
+/// folds it (`fold_infix` over `IntLiteral`s) over the module constants'
+/// values the check's fold gave them; `None` for anything the check would
+/// not fold to an integer.
 fn eval_comptime_int(
     expr: &Expr,
     comptimes: &dyn Fn(&str) -> Option<IntLiteral>,

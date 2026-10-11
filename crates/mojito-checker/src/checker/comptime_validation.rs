@@ -140,6 +140,7 @@ pub(in crate::checker) struct ApplicableFunction {
 pub(super) fn applicable_functions(
     stmts: &[Stmt],
     overloads: &impl mojito_symbol::symbol::OverloadLookup,
+    constants: &dyn Fn(&str) -> Option<mojito_common::literal::IntLiteral>,
 ) -> HashMap<String, Vec<ApplicableFunction>> {
     let mut functions = HashMap::<String, Vec<ApplicableFunction>>::new();
     for statement in stmts {
@@ -164,8 +165,13 @@ pub(super) fn applicable_functions(
                     raises: *raises,
                     ret,
                 };
-                let symbol =
-                    mojito_symbol::symbol::lowered_def_name(name, type_params, params, overloads);
+                let symbol = mojito_symbol::symbol::lowered_def_name(
+                    name,
+                    type_params,
+                    params,
+                    overloads,
+                    constants,
+                );
                 functions
                     .entry(name.clone())
                     .or_default()
@@ -199,6 +205,7 @@ pub(super) fn applicable_functions(
                         type_params,
                         mojito_symbol::symbol::MethodShape::of(method),
                         overloads,
+                        constants,
                     );
                     functions
                         .entry(source)

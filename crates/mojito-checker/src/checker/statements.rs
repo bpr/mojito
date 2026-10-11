@@ -10,14 +10,22 @@ use mojito_types::types::{FuncTy, GenericFuncTy, TransferSet};
 impl Checker {
     pub fn check_program(&mut self, stmts: &[Stmt]) -> Result<(), TypeError> {
         let phase = timing::span("declarations.tuple_prepass");
+        // A module integer constant folds once, ahead of every declaration
+        // whose symbol spells it.
+        self.fold_module_constants(stmts);
         // An importer's own statements add to its own sets, which a name
         // they miss falls through to the package's.
         std::sync::Arc::make_mut(&mut self.overload_sets).scan_more(stmts);
         self.default_wrappers = self.plan_default_wrappers(stmts)?;
         self.method_binder_owners =
-            mojito_symbol::symbol::MethodBinderOwners::scan(stmts, &*self.overload_sets);
-        let applicable =
-            super::comptime_validation::applicable_functions(stmts, &*self.overload_sets);
+            mojito_symbol::symbol::MethodBinderOwners::scan(stmts, &*self.overload_sets, &|name| {
+                self.program_constants.get(name)
+            });
+        let applicable = super::comptime_validation::applicable_functions(
+            stmts,
+            &*self.overload_sets,
+            &|name| self.program_constants.get(name),
+        );
         self.applicable_functions.extend(applicable);
         for statement in stmts {
             if let StmtKind::Def {
@@ -113,8 +121,7 @@ impl Checker {
             }
             // The constant is bound ahead of its statement, so a body
             // declared before it reads it; the statement binds it again.
-            let predeclared = if let Ok(constant) = self.eval_ct(value) {
-                self.comptimes.insert(name.clone(), constant);
+            let predeclared = if self.program_constants.own(name).is_some() {
                 Some(Ty::IntLiteral)
             } else if let Some(applied) = self.applied_constant_expr(value) {
                 let ty = applied.meta().as_value().cloned();
@@ -1929,10 +1936,17 @@ impl Checker {
                     })
                     .transpose()?
                     .filter(|expected| !matches!(expected, Ty::Int | Ty::IntLiteral));
+                // A module constant was folded before any declaration; only a
+                // body's own constant folds here.
+                let folded = if self.function_bases.is_empty() && self.scopes.len() == 1 {
+                    self.program_constants.own(name).cloned().ok_or(())
+                } else {
+                    self.eval_ct(value).map_err(drop)
+                };
                 if let Some(expected) = annotated {
                     // An annotation other than `Int` is the binding's type: the
                     // literal converts to it as a `var` initializer does.
-                    if let Ok(v) = self.eval_ct(value) {
+                    if let Ok(v) = folded {
                         self.comptimes.insert(name.clone(), v);
                     }
                     let found = self.infer_with_expected(value, &expected, true)?;
@@ -1944,7 +1958,7 @@ impl Checker {
                         });
                     }
                     self.declare_immutable(name, expected)?;
-                } else if let Ok(v) = self.eval_ct(value) {
+                } else if let Ok(v) = folded {
                     self.comptimes.insert(name.clone(), v);
                     self.declare_immutable(name, Ty::IntLiteral)?;
                 } else {
@@ -2497,7 +2511,13 @@ impl Checker {
         // Two overloads of one name are two declarations, so each owns its
         // binders under the symbol it lowers to.
         let owner = if self.function_bases.is_empty() {
-            mojito_symbol::symbol::lowered_def_name(name, type_params, params, &*self.overload_sets)
+            mojito_symbol::symbol::lowered_def_name(
+                name,
+                type_params,
+                params,
+                &*self.overload_sets,
+                &|name| self.program_constants.get(name),
+            )
         } else {
             name.clone()
         };

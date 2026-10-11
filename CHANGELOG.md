@@ -8,6 +8,12 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A module integer constant is folded once, by the check, before any
+  declaration's symbol is spelled (R599), as upstream folds a constant once
+  in its declaration: the checker's binder owners, the conformance oracle,
+  and MIR's name lowering all read the check's value
+  (`CheckedProgram::constants`), and the overload scan no longer folds or
+  holds constants. The package format and MIR text are unchanged.
 - A library module integer constant's value is held once in its package
   record (R596), exactly, in its declaration's lowered part, as upstream
   holds a constant once in its declaration's op: the checker's integer row

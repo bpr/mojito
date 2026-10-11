@@ -1501,6 +1501,9 @@ pub struct DiscoveryResult {
     /// The overload sets of every declaration the check knew: its own,
     /// and an imported package's, answered from the package's declarations.
     pub overloads: Arc<crate::package::ProgramOverloads>,
+    /// The module integer constants the check folded: its own, and an
+    /// imported package's, answered from the package's declarations.
+    pub constants: Arc<crate::package::ProgramConstants>,
     /// Every inherited trait default's wrapper the check built.
     pub default_wrappers: Vec<CheckedDefaultWrapper>,
     /// Every trait default the check checked as its trait's member.
@@ -1556,6 +1559,7 @@ impl DiscoveryResult {
             &self.rebind_assertions,
             self.declaration_effects.into_inner(),
             self.overloads,
+            self.constants,
             self.default_wrappers,
             self.trait_members,
         )
@@ -1669,6 +1673,7 @@ pub struct CheckedProgram {
     conformances: ConformanceFacts,
     declaration_effects: HashMap<AnnotationSite, DeclarationEffect>,
     overloads: Arc<crate::package::ProgramOverloads>,
+    constants: Arc<crate::package::ProgramConstants>,
     default_wrappers: Vec<CheckedDefaultWrapper>,
     trait_members: Vec<CheckedTraitMember>,
 }
@@ -2031,6 +2036,7 @@ impl CheckedProgram {
         rebind_assertions: &HashMap<SourceSpan, RebindAssertion>,
         declaration_effects: HashMap<AnnotationSite, DeclarationEffect>,
         overloads: Arc<crate::package::ProgramOverloads>,
+        constants: Arc<crate::package::ProgramConstants>,
         default_wrappers: Vec<CheckedDefaultWrapper>,
         trait_members: Vec<CheckedTraitMember>,
     ) -> Self {
@@ -2104,6 +2110,7 @@ impl CheckedProgram {
             conformances,
             declaration_effects,
             overloads,
+            constants,
             default_wrappers,
             trait_members,
         }
@@ -2130,6 +2137,13 @@ impl CheckedProgram {
     /// program's own and those of a package it imports.
     pub const fn overloads(&self) -> &Arc<crate::package::ProgramOverloads> {
         &self.overloads
+    }
+
+    /// The module integer constants the check folded, each its
+    /// declaration's one value: the program's own and those of a package
+    /// it imports. Every declaration's symbol spells a constant from here.
+    pub const fn constants(&self) -> &Arc<crate::package::ProgramConstants> {
+        &self.constants
     }
 
     /// Checker-selected lowered callable name at each resolved call site.

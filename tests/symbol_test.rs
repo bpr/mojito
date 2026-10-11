@@ -178,6 +178,7 @@ fn overloaded_trait_requirements_get_qualified_names() {
                     self_convention: m.self_convention,
                 },
                 &sets,
+                &|_| None,
             )
         })
         .collect();
@@ -204,7 +205,7 @@ fn overloaded_struct_methods_own_distinct_binders_numbered_past_origins() {
          \x20       return a.copy()\n",
     )
     .expect("parse error");
-    let owners = MethodBinderOwners::scan(&program, &OverloadSets::scan(&program));
+    let owners = MethodBinderOwners::scan(&program, &OverloadSets::scan(&program), &|_| None);
     let methods = program
         .iter()
         .find_map(|stmt| match &stmt.kind {
@@ -706,61 +707,40 @@ fn a_nested_instance_argument_spells_as_its_own_symbol() {
 
 #[test]
 fn overload_sets_scan_over_a_package() {
-    // An importer scans its own statements alone, reading a constant the
-    // package declares through a lookup.
+    // An importer scans its own statements alone; the package's names stay
+    // the package's.
     use mojito::symbol::{OverloadLookup, OverloadSets};
     let library = parse(
-        "comptime N = 2\n\
-         def pick() -> Int:\n    return 0\n\
+        "def pick() -> Int:\n    return 0\n\
          def pick(x: Int) -> Int:\n    return x\n\
          def solo() -> Int:\n    return 1\n",
     )
     .expect("parse error");
     let own = parse(
-        "comptime M = N + 1\n\
-         def mine(x: Int) -> Int:\n    return x\n\
+        "def mine(x: Int) -> Int:\n    return x\n\
          def mine(x: Int, y: Int) -> Int:\n    return y\n",
     )
     .expect("parse error");
     let sets = OverloadSets::scan(&library);
     assert!(sets.function_is_overloaded("pick", 1));
     assert!(sets.is_function("solo"));
-    assert_eq!(sets.comptime("N"), Some(mojito::IntLiteral::from(2_i64)));
     let mut mine = OverloadSets::default();
-    mine.scan_more(&own, |name| sets.comptime(name));
-    assert_eq!(mine.comptime("M"), Some(mojito::IntLiteral::from(3_i64)));
+    mine.scan_more(&own);
     assert!(mine.function_is_overloaded("mine", 2));
     assert!(!mine.is_function("pick"));
-}
-
-#[test]
-fn overload_scan_folds_constants_as_the_check_does() {
-    // The scan folds a module constant exactly, with the one folder: `//`
-    // floors toward the divisor's sign and shifts fold, as at the pin.
-    use mojito::symbol::{OverloadLookup, OverloadSets};
-    let library = parse("comptime A = 7 // -2\ncomptime B = 1 << 3\n").expect("parse error");
-    let sets = OverloadSets::scan(&library);
-    assert_eq!(sets.comptime("A"), Some(mojito::IntLiteral::from(-4_i64)));
-    assert_eq!(sets.comptime("B"), Some(mojito::IntLiteral::from(8_i64)));
-}
-
-#[test]
-fn overload_scan_folds_no_integer_from_a_true_division() {
-    use mojito::symbol::{OverloadLookup, OverloadSets};
-    let library = parse("comptime C = 1 / 2\n").expect("parse error");
-    assert_eq!(OverloadSets::scan(&library).comptime("C"), None);
 }
 
 #[test]
 fn program_overloads_ask_the_own_sets_then_the_owning_package_declaration() {
     // An importer's sets answer an own name from its own scan and a package
     // name by looking up the reached declarations under it, decoding each
-    // record only when a query names it; a package stores only constants.
+    // record only when a query names it. A package constant is answered
+    // from its declaration's record likewise.
     use mojito::checked_package::{
         DeclarationRecords, DeclaringModules, PackageDeclarations, PackageScope, PackagedModule,
-        ProgramOverloads,
+        ProgramConstants, ProgramOverloads,
     };
-    use mojito::symbol::{OverloadLookup, OverloadSets};
+    use mojito::symbol::OverloadLookup;
     use std::sync::Arc;
     let mut library = parse(
         "comptime N = 2\n\
@@ -773,7 +753,6 @@ fn program_overloads_ask_the_own_sets_then_the_owning_package_declaration() {
     mojito::ast::stamp_source(&mut unreached, "/library/b.mojo");
     library.extend(unreached);
     let declaring = DeclaringModules::of(&library).expect("one module per name");
-    let constants = OverloadSets::scan(&library).constants();
     let program = lower_program(&library).expect("type error");
     let mut records = DeclarationRecords {
         modules: ["a", "b"]
@@ -792,26 +771,23 @@ fn program_overloads_ask_the_own_sets_then_the_owning_package_declaration() {
             records.place_function(declaration).expect("placed");
         }
     }
-    for (name, value) in constants {
-        records
-            .place_constant(name, value)
-            .expect("a library declaration");
-    }
+    records
+        .place_constant("N".to_string(), mojito::IntLiteral::from(2_i64))
+        .expect("a library declaration");
     let package = Arc::new(PackageDeclarations::of_records(records).expect("the records encode"));
     let scope = PackageScope::new(Arc::clone(&package), Arc::from([true, false]));
-    let mut overloads = ProgramOverloads::importing(Some(scope));
+    let mut overloads = ProgramOverloads::importing(Some(scope.clone()));
     assert_eq!(package.decoded(), 0);
     overloads.scan_more(
         &parse(
-            "comptime M = N + 1\n\
-             def mine(x: Int) -> Int:\n    return x\n\
+            "def mine(x: Int) -> Int:\n    return x\n\
              def mine(x: Int, y: Int) -> Int:\n    return y\n",
         )
         .expect("parse error"),
     );
     assert_eq!(
-        overloads.comptime("M"),
-        Some(mojito::IntLiteral::from(3_i64))
+        ProgramConstants::importing(Some(scope)).get("N"),
+        Some(mojito::IntLiteral::from(2_i64))
     );
     assert_eq!(package.decoded(), 1, "only `N`'s record decoded");
     assert!(overloads.function_is_overloaded("mine", 2));

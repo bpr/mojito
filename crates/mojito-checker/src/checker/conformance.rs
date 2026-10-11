@@ -57,13 +57,15 @@ impl ConformanceOracle {
         if let Some(installed) = installed {
             checker.attach_interfaces(installed)?;
         }
-        // A field type may apply a module function to a parameter.
-        checker
-            .applicable_functions
-            .extend(super::comptime_validation::applicable_functions(
-                stmts,
-                &mojito_symbol::symbol::OverloadSets::scan(stmts),
-            ));
+        // A field type may apply a module function to a parameter, whose
+        // symbol spells the module constants the check folds.
+        checker.fold_module_constants(stmts);
+        let applicable = super::comptime_validation::applicable_functions(
+            stmts,
+            &mojito_symbol::symbol::OverloadSets::scan(stmts),
+            &|name| checker.program_constants.get(name),
+        );
+        checker.applicable_functions.extend(applicable);
 
         // Refinement is the only trait fact needed by `conforms_to`. Register
         // every name first so the oracle is independent of body checking and

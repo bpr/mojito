@@ -961,6 +961,16 @@ impl PackageScope {
         Self { package, reached }
     }
 
+    /// The value of the reached library integer constant `name`, held once
+    /// in its declaration's lowered part.
+    pub fn constant(&self, name: &str) -> Option<IntLiteral> {
+        let entry = self.package.owning(name)?;
+        if !self.reaches(entry) {
+            return None;
+        }
+        self.package.lowered(entry)?.constant(name).cloned()
+    }
+
     /// Whether the link reached the module of the declaration at `entry`.
     fn reaches(&self, entry: usize) -> bool {
         self.package
@@ -1025,14 +1035,6 @@ impl OverloadLookup for PackageScope {
             .fieldwise_parameters()
             .map(Cow::Owned)
     }
-
-    fn comptime(&self, name: &str) -> Option<IntLiteral> {
-        let entry = self.package.owning(name)?;
-        if !self.reaches(entry) {
-            return None;
-        }
-        self.package.lowered(entry)?.constant(name).cloned()
-    }
 }
 
 /// A program's overload sets: its own, and the package it imports, whose
@@ -1061,11 +1063,9 @@ impl ProgramOverloads {
         &self.own
     }
 
-    /// Add the declarations of `program`, the program's own, whose
-    /// constants may read the package's.
+    /// Add the declarations of `program`, the program's own.
     pub fn scan_more(&mut self, program: &[Stmt]) {
-        let package = self.package.as_ref();
-        self.own.scan_more(program, |name| package?.comptime(name));
+        self.own.scan_more(program);
     }
 
     /// Record the own method `source_name`'s declarations by arity
@@ -1105,11 +1105,46 @@ impl OverloadLookup for ProgramOverloads {
             .fieldwise_parameters(name)
             .or_else(|| self.package.as_ref()?.fieldwise_parameters(name))
     }
+}
 
-    fn comptime(&self, name: &str) -> Option<IntLiteral> {
+/// A program's module integer constants, each its declaration's one value:
+/// its own, as its check folded them, and the package it imports, whose
+/// declarations answer a name the own constants miss.
+///
+/// Every phase that spells a declaration's symbol reads a constant here.
+#[derive(Debug, Clone, Default)]
+pub struct ProgramConstants {
+    own: HashMap<String, IntLiteral>,
+    package: Option<PackageScope>,
+}
+
+impl ProgramConstants {
+    /// The constants of a program importing `package`, before its own are
+    /// folded.
+    pub fn importing(package: Option<PackageScope>) -> Self {
+        Self {
+            own: HashMap::new(),
+            package,
+        }
+    }
+
+    /// Record the own constant `name`'s folded value.
+    pub fn declare(&mut self, name: String, value: IntLiteral) {
+        self.own.insert(name, value);
+    }
+
+    /// The own constant `name`'s value.
+    pub fn own(&self, name: &str) -> Option<&IntLiteral> {
+        self.own.get(name)
+    }
+
+    /// The value of constant `name`: the program's own, else the
+    /// package's.
+    pub fn get(&self, name: &str) -> Option<IntLiteral> {
         self.own
-            .comptime(name)
-            .or_else(|| self.package.as_ref()?.comptime(name))
+            .get(name)
+            .cloned()
+            .or_else(|| self.package.as_ref()?.constant(name))
     }
 }
 

@@ -60,8 +60,8 @@ impl DeclarationInterfaces {
 /// [`Self::records`] encodes as the residue of the declaration's record
 /// once its lowering is known, the overload sets its lowered declarations
 /// must imply, and the effect summaries its lowered part holds. The
-/// constants its lowered part holds are the check's integer rows, which the
-/// overload scan must fold alike.
+/// constants its lowered part holds are the check's integer rows, the one
+/// fold of each.
 pub struct InterfaceExport {
     declarations: BTreeMap<String, (DeclarationInterface, Vec<(Table, String)>)>,
     /// The library's overload sets, as its check scanned them.
@@ -96,8 +96,7 @@ impl InterfaceExport {
     ///
     /// A lowered declaration, constant, or summary no library declaration
     /// owns, lowered declarations whose overload sets differ from the
-    /// check's, an integer constant the overload scan folds other than the
-    /// check, a struct, method, or function whose lowered declaration
+    /// check's, a struct, method, or function whose lowered declaration
     /// says other than the check's rows, or a residue that does not
     /// encode.
     pub fn records(
@@ -114,7 +113,7 @@ impl InterfaceExport {
                 "the library's lowered declarations say other than its check of the overloads of `{name}`"
             ));
         }
-        let constants = self.checked_constants()?;
+        let constants = self.checked_constants();
         let mut records = DeclarationRecords {
             modules,
             declaring: self.declaring,
@@ -191,35 +190,15 @@ impl InterfaceExport {
         Ok(records)
     }
 
-    /// Every library integer constant as the check folded it, sorted, once
-    /// the guard finds the overload scan, which spelled the library's
-    /// signatures before the check, folded each to the same value.
-    fn checked_constants(&self) -> Result<Vec<(String, IntLiteral)>, String> {
-        let checked: BTreeMap<&str, &IntLiteral> = self
-            .declarations
+    /// Every library integer constant as the check folded it, sorted.
+    fn checked_constants(&self) -> Vec<(String, IntLiteral)> {
+        self.declarations
             .values()
             .flat_map(|(interface, _)| &interface.comptimes)
-            .map(|(name, value)| (name.as_str(), value))
-            .collect();
-        let scanned = self.overloads.constants();
-        let scanned: BTreeMap<&str, &IntLiteral> = scanned
-            .iter()
-            .map(|(name, value)| (name.as_str(), value))
-            .collect();
-        if let Some(name) = checked
-            .keys()
-            .chain(scanned.keys())
-            .filter(|name| checked.get(*name) != scanned.get(*name))
-            .min()
-        {
-            return Err(format!(
-                "the library's overload scan folds other than its check the constant `{name}`"
-            ));
-        }
-        Ok(checked
+            .map(|(name, value)| (name.clone(), value.clone()))
+            .collect::<BTreeMap<_, _>>()
             .into_iter()
-            .map(|(name, value)| (name.to_string(), value.clone()))
-            .collect())
+            .collect()
     }
 }
 
@@ -897,6 +876,9 @@ impl Checker {
         self.overload_sets = Arc::new(mojito_checked::package::ProgramOverloads::importing(Some(
             installed.package_scope(),
         )));
+        self.program_constants = Arc::new(mojito_checked::package::ProgramConstants::importing(
+            Some(installed.package_scope()),
+        ));
         let base = self.reserve_owners(installed.binding_count())?;
         self.installed = Some((installed.clone(), base));
         Ok(())

@@ -461,6 +461,7 @@ pub fn lower_checked_program_importing(
                             type_params,
                             mojito_symbol::symbol::MethodShape::of(m),
                             &**overloads,
+                            &|name| checked.constants().get(name),
                         );
                         if lowered == source {
                             method_name.to_string()
@@ -572,6 +573,7 @@ pub fn lower_checked_program_importing(
                                 type_params,
                                 mojito_symbol::symbol::MethodShape::of(m),
                                 &**overloads,
+                                &|name| checked.constants().get(name),
                             ),
                             params: &m.params,
                             has_self: m.has_self,
@@ -797,7 +799,9 @@ fn lower_function(
         .map(|p| is_ref(&p.convention))
         .collect();
     let lowered_name =
-        mojito_symbol::symbol::lowered_def_name(name, type_params, params, &**overloads);
+        mojito_symbol::symbol::lowered_def_name(name, type_params, params, &**overloads, &|name| {
+            checked.constants().get(name)
+        });
     let variadic_idx = params.iter().position(|p| p.kind == ParamKind::Variadic);
     let kw_variadic_idx = params.iter().position(|p| p.kind == ParamKind::KwVariadic);
     let regular: Vec<_> = params

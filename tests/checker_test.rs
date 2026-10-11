@@ -7818,3 +7818,17 @@ fn library_module(path: &str) -> mojito::checked_package::PackagedModule {
         link: Vec::new(),
     }
 }
+
+#[test]
+fn module_integer_constants_fold_once_as_at_the_pin() {
+    // The check folds a module constant exactly, with the one folder: `//`
+    // floors toward the divisor's sign and shifts fold; a true division
+    // folds no integer.
+    let program = mojito::parse("comptime A = 7 // -2\ncomptime B = 1 << 3\ncomptime C = 1 / 2\n")
+        .expect("parse error");
+    let checked = mojito::checker::check_program(&program).expect("checks");
+    let constants = checked.constants();
+    assert_eq!(constants.get("A"), Some(mojito::IntLiteral::from(-4_i64)));
+    assert_eq!(constants.get("B"), Some(mojito::IntLiteral::from(8_i64)));
+    assert_eq!(constants.get("C"), None);
+}

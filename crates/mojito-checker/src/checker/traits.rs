@@ -159,6 +159,7 @@ impl Checker {
                         self_convention: m.self_convention,
                     },
                     &*self.overload_sets,
+                    &|name| self.program_constants.get(name),
                 );
                 let mut decls = self.classify_params(&owner, &m.type_params)?;
                 for condition in &m.where_clauses {
@@ -291,7 +292,10 @@ impl Checker {
         self.trait_self_comptime.pop();
         self.self_ty = saved_self_ty;
         self.self_decls = saved_self_decls;
-        let shapes = super::trait_defaults::default_shapes(name, methods, &*self.overload_sets);
+        let shapes =
+            super::trait_defaults::default_shapes(name, methods, &*self.overload_sets, &|name| {
+                self.program_constants.get(name)
+            });
         let (methods, default_overloads) = result?;
         let defaults = shapes
             .into_iter()

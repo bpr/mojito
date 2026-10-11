@@ -16,6 +16,7 @@ use mojito_ast::ast::{
 use mojito_ast::visit::{MutVisitor, walk_block_mut, walk_stmt_mut};
 use mojito_checked::checked::{CheckedDefaultWrapper, CheckedTraitMember, SignatureParam};
 use mojito_common::error::TypeError;
+use mojito_common::literal::IntLiteral;
 use mojito_common::token::{Span, SyntaxId};
 use mojito_symbol::symbol::OverloadLookup;
 use mojito_symbol::symbol::SignatureKey;
@@ -193,13 +194,14 @@ pub(super) fn default_shapes(
     trait_name: &str,
     methods: &[TraitMethod],
     sets: &impl OverloadLookup,
+    constants: &dyn Fn(&str) -> Option<IntLiteral>,
 ) -> Vec<DefaultShape> {
     methods
         .iter()
         .filter(|method| method.default_body.is_some())
         .map(|method| DefaultShape {
             method: method.name.clone(),
-            member: member_symbol(trait_name, method, sets),
+            member: member_symbol(trait_name, method, sets, constants),
             key: overload_key(&method.name, &method.params, method.keyword_only, None),
             overload: 0,
             arity: method.params.len(),
@@ -360,7 +362,9 @@ impl Checker {
                     name.as_str(),
                     (
                         refines.clone(),
-                        default_shapes(name, methods, &*self.overload_sets),
+                        default_shapes(name, methods, &*self.overload_sets, &|name| {
+                            self.program_constants.get(name)
+                        }),
                     ),
                 )),
                 _ => None,
@@ -455,7 +459,9 @@ impl Checker {
                 continue;
             };
             for (index, method) in methods.iter().enumerate() {
-                let symbol = member_symbol(name, method, &*self.overload_sets);
+                let symbol = member_symbol(name, method, &*self.overload_sets, &|name| {
+                    self.program_constants.get(name)
+                });
                 let Some(declaration) = trait_member_declaration(stmt, index, symbol.clone())
                 else {
                     continue;
@@ -817,7 +823,12 @@ impl Checker {
 /// trait overloads the name. Named by declaration, so it is stable across
 /// packages; source cannot spell a dotted callee, so no source name reaches
 /// it.
-fn member_symbol(trait_name: &str, method: &TraitMethod, sets: &impl OverloadLookup) -> String {
+fn member_symbol(
+    trait_name: &str,
+    method: &TraitMethod,
+    sets: &impl OverloadLookup,
+    constants: &dyn Fn(&str) -> Option<IntLiteral>,
+) -> String {
     mojito_symbol::symbol::lowered_method_name(
         &format!(
             "{}.{}",
@@ -833,6 +844,7 @@ fn member_symbol(trait_name: &str, method: &TraitMethod, sets: &impl OverloadLoo
             self_convention: method.self_convention,
         },
         sets,
+        constants,
     )
 }
 
