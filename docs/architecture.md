@@ -372,7 +372,7 @@ import (every compilation that links the bundled library):
   Mojito's holds the body's syntax beside one record of the check's facts
   per occurrence, its checked handoff's own shape, and those facts still
   name the package check's binding owners (`docs/roadmap.md`,
-  `mojo-shape` track: R604, R611). A module record holds no
+  `mojo-shape` track: R616, R611). A module record holds no
   declaration: an importer reads every library declaration, trait
   defaults included, from its declaration record. A declaration's overload
   facts restate what its lowered functions imply (`pmir` track).

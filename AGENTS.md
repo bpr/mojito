@@ -173,6 +173,10 @@ the root `backend-pliron` feature) may, and `scripts/check` excludes it.
 - Keep `docs/roadmap.md` to work that is actually next. An item we decide
   not to do moves to `docs/non-goals.md` with its reason, rather than sitting
   unchecked forever.
+- Size every `docs/roadmap.md` entry so one session can land it and delete
+  it: `scripts/claude_loop.py` counts a task done only when its entry is
+  gone. Split multi-session work, including a plan's multi-session slices,
+  into separate entries chained by Depends bullets.
 - Write `docs/roadmap.md` entries for a human reader: one problem per
   checkbox, its first sentence stating the issue (or that it is not to be
   fixed, and why), then short bullets — never a semicolon-chained paragraph.

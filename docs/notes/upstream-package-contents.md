@@ -65,7 +65,7 @@ unit (its syntax and the check's facts for it,
 unit (checked arena, HIR CFG, MIR) and inserts its drops when the
 elaborator first reaches it. What remains is representation: Mojito's
 checked body is syntax beside side tables, upstream's typed `lit` ops
-(R604).
+(R616).
 
 ## Finding: the package names no install path
 

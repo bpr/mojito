@@ -1045,7 +1045,7 @@ mojito-package 30
   an AST node encodes no identity or path, as a link record's and a
   residue's do, and a `SourceSpan` does not encode. The package build's
   binding owners the facts name are carried as bare numbers, under
-  `origin::encoding_packaged_owners` (R561, R604). The importer lowers a
+  `origin::encoding_packaged_owners` (R561, R611). The importer lowers a
   unit once per process when the elaborator first reaches one of its
   functions (`PackageBodies`): it rebuilds the unit's checked arena over
   the package's own overload sets and constants, lowers it to MIR, closes

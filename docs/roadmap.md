@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R613**.
+Next free ID: **R626**.
 
 ## Ordered Work
 
@@ -4732,7 +4732,7 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     records stay until the winner's re-run overwrites them, and a loser's
     generic instantiation is removed by hand.
   - It keeps the checker's stores one table per fact: merged into one
-    record per occurrence, as the handoff's are (R604), a probe would
+    record per occurrence, as the handoff's are (R613), a probe would
     clone every record.
   - Upstream's checked IR holds the chosen call's ops alone; recording a
     loser's facts into shared stores and undoing them is Mojito's own
@@ -4743,38 +4743,180 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
-- [ ] **R604 A package's checked body is syntax beside per-occurrence
+- [ ] **R613 The checker keeps one logged table per fact, where the
+  handoff holds one record per occurrence**
+
+  The check's handoff holds its facts as one `NodeFacts` record per
+  occurrence, but the checker still writes some 30 separate tables and
+  gathers them into records at the end.
+  - `body_carry::HandoffStores::into_discovery` does the gathering.
+  - The writers by table: `operation_adjustments` about 125 sites,
+    `binding_types` and `expression_types` about 45 each,
+    `overload_targets` about 32, `selected_calls` about 20,
+    `expression_bindings` about 15.
+  - The lever: one `FactMap<SourceSpan, NodeFacts>` store, written through
+    `entry(span).or_default().<field>`, one table at a time.
+  - Done when the checker has no per-fact table but the five that are not
+    per-occurrence, and `into_discovery` gathers nothing.
+  - Plan: `R604-a-package-s-checked-body-is-plan.md`, slice 4.
+  - Depends on R612 (an overload probe restores whole tables).
+  - Model: Opus, Not Planned.
+
+- [ ] **R614 A checked expression clones its whole syntax subtree, where an
+  upstream op holds only itself**
+
+  `CheckedExpr::syntax` is a full clone of the node's `Expr`, so the
+  checked arena grows quadratically with nesting depth.
+  - The lever: `CheckedOp`, the node's own `ExprKind` with each child
+    expression replaced by its `CheckedNodeId`; it mirrors `ExprKind`'s
+    variants and invents none.
+  - HIR and MIR keep reading syntax through a transitional
+    `CheckedTables::syntax_of(CheckedNodeId) -> Expr` until R623.
+  - Done when `CheckedExpr` holds no `Expr` and the probe fixtures and
+    Hello World run.
+  - Plan: `R604-a-package-s-checked-body-is-plan.md`, slice 5.
+  - Depends on nothing.
+  - Model: Fable, Not Planned.
+
+- [ ] **R615 A statement has no checked node, where upstream's is an op**
+
+  The checked arena holds expressions only, so a statement's binding,
+  binding type, and declaration are found through its syntax.
+  - The lever: `CheckedStmt`, the statement's own `StmtKind` with its
+    children as node ids, plus its binding, binding type, and
+    `CheckedDeclaration`; `CheckedTables::statements` and each function's
+    root statement list.
+  - `if`, `while`, `for`, and `try` stay structured, as upstream's `hlcf`
+    does.
+  - A transitional `statement_syntax_of` serves HIR until R623.
+  - Plan: `R604-a-package-s-checked-body-is-plan.md`, slice 5.
+  - Depends on R614.
+  - Model: Fable, Not Planned.
+
+- [ ] **R616 A package's checked body is syntax beside per-occurrence
   fact records, where upstream's is typed `lit` ops**
 
-  The bundled package keeps each body as its elaborated AST plus one
-  record of the check's facts per occurrence, while upstream's `.mojoc`
-  keeps each body as `lit` ops that carry their own types and attributes.
-  - The check's handoff already holds its facts as one `NodeFacts` record
-    per occurrence (`DiscoveryResult::node_facts`). A unit record
-    (`checked_unit::CheckedUnit`) holds the unit's syntax and its share of
-    those records, which the importer installs as they decode before
-    `finalize` builds the checked arena.
-  - What remains is the checked handoff's own shape:
-    - the checker's working stores are still one logged table per fact,
-      gathered into records at the handoff (`HandoffStores::into_discovery`),
-      since an overload probe saves and restores single tables (R612);
-    - a checked node clones its whole `Expr` subtree, and a statement has
-      no checked node;
-    - HIR and MIR lower from that syntax, not from checked nodes.
-  - The stages, each closer to `lit`: a checked node holds its own
-    operation with its children as node ids, statements included; HIR
-    and MIR lower from those nodes; the check emits them, writing each
-    record onto its node. Then a unit holds nodes, no syntax.
-  - Not one session's work: MIR lowering reads AST syntax through
-    `HirExpr`'s `Deref` to `Expr` across about 20k lines, and a node
-    rebuilt from its operation must keep the sugar a spelled construction
-    replaces, which HIR's `checked_expr` hands MIR today.
+  A unit record (`checked_unit::CheckedUnit`) holds the unit's AST and
+  its share of the check's `NodeFacts` records, while upstream's `.mojoc`
+  holds each body as ops that carry their own types and attributes.
+  - The lever: a unit holds its checked statement and expression nodes
+    and its site facts, and `CheckedUnit::program` installs
+    `CheckedTables` directly, with no `DiscoveryResult` and no `finalize`.
   - A member's unit still holds its struct's `type_params` syntax, which
-    MIR reads for `lowered_def_name` and `origin_binder_names`; it goes
-    once a member names its struct's checked declaration.
-  - `docs/pliron-future.md` assesses the checker's half.
+    MIR reads for `lowered_def_name` and `origin_binder_names`; it names
+    its struct's declaration instead.
+  - Bumps `PACKAGE_FORMAT`; `docs/mir-text-format.md`'s unit section is
+    rewritten.
+  - Done when no `Expr` or `Stmt` is encoded in a unit and unit decode
+    plus lower time is no worse.
+  - Plan: `R604-a-package-s-checked-body-is-plan.md`, slice 5.
   - Found while landing R546 (2026-10-10).
-  - Depends on R612.
+  - Depends on R615.
+  - Model: Fable, Not Planned.
+
+- [ ] **R617 HIR lowers from syntax, where upstream lowers checked ops**
+
+  `hir::lower` walks the AST and reaches each node's facts through it.
+  - The lever: lowering walks `CheckedStmt` and `CheckedExpr`, and
+    `HirExpr` holds a node id instead of syntax.
+  - `rename_expr` and the `$contextual` rewrite become operations on the
+    node (`contextual_base` is already a node fact).
+  - `substitute_spelled_constructions` is deleted: a spelled construction
+    is the node the sugar's occurrence answers.
+  - MIR keeps reading syntax through `syntax_of` until R618–R622 land.
+  - Plan: `R604-a-package-s-checked-body-is-plan.md`, slice 6.
+  - Depends on R615.
+  - Model: Fable, Not Planned.
+
+- [ ] **R618 MIR lowers literals and names from syntax**
+
+  MIR lowering matches `ExprKind` for literals and name reads, where it
+  should match the checked node's `CheckedOp`.
+  - The fact a lowering reads becomes a field of the node it lowers,
+    not an `ExprFacts` lookup.
+  - Each of R618–R622 is one op family of the 199 `ExprKind::` matches
+    under `crates/mojito-mir/src`; run the probe fixtures on the VM and
+    with `--backend pliron` after each.
+  - Plan: `R604-a-package-s-checked-body-is-plan.md`, slice 6.
+  - Depends on R617.
+  - Model: Opus, Not Planned.
+
+- [ ] **R619 MIR lowers calls and method calls from syntax**
+
+  MIR lowering matches `ExprKind` for calls and method calls
+  (`mir/calls.rs`, `mir/lower_expr/`), where it should match `CheckedOp`.
+  - `call_transfers` and the other span-keyed reads there read the node.
+  - Plan: `R604-a-package-s-checked-body-is-plan.md`, slice 6.
+  - Depends on R617.
+  - Model: Opus, Not Planned.
+
+- [ ] **R620 MIR lowers member reads and subscripts from syntax**
+
+  MIR lowering matches `ExprKind` for members and subscripts, where it
+  should match `CheckedOp`.
+  - Plan: `R604-a-package-s-checked-body-is-plan.md`, slice 6.
+  - Depends on R617.
+  - Model: Opus, Not Planned.
+
+- [ ] **R621 MIR lowers displays and comprehensions from syntax**
+
+  MIR lowering matches `ExprKind` for list, dict, set, and tuple displays
+  and comprehensions, where it should match `CheckedOp`.
+  - `expression_ids_at` in `mir/nested.rs` reads the node instead.
+  - Plan: `R604-a-package-s-checked-body-is-plan.md`, slice 6.
+  - Depends on R617.
+  - Model: Opus, Not Planned.
+
+- [ ] **R622 MIR lowers statements and control flow from syntax**
+
+  `mir/lower_stmt.rs` matches `StmtKind`, where it should match the
+  statement's `CheckedStmt`.
+  - Plan: `R604-a-package-s-checked-body-is-plan.md`, slice 6.
+  - Depends on R617.
+  - Model: Opus, Not Planned.
+
+- [ ] **R623 HIR and MIR keep transitional syntax rebuilders and
+  span-keyed fact lookups**
+
+  Once HIR and MIR lower from checked nodes, the scaffolding that serves
+  their syntax readers is dead weight.
+  - Delete `CheckedTables::{syntax_of, statement_syntax_of}`,
+    `expressions_by_span`, `expression_ids_at`, and `ExprFacts` with its
+    pointer-keyed `active_semantics` index.
+  - Done when an `rg` for `ExprKind::` and `StmtKind::` over
+    `crates/mojito-hir` and `crates/mojito-mir/src` finds only the
+    checked-node builder, and the probe fixtures run on the VM and with
+    `--backend pliron`.
+  - Plan: `R604-a-package-s-checked-body-is-plan.md`, slice 6.
+  - Depends on R616, R618, R619, R620, R621, R622.
+  - Model: Opus, Not Planned.
+
+- [ ] **R624 The check writes fact records for a later pass to gather into
+  nodes, where upstream's parser emits typed ops as it checks**
+
+  `DiscoveryResult::finalize` and `build_checked_expressions` build the
+  checked nodes after the check ends.
+  - The lever: the checker's recording helpers write `NodeFacts` onto the
+    node of the occurrence being checked, and `body_carry` carries node
+    ranges.
+  - Done when `finalize` and `build_checked_expressions` are deleted.
+  - Plan: `R604-a-package-s-checked-body-is-plan.md`, slice 7.
+  - Depends on R613, R623.
+  - Model: Fable, Not Planned.
+
+- [ ] **R625 `DiscoveryResult` still stands between the check and
+  `CheckedProgram`**
+
+  Once the check emits nodes, the handoff record is a leftover.
+  - The lever: `CheckedProgram` is the checked nodes, the site facts, and
+    the declaration-level tables; `build_checked_declarations` is deleted,
+    and `DiscoveryResult::units` becomes `CheckedProgram::units`.
+  - Update `docs/pliron-future.md`'s "checker (+ checked handoff)" row to
+    say the output is emitted ops.
+  - Then judge whether the node tree's remaining distance from `lit`'s ops
+    in regions earns a new `mojo-shape` entry, and file it if so.
+  - Plan: `R604-a-package-s-checked-body-is-plan.md`, slice 7.
+  - Depends on R624.
   - Model: Fable, Not Planned.
 
 - [ ] **R611 A package unit's facts name the package check's binding
@@ -6168,6 +6310,13 @@ Every entry is written for a human reader who has not seen the code.
 - One problem per checkbox. Its first sentence states the issue to fix. An
   item we are not going to fix does not belong here at all — it belongs in
   [`docs/non-goals.md`](non-goals.md).
+- One session's work per checkbox. An entry is a task `scripts/claude_loop.py`
+  hands to one session, and the session's only way to finish it is to delete
+  it. Work that needs several sessions is several checkboxes, chained by
+  their Depends bullets. Never file an entry that is "not one session's
+  work". A session that cannot finish its entry deletes it and files what
+  remains the same way, rather than rewriting it as one larger "what
+  remains" entry.
 - Details follow as short bullet points: the symptom, the workaround, the
   cause or the lever, and the file or test that pins it.
 - No run-on sentences and no semicolon chains. If a thought needs a
