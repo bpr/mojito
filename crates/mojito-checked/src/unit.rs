@@ -16,7 +16,7 @@ use crate::checked::{
 use crate::fact_store::{FactMap, FactSet, FactVec};
 use crate::package::{LibraryRoot, ProgramConstants, ProgramOverloads};
 use mojito_ast::ast::{Expr, Method, Stmt, StmtKind};
-use mojito_common::token::{SourceSpan, SyntaxId};
+use mojito_common::token::{SourceSpan, Span, SyntaxId};
 use mojito_types::origin::{OriginPlace, OwnerId, encoding_packaged_owners};
 use mojito_types::types::{ParamDecl, SimdDtype, SimdWidth, SliceKind, Ty};
 use std::collections::{HashMap, HashSet};
@@ -130,8 +130,8 @@ pub enum UnitKind {
 /// Its syntax is the unit's declaration alone: a struct's member holds
 /// its struct with no method but its own. Its facts are the check's
 /// outputs keyed by that syntax (`DiscoveryResult`'s, before the checked
-/// arena is built from them), so the unit's arena is built from them as
-/// the whole program's is.
+/// arena is built from them), one record per occurrence, so the unit's
+/// arena is built from them as the whole program's is.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct CheckedUnit {
     pub kind: UnitKind,
@@ -144,12 +144,46 @@ pub struct CheckedUnit {
 
 impl CheckedUnit {
     /// The unit's checked program, its overload and constant lookups
-    /// answered by `overloads` and `constants`.
+    /// answered by `overloads` and `constants`, and a member's struct's
+    /// compile-time parameters by `struct_parameters`, from the struct's
+    /// declaration.
+    ///
+    /// # Errors
+    ///
+    /// When a fact names an occurrence the unit's syntax does not hold.
     pub fn program(
         self,
         overloads: Arc<ProgramOverloads>,
         constants: Arc<ProgramConstants>,
-    ) -> UnitProgram {
+        struct_parameters: &dyn Fn(&str) -> Option<Vec<ParamDecl>>,
+    ) -> Result<UnitProgram, String> {
+        let wanted = self
+            .facts
+            .nodes
+            .iter()
+            .filter(|record| record.location.is_none())
+            .map(|record| record.occurrence)
+            .collect();
+        let locations = Locations::of(&self.statements, &self.default_wrappers, Some(&wanted));
+        let structure = match (&self.kind, self.statements.first()) {
+            (
+                UnitKind::Method(_) | UnitKind::Wrapper,
+                Some(Stmt {
+                    kind: StmtKind::Struct { name, .. },
+                    module,
+                    ..
+                }),
+            ) => struct_parameters(name).map(|parameters| {
+                (
+                    GenericSite::Struct {
+                        module: module.clone(),
+                        declaration: name.clone(),
+                    },
+                    parameters,
+                )
+            }),
+            _ => None,
+        };
         let mut discovery = DiscoveryResult {
             statements: self.statements,
             overload_targets: FactMap::default(),
@@ -199,12 +233,15 @@ impl CheckedUnit {
             default_wrappers: self.default_wrappers,
             trait_members: Vec::new(),
         };
-        self.facts.install(&mut discovery);
-        UnitProgram {
+        self.facts.install(&locations, &mut discovery)?;
+        if let Some((site, parameters)) = structure {
+            discovery.generic_parameters.insert(site, parameters);
+        }
+        Ok(UnitProgram {
             kind: self.kind,
             program: discovery.finalize(),
             member: self.member,
-        }
+        })
     }
 
     /// The unit as package bytecode: its file table, which names each file
@@ -339,11 +376,12 @@ impl DiscoveryResult {
     /// Each of `units`' checked syntax and facts, in order.
     ///
     /// A fact belongs to every unit whose syntax holds the occurrence its
-    /// key names, or the occurrence that one was derived from; a
-    /// struct's compile-time parameters belong to every member of it, and
-    /// a member's own sites to the member.
+    /// key names, or the occurrence that one was derived from, and a
+    /// member's own sites to the member; a struct's own sites belong to
+    /// none, since its declaration holds them.
     pub fn units(&self, units: &[LoweringUnit<'_>]) -> Vec<CheckedUnit> {
         let mut owners = Owners::default();
+        let mut syntax = Vec::with_capacity(units.len());
         let mut sliced: Vec<CheckedUnit> = units
             .iter()
             .enumerate()
@@ -359,18 +397,20 @@ impl DiscoveryResult {
                     &checked.default_wrappers,
                     &mut |expression| occurrences.0.push(expression.syntax_id),
                 );
-                for syntax in occurrences.0 {
-                    let units = owners.syntax.entry(syntax).or_default();
+                let mut ranks = HashMap::new();
+                for occurrence in occurrences.0 {
+                    let next = ranks.len();
+                    ranks.entry(occurrence).or_insert(next);
+                    let units = owners.syntax.entry(occurrence).or_default();
                     if units.last() != Some(&position) {
                         units.push(position);
                     }
                 }
+                syntax.push(UnitSyntax {
+                    ranks,
+                    locations: Locations::of(&checked.statements, &checked.default_wrappers, None),
+                });
                 if let Some((module, name, member)) = unit.structure() {
-                    owners
-                        .structs
-                        .entry((module.clone(), name.to_string()))
-                        .or_default()
-                        .push(position);
                     owners
                         .members
                         .entry((module.clone(), name.to_string(), member))
@@ -381,7 +421,7 @@ impl DiscoveryResult {
             })
             .collect();
         let mut facts: Vec<UnitFacts> = sliced.iter().map(|_| UnitFacts::default()).collect();
-        UnitFacts::distribute(self, &owners, &mut facts);
+        UnitFacts::distribute(self, &owners, &syntax, &mut facts);
         for (unit, facts) in sliced.iter_mut().zip(facts) {
             unit.facts = facts;
         }
@@ -393,8 +433,6 @@ impl DiscoveryResult {
 #[derive(Default)]
 struct Owners {
     syntax: HashMap<SyntaxId, Vec<usize>>,
-    /// By struct.
-    structs: HashMap<(Option<String>, String), Vec<usize>>,
     /// By struct member.
     members: HashMap<(Option<String>, String, usize), Vec<usize>>,
 }
@@ -458,10 +496,10 @@ impl UnitKey for GenericSite {
     fn units<'o>(&self, owners: &'o Owners) -> &'o [usize] {
         let units = match self {
             Self::Function { syntax, .. } => return owners.of_syntax(*syntax),
-            Self::Struct {
-                module,
-                declaration,
-            } => owners.structs.get(&(module.clone(), declaration.clone())),
+            // A struct's parameters are its declaration's, which a
+            // package's declaration record holds and a member's unit is
+            // given when it lowers.
+            Self::Struct { .. } => None,
             Self::Method {
                 module,
                 declaration,
@@ -472,6 +510,202 @@ impl UnitKey for GenericSite {
         };
         units.map_or(&[][..], Vec::as_slice)
     }
+}
+
+/// A unit's share of the check's facts: one record per occurrence the
+/// check recorded any fact at, as an op holds its own attributes, and the
+/// facts of its declaration sites.
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+struct UnitFacts {
+    nodes: Vec<NodeRecord>,
+    sites: SiteFacts,
+}
+
+/// Every fact the check recorded at one occurrence of a unit's syntax.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+struct NodeRecord {
+    occurrence: SyntaxId,
+    /// Where the facts were recorded, when that is not the location of the
+    /// occurrence's node in the unit's syntax: a derived occurrence's, or
+    /// one the check gave a node it spelled at another node's location.
+    location: Option<SourceSpan>,
+    facts: Vec<NodeFact>,
+}
+
+impl NodeRecord {
+    /// The key the record's facts were recorded under.
+    fn key(&self, locations: &Locations) -> Result<SourceSpan, String> {
+        let location = self
+            .location
+            .as_ref()
+            .or_else(|| locations.get(self.occurrence))
+            .ok_or("a fact names an occurrence its unit does not hold")?;
+        Ok(SourceSpan::syntax(
+            location.source.clone(),
+            location.span,
+            self.occurrence,
+        ))
+    }
+
+    /// One record per key of `nodes`, in an order that does not depend on
+    /// hashing, each naming its location only when `syntax` does not.
+    fn ordered(nodes: HashMap<SourceSpan, Vec<NodeFact>>, syntax: &UnitSyntax) -> Vec<Self> {
+        let mut keyed: Vec<_> = nodes
+            .into_iter()
+            .filter_map(|(key, facts)| {
+                let occurrence = key.syntax?;
+                let order = (
+                    occurrence_order(occurrence, &syntax.ranks),
+                    key.source.clone(),
+                    key.span,
+                );
+                let location = key.without_syntax();
+                let location =
+                    (syntax.locations.get(occurrence) != Some(&location)).then_some(location);
+                Some((
+                    order,
+                    Self {
+                        occurrence,
+                        location,
+                        facts,
+                    },
+                ))
+            })
+            .collect();
+        keyed.sort_by(|left, right| left.0.cmp(&right.0));
+        keyed.into_iter().map(|(_, record)| record).collect()
+    }
+}
+
+/// One lowering unit's syntax as [`UnitFacts::distribute`] reads it.
+struct UnitSyntax {
+    /// Each occurrence's position in the unit's walk.
+    ranks: HashMap<SyntaxId, usize>,
+    locations: Locations<'static>,
+}
+
+/// The order a fact keyed by `syntax` takes among a unit's: by where the
+/// occurrence it was derived from sits in the unit's walk (`ranks`), then
+/// by its derivation.
+fn occurrence_order(syntax: SyntaxId, ranks: &HashMap<SyntaxId, usize>) -> (usize, Vec<u32>) {
+    let mut ordinals = Vec::new();
+    let mut current = syntax;
+    loop {
+        if let Some(rank) = ranks.get(&current) {
+            ordinals.reverse();
+            return (*rank, ordinals);
+        }
+        match current.derivation() {
+            Some((parent, ordinal)) => {
+                ordinals.push(ordinal);
+                current = parent;
+            }
+            None => return (usize::MAX, ordinals),
+        }
+    }
+}
+
+/// Where occurrences of a unit's syntax sit: the location of the first
+/// node of the walk that has it, for each occurrence `wanted` names, or
+/// every one.
+struct Locations<'w> {
+    wanted: Option<&'w HashSet<SyntaxId>>,
+    found: HashMap<SyntaxId, SourceSpan>,
+}
+
+impl<'w> Locations<'w> {
+    fn of(
+        statements: &[Stmt],
+        wrappers: &[CheckedDefaultWrapper],
+        wanted: Option<&'w HashSet<SyntaxId>>,
+    ) -> Self {
+        let mut locations = Self {
+            wanted,
+            found: HashMap::new(),
+        };
+        mojito_ast::visit::walk_block(&mut locations, statements);
+        for wrapper in wrappers {
+            mojito_ast::visit::walk_block(&mut locations, &wrapper.body);
+        }
+        locations
+    }
+
+    fn get(&self, syntax: SyntaxId) -> Option<&SourceSpan> {
+        self.found.get(&syntax)
+    }
+
+    fn record(&mut self, syntax: SyntaxId, source: Option<&String>, span: Span) {
+        if self.wanted.is_none_or(|wanted| wanted.contains(&syntax)) {
+            self.found
+                .entry(syntax)
+                .or_insert_with(|| SourceSpan::new(source.cloned(), span));
+        }
+    }
+}
+
+impl mojito_ast::visit::Visitor for Locations<'_> {
+    fn visit_stmt(&mut self, statement: &Stmt) {
+        self.record(
+            statement.syntax_id,
+            statement.module.as_ref(),
+            statement.span,
+        );
+    }
+
+    fn visit_expr(&mut self, expression: &Expr) {
+        self.record(
+            expression.syntax_id,
+            expression.source.as_ref(),
+            expression.span,
+        );
+    }
+}
+
+/// A site fact's key: the occurrence it names, if any, orders it.
+trait SiteKey: UnitKey + std::fmt::Debug {
+    fn syntax(&self) -> Option<SyntaxId>;
+}
+
+impl SiteKey for AnnotationSite {
+    fn syntax(&self) -> Option<SyntaxId> {
+        match self {
+            Self::FunctionParam { syntax, .. }
+            | Self::FunctionReturn { syntax, .. }
+            | Self::FunctionType { syntax, .. } => Some(*syntax),
+            Self::StructField { .. } | Self::MethodParam { .. } | Self::MethodReturn { .. } => None,
+        }
+    }
+}
+
+impl SiteKey for GenericSite {
+    fn syntax(&self) -> Option<SyntaxId> {
+        match self {
+            Self::Function { syntax, .. } => Some(*syntax),
+            Self::Struct { .. } | Self::Method { .. } => None,
+        }
+    }
+}
+
+/// `entries` in an order that does not depend on hashing.
+fn ordered_sites<K: SiteKey, V>(
+    entries: Vec<(K, V)>,
+    ranks: &HashMap<SyntaxId, usize>,
+) -> Vec<(K, V)> {
+    let mut keyed: Vec<_> = entries
+        .into_iter()
+        .map(|(key, value)| {
+            let order = (
+                key.syntax().map(|syntax| occurrence_order(syntax, ranks)),
+                format!("{key:?}"),
+            );
+            (order, key, value)
+        })
+        .collect();
+    keyed.sort_by(|left, right| left.0.cmp(&right.0));
+    keyed
+        .into_iter()
+        .map(|(_, key, value)| (key, value))
+        .collect()
 }
 
 /// Every syntax occurrence a walk reaches.
@@ -517,120 +751,186 @@ fn member_of(structure: &Stmt, method: Option<&Method>) -> Stmt {
     }
 }
 
-/// Every key of `entries` with its value, in an order that does not depend
-/// on hashing.
-fn sorted_entries<K: serde::Serialize + Clone, V: Clone>(
-    entries: impl Iterator<Item = (K, V)>,
-) -> Vec<(K, V)> {
-    let mut keyed: Vec<_> = entries
-        .map(|(key, value)| {
-            let order = mojito_common::token::encoding_occurrences(|| {
-                encoding_packaged_owners(|| postcard::to_stdvec(&key).unwrap_or_default())
-            })
-            .0;
-            (order, key, value)
-        })
-        .collect();
-    keyed.sort_by(|left, right| left.0.cmp(&right.0));
-    keyed
-        .into_iter()
-        .map(|(_, key, value)| (key, value))
-        .collect()
-}
-
 macro_rules! unit_facts {
     (
-        maps { $($map:ident: $key:ty => $value:ty,)* }
-        sets { $($set:ident,)* }
+        nodes { $($map:ident => $variant:ident($value:ty),)* }
+        flags { $($set:ident => $flag:ident,)* }
+        sites { $($site:ident: $key:ty => $site_value:ty,)* }
     ) => {
-        /// A unit's share of each of the check's fact tables.
+        /// One fact the check recorded at an occurrence: an entry of the
+        /// check's table of that name.
+        #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+        enum NodeFact {
+            $($variant($value),)*
+            $($flag,)*
+        }
+
+        /// A unit's share of each of the check's tables keyed by a
+        /// declaration site.
         #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
-        struct UnitFacts {
-            $($map: Vec<($key, $value)>,)*
-            $($set: Vec<SourceSpan>,)*
+        struct SiteFacts {
+            $($site: Vec<($key, $site_value)>,)*
         }
 
         impl UnitFacts {
-            /// Give each unit its share of `discovery`'s facts.
-            fn distribute(discovery: &DiscoveryResult, owners: &Owners, facts: &mut [Self]) {
+            /// Give each unit, whose syntax `syntax` describes, its share
+            /// of `discovery`'s facts.
+            fn distribute(
+                discovery: &DiscoveryResult,
+                owners: &Owners,
+                syntax: &[UnitSyntax],
+                facts: &mut [Self],
+            ) {
+                let mut nodes: Vec<HashMap<SourceSpan, Vec<NodeFact>>> =
+                    facts.iter().map(|_| HashMap::new()).collect();
                 $(
-                    let mut shares: Vec<Vec<($key, $value)>> = facts.iter().map(|_| Vec::new()).collect();
                     for (key, value) in discovery.$map.iter() {
+                        for unit in key.units(owners) {
+                            nodes[*unit]
+                                .entry(key.clone())
+                                .or_default()
+                                .push(NodeFact::$variant(value.clone()));
+                        }
+                    }
+                )*
+                $(
+                    for key in discovery.$set.iter() {
+                        for unit in key.units(owners) {
+                            nodes[*unit].entry(key.clone()).or_default().push(NodeFact::$flag);
+                        }
+                    }
+                )*
+                $(
+                    let mut shares: Vec<Vec<($key, $site_value)>> =
+                        facts.iter().map(|_| Vec::new()).collect();
+                    for (key, value) in discovery.$site.iter() {
                         for unit in key.units(owners) {
                             shares[*unit].push((key.clone(), value.clone()));
                         }
                     }
-                    for (unit, share) in facts.iter_mut().zip(shares) {
-                        unit.$map = sorted_entries(share.into_iter());
+                    for ((unit, share), syntax) in facts.iter_mut().zip(shares).zip(syntax) {
+                        unit.sites.$site = ordered_sites(share, &syntax.ranks);
                     }
                 )*
-                $(
-                    let mut shares: Vec<Vec<(SourceSpan, ())>> = facts.iter().map(|_| Vec::new()).collect();
-                    for key in discovery.$set.iter() {
-                        for unit in key.units(owners) {
-                            shares[*unit].push((key.clone(), ()));
-                        }
-                    }
-                    for (unit, share) in facts.iter_mut().zip(shares) {
-                        unit.$set = sorted_entries(share.into_iter())
-                            .into_iter()
-                            .map(|(key, ())| key)
-                            .collect();
-                    }
-                )*
+                for ((unit, nodes), syntax) in facts.iter_mut().zip(nodes).zip(syntax) {
+                    unit.nodes = NodeRecord::ordered(nodes, syntax);
+                }
             }
 
-            /// Install the unit's facts in its `discovery`.
-            fn install(self, discovery: &mut DiscoveryResult) {
-                $(discovery.$map = FactMap::from(self.$map.into_iter().collect::<HashMap<_, _>>());)*
-                $(discovery.$set = FactSet::from(self.$set.into_iter().collect::<HashSet<_>>());)*
+            /// Install the unit's facts, its syntax at `locations`, in its
+            /// `discovery`.
+            fn install(
+                self,
+                locations: &Locations<'_>,
+                discovery: &mut DiscoveryResult,
+            ) -> Result<(), String> {
+                /// The tables being filled.
+                struct Tables {
+                    $($map: HashMap<SourceSpan, $value>,)*
+                    $($set: HashSet<SourceSpan>,)*
+                }
+
+                impl Tables {
+                    /// Tables sized for `records`' facts.
+                    fn for_records(records: &[NodeRecord]) -> Self {
+                        #[derive(Default)]
+                        struct Counts {
+                            $($map: usize,)*
+                            $($set: usize,)*
+                        }
+                        let mut counts = Counts::default();
+                        for fact in records.iter().flat_map(|record| &record.facts) {
+                            match fact {
+                                $(NodeFact::$variant(_) => counts.$map += 1,)*
+                                $(NodeFact::$flag => counts.$set += 1,)*
+                            }
+                        }
+                        Self {
+                            $($map: HashMap::with_capacity(counts.$map),)*
+                            $($set: HashSet::with_capacity(counts.$set),)*
+                        }
+                    }
+
+                    fn put(&mut self, key: SourceSpan, fact: NodeFact) {
+                        match fact {
+                            $(NodeFact::$variant(value) => {
+                                self.$map.insert(key, value);
+                            })*
+                            $(NodeFact::$flag => {
+                                self.$set.insert(key);
+                            })*
+                        }
+                    }
+                }
+
+                let mut tables = Tables::for_records(&self.nodes);
+                for mut record in self.nodes {
+                    let key = record.key(locations)?;
+                    let Some(last) = record.facts.pop() else {
+                        continue;
+                    };
+                    for fact in record.facts {
+                        tables.put(key.clone(), fact);
+                    }
+                    tables.put(key, last);
+                }
+                $(discovery.$map = FactMap::from(tables.$map);)*
+                $(discovery.$set = FactSet::from(tables.$set);)*
+                $(
+                    discovery.$site = FactMap::from(
+                        self.sites.$site.into_iter().collect::<HashMap<_, _>>(),
+                    );
+                )*
+                Ok(())
             }
         }
     };
 }
 
 unit_facts! {
-    maps {
-        overload_targets: SourceSpan => String,
-        contextual_bases: SourceSpan => String,
-        generic_instantiations: SourceSpan => GenericInstantiation,
-        method_instantiations: SourceSpan => MethodInstantiation,
-        call_transfers: SourceSpan => Vec<CheckedCallTransfer>,
-        implicit_conversions: SourceSpan => String,
-        implicit_conversion_types: SourceSpan => Ty,
-        conversion_source_borrows: SourceSpan => bool,
-        conversion_raises: SourceSpan => Ty,
+    nodes {
+        overload_targets => OverloadTarget(String),
+        contextual_bases => ContextualBase(String),
+        generic_instantiations => GenericInstantiation(GenericInstantiation),
+        method_instantiations => MethodInstantiation(MethodInstantiation),
+        call_transfers => CallTransfers(Vec<CheckedCallTransfer>),
+        implicit_conversions => ImplicitConversion(String),
+        implicit_conversion_types => ImplicitConversionType(Ty),
+        conversion_source_borrows => ConversionSourceBorrow(bool),
+        conversion_raises => ConversionRaises(Ty),
+        expression_types => Type(Ty),
+        expression_bindings => Binding(OwnerId),
+        statement_bindings => StatementBinding(OwnerId),
+        declaration_captures => Captures(Vec<CheckedCapture>),
+        comprehension_bindings => ComprehensionBindings(Vec<CheckedComprehensionBinding>),
+        expression_place_types => PlaceType(Ty),
+        binding_types => BindingType(Ty),
+        expression_effects => Effects(EffectFacts),
+        selected_calls => SelectedCall(CheckedCallContract),
+        subscript_descriptors => SubscriptDescriptor((Vec<Option<SliceKind>>, bool)),
+        iteration_protocols => IterationProtocol(IterationProtocol),
+        simd_constructions => SimdConstruction((SimdDtype, SimdWidth)),
+        operation_adjustments => Adjustment(SemanticAdjustment),
+        parameterized_method_calls => ParameterizedMethodCall(Vec<ParamDecl>),
+        tuple_unpack_plans => TupleUnpackPlan(Vec<CheckedTupleUnpackElement>),
+        interior_references => InteriorReference(OriginPlace),
+        interior_invalidations => InteriorInvalidations(Vec<InteriorInvalidation>),
+        reference_value_uses => ReferenceValueUse(bool),
+        rebind_assertions => RebindAssertion(RebindAssertion),
+    }
+    flags {
+        explicit_destroy_calls => ExplicitDestroyCall,
+        copy_place_value_uses => CopyPlaceValueUse,
+        call_place_uses => CallPlaceUse,
+        borrowed_read_call_places => BorrowedReadCallPlace,
+        read_temporary_arguments => ReadTemporaryArgument,
+        implicitly_copied_consuming_receivers => ImplicitlyCopiedConsumingReceiver,
+        truthiness_conditions => TruthinessCondition,
+    }
+    sites {
         checked_types: AnnotationSite => Ty,
         generic_parameters: GenericSite => Vec<ParamDecl>,
-        expression_types: SourceSpan => Ty,
-        expression_bindings: SourceSpan => OwnerId,
-        statement_bindings: SourceSpan => OwnerId,
-        declaration_captures: SourceSpan => Vec<CheckedCapture>,
-        comprehension_bindings: SourceSpan => Vec<CheckedComprehensionBinding>,
-        expression_place_types: SourceSpan => Ty,
-        binding_types: SourceSpan => Ty,
-        expression_effects: SourceSpan => EffectFacts,
-        selected_calls: SourceSpan => CheckedCallContract,
-        subscript_descriptors: SourceSpan => (Vec<Option<SliceKind>>, bool),
-        iteration_protocols: SourceSpan => IterationProtocol,
-        simd_constructions: SourceSpan => (SimdDtype, SimdWidth),
-        operation_adjustments: SourceSpan => SemanticAdjustment,
-        parameterized_method_calls: SourceSpan => Vec<ParamDecl>,
-        tuple_unpack_plans: SourceSpan => Vec<CheckedTupleUnpackElement>,
-        interior_references: SourceSpan => OriginPlace,
-        interior_invalidations: SourceSpan => Vec<InteriorInvalidation>,
-        reference_value_uses: SourceSpan => bool,
-        rebind_assertions: SourceSpan => RebindAssertion,
         declaration_effects: AnnotationSite => DeclarationEffect,
-    }
-    sets {
-        explicit_destroy_calls,
-        copy_place_value_uses,
-        call_place_uses,
-        borrowed_read_call_places,
-        read_temporary_arguments,
-        implicitly_copied_consuming_receivers,
-        truthiness_conditions,
     }
 }
 

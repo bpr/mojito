@@ -122,16 +122,19 @@ impl SourceSpan {
 /// with the file table its occurrences name.
 ///
 /// Inside it a [`SyntaxId`] encodes as its derivation, so a decoded one
-/// keeps it, and a source path as its index in the file table: the
-/// encoding of a checked body keeps which occurrence each of its facts is
-/// keyed by. Outside it a [`SourceSpan`] or a [`SyntaxId`] does not encode,
-/// since both are local to one compilation.
+/// keeps it, over a number local to the encoding: the encoding renumbers
+/// each underived identity densely, in the order it first meets them. A
+/// source path encodes as its index in the file table. The encoding of a
+/// checked body thus keeps which occurrence each of its facts is keyed by.
+/// Outside it a [`SourceSpan`] or a [`SyntaxId`] does not encode, since
+/// both are local to one compilation.
 pub fn encoding_occurrences<R>(encode: impl FnOnce() -> R) -> (R, Vec<Option<String>>) {
     let previous = OCCURRENCES.replace(Some(Occurrences::Encoding {
         files: std::collections::HashMap::new(),
+        numbers: std::collections::HashMap::new(),
     }));
     let result = encode();
-    let Some(Occurrences::Encoding { files }) = OCCURRENCES.replace(previous) else {
+    let Some(Occurrences::Encoding { files, .. }) = OCCURRENCES.replace(previous) else {
         unreachable!("the occurrence encoding scope was replaced")
     };
     let mut table = vec![None; files.len()];
@@ -170,7 +173,7 @@ pub fn occurrences_encode() -> bool {
 /// When no occurrence encoding is in progress.
 pub fn occurrence_file(file: Option<&str>) -> Result<u32, String> {
     OCCURRENCES.with_borrow_mut(|occurrences| match occurrences {
-        Some(Occurrences::Encoding { files }) => {
+        Some(Occurrences::Encoding { files, .. }) => {
             let next = files.len() as u32;
             Ok(*files.entry(file.map(str::to_string)).or_insert(next))
         }
@@ -201,7 +204,9 @@ impl serde::Serialize for SyntaxId {
                 "a syntax identity is local to one compilation",
             ));
         }
-        EncodedSyntax::of(*self).serialize(serializer)
+        EncodedSyntax::of(*self)
+            .map_err(serde::ser::Error::custom)?
+            .serialize(serializer)
     }
 }
 
@@ -451,7 +456,8 @@ impl Token {
     }
 }
 
-/// The encoding of a [`SyntaxId`]: its own number, or how it was derived.
+/// The encoding of a [`SyntaxId`]: its number in the encoding, or how it
+/// was derived.
 #[derive(serde::Serialize, serde::Deserialize)]
 enum EncodedSyntax {
     Plain(u64),
@@ -459,10 +465,16 @@ enum EncodedSyntax {
 }
 
 impl EncodedSyntax {
-    fn of(id: SyntaxId) -> Self {
+    fn of(id: SyntaxId) -> Result<Self, String> {
         match id.derivation() {
-            Some((parent, ordinal)) => Self::Derived(Box::new(Self::of(parent)), ordinal),
-            None => Self::Plain(id.0),
+            Some((parent, ordinal)) => Ok(Self::Derived(Box::new(Self::of(parent)?), ordinal)),
+            None => OCCURRENCES.with_borrow_mut(|occurrences| match occurrences {
+                Some(Occurrences::Encoding { numbers, .. }) => {
+                    let next = numbers.len() as u64;
+                    Ok(Self::Plain(*numbers.entry(id.0).or_insert(next)))
+                }
+                _ => Err("a syntax identity is local to one compilation".to_string()),
+            }),
         }
     }
 
@@ -483,6 +495,8 @@ impl EncodedSyntax {
 enum Occurrences {
     Encoding {
         files: std::collections::HashMap<Option<String>, u32>,
+        /// Each underived identity's number in the encoding.
+        numbers: std::collections::HashMap<u64, u64>,
     },
     Decoding {
         files: Vec<Option<String>>,

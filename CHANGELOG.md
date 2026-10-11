@@ -8,6 +8,19 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A package unit holds the check's facts as one record per occurrence,
+  as an op holds its own attributes (R604, first slices): the record names
+  the occurrence once, numbered densely within the unit, gives a location
+  only when it is not the occurrence's own node's (34 of 14,287 records),
+  and lists its facts, each named by its table. A unit previously wrote
+  one row per fact, each repeating the occurrence's file, span, and
+  build-wide identity. A struct's parameter list is no longer repeated in
+  every member's unit: the importer reads it from the struct's
+  declaration record. The package is 1.16 MB, from 1.98 MB; decoding all
+  units takes 20 ms release, from 24, and building their checked arenas
+  about 10 ms more. The package format is `mojito-package 30`. No
+  program's output changes.
+
 - A type is a handle to shared, immutable storage (R585), as MLIR's `Type`
   is a pointer to storage its context uniques. `Ty` is one pointer to a
   node that holds its variant (`TyKind`, which code now matches through

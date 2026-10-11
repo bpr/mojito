@@ -152,8 +152,13 @@ import (every compilation that links the bundled library):
   `def`, one struct method (with its struct's name and compile-time
   parameters), an inherited default's wrapper, a trait default, or a
   module constant's lifted applications; its record holds its syntax and
-  its share of the check's facts (`DiscoveryResult::units`), keyed by
-  syntax occurrence. The encoding renumbers each occurrence and the
+  its share of the check's facts (`DiscoveryResult::units`): one record
+  per occurrence the check recorded facts at, as an op holds its own
+  attributes, naming the occurrence, its location only when that is not
+  its node's own, and its facts, beside the facts of the unit's own
+  declaration sites. A member's struct's parameter list is not in its
+  record: the importer gives it from the struct's declaration record. The
+  encoding numbers each occurrence densely within the unit and the
   decoding draws a fresh identity per number, keeping each derivation
   (`token::{encoding_occurrences, decoding_occurrences}`). A package body
   enters the pipeline at HIR: the importer rebuilds the unit's checked
@@ -364,9 +369,10 @@ import (every compilation that links the bundled library):
   development build only; an installed compiler refuses them, and refuses
   to `precompile`.
 - **Divergences.** Upstream's package holds each body as typed `lit` ops;
-  Mojito's holds the body's syntax beside the check's facts keyed by
-  occurrence, its checked handoff's own shape (`docs/roadmap.md`,
-  `mojo-shape` track: R604). A module record holds no
+  Mojito's holds the body's syntax beside one record of the check's facts
+  per occurrence, its checked handoff's own shape, and those facts still
+  name the package check's binding owners (`docs/roadmap.md`,
+  `mojo-shape` track: R604, R611). A module record holds no
   declaration: an importer reads every library declaration, trait
   defaults included, from its declaration record. A declaration's overload
   facts restate what its lowered functions imply (`pmir` track).
