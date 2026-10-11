@@ -50,23 +50,6 @@ Scope: what remains of the plan's stages, and what the pipeline order still
 leaves to close. A defect found on the way is filed by its kind; a
 divergence from the pin goes to a catch-up track, however small.
 
-- [ ] **R597 (P6) A library trait's overloaded requirement with no default
-  would keep the bundled library from being packaged**
-
-  An importer finds a name's overload set by looking up its function
-  declarations, and a requirement with no default lowers to none.
-  - So a library trait overloading such a requirement would make its
-    lowered declarations imply other sets than the build's check, which
-    refuses the package; the library then compiles from source after a
-    warning.
-  - No library trait has an overloaded requirement today.
-  - Upstream's trait op declares each requirement, defaulted or not, so a
-    lookup finds every one.
-  - The lever: a trait declaration records its requirements' arities by
-    name (`TraitDeclaration`), which the lookup reads beside the functions.
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R547 A function the check lifts from a body is numbered per
   compilation, so the bundled library cannot contain one**
 

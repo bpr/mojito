@@ -515,21 +515,43 @@ impl Decoder {
     }
 
     /// A trait of the artifact's list: a schema 1.42 `trait` record, or an
-    /// older artifact's bare name, which records no parents.
+    /// older artifact's bare name, which records no parents. A record
+    /// before schema 1.44 records no requirements.
     fn trait_declaration(&mut self, value: &Value) -> Option<TraitDeclaration> {
         if !matches!(value.kind, ValueKind::Record(..)) {
             return Some(TraitDeclaration {
                 name: self.symbol(value)?,
                 refines: Vec::new(),
+                requirements: Vec::new(),
             });
         }
         let fields = self.record(value, "trait").ok()?;
         let name = self.req(value, fields, "name", Self::symbol);
         let refines = self.req(value, fields, "refines", |d, v| Some(d.strings(v)));
-        self.unknown(fields, &["name", "refines"]);
+        let requirements = self
+            .field(fields, "requirements")
+            .ok()
+            .and_then(|rows| self.list(rows).ok())
+            .map(|rows| {
+                rows.iter()
+                    .filter_map(|row| {
+                        let row_fields = self.record(row, "requirement").ok()?;
+                        let name = self.req(row, row_fields, "name", Self::symbol);
+                        let arity = self.req(row, row_fields, "arity", Self::uint);
+                        self.unknown(row_fields, &["name", "arity"]);
+                        Some(TraitRequirement {
+                            name: name?,
+                            arity: arity?,
+                        })
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        self.unknown(fields, &["name", "refines", "requirements"]);
         Some(TraitDeclaration {
             name: name?,
             refines: refines?,
+            requirements,
         })
     }
 

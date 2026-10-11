@@ -296,6 +296,10 @@ impl Checker {
             super::trait_defaults::default_shapes(name, methods, &*self.overload_sets, &|name| {
                 self.program_constants.get(name)
             });
+        let requirements = methods
+            .iter()
+            .map(|method| (method.name.clone(), method.params.len()))
+            .collect();
         let (methods, default_overloads) = result?;
         let defaults = shapes
             .into_iter()
@@ -310,6 +314,7 @@ impl Checker {
                 comptime_members: ct_members,
                 comptime_constraints: ct_constraints,
                 defaults,
+                requirements,
             },
         );
         Ok(())
@@ -1847,6 +1852,16 @@ impl Checker {
                 |(name, info)| mojito_checked::declaration::TraitDeclaration {
                     name: name.clone(),
                     refines: info.refines.clone(),
+                    requirements: info
+                        .requirements
+                        .iter()
+                        .map(
+                            |(name, arity)| mojito_checked::declaration::TraitRequirement {
+                                name: name.clone(),
+                                arity: *arity,
+                            },
+                        )
+                        .collect(),
                 },
             )
             .collect();

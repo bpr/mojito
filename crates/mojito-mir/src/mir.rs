@@ -29,7 +29,7 @@ use mojito_checked::checked::{AnnotationSite, GenericSite};
 use mojito_checked::checked::{CheckedConst, CheckedProgram};
 pub use mojito_checked::declaration::{
     FunctionDeclaration as MirFunctionDeclaration, StructDeclaration as MirStructDeclaration,
-    TraitDeclaration,
+    TraitDeclaration, TraitRequirement,
 };
 use mojito_checked::interface::PackageInterface;
 use mojito_common::timing;

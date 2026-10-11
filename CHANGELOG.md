@@ -8,6 +8,15 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A library trait's overloaded requirement no longer keeps the bundled
+  library from being packaged (R597): a trait declaration records its own
+  requirements, defaulted or not (`TraitDeclaration::requirements`), and
+  an importer's lookup and the build's overload comparison read a
+  `Trait.method` set from them, as upstream's trait declares each
+  requirement. Before, a requirement with no default lowered to no
+  function, and a defaulted member counted its receiver, so any overloaded
+  library requirement refused the package. MIR text is now 1.44 and the
+  format `mojito-package 24`.
 - A package record keys nothing by a name its directory holds (R598): a
   projected struct's method residue names its method by its function's
   index in the record, whose name splits back into the method's name and

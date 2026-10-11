@@ -1590,15 +1590,46 @@ fn declaration_metadata_reprints_byte_identically() {
             TraitDeclaration {
                 name: "Shape".into(),
                 refines: vec!["Copyable".into(), "needs quoting!".into()],
+                requirements: vec![
+                    TraitRequirement {
+                        name: "area".into(),
+                        arity: 0,
+                    },
+                    TraitRequirement {
+                        name: "area".into(),
+                        arity: 1,
+                    },
+                ],
             },
             TraitDeclaration {
                 name: "needs quoting!".into(),
                 refines: Vec::new(),
+                requirements: Vec::new(),
             },
         ],
         imported: None,
     };
     assert_reprints(&program);
+}
+
+#[test]
+fn a_trait_record_before_requirements_reads_with_none() {
+    let mut program = program_with(vec![("main".into(), function_with(Vec::new(), Vec::new()))]);
+    program.declarations.traits = vec![TraitDeclaration {
+        name: "Shape".into(),
+        refines: Vec::new(),
+        requirements: Vec::new(),
+    }];
+    let text = write::program(&program)
+        .replacen("mojito-mir 1.44", "mojito-mir 1.43", 1)
+        .replacen(", requirements: []", "", 1);
+    assert!(!text.contains("requirements"));
+    let parsed =
+        artifact(text.as_bytes(), "unit.mir".to_string()).expect("an older artifact reads");
+    assert_eq!(
+        parsed.program.declarations.traits,
+        program.declarations.traits
+    );
 }
 
 #[test]

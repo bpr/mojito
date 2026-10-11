@@ -7736,6 +7736,74 @@ fn an_installed_declaration_that_does_not_decode_is_reported_where_named() {
     );
 }
 
+/// The declaration records of a library declaring `trait Probe` with an
+/// overloaded `probe` requirement, one overload defaulted, after `edit`
+/// rewrites its lowered trait declarations.
+fn overloaded_requirement_records(
+    edit: impl FnOnce(&mut Vec<mojito::mir::TraitDeclaration>),
+) -> Result<mojito::checked_package::DeclarationRecords, String> {
+    let library_path = "/library/probe.mojo";
+    let mut library = parse(
+        "trait Probe:\n\
+         \x20   def probe(self) -> Int: ...\n\
+         \x20   def probe(self, x: Int) -> Int:\n        return x\n\
+         def total[T: Probe](t: T) -> Int:\n    return t.probe() + t.probe(2)\n",
+    )
+    .expect("parse error");
+    mojito::ast::stamp_source(&mut library, library_path);
+    let mut building = mojito::checker::CheckContext::new();
+    building.record_interfaces();
+    mojito::checker::check_program_in(&library, &mut building).expect("the library checks");
+    let mut lowered = mojito::mir::lower_program(&library)
+        .expect("the library lowers")
+        .declarations;
+    edit(&mut lowered.traits);
+    building
+        .take_interfaces()
+        .expect("the library exports")
+        .records(
+            vec![library_module(library_path)],
+            lowered.structs,
+            lowered.functions,
+            lowered.traits,
+        )
+}
+
+#[test]
+fn a_library_trait_s_overloaded_requirement_is_found_by_lookup() {
+    // A lookup of `Trait.method` finds every requirement its trait
+    // declares, defaulted or not, as upstream's trait declares each.
+    use mojito::symbol::OverloadLookup;
+    let records = overloaded_requirement_records(|_| {}).expect("the library records");
+    let package = std::sync::Arc::new(
+        mojito::checked_package::PackageDeclarations::of_records(records)
+            .expect("the records encode"),
+    );
+    let reached =
+        mojito::checked_package::PackageScope::new(package.clone(), std::sync::Arc::from([true]));
+    assert!(reached.method_is_overloaded("Probe.probe", 0));
+    assert!(reached.method_is_overloaded("Probe.probe", 1));
+    assert!(!reached.method_is_overloaded("Probe.probe", 2));
+    let unreached =
+        mojito::checked_package::PackageScope::new(package, std::sync::Arc::from([false]));
+    assert!(!unreached.method_is_overloaded("Probe.probe", 0));
+    assert!(!unreached.method_is_overloaded("Probe.probe", 1));
+}
+
+#[test]
+fn a_library_trait_whose_lowered_requirements_differ_is_refused() {
+    let refused = overloaded_requirement_records(|traits| {
+        for declaration in traits
+            .iter_mut()
+            .filter(|declaration| declaration.name == "Probe")
+        {
+            declaration.requirements.truncate(1);
+        }
+    })
+    .expect_err("the build refuses the library");
+    assert!(refused.contains("overloads of `Probe.probe`"), "{refused}");
+}
+
 #[test]
 fn an_installed_module_interface_checks_like_its_statements() {
     // A package build's check exports each library declaration's interface;

@@ -1,4 +1,4 @@
-# Mojito Textual MIR Format, Version 1.43
+# Mojito Textual MIR Format, Version 1.44
 
 This document is the normative specification of Mojito's textual verified-MIR
 artifact. The Rust data model in `src/mir.rs` and `src/mir/ir.rs` remains the
@@ -6,7 +6,7 @@ in-memory authority; this format is its stable inspection and interchange
 boundary. `docs/vm-instruction-set.md` explains execution semantics, while this
 document defines syntax and serialized data.
 
-Version 1.43 is implemented end to end for inspection and loading: canonical
+Version 1.44 is implemented end to end for inspection and loading: canonical
 in-memory disassembly, full-grammar assembly parsing, and artifact-loading
 verification (`mir::text::load_artifact`, which reports canonical-verifier
 findings at artifact source spans). Lossless print → parse → print round trips
@@ -22,10 +22,10 @@ which may be generic; it is always elaborated before it runs.
 Every artifact begins with exactly:
 
 ```text
-mojito-mir 1.43
+mojito-mir 1.44
 ```
 
-The writer emits 1.43. The reader accepts 1.0 through 1.43; *Schema 1.0*
+The writer emits 1.44. The reader accepts 1.0 through 1.44; *Schema 1.0*
 below says how a 1.0 artifact is read, and *Binder identity* under *Types*
 how a binder without an identity is.
 
@@ -111,6 +111,13 @@ trait as `trait { name: symbol, refines: [symbol...] }`, its parents in
 declaration order, where `traits` held bare names; a struct's
 `conformances` hold only its lifecycle rows. An older artifact's struct
 reads as declaring nothing, and its trait as refining nothing.
+
+Minor version 44 adds each trait's own requirements, defaulted or not, in
+declaration order, one per overload:
+`trait { name: symbol, refines: [symbol...], requirements: [requirement {
+name: symbol, arity: int }...] }`, `arity` counting the spelled parameters
+the receiver aside. A lookup of `Trait.method` reads a trait's overload set
+from them. An older artifact's trait reads as requiring nothing.
 
 Minor version 10 adds the signature origin `sig_carried(type)`: the source of
 a transfer effect whose body stores a value of a type over its binders. It
@@ -840,7 +847,7 @@ Unknown terminators and instructions are fatal for schema major version 1.
 ## Complete Artifact Example
 
 ```text
-mojito-mir 1.43
+mojito-mir 1.44
 artifact {
   features: [],
   files: [file { id: file0, path: present("main.mojo"), module: absent }],
@@ -881,10 +888,10 @@ library declaration, and one module table holding each module's link
 record, one file per package. The bundled library's is the
 only producer today (`src/package.rs`). No part of a package is MIR text:
 it is a header followed by bytecode records, as upstream's package is
-MLIR bytecode throughout. The format line is `mojito-package 23`.
+MLIR bytecode throughout. The format line is `mojito-package 24`.
 
 ```text
-mojito-package 23
+mojito-package 24
 <the header's length, 8 bytes little-endian>
 <the header, as bytecode>
 <the payload: every record, as bytecode>

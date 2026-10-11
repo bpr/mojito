@@ -106,8 +106,9 @@ impl InterfaceExport {
         functions: Vec<FunctionDeclaration>,
         traits: Vec<mojito_checked::declaration::TraitDeclaration>,
     ) -> Result<DeclarationRecords, String> {
-        if let Some(name) = mojito_checked::declaration::declared_overloads(&functions, &structs)
-            .differing_name(&self.overloads)
+        if let Some(name) =
+            mojito_checked::declaration::declared_overloads(&functions, &structs, &traits)
+                .differing_name(&self.overloads)
         {
             return Err(format!(
                 "the library's lowered declarations say other than its check of the overloads of `{name}`"

@@ -108,6 +108,18 @@ fn write_artifact_head(
                         "refines",
                         list(declaration.refines.iter().map(|parent| symbol(parent))),
                     ),
+                    (
+                        "requirements",
+                        list(declaration.requirements.iter().map(|requirement| {
+                            record(
+                                "requirement",
+                                &[
+                                    ("name", symbol(&requirement.name)),
+                                    ("arity", requirement.arity.to_string()),
+                                ],
+                            )
+                        })),
+                    ),
                 ],
             )
         }))

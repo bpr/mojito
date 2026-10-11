@@ -221,8 +221,12 @@ import (every compilation that links the bundled library):
   upstream's package holds none, an importer's name's overload set is the
   reached declarations a lookup finds under it, the plain name and its
   `$ov$` run of the by-name function table (`PackageScope`'s
-  `OverloadLookup`), and the build refuses a library whose lowered
-  declarations imply other sets than its check scanned
+  `OverloadLookup`). A `Trait.method` name's set is its trait
+  declaration's requirements, every one, defaulted or not, as upstream's
+  trait declares each (`TraitDeclaration::requirements`); a defaulted
+  requirement's member function is its body, not another declaration of
+  the name. The build refuses a library whose lowered declarations —
+  functions, structs, and traits — imply other sets than its check scanned
   (`checked::declaration::declared_overloads`). No module has a checker
   record of its own. The build's check
   exports the rows once the whole library is checked

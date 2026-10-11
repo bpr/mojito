@@ -2704,6 +2704,11 @@ struct TraitInfo {
     /// The trait's own defaults, in declaration order; a refinement's are
     /// its parent's. Each names its requirement row in [`Self::methods`].
     defaults: Vec<trait_defaults::DefaultShape>,
+    /// The trait's own requirements, in declaration order, each beside its
+    /// spelled arity; [`Self::methods`] merges its parents'. Its lowered
+    /// declaration carries them, so a residue does not.
+    #[serde(skip)]
+    requirements: Vec<(String, usize)>,
 }
 
 /// A concrete method candidate after receiver-type substitution and argument

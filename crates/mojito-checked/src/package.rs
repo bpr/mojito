@@ -38,6 +38,7 @@ use mojito_ast::ast::{Stmt, StmtKind};
 use mojito_common::literal::IntLiteral;
 use mojito_symbol::symbol::{
     LiftedOwner, OV_SEP, OverloadFamily, OverloadLookup, OverloadSets, lifted_owner,
+    split_method_symbol,
 };
 use std::borrow::Cow;
 use std::cmp::Ordering;
@@ -1002,11 +1003,36 @@ impl PackageScope {
             })
     }
 
-    /// The source arity of every reached function of the overload set
-    /// `family`: the declarations a lookup finds under its name, the plain
-    /// one and each signature-qualified one, decoded on first use.
+    /// The source arity of every reached declaration of the overload set
+    /// `family`, decoded on first use: a reached trait's requirements under
+    /// a `Trait.method` name, as its declaration declares each; otherwise
+    /// the functions a lookup finds under the name, the plain one and each
+    /// signature-qualified one.
     fn arities(&self, family: OverloadFamily<'_>) -> Vec<usize> {
         let (OverloadFamily::Free(name) | OverloadFamily::Method(name)) = family;
+        if let OverloadFamily::Method(name) = family
+            && let Some((owner, method)) = split_method_symbol(name)
+            && let Some(entry) = self
+                .package
+                .directory
+                .key_declaration(InterfaceTable::Traits, owner)
+        {
+            if !self.reaches(entry as usize) {
+                return Vec::new();
+            }
+            return self
+                .package
+                .trait_declaration(owner)
+                .map(|declaration| {
+                    declaration
+                        .requirements
+                        .iter()
+                        .filter(|requirement| requirement.name == method)
+                        .map(|requirement| requirement.arity)
+                        .collect()
+                })
+                .unwrap_or_default();
+        }
         let directory = &self.package.directory;
         directory
             .function_position(name)

@@ -6,7 +6,7 @@
 
 use crate::checked::{CheckedConst, ExplicitDestroyInfo, StructConformance};
 use mojito_ast::ast::ArgConvention;
-use mojito_symbol::symbol::{OverloadFamily, OverloadSets, overload_family};
+use mojito_symbol::symbol::{OverloadFamily, OverloadSets, overload_family, split_method_symbol};
 use mojito_types::param_expr::ParamExpr;
 use mojito_types::types::{GenericConstraint, ParamDecl, Ty};
 use std::collections::{HashMap, HashSet};
@@ -77,8 +77,8 @@ impl StructDeclaration {
     }
 }
 
-/// A trait declaration as a conformance decision reads it: its name and
-/// the traits it refines.
+/// A trait declaration as a conformance decision and an overload lookup
+/// read it: its name, the traits it refines, and its own requirements.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct TraitDeclaration {
     /// A package record leaves it to its declaration's directory row, so
@@ -87,6 +87,20 @@ pub struct TraitDeclaration {
     pub name: String,
     /// Its parents, in declaration order.
     pub refines: Vec<String>,
+    /// Its own requirements, defaulted or not, in declaration order, one
+    /// per overload: a lookup of `Trait.method` finds every one, as
+    /// upstream's trait declares each, and a defaulted one's member
+    /// function is its body, not another declaration of the name.
+    pub requirements: Vec<TraitRequirement>,
+}
+
+/// One requirement of a trait declaration.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct TraitRequirement {
+    pub name: String,
+    /// How many parameters it spells, its receiver aside, as the overload
+    /// scan counts them.
+    pub arity: usize,
 }
 
 /// A struct's explicit-destruction obligation, apart from its destructors,
@@ -214,16 +228,43 @@ impl FunctionDeclaration {
     }
 }
 
-/// The overload sets the declarations `functions` and `structs` imply, as
-/// a lookup by name finds them ([`OverloadSets::declared`]).
+/// The overload sets the declarations `functions`, `structs`, and
+/// `traits` imply, as a lookup by name finds them.
+///
+/// A trait's requirement set is its declaration's, which its member
+/// functions do not restate ([`OverloadSets::declared`]).
 pub fn declared_overloads(
     functions: &[FunctionDeclaration],
     structs: &[StructDeclaration],
+    traits: &[TraitDeclaration],
 ) -> OverloadSets {
+    let requirements: Vec<(String, usize)> = traits
+        .iter()
+        .flat_map(|declaration| {
+            declaration.requirements.iter().map(|requirement| {
+                (
+                    format!("{}.{}", declaration.name, requirement.name),
+                    requirement.arity,
+                )
+            })
+        })
+        .collect();
+    let is_trait = |owner: &str| traits.iter().any(|declaration| declaration.name == owner);
     OverloadSets::declared(
         functions
             .iter()
-            .filter_map(FunctionDeclaration::overload_member),
+            .filter_map(FunctionDeclaration::overload_member)
+            .filter(|(family, _)| match family {
+                OverloadFamily::Method(name) => {
+                    split_method_symbol(name).is_none_or(|(owner, _)| !is_trait(owner))
+                }
+                OverloadFamily::Free(_) => true,
+            })
+            .chain(
+                requirements
+                    .iter()
+                    .map(|(name, arity)| (OverloadFamily::Method(name), *arity)),
+            ),
         structs.iter().filter_map(|declaration| {
             declaration
                 .fieldwise_parameters()
