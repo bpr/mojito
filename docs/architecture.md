@@ -1727,7 +1727,17 @@ own operation (`CheckedOp`: the node's `ExprKind` with each child expression
 replaced by the child's node, so its operands are its child edges and a type
 operand stays its annotation), its occurrence, resolved runtime type, value/place/type category, stable owner identity for
 binding uses, extensible effect facts, and a list of semantic adjustments. Checked
-declarations have independent `CheckedDeclId` identities. Source spans index
+declarations have independent `CheckedDeclId` identities. A statement is a
+checked node too (`CheckedStmt`, with a `CheckedStmtId`): its own operation
+(`CheckedStmtOp`: its `StmtKind` with each expression operand a node and each
+body a list of statement nodes, so `if`, `while`, `for`, `try`, `with`, and
+the compile-time forms stay structured as upstream's `hlcf` keeps them), its
+occurrence, the binding it introduces with that binding's type, and its
+declaration. A function's root statements are its op's body; the tables keep
+the module's and each default wrapper's. A lambda's op names its `def`'s
+statement node. HIR and MIR still walk statement syntax and reach a
+statement's node through the transitional `CheckedTables::statement_at`
+(R629). Source spans index
 diagnostics and associate a checker-approved compile-time value argument with
 the register produced from that same source occurrence; they are not used to
 re-resolve a type, overload, effect, or origin decision.

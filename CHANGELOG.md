@@ -8,6 +8,18 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A statement is a checked node (R615), as upstream's is an op: a
+  `CheckedStmt` holds its own `CheckedStmtOp`, its `StmtKind` with each
+  expression a node and each body a list of statement nodes, so control
+  flow stays structured, plus the binding it introduces, that binding's
+  type, and its declaration. HIR and MIR read a statement's declaration
+  and binding from its node rather than from a declaration table keyed by
+  location, a lambda names its `def`'s node instead of keeping a cloned
+  `def`, and a nested `def`'s declaration is no longer a linear search.
+  Every program's output and MIR are unchanged, and so is the total
+  compile time. HIR and MIR still find the node by location (R629), and a
+  declaration's signature is still syntax (R630).
+
 - A checked expression holds its own operation (R614), as an upstream op
   does: `CheckedOp` is the node's `ExprKind` with each child expression
   replaced by the child's node, so the arena no longer copies every

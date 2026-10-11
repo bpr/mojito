@@ -2,8 +2,9 @@
 
 use mojito_ast::ast::Stmt;
 use mojito_ast::ast::{
-    CollectionKind, ComprehensionClause, Expr, ExprKind, InfixOp, KwArg, LoopBindingMode, ParamArg,
-    PrefixOp, SubscriptArg, TStringPart, Type,
+    ArgConvention, CaptureList, CollectionKind, ComprehensionClause, Decorator, Expr, ExprKind,
+    ImportNames, InfixOp, KwArg, LoopBindingMode, MethodProvenance, OriginSpec, Param, ParamArg,
+    ParamKind, PrefixOp, SubscriptArg, TStringPart, Type, TypeParam,
 };
 use mojito_common::literal::{FloatLiteral, IntLiteral};
 use mojito_common::token::{SourceSpan, Span, SyntaxId};
@@ -1203,8 +1204,10 @@ impl CheckedExpr {
 /// A checked expression's own operation.
 ///
 /// It is the node's [`ExprKind`], with each child expression replaced by
-/// the child's node. A type operand stays the annotation as written, and a lambda names nothing: the node's `binding`
-/// is its hidden function's identity.
+/// the child's node. A type operand stays the annotation as written. A
+/// lambda names its hidden `def`'s statement node, as upstream's closure
+/// names the function it closes over; the node's `binding` is that
+/// function's identity.
 #[derive(Debug, Clone)]
 pub enum CheckedOp {
     Int(IntLiteral),
@@ -1258,7 +1261,9 @@ pub enum CheckedOp {
         value: CheckedNodeId,
         clauses: Vec<CheckedComprehensionClause>,
     },
-    Lambda,
+    Lambda {
+        def: CheckedStmtId,
+    },
     TupleLit(Vec<CheckedNodeId>),
     Named {
         name: String,
@@ -1309,7 +1314,7 @@ impl CheckedOp {
             | Self::EmptySubscript
             | Self::Identifier(_)
             | Self::TypeValue(_)
-            | Self::Lambda => {}
+            | Self::Lambda { .. } => {}
             Self::Prefix(_, value)
             | Self::Transfer(value)
             | Self::Spread(value)
@@ -1487,6 +1492,333 @@ pub enum CheckedTStringPart {
     Expr(CheckedNodeId),
 }
 
+/// One statement in the typed semantic arena.
+///
+/// A statement is an op too: it holds its own operation, with each child
+/// expression its node and each body a list of statement nodes, so control
+/// flow stays structured as upstream's `hlcf` keeps it. Its location is its
+/// own occurrence.
+#[derive(Debug, Clone)]
+pub struct CheckedStmt {
+    pub id: CheckedStmtId,
+    pub op: CheckedStmtOp,
+    pub span: Span,
+    pub module: Option<String>,
+    pub syntax_id: SyntaxId,
+    /// The binding the statement introduces.
+    pub binding: Option<mojito_types::origin::OwnerId>,
+    /// The checked type of that binding.
+    pub binding_ty: Option<Ty>,
+    /// The declaration the statement makes.
+    pub declaration: Option<CheckedDeclId>,
+}
+
+impl CheckedStmt {
+    /// The occurrence this node was checked at.
+    pub fn location(&self) -> SourceSpan {
+        SourceSpan::syntax(self.module.clone(), self.span, self.syntax_id)
+    }
+}
+
+/// Stable identity of a statement within one checked program.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct CheckedStmtId(pub u32);
+
+/// A checked statement's own operation.
+///
+/// It is the statement's [`StmtKind`](mojito_ast::ast::StmtKind), with each
+/// child expression replaced by its node and each child statement list by
+/// its statements' nodes. A signature (parameter and return types, type
+/// parameters, decorators, fields) stays the syntax as written.
+#[derive(Debug, Clone)]
+pub enum CheckedStmtOp {
+    VarDecl {
+        name: String,
+        ty: Option<Type>,
+        value: CheckedNodeId,
+    },
+    RefDecl {
+        name: String,
+        value: CheckedNodeId,
+    },
+    Assign {
+        name: String,
+        value: CheckedNodeId,
+    },
+    AugAssign {
+        place: CheckedNodeId,
+        op: InfixOp,
+        value: CheckedNodeId,
+    },
+    Unpack {
+        targets: Vec<CheckedNodeId>,
+        value: CheckedNodeId,
+        declares: bool,
+    },
+    SetPlace {
+        place: CheckedNodeId,
+        value: CheckedNodeId,
+    },
+    Def(Box<CheckedDef>),
+    Struct(Box<CheckedStruct>),
+    Trait(Box<CheckedTrait>),
+    Comptime {
+        name: String,
+        type_params: Vec<TypeParam>,
+        ty: Option<Type>,
+        where_clauses: Vec<CheckedNodeId>,
+        value: CheckedNodeId,
+    },
+    ComptimeIf {
+        branches: Vec<(CheckedNodeId, Vec<CheckedStmtId>)>,
+        orelse: Option<Vec<CheckedStmtId>>,
+    },
+    ComptimeFor {
+        var: String,
+        iter: CheckedNodeId,
+        body: Vec<CheckedStmtId>,
+    },
+    If {
+        branches: Vec<(CheckedNodeId, Vec<CheckedStmtId>)>,
+        orelse: Option<Vec<CheckedStmtId>>,
+    },
+    While {
+        cond: CheckedNodeId,
+        body: Vec<CheckedStmtId>,
+        orelse: Option<Vec<CheckedStmtId>>,
+    },
+    For {
+        var: String,
+        binding: LoopBindingMode,
+        iter: CheckedNodeId,
+        body: Vec<CheckedStmtId>,
+        orelse: Option<Vec<CheckedStmtId>>,
+    },
+    Return(Option<CheckedNodeId>),
+    Raise(CheckedNodeId),
+    Import {
+        path: Vec<String>,
+        alias: Option<String>,
+    },
+    FromImport {
+        level: usize,
+        path: Vec<String>,
+        names: ImportNames,
+    },
+    With {
+        items: Vec<CheckedWithItem>,
+        body: Vec<CheckedStmtId>,
+    },
+    Try {
+        body: Vec<CheckedStmtId>,
+        except: Option<(Option<String>, Vec<CheckedStmtId>)>,
+        orelse: Option<Vec<CheckedStmtId>>,
+        finalbody: Option<Vec<CheckedStmtId>>,
+    },
+    Scope(Vec<CheckedStmtId>),
+    Pass,
+    Break,
+    Continue,
+    Expr(CheckedNodeId),
+}
+
+impl CheckedStmtOp {
+    /// The statement's own expression operands, in checked order; a nested
+    /// body's are its statements'.
+    pub fn expressions(&self) -> Vec<CheckedNodeId> {
+        let params = |params: &[CheckedFnParam]| {
+            params
+                .iter()
+                .filter_map(|param| param.default)
+                .collect::<Vec<_>>()
+        };
+        match self {
+            Self::VarDecl { value, .. }
+            | Self::RefDecl { value, .. }
+            | Self::Assign { value, .. }
+            | Self::Raise(value)
+            | Self::Expr(value) => vec![*value],
+            Self::AugAssign { place, value, .. } | Self::SetPlace { place, value } => {
+                vec![*place, *value]
+            }
+            Self::Unpack { targets, value, .. } => {
+                targets.iter().copied().chain([*value]).collect()
+            }
+            Self::Comptime {
+                where_clauses,
+                value,
+                ..
+            } => where_clauses.iter().copied().chain([*value]).collect(),
+            Self::Def(def) => {
+                let mut operands = params(&def.params);
+                operands.extend(&def.where_clauses);
+                operands
+            }
+            Self::Struct(declaration) => {
+                let mut operands: Vec<_> = declaration
+                    .conformance_conditions
+                    .iter()
+                    .map(|(_, value)| *value)
+                    .chain(declaration.where_clauses.iter().copied())
+                    .collect();
+                for member in &declaration.associated {
+                    operands.extend(&member.where_clauses);
+                    operands.push(member.value);
+                }
+                for method in &declaration.methods {
+                    operands.extend(params(&method.params));
+                    operands.extend(&method.where_clauses);
+                }
+                operands
+            }
+            Self::Trait(declaration) => {
+                let mut operands = Vec::new();
+                for method in &declaration.methods {
+                    operands.extend(params(&method.params));
+                    operands.extend(&method.where_clauses);
+                }
+                for member in &declaration.comptime_members {
+                    operands.extend(&member.where_clauses);
+                }
+                operands
+            }
+            Self::ComptimeIf { branches, .. } | Self::If { branches, .. } => {
+                branches.iter().map(|(condition, _)| *condition).collect()
+            }
+            Self::ComptimeFor { iter, .. } | Self::For { iter, .. } => vec![*iter],
+            Self::While { cond, .. } => vec![*cond],
+            Self::Return(value) => value.iter().copied().collect(),
+            Self::With { items, .. } => items.iter().map(|item| item.context).collect(),
+            Self::Import { .. }
+            | Self::FromImport { .. }
+            | Self::Try { .. }
+            | Self::Scope(_)
+            | Self::Pass
+            | Self::Break
+            | Self::Continue => Vec::new(),
+        }
+    }
+}
+
+/// A checked `def`: its signature as written, its parameter defaults and
+/// constraints as nodes, and its body.
+#[derive(Debug, Clone)]
+pub struct CheckedDef {
+    pub name: String,
+    pub decorators: Vec<Decorator>,
+    pub type_params: Vec<TypeParam>,
+    pub params: Vec<CheckedFnParam>,
+    pub positional_only: Option<usize>,
+    pub keyword_only: Option<usize>,
+    pub captures: Option<CaptureList>,
+    pub raises: bool,
+    pub raises_type: Option<Type>,
+    pub ret: Option<Type>,
+    pub where_clauses: Vec<CheckedNodeId>,
+    pub body: Vec<CheckedStmtId>,
+}
+
+/// A function parameter whose default is a node.
+#[derive(Debug, Clone)]
+pub struct CheckedFnParam {
+    pub name: String,
+    pub ty: Type,
+    pub default: Option<CheckedNodeId>,
+    pub kind: ParamKind,
+    pub convention: Option<ArgConvention>,
+    pub origin: Option<OriginSpec>,
+}
+
+/// A checked `struct`: its members, with their bodies and constraints as
+/// nodes.
+#[derive(Debug, Clone)]
+pub struct CheckedStruct {
+    pub name: String,
+    pub decorators: Vec<Decorator>,
+    pub type_params: Vec<TypeParam>,
+    pub conforms: Vec<String>,
+    pub callable_conformance: Option<Type>,
+    pub conformance_conditions: Vec<(String, CheckedNodeId)>,
+    pub where_clauses: Vec<CheckedNodeId>,
+    pub fields: Vec<Param>,
+    pub associated: Vec<CheckedStructComptime>,
+    pub methods: Vec<CheckedMethod>,
+    pub fieldwise_init: bool,
+}
+
+/// A struct's associated `comptime` member.
+#[derive(Debug, Clone)]
+pub struct CheckedStructComptime {
+    pub name: String,
+    pub params: Vec<TypeParam>,
+    pub ty: Option<Type>,
+    pub where_clauses: Vec<CheckedNodeId>,
+    pub value: CheckedNodeId,
+}
+
+/// A struct method, with its body as statement nodes.
+#[derive(Debug, Clone)]
+pub struct CheckedMethod {
+    pub name: String,
+    pub type_params: Vec<TypeParam>,
+    pub has_self: bool,
+    pub self_convention: Option<ArgConvention>,
+    pub self_origin: Option<OriginSpec>,
+    pub decorators: Vec<Decorator>,
+    pub params: Vec<CheckedFnParam>,
+    pub positional_only: Option<usize>,
+    pub keyword_only: Option<usize>,
+    pub raises: bool,
+    pub raises_type: Option<Type>,
+    pub ret: Option<Type>,
+    pub where_clauses: Vec<CheckedNodeId>,
+    pub body: Vec<CheckedStmtId>,
+    pub provenance: MethodProvenance,
+}
+
+/// A checked `trait`: its requirements, a default's body as statement
+/// nodes.
+#[derive(Debug, Clone)]
+pub struct CheckedTrait {
+    pub name: String,
+    pub refines: Vec<String>,
+    pub methods: Vec<CheckedTraitMethod>,
+    pub comptime_members: Vec<CheckedTraitComptime>,
+}
+
+/// A trait method requirement, and its default's body when it has one.
+#[derive(Debug, Clone)]
+pub struct CheckedTraitMethod {
+    pub name: String,
+    pub type_params: Vec<TypeParam>,
+    pub self_convention: Option<ArgConvention>,
+    pub self_origin: Option<OriginSpec>,
+    pub params: Vec<CheckedFnParam>,
+    pub positional_only: Option<usize>,
+    pub keyword_only: Option<usize>,
+    pub raises: bool,
+    pub raises_type: Option<Type>,
+    pub ret: Option<Type>,
+    pub where_clauses: Vec<CheckedNodeId>,
+    pub default_body: Option<Vec<CheckedStmtId>>,
+}
+
+/// A trait's `comptime` member requirement.
+#[derive(Debug, Clone)]
+pub struct CheckedTraitComptime {
+    pub name: String,
+    pub params: Vec<TypeParam>,
+    pub ty: Type,
+    pub where_clauses: Vec<CheckedNodeId>,
+}
+
+/// One `with` item: its context as a node.
+#[derive(Debug, Clone)]
+pub struct CheckedWithItem {
+    pub context: CheckedNodeId,
+    pub var: Option<String>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct CheckedComprehensionBinding {
     pub name: String,
@@ -1547,48 +1879,32 @@ pub struct CheckedCapture {
     pub origins: Vec<mojito_types::origin::CaptureOrigin>,
 }
 
-/// The whole program's checked expressions and declarations, shared by every
-/// function's HIR and MIR lowering through one `Arc` — lowering a function
-/// never copies program-wide tables.
+/// The whole program's checked expression and statement nodes and its
+/// declarations.
+///
+/// Every function's HIR and MIR lowering shares them through one `Arc`:
+/// lowering a function never copies program-wide tables.
 #[derive(Debug, Default)]
 pub struct CheckedTables {
     /// Indexed by `CheckedNodeId`.
     pub expressions: Vec<CheckedExpr>,
+    /// Indexed by `CheckedStmtId`.
+    pub statements: Vec<CheckedStmt>,
     /// Indexed by `CheckedDeclId`.
     pub declarations: Vec<CheckedDeclaration>,
+    /// The module's root statements, parallel to
+    /// [`CheckedProgram::statements`].
+    roots: Vec<CheckedStmtId>,
+    /// Each default wrapper's root statements, parallel to
+    /// [`CheckedProgram::default_wrappers`].
+    wrapper_roots: Vec<Vec<CheckedStmtId>>,
     /// Nodes whose syntax sits at a source location (several may share one).
     expressions_by_span: HashMap<SourceSpan, Vec<CheckedNodeId>>,
-    /// The last declaration recorded at a source location.
-    declarations_by_span: HashMap<SourceSpan, usize>,
-    /// Each lambda node's hidden `def`, which [`Self::syntax_of`] rebuilds
-    /// the lambda's syntax around.
-    lambda_definitions: HashMap<CheckedNodeId, Stmt>,
+    /// The last statement node at a source location.
+    statements_by_span: HashMap<SourceSpan, CheckedStmtId>,
 }
 
 impl CheckedTables {
-    /// `expressions_by_span` is the arena builder's index: every node at its
-    /// own location, and a construction the checker spelled for a source
-    /// expression (an initializer list's) at that expression's location too.
-    pub fn new(
-        expressions: Vec<CheckedExpr>,
-        declarations: Vec<CheckedDeclaration>,
-        expressions_by_span: HashMap<SourceSpan, Vec<CheckedNodeId>>,
-        lambda_definitions: HashMap<CheckedNodeId, Stmt>,
-    ) -> Self {
-        let declarations_by_span = declarations
-            .iter()
-            .enumerate()
-            .map(|(index, declaration)| (declaration.location.clone(), index))
-            .collect();
-        Self {
-            expressions,
-            declarations,
-            expressions_by_span,
-            declarations_by_span,
-            lambda_definitions,
-        }
-    }
-
     pub fn expression(&self, id: CheckedNodeId) -> Option<&CheckedExpr> {
         self.expressions.get(id.0 as usize)
     }
@@ -1722,8 +2038,8 @@ impl CheckedTables {
                     })
                     .collect::<Option<_>>()?,
             },
-            CheckedOp::Lambda => ExprKind::Lambda {
-                def: Box::new(self.lambda_definitions.get(&id)?.clone()),
+            CheckedOp::Lambda { def } => ExprKind::Lambda {
+                def: Box::new(self.statement_syntax_of(*def)?),
             },
             CheckedOp::Named { name, value } => ExprKind::Named {
                 name: name.clone(),
@@ -1830,11 +2146,339 @@ impl CheckedTables {
         self.declarations.get(id.0 as usize)
     }
 
-    /// The declaration recorded at a statement's source location.
-    pub fn declaration_at(&self, span: &SourceSpan) -> Option<&CheckedDeclaration> {
-        self.declarations_by_span
+    pub fn statement(&self, id: CheckedStmtId) -> Option<&CheckedStmt> {
+        self.statements.get(id.0 as usize)
+    }
+
+    /// The module's root statements, parallel to
+    /// [`CheckedProgram::statements`].
+    pub fn roots(&self) -> &[CheckedStmtId] {
+        &self.roots
+    }
+
+    /// The root statements of default wrapper `index`, parallel to
+    /// [`CheckedProgram::default_wrappers`].
+    pub fn wrapper_roots(&self, index: usize) -> &[CheckedStmtId] {
+        self.wrapper_roots.get(index).map_or(&[][..], Vec::as_slice)
+    }
+
+    /// The statement node at a statement's source location. Transitional,
+    /// for HIR's and MIR's syntax walks; R623 deletes it once both walk
+    /// statement nodes.
+    pub fn statement_at(&self, span: &SourceSpan) -> Option<&CheckedStmt> {
+        self.statements_by_span
             .get(span)
-            .and_then(|&index| self.declarations.get(index))
+            .and_then(|id| self.statement(*id))
+    }
+
+    /// The syntax of statement `id` and its bodies, rebuilt from their ops,
+    /// each expression through [`Self::syntax_of`]. Transitional, as
+    /// `syntax_of` is; R623 deletes it.
+    pub fn statement_syntax_of(&self, id: CheckedStmtId) -> Option<Stmt> {
+        use mojito_ast::ast::{
+            FnParam, Method, StmtKind, StructComptime, TraitComptime, TraitMethod, WithItem,
+        };
+        let node = self.statement(id)?;
+        let expr = |id: &CheckedNodeId| self.syntax_of(*id);
+        let exprs = |ids: &[CheckedNodeId]| ids.iter().map(expr).collect::<Option<Vec<_>>>();
+        let block = |ids: &[CheckedStmtId]| {
+            ids.iter()
+                .map(|id| self.statement_syntax_of(*id))
+                .collect::<Option<Vec<_>>>()
+        };
+        let optional_block = |ids: &Option<Vec<CheckedStmtId>>| {
+            ids.as_ref().map_or(Some(None), |ids| block(ids).map(Some))
+        };
+        let params = |params: &[CheckedFnParam]| {
+            params
+                .iter()
+                .map(|param| {
+                    Some(FnParam {
+                        name: param.name.clone(),
+                        ty: param.ty.clone(),
+                        default: param
+                            .default
+                            .as_ref()
+                            .map_or(Some(None), |id| expr(id).map(Some))?,
+                        kind: param.kind,
+                        convention: param.convention,
+                        origin: param.origin.clone(),
+                    })
+                })
+                .collect::<Option<Vec<_>>>()
+        };
+        let branches = |branches: &[(CheckedNodeId, Vec<CheckedStmtId>)]| {
+            branches
+                .iter()
+                .map(|(condition, body)| Some((expr(condition)?, block(body)?)))
+                .collect::<Option<Vec<_>>>()
+        };
+        let kind = match &node.op {
+            CheckedStmtOp::VarDecl { name, ty, value } => StmtKind::VarDecl {
+                name: name.clone(),
+                ty: ty.clone(),
+                value: expr(value)?,
+            },
+            CheckedStmtOp::RefDecl { name, value } => StmtKind::RefDecl {
+                name: name.clone(),
+                value: expr(value)?,
+            },
+            CheckedStmtOp::Assign { name, value } => StmtKind::Assign {
+                name: name.clone(),
+                value: expr(value)?,
+            },
+            CheckedStmtOp::AugAssign { place, op, value } => StmtKind::AugAssign {
+                place: expr(place)?,
+                op: *op,
+                value: expr(value)?,
+            },
+            CheckedStmtOp::Unpack {
+                targets,
+                value,
+                declares,
+            } => StmtKind::Unpack {
+                targets: exprs(targets)?,
+                value: expr(value)?,
+                declares: *declares,
+            },
+            CheckedStmtOp::SetPlace { place, value } => StmtKind::SetPlace {
+                place: expr(place)?,
+                value: expr(value)?,
+            },
+            CheckedStmtOp::Def(def) => StmtKind::Def {
+                name: def.name.clone(),
+                decorators: def.decorators.clone(),
+                type_params: def.type_params.clone(),
+                params: params(&def.params)?,
+                positional_only: def.positional_only,
+                keyword_only: def.keyword_only,
+                captures: def.captures.clone(),
+                raises: def.raises,
+                raises_type: def.raises_type.clone(),
+                ret: def.ret.clone(),
+                where_clauses: exprs(&def.where_clauses)?,
+                body: block(&def.body)?,
+            },
+            CheckedStmtOp::Struct(declaration) => StmtKind::Struct {
+                name: declaration.name.clone(),
+                decorators: declaration.decorators.clone(),
+                type_params: declaration.type_params.clone(),
+                conforms: declaration.conforms.clone(),
+                callable_conformance: declaration.callable_conformance.clone(),
+                conformance_conditions: declaration
+                    .conformance_conditions
+                    .iter()
+                    .map(|(name, value)| Some((name.clone(), expr(value)?)))
+                    .collect::<Option<_>>()?,
+                where_clauses: exprs(&declaration.where_clauses)?,
+                fields: declaration.fields.clone(),
+                associated: declaration
+                    .associated
+                    .iter()
+                    .map(|member| {
+                        Some(StructComptime {
+                            name: member.name.clone(),
+                            params: member.params.clone(),
+                            ty: member.ty.clone(),
+                            where_clauses: exprs(&member.where_clauses)?,
+                            value: expr(&member.value)?,
+                        })
+                    })
+                    .collect::<Option<_>>()?,
+                methods: declaration
+                    .methods
+                    .iter()
+                    .map(|method| {
+                        Some(Method {
+                            name: method.name.clone(),
+                            type_params: method.type_params.clone(),
+                            has_self: method.has_self,
+                            self_convention: method.self_convention,
+                            self_origin: method.self_origin.clone(),
+                            decorators: method.decorators.clone(),
+                            params: params(&method.params)?,
+                            positional_only: method.positional_only,
+                            keyword_only: method.keyword_only,
+                            raises: method.raises,
+                            raises_type: method.raises_type.clone(),
+                            ret: method.ret.clone(),
+                            where_clauses: exprs(&method.where_clauses)?,
+                            body: block(&method.body)?,
+                            provenance: method.provenance,
+                        })
+                    })
+                    .collect::<Option<_>>()?,
+                fieldwise_init: declaration.fieldwise_init,
+            },
+            CheckedStmtOp::Trait(declaration) => StmtKind::Trait {
+                name: declaration.name.clone(),
+                refines: declaration.refines.clone(),
+                methods: declaration
+                    .methods
+                    .iter()
+                    .map(|method| {
+                        Some(TraitMethod {
+                            name: method.name.clone(),
+                            type_params: method.type_params.clone(),
+                            self_convention: method.self_convention,
+                            self_origin: method.self_origin.clone(),
+                            params: params(&method.params)?,
+                            positional_only: method.positional_only,
+                            keyword_only: method.keyword_only,
+                            raises: method.raises,
+                            raises_type: method.raises_type.clone(),
+                            ret: method.ret.clone(),
+                            where_clauses: exprs(&method.where_clauses)?,
+                            default_body: optional_block(&method.default_body)?,
+                        })
+                    })
+                    .collect::<Option<_>>()?,
+                comptime_members: declaration
+                    .comptime_members
+                    .iter()
+                    .map(|member| {
+                        Some(TraitComptime {
+                            name: member.name.clone(),
+                            params: member.params.clone(),
+                            ty: member.ty.clone(),
+                            where_clauses: exprs(&member.where_clauses)?,
+                        })
+                    })
+                    .collect::<Option<_>>()?,
+            },
+            CheckedStmtOp::Comptime {
+                name,
+                type_params,
+                ty,
+                where_clauses,
+                value,
+            } => StmtKind::Comptime {
+                name: name.clone(),
+                type_params: type_params.clone(),
+                ty: ty.clone(),
+                where_clauses: exprs(where_clauses)?,
+                value: expr(value)?,
+            },
+            CheckedStmtOp::ComptimeIf {
+                branches: arms,
+                orelse,
+            } => StmtKind::ComptimeIf {
+                branches: branches(arms)?,
+                orelse: optional_block(orelse)?,
+            },
+            CheckedStmtOp::ComptimeFor { var, iter, body } => StmtKind::ComptimeFor {
+                var: var.clone(),
+                iter: expr(iter)?,
+                body: block(body)?,
+            },
+            CheckedStmtOp::If {
+                branches: arms,
+                orelse,
+            } => StmtKind::If {
+                branches: branches(arms)?,
+                orelse: optional_block(orelse)?,
+            },
+            CheckedStmtOp::While { cond, body, orelse } => StmtKind::While {
+                cond: expr(cond)?,
+                body: block(body)?,
+                orelse: optional_block(orelse)?,
+            },
+            CheckedStmtOp::For {
+                var,
+                binding,
+                iter,
+                body,
+                orelse,
+            } => StmtKind::For {
+                var: var.clone(),
+                binding: *binding,
+                iter: expr(iter)?,
+                body: block(body)?,
+                orelse: optional_block(orelse)?,
+            },
+            CheckedStmtOp::Return(value) => {
+                StmtKind::Return(value.as_ref().map_or(Some(None), |id| expr(id).map(Some))?)
+            }
+            CheckedStmtOp::Raise(value) => StmtKind::Raise(expr(value)?),
+            CheckedStmtOp::Import { path, alias } => StmtKind::Import {
+                path: path.clone(),
+                alias: alias.clone(),
+            },
+            CheckedStmtOp::FromImport { level, path, names } => StmtKind::FromImport {
+                level: *level,
+                path: path.clone(),
+                names: names.clone(),
+            },
+            CheckedStmtOp::With { items, body } => StmtKind::With {
+                items: items
+                    .iter()
+                    .map(|item| {
+                        Some(WithItem {
+                            context: expr(&item.context)?,
+                            var: item.var.clone(),
+                        })
+                    })
+                    .collect::<Option<_>>()?,
+                body: block(body)?,
+            },
+            CheckedStmtOp::Try {
+                body,
+                except,
+                orelse,
+                finalbody,
+            } => StmtKind::Try {
+                body: block(body)?,
+                except: except.as_ref().map_or(Some(None), |(name, body)| {
+                    block(body).map(|body| Some((name.clone(), body)))
+                })?,
+                orelse: optional_block(orelse)?,
+                finalbody: optional_block(finalbody)?,
+            },
+            CheckedStmtOp::Scope(body) => StmtKind::Scope(block(body)?),
+            CheckedStmtOp::Pass => StmtKind::Pass,
+            CheckedStmtOp::Break => StmtKind::Break,
+            CheckedStmtOp::Continue => StmtKind::Continue,
+            CheckedStmtOp::Expr(value) => StmtKind::Expr(expr(value)?),
+        };
+        Some(Stmt {
+            kind,
+            span: node.span,
+            module: node.module.clone(),
+            syntax_id: node.syntax_id,
+        })
+    }
+
+    /// `expressions_by_span` is the arena builder's index: every node at its
+    /// own location, and a construction the checker spelled for a source
+    /// expression (an initializer list's) at that expression's location too.
+    /// Each statement node takes the last declaration recorded at its
+    /// location.
+    fn new(arena: CheckedArena, declarations: Vec<CheckedDeclaration>) -> Self {
+        let CheckedArena {
+            nodes: expressions,
+            index: expressions_by_span,
+            mut statements,
+            roots,
+            wrapper_roots,
+            statements_by_span,
+        } = arena;
+        let declared: HashMap<&SourceSpan, CheckedDeclId> = declarations
+            .iter()
+            .map(|declaration| (&declaration.location, declaration.id))
+            .collect();
+        for statement in &mut statements {
+            statement.declaration = declared.get(&statement.location()).copied();
+        }
+        drop(declared);
+        Self {
+            expressions,
+            statements,
+            declarations,
+            roots,
+            wrapper_roots,
+            expressions_by_span,
+            statements_by_span,
+        }
     }
 
     fn param_arg_syntax(&self, argument: &CheckedParamArg) -> Option<ParamArg> {
@@ -2430,11 +3074,8 @@ impl CheckedProgram {
             trait_members,
         } = discovery;
         let expressions_span = mojito_common::timing::span("expressions");
-        let CheckedArena {
-            nodes: expressions,
-            index: expression_index,
-            lambda_definitions,
-        } = build_checked_expressions(&statements, &node_facts, &default_wrappers, None);
+        let arena = build_checked_expressions(&statements, &node_facts, &default_wrappers, None);
+        let expression_index = arena.index.clone();
         drop(expressions_span);
         let _declarations = mojito_common::timing::span("declarations");
         let declarations =
@@ -2460,12 +3101,7 @@ impl CheckedProgram {
             }),
             checked_types,
             generic_parameters,
-            tables: Arc::new(CheckedTables::new(
-                expressions,
-                declarations,
-                expression_index.clone(),
-                lambda_definitions,
-            )),
+            tables: Arc::new(CheckedTables::new(arena, declarations)),
             expression_index,
             explicit_destroy_types,
             struct_destructors,
@@ -2633,17 +3269,22 @@ fn build_checked_expressions(
         scan,
         nodes: Vec::new(),
         index: HashMap::new(),
-        lambda_definitions: HashMap::new(),
+        statements: Vec::new(),
+        statements_by_span: HashMap::new(),
         facts,
     };
-    builder.block(statements);
-    for wrapper in default_wrappers {
-        builder.block(&wrapper.body);
-    }
+    let roots = builder.block(statements);
+    let wrapper_roots = default_wrappers
+        .iter()
+        .map(|wrapper| builder.block(&wrapper.body))
+        .collect();
     CheckedArena {
         nodes: builder.nodes,
         index: builder.index,
-        lambda_definitions: builder.lambda_definitions,
+        statements: builder.statements,
+        roots,
+        wrapper_roots,
+        statements_by_span: builder.statements_by_span,
     }
 }
 
@@ -2651,7 +3292,10 @@ fn build_checked_expressions(
 struct CheckedArena {
     nodes: Vec<CheckedExpr>,
     index: HashMap<SourceSpan, Vec<CheckedNodeId>>,
-    lambda_definitions: HashMap<CheckedNodeId, Stmt>,
+    statements: Vec<CheckedStmt>,
+    roots: Vec<CheckedStmtId>,
+    wrapper_roots: Vec<Vec<CheckedStmtId>>,
+    statements_by_span: HashMap<SourceSpan, CheckedStmtId>,
 }
 
 /// The checked arena under construction.
@@ -2661,7 +3305,8 @@ struct ArenaBuilder<'a, 's> {
     scan: Option<&'s mut dyn FnMut(&Expr)>,
     nodes: Vec<CheckedExpr>,
     index: HashMap<SourceSpan, Vec<CheckedNodeId>>,
-    lambda_definitions: HashMap<CheckedNodeId, Stmt>,
+    statements: Vec<CheckedStmt>,
+    statements_by_span: HashMap<SourceSpan, CheckedStmtId>,
     facts: &'a HashMap<SourceSpan, NodeFacts>,
 }
 
@@ -2708,9 +3353,6 @@ impl<'a> ArenaBuilder<'a, '_> {
             _ => ValueCategory::Value,
         };
         let id = CheckedNodeId(self.nodes.len() as u32);
-        if let ExprKind::Lambda { def } = &expression.kind {
-            self.lambda_definitions.insert(id, (**def).clone());
-        }
         self.nodes.push(CheckedExpr {
             id,
             op,
@@ -2962,13 +3604,11 @@ impl<'a> ArenaBuilder<'a, '_> {
                     .collect(),
                 raw: *raw,
             },
-            // A lambda node has no operands, but its hidden definition's
-            // body is built exactly like a nested `def` statement's body so
-            // the body's checked facts become checked nodes.
-            ExprKind::Lambda { def } => {
-                self.block(std::slice::from_ref(def));
-                CheckedOp::Lambda
-            }
+            // A lambda node has no operands; it names its hidden
+            // definition, built exactly like a nested `def` statement.
+            ExprKind::Lambda { def } => CheckedOp::Lambda {
+                def: self.stmt(def),
+            },
         }
     }
 
@@ -3044,175 +3684,324 @@ impl<'a> ArenaBuilder<'a, '_> {
         }
     }
 
-    fn block(&mut self, statements: &[Stmt]) {
-        use mojito_ast::ast::StmtKind::{
-            Assign, AugAssign, Break, Comptime, ComptimeFor, ComptimeIf, Continue, Def, Expr, For,
-            FromImport, If, Import, Pass, Raise, RefDecl, Return, Scope, SetPlace, Struct, Trait,
-            Try, Unpack, VarDecl, While, With,
+    fn block(&mut self, statements: &[Stmt]) -> Vec<CheckedStmtId> {
+        statements
+            .iter()
+            .map(|statement| self.stmt(statement))
+            .collect()
+    }
+
+    /// `statement`'s node, built after its operands' and bodies' nodes; in
+    /// scan mode, the traversal alone.
+    fn stmt(&mut self, statement: &Stmt) -> CheckedStmtId {
+        let op = self.stmt_op(statement);
+        if self.scan.is_some() {
+            return CheckedStmtId(0);
+        }
+        let span = statement.source_span();
+        let facts = self.facts(&span);
+        let id = CheckedStmtId(self.statements.len() as u32);
+        self.statements.push(CheckedStmt {
+            id,
+            op,
+            span: statement.span,
+            module: statement.module.clone(),
+            syntax_id: statement.syntax_id,
+            binding: facts.statement_binding,
+            binding_ty: facts.binding_ty.clone(),
+            declaration: None,
+        });
+        self.statements_by_span.insert(span, id);
+        id
+    }
+
+    /// `statement`'s own operation, its expressions' and bodies' nodes built
+    /// in their structural order.
+    fn stmt_op(&mut self, statement: &Stmt) -> CheckedStmtOp {
+        use mojito_ast::ast::StmtKind;
+        let values = |this: &mut Self, values: &[Expr]| {
+            values
+                .iter()
+                .map(|value| this.expr(value))
+                .collect::<Vec<_>>()
         };
-        for statement in statements {
-            match &statement.kind {
-                VarDecl { ty, value, .. } => {
-                    if let Some(ty) = ty {
-                        self.type_applications(ty);
-                    }
-                    self.expr(value);
+        let optional_block =
+            |this: &mut Self, body: &Option<Vec<Stmt>>| body.as_ref().map(|body| this.block(body));
+        let branches = |this: &mut Self, branches: &[(Expr, Vec<Stmt>)]| {
+            branches
+                .iter()
+                .map(|(condition, body)| (this.expr(condition), this.block(body)))
+                .collect::<Vec<_>>()
+        };
+        match &statement.kind {
+            StmtKind::VarDecl { name, ty, value } => {
+                if let Some(ty) = ty {
+                    self.type_applications(ty);
                 }
-                RefDecl { value, .. } | Assign { value, .. } | Raise(value) | Expr(value) => {
-                    self.expr(value);
+                CheckedStmtOp::VarDecl {
+                    name: name.clone(),
+                    ty: ty.clone(),
+                    value: self.expr(value),
                 }
-                Comptime {
-                    where_clauses,
-                    value,
-                    ..
-                } => {
-                    for constraint in where_clauses {
-                        self.expr(constraint);
-                    }
-                    self.expr(value);
-                }
-                AugAssign { place, value, .. } | SetPlace { place, value } => {
-                    self.expr(place);
-                    self.expr(value);
-                }
-                Unpack { targets, value, .. } => {
-                    for target in targets {
-                        self.expr(target);
-                    }
-                    self.expr(value);
-                }
-                Def {
-                    params,
-                    where_clauses,
-                    body,
-                    ..
-                } => {
-                    for param in params {
-                        if let Some(value) = &param.default {
-                            self.expr(value);
-                        }
-                    }
-                    for value in where_clauses {
-                        self.expr(value);
-                    }
-                    self.block(body);
-                }
-                Struct {
+            }
+            StmtKind::RefDecl { name, value } => CheckedStmtOp::RefDecl {
+                name: name.clone(),
+                value: self.expr(value),
+            },
+            StmtKind::Assign { name, value } => CheckedStmtOp::Assign {
+                name: name.clone(),
+                value: self.expr(value),
+            },
+            StmtKind::Raise(value) => CheckedStmtOp::Raise(self.expr(value)),
+            StmtKind::Expr(value) => CheckedStmtOp::Expr(self.expr(value)),
+            StmtKind::Comptime {
+                name,
+                type_params,
+                ty,
+                where_clauses,
+                value,
+            } => CheckedStmtOp::Comptime {
+                name: name.clone(),
+                type_params: type_params.clone(),
+                ty: ty.clone(),
+                where_clauses: values(self, where_clauses),
+                value: self.expr(value),
+            },
+            StmtKind::AugAssign { place, op, value } => CheckedStmtOp::AugAssign {
+                place: self.expr(place),
+                op: *op,
+                value: self.expr(value),
+            },
+            StmtKind::SetPlace { place, value } => CheckedStmtOp::SetPlace {
+                place: self.expr(place),
+                value: self.expr(value),
+            },
+            StmtKind::Unpack {
+                targets,
+                value,
+                declares,
+            } => CheckedStmtOp::Unpack {
+                targets: values(self, targets),
+                value: self.expr(value),
+                declares: *declares,
+            },
+            StmtKind::Def {
+                name,
+                decorators,
+                type_params,
+                params,
+                positional_only,
+                keyword_only,
+                captures,
+                raises,
+                raises_type,
+                ret,
+                where_clauses,
+                body,
+            } => CheckedStmtOp::Def(Box::new(CheckedDef {
+                name: name.clone(),
+                decorators: decorators.clone(),
+                type_params: type_params.clone(),
+                params: self.fn_params(params),
+                positional_only: *positional_only,
+                keyword_only: *keyword_only,
+                captures: captures.clone(),
+                raises: *raises,
+                raises_type: raises_type.clone(),
+                ret: ret.clone(),
+                where_clauses: values(self, where_clauses),
+                body: self.block(body),
+            })),
+            StmtKind::Struct {
+                name,
+                decorators,
+                type_params,
+                conforms,
+                callable_conformance,
+                conformance_conditions,
+                where_clauses,
+                fields,
+                associated,
+                methods,
+                fieldwise_init,
+            } => {
+                let conformance_conditions = conformance_conditions
+                    .iter()
+                    .map(|(name, value)| (name.clone(), self.expr(value)))
+                    .collect();
+                let where_clauses = values(self, where_clauses);
+                let associated = associated
+                    .iter()
+                    .map(|member| CheckedStructComptime {
+                        name: member.name.clone(),
+                        params: member.params.clone(),
+                        ty: member.ty.clone(),
+                        where_clauses: values(self, &member.where_clauses),
+                        value: self.expr(&member.value),
+                    })
+                    .collect();
+                let methods = methods
+                    .iter()
+                    .map(|method| CheckedMethod {
+                        name: method.name.clone(),
+                        type_params: method.type_params.clone(),
+                        has_self: method.has_self,
+                        self_convention: method.self_convention,
+                        self_origin: method.self_origin.clone(),
+                        decorators: method.decorators.clone(),
+                        params: self.fn_params(&method.params),
+                        positional_only: method.positional_only,
+                        keyword_only: method.keyword_only,
+                        raises: method.raises,
+                        raises_type: method.raises_type.clone(),
+                        ret: method.ret.clone(),
+                        where_clauses: values(self, &method.where_clauses),
+                        body: self.block(&method.body),
+                        provenance: method.provenance,
+                    })
+                    .collect();
+                CheckedStmtOp::Struct(Box::new(CheckedStruct {
+                    name: name.clone(),
+                    decorators: decorators.clone(),
+                    type_params: type_params.clone(),
+                    conforms: conforms.clone(),
+                    callable_conformance: callable_conformance.clone(),
                     conformance_conditions,
                     where_clauses,
+                    fields: fields.clone(),
                     associated,
                     methods,
-                    ..
-                } => {
-                    for (_, value) in conformance_conditions {
-                        self.expr(value);
-                    }
-                    for value in where_clauses {
-                        self.expr(value);
-                    }
-                    for value in associated {
-                        for constraint in &value.where_clauses {
-                            self.expr(constraint);
-                        }
-                        self.expr(&value.value);
-                    }
-                    for method in methods {
-                        for param in &method.params {
-                            if let Some(value) = &param.default {
-                                self.expr(value);
-                            }
-                        }
-                        for value in &method.where_clauses {
-                            self.expr(value);
-                        }
-                        self.block(&method.body);
-                    }
-                }
-                Trait {
+                    fieldwise_init: *fieldwise_init,
+                }))
+            }
+            StmtKind::Trait {
+                name,
+                refines,
+                methods,
+                comptime_members,
+            } => {
+                let methods = methods
+                    .iter()
+                    .map(|method| CheckedTraitMethod {
+                        name: method.name.clone(),
+                        type_params: method.type_params.clone(),
+                        self_convention: method.self_convention,
+                        self_origin: method.self_origin.clone(),
+                        params: self.fn_params(&method.params),
+                        positional_only: method.positional_only,
+                        keyword_only: method.keyword_only,
+                        raises: method.raises,
+                        raises_type: method.raises_type.clone(),
+                        ret: method.ret.clone(),
+                        where_clauses: values(self, &method.where_clauses),
+                        default_body: optional_block(self, &method.default_body),
+                    })
+                    .collect();
+                let comptime_members = comptime_members
+                    .iter()
+                    .map(|member| CheckedTraitComptime {
+                        name: member.name.clone(),
+                        params: member.params.clone(),
+                        ty: member.ty.clone(),
+                        where_clauses: values(self, &member.where_clauses),
+                    })
+                    .collect();
+                CheckedStmtOp::Trait(Box::new(CheckedTrait {
+                    name: name.clone(),
+                    refines: refines.clone(),
                     methods,
                     comptime_members,
-                    ..
-                } => {
-                    for method in methods {
-                        for param in &method.params {
-                            if let Some(value) = &param.default {
-                                self.expr(value);
-                            }
-                        }
-                        for value in &method.where_clauses {
-                            self.expr(value);
-                        }
-                        if let Some(body) = &method.default_body {
-                            self.block(body);
-                        }
-                    }
-                    for member in comptime_members {
-                        for constraint in &member.where_clauses {
-                            self.expr(constraint);
-                        }
-                    }
-                }
-                ComptimeIf { branches, orelse } | If { branches, orelse } => {
-                    for (condition, body) in branches {
-                        self.expr(condition);
-                        self.block(body);
-                    }
-                    if let Some(body) = orelse {
-                        self.block(body);
-                    }
-                }
-                ComptimeFor { iter, body, .. } => {
-                    self.expr(iter);
-                    self.block(body);
-                }
-                Scope(body) => self.block(body),
-                While { cond, body, orelse } => {
-                    self.expr(cond);
-                    self.block(body);
-                    if let Some(body) = orelse {
-                        self.block(body);
-                    }
-                }
-                For {
-                    iter, body, orelse, ..
-                } => {
-                    self.expr(iter);
-                    self.block(body);
-                    if let Some(body) = orelse {
-                        self.block(body);
-                    }
-                }
-                Return(value) => {
-                    if let Some(value) = value {
-                        self.expr(value);
-                    }
-                }
-                With { items, body } => {
-                    for item in items {
-                        self.expr(&item.context);
-                    }
-                    self.block(body);
-                }
-                Try {
-                    body,
-                    except,
-                    orelse,
-                    finalbody,
-                } => {
-                    self.block(body);
-                    if let Some((_, body)) = except {
-                        self.block(body);
-                    }
-                    if let Some(body) = orelse {
-                        self.block(body);
-                    }
-                    if let Some(body) = finalbody {
-                        self.block(body);
-                    }
-                }
-                Import { .. } | FromImport { .. } | Pass | Break | Continue => {}
+                }))
             }
+            StmtKind::ComptimeIf {
+                branches: arms,
+                orelse,
+            } => CheckedStmtOp::ComptimeIf {
+                branches: branches(self, arms),
+                orelse: optional_block(self, orelse),
+            },
+            StmtKind::If {
+                branches: arms,
+                orelse,
+            } => CheckedStmtOp::If {
+                branches: branches(self, arms),
+                orelse: optional_block(self, orelse),
+            },
+            StmtKind::ComptimeFor { var, iter, body } => CheckedStmtOp::ComptimeFor {
+                var: var.clone(),
+                iter: self.expr(iter),
+                body: self.block(body),
+            },
+            StmtKind::Scope(body) => CheckedStmtOp::Scope(self.block(body)),
+            StmtKind::While { cond, body, orelse } => CheckedStmtOp::While {
+                cond: self.expr(cond),
+                body: self.block(body),
+                orelse: optional_block(self, orelse),
+            },
+            StmtKind::For {
+                var,
+                binding,
+                iter,
+                body,
+                orelse,
+            } => CheckedStmtOp::For {
+                var: var.clone(),
+                binding: *binding,
+                iter: self.expr(iter),
+                body: self.block(body),
+                orelse: optional_block(self, orelse),
+            },
+            StmtKind::Return(value) => CheckedStmtOp::Return(self.optional(value.as_ref())),
+            StmtKind::With { items, body } => CheckedStmtOp::With {
+                items: items
+                    .iter()
+                    .map(|item| CheckedWithItem {
+                        context: self.expr(&item.context),
+                        var: item.var.clone(),
+                    })
+                    .collect(),
+                body: self.block(body),
+            },
+            StmtKind::Try {
+                body,
+                except,
+                orelse,
+                finalbody,
+            } => CheckedStmtOp::Try {
+                body: self.block(body),
+                except: except
+                    .as_ref()
+                    .map(|(name, body)| (name.clone(), self.block(body))),
+                orelse: optional_block(self, orelse),
+                finalbody: optional_block(self, finalbody),
+            },
+            StmtKind::Import { path, alias } => CheckedStmtOp::Import {
+                path: path.clone(),
+                alias: alias.clone(),
+            },
+            StmtKind::FromImport { level, path, names } => CheckedStmtOp::FromImport {
+                level: *level,
+                path: path.clone(),
+                names: names.clone(),
+            },
+            StmtKind::Pass => CheckedStmtOp::Pass,
+            StmtKind::Break => CheckedStmtOp::Break,
+            StmtKind::Continue => CheckedStmtOp::Continue,
         }
+    }
+
+    fn fn_params(&mut self, params: &[mojito_ast::ast::FnParam]) -> Vec<CheckedFnParam> {
+        params
+            .iter()
+            .map(|param| CheckedFnParam {
+                name: param.name.clone(),
+                ty: param.ty.clone(),
+                default: self.optional(param.default.as_ref()),
+                kind: param.kind,
+                convention: param.convention,
+                origin: param.origin.clone(),
+            })
+            .collect()
     }
 }
 

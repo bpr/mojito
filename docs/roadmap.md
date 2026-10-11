@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R629**.
+Next free ID: **R631**.
 
 ## Ordered Work
 
@@ -4759,21 +4759,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R615 A statement has no checked node, where upstream's is an op**
-
-  The checked arena holds expressions only, so a statement's binding,
-  binding type, and declaration are found through its syntax.
-  - The lever: `CheckedStmt`, the statement's own `StmtKind` with its
-    children as node ids, plus its binding, binding type, and
-    `CheckedDeclaration`; `CheckedTables::statements` and each function's
-    root statement list.
-  - `if`, `while`, `for`, and `try` stay structured, as upstream's `hlcf`
-    does.
-  - A transitional `statement_syntax_of` serves HIR until R623.
-  - Plan: `R604-a-package-s-checked-body-is-plan.md`, slice 5.
-  - Depends on R614.
-  - Model: Fable, Not Planned.
-
 - [ ] **R616 A package's checked body is syntax beside per-occurrence
   fact records, where upstream's is typed `lit` ops**
 
@@ -4872,6 +4857,22 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on R616, R618, R619, R620, R621, R622.
   - Model: Opus, Not Planned.
 
+- [ ] **R629 HIR and MIR find a statement's checked node by its location**
+
+  `CheckedTables::statement_at` looks a statement's node up in the
+  span-keyed `statements_by_span`, because HIR and MIR still walk `Stmt`
+  syntax.
+  - The lever: every CFG MIR builds hands HIR the body's statement ids:
+    units, the top level, nested defs and lambdas, `try` regions, and the
+    expression thunks' prologue statements.
+  - A trait member's ids are its trait op's `methods[i].default_body` in
+    the whole program, and its `def`'s `body` in a unit; its derived
+    root `def` has no node of its own.
+  - Done when `statement_at` and `statements_by_span` are deleted.
+  - Found while landing R615 (2026-10-11).
+  - Depends on R617, R622.
+  - Model: Opus, Not Planned.
+
 - [ ] **R628 A checked op's type operand is annotation syntax, where
   upstream's is a resolved type attribute**
 
@@ -4882,6 +4883,22 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     nodes MIR finds by span.
   - Done when no `CheckedOp` variant holds an `ast::Type`.
   - Depends on R623.
+  - Model: Opus, Not Planned.
+
+- [ ] **R630 A checked declaration op's signature is syntax, where
+  upstream's is a resolved function type**
+
+  `CheckedDef`, `CheckedMethod`, `CheckedTraitMethod`,
+  `CheckedStruct::fields`, and the `VarDecl`/`Comptime` `ty` hold
+  `ast::Type`, `TypeParam`, and `Decorator` attributes as written.
+  - A `TypeParam`'s `default` and `origin_mutability` and a decorator's
+    arguments are `Expr`s with no node.
+  - The lever: the op holds the declaration's checked signature, its
+    `FunctionType` annotation site's `Ty` and its `generic_parameters`
+    `ParamDecl`s.
+  - Done when no `CheckedStmtOp` payload holds an `ast::Type`.
+  - Found while landing R615 (2026-10-11).
+  - Depends on R628.
   - Model: Opus, Not Planned.
 
 - [ ] **R624 The check writes fact records for a later pass to gather into

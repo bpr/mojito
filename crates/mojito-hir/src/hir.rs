@@ -1135,15 +1135,17 @@ impl Lower {
         for root in statement_expression_roots_mut(&mut syntax) {
             self.substitute_spelled_constructions(root);
         }
-        let declaration = self.checked.declaration_at(&syntax.source_span());
+        let node = self.checked.statement_at(&syntax.source_span());
+        let declaration = node.and_then(|node| node.declaration);
+        let binding = node.and_then(|node| node.binding);
         let expressions = statement_expression_roots(&syntax)
             .into_iter()
             .map(|expression| self.expr(expression))
             .collect();
         HirStmt {
             syntax,
-            declaration: declaration.map(|declaration| declaration.id),
-            binding: declaration.and_then(|declaration| declaration.binding),
+            declaration,
+            binding,
             expressions,
         }
     }
@@ -1215,8 +1217,8 @@ impl Lower {
                 let index = self.declare_var(var);
                 let binding = self
                     .checked
-                    .declaration_at(&s.source_span())
-                    .and_then(|declaration| declaration.binding);
+                    .statement_at(&s.source_span())
+                    .and_then(|node| node.binding);
                 self.seal(Terminator::ComptimeLoop {
                     iter,
                     var: var.clone(),
@@ -1356,7 +1358,9 @@ impl Lower {
                 let v = self.declare_var(var);
                 let declaration = self
                     .checked
-                    .declaration_at(&s.source_span())
+                    .statement_at(&s.source_span())
+                    .and_then(|node| node.declaration)
+                    .and_then(|id| self.checked.declaration(id))
                     .expect("checked for-loop binding declaration");
                 let binding = declaration
                     .binding
@@ -1503,8 +1507,8 @@ impl Lower {
                 let v = self.declare_var(name);
                 let binding = self
                     .checked
-                    .declaration_at(&s.source_span())
-                    .and_then(|declaration| declaration.binding);
+                    .statement_at(&s.source_span())
+                    .and_then(|node| node.binding);
                 let binding_ty = value.checked.and_then(|id| {
                     self.checked
                         .expression(id)
@@ -1531,8 +1535,8 @@ impl Lower {
                 let value = self.expr(value);
                 let binding = self
                     .checked
-                    .declaration_at(&s.source_span())
-                    .and_then(|declaration| declaration.binding);
+                    .statement_at(&s.source_span())
+                    .and_then(|node| node.binding);
                 let captured = self.captures.remove(name);
                 if !self.scopes.iter().any(|s| s.contains_key(name))
                     && let Some(scope) = self.scopes.last_mut()

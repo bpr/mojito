@@ -751,15 +751,17 @@ fn checked_nested_declaration<'a>(
     let StmtKind::Def { name, .. } = &statement.kind else {
         unreachable!("nested declaration lookup requires a def")
     };
-    checked
-        .declarations()
-        .iter()
-        .find(|declaration| {
-            declaration.kind == mojito_checked::checked::CheckedDeclKind::Function
-                && declaration.name == *name
-                && declaration.location == statement.source_span()
-        })
-        .expect("checked nested function declaration is missing")
+    let declaration = checked
+        .tables()
+        .statement_at(&statement.source_span())
+        .and_then(|node| node.declaration)
+        .and_then(|id| checked.declaration(id))
+        .expect("checked nested function declaration is missing");
+    debug_assert!(
+        declaration.kind == mojito_checked::checked::CheckedDeclKind::Function
+            && declaration.name == *name
+    );
+    declaration
 }
 
 fn analyze_root_children<'a>(
@@ -816,7 +818,7 @@ fn loop_index(
         })?;
     let binding = checked
         .tables()
-        .declaration_at(&statement.source_span())
-        .and_then(|declaration| declaration.binding);
+        .statement_at(&statement.source_span())
+        .and_then(|node| node.binding);
     Some(LoopIndex::of(iteration, binding))
 }
