@@ -1408,9 +1408,8 @@ impl Checker {
                 mojito_ast::ast::ParamArg::Value(expression) => Some(expression),
                 mojito_ast::ast::ParamArg::Named { value, .. } => match &**value {
                     mojito_ast::ast::ParamArg::Value(expression) => Some(expression),
-                    mojito_ast::ast::ParamArg::Type(_) | mojito_ast::ast::ParamArg::Named { .. } => {
-                        None
-                    }
+                    mojito_ast::ast::ParamArg::Type(_)
+                    | mojito_ast::ast::ParamArg::Named { .. } => None,
                 },
                 mojito_ast::ast::ParamArg::Type(_) => None,
             })
@@ -1421,7 +1420,6 @@ impl Checker {
                         matches!(
                             adjustment,
                             mojito_checked::checked::SemanticAdjustment::EraseCompileTimeArgument
-                                | mojito_checked::checked::SemanticAdjustment::ReifyTypeArgument { .. }
                         )
                     })
             })

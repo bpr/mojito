@@ -253,13 +253,6 @@ impl Decoder {
         let fields = self.record(value, "param_arg").ok()?;
         let name = self.req(value, fields, "name", |d, v| Some(d.option_symbol(v)))?;
         let param_value = self.req(value, fields, "value", |d, v| Some(d.option_reg(v)))?;
-        // Schema 1.3 records the binder a forwarded type argument names; an
-        // older artifact carries only the reified spelling.
-        let binder = self
-            .field(fields, "binder")
-            .ok()
-            .and_then(|found| self.option_value(Some(found)))
-            .and_then(|found| self.binder_ref(found));
         // Schema 1.7 records the expression a value argument built from the
         // caller's value binders denotes; an older artifact carries only the
         // runtime register.
@@ -268,11 +261,13 @@ impl Decoder {
             .ok()
             .and_then(|found| self.option_value(Some(found)))
             .and_then(|found| self.param_expr(found));
+        // Schemas 1.3 to 1.44 record the binder a forwarded type argument
+        // names; a type argument has no run-time form, so it is read and
+        // ignored.
         self.unknown(fields, &["name", "value", "binder", "expr"]);
         Some(MirParamArg {
             name,
             value: param_value,
-            binder,
             expr,
         })
     }

@@ -673,7 +673,7 @@ fn specialized_programs_verify_over_erased_contracts() {
 }
 
 #[test]
-fn concrete_verification_rejects_a_forwarded_compile_time_argument() {
+fn concrete_verification_rejects_a_symbolic_instantiated_argument() {
     let source = "def same[T: Copyable](value: T) -> T:\n\
          \x20   return value.copy()\n\
          def forward[T: Copyable](value: T) -> T:\n\
@@ -689,8 +689,8 @@ fn concrete_verification_rejects_a_forwarded_compile_time_argument() {
     assert!(
         findings
             .iter()
-            .any(|finding| finding.contains("keeps compile-time argument forwarding `T`")),
-        "a parametric call forwards its binder: {findings:?}"
+            .any(|finding| finding.contains("instantiated argument keeps symbolic type `T`")),
+        "a parametric call instantiates its callee at its binder: {findings:?}"
     );
     let specialized =
         specialize(parametric, &["main".to_string()], host_target().as_ref()).expect("specialize");
@@ -1260,7 +1260,7 @@ fn comptime_branch_selection_keeps_the_taken_arm() {
 }
 
 #[test]
-fn defaultable_pack_instance_keeps_no_reification_slot_and_builds_its_elements() {
+fn defaultable_pack_instance_builds_its_elements() {
     let source = "def build[*Ts: Movable & Defaultable & Writable & Deinitable]() -> Int:\n\
                   \x20   comptime for i in range(len(Ts)):\n\
                   \x20       var value = Ts[i]()\n\
@@ -1278,7 +1278,7 @@ fn defaultable_pack_instance_keeps_no_reification_slot_and_builds_its_elements()
         .expect("an instance of `build`");
     assert!(
         !instance.var_names.iter().any(|name| name == "*Ts"),
-        "the pack's reification slot leaves the instance: {:?}",
+        "a type pack has no frame slot: {:?}",
         instance.var_names
     );
     let body = instructions(&instance.blocks);

@@ -662,11 +662,9 @@ pub struct Reg(pub u32);
 pub struct MirParamArg {
     pub name: Option<String>,
     /// The argument's run-time register; absent for an erased origin
-    /// argument and for a closed value the call's `instantiated_args` carry.
+    /// argument, for a type argument, and for a closed value the call's
+    /// `instantiated_args` carry.
     pub value: Option<Reg>,
-    /// The enclosing declaration's type binder this argument forwards
-    /// (`hash[Self.H](key)`), whose spelling `value` reifies.
-    pub binder: Option<mojito_types::param_expr::ParamRef>,
     /// A value argument built from the enclosing declaration's value binders
     /// (`successor[n, 1 + n]()`, `below[Self.n, k]()`), as the expression
     /// over them that monomorphization evaluates under the caller instance's

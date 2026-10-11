@@ -570,13 +570,11 @@ impl Flatten<'_> {
                     MirParamArg {
                         name: None,
                         value: None,
-                        binder: None,
                         expr: None,
                     },
                     MirParamArg {
                         name: None,
                         value: Some(length_reg),
-                        binder: None,
                         expr: None,
                     },
                 ],

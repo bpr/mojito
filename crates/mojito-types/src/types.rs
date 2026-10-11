@@ -1269,18 +1269,6 @@ pub fn mentions_open(ty: &Ty, predicate: &dyn Fn(&Ty) -> bool) -> bool {
 
 /// A declared compile-time parameter of a generic `struct`/`def`, classified
 /// from `[name: X]` by whether `X` is a trait or a type.
-///
-/// Whether a type parameter's bound admits nullary construction (`H()`): such
-/// parameters are reified at runtime as the bound struct's name so an erased
-/// body can construct them.
-pub fn constructible_type_parameter(declaration: &ParamDecl) -> bool {
-    matches!(
-        declaration,
-        ParamDecl::Type { bounds, .. }
-            if bounds.iter().any(|bound| matches!(bound.as_str(), "Hasher" | "Defaultable"))
-    )
-}
-
 #[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum ParamDecl {
     /// A type parameter `T: Trait & ...`.

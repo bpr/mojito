@@ -350,24 +350,17 @@ impl FnLowering<'_> {
                 arg_places,
                 kwarg_places,
                 capture_accesses,
-                param_arg_regs,
                 ..
             } => {
                 // The callee's compiled signature is authoritative for the
                 // raising and reference-result ABI.
                 let _ = (raises, reference_result);
                 // Capture accesses are static ownership facts execution
-                // erases. Erased type-parameter slots (`value: None`) carry
-                // no runtime data and are permitted; argument places matter
-                // only at `mut`/`ref` parameter positions (borrowed read
-                // arguments pass their value copy).
+                // erases; verified concrete MIR carries no compile-time
+                // argument slots. Argument places matter only at `mut`/`ref`
+                // parameter positions (borrowed read arguments pass their
+                // value copy).
                 let _ = capture_accesses;
-                if param_arg_regs.iter().any(|arg| arg.value.is_some()) {
-                    return Err(self.unsupported_reg(
-                        format!("non-positional method contract for `{method}`"),
-                        *dest,
-                    ));
-                }
                 let adapter = result_adapter.is_some();
                 self.lower_method_call(
                     ctx,
@@ -407,7 +400,7 @@ impl FnLowering<'_> {
                 arg_places,
                 kwarg_places,
                 capture_accesses,
-                param_arg_regs,
+                param_arg_regs: _,
                 receiver: _,
                 instantiated_args,
                 spread: _,
@@ -416,22 +409,15 @@ impl FnLowering<'_> {
                 // raising ABI.
                 let _ = raises;
                 // Capture accesses are static ownership facts execution
-                // erases. Erased type-parameter slots (`value: None`) carry
-                // no runtime data and are permitted; argument places matter
-                // only at `mut`/`ref` parameter positions (borrowed read
-                // arguments pass their value copy).
+                // erases; verified concrete MIR carries no compile-time
+                // argument slots. Argument places matter only at `mut`/`ref`
+                // parameter positions (borrowed read arguments pass their
+                // value copy).
                 let _ = capture_accesses;
                 // The libc FFI builtin reads its callee from the call's
-                // compile-time arguments; a value parameter argument with a
-                // register is a contract the native backend does not lower.
+                // compile-time arguments.
                 if func.0 == "external_call" {
                     return self.lower_external_call(ctx, *dest, args, instantiated_args);
-                }
-                if param_arg_regs.iter().any(|arg| arg.value.is_some()) {
-                    return Err(self.unsupported_reg(
-                        format!("non-positional call contract for `{}`", func.0),
-                        *dest,
-                    ));
                 }
                 self.lower_call(ctx, *dest, &func.0, args, kwargs, arg_places, kwarg_places)
             }
@@ -668,7 +654,7 @@ impl FnLowering<'_> {
                 arg_places,
                 kwarg_places,
                 capture_accesses,
-                param_arg_regs,
+                param_arg_regs: _,
                 param_decls,
                 instantiated_contract,
                 instantiated_args,
@@ -687,10 +673,10 @@ impl FnLowering<'_> {
                     capture_accesses,
                     instantiated_args,
                 );
-                // A generic-callable contract that still carries value
-                // parameter arguments or unresolved declarations at lowering
-                // is outside the monomorphized subset.
-                if param_arg_regs.iter().any(|arg| arg.value.is_some()) || !param_decls.is_empty() {
+                // A generic-callable contract that still carries unresolved
+                // declarations at lowering is outside the monomorphized
+                // subset.
+                if !param_decls.is_empty() {
                     return Err(
                         self.unsupported_reg("generic callable value invocation".into(), *dest)
                     );

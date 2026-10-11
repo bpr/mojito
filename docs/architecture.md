@@ -944,9 +944,8 @@ every nullary construction whose type the bindings decide as that type's
 default construction — before unrolling for a parameter or a literal index,
 and in each unrolled copy for the loop's index — and a binding of the
 element under the loop takes the copy's own slot at its element type. A
-type parameter's reification slot (a `Hasher` or `Defaultable` bound), which
-nothing reads, leaves every concrete instance (`reification_slots`,
-`mono/slots.rs`), as Mojo gives a type parameter no storage.
+type parameter has no frame slot (`callable_parameter_locals`), as Mojo
+gives a type parameter no storage.
 
 **One check.** `prepare` normalizes declarations
 without selecting an arm, unrolling a loop, stubbing a template, or minting a
@@ -1936,18 +1935,15 @@ generator over the leaf's dtype and width that `native::mono` instantiates
 per leaf type and both backends select by the lane shape of its value
 parameter (an erased run calls the template with the binders read off the
 value) — and a constructible type parameter (`H()`
-under a `Hasher`/`Defaultable` bound) is reified at runtime as the bound
-struct's name (`MirInstr::ConstructTypeParam`), bound into a def's frame or a
-struct's value parameters with the declaration default when unsupplied. An
-erased body that forwards its own binder (`hash[Self.H](key)` in
-`DictEntry.__init__`) reifies the binder's spelling (`Const::Str("H")`), which
-the VM resolves through the caller frame's bindings at the call
-(`runtime_parameter_arguments`), so an explicit `Dict[K, V, SumHasher]`
-hashes under `SumHasher` on insertion as well as lookup. The argument's slot
-records the binder itself (`MirParamArg::binder`), as the construction names
-the binder it builds, and the native monomorphizer resolves both by that
-identity in the instance's type bindings (`Bindings.types`, keyed by
-`ParamRef`). A value argument built from the caller's own value binders
+under a `Hasher`/`Defaultable` bound) is a `MirInstr::ConstructTypeParam`
+naming its binder, which `native::mono` writes as the bound type's default
+construction. A type bracket argument has no run-time form: as Mojo's call
+carries a type parameter as an attribute, it rides the call's instantiated
+arguments, and a forwarded binder (`hash[Self.H](key)` in
+`DictEntry.__init__`) is a `Ty::Param` there, which substitution closes under
+the caller's bindings (`Bindings.types`, keyed by `ParamRef`), so an explicit
+`Dict[K, V, SumHasher]` hashes under `SumHasher` on insertion as well as
+lookup. A value argument built from the caller's own value binders
 (`successor[n, 1 + n]()`, `below[Self.n, k]()`) keeps its runtime register
 for the VM and records the expression over those binders beside it
 (`MirParamArg::expr`, built by `Flatten::forwarded_value` through
@@ -1967,8 +1963,10 @@ A value parameter the call leaves to inference (`size(Counter[4](1))` binds
 arguments. The verifier accepts an absent register, or a missing inferred
 parameter, only while the call carries the value (`verify_param_arguments`),
 and the monomorphizer binds it from the instantiated arguments
-(`bind_instantiated_arguments`). Only an argument over the caller's binders,
-a callable, or a type keeps a register.
+(`bind_instantiated_arguments`). Only an argument over the caller's binders
+or a callable keeps a register; a type argument has none
+(`verify_param_arguments` rejects one), and concrete MIR keeps no slot
+(`drop_parameter_slots`, `verify_concrete`).
 
 Examples of syntax that may parse before it is fully implemented include richer
 trait features and advanced expression/declaration forms that the VM does not

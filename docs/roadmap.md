@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R602**.
+Next free ID: **R603**.
 
 ## Ordered Work
 
@@ -49,25 +49,6 @@ belongs to is named in its title.
 Scope: what remains of the plan's stages, and what the pipeline order still
 leaves to close. A defect found on the way is filed by its kind; a
 divergence from the pin goes to a catch-up track, however small.
-
-- [ ] **R601 (P5) A type bracket argument still lowers as a type-name
-  string register**
-
-  Problem: `Array[UInt8, 16](fill=0)` emits `const string("UInt8")` for `T`,
-  and `external_call["strlen", UInt]` emits `const string("UInt")` for its
-  return type, where Mojo's call carries a type parameter as an attribute
-  and emits nothing.
-  - `Flatten::reified_type_argument` and `SemanticAdjustment::ReifyTypeArgument`
-    reify a bare type argument for `ConstructTypeParam`, which
-    `native::mono` now substitutes, so no backend reads the register.
-  - `native::mono` clears a resolved call's slots, but a builtin's survive:
-    `external_call`'s return-type register reaches concrete MIR.
-  - That register is why the concrete verifier
-    (`verify/concrete.rs:require_no_parameter_slots`) still accepts a slot
-    register; once the type slots carry none, it should reject every one.
-  - Found while landing R474 (2026-10-10).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
 
 - [ ] **R347 (P3d) A static call on a `Tuple` type over a pack still open
   finds no method**
@@ -1954,6 +1935,17 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Generalize it to the field type's conditional `Deinitable` conformance.
   - Depends on nothing.
   - Model: Opus, Planned.
+
+- [ ] **R602 A local annotated `comptime` constant as a bracket value
+  argument fails to elaborate**
+
+  Problem: `comptime y: Int = 5` then `f[y]()`, for `def f[v: Int]() -> Int`, stops with "keeps the parameter constant `$comptime$main$c0()` in elaborated MIR"; the pin prints 5.
+  - The call's instantiated arguments and its slot carry the application of the lifted constant (`param_apply { function: "$comptime$main$c0" }`), which reaches concrete MIR unanswered.
+  - `comptime x = f[3]()` then `print(x)` runs.
+  - `assets/ok/value_param_typed_by_type_param.mojo` fails on it.
+  - Found while landing R601 (2026-10-10); HEAD before R601 fails the same way.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
 
 - [ ] **R532 A generic closure declared in a generic body does not
   elaborate when bound to a callable parameter**

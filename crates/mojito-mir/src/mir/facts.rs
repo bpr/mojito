@@ -425,7 +425,6 @@ impl Flatten<'_> {
                         (candidate == source).then_some(*register)
                     })
                 }),
-                binder: None,
                 expr: None,
             })
             .collect();

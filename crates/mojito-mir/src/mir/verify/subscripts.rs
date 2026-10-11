@@ -768,20 +768,12 @@ pub(super) fn verify_param_arguments(
         }
         occupied[index] = true;
         match (&declarations[index], argument.value) {
-            // A supplied type argument reifies as a string register naming
-            // the bound struct, feeding the VM's `ConstructTypeParam`
-            // dispatch on constructible slots (other slots ignore it). Any
-            // other register kind on a type slot is a lowering error.
-            (mojito_types::types::ParamDecl::Type { name, .. }, Some(register)) => {
-                if !matches!(
-                    function.reg_types.get(&register.0),
-                    None | Some(Ty::StringLiteral)
-                ) {
-                    errors.push(format!(
-                        "{prefix}: type parameter '{name}' unexpectedly carries a non-reified \
-                         runtime register"
-                    ));
-                }
+            // A type argument is compile-time data on the call: it has no
+            // run-time form.
+            (mojito_types::types::ParamDecl::Type { name, .. }, Some(_)) => {
+                errors.push(format!(
+                    "{prefix}: type parameter '{name}' carries a runtime register"
+                ));
             }
             (mojito_types::types::ParamDecl::Value { name, .. }, None) => {
                 if !matches!(

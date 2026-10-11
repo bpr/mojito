@@ -13,7 +13,7 @@ use crate::mir::{Const, MirParamArg, MirSubscriptCall};
 ///
 /// A finding is a symbolic type in its signature, slots, registers, places,
 /// or instructions, a compile-time parameter an instruction still declares,
-/// or a compile-time argument a call still forwards or computes from one.
+/// or a compile-time argument slot a call still carries.
 pub fn concrete_function_findings(name: &str, function: &MirFunction) -> Vec<String> {
     let mut errors = Vec::new();
     let head = format!("MIR function '{name}'");
@@ -128,21 +128,14 @@ fn require_no_parameters(head: &str, parameters: &[ParamDecl], errors: &mut Vec<
     }
 }
 
-/// A compile-time argument slot is parametric while it names the enclosing
-/// binder it forwards or the expression over value binders it computes. A
-/// slot holding only a register is runtime data an unresolved call reads.
+/// A concrete call has no parameter list: its compile-time arguments are
+/// attributes its instantiated arguments carry, and none has a run-time
+/// register.
 fn require_no_parameter_slots(head: &str, slots: &[MirParamArg], errors: &mut Vec<String>) {
-    for slot in slots {
-        if let Some(binder) = &slot.binder {
-            errors.push(format!(
-                "{head} keeps compile-time argument forwarding `{}` in elaborated MIR",
-                binder.name
-            ));
-        } else if slot.expr.is_some() {
-            errors.push(format!(
-                "{head} keeps a compile-time argument expression in elaborated MIR"
-            ));
-        }
+    if !slots.is_empty() {
+        errors.push(format!(
+            "{head} keeps compile-time argument slots in elaborated MIR"
+        ));
     }
 }
 

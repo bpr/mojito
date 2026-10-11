@@ -2707,7 +2707,6 @@ impl Flatten<'_> {
                             .map(|_| MirParamArg {
                                 name: None,
                                 value: Some(idx),
-                                binder: None,
                                 expr: None,
                             })
                             .collect(),

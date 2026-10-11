@@ -1852,7 +1852,6 @@ fn array_literal_construction(
     let unbound = || mojito_mir::mir::MirParamArg {
         name: None,
         value: None,
-        binder: None,
         expr: None,
     };
     vec![

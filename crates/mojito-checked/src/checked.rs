@@ -588,13 +588,6 @@ pub enum SemanticAdjustment {
     /// whose copy is the read of its source, so MIR lowers the call as its
     /// one keyword argument's value.
     BuiltinCopyConstruction,
-    /// A supplied compile-time type argument binding a runtime-constructible
-    /// type parameter (`hash[Fnv1a](x)`): MIR reifies it as the bound
-    /// struct's name so `ConstructTypeParam` dispatch constructs the supplied
-    /// type rather than the declaration default.
-    ReifyTypeArgument {
-        name: String,
-    },
     /// Complete selected method/subscript contract.  `ResolveCallable` remains
     /// as a compatibility projection while downstream consumers migrate; this
     /// record is authoritative whenever both are present.

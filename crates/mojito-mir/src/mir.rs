@@ -760,7 +760,7 @@ fn lower_function(
         .generic_parameters_at(&generic_site)
         .unwrap_or(&[])
         .to_vec();
-    let value_parameter_locals = value_parameter_locals(&param_decls);
+    let value_parameter_locals = callable_parameter_locals(&param_decls);
     let enclosing_binders = EnclosingBinders::of(&param_decls);
     names.extend(value_parameter_locals.iter().map(|(name, _)| name.clone()));
     let ptys = caller_params
@@ -1042,7 +1042,7 @@ fn lower_struct_member<P: DeclaredParam>(
             .unwrap_or(&[]);
         param_decls = struct_decls.iter().cloned().chain(param_decls).collect();
     }
-    let value_parameter_locals = value_parameter_locals(&param_decls);
+    let value_parameter_locals = callable_parameter_locals(&param_decls);
     let enclosing_binders = EnclosingBinders::of(
         checked
             .generic_parameters_at(&GenericSite::Struct {
@@ -1401,7 +1401,7 @@ fn lower_expression_thunk(
         binders,
         ty,
     } = thunk;
-    let parameter_locals = value_parameter_locals(&binders.declarations);
+    let parameter_locals = callable_parameter_locals(&binders.declarations);
     let parameter_names: Vec<String> = parameter_locals
         .iter()
         .map(|(name, _)| name.clone())
@@ -2002,10 +2002,10 @@ fn checked_type_or_record(
     }
 }
 
-/// Compile-time value parameters have runtime storage in the callee frame even
-/// though they are not part of the ordinary argument ABI. The VM reifies each
-/// supplied parameter-argument register into these named slots before execution.
-fn value_parameter_locals(decls: &[ParamDecl]) -> Vec<(String, Ty)> {
+/// A callable value parameter has storage in the callee frame although it is
+/// not part of the ordinary argument ABI: the slot the body calls through. A
+/// type parameter, as at Mojo, has none.
+fn callable_parameter_locals(decls: &[ParamDecl]) -> Vec<(String, Ty)> {
     decls
         .iter()
         .filter_map(|decl| match decl {
@@ -2017,19 +2017,6 @@ fn value_parameter_locals(decls: &[ParamDecl]) -> Vec<(String, Ty)> {
                     Ty::VariadicPack(ty.clone())
                 } else {
                     (**ty).clone()
-                },
-            )),
-            ParamDecl::Type {
-                name,
-                bounds,
-                callable_bound,
-                ..
-            } if mojito_types::types::constructible_type_parameter(decl) => Some((
-                name.clone(),
-                Ty::Param {
-                    binder: decl.binder(),
-                    bounds: bounds.clone(),
-                    callable_bound: callable_bound.clone(),
                 },
             )),
             ParamDecl::Type { .. } | ParamDecl::Value { .. } => None,
@@ -3124,7 +3111,7 @@ impl Flatten<'_> {
             ParamArg::Value(expression) => expression,
             ParamArg::Named { value, .. } => match &**value {
                 ParamArg::Value(expression) => expression,
-                ParamArg::Type(t) => return self.reified_type_argument(t, site),
+                ParamArg::Type(_) => return None,
                 ParamArg::Named { .. } => unreachable!(),
             },
             ParamArg::Type(mojito_ast::ast::Type::SelfParam(name))
@@ -3138,25 +3125,10 @@ impl Flatten<'_> {
             ParamArg::Type(t) if let Some(pack) = self.value_pack_spread(t, site) => {
                 return Some(pack);
             }
-            ParamArg::Type(t) => return self.reified_type_argument(t, site),
+            // A type argument is compile-time data on the call.
+            ParamArg::Type(_) => return None,
         };
         let adjustments = self.checked_adjustments(expression);
-        // A constructible type parameter's supplied binding reifies as the
-        // bound struct's name; the VM's `ConstructTypeParam` dispatch reads
-        // it from the parameter's frame slot.
-        if let Some(name) = adjustments.iter().find_map(|adjustment| match adjustment {
-            mojito_checked::checked::SemanticAdjustment::ReifyTypeArgument { name } => {
-                Some(name.clone())
-            }
-            _ => None,
-        }) {
-            let dest = self.fresh_typed(span(expression), None, Ty::StringLiteral);
-            self.emit(MirInstr::Const {
-                dest,
-                k: Const::Str(name),
-            });
-            return Some(dest);
-        }
         if adjustments.iter().any(|adjustment| {
             matches!(
                 adjustment,
@@ -3280,66 +3252,6 @@ impl Flatten<'_> {
         let var = self.var("self");
         self.var_types.entry(var).or_insert(receiver);
         Some(var)
-    }
-
-    /// A concrete nominal type argument may bind a runtime-constructible type
-    /// parameter (`hash[Fnv1a](x)`, alias-folded to type spelling): reify it
-    /// as the named struct so an abstract callee's `ConstructTypeParam`
-    /// dispatch constructs the supplied type rather than the declaration
-    /// default. An enclosing struct's own parameter (`hash[Self.H](key)` in
-    /// an erased method body) reifies as the binder's spelling, which the VM
-    /// resolves through the caller's reified parameters at the call, and
-    /// its slot records the binder itself for monomorphization. The VM
-    /// ignores the reified value in every other erased slot.
-    fn reified_type_argument(
-        &mut self,
-        ty: &mojito_ast::ast::Type,
-        site: &SourceSpan,
-    ) -> Option<Reg> {
-        let name = match ty {
-            mojito_ast::ast::Type::Int => "Int",
-            mojito_ast::ast::Type::UInt => "UInt",
-            mojito_ast::ast::Type::Bool => "Bool",
-            mojito_ast::ast::Type::StringLiteral | mojito_ast::ast::Type::ClosedStringLiteral => {
-                "StringLiteral"
-            }
-            mojito_ast::ast::Type::Float64 => "Float64",
-            mojito_ast::ast::Type::None => "NoneType",
-            mojito_ast::ast::Type::Named(name, args) if args.is_empty() => name,
-            mojito_ast::ast::Type::SelfParam(name) => name,
-            _ => return None,
-        };
-        let dest = self.fresh_typed(site.clone(), None, Ty::StringLiteral);
-        self.emit(MirInstr::Const {
-            dest,
-            k: Const::Str(name.to_string()),
-        });
-        Some(dest)
-    }
-
-    /// The enclosing binder a type-shaped bracket argument forwards. `Self.H`
-    /// names the struct's binder, declared first; a bare `H` names the
-    /// innermost declaration's.
-    fn forwarded_binder(&self, argument: &ParamArg) -> Option<mojito_types::param_expr::ParamRef> {
-        let ty = match argument {
-            ParamArg::Type(ty) => ty,
-            ParamArg::Named { value, .. } => match &**value {
-                ParamArg::Type(ty) => ty,
-                ParamArg::Value(_) | ParamArg::Named { .. } => return None,
-            },
-            ParamArg::Value(_) => return None,
-        };
-        let mut binders = self.enclosing_binders.types.iter();
-        match ty {
-            mojito_ast::ast::Type::SelfParam(name) => {
-                binders.find(|binder| binder.name.as_ref() == name.as_str())
-            }
-            mojito_ast::ast::Type::Named(name, args) if args.is_empty() => {
-                binders.rfind(|binder| binder.name.as_ref() == name.as_str())
-            }
-            _ => None,
-        }
-        .cloned()
     }
 
     /// The expression a bracket argument built from the enclosing value
@@ -3629,14 +3541,8 @@ impl Flatten<'_> {
             } else {
                 self.param_arg_reg(argument, &site)
             };
-            let binder = value.and_then(|_| self.forwarded_binder(argument));
             let expr = value.and_then(|_| self.forwarded_value(argument));
-            registers.push(MirParamArg {
-                name,
-                value,
-                binder,
-                expr,
-            });
+            registers.push(MirParamArg { name, value, expr });
         }
         registers
     }

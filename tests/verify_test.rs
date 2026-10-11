@@ -1246,7 +1246,6 @@ fn verifier_rejects_malformed_direct_compile_time_arguments() {
                 param_arg_regs: vec![MirParamArg {
                     name: Some("n".to_string()),
                     value: Some(Reg(0)),
-                    binder: None,
                     expr: None,
                 }],
                 receiver: None,
@@ -1319,7 +1318,6 @@ fn verifier_rejects_malformed_indirect_compile_time_arguments() {
                 param_arg_regs: vec![MirParamArg {
                     name: Some("n".to_string()),
                     value: Some(Reg(1)),
-                    binder: None,
                     expr: None,
                 }],
                 param_decls: declarations,
@@ -1370,7 +1368,6 @@ fn verifier_substitutes_retained_dependent_callable_arguments() {
                 param_arg_regs: vec![MirParamArg {
                     name: None,
                     value: Some(Reg(1)),
-                    binder: None,
                     expr: None,
                 }],
                 param_decls: declarations,
@@ -1411,7 +1408,6 @@ fn verifier_rejects_corrupt_or_unbound_dependent_callable_indices() {
                 param_arg_regs: vec![MirParamArg {
                     name: None,
                     value: Some(Reg(1)),
-                    binder: None,
                     expr: None,
                 }],
                 param_decls: declarations,

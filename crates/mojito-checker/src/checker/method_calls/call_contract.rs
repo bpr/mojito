@@ -160,9 +160,6 @@ impl Checker {
                                 matches!(
                                     adjustment,
                                     mojito_checked::checked::SemanticAdjustment::EraseCompileTimeArgument
-                                        | mojito_checked::checked::SemanticAdjustment::ReifyTypeArgument {
-                                            ..
-                                        }
                                 )
                             });
                         if erased {

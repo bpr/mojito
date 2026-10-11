@@ -1803,22 +1803,11 @@ impl Checker {
                         },
                     ) => {
                         // Once it resolves as a type, MIR must not emit it as
-                        // a runtime value register. A runtime-constructible
-                        // parameter's binding instead reifies as the bound
-                        // struct's name, so an abstract (non-specialized)
-                        // callee's `ConstructTypeParam` constructs the
-                        // supplied type, not the default.
+                        // a runtime value register: the type is compile-time
+                        // data on the call.
                         let ty = self.ty_from_anno(&SourceType::Named(id.clone(), vec![]))?;
-                        let fact = match &ty {
-                            Ty::Struct(struct_name, _)
-                                if mojito_types::types::constructible_type_parameter(decl) =>
-                            {
-                                mojito_checked::checked::SemanticAdjustment::ReifyTypeArgument {
-                                    name: struct_name.clone(),
-                                }
-                            }
-                            _ => mojito_checked::checked::SemanticAdjustment::EraseCompileTimeArgument,
-                        };
+                        let fact =
+                            mojito_checked::checked::SemanticAdjustment::EraseCompileTimeArgument;
                         (ty, Some((expression.source_span(), fact)))
                     }
                     // A parameterized type argument (`Dict[Variant[Int, String],

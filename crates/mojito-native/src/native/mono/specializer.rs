@@ -515,7 +515,6 @@ impl<'a> Specializer<'a> {
             &self.constant_values,
             &mut bindings,
             target,
-            &|name| self.structs.contains_key(name),
             &self.enclosing,
         )?;
         apply_defaults(contract, &mut bindings)?;
@@ -576,7 +575,7 @@ impl<'a> Specializer<'a> {
         // lowered function (`SIMD[dt, L[0]]`), which only running it
         // answers: each one a substitution meets is demanded, and the
         // template is substituted again with its value.
-        let (mut function, reified) = loop {
+        let mut function = loop {
             self.applications.pending.borrow_mut().clear();
             self.unreached_failures.clear();
             let substituted = self.substituted(&key.template, template, scope, bindings);
@@ -585,7 +584,6 @@ impl<'a> Specializer<'a> {
             }
         };
         let unreached_failures = std::mem::take(&mut self.unreached_failures);
-        retire_slots(&mut function, &reified);
         expand_pack_spreads(&key.template, &mut function)?;
         self.select_comptime_branches(&key.template, &mut function, bindings)?;
         self.discharge_instantiation_failures(&key.template, &function)?;
@@ -717,7 +715,7 @@ impl<'a> Specializer<'a> {
         template: &MirFunction,
         scope: &[ParamDecl],
         bindings: &Bindings,
-    ) -> Result<(MirFunction, BTreeSet<mojito_hir::hir::VarId>), MonoError> {
+    ) -> Result<MirFunction, MonoError> {
         let mut function = template.clone();
         default_construct_parameters(
             &mut function.blocks,
@@ -726,14 +724,13 @@ impl<'a> Specializer<'a> {
             bindings,
         )?;
         self.unroll_comptime_loops(name, &mut function, scope, bindings)?;
-        let reified = reification_slots(&function, scope);
         substitute_function(&mut function, bindings, scope, self.construction_decls()).map_err(
             |mut e| {
                 e.function.get_or_insert_with(|| name.to_string());
                 e
             },
         )?;
-        Ok((function, reified))
+        Ok(function)
     }
 
     /// Demand every application the last substitution met with no value
@@ -2703,7 +2700,7 @@ impl<'a> Specializer<'a> {
                     _ => {}
                 }
             }
-            block.instrs.iter_mut().for_each(close_parameter_slots);
+            block.instrs.iter_mut().for_each(drop_parameter_slots);
             // A conversion follows instruction `index` and a prelude precedes
             // it, so at one position the conversion comes first.
             let mut insertions: Vec<(usize, bool, Vec<MirInstr>)> = conversions
@@ -3108,11 +3105,12 @@ fn without_pointer_origins(ty: &Ty) -> Ty {
     }
 }
 
-/// Strips what only an instantiation reads from the compile-time argument
-/// slots `instruction` still carries: the enclosing binder a slot forwards
-/// and the expression over value binders it computes. A call left unresolved
-/// (a builtin, a `Func`-typed callee) keeps the slot's register.
-fn close_parameter_slots(instruction: &mut MirInstr) {
+/// Drops the compile-time argument slots `instruction` still carries: a
+/// concrete call has no parameter list, its compile-time arguments being
+/// attributes its instantiated arguments carry. A slot that still holds a
+/// run-time register stays, with every other slot of its call, for the
+/// concrete verifier to report.
+fn drop_parameter_slots(instruction: &mut MirInstr) {
     let slots = match instruction {
         MirInstr::Call { param_arg_regs, .. }
         | MirInstr::MethodCall { param_arg_regs, .. }
@@ -3129,9 +3127,8 @@ fn close_parameter_slots(instruction: &mut MirInstr) {
         | MirInstr::MultiSet { call, .. } => &mut call.param_arg_regs,
         _ => return,
     };
-    for slot in slots {
-        slot.binder = None;
-        slot.expr = None;
+    if slots.iter().all(|slot| slot.value.is_none()) {
+        slots.clear();
     }
 }
 

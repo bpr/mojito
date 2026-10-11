@@ -8,6 +8,18 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A type bracket argument is compile-time data on its call (R601), as
+  Mojo's call carries a type parameter as an attribute:
+  `Array[UInt8, 16](fill=0)` and `external_call["strlen", UInt]` no longer
+  emit a type-name string register. The checker's `ReifyTypeArgument`,
+  MIR's `reified_type_argument`, `MirParamArg::binder`, a constructible
+  type parameter's frame slot, and the elaborator's binding of a type
+  parameter from a string are gone; the elaborator binds a type parameter
+  from the call's instantiated arguments alone. `native::mono` drops every
+  compile-time argument slot of a concrete call, a builtin's included, and
+  the concrete verifier rejects any slot. MIR text is now 1.45 (a 1.44
+  `param_arg`'s `binder` is read and ignored) and the package format
+  `mojito-package 25`.
 - A closed parameter argument outside a generic call's brackets is
   compile-time data on its call (R474), as Mojo's call carries a parameter
   attribute: a construction's bracket arguments (`Counter[4](1)`), a value
@@ -19,7 +31,6 @@ to evolve under the `0.x` compatibility rules.
   `Flatten::inferred_param_arg_regs` are gone), and both backends read
   `external_call`'s callee from them. A `UInt` value parameter inferred from
   an argument type (`name(S[UInt(3)]())`, R450) now passes MIR verification.
-  A type argument still reifies as a string register (R601).
 - A function the check lifts from a body is named by its declaration and
   an index within it, `$comptime$<declaration>$c<k>` (R547), beside MIR's
   own `$comptime$<declaration>$<k>`, as upstream keeps a parameter

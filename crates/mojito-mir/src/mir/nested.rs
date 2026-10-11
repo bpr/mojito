@@ -340,7 +340,7 @@ impl Enclosing<'_> {
     /// The frame locals of a body nested here declaring `decls`: its own,
     /// then each inherited one its own do not shadow.
     fn frame_locals(&self, decls: &[ParamDecl]) -> Vec<(String, Ty)> {
-        let mut locals = value_parameter_locals(decls);
+        let mut locals = callable_parameter_locals(decls);
         let inherited: Vec<_> = self
             .locals
             .iter()

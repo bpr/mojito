@@ -683,13 +683,11 @@ fn sample_subscript_call() -> MirSubscriptCall {
             MirParamArg {
                 name: Some("T".into()),
                 value: None,
-                binder: None,
                 expr: None,
             },
             MirParamArg {
                 name: None,
                 value: Some(Reg(5)),
-                binder: None,
                 expr: None,
             },
         ],
@@ -836,7 +834,6 @@ fn instruction_families_reprint_byte_identically() {
             param_arg_regs: vec![MirParamArg {
                 name: Some("T".into()),
                 value: Some(Reg(4)),
-                binder: None,
                 expr: None,
             }],
             receiver: None,
@@ -1879,9 +1876,11 @@ fn param_expr_mir_round_trip() {
     );
 }
 
-/// Schema 1.3 carries a binder's identity on `type.construct` and on a
-/// forwarded `param_arg`; an older artifact, which spells neither, constructs
-/// the binder typing the destination register and forwards none.
+/// Schema 1.3 carries a binder's identity on `type.construct`; an older
+/// artifact, which spells none, constructs the binder typing the destination
+/// register. Schemas 1.3 to 1.44 also spell the binder a type argument
+/// forwards, which a type argument's slot no longer holds: it reads and
+/// reprints without it.
 #[test]
 fn binder_operands_round_trip_and_read_from_older_artifacts() {
     let binder = test_binder("H");
@@ -1909,8 +1908,7 @@ fn binder_operands_round_trip_and_read_from_older_artifacts() {
             capture_accesses: Vec::new(),
             param_arg_regs: vec![MirParamArg {
                 name: None,
-                value: Some(Reg(2)),
-                binder: Some(binder.clone()),
+                value: None,
                 expr: None,
             }],
             receiver: None,
@@ -1920,37 +1918,42 @@ fn binder_operands_round_trip_and_read_from_older_artifacts() {
     ];
     let program = program_with(vec![(
         "main".into(),
-        function_with(vec![parameter, Ty::UInt, Ty::StringLiteral], instrs),
+        function_with(vec![parameter, Ty::UInt], instrs),
     )]);
     assert_reprints(&program);
     let text = write::program(&program);
-    let parsed = artifact(text.as_bytes(), "unit.mir".to_string()).expect("parse artifact");
-    assert!(matches!(
-        &parsed.program.functions[0].1.blocks[0].instrs[1],
-        MirInstr::Call { param_arg_regs, .. }
-            if param_arg_regs[0].binder.as_ref().is_some_and(|read| read.id == binder.id)
-    ));
+    assert!(!text.contains("binder: "));
 
-    let older = text
-        .replacen("mojito-mir 1.10", "mojito-mir 1.2", 1)
-        .replace(
-            "type.construct { dest: %r0, owner: \"$test:H\", slot: 0, param: H }",
-            "type.construct { dest: %r0, param: H }",
+    let forwarding = text
+        .replacen(
+            &format!("mojito-mir 1.{}", crate::mir::text::VERSION_MINOR),
+            "mojito-mir 1.44",
+            1,
         )
         .replace(
-            ", binder: present(binder { owner: \"$test:H\", slot: 0, name: H })",
-            "",
+            "param_arg { name: absent, value: absent,",
+            "param_arg { name: absent, value: absent, \
+             binder: present(binder { owner: \"$test:H\", slot: 0, name: H }),",
         );
-    assert_ne!(older.replacen("mojito-mir 1.2", "mojito-mir 1.10", 1), text);
+    assert!(forwarding.contains("mojito-mir 1.44") && forwarding.contains("binder: present"));
+    let parsed = artifact(forwarding.as_bytes(), "unit.mir".to_string()).expect("parse artifact");
+    assert_eq!(write::program(&parsed.program), text);
+
+    let older = text
+        .replacen(
+            &format!("mojito-mir 1.{}", crate::mir::text::VERSION_MINOR),
+            "mojito-mir 1.2",
+            1,
+        )
+        .replace(
+            "type.construct { dest: %r0, owner: \"$test:H\", slot: 0, param: H,",
+            "type.construct { dest: %r0, param: H,",
+        );
+    assert!(older.contains("type.construct { dest: %r0, param: H,"));
     let parsed = artifact(older.as_bytes(), "unit.mir".to_string()).expect("parse artifact");
-    let read = &parsed.program.functions[0].1.blocks[0].instrs;
     assert!(matches!(
-        &read[0],
+        &parsed.program.functions[0].1.blocks[0].instrs[0],
         MirInstr::ConstructTypeParam { param, .. } if param.id == binder.id
-    ));
-    assert!(matches!(
-        &read[1],
-        MirInstr::Call { param_arg_regs, .. } if param_arg_regs[0].binder.is_none()
     ));
 }
 
@@ -1986,7 +1989,6 @@ fn pack_element_constructions_round_trip_and_read_from_older_artifacts() {
     let program = construct(Some(MirParamArg {
         name: None,
         value: Some(Reg(0)),
-        binder: None,
         expr: Some(index.clone()),
     }));
     assert_reprints(&program);
@@ -2172,7 +2174,6 @@ fn value_argument_expressions_round_trip_and_read_from_older_artifacts() {
                     param_arg_regs: vec![MirParamArg {
                         name: None,
                         value: Some(Reg(0)),
-                        binder: None,
                         expr,
                     }],
                     receiver: None,

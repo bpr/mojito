@@ -218,7 +218,6 @@ impl Specializer<'_> {
             &self.constant_values,
             &mut bindings,
             target,
-            &|name| self.structs.contains_key(name),
             &self.enclosing,
         )?;
         apply_defaults(&declaration.param_decls, &mut bindings)?;

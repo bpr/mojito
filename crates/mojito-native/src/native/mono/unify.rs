@@ -178,7 +178,6 @@ pub(super) fn bind_explicit_value_arguments(
     constant_values: &HashMap<u32, CtValue>,
     bindings: &mut Bindings,
     target: &str,
-    is_struct: &dyn Fn(&str) -> bool,
     enclosing: &Bindings,
 ) -> Result<(), MonoError> {
     let mut packs: Vec<(ParamRef, Vec<CtValue>)> = Vec::new();
@@ -231,32 +230,9 @@ pub(super) fn bind_explicit_value_arguments(
                     packs.push((binder, vec![value]));
                 }
             }
-            // A supplied constructible type argument (`hash[Fnv1a](x)`)
-            // reifies as a string register naming the bound struct; an
-            // erased body forwarding its own binder (`hash[Self.H](key)`)
-            // records that binder, which the enclosing instance's bindings
-            // resolve. An unresolvable argument leaves the slot to its
-            // default. A binder the receiver already solved keeps that
-            // solution: the name alone drops a `Tuple`'s element
-            // arguments, which the receiver's type — and so the instance's
-            // owner — spells.
-            ParamDecl::Type { .. } if bindings.types.contains_key(&declaration.binder()) => {}
-            ParamDecl::Type { .. } => {
-                let Some(CtValue::Str(spelling)) = constant_values.get(&value_reg.0) else {
-                    continue;
-                };
-                let bound = if is_struct(spelling) {
-                    Some(Ty::Struct(spelling.clone(), Vec::new().into()))
-                } else {
-                    match &argument.binder {
-                        Some(binder) => enclosing.types.get(binder).cloned(),
-                        None => uniquely_spelled(&enclosing.types, spelling),
-                    }
-                };
-                if let Some(bound) = bound {
-                    bindings.types.insert(declaration.binder(), bound);
-                }
-            }
+            // A type argument is compile-time data on the call, bound from
+            // its instantiated arguments.
+            ParamDecl::Type { .. } => {}
         }
     }
     // A value pack binds the list of its positional arguments.
@@ -752,20 +728,6 @@ const fn width_expr(width: &SimdWidth) -> Option<&ParamExpr> {
     match width {
         SimdWidth::Expr(expr) => Some(expr),
         SimdWidth::Known(_) => None,
-    }
-}
-
-/// The binding of the one enclosing binder spelled `spelling`. A forwarded
-/// type argument read from an artifact older than schema 1.3 records no
-/// binder and has only its spelling, which names a binder when exactly one
-/// carries it.
-fn uniquely_spelled(enclosing_types: &HashMap<ParamRef, Ty>, spelling: &str) -> Option<Ty> {
-    let mut spelled = enclosing_types
-        .iter()
-        .filter(|(binder, _)| binder.name.as_ref() == spelling);
-    match (spelled.next(), spelled.next()) {
-        (Some((_, bound)), None) => Some(bound.clone()),
-        _ => None,
     }
 }
 
