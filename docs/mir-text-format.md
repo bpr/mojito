@@ -888,15 +888,15 @@ artifact {
 
 ## Package Container
 
-A compiled package (`mir::text::package`) holds MIR bodies, one record per
-library declaration, and one module table holding each module's link
-record, one file per package. The bundled library's is the
+A compiled package (`mir::text::package`) holds one checked record per
+lowering unit, one record per library declaration, and one module table
+holding each module's link record, one file per package. The bundled library's is the
 only producer today (`src/package.rs`). No part of a package is MIR text:
 it is a header followed by bytecode records, as upstream's package is
-MLIR bytecode throughout. The format line is `mojito-package 25`.
+MLIR bytecode throughout. The format line is `mojito-package 26`.
 
 ```text
-mojito-package 25
+mojito-package 26
 <the header's length, 8 bytes little-endian>
 <the header, as bytecode>
 <the payload: every record, as bytecode>
@@ -904,8 +904,7 @@ mojito-package 25
 
 - The header (`PackageDirectory`, `postcard`) holds the package's identity
   (`package`, `compiler`, `root`), the payload's length, and the payload
-  range of the interface, of the `files` table, and of the declaration
-  directory. A reader refuses a header whose ranges leave the payload or
+  range of the interface and of the declaration directory. A reader refuses a header whose ranges leave the payload or
   whose payload length differs.
 - The declaration directory (`mojito_checked::package::DeclarationDirectory`)
   is read in place. Every name it holds is written once, in one string
@@ -926,8 +925,9 @@ mojito-package 25
   - one row per function, in the order the bodies were lowered in, which
     `emit-mir` and the elaborator's candidate order observe: its name, its
     declaration's position and its index in that record, its runtime
-    parameter count, its `ref_params` mask's span, and its body's range, as
-    an MLIR function op names its symbol once and holds its region, so
+    parameter count, its `ref_params` mask's span, and the range of the
+    unit it lowers from (several functions may share one), as an MLIR
+    function op names its symbol once and holds its region, so
     overload resolution and the loan analysis read a function's signature
     without decoding anything; and a by-name permutation of those rows
     (the package order of function declarations);
@@ -1006,15 +1006,29 @@ mojito-package 25
   (`PackageDeclarations::compiles`).
 - The interface is `postcard` of `PackageInterface`: the names of the
   declarations the package's modules make.
-- A body is `postcard` of its `MirFunction` (variable and register types
-  written sorted) and its locations, one `(register, file id, start, end,
-  origin slot)` row per located register, naming the `files` table
-  (`postcard` of each file id's optional path). A body is
-  ownership-checked MIR before drop elaboration; the importer inserts its
-  drops and verifies it as it is decoded (`PackageBodies`). The package
-  build's check-local binding owners some bodies' types still name are
-  carried as bare numbers, under `origin::encoding_packaged_owners`, as
-  the MIR text spells them `$v<n>` (R561).
+- A unit's record is `postcard` of its file table (each file id's optional
+  path) and of its `checked_unit::CheckedUnit`: the lowering unit's kind,
+  its syntax (a module `def`, a trait default's declaration, a module
+  constant, or a struct holding only its name, its compile-time
+  parameters, and the one method, or for a wrapper none, beside the
+  wrapper), and its share of every fact table the check recorded before
+  its arena is built, each table written sorted. It is written under
+  `token::encoding_occurrences`, where a `SyntaxId` encodes as its number
+  or its derivation and a source path as its file id, so a fact keeps the
+  occurrence it is keyed by; it is read under
+  `token::decoding_occurrences`, which draws one fresh identity per number
+  and derives a derived one from its decoded parent. Outside those scopes
+  an AST node encodes no identity or path, as a link record's and a
+  residue's do, and a `SourceSpan` does not encode. The package build's
+  binding owners the facts name are carried as bare numbers, under
+  `origin::encoding_packaged_owners` (R561, R604). The importer lowers a
+  unit once per process when the elaborator first reaches one of its
+  functions (`PackageBodies`): it rebuilds the unit's checked arena over
+  the package's own overload sets and constants, lowers it to MIR, closes
+  its register types against the package's declarations, then inserts the
+  reached body's drops and verifies it. The build refuses a package whose
+  units, read back and lowered alone, give any function other than the
+  library's whole-program lowering.
 - A link module record is opaque to the container: it is the linker's
   (`module::package::PackageModule`), `postcard` bytecode of the dotted
   names of the loads its link asked for and its export and namespace

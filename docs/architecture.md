@@ -96,7 +96,9 @@ build (once per compiler build, then cached):
     -> std package: interface + one record per library declaration
        (its MIR declarations and effect summaries, then the checker
        rows they do not say) + module table (each module's link
-       record) + pre-drop bodies
+       record) + one checked record per lowering unit (its syntax and
+       the check's facts for it; the build refuses a unit that, lowered
+       alone, gives any function other than the library's MIR)
 
 import (every compilation that links the bundled library):
   source -> link (each library module from its record)
@@ -109,26 +111,44 @@ import (every compilation that links the bundled library):
        declaration records attached (each decoded on first lookup)
     -> verify + ownership (own functions)
     -> drop elaboration (own functions)
-    -> native::mono, which decodes a package body when it first reaches
-       it and inserts its drops then -> VM
+    -> native::mono, which, when it first reaches a package body,
+       lowers the body's unit (checked arena -> HIR CFG -> MIR) and
+       inserts its drops then -> VM
 ```
 
 - **The package file** (`mir::text::package`) is a header followed by
   bytecode records, as upstream's package is bytecode throughout. The
   header holds the package's identity (package, compiler build identity,
   library root) and the byte range of the checker interface
-  (`checked::interface::PackageInterface`), the source-file table, and the
+  (`checked::interface::PackageInterface`) and of the
   declaration directory (`checked::package::DeclarationDirectory`). That
   directory holds every name once, in one string section, and places each
   library module once, by dotted name, with its link record, one record
   per library declaration, and one row per function, which names it once
-  and holds its signature masks and its body's range, as an MLIR function
-  op names its symbol once and holds its region. The importer maps the
+  and holds its signature masks and the range of the unit it lowers
+  from, as an MLIR function op names its symbol once and holds its
+  region. The importer maps the
   file (`PackageBytes`), decodes its header and interface, and reads the
   directory in place, looking a name up by binary search over the mapped
-  rows; declarations and bodies decode from their own ranges on demand:
-  Hello World decodes three of 251 declaration records and three of 874
-  bodies.
+  rows; declarations and units decode from their own ranges on demand:
+  Hello World decodes three of 251 declaration records and lowers three
+  of 874 bodies.
+- **A unit's record** (`checked_unit::CheckedUnit`) is a package body as
+  the check left it, as upstream's package holds each body's IR as its
+  parser wrote it and its checks validated it, structured control flow
+  included. A lowering unit (`CheckedProgram::lowering_units`) is a module
+  `def`, one struct method (with its struct's name and compile-time
+  parameters), an inherited default's wrapper, a trait default, or a
+  module constant's lifted applications; its record holds its syntax and
+  its share of the check's facts (`DiscoveryResult::units`), keyed by
+  syntax occurrence. The encoding renumbers each occurrence and the
+  decoding draws a fresh identity per number, keeping each derivation
+  (`token::{encoding_occurrences, decoding_occurrences}`). A package body
+  enters the pipeline at HIR: the importer rebuilds the unit's checked
+  arena from its facts (`CheckedUnit::program`, over the package's own
+  overload sets and constants), lowers it (`mir::lower_package_unit`), and
+  then inserts drops, as upstream's importer lowers its semantic control
+  flow and runs its lifetime pass on a body it materializes.
 - **A declaration's record** (`checked::package`) holds the declaration
   once, as upstream's package holds it in one op every phase of its
   importer reads. Its lowered part (`LoweredDeclaration`) is every MIR
@@ -299,11 +319,12 @@ import (every compilation that links the bundled library):
   declarations' parents, as upstream decides a conformance when a clause
   asks it.
 - **The elaborator** (`native::mono::specialize_importing`) reads a callee
-  the program does not define from the package. The body is drop-elaborated
-  and verified as it is decoded. Upstream's precompiled package likewise
-  holds each body before its lifetime pass inserts destructors (the pass
-  checks at package build time but keeps no rewrite), and its importer runs
-  that pass on each body it materializes
+  the program does not define from the package. The body is lowered from
+  its unit, drop-elaborated, and verified when first reached. Upstream's
+  precompiled package likewise holds each body as checked, before its
+  semantic control flow is lowered and its lifetime pass inserts
+  destructors (the checks run at package build time but keep no rewrite),
+  and its importer runs those passes on each body it materializes
   (`docs/notes/upstream-package-contents.md`).
 - **Identity.** A package names its modules by stamped path and its
   declarations by linked name. The build id (`MOJITO_BUILD_ID`, a digest of
@@ -317,9 +338,10 @@ import (every compilation that links the bundled library):
   one of the package's names again, as a second copy of a bundled module
   would, is linked again from source and compiles the library from source.
   So does `MOJITO_STD_PACKAGE=0`, or `Compiler::with_std_package(false)`.
-- **Divergences.** Upstream's package holds post-parse IR, and its importer
-  resolves a package declaration on first lookup. Mojito's holds lowered
-  MIR (`docs/roadmap.md`, `pmir` track: R546). A module record holds no
+- **Divergences.** Upstream's package holds each body as typed `lit` ops;
+  Mojito's holds the body's syntax beside the check's facts keyed by
+  occurrence, its checked handoff's own shape (`docs/roadmap.md`,
+  `mojo-shape` track: R604). A module record holds no
   declaration: an importer reads every library declaration, trait
   defaults included, from its declaration record. A declaration's overload
   facts restate what its lowered functions imply (`pmir` track).

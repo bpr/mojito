@@ -32,6 +32,7 @@ pub use mojito_checked::declaration::{
     TraitDeclaration, TraitRequirement,
 };
 use mojito_checked::interface::PackageInterface;
+use mojito_checked::unit::LoweringUnit;
 use mojito_common::timing;
 use mojito_common::token::{DUMMY_SPAN, SourceSpan};
 use mojito_hir::hir::{self, Cfg, HirInstr, Terminator, VarId};
@@ -403,7 +404,6 @@ pub fn lower_checked_program(checked: &CheckedProgram) -> MirProgram {
 /// # Panics
 ///
 /// As [`lower_checked_program`].
-#[allow(clippy::too_many_lines, reason = "TODO: split this pass")]
 pub fn lower_checked_program_importing(
     checked: &CheckedProgram,
     package: Option<(
@@ -411,235 +411,239 @@ pub fn lower_checked_program_importing(
         &std::sync::Arc<text::package::PackageDeclarations>,
     )>,
 ) -> MirProgram {
-    let program = checked.statements();
+    lower_program(checked, package).0
+}
+
+/// [`lower_checked_program`], with the functions each lowering unit
+/// ([`CheckedProgram::lowering_units`]) lowered to, as a range of the
+/// result's functions, in unit order.
+///
+/// # Panics
+///
+/// As [`lower_checked_program`].
+pub fn lower_checked_program_units(
+    checked: &CheckedProgram,
+) -> (MirProgram, Vec<std::ops::Range<usize>>) {
+    lower_program(checked, None)
+}
+
+/// Lower one lowering `unit` of `checked`, pushing the functions it lowers
+/// to, and the declarations of each, onto `functions` and `declarations`.
+/// A function another unit lifts first is not lowered again.
+pub fn lower_unit(
+    unit: LoweringUnit<'_>,
+    checked: &CheckedProgram,
+    functions: &mut Vec<(String, MirFunction)>,
+    declarations: &mut MirDeclarations,
+    invariant_errors: &mut Vec<String>,
+) {
+    let overloads = checked.overloads();
+    match unit {
+        LoweringUnit::Function(statement) => {
+            let _def = timing::span("def");
+            lower_function(
+                statement,
+                checked,
+                overloads,
+                functions,
+                declarations,
+                invariant_errors,
+            );
+        }
+        LoweringUnit::Method {
+            structure: s,
+            method: m,
+            index,
+        } => {
+            let _struct = timing::span("struct");
+            let Some((name, type_params)) = struct_name(s) else {
+                return;
+            };
+            let method_name = mojito_symbol::symbol::lifecycle_method_name(m);
+            lower_struct_member(
+                &StructLowering {
+                    checked,
+                    overloads,
+                    module: &s.module,
+                    name,
+                    type_params,
+                },
+                StructMember {
+                    index,
+                    name: method_name,
+                    lowered: mojito_symbol::symbol::lowered_method_name(
+                        &format!("{name}.{method_name}"),
+                        type_params,
+                        mojito_symbol::symbol::MethodShape::of(m),
+                        &**overloads,
+                        &|name| checked.constants().get(name),
+                    ),
+                    params: &m.params,
+                    has_self: m.has_self,
+                    self_convention: m.self_convention,
+                    positional_only: m.positional_only,
+                    keyword_only: m.keyword_only,
+                    type_params: &m.type_params,
+                    body: &m.body,
+                },
+                functions,
+                declarations,
+                invariant_errors,
+            );
+        }
+        LoweringUnit::Wrapper {
+            structure: s,
+            wrapper,
+        } => {
+            let _struct = timing::span("struct");
+            let Some((name, type_params)) = struct_name(s) else {
+                return;
+            };
+            lower_struct_member(
+                &StructLowering {
+                    checked,
+                    overloads,
+                    module: &s.module,
+                    name,
+                    type_params,
+                },
+                StructMember {
+                    index: wrapper.method_index,
+                    name: &wrapper.method,
+                    lowered: wrapper.lowered_name.clone(),
+                    params: &wrapper.params,
+                    has_self: true,
+                    self_convention: wrapper.self_convention,
+                    positional_only: None,
+                    keyword_only: None,
+                    type_params: &[],
+                    body: &wrapper.body,
+                },
+                functions,
+                declarations,
+                invariant_errors,
+            );
+        }
+        // A trait's requirements have no body (`...`); each default is
+        // the trait's member, lowered as the check checked it.
+        LoweringUnit::TraitMember(member) => {
+            let _other = timing::span("other");
+            lower_function(
+                &member.declaration,
+                checked,
+                overloads,
+                functions,
+                declarations,
+                invariant_errors,
+            );
+        }
+        // A module `comptime` declaration has no runtime form, as
+        // upstream's `lit.alias.decl` has none: a body's read of it is the
+        // parameter value the check recorded, and an application it makes
+        // is lifted at module scope.
+        LoweringUnit::Constant(statement) => {
+            let _toplevel = timing::span("toplevel");
+            let mut thunks = ComptimeThunks::for_owner("__toplevel__");
+            thunks.enter_scope(&EnclosingBinders::default().with_loops(&[]));
+            thunks.request_applications(checked, std::slice::from_ref(statement));
+            thunks.lower(checked, overloads, functions, declarations);
+        }
+    }
+}
+
+/// Lower a package's checked `unit` alone, as its importer does when it
+/// first reaches one of the unit's functions.
+///
+/// It gives each function the unit lowers to, its register types closed
+/// against the package's own `declarations`, its locations naming source
+/// provenance only.
+///
+/// # Errors
+///
+/// What the lowering found wrong with the unit.
+pub fn lower_package_unit(
+    unit: &mojito_checked::unit::UnitProgram,
+    declarations: &MirDeclarations,
+) -> Result<Vec<(String, MirFunction)>, String> {
+    let lowering = unit
+        .unit()
+        .ok_or_else(|| "the unit's syntax is not of its kind".to_string())?;
+    let mut functions = Vec::new();
+    let mut invariant_errors = Vec::new();
+    lower_unit(
+        lowering,
+        unit.program(),
+        &mut functions,
+        &mut MirDeclarations::default(),
+        &mut invariant_errors,
+    );
+    for (name, function) in &mut functions {
+        close_register_types(name, function, declarations, &mut invariant_errors);
+        let registers = function.n_regs;
+        function.spans.0.retain(|reg, _| *reg < registers);
+        for (span, _) in function.spans.0.values_mut() {
+            span.syntax = None;
+        }
+    }
+    if invariant_errors.is_empty() {
+        Ok(functions)
+    } else {
+        Err(invariant_errors.join("; "))
+    }
+}
+
+fn lower_program(
+    checked: &CheckedProgram,
+    package: Option<(
+        &PackageInterface,
+        &std::sync::Arc<text::package::PackageDeclarations>,
+    )>,
+) -> (MirProgram, Vec<std::ops::Range<usize>>) {
     let mut functions = Vec::new();
     let mut declarations = MirDeclarations {
         traits: checked.conformances().traits.clone(),
         ..MirDeclarations::default()
     };
     let mut invariant_errors = Vec::new();
-    let mut toplevel: Vec<Stmt> = Vec::new();
-    let mut constants: Vec<Stmt> = Vec::new();
     let overloads = checked.overloads();
-
-    for s in program {
-        let _stmt = timing::span(match &s.kind {
-            StmtKind::Def { .. } => "def",
-            StmtKind::Struct { .. } => "struct",
-            _ => "other",
-        });
-        match &s.kind {
-            StmtKind::Def { .. } => lower_function(
-                s,
-                checked,
-                overloads,
-                &mut functions,
-                &mut declarations,
-                &mut invariant_errors,
-            ),
-            StmtKind::Struct {
-                name,
-                type_params,
-                fields,
-                methods,
-                fieldwise_init,
-                ..
-            } => {
-                let mut_self_methods = methods
-                    .iter()
-                    .filter(|m| {
-                        matches!(
-                            m.self_convention,
-                            Some(ArgConvention::Mut | ArgConvention::Ref)
-                        )
-                    })
-                    .map(|m| {
-                        let method_name = mojito_symbol::symbol::lifecycle_method_name(m);
-                        let source = format!("{name}.{method_name}");
-                        let lowered = mojito_symbol::symbol::lowered_method_name(
-                            &source,
-                            type_params,
-                            mojito_symbol::symbol::MethodShape::of(m),
-                            &**overloads,
-                            &|name| checked.constants().get(name),
-                        );
-                        if lowered == source {
-                            method_name.to_string()
-                        } else {
-                            lowered
-                        }
-                    })
-                    .chain(
-                        checked
-                            .default_wrappers()
-                            .iter()
-                            .filter(|wrapper| {
-                                wrapper.declaration == *name
-                                    && wrapper.module == s.module
-                                    && matches!(
-                                        wrapper.self_convention,
-                                        Some(ArgConvention::Mut | ArgConvention::Ref)
-                                    )
-                            })
-                            .map(|wrapper| {
-                                if wrapper.lowered_name == format!("{name}.{}", wrapper.method) {
-                                    wrapper.method.clone()
-                                } else {
-                                    wrapper.lowered_name.clone()
-                                }
-                            }),
-                    )
-                    .collect();
-                declarations.structs.push(MirStructDeclaration {
-                    name: name.clone(),
-                    fields: fields
-                        .iter()
-                        .enumerate()
-                        .map(|(field_index, field)| {
-                            (
-                                field.name.clone(),
-                                checked_type_or_record(
-                                    checked,
-                                    &AnnotationSite::StructField {
-                                        module: s.module.clone(),
-                                        declaration: name.clone(),
-                                        field: field_index,
-                                    },
-                                    &format!("field '{}' of struct '{name}'", field.name),
-                                    &mut invariant_errors,
-                                ),
-                            )
-                        })
-                        .collect(),
-                    mut_self_methods,
-                    fieldwise_init: *fieldwise_init,
-                    param_decls: checked
-                        .generic_parameters_at(&GenericSite::Struct {
-                            module: s.module.clone(),
-                            declaration: name.clone(),
-                        })
-                        .unwrap_or(&[])
-                        .to_vec(),
-                    explicit_destructors: checked
-                        .struct_destructors()
-                        .get(name)
-                        .cloned()
-                        .unwrap_or_default(),
-                    explicit_destroy: checked
-                        .explicit_destroy_types()
-                        .get(name)
-                        .map(mojito_checked::declaration::ExplicitDestroyObligation::of),
-                    conformances: checked
-                        .conformances()
-                        .structs
-                        .get(name)
-                        .cloned()
-                        .unwrap_or_default(),
-                    declared: checked
-                        .conformances()
-                        .declared
-                        .get(name)
-                        .cloned()
-                        .unwrap_or_default(),
-                    associated_types: checked
-                        .conformances()
-                        .associated
-                        .get(name)
-                        .cloned()
-                        .unwrap_or_default(),
-                    associated_values: checked
-                        .conformances()
-                        .associated_values
-                        .get(name)
-                        .cloned()
-                        .unwrap_or_default(),
-                });
-                let structure = StructLowering {
-                    checked,
-                    overloads,
-                    module: &s.module,
-                    name,
-                    type_params,
-                };
-                for (index, m) in methods.iter().enumerate() {
-                    let method_name = mojito_symbol::symbol::lifecycle_method_name(m);
-                    lower_struct_member(
-                        &structure,
-                        StructMember {
-                            index,
-                            name: method_name,
-                            lowered: mojito_symbol::symbol::lowered_method_name(
-                                &format!("{name}.{method_name}"),
-                                type_params,
-                                mojito_symbol::symbol::MethodShape::of(m),
-                                &**overloads,
-                                &|name| checked.constants().get(name),
-                            ),
-                            params: &m.params,
-                            has_self: m.has_self,
-                            self_convention: m.self_convention,
-                            positional_only: m.positional_only,
-                            keyword_only: m.keyword_only,
-                            type_params: &m.type_params,
-                            body: &m.body,
-                        },
-                        &mut functions,
-                        &mut declarations,
-                        &mut invariant_errors,
-                    );
-                }
-                for wrapper in checked
-                    .default_wrappers()
-                    .iter()
-                    .filter(|wrapper| wrapper.declaration == *name && wrapper.module == s.module)
-                {
-                    lower_struct_member(
-                        &structure,
-                        StructMember {
-                            index: wrapper.method_index,
-                            name: &wrapper.method,
-                            lowered: wrapper.lowered_name.clone(),
-                            params: &wrapper.params,
-                            has_self: true,
-                            self_convention: wrapper.self_convention,
-                            positional_only: None,
-                            keyword_only: None,
-                            type_params: &[],
-                            body: &wrapper.body,
-                        },
-                        &mut functions,
-                        &mut declarations,
-                        &mut invariant_errors,
-                    );
-                }
-            }
-            // A trait's requirements have no body (`...`); each default is
-            // the trait's member, lowered as the check checked it.
-            StmtKind::Trait { name, .. } => {
-                for member in checked
-                    .trait_members()
-                    .iter()
-                    .filter(|member| member.trait_name == *name && member.module == s.module)
-                {
-                    lower_function(
-                        &member.declaration,
-                        checked,
-                        overloads,
-                        &mut functions,
-                        &mut declarations,
-                        &mut invariant_errors,
-                    );
-                }
-            }
-            // A module `comptime` declaration has no runtime form, as
-            // upstream's `lit.alias.decl` has none: a body's read of it is
-            // the parameter value the check recorded, and an application it
-            // makes is lifted from the toplevel below.
-            StmtKind::Comptime { .. } => constants.push(s.clone()),
-            _ => toplevel.push(s.clone()),
-        }
+    for s in checked.statements() {
+        declarations
+            .structs
+            .extend(struct_declaration(checked, s, &mut invariant_errors));
     }
-
+    let units = checked.lowering_units();
+    let mut ranges = Vec::with_capacity(units.len());
+    let mut lowered = |unit, functions: &mut Vec<_>, declarations: &mut _, errors: &mut _| {
+        let start = functions.len();
+        lower_unit(unit, checked, functions, declarations, errors);
+        ranges.push(start..functions.len());
+    };
+    let constants = units
+        .iter()
+        .position(|unit| matches!(unit, LoweringUnit::Constant(_)))
+        .unwrap_or(units.len());
+    for unit in &units[..constants] {
+        lowered(
+            *unit,
+            &mut functions,
+            &mut declarations,
+            &mut invariant_errors,
+        );
+    }
+    let toplevel: Vec<Stmt> = checked
+        .statements()
+        .iter()
+        .filter(|s| {
+            !matches!(
+                s.kind,
+                StmtKind::Def { .. }
+                    | StmtKind::Struct { .. }
+                    | StmtKind::Trait { .. }
+                    | StmtKind::Comptime { .. }
+            )
+        })
+        .cloned()
+        .collect();
     let mut toplevel_fn = {
         let _toplevel = timing::span("toplevel");
         let mut thunks = ComptimeThunks::for_owner("__toplevel__");
@@ -658,10 +662,17 @@ pub fn lower_checked_program_importing(
             &mut thunks,
         );
         thunks.request_applications(checked, &toplevel);
-        thunks.request_applications(checked, &constants);
         thunks.lower(checked, overloads, &mut functions, &mut declarations);
         function
     };
+    for unit in &units[constants..] {
+        lowered(
+            *unit,
+            &mut functions,
+            &mut declarations,
+            &mut invariant_errors,
+        );
+    }
     // The synthetic module initializer returns nothing and never raises.
     toplevel_fn.ret_ty = Some(Ty::None);
     functions.push(("__toplevel__".to_string(), toplevel_fn));
@@ -690,7 +701,147 @@ pub fn lower_checked_program_importing(
     );
     let _verify = timing::span("verify.pre_drop");
     result.invariant_errors.extend(verify::verify(&result));
-    result
+    (result, ranges)
+}
+
+/// The MIR declaration of the struct `s` declares, if it declares one.
+fn struct_declaration(
+    checked: &CheckedProgram,
+    s: &Stmt,
+    invariant_errors: &mut Vec<String>,
+) -> Option<MirStructDeclaration> {
+    let StmtKind::Struct {
+        name,
+        type_params,
+        fields,
+        methods,
+        fieldwise_init,
+        ..
+    } = &s.kind
+    else {
+        return None;
+    };
+    let overloads = checked.overloads();
+    let mut_self_methods = methods
+        .iter()
+        .filter(|m| {
+            matches!(
+                m.self_convention,
+                Some(ArgConvention::Mut | ArgConvention::Ref)
+            )
+        })
+        .map(|m| {
+            let method_name = mojito_symbol::symbol::lifecycle_method_name(m);
+            let source = format!("{name}.{method_name}");
+            let lowered = mojito_symbol::symbol::lowered_method_name(
+                &source,
+                type_params,
+                mojito_symbol::symbol::MethodShape::of(m),
+                &**overloads,
+                &|name| checked.constants().get(name),
+            );
+            if lowered == source {
+                method_name.to_string()
+            } else {
+                lowered
+            }
+        })
+        .chain(
+            checked
+                .default_wrappers()
+                .iter()
+                .filter(|wrapper| {
+                    wrapper.declaration == *name
+                        && wrapper.module == s.module
+                        && matches!(
+                            wrapper.self_convention,
+                            Some(ArgConvention::Mut | ArgConvention::Ref)
+                        )
+                })
+                .map(|wrapper| {
+                    if wrapper.lowered_name == format!("{name}.{}", wrapper.method) {
+                        wrapper.method.clone()
+                    } else {
+                        wrapper.lowered_name.clone()
+                    }
+                }),
+        )
+        .collect();
+    Some(MirStructDeclaration {
+        name: name.clone(),
+        fields: fields
+            .iter()
+            .enumerate()
+            .map(|(field_index, field)| {
+                (
+                    field.name.clone(),
+                    checked_type_or_record(
+                        checked,
+                        &AnnotationSite::StructField {
+                            module: s.module.clone(),
+                            declaration: name.clone(),
+                            field: field_index,
+                        },
+                        &format!("field '{}' of struct '{name}'", field.name),
+                        invariant_errors,
+                    ),
+                )
+            })
+            .collect(),
+        mut_self_methods,
+        fieldwise_init: *fieldwise_init,
+        param_decls: checked
+            .generic_parameters_at(&GenericSite::Struct {
+                module: s.module.clone(),
+                declaration: name.clone(),
+            })
+            .unwrap_or(&[])
+            .to_vec(),
+        explicit_destructors: checked
+            .struct_destructors()
+            .get(name)
+            .cloned()
+            .unwrap_or_default(),
+        explicit_destroy: checked
+            .explicit_destroy_types()
+            .get(name)
+            .map(mojito_checked::declaration::ExplicitDestroyObligation::of),
+        conformances: checked
+            .conformances()
+            .structs
+            .get(name)
+            .cloned()
+            .unwrap_or_default(),
+        declared: checked
+            .conformances()
+            .declared
+            .get(name)
+            .cloned()
+            .unwrap_or_default(),
+        associated_types: checked
+            .conformances()
+            .associated
+            .get(name)
+            .cloned()
+            .unwrap_or_default(),
+        associated_values: checked
+            .conformances()
+            .associated_values
+            .get(name)
+            .cloned()
+            .unwrap_or_default(),
+    })
+}
+
+/// The name and compile-time parameters of the struct `statement`
+/// declares.
+const fn struct_name(statement: &Stmt) -> Option<(&String, &[mojito_ast::ast::TypeParam])> {
+    match &statement.kind {
+        StmtKind::Struct {
+            name, type_params, ..
+        } => Some((name, type_params.as_slice())),
+        _ => None,
+    }
 }
 
 /// An expression's source span, stamped by the parser (`ast::Expr.span`). Fed

@@ -28,7 +28,8 @@
 //! its importer's link reads (its loads, exports, and namespaces), which
 //! every declaration names by position. A module's compile-time facts and
 //! constants are each its declaration's. It holds one row per library
-//! function, which names the function once and places its body, and the
+//! function, which names the function once and places the unit it lowers
+//! from, and the
 //! indexes every phase looks a name up in; an importer reads it in place
 //! ([`DeclarationDirectory`]).
 
@@ -650,9 +651,9 @@ pub struct DeclarationEntry<'a> {
     pub residue: usize,
 }
 
-/// One library function's body as a package build writes it: its name, its
+/// One library function as a package build writes it: its name, its
 /// runtime parameter count, its `mut`/`ref` parameter mask (receiver
-/// included), and where its encoded body lies.
+/// included), and where the encoded unit it lowers from lies.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PackagedBody {
     pub name: String,
@@ -814,8 +815,9 @@ impl PackageDeclarations {
         directory.string(directory.word(Section::Functions, row, 0))
     }
 
-    /// Where the body of the function at `row` among [`Self::bodies`]
-    /// lies in the payload; `None` when the package holds no body for it.
+    /// Where the unit the function at `row` among [`Self::bodies`] lowers
+    /// from lies in the payload; `None` when the package holds no unit for
+    /// it.
     pub fn body_range(&self, row: usize) -> Option<Range<usize>> {
         let word = |column| self.directory.word(Section::Functions, row, column);
         let range = word(6) as usize..word(7) as usize;
@@ -1717,7 +1719,7 @@ enum Section {
     /// package order of structs.
     Structs,
     /// `[name, declaration, index in its record, runtime parameter count,
-    /// first mask word, mask length, body start, body end]`, in the order
+    /// first mask word, mask length, unit start, unit end]`, in the order
     /// the bodies were lowered in.
     Functions,
     /// `[function row]`, sorted by the function's name: the package order

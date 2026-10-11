@@ -8,6 +8,17 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- The bundled library's package holds each body as checked (R546), as
+  upstream's `.mojoc` holds each body's IR as its checks validated it: one
+  record per lowering unit (`checked_unit::CheckedUnit`) holding the
+  unit's elaborated syntax and its share of the check's facts, keyed by
+  occurrences an encoding scope renumbers (`token::encoding_occurrences`).
+  The importer lowers a unit (HIR CFG, MIR) when the elaborator first
+  reaches one of its functions, then inserts drops and verifies, and the
+  build refuses a package whose units, lowered alone, give any function
+  other than the whole library's lowering. MIR lowering runs by unit
+  (`mir::lower_unit`); the package format is `mojito-package 26`, and the
+  package is 3.0 MB, from 1.47 MB (R604).
 - A type bracket argument is compile-time data on its call (R601), as
   Mojo's call carries a type parameter as an attribute:
   `Array[UInt8, 16](fill=0)` and `external_call["strlen", UInt]` no longer

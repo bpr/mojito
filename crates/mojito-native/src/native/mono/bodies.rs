@@ -1,7 +1,7 @@
 //! The bodies an elaboration instantiates: the program's own, and an
-//! imported package's, each decoded the first time the elaboration reaches
-//! it, and both looked up by name or name prefix, as upstream's symbol
-//! table finds a callee's overload set.
+//! imported package's, each lowered from its unit the first time the
+//! elaboration reaches it, and both looked up by name or name prefix, as
+//! upstream's symbol table finds a callee's overload set.
 
 use mojito_mir::mir::MirFunction;
 use mojito_mir::mir::text::package::PackageBodies;

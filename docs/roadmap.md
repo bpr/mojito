@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R604**.
+Next free ID: **R605**.
 
 ## Ordered Work
 
@@ -49,19 +49,6 @@ belongs to is named in its title.
 Scope: what remains of the plan's stages, and what the pipeline order still
 leaves to close. A defect found on the way is filed by its kind; a
 divergence from the pin goes to a catch-up track, however small.
-
-- [ ] **R546 (P6) A package holds lowered CFG MIR where upstream's holds
-  post-parse IR**
-
-  The bundled library's package keeps each body as ownership-checked CFG
-  MIR, where upstream's `.mojoc` keeps the structured IR written just after
-  the semantic checks, which its importer lowers.
-  - The importer inserts a decoded body's drops, as upstream runs its
-    lifetime pass on a materialized body, but repeats nothing earlier.
-  - Closing it needs a serializable checked IR above the MIR waist
-    (`docs/pliron-future.md`).
-  - Depends on R545, the declaration half of the same package.
-  - Model: Fable, Planned.
 
 - [ ] **R566 (P6) An installed compiler builds its library package on
   first use**
@@ -4707,6 +4694,28 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - The lever: lowering closes a type's owner roots to the variable
     `owner_vars` maps each to, or to an unbound origin; then the permit is
     deleted.
+  - Depends on nothing.
+  - Model: Fable, Not Planned.
+
+- [ ] **R604 A package's checked body is syntax beside fact tables keyed
+  by occurrence, where upstream's is typed `lit` ops**
+
+  The bundled package keeps each body as its elaborated AST plus the
+  check's span-keyed facts, while upstream's `.mojoc` keeps each body as
+  `lit` ops that carry their own types and attributes.
+  - A unit record (`checked_unit::CheckedUnit`) is the unit's syntax and
+    its share of the check's `DiscoveryResult`, each fact keyed by a
+    syntax occurrence the encoding renumbers; the importer rebuilds the
+    checked arena from them before it lowers.
+  - The package grew from 1.47 MB of MIR bodies to 3.0 MB of units: a
+    node's type, place type, and binding are separate rows, and a struct's
+    parameter list repeats in each member's record.
+  - The units also carry the build's binding owners under
+    `origin::encoding_packaged_owners`, so R561's lever alone no longer
+    deletes that permit.
+  - The gap is the checked handoff's own; `docs/pliron-future.md`
+    assesses closing it.
+  - Found while landing R546 (2026-10-10).
   - Depends on nothing.
   - Model: Fable, Not Planned.
 

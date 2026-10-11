@@ -19,7 +19,7 @@ pub struct CheckedNodeId(pub u32);
 /// New categories can be added without changing source syntax; in particular,
 /// future patterns and suspended computations can refer to nodes rather than
 /// impersonating ordinary values.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[non_exhaustive]
 pub enum ValueCategory {
     Value,
@@ -33,7 +33,7 @@ pub enum ValueCategory {
 /// Suspension is deliberately independent from raising: future coroutines,
 /// generators, and delimited continuations can introduce resume edges without
 /// being encoded as exceptions or calls.
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
 pub struct EffectFacts {
     pub raises: Option<Ty>,
     pub may_suspend: bool,
@@ -69,7 +69,7 @@ pub enum CheckedCallArgumentSource {
 /// Type arguments occupy a declaration slot with no runtime value; value
 /// arguments name the checked expression occurrence whose already-evaluated
 /// register lowering must reuse.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct CheckedCallParameterArgument {
     pub name: Option<String>,
     pub value_source: Option<SourceSpan>,
@@ -79,7 +79,7 @@ pub struct CheckedCallParameterArgument {
 ///
 /// These are deliberately call-local: augmented subscripts may send the same
 /// source value through different getter and setter parameter contracts.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum CheckedCallValueAdjustment {
     ResolveCallable { target: String },
     ImplicitConversion { target: String },
@@ -95,7 +95,7 @@ pub enum CheckedCallValueAdjustment {
 /// `adjustments`, retain the original caller place when the corresponding
 /// [`CheckedCallArgument`] requires it, and emit the invalidations immediately
 /// at this call rather than at source evaluation.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct CheckedCallArgumentBoundary {
     pub source: CheckedCallArgumentSource,
     pub value_source: SourceSpan,
@@ -108,7 +108,7 @@ pub struct CheckedCallArgumentBoundary {
 /// Keeping this on the contract makes two calls over shared syntax independent:
 /// the source operands are still evaluated once, but conversions and mutation
 /// effects occur according to each callee's own signature.
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
 pub struct CheckedCallBoundary {
     pub arguments: Vec<CheckedCallArgumentBoundary>,
     /// Receiver/call-site generation changes, emitted at the call boundary.
@@ -135,7 +135,7 @@ pub enum CheckedResultAdapter {
 /// Nominal subscripts use this exact record rather than a reduced parallel
 /// resolver.  Future syntactic call forms can share it without teaching MIR
 /// overload resolution, origin solving, or effect inference.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct CheckedCallContract {
     pub target: String,
     pub raises: Option<Ty>,
@@ -168,7 +168,7 @@ pub struct CheckedCallContract {
 /// getter writes the computed result directly through that handle and
 /// therefore has no setter. In either case the receiver and indices are
 /// evaluated only once.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct CheckedAugmentedSubscript {
     pub getter: CheckedCallContract,
     /// Absent exactly when `getter.reference_result` is mutable and lowering
@@ -196,7 +196,7 @@ pub struct CheckedAugmentedSubscript {
 /// The getter contract lives here rather than in `SelectedCall` so node-level
 /// consumers (reference-result diversion, `resolved_callable`,
 /// `checked_raises`) see the element call, not the subscript read.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct CheckedElementInvocation {
     /// The selected `__getitem__` contract for the subscript read.
     pub getter: CheckedCallContract,
@@ -226,7 +226,7 @@ pub enum IterationMode {
 /// Source ownership is deliberately absent: [`IterationMode`] selects borrowed
 /// versus consuming `__iter__`, while this enum describes only what the target
 /// spelling does with each yielded item.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum IterationBindingAction {
     /// Move a freshly yielded value into an explicit `var` target that owns it
     /// and may transfer it onward.
@@ -248,7 +248,7 @@ pub enum IterationBindingAction {
 /// `yielded_ty` is the exact result type of `__next__`; `binding_ty` is the
 /// user-visible storage type. `mutable` is the loop variable's declared
 /// mutability.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct CheckedIterationBinding {
     pub mode: mojito_ast::ast::LoopBindingMode,
     pub action: IterationBindingAction,
@@ -281,7 +281,7 @@ pub struct CheckedIteratorCall {
 /// arguments, then the selected constructor's own, in the layout the
 /// constructor's declaration restates them (`Counter[4](1)` calls
 /// `Counter[4].__init__`).
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct GenericInstantiation {
     pub callee: String,
     /// The selected overload's runtime parameter names, in declaration order,
@@ -317,7 +317,7 @@ pub struct GenericInstantiation {
 ///
 /// The compiler's discovery loop replays closed recordings on specialized
 /// variadic structs as per-call method clones.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct MethodInstantiation {
     pub owner: String,
     /// The receiver instance's declaration-order type arguments when `owner`
@@ -359,7 +359,7 @@ pub struct StructInstantiation {
 /// overload reconstruction. `exhaustion` is the checked typed error caught by
 /// a raising `__next__`; it is absent only for compiler-private iterator
 /// storage, which advances without a nominal method.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct IterationProtocol {
     pub mode: IterationMode,
     /// Target convention and result-category adaptation, filled once the
@@ -400,7 +400,7 @@ pub struct IterationProtocol {
 /// `include_base_generation` distinguishes defining a fresh named
 /// owned-interior generation (which replaces that exact generation) from an
 /// ordinary write through its storage.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct InteriorInvalidation {
     pub base: mojito_types::origin::OriginPlace,
     pub except: Option<mojito_types::origin::OwnerId>,
@@ -413,14 +413,14 @@ pub struct InteriorInvalidation {
 /// iterates over the binders in scope. The body is checked once with the
 /// binder symbolic; `native::mono` unrolls it under each instance's
 /// bindings.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct ComptimeIteration {
     pub binder: mojito_types::param_expr::ParamRef,
     pub source: ComptimeSource,
 }
 
 /// How the check leaves a `comptime for` iterable to the phases below it.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum ComptimeSource {
     /// A sequence the check compiled over the binders in scope.
     Sequence(ComptimeSequence),
@@ -555,7 +555,7 @@ impl std::fmt::Display for ComptimeSequence {
 }
 
 /// Checker decisions which lowering must apply explicitly.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[non_exhaustive]
 pub enum SemanticAdjustment {
     ResolveCallable(String),
@@ -1136,12 +1136,12 @@ pub enum SemanticAdjustment {
 /// See [`SemanticAdjustment::SpelledConstruction`]. Equality is the expression's
 /// structural equality, an equivalence on parsed syntax (a literal is never
 /// NaN).
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct SpelledConstruction(pub Box<Expr>);
 
 impl Eq for SpelledConstruction {}
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct CheckedTupleUnpackElement {
     pub ty: Ty,
     pub accessor: Option<String>,
@@ -1189,7 +1189,7 @@ pub struct CheckedExpr {
     pub comprehension_bindings: Vec<CheckedComprehensionBinding>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct CheckedComprehensionBinding {
     pub name: String,
     pub owner: mojito_types::origin::OwnerId,
@@ -1234,7 +1234,7 @@ pub struct CheckedDeclaration {
     pub children: Vec<CheckedDeclId>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct CheckedCapture {
     pub name: String,
     pub binding: mojito_types::origin::OwnerId,
@@ -1319,7 +1319,7 @@ impl CheckedTables {
 /// `by_value` is the overload upstream selects once, on the declaration: a
 /// trivially register-passable operand is rebound by value and is not a
 /// place.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct RebindAssertion {
     pub operand: Ty,
     pub dest: Ty,
@@ -1338,7 +1338,7 @@ pub struct RebindAssertion {
 /// spells, and every wrapper's index follows them. Its parameters' defaults
 /// are its member's, which the member's lowered declaration holds, as
 /// `getTraitFunctionSignature` gives the wrapper its trait function's.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct CheckedDefaultWrapper {
     pub module: Option<String>,
     /// The struct that inherits the default.
@@ -1368,7 +1368,7 @@ pub struct CheckedDefaultWrapper {
 /// check checked, built from its trait's method, whose checked sites are the
 /// declaration's `AnnotationSite::FunctionParam`/`FunctionReturn` and
 /// `GenericSite::Function`; a conformer's wrapper calls it.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct CheckedTraitMember {
     pub module: Option<String>,
     pub trait_name: String,
@@ -1617,6 +1617,53 @@ impl DiscoveryResult {
         .filter_map(|declaration| declaration.ty)
         .collect()
     }
+
+    /// [`Self::scan_expressions`] over `statements` and the bodies of
+    /// `wrappers` in place of the program's.
+    pub(crate) fn scan_unit_expressions(
+        &self,
+        statements: &[Stmt],
+        wrappers: &[CheckedDefaultWrapper],
+        visit: &mut dyn FnMut(&Expr),
+    ) {
+        build_checked_expressions(
+            statements,
+            &self.contextual_bases,
+            &self.expression_types,
+            &self.expression_bindings,
+            &self.comprehension_bindings,
+            &self.expression_place_types,
+            &self.binding_types,
+            &self.expression_effects,
+            &self.selected_calls,
+            &self.subscript_descriptors,
+            &self.iteration_protocols,
+            &self.simd_constructions,
+            &self.operation_adjustments,
+            &self.parameterized_method_calls,
+            &self.tuple_unpack_plans,
+            &self.interior_references,
+            &self.interior_invalidations,
+            &self.overload_targets,
+            &self.implicit_conversions,
+            &self.implicit_conversion_types,
+            &self.conversion_source_borrows,
+            &self.conversion_raises,
+            &self.explicit_destroy_calls,
+            &self.reference_value_uses,
+            &self.copy_place_value_uses,
+            &self.call_place_uses,
+            &self.borrowed_read_call_places,
+            &self.read_temporary_arguments,
+            &self.implicitly_copied_consuming_receivers,
+            &self.truthiness_conditions,
+            &self.rebind_assertions,
+            &self.generic_instantiations,
+            &self.method_instantiations,
+            wrappers,
+            Some(visit),
+        );
+    }
 }
 
 /// A successfully checked program plus semantic facts that downstream phases
@@ -1716,7 +1763,7 @@ impl ExplicitDestroyInfo {
 /// The declaration-owned location of a source annotation. Unlike `SourceType`
 /// syntax itself, this identity preserves the scope in which syntax such as a
 /// bare `T` was resolved.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum AnnotationSite {
     FunctionParam {
         module: Option<String>,
@@ -1763,7 +1810,7 @@ pub enum AnnotationSite {
 /// Declaration-owned identity for a checked compile-time parameter list.
 /// Runtime reification consumes these already-resolved declarations instead of
 /// reclassifying source bounds in MIR or the VM.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum GenericSite {
     Function {
         module: Option<String>,
@@ -1821,7 +1868,7 @@ pub struct CallThroughArg {
 
 /// One caller-substituted transfer at a call site: which actual receives
 /// loans rooted at which caller origins. MIR lowering installs the loans.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct CheckedCallTransfer {
     pub dest: CheckedTransferDest,
     /// Interior path below the destination actual's root that receives the
@@ -1832,7 +1879,7 @@ pub struct CheckedCallTransfer {
     pub mutable: bool,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum CheckedTransferDest {
     Receiver,
     Argument(usize),
@@ -1845,7 +1892,7 @@ pub enum CheckedTransferDest {
 
 /// the declaration returns a reference. Recorded per callable so lowering
 /// never re-reads source `raises`/return annotations.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct DeclarationEffect {
     pub raises: bool,
     pub error: Option<Ty>,

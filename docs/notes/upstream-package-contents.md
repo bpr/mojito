@@ -39,11 +39,33 @@ that pass on each body it materializes.
   uninitialized value 's'"). The check's rewrite is not what it stores.
 
 So storing drop-elaborated bodies in Mojito's package would diverge from
-upstream. Mojito matches it instead: `src/package.rs::build` runs the
-ownership check and writes pre-drop MIR, and `PackageBodies::get` inserts a
-body's drops when the elaborator first decodes it. The remaining gap is the
-stage of IR (CFG MIR versus upstream's structured post-parse IR), filed as
-R546.
+upstream.
+
+## Finding: the stored body's control flow is still structured
+
+Verified against the same pin on 2026-10-10, while landing R546. A package
+`b` whose one function has a `while` with an `if`/`else` and a `break`, a
+`for` over `range`, and a `return`:
+
+- holds the ops `hlcf`, `loop`, `loop.yield`, `loop.continue`,
+  `loop.break.else`, `yield`, `try.yield`, and `return`;
+- holds no `br` and no `cond_br`.
+
+So the stored body is the parser's IR with its semantic control flow, which
+the checks validated without storing a rewrite: `lit`'s `return` and the
+structured `hlcf` loops, which LowerSemanticCF lowers to terminators. The
+compiler walkthrough agrees: package building rebuilds "a `lit.package` op
+whose regions carry the full post-parse IR". An importer therefore lowers a
+materialized body's control flow as well as running its lifetime pass.
+
+Mojito matches it: `src/package.rs::build` runs the check and the ownership
+check, and writes each body as the check left it, one record per lowering
+unit (its syntax and the check's facts for it,
+`mojito_checked::unit::CheckedUnit`); `PackageBodies::get` lowers a body's
+unit (checked arena, HIR CFG, MIR) and inserts its drops when the
+elaborator first reaches it. What remains is representation: Mojito's
+checked body is syntax beside side tables, upstream's typed `lit` ops
+(R604).
 
 ## Recipe
 
@@ -58,8 +80,9 @@ To read what a pinned package holds:
 3. The result is MLIR bytecode (it starts `ML\xefR`, producer `MLIR24.0.0git`).
    Its dialect/op-name and string sections are plain text:
    `strings b.raw | grep -E '^(call|fn|var\.decl|ref\.|load\.|ownership)'`
-   lists the ops, and `strings b.raw | grep -c __deinit__` asks whether any
-   destructor is named.
+   lists the ops, `strings b.raw | grep -c __deinit__` asks whether any
+   destructor is named, and `strings b.raw | grep -E '^(hlcf|loop|br|cond_br)'`
+   whether the control flow is still structured.
 
 What the importer does with an already-checked body beyond reinserting
 destructors (whether it reports lifetime diagnostics again) is not

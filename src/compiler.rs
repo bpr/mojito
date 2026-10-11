@@ -87,7 +87,7 @@ impl CompiledProgram {
 
     /// Drop-elaborated MIR: parametric MIR with drops inserted, re-verified.
     /// It may still be generic. It is the whole program: an imported
-    /// package's bodies, every one decoded, join [`Self::elaborated_mir`],
+    /// package's bodies, every one lowered, join [`Self::elaborated_mir`],
     /// so it serializes as one artifact.
     pub fn drop_elaborated_mir(&self) -> &MirProgram {
         let elaborated = self.elaborated_mir();
@@ -108,7 +108,7 @@ impl CompiledProgram {
     /// Concrete MIR: the drop-elaborated program elaborated by
     /// `native::mono` from its entry roots and verified concrete. Every
     /// backend consumes this one graph; no backend elaborates again. An
-    /// imported package's body is decoded when the elaboration first
+    /// imported package's body is lowered from its unit when the elaboration first
     /// reaches it.
     pub fn concrete_mir(&self) -> Result<&SpecializedProgram, CompilerError> {
         self.concrete
@@ -147,6 +147,10 @@ impl CompiledProgram {
                     timing::count(
                         "package_bodies_decoded",
                         package.bodies.materialized() as u64,
+                    );
+                    timing::count(
+                        "package_units_lowered",
+                        package.bodies.units_lowered() as u64,
                     );
                     timing::count(
                         "package_declarations_decoded",
@@ -367,11 +371,15 @@ impl Compiler {
         let interfaces = context
             .take_interfaces()
             .map_err(|error| CompilerError::Verify(vec![error]))?;
+        let facts = context
+            .take_facts()
+            .map_err(|error| CompilerError::Verify(vec![error]))?;
         Ok((
             program,
             PackageExports {
                 interfaces,
                 prepared,
+                facts,
             },
         ))
     }
@@ -564,6 +572,8 @@ impl Compiler {
 pub(crate) struct PackageExports {
     pub interfaces: crate::checker::InterfaceExport,
     pub prepared: Vec<Stmt>,
+    /// What its check recorded, before the checked arena was built.
+    pub facts: crate::checked::DiscoveryResult,
 }
 
 /// A source link, which read no package record.

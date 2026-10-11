@@ -836,11 +836,12 @@ waist. An importer's check no longer registers the library's declarations
 either (R552, 2026-10-10): the package build's check exports each module's
 resolved declarations, and the importer's check installs those of the
 modules its link reached and checks the program's own statements alone.
-Gaps remain, each a `pmir` entry: the package holds CFG MIR where
-upstream's holds post-parse IR (R546), and an importer still prepares and
+Gaps remain, each a `pmir` entry: an importer still prepares and
 elaborates (R553), eagerly decodes the MIR of (R554), and eagerly installs
 (R555) the library's declarations, where upstream resolves each on first
-lookup.
+lookup. The package's bodies are held as checked since R546 (2026-10-10):
+one record per lowering unit, its syntax and the check's facts for it,
+which an importer lowers when it first reaches the body.
 
 ## Decisions for the owner
 

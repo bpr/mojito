@@ -1,13 +1,14 @@
 //! The bundled standard library as a compiled package.
 //!
 //! The library's bodies are checked, lowered, and ownership-verified once
-//! per compiler build, into one `std` package file (`mir::text::package`).
-//! Every compilation after that imports it instead of reading the library
-//! again, as upstream imports its precompiled `std.mojoc`: its link reads
-//! each library module's record (`module::package`), and it inserts a
-//! body's drops when its elaboration first reaches it, as upstream's
-//! importer runs its lifetime pass on each body of a package that holds them
-//! before destructor insertion. The package is
+//! per compiler build, and kept as checked in one `std` package file
+//! (`mir::text::package`), one record per lowering unit. Every compilation
+//! after that imports it instead of reading the library again, as upstream
+//! imports its precompiled `std.mojoc`: its link reads each library
+//! module's record (`module::package`), and it lowers a body's unit and
+//! inserts the body's drops when its elaboration first reaches it, as
+//! upstream's importer lowers and runs its lifetime pass on each body it
+//! materializes from a package that holds each body as checked. The package is
 //! written to a cache the first time a build needs it, keyed by the
 //! build's identity, which covers the library's source, and the library's
 //! root: like upstream's, the importer reads no library source to find it.
@@ -17,7 +18,8 @@ use crate::compiler::{Compiler, CompilerError};
 use crate::interface::PackageInterface;
 use crate::mir::MirProgram;
 use crate::mir::text::package::{
-    PackageBodies, PackageBytes, PackageDeclarations, PackageHeader, read_package, write_package,
+    PackageBodies, PackageBytes, PackageDeclarations, PackageHeader, read_package, same_body,
+    write_package,
 };
 use crate::module::{LinkOptions, bundled_root, link_source_recording};
 use crate::module_package::{ModuleIdentity, PackageModules};
@@ -176,8 +178,8 @@ fn import(bytes: PackageBytes, header: &PackageHeader) -> Result<ImportedPackage
 
 /// Build the package of the library under `root`: compile a program that
 /// imports every one of its modules, keep each module's link record, its
-/// checked effect summaries, and the ownership-checked MIR of its
-/// declarations, before drop elaboration, and write them.
+/// checked effect summaries, the MIR declarations of its declarations, and
+/// each lowering unit as the check left it, and write them.
 fn build(root: &Path, header: &PackageHeader) -> Result<Vec<u8>, CompilerError> {
     let modules = module_paths(&root.join("std"), "std");
     let mut source = String::new();
@@ -247,6 +249,7 @@ fn build(root: &Path, header: &PackageHeader) -> Result<Vec<u8>, CompilerError> 
         }
         program.functions.push((name.clone(), function.clone()));
     }
+    let units = packaged_units(&compiled, &exports.facts);
     let records = exports
         .interfaces
         .records(
@@ -256,8 +259,61 @@ fn build(root: &Path, header: &PackageHeader) -> Result<Vec<u8>, CompilerError> 
             program.declarations.traits.clone(),
         )
         .map_err(|error| CompilerError::Verify(vec![error]))?;
-    write_package(header, &interface, &program, records)
-        .map_err(|error| CompilerError::Verify(vec![error.to_string()]))
+    let bytes = write_package(header, &interface, &program, &units, records)
+        .map_err(|error| CompilerError::Verify(vec![error.to_string()]))?;
+    refuse_unequal_units(&bytes, &program)?;
+    Ok(bytes)
+}
+
+/// Each lowering unit of the library's checked program, with its share of
+/// the check's `facts` and the names of the functions it places: every
+/// function the library lowers it to, unless an earlier unit lowers to the
+/// same one.
+fn packaged_units(
+    compiled: &crate::compiler::CompiledProgram,
+    facts: &crate::checked::DiscoveryResult,
+) -> Vec<(crate::checked_unit::CheckedUnit, Vec<String>)> {
+    let checked = compiled.checked();
+    let (lowered, ranges) = crate::mir::lower_checked_program_units(checked);
+    let mut placed = std::collections::HashSet::new();
+    facts
+        .units(&checked.lowering_units())
+        .into_iter()
+        .zip(ranges)
+        .map(|(unit, range)| {
+            let names = lowered.functions[range]
+                .iter()
+                .map(|(name, _)| name)
+                .filter(|name| placed.insert(name.as_str()))
+                .cloned()
+                .collect();
+            (unit, names)
+        })
+        .collect()
+}
+
+/// Refuse the package `bytes` unless each of its units, lowered alone as
+/// an importer lowers it, gives every function it places exactly as the
+/// library's `program` holds it, so importing the package changes no body.
+fn refuse_unequal_units(bytes: &[u8], program: &MirProgram) -> Result<(), CompilerError> {
+    let package = read_package(PackageBytes::Owned(bytes.to_vec()))
+        .map_err(|error| CompilerError::Verify(vec![error.to_string()]))?;
+    let findings: Vec<String> = program
+        .functions
+        .iter()
+        .filter_map(|(name, function)| match package.bodies.lowered(name) {
+            Err(error) => Some(format!("the unit of `{name}` does not lower: {error}")),
+            Ok(lowered) if !same_body(&lowered, function) => Some(format!(
+                "the unit of `{name}` lowers to another body than the library's"
+            )),
+            Ok(_) => None,
+        })
+        .collect();
+    if findings.is_empty() {
+        Ok(())
+    } else {
+        Err(CompilerError::Verify(findings))
+    }
 }
 
 /// Whether `name` stays the package's own in every importer.
@@ -384,6 +440,7 @@ mod tests {
                 declarations: MirDeclarations::default(),
                 invariant_errors: Vec::new(),
             },
+            &[],
             crate::mir::text::package::DeclarationRecords::default(),
         )
         .expect("write")

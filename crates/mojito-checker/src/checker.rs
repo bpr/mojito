@@ -90,6 +90,9 @@ pub fn check_program_in(
     context: &mut CheckContext,
 ) -> Result<mojito_checked::checked::CheckedProgram, TypeError> {
     let discovery = check_program_for_discovery(stmts, context)?;
+    if context.record_interfaces {
+        context.facts = Some(Box::new(discovery.clone()));
+    }
     let _arena = timing::span("arena");
     timing::count("arena_builds", 1);
     Ok(discovery.finalize())
@@ -137,6 +140,9 @@ pub struct CheckContext {
     /// The module constants the program's comptime elaboration resolved,
     /// which an exported interface carries.
     elaborated: ElaboratedConstants,
+    /// What the last check that exported interfaces recorded, before its
+    /// checked arena was built: a package keeps each body's share of it.
+    facts: Option<Box<mojito_checked::checked::DiscoveryResult>>,
 }
 
 impl CheckContext {
@@ -149,6 +155,7 @@ impl CheckContext {
             record_interfaces: false,
             interfaces: None,
             elaborated: Vec::new(),
+            facts: None,
         }
     }
 
@@ -181,6 +188,19 @@ impl CheckContext {
         self.interfaces
             .take()
             .unwrap_or_else(|| Err("the check exported no interface".to_string()))
+    }
+
+    /// What the last check that exported interfaces recorded, before its
+    /// checked arena was built.
+    ///
+    /// # Errors
+    ///
+    /// When no check exported interfaces.
+    pub fn take_facts(&mut self) -> Result<mojito_checked::checked::DiscoveryResult, String> {
+        self.facts
+            .take()
+            .map(|facts| *facts)
+            .ok_or_else(|| "the check recorded no facts".to_string())
     }
 
     pub const fn param_context(&self) -> &ParamContext {

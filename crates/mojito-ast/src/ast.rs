@@ -986,12 +986,12 @@ pub struct Stmt {
     /// use `None`; linked entry/import declarations carry their originating path.
     /// A package's encoding leaves it out: its importer stamps the path it
     /// reached the module by, as it stamps a module it parses.
-    #[serde(skip)]
+    #[serde(with = "statement_module")]
     pub module: Option<String>,
     /// Concrete occurrence identity. It is deliberately ignored by structural
     /// AST equality, like source spans and module provenance. A decoded
     /// statement draws a fresh one, as a parsed one does.
-    #[serde(skip, default = "mojito_common::token::SyntaxId::fresh")]
+    #[serde(with = "mojito_common::token::node_syntax")]
     pub syntax_id: mojito_common::token::SyntaxId,
 }
 
@@ -1293,11 +1293,11 @@ pub struct Expr {
     /// Stamped as [`Stmt::module`] is, and likewise left out of an encoding:
     /// a decoded expression is stamped with the module [`decoding_from`]
     /// names, if any.
-    #[serde(skip, default = "decoded_source")]
+    #[serde(with = "expression_source")]
     pub source: Option<String>,
     /// Concrete occurrence identity; ignored by structural AST equality. A
     /// decoded expression draws a fresh one.
-    #[serde(skip, default = "mojito_common::token::SyntaxId::fresh")]
+    #[serde(with = "mojito_common::token::node_syntax")]
     pub syntax_id: mojito_common::token::SyntaxId,
 }
 
@@ -2511,6 +2511,62 @@ thread_local! {
 
 fn decoded_source() -> Option<String> {
     DECODING_SOURCE.with_borrow(Clone::clone)
+}
+
+/// [`Stmt::module`] as its encoding carries it: the module's file index
+/// inside an occurrence encoding
+/// ([`mojito_common::token::encoding_occurrences`]), and nothing outside
+/// one.
+mod statement_module {
+    use serde::{Deserialize, Serialize};
+
+    pub fn serialize<S: serde::Serializer>(
+        module: &impl std::borrow::Borrow<Option<String>>,
+        serializer: S,
+    ) -> Result<S::Ok, S::Error> {
+        if mojito_common::token::occurrences_encode() {
+            mojito_common::token::occurrence_file(module.borrow().as_deref())
+                .map_err(serde::ser::Error::custom)?
+                .serialize(serializer)
+        } else {
+            serializer.serialize_unit()
+        }
+    }
+
+    pub fn deserialize<'de, D: serde::Deserializer<'de>>(
+        deserializer: D,
+    ) -> Result<Option<String>, D::Error> {
+        if mojito_common::token::occurrences_encode() {
+            mojito_common::token::occurrence_source(u32::deserialize(deserializer)?)
+                .map_err(serde::de::Error::custom)
+        } else {
+            <()>::deserialize(deserializer).map(|()| None)
+        }
+    }
+}
+
+/// [`Expr::source`] as its encoding carries it: as [`Stmt::module`]'s,
+/// except that outside an occurrence encoding a decoded expression is
+/// stamped with the module [`decoding_from`] names.
+mod expression_source {
+    use serde::Deserialize;
+
+    pub fn serialize<S: serde::Serializer>(
+        source: &impl std::borrow::Borrow<Option<String>>,
+        serializer: S,
+    ) -> Result<S::Ok, S::Error> {
+        super::statement_module::serialize(source, serializer)
+    }
+
+    pub fn deserialize<'de, D: serde::Deserializer<'de>>(
+        deserializer: D,
+    ) -> Result<Option<String>, D::Error> {
+        if mojito_common::token::occurrences_encode() {
+            super::statement_module::deserialize(deserializer)
+        } else {
+            <()>::deserialize(deserializer).map(|()| super::decoded_source())
+        }
+    }
 }
 
 #[cfg(test)]

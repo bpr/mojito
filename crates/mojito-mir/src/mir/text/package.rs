@@ -3,55 +3,58 @@
 //! It holds the package's checker interface, its one module table, which
 //! holds the record its importer's link reads for each of its source
 //! modules, one record per library declaration (both
-//! `mojito_checked::package`), and each of its verified, ownership-checked
-//! function bodies, before drop elaboration. An importer maps the file and
-//! decodes its header and interface eagerly; it reads the declaration
-//! directory in place, a declaration's record the first time one of its
-//! phases looks one of its names up (as upstream's importer resolves a
-//! declaration from bytecode on first lookup), a module's link record when
-//! its link reaches the module, and a body only when the elaborator first
-//! reaches it, inserting that body's drops then. Upstream's precompiled
-//! package likewise holds each body as checked, before its lifetime pass
-//! inserts destructors, and its importer runs that pass on each body it
+//! `mojito_checked::package`), and each of its bodies as the check left
+//! it: one record per lowering unit (`mojito_checked::unit::CheckedUnit`),
+//! a declaration's checked syntax and the facts the check recorded for it.
+//! An importer maps the file and decodes its header and interface eagerly;
+//! it reads the declaration directory in place, a declaration's record the
+//! first time one of its phases looks one of its names up (as upstream's
+//! importer resolves a declaration from bytecode on first lookup), a
+//! module's link record when its link reaches the module, and a unit only
+//! when the elaborator first reaches one of its functions: it lowers the
+//! unit then (HIR CFG, MIR) and inserts the reached body's drops. Upstream's
+//! precompiled package likewise holds each body's IR as its parser wrote it
+//! and its semantic checks validated it, and its importer lowers its
+//! semantic control flow and runs its lifetime pass on each body it
 //! materializes (`docs/notes/upstream-package-contents.md`).
 //!
 //! The container is a header followed by records:
 //!
 //! ```text
-//! mojito-package 25
+//! mojito-package 26
 //! <the header's length, 8 bytes little-endian>
 //! <the header, as bytecode>
 //! <the payload: every record, as bytecode>
 //! ```
 //!
 //! The header names the package and the compiler that built it, and holds
-//! the payload range of the interface, of the source-file table every
-//! body's locations name, and of the declaration directory
+//! the payload range of the interface and of the declaration directory
 //! (`mojito_checked::package::DeclarationDirectory`). That directory holds
 //! every name once, in one string section, and places every module's link
-//! record, every declaration's record, and every function's body: one row
+//! record, every declaration's record, and every function's unit: one row
 //! per function names it once and holds its declaration, its runtime
-//! parameter count, its reference parameter mask, and its body's range, as
-//! an MLIR function op names its symbol once and holds its region. Every
-//! record is postcard bytecode; a link module record and a declaration's
-//! checker residue are opaque here, since the linker and the checker that
-//! read them sit above MIR. No part of a package is MIR text.
+//! parameter count, its reference parameter mask, and the range of the
+//! unit it lowers from, as an MLIR function op names its symbol once and
+//! holds its region. Every record is postcard bytecode; a link module
+//! record and a declaration's checker residue are opaque here, since the
+//! linker and the checker that read them sit above MIR. No part of a
+//! package is MIR.
 
-use crate::mir::{MirDeclarations, MirFunction, MirProgram, SpanTable};
+use crate::mir::{MirDeclarations, MirFunction, MirProgram};
 use mojito_checked::interface::PackageInterface;
 pub use mojito_checked::package::{DeclarationRecords, PackageBytes, PackageDeclarations};
-use mojito_checked::package::{LoweredDeclaration, PackagedBody, Payload};
+use mojito_checked::package::{
+    LoweredDeclaration, PackageScope, PackagedBody, Payload, ProgramConstants, ProgramOverloads,
+};
+use mojito_checked::unit::CheckedUnit;
 use mojito_common::timing;
-use mojito_common::token::SourceSpan;
-use mojito_hir::hir::VarId;
-use mojito_types::origin::encoding_packaged_owners;
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::HashMap;
 use std::fmt;
 use std::ops::Range;
 use std::sync::{Arc, Mutex, OnceLock};
 
 /// The container format this compiler writes and reads.
-pub const PACKAGE_FORMAT: &str = "mojito-package 25";
+pub const PACKAGE_FORMAT: &str = "mojito-package 26";
 
 /// Who built a package from what: an importer refuses a package another
 /// compiler built, or one built from other sources.
@@ -76,49 +79,52 @@ pub struct Package {
     pub bodies: PackageBodies,
 }
 
-/// A package's function bodies, each decoded the first time it is asked
-/// for, then finished as its importer finishes a body it lowers itself.
+/// A package's function bodies, each lowered from its unit the first time
+/// it is asked for, then finished as its importer finishes a body it
+/// lowers itself.
 #[derive(Debug)]
 pub struct PackageBodies {
     payload: Payload,
-    /// The source file each body location names, by file id.
-    files: Vec<Option<String>>,
-    /// The package's declarations, whose function table places each body.
+    /// The package's declarations, whose function table places each
+    /// function's unit.
     package: Arc<PackageDeclarations>,
     /// The package's own declarations, which its bodies were lowered
     /// against, resolved through the same lookups an importer's are.
     declarations: MirDeclarations,
-    /// Each function table row's body, once decoded.
+    /// The overload sets and module constants of the package alone, which
+    /// a unit's lowering reads.
+    overloads: Arc<ProgramOverloads>,
+    constants: Arc<ProgramConstants>,
+    /// Each unit lowered so far, by where its record starts.
+    units: Mutex<HashMap<usize, Arc<OnceLock<LoweredUnit>>>>,
+    /// Each function table row's body, once finished.
     decoded: Vec<OnceLock<Option<MirFunction>>>,
     finish: Option<BodyFinish>,
     failures: Mutex<Vec<String>>,
 }
 
-/// What an importer does to a decoded body before using it — insert its
+/// What an importer does to a lowered body before using it — insert its
 /// drops — given the body's name and the package's declarations. A plain
 /// function, since the phase it runs sits above MIR.
 pub type BodyFinish = fn(&str, MirFunction, &MirDeclarations) -> MirFunction;
 
 impl PackageBodies {
-    /// The body of `name`, decoded on first use; `None` when the package
-    /// has no such function or its record does not decode (a failure
-    /// [`Self::failures`] reports).
+    /// The body of `name`, lowered and finished on first use; `None` when
+    /// the package has no such function or its unit does not lower (a
+    /// failure [`Self::failures`] reports).
     ///
-    /// Its decode, finish, and verify report as the `package.body.*`
-    /// `--timings` spans of the thread that first asks for the body.
+    /// Its unit's decode and lowering, and its finish and verify, report as
+    /// the `package.unit.*` and `package.body.*` `--timings` spans of the
+    /// thread that first asks for it.
     pub fn get(&self, name: &str) -> Option<&MirFunction> {
         let row = self.package.body_row(name)?;
         self.decoded
             .get(row)?
             .get_or_init(|| {
-                let decoded = {
-                    let _decode = timing::span("package.body.decode");
-                    self.decode(row)
-                };
-                let function = match decoded {
+                let function = match self.lowered(name) {
                     Ok(function) => function,
                     Err(error) => {
-                        self.fail(format!("package body `{name}` does not decode: {error}"));
+                        self.fail(format!("package body `{name}` does not lower: {error}"));
                         return None;
                     }
                 };
@@ -140,7 +146,39 @@ impl PackageBodies {
             .as_ref()
     }
 
-    /// Finish every body with `finish` as it is decoded, and verify it.
+    /// The body of `name` as its unit lowers to it, before it is finished.
+    ///
+    /// # Errors
+    ///
+    /// When the package has no such function, or its unit does not decode
+    /// or lower, or lowers to no such function.
+    pub fn lowered(&self, name: &str) -> Result<MirFunction, String> {
+        let row = self
+            .package
+            .body_row(name)
+            .ok_or_else(|| "the package has no such function".to_string())?;
+        let range = self
+            .package
+            .body_range(row)
+            .ok_or_else(|| "the package holds no unit for it".to_string())?;
+        let cell = Arc::clone(
+            self.units
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .entry(range.start)
+                .or_default(),
+        );
+        let functions = cell.get_or_init(|| self.lower(&range));
+        functions
+            .as_ref()
+            .map_err(Clone::clone)?
+            .iter()
+            .find(|(lowered, _)| lowered == name)
+            .map(|(_, function)| function.clone())
+            .ok_or_else(|| "its unit does not lower to it".to_string())
+    }
+
+    /// Finish every body with `finish` as it is lowered, and verify it.
     #[must_use]
     pub fn finishing(mut self, finish: BodyFinish) -> Self {
         self.finish = Some(finish);
@@ -153,7 +191,7 @@ impl PackageBodies {
     }
 
     /// The name and runtime parameter count of every function whose name
-    /// starts with `prefix`, in name order, decoding nothing.
+    /// starts with `prefix`, in name order, lowering nothing.
     pub fn functions_prefixed<'s>(
         &'s self,
         prefix: &str,
@@ -166,7 +204,7 @@ impl PackageBodies {
         self.package.body_row(name)
     }
 
-    /// How many bodies have been decoded so far.
+    /// How many bodies have been finished so far.
     pub fn materialized(&self) -> usize {
         self.decoded
             .iter()
@@ -174,7 +212,17 @@ impl PackageBodies {
             .count()
     }
 
-    /// Every body, decoded, in package order.
+    /// How many units have been lowered so far.
+    pub fn units_lowered(&self) -> usize {
+        self.units
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .values()
+            .filter(|cell| cell.get().is_some())
+            .count()
+    }
+
+    /// Every body, lowered and finished, in package order.
     pub fn all(&self) -> Vec<(String, MirFunction)> {
         self.package
             .bodies()
@@ -185,7 +233,7 @@ impl PackageBodies {
             .collect()
     }
 
-    /// The bodies that failed to decode so far.
+    /// The bodies that failed to lower so far.
     pub fn failures(&self) -> Vec<String> {
         self.failures
             .lock()
@@ -193,32 +241,15 @@ impl PackageBodies {
             .clone()
     }
 
-    /// The body of the function at `row` of the function table, its
-    /// locations rebuilt against the package's file table.
-    fn decode(&self, row: usize) -> Result<MirFunction, String> {
-        let range = self
-            .package
-            .body_range(row)
-            .ok_or_else(|| "the package holds no body for it".to_string())?;
-        let (mut function, locations): (MirFunction, Vec<Location>) =
-            encoding_packaged_owners(|| postcard::from_bytes(self.payload.get(&range)))
-                .map_err(|error| error.to_string())?;
-        let mut spans = SpanTable::default();
-        for location in locations {
-            let source = self
-                .files
-                .get(location.file as usize)
-                .ok_or_else(|| format!("location names no file {}", location.file))?;
-            spans.0.insert(
-                location.reg,
-                (
-                    SourceSpan::new(source.clone(), (location.start, location.end)),
-                    location.origin,
-                ),
-            );
-        }
-        function.spans = spans;
-        Ok(function)
+    /// Decode the unit at `range` of the payload and lower it.
+    fn lower(&self, range: &Range<usize>) -> LoweredUnit {
+        let unit = {
+            let _decode = timing::span("package.unit.decode");
+            CheckedUnit::decode(self.payload.get(range))?
+        };
+        let _lower = timing::span("package.unit.lower");
+        let program = unit.program(Arc::clone(&self.overloads), Arc::clone(&self.constants));
+        crate::mir::lower_package_unit(&program, &self.declarations)
     }
 
     fn fail(&self, message: String) {
@@ -241,17 +272,20 @@ impl fmt::Display for PackageError {
 
 impl std::error::Error for PackageError {}
 
-/// Write a package of `program`, its verified, ownership-checked MIR.
+/// Write a package of `program`, its verified, ownership-checked MIR, as
+/// the checked `units` it was lowered from.
 ///
-/// The package holds `program` before drop elaboration, its interface, and
-/// its declaration `records`, which hold its module table and every struct
-/// and function declaration of `program`.
+/// The package holds its interface, its declaration `records`, which hold
+/// its module table and every struct and function declaration of
+/// `program`, and each of `units` with the names of the functions it
+/// places: every function of `program`, each once.
 ///
 /// Verification runs first, so an error never leaves a partial package.
 pub fn write_package(
     header: &PackageHeader,
     interface: &PackageInterface,
     program: &MirProgram,
+    units: &[(CheckedUnit, Vec<String>)],
     records: DeclarationRecords,
 ) -> Result<Vec<u8>, PackageError> {
     let mut findings = program.invariant_errors.clone();
@@ -327,44 +361,48 @@ pub fn write_package(
         start..payload.len()
     };
     let interface = record(&bytecode(interface)?);
-    let files = files(program);
-    let files_range = record(&bytecode(&files.keys().collect::<Vec<_>>())?);
-    let bodies = program
+    let functions: HashMap<&str, &MirFunction> = program
         .functions
         .iter()
-        .map(|(name, function)| {
-            let locations = (0..function.n_regs)
-                .filter_map(|reg| {
-                    let (span, origin) = function.spans.0.get(&reg)?;
-                    Some(Location {
-                        reg,
-                        file: files[&span.source],
-                        start: span.span.0,
-                        end: span.span.1,
-                        origin: *origin,
-                    })
-                })
-                .collect::<Vec<_>>();
-            let bytes = encoding_packaged_owners(|| bytecode(&(function, locations))).map_err(
-                |PackageError(error)| {
-                    PackageError(format!("body `{name}` does not encode: {error}"))
-                },
-            )?;
-            Ok(PackagedBody {
+        .map(|(name, function)| (name.as_str(), function))
+        .collect();
+    let mut placed = 0;
+    let mut bodies = Vec::with_capacity(program.functions.len());
+    for (unit, names) in units {
+        if names.is_empty() {
+            continue;
+        }
+        let range = record(&unit.encode().map_err(|error| {
+            PackageError(format!(
+                "the unit of `{}` does not encode: {error}",
+                names[0]
+            ))
+        })?);
+        for name in names {
+            let function = functions.get(name.as_str()).ok_or_else(|| {
+                PackageError(format!("a unit places `{name}`, which the program lacks"))
+            })?;
+            placed += 1;
+            bodies.push(PackagedBody {
                 name: name.clone(),
                 n_params: function.n_params,
                 ref_params: function.ref_params.clone(),
-                range: record(&bytes),
-            })
-        })
-        .collect::<Result<Vec<_>, PackageError>>()?;
+                range: range.clone(),
+            });
+        }
+    }
+    if placed != program.functions.len() {
+        return Err(PackageError(format!(
+            "the units place {placed} functions, the program has {}",
+            program.functions.len()
+        )));
+    }
     let declarations = records
         .encode(Some(bodies), &mut record)
         .map_err(PackageError)?;
     let directory = bytecode(&PackageDirectory {
         header: header.clone(),
         interface,
-        files: files_range,
         declarations,
         payload: payload.len(),
     })?;
@@ -373,6 +411,12 @@ pub fn write_package(
     output.extend_from_slice(&directory);
     output.extend_from_slice(&payload);
     Ok(output)
+}
+
+/// Whether two lowerings of a body agree: in their encoding, and in each
+/// register's source location as provenance.
+pub fn same_body(left: &MirFunction, right: &MirFunction) -> bool {
+    body_key(left) == body_key(right)
 }
 
 /// Read a package: its header and interface now, and its directory of
@@ -404,10 +448,15 @@ pub fn read_package(bytes: PackageBytes) -> Result<Package, PackageError> {
     let decoding = mojito_common::timing::span("package.interface");
     let interface = from_bytecode(payload.get(&directory.interface), "interface")?;
     drop(decoding);
-    let files = from_bytecode(payload.get(&directory.files), "files")?;
     let declarations = Arc::new(
         PackageDeclarations::read(payload.clone(), &directory.declarations)
             .map_err(PackageError)?,
+    );
+    // A unit's lowering reads the package's own declarations, as its
+    // build's did: every module of it.
+    let scope = PackageScope::new(
+        Arc::clone(&declarations),
+        vec![true; declarations.modules().len()].into(),
     );
     Ok(Package {
         header: directory.header,
@@ -415,11 +464,13 @@ pub fn read_package(bytes: PackageBytes) -> Result<Package, PackageError> {
         declarations: Arc::clone(&declarations),
         bodies: PackageBodies {
             payload,
-            files,
             decoded: (0..declarations.body_count())
                 .map(|_| OnceLock::new())
                 .collect(),
             declarations: MirDeclarations::of_package(Arc::clone(&declarations)),
+            overloads: Arc::new(ProgramOverloads::importing(Some(scope.clone()))),
+            constants: Arc::new(ProgramConstants::importing(Some(scope))),
+            units: Mutex::new(HashMap::new()),
             package: declarations,
             finish: None,
             failures: Mutex::new(Vec::new()),
@@ -427,14 +478,16 @@ pub fn read_package(bytes: PackageBytes) -> Result<Package, PackageError> {
     })
 }
 
+/// The functions a unit lowers to, or why it does not lower.
+type LoweredUnit = Result<Vec<(String, MirFunction)>, String>;
+
 /// Where every record of a package lies in its payload.
 #[derive(serde::Serialize, serde::Deserialize)]
 struct PackageDirectory {
     header: PackageHeader,
     interface: Range<usize>,
-    files: Range<usize>,
     /// The declaration directory, which places every declaration record and
-    /// every body.
+    /// every unit.
     declarations: Range<usize>,
     /// The payload's length.
     payload: usize,
@@ -444,23 +497,13 @@ impl PackageDirectory {
     /// Refuse a directory whose ranges leave the payload (the declaration
     /// directory's rows are checked as they are read).
     fn validate(&self) -> Result<(), PackageError> {
-        for range in [&self.interface, &self.files, &self.declarations] {
+        for range in [&self.interface, &self.declarations] {
             if range.start > range.end || !(..=self.payload).contains(&range.end) {
                 return Err(PackageError("a record overruns the payload".to_string()));
             }
         }
         Ok(())
     }
-}
-
-/// A body register's source location, its file named by id.
-#[derive(serde::Serialize, serde::Deserialize)]
-struct Location {
-    reg: u32,
-    file: u32,
-    start: usize,
-    end: usize,
-    origin: Option<VarId>,
 }
 
 fn bytecode<T: serde::Serialize + ?Sized>(value: &T) -> Result<Vec<u8>, PackageError> {
@@ -475,21 +518,22 @@ fn from_bytecode<T: serde::de::DeserializeOwned>(
         .map_err(|error| PackageError(format!("the {label} record does not decode: {error}")))
 }
 
-/// Every source file a body location names, by its file id.
-fn files(program: &MirProgram) -> BTreeMap<&Option<String>, u32> {
-    program
-        .functions
+/// What [`same_body`] compares of a body.
+fn body_key(function: &MirFunction) -> (Vec<u8>, Vec<(u32, String)>) {
+    let encoded =
+        mojito_types::origin::encoding_packaged_owners(|| bytecode(function)).unwrap_or_default();
+    let mut locations: Vec<(u32, String)> = function
+        .spans
+        .0
         .iter()
-        .flat_map(|(_, function)| {
-            function
-                .spans
-                .0
-                .iter()
-                .filter(|(reg, _)| **reg < function.n_regs)
-                .map(|(_, (span, _))| &span.source)
+        .filter(|(reg, _)| **reg < function.n_regs)
+        .map(|(reg, (span, origin))| {
+            (
+                *reg,
+                format!("{:?} {:?} {origin:?}", span.source, span.span),
+            )
         })
-        .collect::<BTreeSet<_>>()
-        .into_iter()
-        .zip(0..)
-        .collect()
+        .collect();
+    locations.sort();
+    (encoded, locations)
 }

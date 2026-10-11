@@ -446,7 +446,7 @@ impl SignatureKey {
 /// collector's position (`f(a: Int, *rest: *Ts)` beside
 /// `f(*rest: *Ts, a: Int)`) or in its pack's bounds. The collector's own name
 /// and convention are not part of the key, since no call can select by them.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct VariadicKey {
     position: usize,
     element: TypeKey,

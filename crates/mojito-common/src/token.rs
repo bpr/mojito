@@ -118,6 +118,156 @@ impl SourceSpan {
     }
 }
 
+/// Run `encode` with syntax occurrences encodable, and give back its result
+/// with the file table its occurrences name.
+///
+/// Inside it a [`SyntaxId`] encodes as its derivation, so a decoded one
+/// keeps it, and a source path as its index in the file table: the
+/// encoding of a checked body keeps which occurrence each of its facts is
+/// keyed by. Outside it a [`SourceSpan`] or a [`SyntaxId`] does not encode,
+/// since both are local to one compilation.
+pub fn encoding_occurrences<R>(encode: impl FnOnce() -> R) -> (R, Vec<Option<String>>) {
+    let previous = OCCURRENCES.replace(Some(Occurrences::Encoding {
+        files: std::collections::HashMap::new(),
+    }));
+    let result = encode();
+    let Some(Occurrences::Encoding { files }) = OCCURRENCES.replace(previous) else {
+        unreachable!("the occurrence encoding scope was replaced")
+    };
+    let mut table = vec![None; files.len()];
+    for (file, index) in files {
+        table[index as usize] = file;
+    }
+    (result, table)
+}
+
+/// Run `decode` over occurrences [`encoding_occurrences`] encoded against
+/// `files`.
+///
+/// Each encoded identity decodes to one fresh identity, the same for every
+/// occurrence of it, and a derived one to the derivation of its decoded
+/// parent.
+pub fn decoding_occurrences<R>(files: Vec<Option<String>>, decode: impl FnOnce() -> R) -> R {
+    let previous = OCCURRENCES.replace(Some(Occurrences::Decoding {
+        files,
+        identities: std::collections::HashMap::new(),
+    }));
+    let result = decode();
+    OCCURRENCES.set(previous);
+    result
+}
+
+/// Whether occurrences encode or decode here ([`encoding_occurrences`],
+/// [`decoding_occurrences`]).
+pub fn occurrences_encode() -> bool {
+    OCCURRENCES.with_borrow(Option::is_some)
+}
+
+/// The index of the source `file` in the file table being encoded.
+///
+/// # Errors
+///
+/// When no occurrence encoding is in progress.
+pub fn occurrence_file(file: Option<&str>) -> Result<u32, String> {
+    OCCURRENCES.with_borrow_mut(|occurrences| match occurrences {
+        Some(Occurrences::Encoding { files }) => {
+            let next = files.len() as u32;
+            Ok(*files.entry(file.map(str::to_string)).or_insert(next))
+        }
+        _ => Err("a source location is local to one compilation".to_string()),
+    })
+}
+
+/// The source file at `index` of the file table being decoded.
+///
+/// # Errors
+///
+/// When no occurrence decoding is in progress, or the table holds no such
+/// file.
+pub fn occurrence_source(index: u32) -> Result<Option<String>, String> {
+    OCCURRENCES.with_borrow(|occurrences| match occurrences {
+        Some(Occurrences::Decoding { files, .. }) => files
+            .get(index as usize)
+            .cloned()
+            .ok_or_else(|| format!("a location names no file {index}")),
+        _ => Err("a source location is local to one compilation".to_string()),
+    })
+}
+
+impl serde::Serialize for SyntaxId {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        if !occurrences_encode() {
+            return Err(serde::ser::Error::custom(
+                "a syntax identity is local to one compilation",
+            ));
+        }
+        EncodedSyntax::of(*self).serialize(serializer)
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for SyntaxId {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        EncodedSyntax::deserialize(deserializer)?
+            .decode()
+            .map_err(serde::de::Error::custom)
+    }
+}
+
+impl serde::Serialize for SourceSpan {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        let file = occurrence_file(self.source.as_deref()).map_err(serde::ser::Error::custom)?;
+        (file, self.span, self.syntax).serialize(serializer)
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for SourceSpan {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let (file, span, syntax) = <(u32, Span, Option<SyntaxId>)>::deserialize(deserializer)?;
+        Ok(Self {
+            source: occurrence_source(file).map_err(serde::de::Error::custom)?,
+            span,
+            syntax,
+        })
+    }
+}
+
+/// An AST node's own [`SyntaxId`] as its encoding carries it.
+///
+/// Inside an occurrence encoding ([`encoding_occurrences`]) it is the
+/// identity; outside one it is nothing, and a decoded node draws a fresh
+/// identity, as a parsed one does.
+pub mod node_syntax {
+    use super::{SyntaxId, occurrences_encode};
+    use serde::{Deserialize, Serialize};
+
+    /// # Errors
+    ///
+    /// As the serializer's.
+    pub fn serialize<S: serde::Serializer>(
+        id: &SyntaxId,
+        serializer: S,
+    ) -> Result<S::Ok, S::Error> {
+        if occurrences_encode() {
+            id.serialize(serializer)
+        } else {
+            serializer.serialize_unit()
+        }
+    }
+
+    /// # Errors
+    ///
+    /// As the deserializer's.
+    pub fn deserialize<'de, D: serde::Deserializer<'de>>(
+        deserializer: D,
+    ) -> Result<SyntaxId, D::Error> {
+        if occurrences_encode() {
+            SyntaxId::deserialize(deserializer)
+        } else {
+            <()>::deserialize(deserializer).map(|()| SyntaxId::fresh())
+        }
+    }
+}
+
 /// The zero-width, position-`0` span used for synthetic nodes that have no source
 /// text (e.g. compiler-generated program-entry operations).
 pub const DUMMY_SPAN: Span = (0, 0);
@@ -299,6 +449,50 @@ impl Token {
             _ => return None,
         })
     }
+}
+
+/// The encoding of a [`SyntaxId`]: its own number, or how it was derived.
+#[derive(serde::Serialize, serde::Deserialize)]
+enum EncodedSyntax {
+    Plain(u64),
+    Derived(Box<Self>, u32),
+}
+
+impl EncodedSyntax {
+    fn of(id: SyntaxId) -> Self {
+        match id.derivation() {
+            Some((parent, ordinal)) => Self::Derived(Box::new(Self::of(parent)), ordinal),
+            None => Self::Plain(id.0),
+        }
+    }
+
+    fn decode(self) -> Result<SyntaxId, String> {
+        match self {
+            Self::Plain(number) => OCCURRENCES.with_borrow_mut(|occurrences| match occurrences {
+                Some(Occurrences::Decoding { identities, .. }) => {
+                    Ok(*identities.entry(number).or_insert_with(SyntaxId::fresh))
+                }
+                _ => Err("a syntax identity is local to one compilation".to_string()),
+            }),
+            Self::Derived(parent, ordinal) => Ok(SyntaxId::derived(parent.decode()?, ordinal)),
+        }
+    }
+}
+
+/// The occurrence encoding in progress on this thread.
+enum Occurrences {
+    Encoding {
+        files: std::collections::HashMap<Option<String>, u32>,
+    },
+    Decoding {
+        files: Vec<Option<String>>,
+        identities: std::collections::HashMap<u64, SyntaxId>,
+    },
+}
+
+thread_local! {
+    static OCCURRENCES: std::cell::RefCell<Option<Occurrences>> =
+        const { std::cell::RefCell::new(None) };
 }
 
 #[cfg(test)]
