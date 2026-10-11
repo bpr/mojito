@@ -74,14 +74,14 @@ impl Checker {
         base: &Expr,
         name: &str,
     ) {
-        if self
-            .interior_references
-            .borrow()
-            .get(&site)
-            .is_some_and(|origin| {
-                matches!(origin.path.last(), Some(mojito_types::origin::OriginSeg::Interior(tag)) if tag == name)
+        if self.has_fact(&site, |facts| {
+            facts.interior_reference.as_ref().is_some_and(|origin| {
+                matches!(
+                    origin.path.last(),
+                    Some(mojito_types::origin::OriginSeg::Interior(tag)) if tag == name
+                )
             })
-        {
+        }) {
             // Inference is intentionally repeatable. Do not project the fact
             // through itself when the same checked expression is revisited.
             return;
@@ -90,7 +90,7 @@ impl Checker {
             origin
                 .path
                 .push(mojito_types::origin::OriginSeg::Interior(name.to_string()));
-            self.interior_references.borrow_mut().insert(site, origin);
+            self.record_at(site).interior_reference = Some(origin);
         }
     }
 
@@ -237,8 +237,8 @@ impl Checker {
             except,
             include_base_generation,
         };
-        let mut invalidations = self.interior_invalidations.borrow_mut();
-        let values = invalidations.entry(site).or_default();
+        let mut record = self.record_at(site);
+        let values = record.interior_invalidations.get_or_insert_default();
         if !values.contains(&fact) {
             values.push(fact);
         }
@@ -255,8 +255,8 @@ impl Checker {
             except: None,
             include_base_generation: false,
         };
-        let mut invalidations = self.interior_invalidations.borrow_mut();
-        let values = invalidations.entry(site).or_default();
+        let mut record = self.record_at(site);
+        let values = record.interior_invalidations.get_or_insert_default();
         if !values.contains(&fact) {
             values.push(fact);
         }

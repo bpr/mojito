@@ -1247,7 +1247,8 @@ pointer to storage its context uniques (`mojito_types::types`):
   uniques, as MLIR's context uniques types beside attributes): every
   recorded expression, place, binding, declaration, and conversion type
   becomes the context's node for it when the check hands its facts off
-  (`body_carry`), so lowering, which clones them into registers, shares
+  (`body_carry`'s `interned` over the occurrence records, `uniqued` over
+  the declaration types), so lowering, which clones them into registers, shares
   one node per distinct type (`--timings` counts `types.interned` and
   `types.intern_hits`).
 - A type whose decoration equality leaves out (`Ty::carries_decorations`:
@@ -1692,8 +1693,10 @@ executable and never reaches HIR or MIR.
 
 The passes of one check hand each other a `PassCarry`: the pass's fact
 stores, one record per body site, and its binding-identity watermark. The
-checker's own stores stay one table per fact, logged as a body writes
-them (R613); the handoff gathers them into the per-occurrence records once
+checker writes each fact straight into its occurrence's one `NodeFacts`
+record (`Checker::record_at`, `checker/node_facts.rs`), as upstream sets
+an attribute on the occurrence's op, so the handoff is that store moved
+out, less any record a cleared fact left empty
 (`body_carry.rs`'s `HandoffStores::into_discovery`). An overload
 candidate — of a free call or of an overloaded function value — is
 checked inside `Checker::probe` (`checker/probe.rs`): every store

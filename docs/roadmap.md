@@ -4759,25 +4759,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R613 The checker keeps one logged table per fact, where the
-  handoff holds one record per occurrence**
-
-  The check's handoff holds its facts as one `NodeFacts` record per
-  occurrence, but the checker still writes some 30 separate tables and
-  gathers them into records at the end.
-  - `body_carry::HandoffStores::into_discovery` does the gathering.
-  - The writers by table: `operation_adjustments` about 125 sites,
-    `binding_types` and `expression_types` about 45 each,
-    `overload_targets` about 32, `selected_calls` about 20,
-    `expression_bindings` about 15.
-  - The lever: one `FactMap<SourceSpan, NodeFacts>` store, written through
-    `entry(span).or_default().<field>`, one table at a time.
-  - Done when the checker has no per-fact table but the five that are not
-    per-occurrence, and `into_discovery` gathers nothing.
-  - Plan: `R604-a-package-s-checked-body-is-plan.md`, slice 4.
-  - Depends on R612 (an overload probe restores whole tables).
-  - Model: Opus, Not Planned.
-
 - [ ] **R614 A checked expression clones its whole syntax subtree, where an
   upstream op holds only itself**
 

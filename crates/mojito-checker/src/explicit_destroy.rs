@@ -2,7 +2,7 @@
 
 use crate::checker::DeclarationTable;
 use mojito_ast::ast::{ArgConvention, Expr, ExprKind, SourceType, Stmt, StmtKind, TStringPart};
-use mojito_checked::checked::{AnnotationSite, ExplicitDestroyInfo};
+use mojito_checked::checked::{AnnotationSite, ExplicitDestroyInfo, NodeFacts};
 use mojito_checked::fact_store::FactSet;
 use mojito_common::error::TypeError;
 use mojito_common::token::SourceSpan;
@@ -52,11 +52,7 @@ pub const LINEAR_TYPE_PARAMETER: &str = "$linear";
 pub(crate) fn check(
     statements: &[Stmt],
     members: &[Stmt],
-    binding_types: &HashMap<SourceSpan, Ty>,
-    comprehension_bindings: &HashMap<
-        SourceSpan,
-        Vec<mojito_checked::checked::CheckedComprehensionBinding>,
-    >,
+    node_facts: &HashMap<SourceSpan, NodeFacts>,
     deletability: &CheckedDeletability,
     types: &DeclarationTable<ExplicitDestroyInfo>,
     spans: SpanFacts,
@@ -70,15 +66,9 @@ pub(crate) fn check(
     };
     for statement in statements {
         match &statement.kind {
-            StmtKind::Def { .. } => check_def(
-                statement,
-                0,
-                binding_types,
-                comprehension_bindings,
-                deletability,
-                types,
-                &root,
-            )?,
+            StmtKind::Def { .. } => {
+                check_def(statement, 0, node_facts, deletability, types, &root)?;
+            }
             StmtKind::Struct {
                 name,
                 type_params,
@@ -114,8 +104,7 @@ pub(crate) fn check(
                     check_function(
                         params.into_iter(),
                         &method.body,
-                        binding_types,
-                        comprehension_bindings,
+                        node_facts,
                         deletability,
                         types,
                         owner.function_env(&method.type_params),
@@ -128,15 +117,7 @@ pub(crate) fn check(
     // A trait member's receiver is a method receiver, which owes nothing
     // here, as a struct method's does not.
     for member in members {
-        check_def(
-            member,
-            1,
-            binding_types,
-            comprehension_bindings,
-            deletability,
-            types,
-            &root,
-        )?;
+        check_def(member, 1, node_facts, deletability, types, &root)?;
     }
     Ok(())
 }
@@ -144,10 +125,7 @@ pub(crate) fn check(
 fn check_expr(
     expr: &Expr,
     env: &mut Env,
-    comprehension_bindings: &HashMap<
-        SourceSpan,
-        Vec<mojito_checked::checked::CheckedComprehensionBinding>,
-    >,
+    node_facts: &HashMap<SourceSpan, NodeFacts>,
     types: &DeclarationTable<ExplicitDestroyInfo>,
 ) -> Result<(), TypeError> {
     if let Some(key) = env.spans.linear_temporaries.get(&expr.source_span())
@@ -163,12 +141,12 @@ fn check_expr(
     }
     match &expr.kind {
         ExprKind::Transfer(inner) if env.spans.lent.contains(&expr.source_span()) => {
-            check_expr(inner, env, comprehension_bindings, types)?;
+            check_expr(inner, env, node_facts, types)?;
         }
         // A transferred temporary (`make(x^)^.close()`) is no place of its
         // own; the transfers inside it still move theirs.
         ExprKind::Transfer(inner) if root_id(inner, env).is_none() => {
-            check_expr(inner, env, comprehension_bindings, types)?;
+            check_expr(inner, env, node_facts, types)?;
         }
         ExprKind::Transfer(inner) => move_root(inner, env, types)?,
         ExprKind::MethodCall {
@@ -178,10 +156,10 @@ fn check_expr(
             kwargs,
         } => {
             for arg in args {
-                check_expr(arg, env, comprehension_bindings, types)?;
+                check_expr(arg, env, node_facts, types)?;
             }
             for arg in kwargs {
-                check_expr(&arg.value, env, comprehension_bindings, types)?;
+                check_expr(&arg.value, env, node_facts, types)?;
             }
             if let ExprKind::Transfer(inner) = &object.kind
                 && let Some((id, path)) = obligation_place(inner, env)
@@ -193,15 +171,15 @@ fn check_expr(
             {
                 consume_destructor(id, &path, env, types)?;
             } else {
-                check_expr(object, env, comprehension_bindings, types)?;
+                check_expr(object, env, node_facts, types)?;
             }
         }
         ExprKind::Call { args, kwargs, .. } => {
             for arg in args {
-                check_expr(arg, env, comprehension_bindings, types)?;
+                check_expr(arg, env, node_facts, types)?;
             }
             for arg in kwargs {
-                check_expr(&arg.value, env, comprehension_bindings, types)?;
+                check_expr(&arg.value, env, node_facts, types)?;
             }
         }
         ExprKind::Invoke {
@@ -210,25 +188,25 @@ fn check_expr(
             kwargs,
             ..
         } => {
-            check_expr(callee, env, comprehension_bindings, types)?;
+            check_expr(callee, env, node_facts, types)?;
             for arg in args {
-                check_expr(arg, env, comprehension_bindings, types)?;
+                check_expr(arg, env, node_facts, types)?;
             }
             for arg in kwargs {
-                check_expr(&arg.value, env, comprehension_bindings, types)?;
+                check_expr(&arg.value, env, node_facts, types)?;
             }
         }
         ExprKind::Prefix(_, value) | ExprKind::Named { value, .. } => {
-            check_expr(value, env, comprehension_bindings, types)?;
+            check_expr(value, env, node_facts, types)?;
         }
         ExprKind::Infix(_, left, right) => {
-            check_expr(left, env, comprehension_bindings, types)?;
-            check_expr(right, env, comprehension_bindings, types)?;
+            check_expr(left, env, node_facts, types)?;
+            check_expr(right, env, node_facts, types)?;
         }
-        ExprKind::Member { object, .. } => check_expr(object, env, comprehension_bindings, types)?,
+        ExprKind::Member { object, .. } => check_expr(object, env, node_facts, types)?,
         ExprKind::Index { object, index } => {
-            check_expr(object, env, comprehension_bindings, types)?;
-            check_expr(index, env, comprehension_bindings, types)?;
+            check_expr(object, env, node_facts, types)?;
+            check_expr(index, env, node_facts, types)?;
         }
         ExprKind::Identifier(name) => {
             if let Some(id) = env.lookup(name) {
@@ -237,14 +215,14 @@ fn check_expr(
         }
         ExprKind::ListLit(values) | ExprKind::TupleLit(values) => {
             for value in values {
-                check_expr(value, env, comprehension_bindings, types)?;
+                check_expr(value, env, node_facts, types)?;
             }
         }
         ExprKind::BraceLit(values) => {
             for (key, value) in values {
-                check_expr(key, env, comprehension_bindings, types)?;
+                check_expr(key, env, node_facts, types)?;
                 if let Some(value) = value {
-                    check_expr(value, env, comprehension_bindings, types)?;
+                    check_expr(value, env, node_facts, types)?;
                 }
             }
         }
@@ -253,31 +231,25 @@ fn check_expr(
             value,
             clauses,
             ..
-        } => check_comprehension_expr(
-            expr,
-            key.as_deref(),
-            value,
-            clauses,
-            env,
-            comprehension_bindings,
-            types,
-        )?,
+        } => {
+            check_comprehension_expr(expr, key.as_deref(), value, clauses, env, node_facts, types)?;
+        }
         ExprKind::IfExpr {
             cond,
             then_branch,
             else_branch,
         } => {
-            check_expr(cond, env, comprehension_bindings, types)?;
+            check_expr(cond, env, node_facts, types)?;
             let mut a = env.clone();
             let mut b = env.clone();
-            check_expr(then_branch, &mut a, comprehension_bindings, types)?;
-            check_expr(else_branch, &mut b, comprehension_bindings, types)?;
+            check_expr(then_branch, &mut a, node_facts, types)?;
+            check_expr(else_branch, &mut b, node_facts, types)?;
             *env = join(vec![a, b])?;
         }
         ExprKind::Compare { first, rest } => {
-            check_expr(first, env, comprehension_bindings, types)?;
+            check_expr(first, env, node_facts, types)?;
             for (_, value) in rest {
-                check_expr(value, env, comprehension_bindings, types)?;
+                check_expr(value, env, node_facts, types)?;
             }
         }
         ExprKind::Slice {
@@ -287,18 +259,18 @@ fn check_expr(
             step,
             ..
         } => {
-            check_expr(object, env, comprehension_bindings, types)?;
+            check_expr(object, env, node_facts, types)?;
             for value in [lower, upper, step].into_iter().flatten() {
-                check_expr(value, env, comprehension_bindings, types)?;
+                check_expr(value, env, node_facts, types)?;
             }
         }
         ExprKind::MultiIndex { object, args } => {
-            check_expr(object, env, comprehension_bindings, types)?;
+            check_expr(object, env, node_facts, types)?;
             for argument in args {
                 match argument {
                     mojito_ast::ast::SubscriptArg::Index(value)
                     | mojito_ast::ast::SubscriptArg::Keyword { value, .. } => {
-                        check_expr(value, env, comprehension_bindings, types)?;
+                        check_expr(value, env, node_facts, types)?;
                     }
                     mojito_ast::ast::SubscriptArg::Slice {
                         lower, upper, step, ..
@@ -307,7 +279,7 @@ fn check_expr(
                         lower, upper, step, ..
                     } => {
                         for value in [lower, upper, step].into_iter().flatten() {
-                            check_expr(value, env, comprehension_bindings, types)?;
+                            check_expr(value, env, node_facts, types)?;
                         }
                     }
                 }
@@ -316,7 +288,7 @@ fn check_expr(
         ExprKind::TString { parts, .. } => {
             for part in parts {
                 if let TStringPart::Expr(value) = part {
-                    check_expr(value, env, comprehension_bindings, types)?;
+                    check_expr(value, env, node_facts, types)?;
                 }
             }
         }
@@ -434,11 +406,7 @@ fn check_block(
     body: &[Stmt],
     mut env: Env,
     scoped: bool,
-    binding_types: &HashMap<SourceSpan, Ty>,
-    comprehension_bindings: &HashMap<
-        SourceSpan,
-        Vec<mojito_checked::checked::CheckedComprehensionBinding>,
-    >,
+    node_facts: &HashMap<SourceSpan, NodeFacts>,
     deletability: &CheckedDeletability,
     types: &DeclarationTable<ExplicitDestroyInfo>,
 ) -> Result<Option<Env>, TypeError> {
@@ -449,23 +417,10 @@ fn check_block(
         // A kept compile-time block runs once, straight through, and its locals'
         // obligations end with it.
         let next = match &statement.kind {
-            StmtKind::Scope(block) => check_block(
-                block,
-                env,
-                true,
-                binding_types,
-                comprehension_bindings,
-                deletability,
-                types,
-            )?,
-            _ => check_stmt(
-                statement,
-                env,
-                binding_types,
-                comprehension_bindings,
-                deletability,
-                types,
-            )?,
+            StmtKind::Scope(block) => {
+                check_block(block, env, true, node_facts, deletability, types)?
+            }
+            _ => check_stmt(statement, env, node_facts, deletability, types)?,
         };
         let Some(next) = next else {
             return Ok(None);
@@ -587,41 +542,21 @@ fn branch_exits(
     branches: &[(Expr, Vec<Stmt>)],
     orelse: Option<&[Stmt]>,
     env: Env,
-    binding_types: &HashMap<SourceSpan, Ty>,
-    comprehension_bindings: &HashMap<
-        SourceSpan,
-        Vec<mojito_checked::checked::CheckedComprehensionBinding>,
-    >,
+    node_facts: &HashMap<SourceSpan, NodeFacts>,
     deletability: &CheckedDeletability,
     types: &DeclarationTable<ExplicitDestroyInfo>,
 ) -> Result<Vec<Env>, TypeError> {
     let mut exits = Vec::new();
     for (condition, body) in branches {
         let mut branch = env.clone();
-        check_expr(condition, &mut branch, comprehension_bindings, types)?;
-        if let Some(exit) = check_block(
-            body,
-            branch,
-            true,
-            binding_types,
-            comprehension_bindings,
-            deletability,
-            types,
-        )? {
+        check_expr(condition, &mut branch, node_facts, types)?;
+        if let Some(exit) = check_block(body, branch, true, node_facts, deletability, types)? {
             exits.push(exit);
         }
     }
     match orelse {
         Some(body) => {
-            if let Some(exit) = check_block(
-                body,
-                env,
-                true,
-                binding_types,
-                comprehension_bindings,
-                deletability,
-                types,
-            )? {
+            if let Some(exit) = check_block(body, env, true, node_facts, deletability, types)? {
                 exits.push(exit);
             }
         }
@@ -638,23 +573,11 @@ fn check_if(
     branches: &[(Expr, Vec<Stmt>)],
     orelse: Option<&[Stmt]>,
     env: Env,
-    binding_types: &HashMap<SourceSpan, Ty>,
-    comprehension_bindings: &HashMap<
-        SourceSpan,
-        Vec<mojito_checked::checked::CheckedComprehensionBinding>,
-    >,
+    node_facts: &HashMap<SourceSpan, NodeFacts>,
     deletability: &CheckedDeletability,
     types: &DeclarationTable<ExplicitDestroyInfo>,
 ) -> Result<Option<Env>, TypeError> {
-    let exits = branch_exits(
-        branches,
-        orelse,
-        env,
-        binding_types,
-        comprehension_bindings,
-        deletability,
-        types,
-    )?;
+    let exits = branch_exits(branches, orelse, env, node_facts, deletability, types)?;
     if exits.is_empty() {
         return Ok(None);
     }
@@ -673,11 +596,7 @@ fn check_comptime_if(
     branches: &[(Expr, Vec<Stmt>)],
     orelse: Option<&[Stmt]>,
     env: Env,
-    binding_types: &HashMap<SourceSpan, Ty>,
-    comprehension_bindings: &HashMap<
-        SourceSpan,
-        Vec<mojito_checked::checked::CheckedComprehensionBinding>,
-    >,
+    node_facts: &HashMap<SourceSpan, NodeFacts>,
     deletability: &CheckedDeletability,
     types: &DeclarationTable<ExplicitDestroyInfo>,
 ) -> Result<Option<Env>, TypeError> {
@@ -688,8 +607,7 @@ fn check_comptime_if(
         branches,
         orelse,
         env.clone(),
-        binding_types,
-        comprehension_bindings,
+        node_facts,
         deletability,
         types,
     )?;
@@ -794,11 +712,7 @@ fn check_function<'a>(
         ),
     >,
     body: &[Stmt],
-    binding_types: &HashMap<SourceSpan, Ty>,
-    comprehension_bindings: &HashMap<
-        SourceSpan,
-        Vec<mojito_checked::checked::CheckedComprehensionBinding>,
-    >,
+    node_facts: &HashMap<SourceSpan, NodeFacts>,
     deletability: &CheckedDeletability,
     types: &DeclarationTable<ExplicitDestroyInfo>,
     mut env: Env,
@@ -828,15 +742,7 @@ fn check_function<'a>(
             parameter.by_parts = by_parts;
         }
     }
-    let normal = check_block(
-        body,
-        env,
-        false,
-        binding_types,
-        comprehension_bindings,
-        deletability,
-        types,
-    )?;
+    let normal = check_block(body, env, false, node_facts, deletability, types)?;
     if let Some(env) = normal {
         env.check_ids(0..env.vars.len())?;
     }
@@ -941,22 +847,19 @@ fn expose_path(
 fn check_stmt(
     stmt: &Stmt,
     mut env: Env,
-    binding_types: &HashMap<SourceSpan, Ty>,
-    comprehension_bindings: &HashMap<
-        SourceSpan,
-        Vec<mojito_checked::checked::CheckedComprehensionBinding>,
-    >,
+    node_facts: &HashMap<SourceSpan, NodeFacts>,
     deletability: &CheckedDeletability,
     types: &DeclarationTable<ExplicitDestroyInfo>,
 ) -> Result<Option<Env>, TypeError> {
     match &stmt.kind {
         StmtKind::VarDecl { name, value, .. } => {
-            check_expr(value, &mut env, comprehension_bindings, types)?;
+            check_expr(value, &mut env, node_facts, types)?;
             let explicit = if deletability.bindings.contains(&value.source_span()) {
                 None
             } else {
-                binding_types
+                node_facts
                     .get(&value.source_span())
+                    .and_then(|facts| facts.binding_ty.as_ref())
                     .and_then(|ty| ty_explicit_name(ty, types))
                     .or_else(|| {
                         deletability
@@ -981,7 +884,7 @@ fn check_stmt(
             {
                 env.check_ids([id])?;
             }
-            check_expr(value, &mut env, comprehension_bindings, types)?;
+            check_expr(value, &mut env, node_facts, types)?;
             if let Some(id) = env.lookup(name) {
                 if !env.vars[id].obligations.is_empty() && env.vars[id].message.is_some() {
                     return Err(TypeError::Abandoned {
@@ -999,7 +902,7 @@ fn check_stmt(
             }
         }
         StmtKind::Expr(expr) => {
-            check_expr(expr, &mut env, comprehension_bindings, types)?;
+            check_expr(expr, &mut env, node_facts, types)?;
             // The runtime trap (the body of an unspecialized generic template
             // stub) never returns: nothing past it is abandoned.
             if is_runtime_trap(expr) {
@@ -1008,13 +911,13 @@ fn check_stmt(
         }
         StmtKind::Return(expr) => {
             if let Some(expr) = expr {
-                check_expr(expr, &mut env, comprehension_bindings, types)?;
+                check_expr(expr, &mut env, node_facts, types)?;
             }
             env.check_ids(0..env.vars.len())?;
             return Ok(None);
         }
         StmtKind::Raise(expr) => {
-            check_expr(expr, &mut env, comprehension_bindings, types)?;
+            check_expr(expr, &mut env, node_facts, types)?;
             env.check_ids(0..env.vars.len())?;
             return Ok(None);
         }
@@ -1030,8 +933,7 @@ fn check_stmt(
                 branches,
                 orelse.as_deref(),
                 env,
-                binding_types,
-                comprehension_bindings,
+                node_facts,
                 deletability,
                 types,
             )?
@@ -1044,42 +946,23 @@ fn check_stmt(
         // several copies, so its body must leave every outer obligation as it
         // found it, as a `while` body must.
         StmtKind::ComptimeFor { iter, body, .. } => {
-            check_expr(iter, &mut env, comprehension_bindings, types)?;
-            if let Some(after) = check_block(
-                body,
-                env.clone(),
-                true,
-                binding_types,
-                comprehension_bindings,
-                deletability,
-                types,
-            )? {
+            check_expr(iter, &mut env, node_facts, types)?;
+            if let Some(after) =
+                check_block(body, env.clone(), true, node_facts, deletability, types)?
+            {
                 ensure_same(&env, &after)?;
             }
         }
         StmtKind::While { cond, body, orelse } => {
-            check_expr(cond, &mut env, comprehension_bindings, types)?;
-            if let Some(after) = check_block(
-                body,
-                env.clone(),
-                true,
-                binding_types,
-                comprehension_bindings,
-                deletability,
-                types,
-            )? {
+            check_expr(cond, &mut env, node_facts, types)?;
+            if let Some(after) =
+                check_block(body, env.clone(), true, node_facts, deletability, types)?
+            {
                 ensure_same(&env, &after)?;
             }
             if let Some(body) = orelse
-                && let Some(after) = check_block(
-                    body,
-                    env.clone(),
-                    true,
-                    binding_types,
-                    comprehension_bindings,
-                    deletability,
-                    types,
-                )?
+                && let Some(after) =
+                    check_block(body, env.clone(), true, node_facts, deletability, types)?
             {
                 env = after;
             }
@@ -1091,12 +974,13 @@ fn check_stmt(
             orelse,
             ..
         } => {
-            check_expr(iter, &mut env, comprehension_bindings, types)?;
+            check_expr(iter, &mut env, node_facts, types)?;
             let explicit = if deletability.bindings.contains(&stmt.source_span()) {
                 None
             } else {
-                binding_types
+                node_facts
                     .get(&stmt.source_span())
+                    .and_then(|facts| facts.binding_ty.as_ref())
                     .and_then(|ty| ty_explicit_name(ty, types))
                     .or_else(|| {
                         deletability
@@ -1112,28 +996,15 @@ fn check_stmt(
             let mut iteration = env.clone();
             iteration.push();
             iteration.declare(var, explicit.clone(), message, explicit.is_some());
-            if let Some(mut after) = check_block(
-                body,
-                iteration,
-                false,
-                binding_types,
-                comprehension_bindings,
-                deletability,
-                types,
-            )? {
+            if let Some(mut after) =
+                check_block(body, iteration, false, node_facts, deletability, types)?
+            {
                 after.pop_checked()?;
                 ensure_same(&env, &after)?;
             }
             if let Some(body) = orelse
-                && let Some(after) = check_block(
-                    body,
-                    env.clone(),
-                    true,
-                    binding_types,
-                    comprehension_bindings,
-                    deletability,
-                    types,
-                )?
+                && let Some(after) =
+                    check_block(body, env.clone(), true, node_facts, deletability, types)?
             {
                 env = after;
             }
@@ -1145,27 +1016,13 @@ fn check_stmt(
             finalbody,
         } => {
             let before = env.clone();
-            let normal = check_block(
-                body,
-                before.clone(),
-                true,
-                binding_types,
-                comprehension_bindings,
-                deletability,
-                types,
-            )?;
+            let normal = check_block(body, before.clone(), true, node_facts, deletability, types)?;
             let mut exits = Vec::new();
             if let Some(normal) = normal {
                 if let Some(orelse) = orelse {
-                    if let Some(out) = check_block(
-                        orelse,
-                        normal,
-                        true,
-                        binding_types,
-                        comprehension_bindings,
-                        deletability,
-                        types,
-                    )? {
+                    if let Some(out) =
+                        check_block(orelse, normal, true, node_facts, deletability, types)?
+                    {
                         exits.push(out);
                     }
                 } else {
@@ -1177,8 +1034,7 @@ fn check_stmt(
                     handler,
                     handler_entry(&before, body),
                     true,
-                    binding_types,
-                    comprehension_bindings,
+                    node_facts,
                     deletability,
                     types,
                 )?
@@ -1193,29 +1049,13 @@ fn check_stmt(
                 // intact; constructing Env::default() here used to lose the
                 // enclosing loop/function scopes and panic on their next pop.
                 if let Some(finalbody) = finalbody {
-                    let _ = check_block(
-                        finalbody,
-                        before,
-                        true,
-                        binding_types,
-                        comprehension_bindings,
-                        deletability,
-                        types,
-                    )?;
+                    let _ = check_block(finalbody, before, true, node_facts, deletability, types)?;
                 }
                 return Ok(None);
             }
             env = join(exits)?;
             if let Some(finalbody) = finalbody {
-                let Some(out) = check_block(
-                    finalbody,
-                    env,
-                    true,
-                    binding_types,
-                    comprehension_bindings,
-                    deletability,
-                    types,
-                )?
+                let Some(out) = check_block(finalbody, env, true, node_facts, deletability, types)?
                 else {
                     return Ok(None);
                 };
@@ -1223,27 +1063,27 @@ fn check_stmt(
             }
         }
         StmtKind::SetPlace { place, value } => {
-            check_expr(place, &mut env, comprehension_bindings, types)?;
-            check_expr(value, &mut env, comprehension_bindings, types)?;
+            check_expr(place, &mut env, node_facts, types)?;
+            check_expr(value, &mut env, node_facts, types)?;
             reinitialize_place(place, &mut env, types)?;
         }
         StmtKind::AugAssign { place, value, .. } => {
-            check_expr(place, &mut env, comprehension_bindings, types)?;
-            check_expr(value, &mut env, comprehension_bindings, types)?;
+            check_expr(place, &mut env, node_facts, types)?;
+            check_expr(value, &mut env, node_facts, types)?;
         }
         StmtKind::Unpack { targets, value, .. } => {
-            check_expr(value, &mut env, comprehension_bindings, types)?;
+            check_expr(value, &mut env, node_facts, types)?;
             for target in targets {
-                check_expr(target, &mut env, comprehension_bindings, types)?;
+                check_expr(target, &mut env, node_facts, types)?;
             }
         }
         StmtKind::RefDecl { value, .. } => {
-            check_expr(value, &mut env, comprehension_bindings, types)?;
+            check_expr(value, &mut env, node_facts, types)?;
         }
         // A constant computed from a parameter varies with the instantiation
         // as the parameter does (`comptime k = T == Int`).
         StmtKind::Comptime { name, value, .. } => {
-            check_expr(value, &mut env, comprehension_bindings, types)?;
+            check_expr(value, &mut env, node_facts, types)?;
             if env.is_parametric(value) {
                 std::rc::Rc::make_mut(&mut env.params).insert(name.clone());
             }
@@ -1254,15 +1094,7 @@ fn check_stmt(
         }
         // A nested function's parameters and locals carry their own
         // obligations; its captures never move the enclosing values.
-        StmtKind::Def { .. } => check_def(
-            stmt,
-            0,
-            binding_types,
-            comprehension_bindings,
-            deletability,
-            types,
-            &env,
-        )?,
+        StmtKind::Def { .. } => check_def(stmt, 0, node_facts, deletability, types, &env)?,
         _ => {}
     }
     Ok(Some(env))
@@ -1273,11 +1105,7 @@ fn check_stmt(
 fn check_def(
     statement: &Stmt,
     receiver: usize,
-    binding_types: &HashMap<SourceSpan, Ty>,
-    comprehension_bindings: &HashMap<
-        SourceSpan,
-        Vec<mojito_checked::checked::CheckedComprehensionBinding>,
-    >,
+    node_facts: &HashMap<SourceSpan, NodeFacts>,
     deletability: &CheckedDeletability,
     types: &DeclarationTable<ExplicitDestroyInfo>,
     outer: &Env,
@@ -1309,8 +1137,7 @@ fn check_def(
     check_function(
         params,
         body,
-        binding_types,
-        comprehension_bindings,
+        node_facts,
         deletability,
         types,
         outer.function_env(type_params),
@@ -1327,14 +1154,12 @@ fn check_comprehension_expr(
     value: &Expr,
     clauses: &[mojito_ast::ast::ComprehensionClause],
     env: &mut Env,
-    comprehension_bindings: &HashMap<
-        SourceSpan,
-        Vec<mojito_checked::checked::CheckedComprehensionBinding>,
-    >,
+    node_facts: &HashMap<SourceSpan, NodeFacts>,
     types: &DeclarationTable<ExplicitDestroyInfo>,
 ) -> Result<(), TypeError> {
-    let bindings = comprehension_bindings
+    let bindings = node_facts
         .get(&expression.source_span())
+        .and_then(|facts| facts.comprehension_bindings.as_ref())
         .ok_or_else(|| {
             TypeError::InvariantViolation(
                 "checked comprehension has no retained binder metadata".to_string(),
@@ -1346,7 +1171,7 @@ fn check_comprehension_expr(
         for clause in clauses {
             match clause {
                 mojito_ast::ast::ComprehensionClause::For { iter, .. } => {
-                    check_expr(iter, env, comprehension_bindings, types)?;
+                    check_expr(iter, env, node_facts, types)?;
                     let binding = bindings.get(binding_index).ok_or_else(|| {
                         TypeError::InvariantViolation(
                             "comprehension binder metadata is incomplete".to_string(),
@@ -1366,7 +1191,7 @@ fn check_comprehension_expr(
                     env.declare(&binding.name, explicit.clone(), message, explicit.is_some());
                 }
                 mojito_ast::ast::ComprehensionClause::If(condition) => {
-                    check_expr(condition, env, comprehension_bindings, types)?;
+                    check_expr(condition, env, node_facts, types)?;
                 }
             }
         }
@@ -1376,9 +1201,9 @@ fn check_comprehension_expr(
             ));
         }
         if let Some(key) = key {
-            check_expr(key, env, comprehension_bindings, types)?;
+            check_expr(key, env, node_facts, types)?;
         }
-        check_expr(value, env, comprehension_bindings, types)
+        check_expr(value, env, node_facts, types)
     })();
 
     let mut cleanup = Ok(());

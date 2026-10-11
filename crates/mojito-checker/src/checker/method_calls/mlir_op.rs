@@ -72,14 +72,11 @@ impl Checker {
             _ => rejected(),
         })?;
         self.infer(place)?;
-        self.operation_adjustments.borrow_mut().insert(
-            span.clone(),
-            if method == INITIALIZED {
-                mojito_checked::checked::SemanticAdjustment::MarkInitialized
-            } else {
-                mojito_checked::checked::SemanticAdjustment::MarkDestroyed
-            },
-        );
+        self.record_at(span.clone()).adjustment = Some(Box::new(if method == INITIALIZED {
+            mojito_checked::checked::SemanticAdjustment::MarkInitialized
+        } else {
+            mojito_checked::checked::SemanticAdjustment::MarkDestroyed
+        }));
         Ok(Ty::none())
     }
 }

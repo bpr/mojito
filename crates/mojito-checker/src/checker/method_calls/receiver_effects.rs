@@ -83,9 +83,10 @@ impl Checker {
         } = call;
         if resolved.mutates_receiver {
             let returned_reference = self
-                .operation_adjustments
+                .node_facts
                 .borrow()
                 .get(&object.source_span())
+                .and_then(|facts| facts.adjustment.as_deref())
                 .and_then(|adjustment| match adjustment {
                     mojito_checked::checked::SemanticAdjustment::ReferenceResult { reference } => {
                         Some(reference.clone())
@@ -245,9 +246,9 @@ impl Checker {
             && matches!(resolved.self_convention, None | Some(ArgConvention::Imm))
             && let ExprKind::Transfer(inner) = &object.kind
         {
-            self.borrowed_read_call_places
-                .borrow_mut()
-                .extend([object.source_span(), inner.source_span()]);
+            for span in [object.source_span(), inner.source_span()] {
+                self.record_at(span).borrowed_read_call_place = true;
+            }
         }
         // A temporary receiver the method only borrows is destroyed once the
         // call returns.
@@ -278,9 +279,8 @@ impl Checker {
                     copyable: true,
                 });
             }
-            self.implicitly_copied_consuming_receivers
-                .borrow_mut()
-                .insert(span.clone());
+            self.record_at(span.clone())
+                .implicitly_copied_consuming_receiver = true;
         }
         // A `var self` receiver takes ownership by move, so a declared
         // `Movable where False` opt-out rejects it; `deinit self` is
@@ -305,9 +305,7 @@ impl Checker {
                 .get(name)
                 .is_some_and(|info| info.explicit_destructors.contains_key(method))
         {
-            self.explicit_destroy_calls
-                .borrow_mut()
-                .insert(span.clone());
+            self.record_at(span.clone()).explicit_destroy_call = true;
         }
         Ok(())
     }
@@ -566,12 +564,11 @@ impl Checker {
             origin,
             mutability: mutable,
         };
-        self.operation_adjustments.borrow_mut().insert(
-            span.clone(),
+        self.record_at(span.clone()).adjustment = Some(Box::new(
             mojito_checked::checked::SemanticAdjustment::ReferenceResult {
                 reference: reference.clone(),
             },
-        );
+        ));
         // Iterator refinement: a `ref`-returning `__next__` satisfying a
         // by-value `Self.Element` contract is read out as a checked copy
         // (`CopyIteratorReference`). The generic body sees only the

@@ -36,15 +36,12 @@ impl Checker {
         construction: Expr,
         ty: &Ty,
     ) {
-        self.expression_types
-            .borrow_mut()
-            .insert(expression.source_span(), ty.clone());
-        self.operation_adjustments.borrow_mut().insert(
-            expression.source_span(),
+        self.record_at(expression.source_span()).ty = Some(ty.clone());
+        self.record_at(expression.source_span()).adjustment = Some(Box::new(
             mojito_checked::checked::SemanticAdjustment::SpelledConstruction {
                 construction: mojito_checked::checked::SpelledConstruction(Box::new(construction)),
             },
-        );
+        ));
     }
 
     /// The construction the checker spelled for the sugar `expression`, when
@@ -52,9 +49,10 @@ impl Checker {
     /// borrows as for lowering.
     pub(super) fn spelled_construction(&self, expression: &Expr) -> Option<Expr> {
         match self
-            .operation_adjustments
+            .node_facts
             .borrow()
             .get(&expression.source_span())
+            .and_then(|facts| facts.adjustment.as_deref())
         {
             Some(mojito_checked::checked::SemanticAdjustment::SpelledConstruction {
                 construction,

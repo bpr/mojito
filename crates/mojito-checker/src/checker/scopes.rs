@@ -431,8 +431,8 @@ impl Checker {
                     ))
                 })?;
                 let checked = self.checked_capture(name, binding, ty, kind);
-                let mut declarations = self.declaration_captures.borrow_mut();
-                let captures = declarations.entry(policy.declaration.clone()).or_default();
+                let mut record = self.record_at(policy.declaration.clone());
+                let captures = record.captures.get_or_insert_default();
                 if !captures.iter().any(|capture| capture.binding == binding) {
                     captures.push(checked);
                 }
@@ -494,8 +494,8 @@ impl Checker {
                 continue;
             };
             let checked = self.checked_capture(name, binding, ty.clone(), kind);
-            let mut declarations = self.declaration_captures.borrow_mut();
-            let captures = declarations.entry(policy.declaration.clone()).or_default();
+            let mut record = self.record_at(policy.declaration.clone());
+            let captures = record.captures.get_or_insert_default();
             if !captures.iter().any(|capture| capture.binding == binding) {
                 captures.push(checked);
             }
@@ -558,9 +558,7 @@ impl Checker {
 
     pub(super) fn record_statement_binding(&self, statement: &Stmt, name: &str) {
         if let Some(owner) = self.lookup_owner(name) {
-            self.statement_bindings
-                .borrow_mut()
-                .insert(statement.source_span(), owner);
+            self.record_at(statement.source_span()).statement_binding = Some(owner);
         }
     }
 

@@ -166,12 +166,11 @@ impl Checker {
                 preserves_receiver_interiors,
             },
         )?;
-        let mut adjustments = self.operation_adjustments.borrow_mut();
-        let inner = adjustments.remove(&span).map(Box::new);
-        adjustments.insert(
-            span,
+        let mut record = self.record_at(span);
+        let inner = record.adjustment.take();
+        record.adjustment = Some(Box::new(
             mojito_checked::checked::SemanticAdjustment::ReceiverFromFirstArgument { inner },
-        );
+        ));
         Ok(ty)
     }
 
@@ -196,10 +195,8 @@ impl Checker {
         if let Ok((_, arguments)) = instance
             && !arguments.is_empty()
         {
-            self.expression_types.borrow_mut().insert(
-                object.source_span(),
-                TyKind::Struct(sname.to_string(), arguments).into(),
-            );
+            self.record_at(object.source_span()).ty =
+                Some(TyKind::Struct(sname.to_string(), arguments).into());
         }
     }
 
@@ -402,9 +399,8 @@ impl Checker {
                 .to_string(),
             })?;
         if parameterized_syntax {
-            self.parameterized_method_calls
-                .borrow_mut()
-                .insert(span.clone(), selected.param_decls.clone());
+            self.record_at(span.clone()).parameterized_method_call =
+                Some(selected.param_decls.clone());
         }
         if let Some(arguments) = &selected.instantiation {
             // An explicit receiver instance (`Box[Int].has[Bool]()`) keys the
@@ -429,9 +425,8 @@ impl Checker {
                 .and_then(mojito_symbol::symbol::overload_qualifier)
                 .map(str::to_string);
             self.record_dtype_parameter_arguments(param_args, arguments);
-            self.method_instantiations.borrow_mut().insert(
-                span.clone(),
-                mojito_checked::checked::MethodInstantiation {
+            self.record_at(span.clone()).method_instantiation =
+                Some(mojito_checked::checked::MethodInstantiation {
                     owner: sname.to_string(),
                     owner_arguments,
                     method: source_method.to_string(),
@@ -443,8 +438,7 @@ impl Checker {
                         param_args,
                         arguments,
                     ),
-                },
-            );
+                });
         }
         // An explicit receiver instance (`Dict[String, Int].fromkeys(...)`)
         // records its instantiation.
@@ -602,9 +596,7 @@ impl Checker {
         );
         self.record_selected_method_conversions(method, &selected, args, kwargs)?;
         if let Some(target) = selected.lowered_name.clone() {
-            self.overload_targets
-                .borrow_mut()
-                .insert(span.clone(), target);
+            self.record_at(span.clone()).overload_target = Some(target);
         }
         if selected.raises {
             let error = selected.error.clone().unwrap_or_else(Ty::error);

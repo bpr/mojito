@@ -2836,9 +2836,7 @@ impl Checker {
                 && self.is_parameter_read(expr)
                 && self.is_materialized_parameter_read(expr);
             if !parameter_field {
-                self.copy_place_value_uses
-                    .borrow_mut()
-                    .insert(expr.source_span());
+                self.record_at(expr.source_span()).copy_place_value_use = true;
             }
             self.consume_parameter_read(expr);
         }
@@ -2856,7 +2854,10 @@ impl Checker {
         }
         let span = value.source_span();
         let reference_result = matches!(
-            self.operation_adjustments.borrow().get(&span),
+            self.node_facts
+                .borrow()
+                .get(&span)
+                .and_then(|facts| facts.adjustment.as_deref()),
             Some(mojito_checked::checked::SemanticAdjustment::ReferenceResult { .. })
         );
         if reference_result {
@@ -2864,7 +2865,7 @@ impl Checker {
                 .borrow_mut()
                 .insert(span);
         } else if is_place_expr(value) {
-            self.copy_place_value_uses.borrow_mut().insert(span);
+            self.record_at(span).copy_place_value_use = true;
         }
     }
 

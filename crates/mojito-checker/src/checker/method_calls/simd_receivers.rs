@@ -45,13 +45,12 @@ impl Checker {
                 });
             }
         }
-        self.operation_adjustments.borrow_mut().insert(
-            span.clone(),
+        self.record_at(span.clone()).adjustment = Some(Box::new(
             mojito_checked::checked::SemanticAdjustment::SimdToBits {
                 dtype: target.clone(),
                 width: width.clone(),
             },
-        );
+        ));
         simd_of(target, width)
     }
 
@@ -109,9 +108,7 @@ impl Checker {
             // itself (the builtin-copy rule of the nominal resolver).
             "copy" if args.is_empty() && param_args.is_empty() => {
                 if is_place_expr(object) {
-                    self.copy_place_value_uses
-                        .borrow_mut()
-                        .insert(object.source_span());
+                    self.record_at(object.source_span()).copy_place_value_use = true;
                 }
                 Ok(obj_ty.clone())
             }
@@ -128,13 +125,12 @@ impl Checker {
                         context: "SIMD.cast".to_string(),
                     });
                 }
-                self.operation_adjustments.borrow_mut().insert(
-                    span.clone(),
+                self.record_at(span.clone()).adjustment = Some(Box::new(
                     mojito_checked::checked::SemanticAdjustment::SimdCast {
                         dtype: target.clone(),
                         width: width.clone(),
                     },
-                );
+                ));
                 simd_of(target, width)
             }
             "select" if dtype.licenses(|d| d == Dtype::Bool) && args.len() == 2 => {
@@ -439,9 +435,8 @@ impl Checker {
             .and_then(|width| mask.resolve(width))
             .and_then(Result::ok)
             .map_or_else(|| mask.clone(), LaneMask::Known);
-        self.operation_adjustments.borrow_mut().insert(
-            span.clone(),
+        self.record_at(span.clone()).adjustment = Some(Box::new(
             mojito_checked::checked::SemanticAdjustment::SimdShuffle { mask, joined },
-        );
+        ));
     }
 }

@@ -168,9 +168,10 @@ impl Checker {
     /// generator's MIR carries the equality for the elaborator to judge.
     pub(super) fn record_assignment_rebind(&self, statement: &Stmt, value: &Expr) {
         let assertion = self
-            .rebind_assertions
+            .node_facts
             .borrow()
             .get(&statement.source_span())
+            .and_then(|facts| facts.rebind_assertion.as_ref())
             .filter(|_| {
                 self.rebind_targets
                     .assignments
@@ -178,14 +179,12 @@ impl Checker {
             })
             .cloned();
         if let Some(assertion) = assertion {
-            self.rebind_assertions.borrow_mut().insert(
-                value.source_span(),
-                mojito_checked::checked::RebindAssertion {
+            self.record_at(value.source_span()).rebind_assertion =
+                Some(mojito_checked::checked::RebindAssertion {
                     operand: assertion.dest,
                     dest: assertion.operand,
                     by_value: false,
-                },
-            );
+                });
         }
     }
 
@@ -229,14 +228,12 @@ impl Checker {
     /// two closed types the check requires the two to be the same type.
     fn rebound_ty(&self, target: &ParamArg, ty: &Ty, site: &SourceSpan) -> Result<Ty, TypeError> {
         let dest = self.rebind_target_ty(target)?;
-        self.rebind_assertions.borrow_mut().insert(
-            site.clone(),
-            mojito_checked::checked::RebindAssertion {
+        self.record_at(site.clone()).rebind_assertion =
+            Some(mojito_checked::checked::RebindAssertion {
                 operand: ty.clone(),
                 dest: dest.clone(),
                 by_value: self.rebinds_by_value(ty),
-            },
-        );
+            });
         let closed = !is_symbolic(ty) && !is_symbolic(&dest);
         if closed && *ty != dest {
             return Err(TypeError::TypeMismatch {

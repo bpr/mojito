@@ -290,9 +290,7 @@ impl Checker {
         ));
         match self.implicit_conversion_target(&Ty::string_literal(), &nominal) {
             Ok(Some((target, _))) => {
-                self.implicit_conversions
-                    .borrow_mut()
-                    .insert(iter.source_span(), target);
+                self.record_at(iter.source_span()).implicit_conversion = Some(target);
                 nominal
             }
             _ => iter_ty,

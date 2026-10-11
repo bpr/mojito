@@ -174,10 +174,9 @@ impl Checker {
             }
             "size_of" => {
                 let ty = self.size_of_operand(param_args, args)?;
-                self.operation_adjustments.borrow_mut().insert(
-                    span,
+                self.record_at(span).adjustment = Some(Box::new(
                     mojito_checked::checked::SemanticAdjustment::SizeOf { ty },
-                );
+                ));
                 Ok(Ty::int())
             }
             // `_unqualified_type_name[T]()` (upstream `std.reflection`):
@@ -201,13 +200,12 @@ impl Checker {
                     });
                 }
                 let ty = self.type_param_argument(&param_args[0], "_unqualified_type_name")?;
-                self.operation_adjustments.borrow_mut().insert(
-                    span,
+                self.record_at(span).adjustment = Some(Box::new(
                     mojito_checked::checked::SemanticAdjustment::TypeName {
                         text: mojito_symbol::symbol::unqualified_instance_name(&ty),
                         ty,
                     },
-                );
+                ));
                 Ok(Ty::string_literal())
             }
             // Compiler-private crossing for `std.os.abort`: an uncatchable
@@ -279,9 +277,7 @@ impl Checker {
             "repr" => {
                 let tys = self.builtin_args("repr", 1, args)?;
                 if self.conforms_to(&tys[0], "Writable") {
-                    self.call_place_uses
-                        .borrow_mut()
-                        .insert(args[0].source_span());
+                    self.record_at(args[0].source_span()).call_place_use = true;
                     return self.nominal_string_wrap(span);
                 }
                 Err(TypeError::TypeMismatch {
@@ -353,9 +349,7 @@ impl Checker {
                 if let TyKind::Struct(target, _) = tuple.kind()
                     && target != mojito_types::types::TUPLE_TYPE_NAME
                 {
-                    self.overload_targets
-                        .borrow_mut()
-                        .insert(span, target.clone());
+                    self.record_at(span).overload_target = Some(target.clone());
                 }
                 Ok(tuple)
             }
@@ -529,15 +523,12 @@ impl Checker {
         else {
             return Ok(Ty::string_literal());
         };
-        self.overload_targets
-            .borrow_mut()
-            .insert(span.clone(), "String".to_string());
+        self.record_at(span.clone()).overload_target = Some("String".to_string());
         // As in `nominal_string_wrap`: a view conversion already recorded at
         // this span supersedes the wrap.
-        self.implicit_conversions
-            .borrow_mut()
-            .entry(span)
-            .or_insert(target);
+        self.record_at(span)
+            .implicit_conversion
+            .get_or_insert(target);
         Ok(nominal)
     }
 
@@ -558,10 +549,9 @@ impl Checker {
         // A view conversion of the produced temporary (`s.startswith(String(5))`
         // at a `StringSpan` parameter) shares this span and supersedes the wrap;
         // re-inferring the argument must not revert it.
-        self.implicit_conversions
-            .borrow_mut()
-            .entry(span)
-            .or_insert(target);
+        self.record_at(span)
+            .implicit_conversion
+            .get_or_insert(target);
         Ok(nominal)
     }
 
@@ -626,12 +616,11 @@ impl Checker {
                 context: format!("argument 'copy' of '{name}'"),
             });
         }
-        self.operation_adjustments.borrow_mut().insert(
-            span,
+        self.record_at(span).adjustment = Some(Box::new(
             mojito_checked::checked::SemanticAdjustment::ConstructTypeParam {
                 param: binder.clone(),
             },
-        );
+        ));
         Ok(ty.clone())
     }
 
@@ -652,10 +641,9 @@ impl Checker {
                 context: format!("argument 'copy' of '{name}'"),
             });
         }
-        self.operation_adjustments.borrow_mut().insert(
-            span,
+        self.record_at(span).adjustment = Some(Box::new(
             mojito_checked::checked::SemanticAdjustment::BuiltinCopyConstruction,
-        );
+        ));
         Ok(ty.clone())
     }
 
@@ -716,9 +704,7 @@ impl Checker {
                     reason: self.trait_failure_reason(&ty, "Copyable"),
                 });
             }
-            self.copy_place_value_uses
-                .borrow_mut()
-                .insert(args[0].source_span());
+            self.record_at(args[0].source_span()).copy_place_value_use = true;
             return Ok(ty);
         }
         if let Some(element) = self.infer_pack_element_construction(
@@ -756,12 +742,11 @@ impl Checker {
                         span, name, ty, param_args, args, kwargs,
                     );
                 }
-                self.operation_adjustments.borrow_mut().insert(
-                    span,
+                self.record_at(span).adjustment = Some(Box::new(
                     mojito_checked::checked::SemanticAdjustment::ConstructTypeParam {
                         param: binder.clone(),
                     },
-                );
+                ));
                 return Ok(ty.clone());
             }
         }
@@ -771,9 +756,7 @@ impl Checker {
         };
         self.record_permitted_call_capture(name);
         if let Some(owner) = self.lookup_owner(name) {
-            self.expression_bindings
-                .borrow_mut()
-                .insert(span.clone(), owner);
+            self.record_at(span.clone()).binding = Some(owner);
         }
         let origin_signatures = self.lookup_callable_origins(name).unwrap_or_default();
         if let TyKind::Overload(candidates) = ty.kind() {
@@ -794,9 +777,7 @@ impl Checker {
             );
             return match select_callable_overload(matches) {
                 Ok((ret, target, selected_index, error)) => {
-                    self.overload_targets
-                        .borrow_mut()
-                        .insert(span.clone(), target);
+                    self.record_at(span.clone()).overload_target = Some(target);
                     if let Some((index, selected)) = candidates
                         .get(selected_index)
                         .map(|selected| (selected_index, selected))
@@ -951,13 +932,12 @@ impl Checker {
         if indirect_target.is_some() && matches!(ty.kind(), TyKind::GenericFunc(_)) {
             let (contract, arguments) =
                 self.instantiate_generic_callable_value(name, ty.clone(), &ordinary_param_args)?;
-            self.operation_adjustments.borrow_mut().insert(
-                span.clone(),
+            self.record_at(span.clone()).adjustment = Some(Box::new(
                 mojito_checked::checked::SemanticAdjustment::InstantiatedCallableContract {
                     contract,
                     arguments,
                 },
-            );
+            ));
         }
         let (ret, _, error, bool_bindings, _) =
             self.infer_callable_ty(&span, name, ty.clone(), &ordinary_param_args, args, kwargs)?;
@@ -1011,9 +991,7 @@ impl Checker {
             kwargs,
         )?;
         if let Some(target) = indirect_target {
-            self.overload_targets
-                .borrow_mut()
-                .insert(span.clone(), target);
+            self.record_at(span.clone()).overload_target = Some(target);
         }
         self.record_view_result_borrow(&span, &ret);
         self.record_free_call_result_origins(&span, &ty, origin_signatures.first(), args, kwargs);
@@ -1062,15 +1040,16 @@ impl Checker {
         // Reference fields and origin-bearing pointer fields (upstream's
         // `Pointer[T, Self.o]` iterator storage) both borrow.
         if matches!(ret.kind(), TyKind::Struct(..)) && self.type_carries_loans(ret) {
-            self.operation_adjustments
-                .borrow_mut()
-                .entry(span.clone())
-                .or_insert(
-                    mojito_checked::checked::SemanticAdjustment::BorrowViewResult {
-                        materialized: None,
-                        interior: Vec::new(),
-                    },
-                );
+            self.record_at(span.clone())
+                .adjustment
+                .get_or_insert_with(|| {
+                    Box::new(
+                        mojito_checked::checked::SemanticAdjustment::BorrowViewResult {
+                            materialized: None,
+                            interior: Vec::new(),
+                        },
+                    )
+                });
         }
     }
 
@@ -1135,10 +1114,10 @@ impl Checker {
     /// `grid[i, j](x)` — as subscript-then-indirect-call, matching current
     /// Mojo. The brackets are a runtime subscript of `receiver`, an indexable
     /// value with no callable contract of its own. The selected `__getitem__`
-    /// moves out of `selected_calls` into the `ElementInvocation` adjustment
-    /// so node-level consumers (reference-result diversion, resolved-callable
-    /// projection, raise attribution) see the element call, not the subscript
-    /// read.
+    /// moves out of the call's `selected_call` fact into the
+    /// `ElementInvocation` adjustment so node-level consumers
+    /// (reference-result diversion, resolved-callable projection, raise
+    /// attribution) see the element call, not the subscript read.
     pub(super) fn infer_element_call(
         &self,
         span: SourceSpan,
@@ -1163,9 +1142,7 @@ impl Checker {
             _ => result,
         };
         let getter = self
-            .selected_calls
-            .borrow_mut()
-            .remove(&span)
+            .clear_fact(&span, |facts| facts.selected_call.take().map(|fact| *fact))
             .ok_or_else(|| {
                 TypeError::InvariantViolation(
                     "element-call subscript selection recorded no contract".to_string(),
@@ -1182,12 +1159,10 @@ impl Checker {
         let target = self.indirect_callable_target(&element_ty);
         match &target {
             Some(target) => {
-                self.overload_targets
-                    .borrow_mut()
-                    .insert(span.clone(), target.clone());
+                self.record_at(span.clone()).overload_target = Some(target.clone());
             }
             None => {
-                self.overload_targets.borrow_mut().remove(&span);
+                self.clear_fact(&span, |facts| facts.overload_target.take());
             }
         }
         let (ret, _, error, _, _) =
@@ -1202,8 +1177,7 @@ impl Checker {
             self.apply_transfer_effects(effect_key, Some(receiver), args, &span, &TySubst::new())?;
         }
         self.record_call_environment_effects(span.clone(), &callable, &[], args, kwargs)?;
-        self.operation_adjustments.borrow_mut().insert(
-            span.clone(),
+        self.record_at(span.clone()).adjustment = Some(Box::new(
             mojito_checked::checked::SemanticAdjustment::ElementInvocation(Box::new(
                 mojito_checked::checked::CheckedElementInvocation {
                     getter,
@@ -1212,7 +1186,7 @@ impl Checker {
                     raises: error.clone(),
                 },
             )),
-        );
+        ));
         if let Some(error) = error.filter(|ty| *ty != TyKind::Never) {
             self.record_call_effect(span, error.clone());
             self.require_error("call through a raising callable element", error)?;
@@ -1840,14 +1814,11 @@ impl Checker {
         if param_args.is_empty()
             && let Some(clone) = self.existing_def_clone(name, decls, &tyargs)
         {
-            self.generic_instantiations.borrow_mut().remove(span);
-            self.overload_targets
-                .borrow_mut()
-                .insert(span.clone(), clone);
+            self.clear_fact(span, |facts| facts.generic_instantiation.take());
+            self.record_at(span.clone()).overload_target = Some(clone);
         } else {
-            self.generic_instantiations.borrow_mut().insert(
-                span.clone(),
-                mojito_checked::checked::GenericInstantiation {
+            self.record_at(span.clone()).generic_instantiation =
+                Some(mojito_checked::checked::GenericInstantiation {
                     callee: name.to_string(),
                     parameter_names: names.clone(),
                     parameter_types: params
@@ -1857,8 +1828,7 @@ impl Checker {
                     variadic: mojito_symbol::symbol::VariadicKey::from_callable(generic),
                     folded_arguments: folded_parameter_arguments(decls, param_args, &tyargs),
                     arguments: tyargs,
-                },
-            );
+                });
         }
         Ok((
             result,
@@ -2192,10 +2162,9 @@ impl Checker {
                 "the value pack `{values}` is not a parameter list of values"
             ))
         })?;
-        self.operation_adjustments.borrow_mut().insert(
-            span,
+        self.record_at(span).adjustment = Some(Box::new(
             mojito_checked::checked::SemanticAdjustment::ParamListAddress { values },
-        );
+        ));
         Ok(TyKind::Pointer {
             element,
             origin: mojito_types::origin::PointerOrigin::Static,

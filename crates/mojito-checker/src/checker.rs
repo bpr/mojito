@@ -410,6 +410,7 @@ pub use conformance::PackageStruct;
 mod declaration_table;
 pub(crate) use declaration_table::DeclarationTable;
 mod interface;
+mod node_facts;
 pub use interface::{
     DeclarationInterfaces, ElaboratedConstant, ElaboratedConstants, InstalledInterfaces,
     InterfaceExport,
@@ -760,10 +761,9 @@ pub struct Checker {
     /// `std/builtin/variadics.mojo`: the pin's `ParameterList` takes its list
     /// as one parameter, so no other bracket spelling of it is admitted.
     parameter_list_brackets: std::cell::Cell<bool>,
-    /// Source-span to lowered callee for calls whose source name denotes an
-    /// overload set. Interior mutability keeps expression inference usable from
-    /// read-only helper methods while still recording resolution facts.
-    overload_targets: RefCell<FactMap<SourceSpan, String>>,
+    /// Every fact the check decided at an occurrence, in the occurrence's one
+    /// record (`node_facts`): the checked handoff, written as it is decided.
+    node_facts: RefCell<FactMap<SourceSpan, mojito_checked::checked::NodeFacts>>,
     /// Free functions decorated `@__unsafe_nested_origins_read_only`; see
     /// [`MethodSig::nested_origins`].
     nested_origins_read_only_functions: declaration_table::DeclarationSet,
@@ -771,21 +771,9 @@ pub struct Checker {
     /// vector argument's width slot solves one, while an `Int` binder in the
     /// slot is a conversion the pin leaves unresolved.
     simd_length_binders: HashSet<mojito_types::param_expr::ParamId>,
-    /// Checker-resolved base type name per `$contextual` leading-dot sentinel
-    /// (keyed by the sentinel identifier's span); HIR substitutes the name.
-    contextual_bases: RefCell<FactMap<SourceSpan, String>>,
-    /// The resolved generic application per bound-generic call site (callee +
-    /// exact compile-time arguments), retained for instantiation discovery.
-    generic_instantiations:
-        RefCell<FactMap<SourceSpan, mojito_checked::checked::GenericInstantiation>>,
     /// The types a generic `def` call solved for the callee's binders, held
     /// from the call's typing until its transfer replay takes them.
     call_bindings: RefCell<FactMap<SourceSpan, TySubst>>,
-    /// The resolved compile-time arguments per generic *method* call site
-    /// (receiver struct + method + declaration-order arguments), retained for
-    /// per-call method specialization discovery.
-    method_instantiations:
-        RefCell<FactMap<SourceSpan, mojito_checked::checked::MethodInstantiation>>,
     /// Every generic-struct application reached as a constructor target or
     /// method-call receiver, a checked fact of the call.
     struct_instantiations: RefCell<FactVec<mojito_checked::checked::StructInstantiation>>,
@@ -794,8 +782,6 @@ pub struct Checker {
     /// Inferred per-callable transfer effects, keyed by callable name
     /// (`name` / `Struct.method`); consulted at later call sites.
     transfer_effects: RefCell<FactMap<String, Vec<mojito_checked::checked::TransferEffect>>>,
-    /// Caller-substituted transfers per call occurrence, handed to MIR.
-    call_transfers: RefCell<FactMap<SourceSpan, Vec<mojito_checked::checked::CheckedCallTransfer>>>,
     /// First-seen callee effects per `apply_transfer_effects` lookup. The
     /// two-phase pass reruns the check when a callee's final committed
     /// effects differ from what its stalest call-site query observed.
@@ -823,32 +809,6 @@ pub struct Checker {
     /// escape it, while a handler outside the region still lets the error
     /// abort the region itself.
     raise_observation_frames: RefCell<Vec<(usize, bool)>>,
-    implicit_conversions: RefCell<FactMap<SourceSpan, String>>,
-    /// The converted-to type of each selected implicit conversion, so a
-    /// parameterized target (`Optional[Int]`) keeps its arguments at the
-    /// emit site rather than the constructor's bare struct name.
-    implicit_conversion_types: RefCell<FactMap<SourceSpan, Ty>>,
-    /// The error type of each site in `implicit_conversions` whose selected
-    /// constructor raises.
-    implicit_conversion_raises: RefCell<FactMap<SourceSpan, Ty>>,
-    /// Sites in `implicit_conversions` whose selected constructor borrows its
-    /// single argument through a `ref [origin]` parameter: the conversion
-    /// result borrows the source place (temporary-origin inference). The
-    /// value is the loan mutability, solved like the explicit construction
-    /// path's `BorrowRefArguments`.
-    conversion_source_borrows: RefCell<FactMap<SourceSpan, bool>>,
-    simd_constructions: RefCell<FactMap<SourceSpan, (SimdDtype, SimdWidth)>>,
-    /// Checked operation decisions — `Variant` construction/tag/projection/
-    /// update and origin-bearing pointer construction — keyed by the source
-    /// expression.  These cross the typed boundary so MIR never reinterprets
-    /// syntax.
-    /// The declared compile-time parameters of the method a parameterized
-    /// invoke (`v.m[T](...)`) selected, keyed by the call. Separate from
-    /// `operation_adjustments` so a reference-yielding invoke keeps both its
-    /// `ReferenceResult` operation and this record.
-    parameterized_method_calls: RefCell<FactMap<SourceSpan, Vec<ParamDecl>>>,
-    operation_adjustments:
-        RefCell<FactMap<SourceSpan, mojito_checked::checked::SemanticAdjustment>>,
     /// Whether type resolution is inside a storage annotation (a struct field
     /// or local `var` type) — the positions where explicit origin slots must
     /// be bound. An initialized local may still leave a BARE generic to infer
@@ -884,11 +844,6 @@ pub struct Checker {
     /// from one — resolves a pointer field's symbolic binder exactly as a
     /// direct construction does.
     call_result_origins: RefCell<FactMap<SourceSpan, Vec<CallResultOrigin>>>,
-    /// Synthetic tuple element reads introduced by unpacking have no source
-    /// expression nodes. Retain their checked types and exact generated
-    /// accessors on the RHS expression for HIR/MIR lowering.
-    tuple_unpack_plans:
-        RefCell<FactMap<SourceSpan, Vec<mojito_checked::checked::CheckedTupleUnpackElement>>>,
     /// Per unpacked value, what [`Self::tuple_unpack_plan`] built the plan
     /// from beside the value's type. Checker-only: a template keeps it as the
     /// recipe of its plan.
@@ -900,10 +855,6 @@ pub struct Checker {
     /// in declaration order. Checker-only: a template keeps them as locals
     /// its statement declares.
     nested_def_params: RefCell<FactMap<SourceSpan, Vec<mojito_types::origin::OwnerId>>>,
-    /// Place expressions that define a fresh interior-reference generation.
-    /// Kept separate from operation adjustments because a Variant projection,
-    /// for example, carries both facts at the same checked node.
-    interior_references: RefCell<FactMap<SourceSpan, mojito_types::origin::OriginPlace>>,
     /// Per view-returning method call, the owned-interior tags its declared
     /// return origin projects on the receiver (see
     /// [`MethodSig::view_return_interior`]). Checker-only: MIR loans stay
@@ -913,9 +864,6 @@ pub struct Checker {
     /// order, for rules that name a parameter or read a free call's
     /// conventions (free calls record no `CheckedCallContract`).
     call_parameters: RefCell<FactMap<SourceSpan, Vec<CallParameter>>>,
-    /// Mutations which invalidate interior generations below checked bases.
-    interior_invalidations:
-        RefCell<FactMap<SourceSpan, Vec<mojito_checked::checked::InteriorInvalidation>>>,
     declaration_types: RefCell<FactMap<mojito_checked::checked::AnnotationSite, Ty>>,
     generic_parameters:
         RefCell<FactMap<mojito_checked::checked::GenericSite, Vec<mojito_types::types::ParamDecl>>>,
@@ -927,47 +875,13 @@ pub struct Checker {
             mojito_checked::checked::DeclarationEffect,
         >,
     >,
-    expression_types: RefCell<FactMap<SourceSpan, Ty>>,
-    expression_bindings: RefCell<FactMap<SourceSpan, mojito_types::origin::OwnerId>>,
-    /// Stable identities assigned by declarations and other binding statements.
-    /// HIR uses these facts to map checked owners to runtime slots without
-    /// recovering a binding from its source spelling.
-    statement_bindings: RefCell<FactMap<SourceSpan, mojito_types::origin::OwnerId>>,
     /// Each checked `with` statement's desugar (keyed by the statement),
     /// spliced into the final tree after the last transfer round.
     with_desugars: RefCell<FactMap<SourceSpan, with_stmt::WithDesugar>>,
-    /// Explicit capture entries resolved at the nested declaration site. Keeping
-    /// unused entries is essential: a move capture still transfers at declaration.
-    declaration_captures:
-        RefCell<FactMap<SourceSpan, Vec<mojito_checked::checked::CheckedCapture>>>,
-    /// Stable identities/types for the lexical binders introduced by each
-    /// comprehension, retained for checked HIR and explicit-destroy analysis.
-    comprehension_bindings:
-        RefCell<FactMap<SourceSpan, Vec<mojito_checked::checked::CheckedComprehensionBinding>>>,
-    expression_place_types: RefCell<FactMap<SourceSpan, Ty>>,
-    binding_types: RefCell<FactMap<SourceSpan, Ty>>,
     /// Positive site-sensitive drop facts retained for the later explicit-
     /// destroy CFG pass. Conditional conformances are meaningful only in the
     /// constraint environment in which a binding was checked.
     explicit_destroy_deletability: RefCell<crate::explicit_destroy::CheckedDeletability>,
-    /// Selected call effects keyed by the checked call expression. This records
-    /// the contract chosen during overload/bounded dispatch so later phases do
-    /// not have to rediscover it from source syntax.
-    expression_effects: RefCell<FactMap<SourceSpan, mojito_checked::checked::EffectFacts>>,
-    /// Complete overload/origin/effect contract for a selected method-like
-    /// call.  Nominal subscripts and ordinary method syntax share this fact.
-    selected_calls: RefCell<FactMap<SourceSpan, mojito_checked::checked::CheckedCallContract>>,
-    /// Subscript descriptor construction is orthogonal to call selection and
-    /// may coexist with a reference-result adjustment at the same expression.
-    subscript_descriptors: RefCell<FactMap<SourceSpan, SubscriptDescriptorPlan>>,
-    /// Exact iterator protocol selected for each loop/comprehension iterable.
-    /// Lowering consumes this fact instead of re-selecting `__iter__` by name.
-    iteration_protocols: RefCell<FactMap<SourceSpan, mojito_checked::checked::IterationProtocol>>,
-    explicit_destroy_calls: RefCell<FactSet<SourceSpan>>,
-    /// Expressions whose reference handle, rather than referent value, is
-    /// required by a reference binding or origin-bearing aggregate operation.
-    /// The bool records whether the resulting capability is writable.
-    reference_value_uses: RefCell<FactMap<SourceSpan, bool>>,
     /// Reference-result reads proven copyable in their site-sensitive generic
     /// constraint environment. Final validation runs after those method scopes
     /// have been popped, so it must retain rather than recompute this fact.
@@ -980,29 +894,10 @@ pub struct Checker {
     /// borrows the referent for its `self` convention (consuming receivers
     /// are gated separately), so the result is never read out as a value.
     borrowed_reference_receivers: RefCell<FactSet<SourceSpan>>,
-    /// Place expressions selected for an independent value copy at a consuming
-    /// boundary. This stays checker-owned because conditional Copyable
-    /// conformance can depend on the active generic constraint environment.
-    copy_place_value_uses: RefCell<FactSet<SourceSpan>>,
     /// Compile-time bindings read as the object of a field chain the checker
     /// compiled to a parameter expression (`q` of `q.a`): the chain is read,
     /// never the binding, which therefore materializes no temporary.
     parameter_field_objects: RefCell<FactSet<SourceSpan>>,
-    /// Actual arguments whose caller place must remain live through a selected
-    /// `mut`/`ref` call. This checker-owned fact keeps MIR lowering from
-    /// retaining ordinary copied arguments merely because they are syntactic
-    /// places.
-    call_place_uses: RefCell<FactSet<SourceSpan>>,
-    /// Read-convention place arguments the selected call may bind by borrow
-    /// instead of the implicit `__copyinit__` read: shared reads whose place no
-    /// exclusive access overlaps within the call. Checker-owned because the
-    /// effective conventions and within-call exclusivity are resolved here.
-    borrowed_read_call_places: RefCell<FactSet<SourceSpan>>,
-    /// Owned temporaries (non-place arguments) the selected call binds to
-    /// read-convention parameters: the callee borrows them, so the caller
-    /// destroys each once the call returns. Checker-owned because the
-    /// effective conventions are resolved here.
-    read_temporary_arguments: RefCell<FactSet<SourceSpan>>,
     /// Expressions whose value nothing takes ownership of: a temporary bound
     /// to a read parameter, an argument of `print`, a discarded statement
     /// expression. A linear one is abandoned there.
@@ -1011,13 +906,6 @@ pub struct Checker {
     /// whose bounds do not prove `Deinitable`: the caller owns each and cannot
     /// destroy it (`explicit_destroy`'s abandoned-temporary rule).
     linear_temporaries: RefCell<FactSet<SourceSpan>>,
-    /// Consuming method calls whose place receiver is implicitly copied. Kept
-    /// separate from the single operation-adjustment slot so parameterized
-    /// method metadata can coexist at the same expression.
-    implicitly_copied_consuming_receivers: RefCell<FactSet<SourceSpan>>,
-    /// Condition expressions whose value is a `Boolable` struct rather than
-    /// `Bool` (see `SemanticAdjustment::Truthiness`).
-    truthiness_conditions: RefCell<FactSet<SourceSpan>>,
     return_ref_contracts: Vec<Option<ReturnRefContract>>,
     /// The enclosing body's value-return annotation, re-resolved over the
     /// body's own places to judge a returned struct's origin tail, flagged
@@ -1038,11 +926,6 @@ pub struct Checker {
     /// The requirement defaults each call through a bound leaves out, by the
     /// call's origin (`bound_defaults.rs`).
     bound_default_arguments: RefCell<HashMap<SyntaxId, BoundDefaultArguments>>,
-    /// Each erased `rebind` this check judged, at its operand (or, for a
-    /// rebound assignment, its statement): the operand's own type, the
-    /// target, and whether the rebind is by value. The elaborator asserts
-    /// the equality per instance.
-    rebind_assertions: RefCell<FactMap<SourceSpan, mojito_checked::checked::RebindAssertion>>,
     /// The module and name of the struct whose method is being checked, for
     /// the method's display name.
     method_site: Option<(Option<String>, String)>,
@@ -1157,74 +1040,41 @@ impl Checker {
             parametric_write_frames: RefCell::new(Vec::new()),
             bundled_stdlib_declaration: false,
             parameter_list_brackets: std::cell::Cell::new(false),
-            overload_targets: RefCell::new(FactMap::default()),
+            node_facts: RefCell::new(FactMap::default()),
             nested_origins_read_only_functions: declaration_table::DeclarationSet::default(),
             simd_length_binders: HashSet::from([builtins::hasher_simd_update_binders().1.id]),
-            contextual_bases: RefCell::new(FactMap::default()),
-            generic_instantiations: RefCell::new(FactMap::default()),
             call_bindings: RefCell::new(FactMap::default()),
-            method_instantiations: RefCell::new(FactMap::default()),
             struct_instantiations: RefCell::new(FactVec::default()),
             transfer_frames: RefCell::new(Vec::new()),
             transfer_effects: RefCell::new(transfer_effects.into()),
             resolving_parameter_annotation: std::cell::Cell::new(false),
             bare_string_literal_parameter: std::cell::Cell::new(false),
-            call_transfers: RefCell::new(FactMap::default()),
             effect_observations: RefCell::new(HashMap::new()),
             call_through_effects: RefCell::new(call_through_seed.into()),
             call_through_observations: RefCell::new(HashMap::new()),
             transferred_origins: RefCell::new(FactMap::default()),
             raise_observation_frames: RefCell::new(Vec::new()),
-            implicit_conversions: RefCell::new(FactMap::default()),
-            implicit_conversion_types: RefCell::new(FactMap::default()),
-            implicit_conversion_raises: RefCell::new(FactMap::default()),
-            conversion_source_borrows: RefCell::new(FactMap::default()),
-            simd_constructions: RefCell::new(FactMap::default()),
-            operation_adjustments: RefCell::new(FactMap::default()),
-            parameterized_method_calls: RefCell::new(FactMap::default()),
             strict_storage_annotation: std::cell::Cell::new(StorageStrictness::Off),
             annotation_depth: std::cell::Cell::new(0),
             generated_declaration: std::cell::Cell::new(false),
             storage_origin_demands: RefCell::new(None),
-            tuple_unpack_plans: RefCell::new(FactMap::default()),
             comprehension_iterables: RefCell::new(FactMap::default()),
             nested_def_params: RefCell::new(FactMap::default()),
-            interior_references: RefCell::new(FactMap::default()),
             view_result_interiors: RefCell::new(FactMap::default()),
             call_parameters: RefCell::new(FactMap::default()),
-            interior_invalidations: RefCell::new(FactMap::default()),
             declaration_types: RefCell::new(FactMap::default()),
             generic_parameters: RefCell::new(FactMap::default()),
             declaration_effects: RefCell::new(FactMap::default()),
-            expression_types: RefCell::new(FactMap::default()),
-            expression_bindings: RefCell::new(FactMap::default()),
-            statement_bindings: RefCell::new(FactMap::default()),
             with_desugars: RefCell::new(FactMap::default()),
-            declaration_captures: RefCell::new(FactMap::default()),
-            comprehension_bindings: RefCell::new(FactMap::default()),
-            expression_place_types: RefCell::new(FactMap::default()),
-            binding_types: RefCell::new(FactMap::default()),
             explicit_destroy_deletability: RefCell::new(
                 crate::explicit_destroy::CheckedDeletability::default(),
             ),
-            expression_effects: RefCell::new(FactMap::default()),
-            selected_calls: RefCell::new(FactMap::default()),
-            subscript_descriptors: RefCell::new(FactMap::default()),
-            iteration_protocols: RefCell::new(FactMap::default()),
-            explicit_destroy_calls: RefCell::new(FactSet::default()),
-            reference_value_uses: RefCell::new(FactMap::default()),
             copyable_reference_result_reads: RefCell::new(FactSet::default()),
             discarded_reference_results: RefCell::new(FactSet::default()),
             borrowed_reference_receivers: RefCell::new(FactSet::default()),
-            copy_place_value_uses: RefCell::new(FactSet::default()),
             parameter_field_objects: RefCell::new(FactSet::default()),
-            call_place_uses: RefCell::new(FactSet::default()),
-            borrowed_read_call_places: RefCell::new(FactSet::default()),
-            read_temporary_arguments: RefCell::new(FactSet::default()),
             unconsumed_temporaries: RefCell::new(FactSet::default()),
             linear_temporaries: RefCell::new(FactSet::default()),
-            implicitly_copied_consuming_receivers: RefCell::new(FactSet::default()),
-            truthiness_conditions: RefCell::new(FactSet::default()),
             return_ref_contracts: Vec::new(),
             return_annotations: Vec::new(),
             named_result_context: Vec::new(),
@@ -1236,7 +1086,6 @@ impl Checker {
             syntax_origins: mojito_ast::ast::SyntaxOrigins::default(),
             bound_default_arguments: RefCell::new(HashMap::new()),
             top_level_callables: RefCell::new(HashSet::new()),
-            rebind_assertions: RefCell::new(FactMap::default()),
             method_site: None,
             previous: None,
             body_records: RefCell::new(HashMap::new()),
@@ -1284,14 +1133,11 @@ impl Checker {
     }
 
     fn record_call_effect(&self, span: SourceSpan, error: Ty) {
-        self.expression_effects.borrow_mut().insert(
-            span,
-            mojito_checked::checked::EffectFacts {
-                raises: Some(error),
-                may_suspend: false,
-                diverges: false,
-            },
-        );
+        self.record_at(span).effects = Some(mojito_checked::checked::EffectFacts {
+            raises: Some(error),
+            may_suspend: false,
+            diverges: false,
+        });
     }
 
     fn concrete_callable_captures(&self, ty: &Ty) -> Vec<mojito_types::origin::CaptureOrigin> {
@@ -1345,10 +1191,9 @@ impl Checker {
         if captures.is_empty() {
             return captures;
         }
-        self.operation_adjustments.borrow_mut().insert(
-            span,
+        self.record_at(span).adjustment = Some(Box::new(
             mojito_checked::checked::SemanticAdjustment::CallableCaptureAccesses(captures.clone()),
-        );
+        ));
         captures
     }
 
@@ -1366,12 +1211,7 @@ impl Checker {
         // that checked type instead of independently re-inferring the syntax
         // without its selected parameter contract.
         let checked_argument_type = |expression: &Expr| {
-            let checked = {
-                self.expression_types
-                    .borrow()
-                    .get(&expression.source_span())
-                    .cloned()
-            };
+            let checked = { self.fact(&expression.source_span(), |facts| facts.ty.as_ref()) };
             match checked {
                 Some(ty) => Ok(ty),
                 None => self.infer(expression),
@@ -1404,11 +1244,7 @@ impl Checker {
         // A bracket argument is a compile-time position.
         let _position = self.comptime_position();
         for expression in self.runtime_param_arg_expressions(param_args) {
-            if !self
-                .expression_types
-                .borrow()
-                .contains_key(&expression.source_span())
-            {
+            if !self.has_fact(&expression.source_span(), |facts| facts.ty.is_some()) {
                 self.infer(expression)?;
             }
         }
@@ -1423,7 +1259,7 @@ impl Checker {
         &self,
         param_args: &'a [mojito_ast::ast::ParamArg],
     ) -> Vec<&'a Expr> {
-        let adjustments = self.operation_adjustments.borrow();
+        let records = self.node_facts.borrow();
         param_args
             .iter()
             .filter_map(|argument| match argument {
@@ -1436,8 +1272,9 @@ impl Checker {
                 mojito_ast::ast::ParamArg::Type(_) => None,
             })
             .filter(|expression| {
-                !adjustments
+                !records
                     .get(&expression.source_span())
+                    .and_then(|facts| facts.adjustment.as_deref())
                     .is_some_and(|adjustment| {
                         matches!(
                             adjustment,
@@ -1933,28 +1770,22 @@ impl Checker {
     ) -> Result<(), TypeError> {
         let span = expression.source_span();
         if let Some(error) = error {
-            self.implicit_conversion_raises
-                .borrow_mut()
-                .insert(span.clone(), error.clone());
+            self.record_at(span.clone()).conversion_raises = Some(error.clone());
             self.require_error(
                 format!("implicit conversion through raising '{target}'"),
                 error,
             )?;
         }
         if let Some(mutable) = source_borrow {
-            self.conversion_source_borrows
-                .borrow_mut()
-                .insert(span.clone(), mutable);
+            self.record_at(span.clone()).conversion_source_borrow = Some(mutable);
             if self.origin_place(expression).is_err()
                 && self.infer_reference_value(expression).is_none()
             {
                 self.materialize_borrow_owner(expression, mutable)?;
             }
         }
-        self.implicit_conversion_types
-            .borrow_mut()
-            .insert(span.clone(), to.clone());
-        self.implicit_conversions.borrow_mut().insert(span, target);
+        self.record_at(span.clone()).implicit_conversion_type = Some(to.clone());
+        self.record_at(span).implicit_conversion = Some(target);
         Ok(())
     }
 
@@ -1977,9 +1808,7 @@ impl Checker {
                 .collect();
             return match matches.as_slice() {
                 [(_, target)] => {
-                    self.overload_targets
-                        .borrow_mut()
-                        .insert(expression.source_span(), target.clone());
+                    self.record_at(expression.source_span()).overload_target = Some(target.clone());
                     Ok(true)
                 }
                 [] => Ok(false),
@@ -2045,9 +1874,9 @@ impl Checker {
             }
             // A literal parameter value read (`A.K` of `comptime K = 7`)
             // materializes as its constant.
-            let mut adjustments = self.operation_adjustments.borrow_mut();
+            let mut record = self.record_at(expression.source_span());
             if let Some(mojito_checked::checked::SemanticAdjustment::ParamValue { value, .. }) =
-                adjustments.get_mut(&expression.source_span())
+                record.adjustment.as_deref_mut()
                 && let Some(materialized) = value
                     .as_constant()
                     .and_then(|constant| constant.clone().materialize_as(to))
@@ -2056,10 +1885,9 @@ impl Checker {
                 *value = materialized;
                 return Ok(());
             }
-            adjustments.insert(
-                expression.source_span(),
+            record.adjustment = Some(Box::new(
                 mojito_checked::checked::SemanticAdjustment::MaterializeLiteral(to.clone()),
-            );
+            ));
             return Ok(());
         }
 
@@ -2140,41 +1968,46 @@ impl Checker {
 
     /// An ordinary value use of a reference-returning expression owns an
     /// independent value: MIR lowers it to `ReadRef` followed by `CopyValue`.
-    /// Reference-bearing contexts are recorded in `reference_value_uses` and
+    /// Reference-bearing contexts record a `reference_value_use` fact and
     /// retain the handle instead. Validate the remaining reads after the whole
     /// tree has been checked so a later enclosing context can mark a nested
     /// result as a retained handle before this distinction is enforced.
     fn check_reference_result_reads(&self) -> Result<(), TypeError> {
-        let operations = self.operation_adjustments.borrow();
-        let retained_handles = self.reference_value_uses.borrow();
-        let copyable_reads = self.copyable_reference_result_reads.borrow();
-        let discarded = self.discarded_reference_results.borrow();
-        let borrowed_call_reads = self.borrowed_read_call_places.borrow();
-        let borrowed_receivers = self.borrowed_reference_receivers.borrow();
-        for (span, adjustment) in operations.iter() {
-            let mojito_checked::checked::SemanticAdjustment::ReferenceResult { reference } =
-                adjustment
-            else {
-                continue;
-            };
-            if retained_handles.contains_key(span)
-                || copyable_reads.contains(span)
-                || discarded.contains(span)
-                || borrowed_call_reads.contains(span)
-                || borrowed_receivers.contains(span)
-                || self.is_implicitly_copyable(&reference.referent)
-            {
+        let read_referents: Vec<Ty> = {
+            let records = self.node_facts.borrow();
+            let copyable_reads = self.copyable_reference_result_reads.borrow();
+            let discarded = self.discarded_reference_results.borrow();
+            let borrowed_receivers = self.borrowed_reference_receivers.borrow();
+            records
+                .iter()
+                .filter_map(|(span, facts)| match facts.adjustment.as_deref() {
+                    Some(mojito_checked::checked::SemanticAdjustment::ReferenceResult {
+                        reference,
+                    }) if facts.reference_value_use.is_none()
+                        && !facts.borrowed_read_call_place
+                        && !copyable_reads.contains(span)
+                        && !discarded.contains(span)
+                        && !borrowed_receivers.contains(span) =>
+                    {
+                        Some(reference.referent.clone())
+                    }
+                    _ => None,
+                })
+                .collect()
+        };
+        for referent in read_referents {
+            if self.is_implicitly_copyable(&referent) {
                 continue;
             }
             let context = "ordinary value read through a reference result".to_string();
-            if !self.is_copyable(&reference.referent) {
+            if !self.is_copyable(&referent) {
                 return Err(TypeError::NonCopyable {
-                    ty: reference.referent.to_string(),
+                    ty: referent.to_string(),
                     context,
                 });
             }
             return Err(TypeError::ImplicitCopy {
-                ty: reference.referent.to_string(),
+                ty: referent.to_string(),
                 context,
                 transferable: false,
                 copyable: true,
@@ -2213,9 +2046,7 @@ impl Checker {
     fn expect_bool(&self, expr: &Expr, context: &str) -> Result<(), TypeError> {
         let ty = self.infer(expr)?;
         if self.condition_truthiness(&ty, context)? {
-            self.truthiness_conditions
-                .borrow_mut()
-                .insert(expr.source_span());
+            self.record_at(expr.source_span()).truthiness_condition = true;
         }
         Ok(())
     }
@@ -2538,8 +2369,7 @@ fn run_explicit_destroy(
     program: &[Stmt],
     struct_types: &HashMap<String, mojito_checked::checked::ExplicitDestroyInfo>,
 ) -> Result<(), TypeError> {
-    let binding_types = checker.binding_types.borrow();
-    let comprehension_bindings = checker.comprehension_bindings.borrow();
+    let node_facts = checker.node_facts.borrow();
     let deletability = checker.explicit_destroy_deletability.borrow();
     // An installed struct's entry is the package build's.
     let mut types = checker.explicit_destroy_table(struct_types.clone());
@@ -2547,14 +2377,17 @@ fn run_explicit_destroy(
     // it is one the caller owns and cannot implicitly destroy, keyed by its
     // struct's entry or, typed by a type parameter, the linear one.
     let unconsumed = checker.unconsumed_temporaries.borrow();
-    let expression_types = checker.expression_types.borrow();
     let linear_temporaries: HashMap<SourceSpan, String> = checker
         .linear_temporaries
         .borrow()
         .iter()
         .filter(|span| unconsumed.contains(span))
         .map(|span| {
-            let key = match expression_types.get(span).map(Ty::kind) {
+            let key = match node_facts
+                .get(span)
+                .and_then(|facts| facts.ty.as_ref())
+                .map(Ty::kind)
+            {
                 Some(TyKind::Struct(name, _)) if types.contains_key(name) => name.clone(),
                 _ => crate::explicit_destroy::LINEAR_TYPE_PARAMETER.to_string(),
             };
@@ -2588,12 +2421,15 @@ fn run_explicit_destroy(
     crate::explicit_destroy::check(
         program,
         &members,
-        &binding_types,
-        &comprehension_bindings,
+        &node_facts,
         &deletability,
         &types,
         crate::explicit_destroy::SpanFacts {
-            lent: (**checker.borrowed_read_call_places.borrow()).clone(),
+            lent: node_facts
+                .iter()
+                .filter(|(_, facts)| facts.borrowed_read_call_place)
+                .map(|(span, _)| span.clone())
+                .collect(),
             linear_temporaries,
         },
     )
@@ -2892,8 +2728,6 @@ struct CallParameter {
     ty: Ty,
 }
 
-type SubscriptDescriptorPlan = (Vec<Option<SliceKind>>, bool);
-
 /// How strictly a storage annotation must bind explicit origin slots.
 ///
 /// `Full`: bare origin-slotted generics and partial applications both reject
@@ -3086,7 +2920,7 @@ struct ValueAdjustmentSnapshot {
     source: SourceSpan,
     overload_target: Option<String>,
     implicit_conversion: Option<String>,
-    operation: Option<mojito_checked::checked::SemanticAdjustment>,
+    operation: Option<Box<mojito_checked::checked::SemanticAdjustment>>,
 }
 
 struct SubscriptResolution {

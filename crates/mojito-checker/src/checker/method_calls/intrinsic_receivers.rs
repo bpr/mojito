@@ -283,18 +283,15 @@ impl Checker {
                 });
             }
             self.check_place(&args[0])?;
-            self.borrowed_read_call_places
-                .borrow_mut()
-                .insert(object.source_span());
+            self.record_at(object.source_span())
+                .borrowed_read_call_place = true;
             self.infer_print(std::slice::from_ref(object), &[])?;
-            self.operation_adjustments.borrow_mut().insert(
-                span.clone(),
-                if method == "write_repr_to" {
+            self.record_at(span.clone()).adjustment =
+                Some(Box::new(if method == "write_repr_to" {
                     mojito_checked::checked::SemanticAdjustment::InvertedReprWrite
                 } else {
                     mojito_checked::checked::SemanticAdjustment::InvertedWrite
-                },
-            );
+                }));
             return Ok(Ty::none());
         }
         if method != "indices" {
@@ -373,18 +370,14 @@ impl Checker {
             });
         }
         self.check_place(&args[0])?;
-        self.borrowed_read_call_places
-            .borrow_mut()
-            .insert(object.source_span());
+        self.record_at(object.source_span())
+            .borrowed_read_call_place = true;
         self.infer_print(std::slice::from_ref(object), &[])?;
-        self.operation_adjustments.borrow_mut().insert(
-            span.clone(),
-            if method == "write_repr_to" {
-                mojito_checked::checked::SemanticAdjustment::InvertedReprWrite
-            } else {
-                mojito_checked::checked::SemanticAdjustment::InvertedWrite
-            },
-        );
+        self.record_at(span.clone()).adjustment = Some(Box::new(if method == "write_repr_to" {
+            mojito_checked::checked::SemanticAdjustment::InvertedReprWrite
+        } else {
+            mojito_checked::checked::SemanticAdjustment::InvertedWrite
+        }));
         Ok(Ty::none())
     }
 
@@ -410,10 +403,9 @@ impl Checker {
                 ..call
             },
         )?;
-        self.operation_adjustments.borrow_mut().insert(
-            span.clone(),
+        self.record_at(span.clone()).adjustment = Some(Box::new(
             mojito_checked::checked::SemanticAdjustment::LiteralFormat,
-        );
+        ));
         Ok(ty)
     }
 
@@ -443,9 +435,8 @@ impl Checker {
                 // `update(mut self, value: Some[Hashable])` reads its
                 // value: a named one is lent where it lies, not copied.
                 if matches!(args[0].kind, ExprKind::Identifier(_)) {
-                    self.borrowed_read_call_places
-                        .borrow_mut()
-                        .insert(args[0].source_span());
+                    self.record_at(args[0].source_span())
+                        .borrowed_read_call_place = true;
                 }
                 return Ok(Some(Ty::none()));
             }

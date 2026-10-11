@@ -56,12 +56,11 @@ impl Checker {
                     reason: self.trait_failure_reason(&ty, "Defaultable"),
                 });
             }
-            self.operation_adjustments.borrow_mut().insert(
-                span.clone(),
+            self.record_at(span.clone()).adjustment = Some(Box::new(
                 mojito_checked::checked::SemanticAdjustment::ConstructTypeParam {
                     param: binder.clone(),
                 },
-            );
+            ));
             return Ok(Some(ty));
         }
         // `Self.width()`: a static method of the enclosing struct, called on
@@ -89,13 +88,14 @@ impl Checker {
             self.record_static_receiver(object, owner, &targs);
             // The receiver spells no struct name for lowering to compose
             // the symbol from.
-            self.operation_adjustments
-                .borrow_mut()
-                .entry(span.clone())
-                .or_insert_with(|| {
-                    mojito_checked::checked::SemanticAdjustment::ResolveCallable(format!(
-                        "{owner}.{method}"
-                    ))
+            self.record_at(span.clone())
+                .adjustment
+                .get_or_insert_with(|| {
+                    Box::new(
+                        mojito_checked::checked::SemanticAdjustment::ResolveCallable(format!(
+                            "{owner}.{method}"
+                        )),
+                    )
                 });
             return Ok(Some(ty));
         }
@@ -338,9 +338,8 @@ impl Checker {
                 }
             })?;
             if parameterized_syntax {
-                self.parameterized_method_calls
-                    .borrow_mut()
-                    .insert(span.clone(), selected.param_decls.clone());
+                self.record_at(span.clone()).parameterized_method_call =
+                    Some(selected.param_decls.clone());
             }
             // A generic static records its instantiation, as an instance
             // call does: the elaborator instantiates its template per
@@ -353,9 +352,8 @@ impl Checker {
                     .and_then(mojito_symbol::symbol::overload_qualifier)
                     .map(str::to_string);
                 self.record_dtype_parameter_arguments(param_args, arguments);
-                self.method_instantiations.borrow_mut().insert(
-                    span.clone(),
-                    mojito_checked::checked::MethodInstantiation {
+                self.record_at(span.clone()).method_instantiation =
+                    Some(mojito_checked::checked::MethodInstantiation {
                         owner: sname.to_string(),
                         owner_arguments: Vec::new(),
                         method: source_method.to_string(),
@@ -367,8 +365,7 @@ impl Checker {
                             param_args,
                             arguments,
                         ),
-                    },
-                );
+                    });
             }
             return self
                 .finish_static_call(

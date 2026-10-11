@@ -1053,10 +1053,9 @@ impl Checker {
             });
         }
         let symbol = self
-            .overload_targets
-            .borrow()
-            .get(&expression.source_span())
-            .cloned()
+            .fact(&expression.source_span(), |facts| {
+                facts.overload_target.as_ref()
+            })
             .unwrap_or_else(|| name.to_string());
         Ok(CallableDefault::Symbol(symbol))
     }
@@ -1758,21 +1757,20 @@ impl Checker {
         if !arguments.is_empty() {
             // A re-inference of the same construction keeps the owner a
             // temporary-receiver materialization already minted on it.
-            let mut adjustments = self.operation_adjustments.borrow_mut();
-            let materialized = match adjustments.get(span) {
+            let mut record = self.record_at(span.clone());
+            let materialized = match record.adjustment.as_deref() {
                 Some(mojito_checked::checked::SemanticAdjustment::BorrowRefArguments {
                     materialized,
                     ..
                 }) => *materialized,
                 _ => None,
             };
-            adjustments.insert(
-                span.clone(),
+            record.adjustment = Some(Box::new(
                 mojito_checked::checked::SemanticAdjustment::BorrowRefArguments {
                     arguments,
                     materialized,
                 },
-            );
+            ));
         }
     }
 
@@ -1952,17 +1950,15 @@ impl Checker {
     ) -> Option<Result<Ty, TypeError>> {
         let decls = &self.structs.get(name)?.decls;
         Self::inferred_construction_pack(name, decls, param_args)?;
-        self.generic_instantiations.borrow_mut().insert(
-            span.clone(),
-            mojito_checked::checked::GenericInstantiation {
+        self.record_at(span.clone()).generic_instantiation =
+            Some(mojito_checked::checked::GenericInstantiation {
                 callee: name.to_string(),
                 parameter_names: Vec::new(),
                 parameter_types: Vec::new(),
                 variadic: None,
                 arguments: tyargs.to_vec(),
                 folded_arguments: Vec::new(),
-            },
-        );
+            });
         let [TyArg::Val(pack @ CtValue::Tuple(_))] = tyargs else {
             return None;
         };
@@ -2026,17 +2022,15 @@ impl Checker {
         let folded_arguments = crate::checker::call_inference::folded_parameter_arguments(
             decls, param_args, &arguments,
         );
-        self.generic_instantiations.borrow_mut().insert(
-            span.clone(),
-            mojito_checked::checked::GenericInstantiation {
+        self.record_at(span.clone()).generic_instantiation =
+            Some(mojito_checked::checked::GenericInstantiation {
                 callee: name.to_string(),
                 parameter_names: parameter_names.to_vec(),
                 parameter_types: Vec::new(),
                 variadic: None,
                 arguments,
                 folded_arguments,
-            },
-        );
+            });
     }
 
     /// The call diagnostic of a constructor candidate whose availability
@@ -2217,9 +2211,7 @@ impl Checker {
                         constructor_miss(name, kind, origin_failure.as_ref(), availability_failure)
                     })?;
                 if let Some(target) = &selected.lowered_name {
-                    self.overload_targets
-                        .borrow_mut()
-                        .insert(span.clone(), target.clone());
+                    self.record_at(span.clone()).overload_target = Some(target.clone());
                 }
                 self.record_construction_instantiation(
                     span,
@@ -2262,8 +2254,8 @@ impl Checker {
                     // Contextual, against the slot this argument fills, as
                     // `record_selected_method_conversions` just typed it.
                     // Inferring bare here re-records the argument's semantic
-                    // adjustment from scratch, and `operation_adjustments` is
-                    // keyed by span: a display argument that had just resolved
+                    // adjustment from scratch, and an occurrence holds one
+                    // adjustment: a display argument that had just resolved
                     // to its parameter's collection (`ConstructCollection` for
                     // a `List[Int]` parameter) was overwritten by the display's
                     // own default (`ConstructArrayLiteral`), so a `var` or
@@ -2745,9 +2737,7 @@ impl Checker {
                     )
                 });
                 if let Some(target) = target {
-                    self.overload_targets
-                        .borrow_mut()
-                        .insert(span.clone(), target);
+                    self.record_at(span.clone()).overload_target = Some(target);
                 }
                 self.record_construction_instantiation(
                     span,

@@ -1090,10 +1090,9 @@ impl Checker {
         if self.strict_storage_annotation.get() == super::StorageStrictness::Off
             && let mojito_ast::ast::ParamArg::Value(expression) = value
         {
-            self.operation_adjustments.borrow_mut().insert(
-                expression.source_span(),
+            self.record_at(expression.source_span()).adjustment = Some(Box::new(
                 mojito_checked::checked::SemanticAdjustment::EraseCompileTimeArgument,
-            );
+            ));
         }
         Ok(())
     }
@@ -1864,7 +1863,7 @@ impl Checker {
                     }
                 }
                 if let Some((span, fact)) = fact {
-                    self.operation_adjustments.borrow_mut().insert(span, fact);
+                    self.record_at(span).adjustment = Some(Box::new(fact));
                 }
                 Ok(TyArg::Ty(ty))
             }

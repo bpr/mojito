@@ -53,21 +53,17 @@ impl Checker {
             .iter()
             .chain(kwargs.iter().map(|argument| &argument.value))
             .filter_map(|expression| {
-                self.expression_types
-                    .borrow()
-                    .get(&expression.source_span())
-                    .cloned()
+                self.fact(&expression.source_span(), |facts| facts.ty.as_ref())
             })
             .collect::<Vec<_>>();
         let captures = self.call_capture_effects(&argument_types);
         let parameter_arguments = self.checked_parameter_arguments(param_args);
         if reference_result.is_none() && !captures.is_empty() {
-            self.operation_adjustments.borrow_mut().insert(
-                span.clone(),
+            self.record_at(span.clone()).adjustment = Some(Box::new(
                 mojito_checked::checked::SemanticAdjustment::CallableCaptureAccesses(
                     captures.clone(),
                 ),
-            );
+            ));
         }
         let return_type = self.rebase_self_place_pointer(resolved.return_type.clone(), object);
         if reference_result.is_none() && captures.is_empty() {
@@ -88,9 +84,8 @@ impl Checker {
                 })
                 .collect(),
         );
-        self.selected_calls.borrow_mut().insert(
-            span.clone(),
-            mojito_checked::checked::CheckedCallContract {
+        self.record_at(span.clone()).selected_call =
+            Some(Box::new(mojito_checked::checked::CheckedCallContract {
                 target,
                 raises,
                 result_ty: reference_result.clone().map_or_else(
@@ -110,8 +105,7 @@ impl Checker {
                 parameter_arguments,
                 param_decls: resolved.param_decls.clone(),
                 boundary,
-            },
-        );
+            }));
     }
 
     /// A `@staticmethod` reached through an instance takes no receiver: the
@@ -154,16 +148,14 @@ impl Checker {
                 let value_source = match argument {
                     mojito_ast::ast::ParamArg::Type(_) => None,
                     mojito_ast::ast::ParamArg::Value(expression) => {
-                        let erased = self
-                            .operation_adjustments
-                            .borrow()
-                            .get(&expression.source_span())
-                            .is_some_and(|adjustment| {
-                                matches!(
-                                    adjustment,
+                        let erased = self.has_fact(&expression.source_span(), |facts| {
+                            matches!(
+                                facts.adjustment.as_deref(),
+                                Some(
                                     mojito_checked::checked::SemanticAdjustment::EraseCompileTimeArgument
                                 )
-                            });
+                            )
+                        });
                         if erased {
                             return None;
                         }
@@ -208,15 +200,16 @@ impl Checker {
         if !lends_receiver {
             return;
         }
-        self.operation_adjustments
-            .borrow_mut()
-            .entry(span.clone())
-            .or_insert_with(
-                || mojito_checked::checked::SemanticAdjustment::BorrowViewResult {
-                    materialized: None,
-                    interior: resolved.view_return_interior.clone(),
-                },
-            );
+        self.record_at(span.clone())
+            .adjustment
+            .get_or_insert_with(|| {
+                Box::new(
+                    mojito_checked::checked::SemanticAdjustment::BorrowViewResult {
+                        materialized: None,
+                        interior: resolved.view_return_interior.clone(),
+                    },
+                )
+            });
         if !resolved.view_return_interior.is_empty() {
             self.view_result_interiors
                 .borrow_mut()

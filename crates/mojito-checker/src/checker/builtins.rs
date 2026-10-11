@@ -613,9 +613,8 @@ impl Checker {
     /// read through the retained handle, not copied out.
     pub(super) fn borrow_reference_result_argument(&self, argument: &Expr) {
         if self.infer_reference_value(argument).is_some() {
-            self.borrowed_read_call_places
-                .borrow_mut()
-                .insert(argument.source_span());
+            self.record_at(argument.source_span())
+                .borrowed_read_call_place = true;
         }
     }
 
@@ -628,9 +627,8 @@ impl Checker {
             && let TyKind::Struct(name, _) = ty.kind()
             && self.structs.contains_key(name)
         {
-            self.borrowed_read_call_places
-                .borrow_mut()
-                .insert(argument.source_span());
+            self.record_at(argument.source_span())
+                .borrowed_read_call_place = true;
         }
     }
 
@@ -644,9 +642,8 @@ impl Checker {
         let element = matches!(argument.kind, ExprKind::Index { .. })
             && self.infer_reference_value(argument).is_some();
         if (named || element) && matches!(ty.kind(), TyKind::Param { .. }) {
-            self.borrowed_read_call_places
-                .borrow_mut()
-                .insert(argument.source_span());
+            self.record_at(argument.source_span())
+                .borrowed_read_call_place = true;
         }
     }
 
@@ -660,9 +657,8 @@ impl Checker {
                 TyKind::Tuple(_) | TyKind::RuntimePack(_) | TyKind::VariadicPack(_)
             )
         {
-            self.borrowed_read_call_places
-                .borrow_mut()
-                .insert(argument.source_span());
+            self.record_at(argument.source_span())
+                .borrowed_read_call_place = true;
         }
     }
 
@@ -674,13 +670,17 @@ impl Checker {
         };
         let storage = matches!(object.kind, ExprKind::Identifier(_))
             && matches!(
-                (self.expression_types.borrow().get(&object.source_span())).map(Ty::kind),
+                (self
+                    .node_facts
+                    .borrow()
+                    .get(&object.source_span())
+                    .and_then(|facts| facts.ty.as_ref()))
+                .map(Ty::kind),
                 Some(TyKind::Tuple(_) | TyKind::RuntimePack(_) | TyKind::VariadicPack(_))
             );
         if storage {
-            self.borrowed_read_call_places
-                .borrow_mut()
-                .insert(argument.source_span());
+            self.record_at(argument.source_span())
+                .borrowed_read_call_place = true;
         }
     }
 
@@ -698,9 +698,7 @@ impl Checker {
             // Like `print`, nominal String conversion formats through a
             // borrowed `Writable` receiver and must retain its caller storage
             // until that synchronous formatter returns.
-            self.call_place_uses
-                .borrow_mut()
-                .insert(args[0].source_span());
+            self.record_at(args[0].source_span()).call_place_use = true;
             return Ok(Ty::string_literal());
         }
         Err(TypeError::TypeMismatch {

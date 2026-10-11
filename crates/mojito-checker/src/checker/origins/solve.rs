@@ -237,9 +237,7 @@ impl Checker {
                 ArgSlot::Keyword(position) => &kwargs[*position].value,
                 ArgSlot::Default => continue,
             };
-            self.call_place_uses
-                .borrow_mut()
-                .insert(expression.source_span());
+            self.record_at(expression.source_span()).call_place_use = true;
         }
         for (index, signature) in signatures.iter().enumerate() {
             let Some(signature) = signature else { continue };

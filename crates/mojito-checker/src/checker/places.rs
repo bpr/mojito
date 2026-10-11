@@ -41,21 +41,17 @@ impl Checker {
         kwargs: &[mojito_ast::ast::KwArg],
         receiver: Option<(&Expr, Option<ArgConvention>)>,
     ) {
-        self.borrowed_read_call_places
-            .borrow_mut()
-            .extend(borrowable_read_arguments(
-                slots,
-                conventions,
-                collected,
-                args,
-                kwargs,
-                receiver,
-            ));
+        for span in borrowable_read_arguments(slots, conventions, collected, args, kwargs, receiver)
+        {
+            self.record_at(span).borrowed_read_call_place = true;
+        }
         let read = read_temporary_arguments(slots, conventions, collected, args, kwargs);
         self.unconsumed_temporaries
             .borrow_mut()
             .extend(read.iter().cloned());
-        self.read_temporary_arguments.borrow_mut().extend(read);
+        for span in read {
+            self.record_at(span).read_temporary_argument = true;
+        }
     }
 
     /// The positions `name`'s positional collector gathers, when it reads
@@ -88,9 +84,7 @@ impl Checker {
     /// the call returns.
     pub(super) fn record_read_temporary_argument(&self, expr: &Expr) {
         if !is_place_expr(expr) && !matches!(expr.kind, ExprKind::Transfer(_)) {
-            self.read_temporary_arguments
-                .borrow_mut()
-                .insert(expr.source_span());
+            self.record_at(expr.source_span()).read_temporary_argument = true;
         }
         self.record_unconsumed_temporary(expr);
     }

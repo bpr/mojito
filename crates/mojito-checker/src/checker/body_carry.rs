@@ -22,18 +22,15 @@ use super::Checker;
 use crate::explicit_destroy::CheckedDeletability;
 use mojito_ast::ast::Stmt;
 use mojito_checked::checked::{
-    AnnotationSite, CallThroughEffect, CheckedCallContract, CheckedCallTransfer, CheckedCapture,
-    CheckedComprehensionBinding, CheckedDefaultWrapper, CheckedTraitMember,
-    CheckedTupleUnpackElement, ConformanceFacts, DeclarationEffect, DiscoveryResult, EffectFacts,
-    ExplicitDestroyInfo, GenericInstantiation, GenericSite, InteriorInvalidation,
-    IterationProtocol, MethodInstantiation, NodeFacts, RebindAssertion, SemanticAdjustment,
+    AnnotationSite, CallThroughEffect, CheckedDefaultWrapper, CheckedTraitMember, ConformanceFacts,
+    DeclarationEffect, DiscoveryResult, ExplicitDestroyInfo, GenericSite, NodeFacts,
     StructInstantiation, TransferEffect,
 };
 use mojito_checked::fact_store::{FactMap, FactSet, FactVec};
 use mojito_common::timing;
 use mojito_common::token::SourceSpan;
-use mojito_types::origin::{OriginPlace, OwnerId};
-use mojito_types::types::{ParamDecl, SimdDtype, SimdWidth, SliceKind, Ty};
+use mojito_types::origin::OwnerId;
+use mojito_types::types::{ParamDecl, Ty};
 use std::collections::{HashMap, HashSet};
 use std::hash::Hash;
 use std::ops::Range;
@@ -156,49 +153,16 @@ pub struct InternalStores {
     deletability: CheckedDeletability,
 }
 
-/// The fact stores the checked handoff is assembled from, each logged as a
-/// body writes it, and what the pass established beside them.
+/// The checked handoff's stores, each logged as a body writes it: one
+/// record per occurrence and the four keyed by declaration, beside what the
+/// pass established with them.
 #[derive(Debug)]
 pub struct HandoffStores {
     statements: Vec<Stmt>,
-    overload_targets: FactMap<SourceSpan, String>,
-    contextual_bases: FactMap<SourceSpan, String>,
-    generic_instantiations: FactMap<SourceSpan, GenericInstantiation>,
-    method_instantiations: FactMap<SourceSpan, MethodInstantiation>,
+    node_facts: FactMap<SourceSpan, NodeFacts>,
     struct_instantiations: FactVec<StructInstantiation>,
-    call_transfers: FactMap<SourceSpan, Vec<CheckedCallTransfer>>,
-    implicit_conversions: FactMap<SourceSpan, String>,
-    implicit_conversion_types: FactMap<SourceSpan, Ty>,
-    conversion_source_borrows: FactMap<SourceSpan, bool>,
-    conversion_raises: FactMap<SourceSpan, Ty>,
     checked_types: FactMap<AnnotationSite, Ty>,
     generic_parameters: FactMap<GenericSite, Vec<ParamDecl>>,
-    expression_types: FactMap<SourceSpan, Ty>,
-    expression_bindings: FactMap<SourceSpan, OwnerId>,
-    statement_bindings: FactMap<SourceSpan, OwnerId>,
-    declaration_captures: FactMap<SourceSpan, Vec<CheckedCapture>>,
-    comprehension_bindings: FactMap<SourceSpan, Vec<CheckedComprehensionBinding>>,
-    expression_place_types: FactMap<SourceSpan, Ty>,
-    binding_types: FactMap<SourceSpan, Ty>,
-    expression_effects: FactMap<SourceSpan, EffectFacts>,
-    selected_calls: FactMap<SourceSpan, CheckedCallContract>,
-    subscript_descriptors: FactMap<SourceSpan, (Vec<Option<SliceKind>>, bool)>,
-    iteration_protocols: FactMap<SourceSpan, IterationProtocol>,
-    simd_constructions: FactMap<SourceSpan, (SimdDtype, SimdWidth)>,
-    operation_adjustments: FactMap<SourceSpan, SemanticAdjustment>,
-    parameterized_method_calls: FactMap<SourceSpan, Vec<ParamDecl>>,
-    tuple_unpack_plans: FactMap<SourceSpan, Vec<CheckedTupleUnpackElement>>,
-    interior_references: FactMap<SourceSpan, OriginPlace>,
-    interior_invalidations: FactMap<SourceSpan, Vec<InteriorInvalidation>>,
-    explicit_destroy_calls: FactSet<SourceSpan>,
-    reference_value_uses: FactMap<SourceSpan, bool>,
-    copy_place_value_uses: FactSet<SourceSpan>,
-    call_place_uses: FactSet<SourceSpan>,
-    borrowed_read_call_places: FactSet<SourceSpan>,
-    read_temporary_arguments: FactSet<SourceSpan>,
-    implicitly_copied_consuming_receivers: FactSet<SourceSpan>,
-    truthiness_conditions: FactSet<SourceSpan>,
-    rebind_assertions: FactMap<SourceSpan, RebindAssertion>,
     declaration_effects: FactMap<AnnotationSite, DeclarationEffect>,
     explicit_destroy_types: HashMap<String, ExplicitDestroyInfo>,
     struct_destructors: HashMap<String, HashMap<String, bool>>,
@@ -210,132 +174,14 @@ pub struct HandoffStores {
 }
 
 impl HandoffStores {
-    /// The checked handoff: each occurrence's facts gathered into its one
-    /// record.
+    /// The checked handoff: the occurrence records, less any a cleared
+    /// fact left empty.
     fn into_discovery(self) -> DiscoveryResult {
-        let mut nodes: HashMap<SourceSpan, NodeFacts> = HashMap::new();
-        gather(&mut nodes, self.overload_targets, |facts, value| {
-            facts.overload_target = Some(value);
-        });
-        gather(&mut nodes, self.contextual_bases, |facts, value| {
-            facts.contextual_base = Some(value);
-        });
-        gather(&mut nodes, self.generic_instantiations, |facts, value| {
-            facts.generic_instantiation = Some(value);
-        });
-        gather(&mut nodes, self.method_instantiations, |facts, value| {
-            facts.method_instantiation = Some(value);
-        });
-        gather(&mut nodes, self.call_transfers, |facts, value| {
-            facts.call_transfers = Some(value);
-        });
-        gather(&mut nodes, self.implicit_conversions, |facts, value| {
-            facts.implicit_conversion = Some(value);
-        });
-        gather(
-            &mut nodes,
-            self.implicit_conversion_types,
-            |facts, value| {
-                facts.implicit_conversion_type = Some(value);
-            },
-        );
-        gather(
-            &mut nodes,
-            self.conversion_source_borrows,
-            |facts, value| {
-                facts.conversion_source_borrow = Some(value);
-            },
-        );
-        gather(&mut nodes, self.conversion_raises, |facts, value| {
-            facts.conversion_raises = Some(value);
-        });
-        gather(&mut nodes, self.expression_types, |facts, value| {
-            facts.ty = Some(value);
-        });
-        gather(&mut nodes, self.expression_bindings, |facts, value| {
-            facts.binding = Some(value);
-        });
-        gather(&mut nodes, self.statement_bindings, |facts, value| {
-            facts.statement_binding = Some(value);
-        });
-        gather(&mut nodes, self.declaration_captures, |facts, value| {
-            facts.captures = Some(value);
-        });
-        gather(&mut nodes, self.comprehension_bindings, |facts, value| {
-            facts.comprehension_bindings = Some(value);
-        });
-        gather(&mut nodes, self.expression_place_types, |facts, value| {
-            facts.place_ty = Some(value);
-        });
-        gather(&mut nodes, self.binding_types, |facts, value| {
-            facts.binding_ty = Some(value);
-        });
-        gather(&mut nodes, self.expression_effects, |facts, value| {
-            facts.effects = Some(value);
-        });
-        gather(&mut nodes, self.selected_calls, |facts, value| {
-            facts.selected_call = Some(Box::new(value));
-        });
-        gather(&mut nodes, self.subscript_descriptors, |facts, value| {
-            facts.subscript_descriptor = Some(value);
-        });
-        gather(&mut nodes, self.iteration_protocols, |facts, value| {
-            facts.iteration_protocol = Some(Box::new(value));
-        });
-        gather(&mut nodes, self.simd_constructions, |facts, value| {
-            facts.simd_construction = Some(value);
-        });
-        gather(&mut nodes, self.operation_adjustments, |facts, value| {
-            facts.adjustment = Some(Box::new(value));
-        });
-        gather(
-            &mut nodes,
-            self.parameterized_method_calls,
-            |facts, value| {
-                facts.parameterized_method_call = Some(value);
-            },
-        );
-        gather(&mut nodes, self.tuple_unpack_plans, |facts, value| {
-            facts.tuple_unpack_plan = Some(value);
-        });
-        gather(&mut nodes, self.interior_references, |facts, value| {
-            facts.interior_reference = Some(value);
-        });
-        gather(&mut nodes, self.interior_invalidations, |facts, value| {
-            facts.interior_invalidations = Some(value);
-        });
-        gather(&mut nodes, self.reference_value_uses, |facts, value| {
-            facts.reference_value_use = Some(value);
-        });
-        gather(&mut nodes, self.rebind_assertions, |facts, value| {
-            facts.rebind_assertion = Some(value);
-        });
-        gather_flags(&mut nodes, self.explicit_destroy_calls, |facts| {
-            facts.explicit_destroy_call = true;
-        });
-        gather_flags(&mut nodes, self.copy_place_value_uses, |facts| {
-            facts.copy_place_value_use = true;
-        });
-        gather_flags(&mut nodes, self.call_place_uses, |facts| {
-            facts.call_place_use = true;
-        });
-        gather_flags(&mut nodes, self.borrowed_read_call_places, |facts| {
-            facts.borrowed_read_call_place = true;
-        });
-        gather_flags(&mut nodes, self.read_temporary_arguments, |facts| {
-            facts.read_temporary_argument = true;
-        });
-        gather_flags(
-            &mut nodes,
-            self.implicitly_copied_consuming_receivers,
-            |facts| facts.implicitly_copied_consuming_receiver = true,
-        );
-        gather_flags(&mut nodes, self.truthiness_conditions, |facts| {
-            facts.truthiness_condition = true;
-        });
+        let mut node_facts = self.node_facts.into_inner();
+        node_facts.retain(|_, facts| !facts.is_empty());
         DiscoveryResult {
             statements: self.statements,
-            node_facts: nodes,
+            node_facts,
             struct_instantiations: self.struct_instantiations.into_inner(),
             checked_types: self.checked_types.into_inner(),
             generic_parameters: self.generic_parameters.into_inner(),
@@ -358,44 +204,10 @@ impl HandoffStores {
 macro_rules! carried_stores {
     ($apply:ident) => {
         $apply! {
-            result map overload_targets = overload_targets;
-            result map contextual_bases = contextual_bases;
-            result map generic_instantiations = generic_instantiations;
-            result map method_instantiations = method_instantiations;
+            result map node_facts = node_facts;
             result vec struct_instantiations = struct_instantiations;
-            result map call_transfers = call_transfers;
-            result map implicit_conversions = implicit_conversions;
-            result map implicit_conversion_types = implicit_conversion_types;
-            result map conversion_source_borrows = conversion_source_borrows;
-            result map conversion_raises = implicit_conversion_raises;
             result map checked_types = declaration_types;
             result map generic_parameters = generic_parameters;
-            result map expression_types = expression_types;
-            result map expression_bindings = expression_bindings;
-            result map statement_bindings = statement_bindings;
-            result map declaration_captures = declaration_captures;
-            result map comprehension_bindings = comprehension_bindings;
-            result map expression_place_types = expression_place_types;
-            result map binding_types = binding_types;
-            result map expression_effects = expression_effects;
-            result map selected_calls = selected_calls;
-            result map subscript_descriptors = subscript_descriptors;
-            result map iteration_protocols = iteration_protocols;
-            result map simd_constructions = simd_constructions;
-            result map operation_adjustments = operation_adjustments;
-            result map parameterized_method_calls = parameterized_method_calls;
-            result map tuple_unpack_plans = tuple_unpack_plans;
-            result map interior_references = interior_references;
-            result map interior_invalidations = interior_invalidations;
-            result set explicit_destroy_calls = explicit_destroy_calls;
-            result map reference_value_uses = reference_value_uses;
-            result set copy_place_value_uses = copy_place_value_uses;
-            result set call_place_uses = call_place_uses;
-            result set borrowed_read_call_places = borrowed_read_call_places;
-            result set read_temporary_arguments = read_temporary_arguments;
-            result set implicitly_copied_consuming_receivers = implicitly_copied_consuming_receivers;
-            result set truthiness_conditions = truthiness_conditions;
-            result map rebind_assertions = rebind_assertions;
             result map declaration_effects = declaration_effects;
             internal map transfer_effects = transfer_effects;
             internal map call_through_effects = call_through_effects;
@@ -749,44 +561,10 @@ fn carried_result(checker: &Checker) -> HandoffStores {
         conformances: mojito_checked::checked::ConformanceFacts::default(),
         overloads: std::sync::Arc::clone(&checker.overload_sets),
         constants: std::sync::Arc::clone(&checker.program_constants),
-        overload_targets: checker.overload_targets.take(),
-        contextual_bases: checker.contextual_bases.take(),
-        generic_instantiations: checker.generic_instantiations.take(),
-        method_instantiations: checker.method_instantiations.take(),
+        node_facts: interned(checker, checker.node_facts.take()),
         struct_instantiations: checker.struct_instantiations.take(),
-        call_transfers: checker.call_transfers.take(),
-        implicit_conversions: checker.implicit_conversions.take(),
-        implicit_conversion_types: uniqued(checker, checker.implicit_conversion_types.take()),
-        conversion_source_borrows: checker.conversion_source_borrows.take(),
-        conversion_raises: uniqued(checker, checker.implicit_conversion_raises.take()),
         checked_types: uniqued(checker, checker.declaration_types.take()),
         generic_parameters: checker.generic_parameters.take(),
-        expression_types: uniqued(checker, checker.expression_types.take()),
-        expression_bindings: checker.expression_bindings.take(),
-        statement_bindings: checker.statement_bindings.take(),
-        declaration_captures: checker.declaration_captures.take(),
-        comprehension_bindings: checker.comprehension_bindings.take(),
-        expression_place_types: uniqued(checker, checker.expression_place_types.take()),
-        binding_types: uniqued(checker, checker.binding_types.take()),
-        expression_effects: checker.expression_effects.take(),
-        selected_calls: checker.selected_calls.take(),
-        subscript_descriptors: checker.subscript_descriptors.take(),
-        iteration_protocols: checker.iteration_protocols.take(),
-        simd_constructions: checker.simd_constructions.take(),
-        operation_adjustments: checker.operation_adjustments.take(),
-        parameterized_method_calls: checker.parameterized_method_calls.take(),
-        tuple_unpack_plans: checker.tuple_unpack_plans.take(),
-        interior_references: checker.interior_references.take(),
-        interior_invalidations: checker.interior_invalidations.take(),
-        explicit_destroy_calls: checker.explicit_destroy_calls.take(),
-        reference_value_uses: checker.reference_value_uses.take(),
-        copy_place_value_uses: checker.copy_place_value_uses.take(),
-        call_place_uses: checker.call_place_uses.take(),
-        borrowed_read_call_places: checker.borrowed_read_call_places.take(),
-        read_temporary_arguments: checker.read_temporary_arguments.take(),
-        implicitly_copied_consuming_receivers: checker.implicitly_copied_consuming_receivers.take(),
-        truthiness_conditions: checker.truthiness_conditions.take(),
-        rebind_assertions: checker.rebind_assertions.take(),
         declaration_effects: checker.declaration_effects.take(),
         default_wrappers: checker.checked_default_wrappers(),
         trait_members: Vec::new(),
@@ -808,26 +586,29 @@ fn uniqued<K: Eq + Hash + Clone>(
     types
 }
 
-/// Put each of `store`'s facts in its occurrence's record.
-fn gather<V>(
-    nodes: &mut HashMap<SourceSpan, NodeFacts>,
-    store: FactMap<SourceSpan, V>,
-    place: impl Fn(&mut NodeFacts, V),
-) {
-    for (span, value) in store.into_inner() {
-        place(nodes.entry(span).or_default(), value);
-    }
-}
-
-/// Mark each of `store`'s occurrences in its record.
-fn gather_flags(
-    nodes: &mut HashMap<SourceSpan, NodeFacts>,
-    store: FactSet<SourceSpan>,
-    mark: impl Fn(&mut NodeFacts),
-) {
-    for span in store.into_inner() {
-        mark(nodes.entry(span).or_default());
-    }
+/// `records` with each type a record holds the context's own node for it,
+/// as [`uniqued`] does for a table of types.
+fn interned(
+    checker: &Checker,
+    mut records: FactMap<SourceSpan, NodeFacts>,
+) -> FactMap<SourceSpan, NodeFacts> {
+    let context = &checker.param_context;
+    records.retain(|_, facts| {
+        for ty in [
+            &mut facts.ty,
+            &mut facts.place_ty,
+            &mut facts.binding_ty,
+            &mut facts.implicit_conversion_type,
+            &mut facts.conversion_raises,
+        ]
+        .into_iter()
+        .flatten()
+        {
+            *ty = context.intern_ty(ty);
+        }
+        true
+    });
+    records
 }
 
 fn copy_map<K: Eq + Hash + Clone, V: Clone>(

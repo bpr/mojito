@@ -813,10 +813,9 @@ impl Checker {
             supplied[index] = true;
             if let Some(origin_index) = parameter.origin {
                 if let ParamArg::Value(expression) = &value {
-                    self.operation_adjustments.borrow_mut().insert(
-                        expression.source_span(),
+                    self.record_at(expression.source_span()).adjustment = Some(Box::new(
                         mojito_checked::checked::SemanticAdjustment::EraseCompileTimeArgument,
-                    );
+                    ));
                 }
                 origins[origin_index] = Some(self.explicit_origin_argument(&value)?);
             } else if parameter.ordinary {
@@ -994,9 +993,7 @@ impl Checker {
         }
         self.check_capture_access(name, false)?;
         if record && let Some(owner) = self.lookup_owner(name) {
-            self.expression_bindings
-                .borrow_mut()
-                .insert(span.clone(), owner);
+            self.record_at(span.clone()).binding = Some(owner);
         }
         let signatures = self.lookup_callable_origins(name).unwrap_or_default();
         let (selected, target) = if let TyKind::Overload(candidates) = callable.kind() {
@@ -1060,12 +1057,8 @@ impl Checker {
             (specialized, name.to_string())
         };
         if record {
-            self.overload_targets
-                .borrow_mut()
-                .insert(span.clone(), target);
-            self.expression_types
-                .borrow_mut()
-                .insert(span, selected.clone());
+            self.record_at(span.clone()).overload_target = Some(target);
+            self.record_at(span).ty = Some(selected.clone());
         }
         Ok(Some(selected))
     }

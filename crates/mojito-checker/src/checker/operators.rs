@@ -359,10 +359,9 @@ impl Checker {
                     self.borrow_nominal_place_argument(right, &rt);
                 }
                 if dispatch.negated_equality {
-                    self.operation_adjustments.borrow_mut().insert(
-                        span.clone(),
+                    self.record_at(span.clone()).adjustment = Some(Box::new(
                         mojito_checked::checked::SemanticAdjustment::NegatedEquality,
-                    );
+                    ));
                 }
                 self.record_struct_instantiation(
                     &dispatch.struct_name,
@@ -370,7 +369,7 @@ impl Checker {
                     span.source.as_deref(),
                 );
                 if let Some(target) = dispatch.target {
-                    self.overload_targets.borrow_mut().insert(span, target);
+                    self.record_at(span).overload_target = Some(target);
                 }
             }
             let dunder = if dispatch.negated_equality {
@@ -388,13 +387,10 @@ impl Checker {
         if let Some(span) = span
             && let Some(target) = self.struct_reflected_dispatch(op, &lt, &rt)
         {
-            self.overload_targets
-                .borrow_mut()
-                .insert(span.clone(), target);
-            self.operation_adjustments.borrow_mut().insert(
-                span,
+            self.record_at(span.clone()).overload_target = Some(target);
+            self.record_at(span).adjustment = Some(Box::new(
                 mojito_checked::checked::SemanticAdjustment::ReflectedOperator,
-            );
+            ));
             let reflected = op
                 .reflected_dunder()
                 .expect("a reflected dispatch has a dunder");
@@ -965,10 +961,9 @@ impl Checker {
             && let Some(reference) = self.lookup_reference_parameter(name)
         {
             let mutable = origin.statically_mutable() == Some(true);
-            self.operation_adjustments.borrow_mut().insert(
-                span,
+            self.record_at(span).adjustment = Some(Box::new(
                 mojito_checked::checked::SemanticAdjustment::PointerToPlace { mutable },
-            );
+            ));
             return Ok(TyKind::Pointer {
                 element: reference.referent,
                 origin,
@@ -1020,10 +1015,9 @@ impl Checker {
                 }
             };
             let mutable = origin.statically_mutable() == Some(true);
-            self.operation_adjustments.borrow_mut().insert(
-                span,
+            self.record_at(span).adjustment = Some(Box::new(
                 mojito_checked::checked::SemanticAdjustment::PointerToPlace { mutable },
-            );
+            ));
             return Ok(TyKind::Pointer {
                 element: reference.referent,
                 origin,
@@ -1038,16 +1032,13 @@ impl Checker {
         // A place an accessor returns by reference (`t[0]` on a `Tuple`) is
         // the pointer's referent: the handle is retained, never read out.
         if let Some(reference) = self.infer_reference_value(value) {
-            self.reference_value_uses.borrow_mut().insert(
-                value.source_span(),
-                reference.mutability == mojito_types::origin::Mutability::Mutable,
-            );
+            self.record_at(value.source_span()).reference_value_use =
+                Some(reference.mutability == mojito_types::origin::Mutability::Mutable);
         }
         let mutable = self.owner_is_mutable(place.root);
-        self.operation_adjustments.borrow_mut().insert(
-            span,
+        self.record_at(span).adjustment = Some(Box::new(
             mojito_checked::checked::SemanticAdjustment::PointerToPlace { mutable },
-        );
+        ));
         Ok(TyKind::Pointer {
             element,
             origin: mojito_types::origin::PointerOrigin::Place { place, mutable },

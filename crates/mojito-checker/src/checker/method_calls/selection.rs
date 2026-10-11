@@ -3,6 +3,7 @@
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
+use mojito_checked::checked::NodeFacts;
 use mojito_types::types::TyKind;
 
 impl Checker {
@@ -133,15 +134,18 @@ impl Checker {
         args: &[Expr],
         kwargs: &[mojito_ast::ast::KwArg],
     ) -> CallBoundarySnapshot {
-        let invalidations = self.interior_invalidations.borrow();
+        let records = self.node_facts.borrow();
         let mut before = HashMap::new();
         for source in std::iter::once(span.clone())
             .chain(args.iter().map(Expr::source_span))
             .chain(kwargs.iter().map(|argument| argument.value.source_span()))
         {
-            before
-                .entry(source.clone())
-                .or_insert_with(|| invalidations.get(&source).cloned().unwrap_or_default());
+            before.entry(source.clone()).or_insert_with(|| {
+                records
+                    .get(&source)
+                    .and_then(|facts| facts.interior_invalidations.clone())
+                    .unwrap_or_default()
+            });
         }
         CallBoundarySnapshot {
             invalidations: before,
@@ -164,27 +168,24 @@ impl Checker {
             CheckedCallValueAdjustment,
         };
 
-        let overloads = self.overload_targets.borrow();
-        let implicit = self.implicit_conversions.borrow();
-        let implicit_types = self.implicit_conversion_types.borrow();
-        let operations = self.operation_adjustments.borrow();
-        let expression_types = self.expression_types.borrow();
-        let invalidations = self.interior_invalidations.borrow();
-        let argument =
-            |source: CheckedCallArgumentSource, expression: &Expr| -> CheckedCallArgumentBoundary {
-                let value_source = expression.source_span();
-                let adjustments = if matches!(
-                    expression_types.get(&value_source).map(Ty::kind),
-                    Some(TyKind::Overload(_))
-                ) && let Some(target) = overloads.get(&value_source)
+        let records = self.node_facts.borrow();
+        let argument = |source: CheckedCallArgumentSource,
+                        expression: &Expr|
+         -> CheckedCallArgumentBoundary {
+            let value_source = expression.source_span();
+            let facts = records.get(&value_source).unwrap_or(&NodeFacts::EMPTY);
+            let adjustments =
+                if matches!(facts.ty.as_ref().map(Ty::kind), Some(TyKind::Overload(_)))
+                    && let Some(target) = &facts.overload_target
                 {
                     vec![CheckedCallValueAdjustment::ResolveCallable {
                         target: target.clone(),
                     }]
-                } else if let Some(target) = implicit.get(&value_source) {
+                } else if let Some(target) = &facts.implicit_conversion {
                     if target == mojito_symbol::symbol::SCALAR_SPLAT_CONVERSION {
-                        implicit_types
-                            .get(&value_source)
+                        facts
+                            .implicit_conversion_type
+                            .as_ref()
                             .map(|ty| {
                                 vec![CheckedCallValueAdjustment::SplatScalar { target: ty.clone() }]
                             })
@@ -199,8 +200,9 @@ impl Checker {
                         }]
                     }
                 } else {
-                    operations
-                        .get(&value_source)
+                    facts
+                        .adjustment
+                        .as_deref()
                         .and_then(|adjustment| match adjustment {
                             mojito_checked::checked::SemanticAdjustment::MaterializeLiteral(
                                 target,
@@ -212,25 +214,25 @@ impl Checker {
                         })
                         .unwrap_or_default()
                 };
-                let prior = before
-                    .invalidations
-                    .get(&value_source)
-                    .map(Vec::as_slice)
-                    .unwrap_or_default();
-                let call_invalidations = invalidations
-                    .get(&value_source)
-                    .into_iter()
-                    .flatten()
-                    .filter(|fact| !prior.contains(fact))
-                    .cloned()
-                    .collect();
-                CheckedCallArgumentBoundary {
-                    source,
-                    value_source,
-                    adjustments,
-                    invalidations: call_invalidations,
-                }
-            };
+            let prior = before
+                .invalidations
+                .get(&value_source)
+                .map(Vec::as_slice)
+                .unwrap_or_default();
+            let call_invalidations = facts
+                .interior_invalidations
+                .iter()
+                .flatten()
+                .filter(|fact| !prior.contains(fact))
+                .cloned()
+                .collect();
+            CheckedCallArgumentBoundary {
+                source,
+                value_source,
+                adjustments,
+                invalidations: call_invalidations,
+            }
+        };
 
         let arguments = args
             .iter()
@@ -250,8 +252,9 @@ impl Checker {
             .get(span)
             .map(Vec::as_slice)
             .unwrap_or_default();
-        let call_invalidations = invalidations
+        let call_invalidations = records
             .get(span)
+            .and_then(|facts| facts.interior_invalidations.as_ref())
             .into_iter()
             .flatten()
             .filter(|fact| !prior.contains(fact))
@@ -267,16 +270,17 @@ impl Checker {
         &self,
         sources: &[SourceSpan],
     ) -> Vec<ValueAdjustmentSnapshot> {
-        let overloads = self.overload_targets.borrow();
-        let implicit = self.implicit_conversions.borrow();
-        let operations = self.operation_adjustments.borrow();
+        let records = self.node_facts.borrow();
         sources
             .iter()
-            .map(|source| ValueAdjustmentSnapshot {
-                source: source.clone(),
-                overload_target: overloads.get(source).cloned(),
-                implicit_conversion: implicit.get(source).cloned(),
-                operation: operations.get(source).cloned(),
+            .map(|source| {
+                let facts = records.get(source).unwrap_or(&NodeFacts::EMPTY);
+                ValueAdjustmentSnapshot {
+                    source: source.clone(),
+                    overload_target: facts.overload_target.clone(),
+                    implicit_conversion: facts.implicit_conversion.clone(),
+                    operation: facts.adjustment.clone(),
+                }
             })
             .collect()
     }
@@ -288,33 +292,22 @@ impl Checker {
         &self,
         snapshots: &[ValueAdjustmentSnapshot],
     ) {
-        let mut overloads = self.overload_targets.borrow_mut();
-        let mut implicit = self.implicit_conversions.borrow_mut();
-        let mut operations = self.operation_adjustments.borrow_mut();
+        let mut records = self.node_facts.borrow_mut();
         for snapshot in snapshots {
-            match &snapshot.overload_target {
-                Some(target) => {
-                    overloads.insert(snapshot.source.clone(), target.clone());
-                }
-                None => {
-                    overloads.remove(&snapshot.source);
-                }
-            }
-            match &snapshot.implicit_conversion {
-                Some(target) => {
-                    implicit.insert(snapshot.source.clone(), target.clone());
-                }
-                None => {
-                    implicit.remove(&snapshot.source);
-                }
-            }
-            match &snapshot.operation {
-                Some(adjustment) => {
-                    operations.insert(snapshot.source.clone(), adjustment.clone());
-                }
-                None => {
-                    operations.remove(&snapshot.source);
-                }
+            let restores_any = snapshot.overload_target.is_some()
+                || snapshot.implicit_conversion.is_some()
+                || snapshot.operation.is_some();
+            let facts = if restores_any {
+                Some(records.entry(snapshot.source.clone()).or_default())
+            } else {
+                records.get_mut(&snapshot.source)
+            };
+            if let Some(facts) = facts {
+                facts.overload_target.clone_from(&snapshot.overload_target);
+                facts
+                    .implicit_conversion
+                    .clone_from(&snapshot.implicit_conversion);
+                facts.adjustment.clone_from(&snapshot.operation);
             }
         }
     }
@@ -328,17 +321,16 @@ impl Checker {
         site: &SourceSpan,
         boundary: &mojito_checked::checked::CheckedCallBoundary,
     ) {
-        let mut invalidations = self.interior_invalidations.borrow_mut();
+        let mut records = self.node_facts.borrow_mut();
         let mut remove =
             |source: &SourceSpan, facts: &[mojito_checked::checked::InteriorInvalidation]| {
-                let empty = if let Some(current) = invalidations.get_mut(source) {
+                if let Some(record) = records.get_mut(source)
+                    && let Some(current) = record.interior_invalidations.as_mut()
+                {
                     current.retain(|fact| !facts.contains(fact));
-                    current.is_empty()
-                } else {
-                    false
-                };
-                if empty {
-                    invalidations.remove(source);
+                    if current.is_empty() {
+                        record.interior_invalidations = None;
+                    }
                 }
             };
         for argument in &boundary.arguments {

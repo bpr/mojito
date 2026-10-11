@@ -77,12 +77,11 @@ impl Checker {
                 } else {
                     target
                 };
-                self.operation_adjustments.borrow_mut().insert(
-                    span.clone(),
+                self.record_at(span.clone()).adjustment = Some(Box::new(
                     mojito_checked::checked::SemanticAdjustment::PointerOriginCast {
                         origin: target.clone(),
                     },
-                );
+                ));
                 Ok(TyKind::Pointer {
                     element: elem.clone(),
                     origin: target,
@@ -118,12 +117,11 @@ impl Checker {
                 } else {
                     origin.clone().immutable()
                 };
-                self.operation_adjustments.borrow_mut().insert(
-                    span.clone(),
+                self.record_at(span.clone()).adjustment = Some(Box::new(
                     mojito_checked::checked::SemanticAdjustment::PointerOriginCast {
                         origin: target.clone(),
                     },
-                );
+                ));
                 Ok(TyKind::Pointer {
                     element: elem.clone(),
                     origin: target,
@@ -140,12 +138,11 @@ impl Checker {
                         got: args.len(),
                     });
                 }
-                self.operation_adjustments.borrow_mut().insert(
-                    span.clone(),
+                self.record_at(span.clone()).adjustment = Some(Box::new(
                     mojito_checked::checked::SemanticAdjustment::PointerOriginCast {
                         origin: origin.clone(),
                     },
-                );
+                ));
                 Ok(TyKind::Pointer {
                     element: elem.clone(),
                     origin: origin.clone(),
@@ -175,10 +172,9 @@ impl Checker {
                         context: "argument to 'Pointer.unsafe_offset'".to_string(),
                     });
                 }
-                self.operation_adjustments.borrow_mut().insert(
-                    span.clone(),
+                self.record_at(span.clone()).adjustment = Some(Box::new(
                     mojito_checked::checked::SemanticAdjustment::PointerOffset,
-                );
+                ));
                 Ok(TyKind::Pointer {
                     element: elem.clone(),
                     origin: origin.clone(),
@@ -251,13 +247,12 @@ impl Checker {
                     args,
                     kwargs,
                 )?;
-                self.operation_adjustments.borrow_mut().insert(
-                    span.clone(),
+                self.record_at(span.clone()).adjustment = Some(Box::new(
                     mojito_checked::checked::SemanticAdjustment::PointerWrite {
                         element: elem.clone(),
                         copy,
                     },
-                );
+                ));
                 Ok(Ty::none())
             }
             "unsafe_take_pointee" | "unsafe_deinit_pointee" => {
@@ -311,9 +306,7 @@ impl Checker {
                         element: elem.clone(),
                     }
                 };
-                self.operation_adjustments
-                    .borrow_mut()
-                    .insert(span.clone(), adjustment);
+                self.record_at(span.clone()).adjustment = Some(Box::new(adjustment));
                 Ok(if method == "unsafe_take_pointee" {
                     elem.clone()
                 } else {
@@ -390,12 +383,11 @@ impl Checker {
                         context: format!("argument to '{method}'"),
                     });
                 }
-                self.operation_adjustments.borrow_mut().insert(
-                    span.clone(),
+                self.record_at(span.clone()).adjustment = Some(Box::new(
                     mojito_checked::checked::SemanticAdjustment::UninitStorageWrite {
                         element: element.clone(),
                     },
-                );
+                ));
                 Ok(Ty::none())
             }
             "take" | "destroy" => {
@@ -428,9 +420,7 @@ impl Checker {
                         element: element.clone(),
                     }
                 };
-                self.operation_adjustments
-                    .borrow_mut()
-                    .insert(span.clone(), adjustment);
+                self.record_at(span.clone()).adjustment = Some(Box::new(adjustment));
                 Ok(if method == "take" {
                     element.clone()
                 } else {
@@ -648,16 +638,13 @@ impl Checker {
             self.replay_transfer_effects(carried, None, args, &span, &TySubst::new())?;
         }
         if let Some(target) = self.indirect_callable_target(callable) {
-            self.overload_targets
-                .borrow_mut()
-                .insert(span.clone(), target);
+            self.record_at(span.clone()).overload_target = Some(target);
         }
-        self.operation_adjustments.borrow_mut().insert(
-            span.clone(),
+        self.record_at(span.clone()).adjustment = Some(Box::new(
             mojito_checked::checked::SemanticAdjustment::FieldInvocation {
                 callable: callable.clone(),
             },
-        );
+        ));
         if let Some(error) = error.filter(|ty| *ty != TyKind::Never) {
             self.record_call_effect(span, error.clone());
             self.require_error("call through a stored callable field", error)?;

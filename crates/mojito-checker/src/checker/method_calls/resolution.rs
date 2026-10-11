@@ -97,9 +97,8 @@ impl Checker {
                 .and_then(mojito_symbol::symbol::overload_qualifier)
                 .map(str::to_string);
             self.record_dtype_parameter_arguments(param_args, arguments);
-            self.method_instantiations.borrow_mut().insert(
-                span.clone(),
-                mojito_checked::checked::MethodInstantiation {
+            self.record_at(span.clone()).method_instantiation =
+                Some(mojito_checked::checked::MethodInstantiation {
                     owner: sname.clone(),
                     owner_arguments,
                     method: method.to_string(),
@@ -111,8 +110,7 @@ impl Checker {
                         param_args,
                         arguments,
                     ),
-                },
-            );
+                });
         }
         if let TyKind::Struct(sname, targs) = obj_ty.kind()
             && !targs.is_empty()
@@ -555,9 +553,7 @@ impl Checker {
             // A place receiver copies out of its storage exactly like an
             // implicit place copy of an `ImplicitlyCopyable` value.
             if is_place_expr(object) {
-                self.copy_place_value_uses
-                    .borrow_mut()
-                    .insert(object.source_span());
+                self.record_at(object.source_span()).copy_place_value_use = true;
             }
             return Ok(Ok(Some(intrinsic_resolution(
                 obj_ty.clone(),

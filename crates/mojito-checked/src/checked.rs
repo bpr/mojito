@@ -3060,6 +3060,12 @@ macro_rules! node_facts {
                 $($field: None,)*
                 $($flag: false,)*
             };
+
+            /// Whether the check recorded nothing here: every fact absent,
+            /// every flag clear.
+            pub const fn is_empty(&self) -> bool {
+                true $(&& self.$field.is_none())* $(&& !self.$flag)*
+            }
         }
 
         /// One fact of a [`NodeFacts`], as it encodes.

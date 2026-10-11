@@ -17,12 +17,9 @@ impl Checker {
         if let Some(construction) = self.spelled_construction(expr) {
             return self.origin_place(&construction);
         }
-        if let Some(interior) = self
-            .interior_references
-            .borrow()
-            .get(&expr.source_span())
-            .cloned()
-        {
+        if let Some(interior) = self.fact(&expr.source_span(), |facts| {
+            facts.interior_reference.as_ref()
+        }) {
             return Ok(interior);
         }
         match &expr.kind {
@@ -93,9 +90,10 @@ impl Checker {
             }
             ExprKind::TypeApply { name, .. }
                 if self
-                    .operation_adjustments
+                    .node_facts
                     .borrow()
                     .get(&expr.source_span())
+                    .and_then(|facts| facts.adjustment.as_deref())
                     .is_some_and(|operation| {
                         matches!(
                             operation,
@@ -268,10 +266,7 @@ impl Checker {
                 .borrow()
                 .contains(&expr.source_span())
             && !self.is_trivial_register_passable(ty)
-            && !self
-                .copy_place_value_uses
-                .borrow()
-                .contains(&expr.source_span())
+            && !self.has_fact(&expr.source_span(), |facts| facts.copy_place_value_use)
         {
             let _ = self.materialize_borrow_owner(expr, false);
         }
@@ -284,12 +279,15 @@ impl Checker {
         if !self.is_parameter_read(expr) {
             return;
         }
-        let mut adjustments = self.operation_adjustments.borrow_mut();
-        match adjustments.get_mut(&expr.source_span()) {
+        let mut records = self.node_facts.borrow_mut();
+        let Some(facts) = records.get_mut(&expr.source_span()) else {
+            return;
+        };
+        match facts.adjustment.as_deref_mut() {
             Some(mojito_checked::checked::SemanticAdjustment::MaterializeBorrowSource {
                 ..
             }) => {
-                adjustments.remove(&expr.source_span());
+                facts.adjustment = None;
             }
             Some(mojito_checked::checked::SemanticAdjustment::ParamValue {
                 materialized, ..
@@ -305,7 +303,10 @@ impl Checker {
     pub(in crate::checker) fn is_materialized_parameter_read(&self, expr: &Expr) -> bool {
         matches!(expr.kind, ExprKind::Identifier(_))
             || matches!(
-                self.operation_adjustments.borrow().get(&expr.source_span()),
+                self.node_facts
+                    .borrow()
+                    .get(&expr.source_span())
+                    .and_then(|facts| facts.adjustment.as_deref()),
                 Some(mojito_checked::checked::SemanticAdjustment::ParamValue { .. })
             )
     }
@@ -443,9 +444,10 @@ impl Checker {
         &self,
         expr: &Expr,
     ) -> Option<mojito_types::origin::OwnerId> {
-        self.operation_adjustments
+        self.node_facts
             .borrow()
             .get(&expr.source_span())
+            .and_then(|facts| facts.adjustment.as_deref())
             .and_then(|adjustment| {
                 mojito_checked::checked::materialized_borrow_owner(std::slice::from_ref(adjustment))
             })
@@ -497,8 +499,8 @@ impl Checker {
         if let Some(construction) = self.spelled_construction(expr) {
             return self.materialize_borrow_owner(&construction, mutable);
         }
-        let mut adjustments = self.operation_adjustments.borrow_mut();
-        match adjustments.get_mut(&expr.source_span()) {
+        let mut record = self.record_at(expr.source_span());
+        match record.adjustment.as_deref_mut() {
             Some(mojito_checked::checked::SemanticAdjustment::MaterializeBorrowSource {
                 owner,
                 mutable: established,
@@ -540,13 +542,12 @@ impl Checker {
             )),
             None => {
                 let owner = self.fresh_owner()?;
-                adjustments.insert(
-                    expr.source_span(),
+                record.adjustment = Some(Box::new(
                     mojito_checked::checked::SemanticAdjustment::MaterializeBorrowSource {
                         owner,
                         mutable,
                     },
-                );
+                ));
                 Ok(owner)
             }
         }
@@ -634,9 +635,10 @@ impl Checker {
             // place, which is the wrong identity for the return contract).
             ExprKind::MethodCall { object, method, .. } => {
                 let recorded = self
-                    .operation_adjustments
+                    .node_facts
                     .borrow()
                     .get(&expr.source_span())
+                    .and_then(|facts| facts.adjustment.as_deref())
                     .and_then(|adjustment| match adjustment {
                         mojito_checked::checked::SemanticAdjustment::ReferenceResult {
                             reference,

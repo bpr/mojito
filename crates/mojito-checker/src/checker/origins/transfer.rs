@@ -689,8 +689,8 @@ impl Checker {
             // Extend rather than insert: a call site may replay both the
             // name-keyed entry and the value-carried set; recorded transfers
             // union across the channels (deduplicated).
-            let mut recorded = self.call_transfers.borrow_mut();
-            let entry = recorded.entry(span.clone()).or_default();
+            let mut record = self.record_at(span.clone());
+            let entry = record.call_transfers.get_or_insert_default();
             for transfer in call_transfers {
                 if !entry.contains(&transfer) {
                     entry.push(transfer);

@@ -478,10 +478,7 @@ impl Checker {
             });
         }
         let contract = self
-            .selected_calls
-            .borrow()
-            .get(span)
-            .cloned()
+            .fact(span, |facts| facts.selected_call.as_deref())
             .ok_or_else(|| {
                 TypeError::InvariantViolation(
                     "in-place operator lost its selected call contract".to_string(),
@@ -491,9 +488,9 @@ impl Checker {
         // contract solely in the `AugmentedInPlace` record so lowering treats the
         // receiver as a place (write-back through `recv_place`) rather than as a
         // reference-returning call result keyed at this span.
-        self.selected_calls.borrow_mut().remove(span);
-        self.overload_targets.borrow_mut().remove(span);
-        self.generic_instantiations.borrow_mut().remove(span);
+        self.clear_fact(span, |facts| facts.selected_call.take().map(|fact| *fact));
+        self.clear_fact(span, |facts| facts.overload_target.take());
+        self.clear_fact(span, |facts| facts.generic_instantiation.take());
         Ok(contract)
     }
 
@@ -577,20 +574,19 @@ impl Checker {
         span: SourceSpan,
         call: mojito_checked::checked::CheckedCallContract,
     ) {
-        let mut adjustments = self.operation_adjustments.borrow_mut();
-        let place_reference = match adjustments.get(&span) {
+        let mut record = self.record_at(span);
+        let place_reference = match record.adjustment.as_deref() {
             Some(mojito_checked::checked::SemanticAdjustment::ReferenceResult { reference }) => {
                 Some(reference.clone())
             }
             _ => None,
         };
-        adjustments.insert(
-            span,
+        record.adjustment = Some(Box::new(
             mojito_checked::checked::SemanticAdjustment::AugmentedInPlace {
                 call: Box::new(call),
                 place_reference,
             },
-        );
+        ));
     }
 
     /// The store-outward escape rule shared by ordinary place assignment and
@@ -787,17 +783,11 @@ impl Checker {
                         matches!(segment, mojito_types::origin::OriginSeg::Interior(_))
                     })
                 {
-                    self.interior_references
-                        .borrow_mut()
-                        .insert(value.source_span(), origin.clone());
+                    self.record_at(value.source_span()).interior_reference = Some(origin.clone());
                 }
-                self.reference_value_uses
-                    .borrow_mut()
-                    .insert(value.source_span(), mutable);
+                self.record_at(value.source_span()).reference_value_use = Some(mutable);
                 let binding_ty = Ty::new(TyKind::Ref(reference));
-                self.binding_types
-                    .borrow_mut()
-                    .insert(stmt.source_span(), binding_ty.clone());
+                self.record_at(stmt.source_span()).binding_ty = Some(binding_ty.clone());
                 self.declare_with_mutability(name, binding_ty, mutable)?;
                 self.record_statement_binding(stmt, name);
                 Ok(())
@@ -927,10 +917,9 @@ impl Checker {
                     }
                     // Inferred `var x = e`: declare the value's materialized type.
                     None if matches!(value.kind, ExprKind::TypeApply { .. })
-                        && self
-                            .overload_targets
-                            .borrow()
-                            .contains_key(&value.source_span()) =>
+                        && self.has_fact(&value.source_span(), |facts| {
+                            facts.overload_target.is_some()
+                        }) =>
                     {
                         // Explicitly specializing an Origin parameter produces
                         // a first-class, non-capturing function value whose
@@ -950,9 +939,7 @@ impl Checker {
                 if ty.is_none() {
                     self.record_literal_materializations(value, &found, &declared)?;
                 }
-                self.binding_types
-                    .borrow_mut()
-                    .insert(value.source_span(), declared.clone());
+                self.record_at(value.source_span()).binding_ty = Some(declared.clone());
                 if self.is_deinitable(&declared) {
                     self.explicit_destroy_deletability
                         .borrow_mut()
@@ -1262,10 +1249,7 @@ impl Checker {
                 };
                 let getter = if nominal_subscript {
                     let contract = self
-                        .selected_calls
-                        .borrow()
-                        .get(&place.source_span())
-                        .cloned()
+                        .fact(&place.source_span(), |facts| facts.selected_call.as_deref())
                         .ok_or_else(|| {
                             TypeError::InvariantViolation(
                                 "augmented nominal subscript lost its getter contract".to_string(),
@@ -1350,19 +1334,15 @@ impl Checker {
                         // shape. A mutable-reference getter has no setter, so a
                         // plain index must retain that metadata here for MIR.
                         if matches!(place.kind, ExprKind::Index { .. }) {
-                            self.subscript_descriptors
-                                .borrow_mut()
-                                .entry(site.clone())
-                                .or_insert_with(|| (vec![None], false));
+                            self.record_at(site.clone())
+                                .subscript_descriptor
+                                .get_or_insert_with(|| (vec![None], false));
                         }
                         // The store writes the element through the handle, so
                         // it stales every view lent below that element.
                         self.record_place_write_invalidation(site.clone(), place);
-                        self.expression_types
-                            .borrow_mut()
-                            .insert(site.clone(), target.clone());
-                        self.operation_adjustments.borrow_mut().insert(
-                            site,
+                        self.record_at(site.clone()).ty = Some(target.clone());
+                        self.record_at(site).adjustment = Some(Box::new(
                             mojito_checked::checked::SemanticAdjustment::AugmentedSubscript(
                                 Box::new(mojito_checked::checked::CheckedAugmentedSubscript {
                                     getter,
@@ -1373,7 +1353,7 @@ impl Checker {
                                     value_source: None,
                                 }),
                             ),
-                        );
+                        ));
                         return Ok(());
                     }
                     // The getter and setter share syntax, not parameter
@@ -1386,9 +1366,7 @@ impl Checker {
                     let mut computed = Expr::new(ExprKind::None, mojito_common::token::DUMMY_SPAN);
                     computed.source.clone_from(&place.source);
                     let value_source = computed.source_span();
-                    self.expression_types
-                        .borrow_mut()
-                        .insert(value_source.clone(), result.clone());
+                    self.record_at(value_source.clone()).ty = Some(result.clone());
                     self.check_nominal_subscript_assignment(place, &computed)?
                         .ok_or_else(|| {
                             TypeError::InvariantViolation(
@@ -1396,35 +1374,29 @@ impl Checker {
                             )
                         })?;
                     let mut setter = self
-                        .selected_calls
-                        .borrow()
-                        .get(&site)
-                        .cloned()
+                        .fact(&site, |facts| facts.selected_call.as_deref())
                         .ok_or_else(|| {
                             TypeError::InvariantViolation(
                                 "augmented nominal subscript lost its setter contract".to_string(),
                             )
                         })?;
-                    self.implicit_conversions.borrow_mut().remove(&value_source);
-                    self.conversion_source_borrows
-                        .borrow_mut()
-                        .remove(&value_source);
-                    self.expression_types.borrow_mut().remove(&value_source);
+                    self.clear_fact(&value_source, |facts| facts.implicit_conversion.take());
+                    self.clear_fact(&value_source, |facts| facts.conversion_source_borrow.take());
+                    self.clear_fact(&value_source, |facts| facts.ty.take());
                     if matches!(
-                        self.operation_adjustments.borrow().get(&value_source),
+                        self.node_facts
+                            .borrow()
+                            .get(&value_source)
+                            .and_then(|facts| facts.adjustment.as_deref()),
                         Some(mojito_checked::checked::SemanticAdjustment::MaterializeLiteral(_))
                     ) {
-                        self.operation_adjustments
-                            .borrow_mut()
-                            .remove(&value_source);
+                        self.clear_fact(&value_source, |facts| facts.adjustment.take());
                     }
                     // The computed result is no expression: lowering binds
                     // its register to the setter directly, so the value is
                     // keyed at the store's own site and nothing is recorded
                     // for it as a temporary argument.
-                    self.read_temporary_arguments
-                        .borrow_mut()
-                        .remove(&value_source);
+                    self.clear_flag(&value_source, |facts| &mut facts.read_temporary_argument);
                     self.unconsumed_temporaries
                         .borrow_mut()
                         .remove(&value_source);
@@ -1440,13 +1412,15 @@ impl Checker {
                     }
                     let value_source = site.clone();
                     let before_write = self
-                        .interior_invalidations
-                        .borrow()
-                        .get(&site)
-                        .cloned()
+                        .fact(&site, |facts| facts.interior_invalidations.as_ref())
                         .unwrap_or_default();
                     self.record_place_write_invalidation(site.clone(), place);
-                    if let Some(after_write) = self.interior_invalidations.borrow().get(&site) {
+                    if let Some(after_write) = self
+                        .node_facts
+                        .borrow()
+                        .get(&site)
+                        .and_then(|facts| facts.interior_invalidations.as_ref())
+                    {
                         let existing = setter.boundary.invalidations.clone();
                         let additional = after_write
                             .iter()
@@ -1458,14 +1432,9 @@ impl Checker {
                     }
                     self.restore_value_adjustments(&shared_adjustments);
                     self.remove_call_boundary_invalidations(&site, &setter.boundary);
-                    self.selected_calls
-                        .borrow_mut()
-                        .insert(site.clone(), setter.clone());
-                    self.expression_types
-                        .borrow_mut()
-                        .insert(site.clone(), target.clone());
-                    self.operation_adjustments.borrow_mut().insert(
-                        site,
+                    self.record_at(site.clone()).selected_call = Some(Box::new(setter.clone()));
+                    self.record_at(site.clone()).ty = Some(target.clone());
+                    self.record_at(site).adjustment = Some(Box::new(
                         mojito_checked::checked::SemanticAdjustment::AugmentedSubscript(Box::new(
                             mojito_checked::checked::CheckedAugmentedSubscript {
                                 getter,
@@ -1476,7 +1445,7 @@ impl Checker {
                                 value_source: Some(value_source),
                             },
                         )),
-                    );
+                    ));
                 }
                 Ok(())
             }
@@ -1569,9 +1538,7 @@ impl Checker {
                         });
                     }
                 }
-                self.tuple_unpack_plans
-                    .borrow_mut()
-                    .insert(value.source_span(), unpack_plan);
+                self.record_at(value.source_span()).tuple_unpack_plan = Some(unpack_plan);
                 for (index, (target, elem)) in targets.iter().zip(&elems).enumerate() {
                     match &target.kind {
                         // `_` discards its element (no binding, no declaration).
@@ -1647,9 +1614,7 @@ impl Checker {
                     if let ExprKind::Identifier(name) = &target.kind
                         && let Some(owner) = self.lookup_owner(name)
                     {
-                        self.expression_bindings
-                            .borrow_mut()
-                            .insert(target.source_span(), owner);
+                        self.record_at(target.source_span()).binding = Some(owner);
                         // Unpack targets are binder/place syntax, not ordinary
                         // inferred expressions, so retain their complete slot
                         // metadata explicitly for checked MIR verification and
@@ -1659,15 +1624,10 @@ impl Checker {
                                 TyKind::Ref(reference) => reference.referent.clone(),
                                 _ => storage_ty.clone(),
                             };
-                            self.expression_types
-                                .borrow_mut()
-                                .insert(target.source_span(), value_ty);
-                            self.expression_place_types
-                                .borrow_mut()
-                                .insert(target.source_span(), storage_ty.clone());
-                            self.binding_types
-                                .borrow_mut()
-                                .insert(target.source_span(), storage_ty);
+                            self.record_at(target.source_span()).ty = Some(value_ty);
+                            self.record_at(target.source_span()).place_ty =
+                                Some(storage_ty.clone());
+                            self.record_at(target.source_span()).binding_ty = Some(storage_ty);
                         }
                     }
                 }
@@ -1752,8 +1712,7 @@ impl Checker {
                                 context: "reference field initialization".to_string(),
                             });
                         }
-                        self.reference_value_uses.borrow_mut().insert(
-                            value.source_span(),
+                        self.record_at(value.source_span()).reference_value_use = Some(
                             expected_reference.mutability
                                 == mojito_types::origin::Mutability::Mutable,
                         );
@@ -2082,9 +2041,7 @@ impl Checker {
                             // because the AST stores the target as a name rather
                             // than as an expression node.
                             self.record_statement_binding(stmt, n);
-                            self.binding_types
-                                .borrow_mut()
-                                .insert(stmt.source_span(), error.clone());
+                            self.record_at(stmt.source_span()).binding_ty = Some(error.clone());
                             self.check_block(ex_body, ret, in_loop)
                         }),
                         None => self.check_block(ex_body, ret, in_loop),
@@ -2153,13 +2110,9 @@ impl Checker {
                     && !self.is_deinitable(&binding_plan.binding_ty))
                 .then(|| binding_plan.binding_ty.clone());
                 let binding_ty = binding_plan.binding_ty.clone();
-                self.iteration_protocols
-                    .borrow_mut()
-                    .insert(iter.source_span(), protocol);
+                self.record_at(iter.source_span()).iteration_protocol = Some(Box::new(protocol));
                 self.push_scope();
-                self.binding_types
-                    .borrow_mut()
-                    .insert(stmt.source_span(), binding_ty.clone());
+                self.record_at(stmt.source_span()).binding_ty = Some(binding_ty.clone());
                 if self.is_deinitable(&binding_ty) {
                     self.explicit_destroy_deletability
                         .borrow_mut()
@@ -2327,9 +2280,7 @@ impl Checker {
                     .last()
                     .is_some_and(Option::is_some);
                 if returning_reference && let Some(expression) = expr {
-                    self.reference_value_uses
-                        .borrow_mut()
-                        .insert(expression.source_span(), false);
+                    self.record_at(expression.source_span()).reference_value_use = Some(false);
                 }
                 if let Some(e) = expr
                     && !returning_reference
@@ -2821,9 +2772,7 @@ impl Checker {
                     entries.insert(capture.name.clone(), capture.kind);
                 }
             }
-            self.declaration_captures
-                .borrow_mut()
-                .insert(stmt.source_span(), checked_captures);
+            self.record_at(stmt.source_span()).captures = Some(checked_captures);
             Some(CapturePolicy {
                 base: self.scopes.len(),
                 function_name: name.clone(),
@@ -3142,10 +3091,7 @@ impl Checker {
                 || !type_params.is_empty());
         if result.is_ok() {
             let captures = self
-                .declaration_captures
-                .borrow()
-                .get(&stmt.source_span())
-                .cloned()
+                .fact(&stmt.source_span(), |facts| facts.captures.as_ref())
                 .unwrap_or_default();
             let concrete = mojito_types::origin::CaptureOriginSet::concrete(
                 captures
@@ -3479,64 +3425,29 @@ fn dependent_projection_spelling(annotation: &SourceType) -> String {
 }
 
 impl Checker {
-    /// Remove one occurrence's entry from every occurrence-keyed fact table:
-    /// the augmented store drops what it recorded at a synthesized receiver.
+    /// Erase one occurrence's record and its entries in the checker's own
+    /// occurrence-keyed tables: the augmented store drops what it recorded
+    /// at a synthesized receiver.
     fn remove_occurrence_facts(&self, span: &SourceSpan) {
-        self.overload_targets.borrow_mut().remove(span);
-        self.contextual_bases.borrow_mut().remove(span);
-        self.generic_instantiations.borrow_mut().remove(span);
-        self.method_instantiations.borrow_mut().remove(span);
-        self.call_transfers.borrow_mut().remove(span);
-        self.implicit_conversions.borrow_mut().remove(span);
-        self.implicit_conversion_types.borrow_mut().remove(span);
-        self.implicit_conversion_raises.borrow_mut().remove(span);
-        self.conversion_source_borrows.borrow_mut().remove(span);
-        self.simd_constructions.borrow_mut().remove(span);
-        self.parameterized_method_calls.borrow_mut().remove(span);
-        self.operation_adjustments.borrow_mut().remove(span);
+        self.node_facts.borrow_mut().remove(span);
         self.construction_immutable_binders
             .borrow_mut()
             .remove(span);
         self.call_result_origins.borrow_mut().remove(span);
-        self.tuple_unpack_plans.borrow_mut().remove(span);
-        self.interior_references.borrow_mut().remove(span);
         self.view_result_interiors.borrow_mut().remove(span);
         self.call_parameters.borrow_mut().remove(span);
-        self.interior_invalidations.borrow_mut().remove(span);
-        self.expression_types.borrow_mut().remove(span);
-        self.expression_bindings.borrow_mut().remove(span);
-        self.statement_bindings.borrow_mut().remove(span);
         self.with_desugars.borrow_mut().remove(span);
-        self.declaration_captures.borrow_mut().remove(span);
-        self.comprehension_bindings.borrow_mut().remove(span);
         self.comprehension_iterables.borrow_mut().remove(span);
         self.nested_def_params.borrow_mut().remove(span);
-        self.expression_place_types.borrow_mut().remove(span);
-        self.binding_types.borrow_mut().remove(span);
-        self.expression_effects.borrow_mut().remove(span);
-        self.selected_calls.borrow_mut().remove(span);
-        self.subscript_descriptors.borrow_mut().remove(span);
-        self.iteration_protocols.borrow_mut().remove(span);
-        self.explicit_destroy_calls.borrow_mut().remove(span);
-        self.reference_value_uses.borrow_mut().remove(span);
         self.copyable_reference_result_reads
             .borrow_mut()
             .remove(span);
         self.discarded_reference_results.borrow_mut().remove(span);
         self.borrowed_reference_receivers.borrow_mut().remove(span);
-        self.copy_place_value_uses.borrow_mut().remove(span);
-        self.call_place_uses.borrow_mut().remove(span);
-        self.borrowed_read_call_places.borrow_mut().remove(span);
-        self.read_temporary_arguments.borrow_mut().remove(span);
         self.unconsumed_temporaries.borrow_mut().remove(span);
         self.linear_temporaries.borrow_mut().remove(span);
-        self.implicitly_copied_consuming_receivers
-            .borrow_mut()
-            .remove(span);
-        self.truthiness_conditions.borrow_mut().remove(span);
         let mut deletability = self.explicit_destroy_deletability.borrow_mut();
         deletability.bindings.remove(span);
         deletability.linear_bindings.remove(span);
-        self.rebind_assertions.borrow_mut().remove(span);
     }
 }

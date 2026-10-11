@@ -167,9 +167,8 @@ impl Checker {
         } = call;
         self.record_method_call_instantiation(site, &resolved);
         if parameterized_syntax {
-            self.parameterized_method_calls
-                .borrow_mut()
-                .insert(span.clone(), resolved.param_decls.clone());
+            self.record_at(span.clone()).parameterized_method_call =
+                Some(resolved.param_decls.clone());
         }
         let boundary_before = self.call_boundary_snapshot(span, args, kwargs);
         self.record_selected_method_conversions(method, &resolved, args, kwargs)?;
@@ -190,9 +189,7 @@ impl Checker {
                 _ => None,
             });
         if let Some(target) = &selected_target {
-            self.overload_targets
-                .borrow_mut()
-                .insert(span.clone(), target.clone());
+            self.record_at(span.clone()).overload_target = Some(target.clone());
         }
         self.replay_callee_effects(site, &resolved, selected_target.as_deref())?;
         self.check_mutated_receiver(site, &resolved)?;

@@ -8,6 +8,14 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- The checker writes each fact straight into its occurrence's one record
+  (R613), as upstream sets a decided fact as an attribute on the
+  occurrence's op: its 35 per-fact tables are one logged store of
+  `NodeFacts`, which body carrying copies and an overload probe undoes as
+  whole records, and the handoff is that store moved out rather than
+  gathered from the tables. The package's bytes, every program's output,
+  and the check's time are unchanged.
+
 - An overload candidate is checked inside a probe (R612): every checker
   fact store journals what a probed write displaces, and closing the probe
   restores it and drops the keys it logged, so only the selected

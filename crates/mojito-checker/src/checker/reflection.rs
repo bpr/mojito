@@ -533,20 +533,19 @@ impl Checker {
         let Ok(value) = self.param_context.constant(value) else {
             return;
         };
-        let mut adjustments = self.operation_adjustments.borrow_mut();
-        let materialized = match adjustments.get(&span) {
+        let mut record = self.record_at(span);
+        let materialized = match record.adjustment.as_deref() {
             Some(mojito_checked::checked::SemanticAdjustment::ParamValue {
                 materialized, ..
             }) => *materialized,
             _ => None,
         };
-        adjustments.insert(
-            span,
+        record.adjustment = Some(Box::new(
             mojito_checked::checked::SemanticAdjustment::ParamValue {
                 value,
                 materialized,
             },
-        );
+        ));
     }
 
     /// Element `index` of a reflected field-type list: a closed list selects
@@ -592,10 +591,9 @@ impl Checker {
                 ),
             });
         }
-        self.operation_adjustments.borrow_mut().insert(
-            expr.source_span(),
+        self.record_at(expr.source_span()).adjustment = Some(Box::new(
             mojito_checked::checked::SemanticAdjustment::ConstructType { ty: ty.clone() },
-        );
+        ));
         Ok(ty)
     }
 }

@@ -370,11 +370,9 @@ impl Checker {
         // its source place: the conversion result carries that origin exactly
         // like the explicit construction's `ref [origin]` argument does, so
         // escape and staleness checks see through the implicit spelling.
-        if self
-            .conversion_source_borrows
-            .borrow()
-            .contains_key(&expression.source_span())
-        {
+        if self.has_fact(&expression.source_span(), |facts| {
+            facts.conversion_source_borrow.is_some()
+        }) {
             if let Ok(place) = self.origin_place(expression) {
                 return vec![Origin::Place(place)];
             }
@@ -388,9 +386,10 @@ impl Checker {
                 owner,
                 ..
             }) = self
-                .operation_adjustments
+                .node_facts
                 .borrow()
                 .get(&expression.source_span())
+                .and_then(|facts| facts.adjustment.as_deref())
             {
                 return vec![Origin::Place(mojito_types::origin::OriginPlace {
                     root: *owner,
@@ -467,9 +466,10 @@ impl Checker {
                 // place; the checker recorded the decision when it typed the
                 // call, so shadowed `UnsafePointer` names cannot match here.
                 if self
-                    .operation_adjustments
+                    .node_facts
                     .borrow()
                     .get(&expression.source_span())
+                    .and_then(|facts| facts.adjustment.as_deref())
                     .is_some_and(|operation| {
                         matches!(
                             operation,
@@ -568,9 +568,10 @@ impl Checker {
             // receiver that is itself the owning place lends that place.
             ExprKind::Slice { object, .. } | ExprKind::MultiIndex { object, .. } => {
                 if matches!(
-                    self.operation_adjustments
+                    self.node_facts
                         .borrow()
-                        .get(&expression.source_span()),
+                        .get(&expression.source_span())
+                        .and_then(|facts| facts.adjustment.as_deref()),
                     Some(mojito_checked::checked::SemanticAdjustment::BorrowViewResult { .. })
                 ) {
                     let carried = self.aggregate_origins(object);
@@ -599,9 +600,10 @@ impl Checker {
                 if let Some(mojito_checked::checked::SemanticAdjustment::PointerOriginCast {
                     origin,
                 }) = self
-                    .operation_adjustments
+                    .node_facts
                     .borrow()
                     .get(&expression.source_span())
+                    .and_then(|facts| facts.adjustment.as_deref())
                 {
                     return origin
                         .as_origin()
@@ -610,7 +612,11 @@ impl Checker {
                 }
                 // A method whose selected contract returns an origin-bearing
                 // pointer (`xs.unsafe_ptr()`) carries that rebased origin.
-                if let Some(contract) = self.selected_calls.borrow().get(&expression.source_span())
+                if let Some(contract) = self
+                    .node_facts
+                    .borrow()
+                    .get(&expression.source_span())
+                    .and_then(|facts| facts.selected_call.as_deref())
                     && let TyKind::Pointer { origin, .. } = contract.result_ty.kind()
                     && let Some(origin) = origin.as_origin()
                 {
@@ -618,11 +624,9 @@ impl Checker {
                 }
                 // The adjustment is read out before recursing into the
                 // receiver, whose inference may record adjustments of its own.
-                let adjustment = self
-                    .operation_adjustments
-                    .borrow()
-                    .get(&expression.source_span())
-                    .cloned();
+                let adjustment = self.fact(&expression.source_span(), |facts| {
+                    facts.adjustment.as_deref()
+                });
                 // `unsafe_offset` preserves provenance: the offset pointer
                 // carries whatever its receiver carried.
                 if let (

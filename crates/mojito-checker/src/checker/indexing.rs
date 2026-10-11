@@ -19,21 +19,15 @@ impl Checker {
             self.apply_rebind_target(place, ty)
         });
         if let Ok(ty) = &result {
-            self.expression_types
-                .borrow_mut()
-                .insert(place.source_span(), ty.clone());
+            self.record_at(place.source_span()).ty = Some(ty.clone());
             if let ExprKind::Identifier(name) = &place.kind
                 && let Some(owner) = self.lookup_owner(name)
             {
-                self.expression_bindings
-                    .borrow_mut()
-                    .insert(place.source_span(), owner);
+                self.record_at(place.source_span()).binding = Some(owner);
             }
             let storage_ty = self.place_storage_ty(place).or_else(|| Some(ty.clone()));
             if let Some(storage_ty) = storage_ty {
-                self.expression_place_types
-                    .borrow_mut()
-                    .insert(place.source_span(), storage_ty);
+                self.record_at(place.source_span()).place_ty = Some(storage_ty);
             }
         }
         result
@@ -125,9 +119,10 @@ impl Checker {
                 }
                 let referent = self.infer(place)?;
                 let reference = self
-                    .selected_calls
+                    .node_facts
                     .borrow()
                     .get(&place.source_span())
+                    .and_then(|facts| facts.selected_call.as_deref())
                     .and_then(|contract| contract.reference_result.clone());
                 match reference {
                     Some(reference)
@@ -138,9 +133,7 @@ impl Checker {
                         // the projected payload replaces it, so references
                         // into the previous payload's interior expire (the
                         // storage's own replacement rule).
-                        self.reference_value_uses
-                            .borrow_mut()
-                            .insert(place.source_span(), true);
+                        self.record_at(place.source_span()).reference_value_use = Some(true);
                         self.record_interior_invalidation(place.source_span(), object);
                         Ok(referent)
                     }
@@ -188,19 +181,16 @@ impl Checker {
                     let alternatives = alternatives.clone();
                     let (index, alternative) =
                         self.variant_alternative(&alternatives, std::slice::from_ref(&arg))?;
-                    self.operation_adjustments.borrow_mut().insert(
-                        place.source_span(),
+                    self.record_at(place.source_span()).adjustment = Some(Box::new(
                         mojito_checked::checked::SemanticAdjustment::VariantProject {
                             alternatives,
                             index,
                         },
-                    );
+                    ));
                     if let ExprKind::Identifier(name) = &object.kind
                         && let Some(owner) = self.lookup_owner(name)
                     {
-                        self.expression_bindings
-                            .borrow_mut()
-                            .insert(place.source_span(), owner);
+                        self.record_at(place.source_span()).binding = Some(owner);
                     }
                     return Ok(alternative);
                 }
@@ -260,13 +250,10 @@ impl Checker {
                     };
                     let resolution = self.resolve_struct_setitem(&obj_ty, &[idx_ty], None)?;
                     if let Some(target) = resolution.lowered_name {
-                        self.overload_targets
-                            .borrow_mut()
-                            .insert(place.source_span(), target);
+                        self.record_at(place.source_span()).overload_target = Some(target);
                     }
-                    self.subscript_descriptors
-                        .borrow_mut()
-                        .insert(place.source_span(), (vec![None], resolution.value_keyword));
+                    self.record_at(place.source_span()).subscript_descriptor =
+                        Some((vec![None], resolution.value_keyword));
                     return Ok(match resolution.return_type.kind() {
                         // Indexing a reference-valued container reads and writes
                         // through the stored handle. The physical storage type
@@ -321,14 +308,10 @@ impl Checker {
                 let resolution =
                     self.resolve_struct_setitem(&object_type, &[descriptor.into()], None)?;
                 if let Some(target) = resolution.lowered_name {
-                    self.overload_targets
-                        .borrow_mut()
-                        .insert(place.source_span(), target);
+                    self.record_at(place.source_span()).overload_target = Some(target);
                 }
-                self.subscript_descriptors.borrow_mut().insert(
-                    place.source_span(),
-                    (vec![Some(kind)], resolution.value_keyword),
-                );
+                self.record_at(place.source_span()).subscript_descriptor =
+                    Some((vec![Some(kind)], resolution.value_keyword));
                 Ok(resolution.return_type)
             }
             ExprKind::MultiIndex { object, args } => {
@@ -405,13 +388,10 @@ impl Checker {
                 let resolution =
                     self.resolve_struct_setitem(&object_type, &argument_types, None)?;
                 if let Some(target) = resolution.lowered_name {
-                    self.overload_targets
-                        .borrow_mut()
-                        .insert(place.source_span(), target);
+                    self.record_at(place.source_span()).overload_target = Some(target);
                 }
-                self.subscript_descriptors
-                    .borrow_mut()
-                    .insert(place.source_span(), (descriptors, resolution.value_keyword));
+                self.record_at(place.source_span()).subscript_descriptor =
+                    Some((descriptors, resolution.value_keyword));
                 Ok(resolution.return_type)
             }
             ExprKind::TypeApply { name, args } => {
@@ -427,17 +407,14 @@ impl Checker {
                     return Err(TypeError::InvalidAssignTarget(name.clone()));
                 };
                 let (index, alternative) = self.variant_alternative(alternatives, args)?;
-                self.operation_adjustments.borrow_mut().insert(
-                    place.source_span(),
+                self.record_at(place.source_span()).adjustment = Some(Box::new(
                     mojito_checked::checked::SemanticAdjustment::VariantProject {
                         alternatives: alternatives.clone(),
                         index,
                     },
-                );
+                ));
                 if let Some(owner) = self.lookup_owner(name) {
-                    self.expression_bindings
-                        .borrow_mut()
-                        .insert(place.source_span(), owner);
+                    self.record_at(place.source_span()).binding = Some(owner);
                 }
                 Ok(alternative)
             }
@@ -456,24 +433,32 @@ impl Checker {
                 let reference = match found.kind() {
                     TyKind::Ref(reference) => Some(reference.clone()),
                     _ => self
-                        .selected_calls
+                        .node_facts
                         .borrow()
                         .get(&span)
+                        .and_then(|facts| facts.selected_call.as_deref())
                         .and_then(|contract| contract.reference_result.clone())
-                        .or_else(|| match self.operation_adjustments.borrow().get(&span) {
-                            Some(
-                                mojito_checked::checked::SemanticAdjustment::ReferenceResult {
-                                    reference,
-                                },
-                            ) => Some(reference.clone()),
-                            _ => None,
+                        .or_else(|| {
+                            match self
+                                .node_facts
+                                .borrow()
+                                .get(&span)
+                                .and_then(|facts| facts.adjustment.as_deref())
+                            {
+                                Some(
+                                    mojito_checked::checked::SemanticAdjustment::ReferenceResult {
+                                        reference,
+                                    },
+                                ) => Some(reference.clone()),
+                                _ => None,
+                            }
                         }),
                 };
                 match reference {
                     Some(reference)
                         if reference.mutability != mojito_types::origin::Mutability::Immutable =>
                     {
-                        self.reference_value_uses.borrow_mut().insert(span, true);
+                        self.record_at(span).reference_value_use = Some(true);
                         Ok(reference.referent)
                     }
                     Some(_) => Err(TypeError::ImmutableBinding(format!(
@@ -530,10 +515,8 @@ impl Checker {
                 u32::try_from(position).unwrap_or(u32::MAX),
             );
         }
-        self.expression_types.borrow_mut().insert(
-            expression.source_span(),
-            TyKind::Struct(kind.type_name().to_string(), Vec::new()).into(),
-        );
+        self.record_at(expression.source_span()).ty =
+            Some(TyKind::Struct(kind.type_name().to_string(), Vec::new()).into());
         expression
     }
 
@@ -546,16 +529,16 @@ impl Checker {
     /// enclosing subscript's source span.
     pub(super) fn is_synthetic_slice_descriptor(&self, expression: &Expr) -> bool {
         matches!(expression.kind, ExprKind::None)
-            && matches!(
-                (self.expression_types
-                    .borrow()
-                    .get(&expression.source_span())).map(Ty::kind),
-                Some(TyKind::Struct(name, args))
-                    if matches!(
-                        name.as_str(),
-                        "Slice" | "ContiguousSlice" | "StridedSlice"
-                    ) && args.is_empty()
-            )
+            && self.has_fact(&expression.source_span(), |facts| {
+                matches!(
+                    facts.ty.as_ref().map(Ty::kind),
+                    Some(TyKind::Struct(name, args))
+                        if matches!(
+                            name.as_str(),
+                            "Slice" | "ContiguousSlice" | "StridedSlice"
+                        ) && args.is_empty()
+                )
+            })
     }
 
     /// Check one nominal `object[...] = value` as the exact selected
@@ -710,10 +693,9 @@ impl Checker {
         };
         self.infer_method_call(&target.source_span(), object, "__setitem__", call)?;
         let contract = self
-            .selected_calls
-            .borrow()
-            .get(&target.source_span())
-            .cloned()
+            .fact(&target.source_span(), |facts| {
+                facts.selected_call.as_deref()
+            })
             .ok_or_else(|| {
                 TypeError::InvariantViolation(
                     "nominal subscript assignment lost its selected call contract".to_string(),
@@ -741,19 +723,14 @@ impl Checker {
                     "selected __setitem__ contract has no assignment-value slot".to_string(),
                 )
             })?;
-        self.subscript_descriptors
-            .borrow_mut()
-            .insert(target.source_span(), (descriptors, value_keyword));
+        self.record_at(target.source_span()).subscript_descriptor =
+            Some((descriptors, value_keyword));
         let target_ty = match target_ty.kind() {
             TyKind::Ref(reference) => reference.referent.clone(),
             _ => target_ty,
         };
-        self.expression_types
-            .borrow_mut()
-            .insert(target.source_span(), target_ty.clone());
-        self.expression_place_types
-            .borrow_mut()
-            .insert(target.source_span(), target_ty.clone());
+        self.record_at(target.source_span()).ty = Some(target_ty.clone());
+        self.record_at(target.source_span()).place_ty = Some(target_ty.clone());
         Ok(Some(target_ty))
     }
 
@@ -771,10 +748,7 @@ impl Checker {
         let element = self.infer(target)?;
         let site = target.source_span();
         let getter = self
-            .selected_calls
-            .borrow()
-            .get(&site)
-            .cloned()
+            .fact(&site, |facts| facts.selected_call.as_deref())
             .ok_or_else(|| {
                 TypeError::InvariantViolation(
                     "subscript reference assignment lost its getter contract".to_string(),
@@ -802,18 +776,12 @@ impl Checker {
             });
         }
         self.check_consuming(value, &found, "index assignment")?;
-        self.subscript_descriptors
-            .borrow_mut()
-            .entry(site.clone())
-            .or_insert_with(|| (vec![None], false));
-        self.expression_types
-            .borrow_mut()
-            .insert(site.clone(), element.clone());
-        self.expression_place_types
-            .borrow_mut()
-            .insert(site.clone(), element.clone());
-        self.operation_adjustments.borrow_mut().insert(
-            site,
+        self.record_at(site.clone())
+            .subscript_descriptor
+            .get_or_insert_with(|| (vec![None], false));
+        self.record_at(site.clone()).ty = Some(element.clone());
+        self.record_at(site.clone()).place_ty = Some(element.clone());
+        self.record_at(site).adjustment = Some(Box::new(
             mojito_checked::checked::SemanticAdjustment::AugmentedSubscript(Box::new(
                 mojito_checked::checked::CheckedAugmentedSubscript {
                     getter,
@@ -824,7 +792,7 @@ impl Checker {
                     value_source: None,
                 },
             )),
-        );
+        ));
         Ok(element)
     }
 
@@ -1008,25 +976,22 @@ impl Checker {
         if self.type_carries_loans(&result) {
             // Re-inference keeps an owner a `ref self` consumer already
             // minted for this view temporary.
-            let mut adjustments = self.operation_adjustments.borrow_mut();
-            let materialized = match adjustments.get(&span) {
+            let mut record = self.record_at(span.clone());
+            let materialized = match record.adjustment.as_deref() {
                 Some(mojito_checked::checked::SemanticAdjustment::BorrowViewResult {
                     materialized,
                     ..
                 }) => *materialized,
                 _ => None,
             };
-            adjustments.insert(
-                span.clone(),
+            record.adjustment = Some(Box::new(
                 mojito_checked::checked::SemanticAdjustment::BorrowViewResult {
                     materialized,
                     interior: Vec::new(),
                 },
-            );
+            ));
         }
-        self.subscript_descriptors
-            .borrow_mut()
-            .insert(span, (vec![Some(kind)], false));
+        self.record_at(span).subscript_descriptor = Some((vec![Some(kind)], false));
         Ok(result)
     }
 
@@ -1140,25 +1105,22 @@ impl Checker {
         if self.type_carries_loans(&result) {
             // Re-inference keeps an owner a `ref self` consumer already
             // minted for this view temporary.
-            let mut adjustments = self.operation_adjustments.borrow_mut();
-            let materialized = match adjustments.get(&span) {
+            let mut record = self.record_at(span.clone());
+            let materialized = match record.adjustment.as_deref() {
                 Some(mojito_checked::checked::SemanticAdjustment::BorrowViewResult {
                     materialized,
                     ..
                 }) => *materialized,
                 _ => None,
             };
-            adjustments.insert(
-                span.clone(),
+            record.adjustment = Some(Box::new(
                 mojito_checked::checked::SemanticAdjustment::BorrowViewResult {
                     materialized,
                     interior: Vec::new(),
                 },
-            );
+            ));
         }
-        self.subscript_descriptors
-            .borrow_mut()
-            .insert(span, (descriptors, false));
+        self.record_at(span).subscript_descriptor = Some((descriptors, false));
         Ok(result)
     }
 
@@ -1814,9 +1776,10 @@ impl Checker {
     pub(super) fn has_index_normalization(&self, expression: &Expr, expected: &Ty) -> bool {
         *expected == TyKind::Int
             && self
-                .implicit_conversions
+                .node_facts
                 .borrow()
                 .get(&expression.source_span())
+                .and_then(|facts| facts.implicit_conversion.as_ref())
                 .is_some_and(|target| mojito_symbol::symbol::is_index_normalization_symbol(target))
     }
 
@@ -1848,9 +1811,7 @@ impl Checker {
                 receiver.kind(),
                 TyKind::Pointer { .. } | TyKind::VariadicPack(_)
             ) {
-                self.implicit_conversions
-                    .borrow_mut()
-                    .insert(expression.source_span(), target);
+                self.record_at(expression.source_span()).implicit_conversion = Some(target);
             }
             return Ok(());
         };
@@ -1879,9 +1840,7 @@ impl Checker {
             accepts_int |= expected == TyKind::Int;
         }
         if !accepts_source && accepts_int {
-            self.implicit_conversions
-                .borrow_mut()
-                .insert(expression.source_span(), target);
+            self.record_at(expression.source_span()).implicit_conversion = Some(target);
         }
         Ok(())
     }
@@ -1900,9 +1859,7 @@ impl Checker {
             && s == "Self"
         {
             if let Some(self_ty) = &self.self_ty {
-                self.expression_types
-                    .borrow_mut()
-                    .insert(object.source_span(), self_ty.clone());
+                self.record_at(object.source_span()).ty = Some(self_ty.clone());
             }
             if self.self_value_pack(field).is_some()
                 && let Some(ParamDecl::Value { ty, .. }) = self
@@ -1931,10 +1888,9 @@ impl Checker {
             };
         }
         if let Some(dtype) = self.dtype_constant(object, field) {
-            self.operation_adjustments.borrow_mut().insert(
-                span,
+            self.record_at(span).adjustment = Some(Box::new(
                 mojito_checked::checked::SemanticAdjustment::DtypeConstant { dtype: dtype? },
-            );
+            ));
             return Ok(Ty::dtype());
         }
         // `Ts.length` of a pack that is still a parameter is an `Int` no
@@ -1951,13 +1907,12 @@ impl Checker {
             && let Some(list) = self.type_list_operand(object)?
         {
             let value = self.param_context.list_length(&list).map_err(param_error)?;
-            self.operation_adjustments.borrow_mut().insert(
-                span,
+            self.record_at(span).adjustment = Some(Box::new(
                 mojito_checked::checked::SemanticAdjustment::ParamValue {
                     value,
                     materialized: None,
                 },
-            );
+            ));
             return Ok(Ty::int());
         }
         if let Some(read) = self.read_type_member(span.clone(), object, field) {
@@ -1978,13 +1933,12 @@ impl Checker {
                     .borrow_mut()
                     .insert(object.source_span());
                 self.consume_parameter_read(object);
-                self.operation_adjustments.borrow_mut().insert(
-                    span,
+                self.record_at(span).adjustment = Some(Box::new(
                     mojito_checked::checked::SemanticAdjustment::ParamValue {
                         value,
                         materialized: None,
                     },
-                );
+                ));
                 return Ok(ty);
             }
         }
@@ -1994,10 +1948,8 @@ impl Checker {
         // copy of the whole value. Retain the handle exactly as method and
         // chained-subscript receivers do, including for linear referents.
         if let Some(reference) = self.infer_reference_value(object) {
-            self.reference_value_uses.borrow_mut().insert(
-                object.source_span(),
-                reference.mutability == mojito_types::origin::Mutability::Mutable,
-            );
+            self.record_at(object.source_span()).reference_value_use =
+                Some(reference.mutability == mojito_types::origin::Mutability::Mutable);
         }
         if matches!(obj_ty.kind(), TyKind::Struct(name, args) if matches!(name.as_str(), "Slice" | "ContiguousSlice" | "StridedSlice") && args.is_empty())
             && matches!(field, "start" | "end" | "step")
@@ -2010,20 +1962,18 @@ impl Checker {
         if field == "length"
             && let Some((_, width)) = simd_slots(&obj_ty)
         {
-            self.operation_adjustments.borrow_mut().insert(
-                span,
+            self.record_at(span).adjustment = Some(Box::new(
                 mojito_checked::checked::SemanticAdjustment::SimdLength { width },
-            );
+            ));
             return Ok(Ty::int());
         }
         // `v.dtype` is upstream's lane-dtype parameter, the slot itself.
         if field == "dtype"
             && let Some(dtype) = simd_dtype(&obj_ty)
         {
-            self.operation_adjustments.borrow_mut().insert(
-                span,
+            self.record_at(span).adjustment = Some(Box::new(
                 mojito_checked::checked::SemanticAdjustment::DtypeConstant { dtype: dtype? },
-            );
+            ));
             return Ok(Ty::dtype());
         }
         if let TyKind::Struct(sname, targs) = obj_ty.kind() {
@@ -2068,13 +2018,12 @@ impl Checker {
 
     /// Record `value` as the type member value read at `span`.
     pub(super) fn record_member_value(&self, span: SourceSpan, value: ParamExpr) {
-        self.operation_adjustments.borrow_mut().insert(
-            span,
+        self.record_at(span).adjustment = Some(Box::new(
             mojito_checked::checked::SemanticAdjustment::ParamValue {
                 value,
                 materialized: None,
             },
-        );
+        ));
     }
 
     /// A dtype constant read as a value: the `dtype` of a `SIMD` type operand

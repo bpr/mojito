@@ -96,11 +96,7 @@ impl Checker {
         &self,
         expression: &Expr,
     ) -> Vec<mojito_types::origin::Origin> {
-        let checked = self
-            .expression_types
-            .borrow()
-            .get(&expression.source_span())
-            .cloned();
+        let checked = self.fact(&expression.source_span(), |facts| facts.ty.as_ref());
         if checked.is_some_and(|ty| {
             !matches!(ty.kind(), TyKind::Pointer { .. })
                 && !self.type_may_carry_loans(&ty)
@@ -177,9 +173,10 @@ impl Checker {
                 kwargs,
             } => {
                 let (receiver_convention, receiver_elided) = self
-                    .selected_calls
+                    .node_facts
                     .borrow()
                     .get(&span)
+                    .and_then(|facts| facts.selected_call.as_deref())
                     .map(|contract| (contract.receiver_convention, contract.receiver_elided))?;
                 let mut arguments = Vec::new();
                 if !receiver_elided {
@@ -208,8 +205,11 @@ impl Checker {
         use mojito_checked::checked::CheckedCallArgumentSource;
         let parameters = self.call_parameters.borrow();
         let parameters = parameters.get(span);
-        let selected = self.selected_calls.borrow();
-        let Some(contract) = selected.get(span) else {
+        let records = self.node_facts.borrow();
+        let Some(contract) = records
+            .get(span)
+            .and_then(|facts| facts.selected_call.as_deref())
+        else {
             // A free call records no contract: positional arguments bind the
             // leading parameters and keywords bind by name.
             let parameters = parameters?;
@@ -283,10 +283,9 @@ impl Checker {
             Some(ArgConvention::Mut | ArgConvention::Ref) => {}
             Some(ArgConvention::Imm) | None => {
                 let ty = argument.parameter_ty.clone().or_else(|| {
-                    self.expression_types
-                        .borrow()
-                        .get(&argument.expression.source_span())
-                        .cloned()
+                    self.fact(&argument.expression.source_span(), |facts| {
+                        facts.ty.as_ref()
+                    })
                 });
                 if ty.is_some_and(|ty| self.is_loan_free_register_passable(&ty)) {
                     return false;

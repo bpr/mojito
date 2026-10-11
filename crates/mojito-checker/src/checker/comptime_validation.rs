@@ -246,10 +246,9 @@ impl Checker {
     /// else the enclosing struct's.
     fn record_comptime_condition(&self, cond: &Expr, constraint: &GenericConstraint) {
         let bound = self.bind_constraint(constraint, &[]);
-        self.operation_adjustments.borrow_mut().insert(
-            cond.source_span(),
+        self.record_at(cond.source_span()).adjustment = Some(Box::new(
             mojito_checked::checked::SemanticAdjustment::ComptimeCondition(bound),
-        );
+        ));
     }
 
     /// The recursive form of [`Self::check_comptime_condition`]: a
@@ -634,22 +633,18 @@ impl Checker {
             return Ok(());
         };
         let record_source = |source_form| {
-            self.operation_adjustments.borrow_mut().insert(
-                source.source_span(),
+            self.record_at(source.source_span()).adjustment = Some(Box::new(
                 mojito_checked::checked::SemanticAdjustment::ComptimeIteration(Box::new(
                     mojito_checked::checked::ComptimeIteration {
                         binder: binder.clone(),
                         source: source_form,
                     },
                 )),
-            );
+            ));
         };
         if evaluated {
-            let construction = self
-                .operation_adjustments
-                .borrow()
-                .get(&source.source_span())
-                .cloned();
+            let construction =
+                self.fact(&source.source_span(), |facts| facts.adjustment.as_deref());
             if let Some(construction) = construction {
                 record_source(ComptimeSource::Evaluated {
                     element,
@@ -741,8 +736,7 @@ impl Checker {
         let Some(reference) = binder.as_decl_ref() else {
             return;
         };
-        self.operation_adjustments.borrow_mut().insert(
-            source.source_span(),
+        self.record_at(source.source_span()).adjustment = Some(Box::new(
             mojito_checked::checked::SemanticAdjustment::ComptimeIteration(Box::new(
                 mojito_checked::checked::ComptimeIteration {
                     binder: reference.clone(),
@@ -751,7 +745,7 @@ impl Checker {
                     },
                 },
             )),
-        );
+        ));
     }
 
     /// Whether every local `expr` names is a compile-time binding: a value
@@ -1205,21 +1199,16 @@ impl Checker {
     /// operation (`SemanticAdjustment::ComptimeApplication`).
     pub(super) fn record_lifted_applications(&self) {
         use mojito_checked::checked::SemanticAdjustment;
-        let mut operations = self.operation_adjustments.borrow_mut();
         for (span, application) in self.lifted_expressions.borrow().iter() {
-            let operation = match operations.get(span) {
-                Some(SemanticAdjustment::ComptimeApplication { operation, .. }) => {
-                    operation.clone()
-                }
-                operation => operation.cloned().map(Box::new),
+            let mut record = self.record_at(span.clone());
+            let operation = match record.adjustment.take().map(|operation| *operation) {
+                Some(SemanticAdjustment::ComptimeApplication { operation, .. }) => operation,
+                operation => operation.map(Box::new),
             };
-            operations.insert(
-                span.clone(),
-                SemanticAdjustment::ComptimeApplication {
-                    operation,
-                    application: application.clone(),
-                },
-            );
+            record.adjustment = Some(Box::new(SemanticAdjustment::ComptimeApplication {
+                operation,
+                application: application.clone(),
+            }));
         }
     }
 
@@ -1231,8 +1220,7 @@ impl Checker {
         let Some(reference) = binder.as_decl_ref() else {
             return;
         };
-        self.operation_adjustments.borrow_mut().insert(
-            source.source_span(),
+        self.record_at(source.source_span()).adjustment = Some(Box::new(
             SemanticAdjustment::ComptimeIteration(Box::new(ComptimeIteration {
                 binder: reference.clone(),
                 source: ComptimeSource::Bound {
@@ -1240,7 +1228,7 @@ impl Checker {
                     display: display.span.clone(),
                 },
             })),
-        );
+        ));
     }
 
     /// The elements a `comptime for` over a closed collection display binds,
@@ -1664,11 +1652,7 @@ impl Checker {
             return None;
         }
         let ty = self.infer(value).ok()?;
-        let construction = self
-            .operation_adjustments
-            .borrow()
-            .get(&value.source_span())
-            .cloned()?;
+        let construction = self.fact(&value.source_span(), |facts| facts.adjustment.as_deref())?;
         Some((string_element_binder(element), ty, construction))
     }
 
@@ -1697,13 +1681,12 @@ impl Checker {
         })?;
         let sequence = self.display_sequence(owner, &element);
         let span = value.source_span();
-        self.operation_adjustments.borrow_mut().insert(
-            span.clone(),
+        self.record_at(span.clone()).adjustment = Some(Box::new(
             mojito_checked::checked::SemanticAdjustment::ComptimeDisplay {
                 construction: Box::new(construction),
                 sequence: sequence.clone(),
             },
-        );
+        ));
         Ok(BoundDisplay {
             span,
             element,
@@ -2021,12 +2004,11 @@ impl Checker {
                     if mojito_types::types::is_symbolic(&element)
                         && let Some(pack) = reference.as_decl_ref()
                     {
-                        self.operation_adjustments.borrow_mut().insert(
-                            span,
+                        self.record_at(span).adjustment = Some(Box::new(
                             mojito_checked::checked::SemanticAdjustment::ConstructPackElement {
                                 pack: pack.clone(),
                             },
-                        );
+                        ));
                     }
                     Ok(element)
                 } else {
@@ -2306,13 +2288,12 @@ impl Checker {
         let ty = element.meta().as_value().cloned().ok_or_else(|| {
             TypeError::InvariantViolation(format!("value-pack element '{element}' is not a value"))
         })?;
-        self.operation_adjustments.borrow_mut().insert(
-            span,
+        self.record_at(span).adjustment = Some(Box::new(
             mojito_checked::checked::SemanticAdjustment::ParamValue {
                 value: element,
                 materialized: None,
             },
-        );
+        ));
         Ok(ty)
     }
 
@@ -2325,13 +2306,12 @@ impl Checker {
         query: mojito_types::param_expr::PackQuery,
     ) {
         if let Some(pack) = pack.as_decl_ref() {
-            self.operation_adjustments.borrow_mut().insert(
-                span,
+            self.record_at(span).adjustment = Some(Box::new(
                 mojito_checked::checked::SemanticAdjustment::ParamValue {
                     value: self.param_context.pack_query(pack, query),
                     materialized: None,
                 },
-            );
+            ));
         }
     }
 
@@ -2589,9 +2569,7 @@ impl Checker {
                 ),
             });
         }
-        self.expression_types
-            .borrow_mut()
-            .insert(argument.source_span(), forwarded.pack.clone());
+        self.record_at(argument.source_span()).ty = Some(forwarded.pack.clone());
         Ok(forwarded.pack.clone())
     }
 
