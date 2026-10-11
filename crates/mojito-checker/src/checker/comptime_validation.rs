@@ -78,6 +78,7 @@ impl BoundDisplay {
 /// bindings its names resolve to.
 #[derive(Debug)]
 pub(in crate::checker) struct LiftedApplication {
+    owner: String,
     expression: Expr,
     binders: Vec<ParamExpr>,
     bindings: Vec<Option<mojito_types::origin::OwnerId>>,
@@ -1090,19 +1091,20 @@ impl Checker {
             });
         }
         let bindings: Vec<_> = names.iter().map(|name| self.lookup_owner(name)).collect();
+        let owner = self.lifted_function_owner();
         let known = self
             .lifted_applications
             .borrow()
             .iter()
             .find(|known| {
-                known.expression == *expr && known.binders == binders && known.bindings == bindings
+                known.owner == owner
+                    && known.expression == *expr
+                    && known.binders == binders
+                    && known.bindings == bindings
             })
             .map(|known| known.application.clone());
         known.or_else(|| {
-            // An identity of its own names the function, as a binding's
-            // names its display's; the empty owner keeps the name apart
-            // from one MIR gives a function it lifts itself.
-            let name = mojito_symbol::symbol::lifted_anonymous_name(self.fresh_owner().ok()?.0);
+            let name = self.lifted_function_name(&owner);
             let application = self.param_context.apply(
                 &name,
                 &binders,
@@ -1111,6 +1113,7 @@ impl Checker {
             self.lifted_applications
                 .borrow_mut()
                 .push(LiftedApplication {
+                    owner,
                     expression: expr.clone(),
                     binders,
                     bindings,
@@ -1118,6 +1121,25 @@ impl Checker {
                 });
             Some(application)
         })
+    }
+
+    /// The declaration that owns a function the check lifts here: the one
+    /// whose body is being checked, or `__toplevel__` at module scope.
+    fn lifted_function_owner(&self) -> String {
+        self.lifting_owner
+            .clone()
+            .unwrap_or_else(|| "__toplevel__".to_string())
+    }
+
+    /// A new function `owner` lifts, named by `owner` and the count of
+    /// those it lifted before, so the name is the same in every
+    /// compilation.
+    fn lifted_function_name(&self, owner: &str) -> String {
+        let mut counts = self.lifted_counts.borrow_mut();
+        let index = counts.entry(owner.to_string()).or_default();
+        let name = mojito_symbol::symbol::lifted_check_name(owner, *index);
+        *index += 1;
+        name
     }
 
     /// The binders `expr` reads through the `names` it spells: each binder
@@ -1569,7 +1591,8 @@ impl Checker {
     /// `application`, the function lifted for the module constant `name`'s
     /// initializer `value`, renamed by the constant: a body's facts carried
     /// from an earlier pass name it, and MIR lifts it from the toplevel
-    /// under that name. A function-local binding keeps the pass's name.
+    /// under that name. A function-local binding keeps its declaration's
+    /// name.
     fn module_lifted_application(
         &self,
         name: &str,
@@ -1670,7 +1693,7 @@ impl Checker {
         let owner = self.lookup_owner(name).ok_or_else(|| {
             TypeError::InvariantViolation(format!("comptime binding '{name}' has no owner"))
         })?;
-        let sequence = self.display_sequence(name, owner.0, &element);
+        let sequence = self.display_sequence(owner, &element);
         let span = value.source_span();
         self.operation_adjustments.borrow_mut().insert(
             span.clone(),
@@ -1688,22 +1711,25 @@ impl Checker {
         })
     }
 
-    /// The sequence the display binding `name` denotes, a list of
-    /// `element`s: the application of the function named by the binding and
-    /// `identity`, which tells two bindings of one name apart, to every
-    /// binder in scope.
-    fn display_sequence(
-        &self,
-        name: &str,
-        identity: impl std::fmt::Display,
-        element: &Ty,
-    ) -> ParamExpr {
+    /// The sequence the display binding `identity` denotes, a list of
+    /// `element`s: the application of a function its declaration lifts to
+    /// every binder in scope, the one the binding was first given.
+    fn display_sequence(&self, identity: mojito_types::origin::OwnerId, element: &Ty) -> ParamExpr {
         use mojito_types::param_expr::MetaTy;
-        self.param_context.apply(
-            &mojito_symbol::symbol::lifted_binding_name(name, identity),
+        let owner = self.lifted_function_owner();
+        let key = (owner, identity);
+        if let Some(sequence) = self.lifted_displays.borrow().get(&key) {
+            return sequence.clone();
+        }
+        let sequence = self.param_context.apply(
+            &self.lifted_function_name(&key.0),
             &self.binders_in_scope(),
             MetaTy::ParamList(Box::new(MetaTy::value(element.clone()))),
-        )
+        );
+        self.lifted_displays
+            .borrow_mut()
+            .insert(key, sequence.clone());
+        sequence
     }
 
     /// The display binding a local `comptime` alias's `value` names

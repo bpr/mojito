@@ -8,6 +8,15 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A function the check lifts from a body is named by its declaration and
+  an index within it, `$comptime$<declaration>$c<k>` (R547), beside MIR's
+  own `$comptime$<declaration>$<k>`, as upstream keeps a parameter
+  expression inside the declaration that holds it. Before, a local
+  `comptime` application was `$comptime$$<n>` and a display binding
+  `$comptime$<binding>$<n>`, numbered by a count each compilation
+  restarts, so the package build refused a library body that lifted one
+  and the library compiled from source instead. `lifted_anonymous_name`,
+  `lifted_binding_name`, and `LiftedOwner::Anonymous` are gone.
 - A library trait's overloaded requirement no longer keeps the bundled
   library from being packaged (R597): a trait declaration records its own
   requirements, defaulted or not (`TraitDeclaration::requirements`), and

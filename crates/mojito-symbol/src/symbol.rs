@@ -1130,15 +1130,11 @@ pub enum LiftedOwner<'a> {
     Constant(&'a str),
     /// An evaluated parameter default: `$default$<owner>$<parameter>`.
     Default { owner: &'a str, parameter: &'a str },
-    /// An application numbered under `owner`: one MIR lifts from the body of
-    /// the function `owner` (`$comptime$<function>$<k>`), or the display
-    /// sequence of the binding `owner` (`$comptime$<binding>$<identity>`).
-    /// Only the first is the same in every compilation; which one it is
-    /// depends on whether `owner` names a function.
+    /// A function lifted from the body of the function `owner`, numbered
+    /// within it, the same in every compilation: one MIR lifts
+    /// (`$comptime$<function>$<k>`) or one the check lifts
+    /// (`$comptime$<function>$c<k>`).
     Numbered(&'a str),
-    /// An application the check numbers by a count each compilation
-    /// restarts: `$comptime$$<n>`.
-    Anonymous,
 }
 
 /// The lifted function of the module constant `constant`'s initializer.
@@ -1151,14 +1147,10 @@ pub fn lifted_body_name(function: &str, index: usize) -> String {
     format!("$comptime${function}${index}")
 }
 
-/// The display sequence the check lifts for the binding `binding`.
-pub fn lifted_binding_name(binding: &str, identity: impl std::fmt::Display) -> String {
-    format!("$comptime${binding}${identity}")
-}
-
-/// The application the check lifts under the fresh identity `identity`.
-pub fn lifted_anonymous_name(identity: impl std::fmt::Display) -> String {
-    format!("$comptime$${identity}")
+/// The `index`th function the check lifts from the body of `function`: a
+/// compile-time expression or a local display binding.
+pub fn lifted_check_name(function: &str, index: usize) -> String {
+    format!("$comptime${function}$c{index}")
 }
 
 /// The function an evaluated default of `owner`'s `parameter` lowers to.
@@ -1173,9 +1165,11 @@ pub fn lifted_owner(name: &str) -> Option<LiftedOwner<'_>> {
         let (owner, parameter) = rest.rsplit_once('$')?;
         return Some(LiftedOwner::Default { owner, parameter });
     }
-    let (owner, tail) = name.strip_prefix("$comptime$")?.rsplit_once('$')?;
+    let (owner, tail) = name
+        .strip_prefix("$comptime$")?
+        .rsplit_once('$')
+        .filter(|(owner, _)| !owner.is_empty())?;
     Some(match (owner, tail) {
-        ("", _) => LiftedOwner::Anonymous,
         (constant, "module") => LiftedOwner::Constant(constant),
         (owner, _) => LiftedOwner::Numbered(owner),
     })
@@ -2822,5 +2816,16 @@ mod tests {
         assert_eq!(method_of_symbol("Lis", "List.pop"), None);
         assert_eq!(method_of_symbol("Dict", "List.pop$ov$"), None);
         assert_eq!(method_of_symbol("List", "List."), None);
+    }
+
+    #[test]
+    fn a_function_the_check_lifts_is_owned_by_its_declaration() {
+        let name = lifted_check_name("S.g$ov$Int", 0);
+        assert_eq!(name, "$comptime$S.g$ov$Int$c0");
+        assert_eq!(
+            lifted_owner(&name),
+            Some(LiftedOwner::Numbered("S.g$ov$Int"))
+        );
+        assert_eq!(lifted_owner("$comptime$$7"), None);
     }
 }

@@ -626,6 +626,17 @@ pub struct Checker {
     module_def_results: declaration_table::DeclarationTable<SourceType>,
     /// The expressions lifted so far, each with the application it denotes.
     lifted_applications: RefCell<Vec<comptime_validation::LiftedApplication>>,
+    /// The lowered name of the declaration whose body is being checked,
+    /// which owns every function the check lifts from it; `None` at module
+    /// scope (`__toplevel__`).
+    lifting_owner: Option<String>,
+    /// The index of the next function the check lifts, per owning
+    /// declaration.
+    lifted_counts: RefCell<HashMap<String, usize>>,
+    /// The sequence of each local display binding, by its owning
+    /// declaration and identity, so that a binding checked again denotes
+    /// the function it was first given.
+    lifted_displays: RefCell<HashMap<(String, mojito_types::origin::OwnerId), ParamExpr>>,
     /// The application each lifted expression of the executable check
     /// denotes, by the expression: the pass records them on the checked
     /// operations when it ends ([`Self::record_lifted_applications`]), after
@@ -1099,6 +1110,9 @@ impl Checker {
             applicable_functions: declaration_table::DeclarationTable::default(),
             module_def_results: declaration_table::DeclarationTable::default(),
             lifted_applications: RefCell::new(Vec::new()),
+            lifting_owner: None,
+            lifted_counts: RefCell::new(HashMap::new()),
+            lifted_displays: RefCell::new(HashMap::new()),
             lifted_expressions: RefCell::new(FactMap::default()),
             rebind_targets: RebindTargets::default(),
             owned_packs: HashSet::new(),

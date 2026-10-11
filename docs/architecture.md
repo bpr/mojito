@@ -1128,7 +1128,11 @@ MIR lowers as `Const::Param` and `native::mono` folds or demands
 initializer the check lifts (a display, a method call) is the application
 `$comptime$<name>$module`, evaluated once, and is declared ahead of the
 first body after which its initializer types (`Checker::check_module_block`);
-no read spells its initializer. A collection display (`[1, 2]`, `{"a": 1}`)
+no read spells its initializer. A function the check lifts from a body (a
+local `comptime` application or display binding) is
+`$comptime$<declaration>$c<k>`, numbered within the declaration whose body
+holds it, beside MIR's own `$comptime$<declaration>$<k>`; both are the same in
+every compilation, so the bundled package may hold one. A collection display (`[1, 2]`, `{"a": 1}`)
 is such an application, closed or not
 (`mojito_checker::checker::lifts_comptime_value`), since the pin constructs
 one by running its initializer; so is a `Dict[...]`/`Set[...]` constructor

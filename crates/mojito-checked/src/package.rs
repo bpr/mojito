@@ -1659,24 +1659,23 @@ impl DeclaringModules {
 
 /// The names the declaration owning `name` may have, most specific first:
 /// the name itself, an overload's base, or a member's owner, of `name` or,
-/// for a lifted function, of the name it is lifted from ([`lifted_owner`]);
-/// none for an anonymous lifted function.
+/// for a lifted function, of the name it is lifted from ([`lifted_owner`]).
 fn declaration_candidates(name: &str) -> impl Iterator<Item = &str> {
     let owner = match lifted_owner(name) {
-        Some(LiftedOwner::Constant(owner) | LiftedOwner::Numbered(owner)) => Some(owner),
-        Some(LiftedOwner::Default { owner, .. }) => Some(owner),
-        Some(LiftedOwner::Anonymous) => None,
-        None => Some(name),
+        Some(
+            LiftedOwner::Constant(owner)
+            | LiftedOwner::Numbered(owner)
+            | LiftedOwner::Default { owner, .. },
+        ) => owner,
+        None => name,
     };
-    owner.into_iter().flat_map(|owner| {
-        [
-            Some(owner),
-            owner.split_once(OV_SEP).map(|(declaration, _)| declaration),
-            owner.split_once('.').map(|(declaration, _)| declaration),
-        ]
-        .into_iter()
-        .flatten()
-    })
+    [
+        Some(owner),
+        owner.split_once(OV_SEP).map(|(declaration, _)| declaration),
+        owner.split_once('.').map(|(declaration, _)| declaration),
+    ]
+    .into_iter()
+    .flatten()
 }
 
 /// The value at the function index `index` in `entries`, which are sorted

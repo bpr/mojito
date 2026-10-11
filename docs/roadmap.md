@@ -50,22 +50,6 @@ Scope: what remains of the plan's stages, and what the pipeline order still
 leaves to close. A defect found on the way is filed by its kind; a
 divergence from the pin goes to a catch-up track, however small.
 
-- [ ] **R547 A function the check lifts from a body is numbered per
-  compilation, so the bundled library cannot contain one**
-
-  `$comptime$$<n>` and a display binding's `$comptime$<binding>$<n>` count
-  binding identities, which every compilation restarts.
-  - An importer's own lifted function could reuse a name a package body
-    calls.
-  - So the package build refuses such a body (`lifted_name_is_stable` in
-    `src/package.rs`), and the library then compiles from source after a
-    warning. No library body lifts one today.
-  - Upstream names a lifted parameter function by its declaration.
-  - The lever: name it by its owning declaration and an index within it, as
-    MIR's own `$comptime$<function>$<k>` is.
-  - Depends on nothing.
-  - Model: Fable, Planned.
-
 - [ ] **R474 (P5) A closed parameter argument outside a generic call's
   brackets still lowers as run-time code**
 

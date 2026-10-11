@@ -242,7 +242,7 @@ fn build(root: &Path, header: &PackageHeader) -> Result<Vec<u8>, CompilerError> 
         }
         if !lifted_name_is_stable(name, lowered) {
             return Err(CompilerError::Verify(vec![format!(
-                "the standard library lifts `{name}`, whose name an importer may reuse"
+                "the standard library lifts `{name}` from no function it packages"
             )]));
         }
         program.functions.push((name.clone(), function.clone()));
@@ -263,13 +263,12 @@ fn build(root: &Path, header: &PackageHeader) -> Result<Vec<u8>, CompilerError> 
 /// Whether `name` stays the package's own in every importer.
 ///
 /// A lifted function's name ([`crate::symbol::lifted_owner`]) says whose it
-/// is when it is a module constant's (`$comptime$<constant>$module`), a
-/// parameter default's (`$default$<owner>$<parameter>`), or one MIR lifts
-/// from a body, named by that function (`$comptime$<function>$<k>`). Any
-/// other is
-/// numbered by a count each compilation restarts (`$comptime$$7`, a display
-/// binding's `$comptime$<binding>$<identity>`), or belongs to the module
-/// initializer, and an importer's own lifted function would reuse it.
+/// is: a module constant's (`$comptime$<constant>$module`), a parameter
+/// default's (`$default$<owner>$<parameter>`), or a function's, numbered
+/// within its body by MIR (`$comptime$<function>$<k>`) or by the check
+/// (`$comptime$<function>$c<k>`). A numbered one is the package's own only
+/// while its owner is a function the package holds, never the module
+/// initializer.
 fn lifted_name_is_stable(name: &str, program: &MirProgram) -> bool {
     use crate::symbol::LiftedOwner;
     match crate::symbol::lifted_owner(name) {
@@ -281,7 +280,6 @@ fn lifted_name_is_stable(name: &str, program: &MirProgram) -> bool {
                     .iter()
                     .any(|(function, _)| function == owner)
         }
-        Some(LiftedOwner::Anonymous) => false,
     }
 }
 
@@ -456,7 +454,7 @@ mod tests {
             &program
         ));
         assert!(lifted_name_is_stable("$comptime$List.f$0", &program));
-        assert!(!lifted_name_is_stable("$comptime$$7", &program));
+        assert!(lifted_name_is_stable("$comptime$List.f$c0", &program));
         assert!(!lifted_name_is_stable("$comptime$L$12", &program));
         assert!(!lifted_name_is_stable("$comptime$__toplevel__$0", &program));
     }

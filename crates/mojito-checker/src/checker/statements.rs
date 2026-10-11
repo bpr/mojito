@@ -3062,7 +3062,15 @@ impl Checker {
                     self.pack_element_views.borrow_mut().clear();
                 }
                 count_body_inference(!decls.is_empty(), || name.clone());
+                // A nested `def` or a lambda lifts under its enclosing
+                // declaration.
+                let enclosing = if module_level {
+                    self.lifting_owner.replace(owner.clone())
+                } else {
+                    self.lifting_owner.clone()
+                };
                 result = self.check_block(body, Some(&ret_ty), false);
+                self.lifting_owner = enclosing;
                 self.named_result_context.pop();
                 self.return_annotations.pop();
                 self.return_ref_contracts.pop();

@@ -1364,7 +1364,9 @@ impl Checker {
             Ok(())
         } else {
             let start = site.as_ref().map(|(key, _)| self.enter_body_site(key));
+            let enclosing = self.lifting_owner.replace(effect_key.clone());
             let checked = self.bind_and_check_method(self_ty, m, &ret_ty, ref_return, effect_key);
+            self.lifting_owner = enclosing;
             if let (Some((key, display)), Some(start)) = (site, start) {
                 self.leave_body_site(key, &display, &start);
             }

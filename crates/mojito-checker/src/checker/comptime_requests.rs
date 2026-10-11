@@ -81,7 +81,10 @@ pub fn applies_callable(expression: &Expr, oracle: &impl CalleeOracle) -> bool {
 }
 
 /// Whether a `comptime` binding's initializer, module or local, is one
-/// compile-time application the check lifts (`$comptime$NAME$<owner>`).
+/// compile-time application the check lifts.
+///
+/// A module constant's is `$comptime$NAME$module`, a local one's
+/// `$comptime$<declaration>$c<k>`.
 ///
 /// It is when it applies a callable ([`applies_callable`]), when it is a
 /// collection display (`[1, 2]`, `{"a": 1}`), or when it calls a dictionary
