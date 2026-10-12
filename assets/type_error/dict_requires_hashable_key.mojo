@@ -1,4 +1,4 @@
-# expect: no constructor overload matches
+# expect: does not conform to trait 'Hashable'
 # Dict requires a Hashable key: upstream's KeyElement bound (Equatable &
 # Hashable & Movable) and Mojito's K bound both reject a key type without
 # hash support.

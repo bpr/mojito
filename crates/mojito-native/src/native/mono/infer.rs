@@ -702,13 +702,12 @@ impl Specializer<'_> {
             })?;
         unify(receiver_pattern, receiver, &mut bindings)
             .map_err(|e| self.error(Some(owner), format!("monomorphizing `{target}`: {e}")))?;
-        let patterns = self
+        let patterns: Vec<&Ty> = self
             .functions
             .get(target)
-            .map(|function| function.param_types.iter().skip(1))
-            .into_iter()
-            .flatten();
-        for (pattern, parameter) in patterns.zip(parameters) {
+            .map(|function| function.param_types.iter().skip(1).collect())
+            .unwrap_or_default();
+        for (pattern, parameter) in parameter_patterns(&patterns, parameters) {
             unify(pattern, parameter, &mut bindings)
                 .map_err(|e| self.error(Some(owner), format!("monomorphizing `{target}`: {e}")))?;
         }
@@ -865,4 +864,44 @@ impl Specializer<'_> {
         }
         Ok(())
     }
+}
+
+/// Each of a method's parameter `patterns` beside the checked parameter it
+/// binds. A homogeneous variadic (`*indices: Int`) binds every parameter
+/// between the ones before it and the ones after it (a keyword-only
+/// `value`), each at its element type.
+fn parameter_patterns<'a>(patterns: &[&'a Ty], parameters: &[&'a Ty]) -> Vec<(&'a Ty, &'a Ty)> {
+    let Some((variadic, element)) =
+        patterns
+            .iter()
+            .enumerate()
+            .find_map(|(position, pattern)| match pattern.kind() {
+                TyKind::VariadicPack(element) => Some((position, element)),
+                _ => None,
+            })
+    else {
+        return patterns
+            .iter()
+            .copied()
+            .zip(parameters.iter().copied())
+            .collect();
+    };
+    let trailing = patterns.len() - variadic - 1;
+    let Some(collected) = parameters.len().checked_sub(variadic + trailing) else {
+        return Vec::new();
+    };
+    let (leading, rest) = parameters.split_at(variadic);
+    let (middle, after) = rest.split_at(collected);
+    patterns[..variadic]
+        .iter()
+        .copied()
+        .zip(leading.iter().copied())
+        .chain(middle.iter().map(|parameter| (element, *parameter)))
+        .chain(
+            patterns[variadic + 1..]
+                .iter()
+                .copied()
+                .zip(after.iter().copied()),
+        )
+        .collect()
 }

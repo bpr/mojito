@@ -907,6 +907,7 @@ impl<'a> Specializer<'a> {
                 format!("compile-time application of `{function}`, which has no MIR declaration"),
             )
         })?;
+        let result_ty = declaration.ret_ty.clone();
         // A static method of a generic struct is applied to the instance it
         // is called on first (`G[n].f()`).
         let owner = mojito_symbol::symbol::split_method_symbol(function)
@@ -1099,6 +1100,9 @@ impl<'a> Specializer<'a> {
                 format!("VM CTFE failed for '{name}': {error}"),
             )
         })?;
+        // The result is the function's declared one: a literal it returns
+        // (`return y` of `comptime y: Int = 5`) is materialized at that type.
+        let value = value.clone().materialize_as(&result_ty).unwrap_or(value);
         self.evaluations.insert(evaluation, value.clone());
         Ok(value)
     }

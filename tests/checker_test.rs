@@ -6602,19 +6602,20 @@ fn generic_comptime_aliases_reject_unsupported_shapes() {
         TypeError::Redeclaration(name) if name == "Pair"
     ));
 
-    // Constructor-through-alias and bare value-position uses stay rejected:
-    // an alias declares no value binding (recorded subset gap).
+    // Constructor-through-alias stays rejected: an alias declares no value
+    // binding (recorded subset gap).
     assert!(matches!(
         err(
             "comptime Pair[T: Copyable & Movable]: AnyType = Tuple[T, T]\n\ndef main():\n    var pair = Pair[Int](1, 2)\n",
         ),
         TypeError::UndefinedVariable(name) if name == "Pair"
     ));
+    // A bare alias is a type, which a `var` cannot hold, as at the pin.
     assert!(matches!(
         err(
             "comptime Pair[T: Copyable & Movable]: AnyType = Tuple[T, T]\n\ndef main():\n    var pair = Pair\n",
         ),
-        TypeError::UndefinedVariable(name) if name == "Pair"
+        TypeError::DynamicTypeValue(name) if name == "pair"
     ));
 }
 

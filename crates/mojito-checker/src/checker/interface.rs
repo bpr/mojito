@@ -2074,10 +2074,12 @@ mod tests {
 
     #[test]
     fn a_method_residue_names_its_function_and_joins_back_its_name_and_qualifier() {
+        use mojito_symbol::symbol::OV_SEP;
+        let (b, a) = (format!("{OV_SEP}b"), format!("{OV_SEP}a"));
         let methods = [
-            ("f", Some("$ov$b")),
-            ("f", Some("$ov$a")),
-            ("pop", Some("$ov$")),
+            ("f", Some(b.as_str())),
+            ("f", Some(a.as_str())),
+            ("pop", Some(OV_SEP)),
             ("g", None),
         ];
         let (mut residue, lowered) = struct_s(&methods);

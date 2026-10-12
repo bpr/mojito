@@ -884,10 +884,6 @@ fn run_lex(source: &str) -> Result<(), String> {
     Ok(())
 }
 
-/// `check`: type-check the linked program; report success or the first error.
-/// Runs the whole static pipeline once — checking, typed-MIR verification, and
-/// ownership all consume the same checked program.
-
 #[cfg(test)]
 mod cli_tests {
     use super::*;

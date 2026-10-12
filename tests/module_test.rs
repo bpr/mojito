@@ -451,7 +451,7 @@ fn linked_expression_locations_include_their_source_module() {
     );
     let entry = d.write(
         "main.mojo",
-        "from lib import pick, from_lib\n\ndef pick(x: Bool) -> Bool:\n    return x\n\ndef main():\n    print(from_lib(), pick(True))\n",
+        "from lib import pick, from_lib\n\ndef main():\n    print(from_lib(), pick(2))\n",
     );
     let compiler = Compiler::default();
     let program = compiler

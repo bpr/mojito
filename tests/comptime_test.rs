@@ -756,14 +756,12 @@ fn comptime_collection_method_calls_run_through_the_vm() {
 }
 
 #[test]
-fn comptime_collection_runtime_use_is_rejected_by_elaboration() {
+fn comptime_collection_runtime_use_is_rejected_by_the_check() {
     // A compile-time collection is not implicitly copyable: a bare runtime
     // use needs `materialize[M]()`.
-    let program = parse("comptime M = {1: 2}\n\ndef main():\n    print(len(M))\n").unwrap();
-    let error = elaborate(program).unwrap_err().to_string();
+    let error = run("comptime M = {1: 2}\n\ndef main():\n    print(len(M))\n").unwrap_err();
     assert!(error.contains("not 'ImplicitlyCopyable'"), "got {error}");
-    let program = parse("def main():\n    comptime l = [1, 2, 3]\n    print(len(l))\n").unwrap();
-    let error = elaborate(program).unwrap_err().to_string();
+    let error = run("def main():\n    comptime l = [1, 2, 3]\n    print(len(l))\n").unwrap_err();
     assert!(error.contains("Array[Int, Int(3)]"), "got {error}");
 }
 

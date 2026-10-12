@@ -305,29 +305,29 @@ fn linked_std_utils_variant_constructs_tests_projects_and_sets() {
     let execution = compiler.execute(&program).expect("execute Variant");
     assert_eq!(execution.output, "True False\nTrue\n7\nTrue\nmojo\n");
     // The template serves every instance: its storage operations select
-    // `_get_type_index[T, *Ts]()`, which each instance closes.
-    assert!(program.checked().expressions().iter().any(|expression| {
-        expression.adjustments.iter().any(|adjustment| {
-            matches!(
-                adjustment,
-                SemanticAdjustment::ConstructVariant {
-                    index: mojito::types::VariantIndex::Expr(_),
-                    ..
-                }
-            )
-        })
-    }));
-    assert!(program.checked().expressions().iter().any(|expression| {
-        expression.adjustments.iter().any(|adjustment| {
-            matches!(
-                adjustment,
-                SemanticAdjustment::VariantSet {
-                    index: mojito::types::VariantIndex::Expr(_),
-                    ..
-                }
-            )
-        })
-    }));
+    // `_get_type_index[T, *Ts]()`, which each instance closes. `Variant`'s
+    // bodies are the imported package's.
+    let instructions: Vec<&mojito::mir::MirInstr> = program
+        .drop_elaborated_mir()
+        .functions
+        .iter()
+        .flat_map(|(_, function)| &function.blocks)
+        .flat_map(|block| &block.instrs)
+        .collect();
+    assert!(instructions.iter().any(|instruction| matches!(
+        instruction,
+        mojito::mir::MirInstr::MakeVariant {
+            index: mojito::types::VariantIndex::Expr(_),
+            ..
+        }
+    )));
+    assert!(instructions.iter().any(|instruction| matches!(
+        instruction,
+        mojito::mir::MirInstr::VariantSet {
+            index: mojito::types::VariantIndex::Expr(_),
+            ..
+        }
+    )));
 }
 
 #[test]
@@ -3262,7 +3262,9 @@ fn generic_struct_method_reaches_instances_through_fields_and_self() {
 }
 
 /// Assert that `source` prints `output` and that the template of each `def`
-/// in `served` serves its calls: the program declares no clone of it.
+/// in `served` serves its calls: the program declares no clone of it. A
+/// library `def` is named by its lowered name, which the imported package
+/// declares.
 fn assert_defs_served_by_template(source: &str, output: &str, served: &[&str]) {
     let compiler = Compiler::default();
     let compiled = compile_entry(&compiler, source);
@@ -3277,7 +3279,10 @@ fn assert_defs_served_by_template(source: &str, output: &str, served: &[&str]) {
         })
         .collect();
     for template in served {
-        assert!(defs.contains(template), "{template} is declared: {defs:?}");
+        assert!(
+            defs.contains(template) || compiled.mir().declarations.function(template).is_some(),
+            "{template} is declared: {defs:?}"
+        );
         let clone = format!("{template}$y");
         assert!(
             defs.iter().all(|name| !name.starts_with(&clone)),

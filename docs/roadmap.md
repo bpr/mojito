@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R633**.
+Next free ID: **R634**.
 
 ## Ordered Work
 
@@ -193,6 +193,21 @@ change that needs a new `MJRT_ABI_VERSION`.
     (`instance_method_clone`), so the nesting probes are linear.
   - The lever is a clone index keyed by the instance's arguments rather
     than by a spelled symbol.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R633 Natively, a subscript method with a homogeneous variadic
+  index is unsupported**
+
+  Problem: `cube[1, 2, 3]` over `def __getitem__(self, *indices: Int)`
+  prints `123` on the VM, but the native backend stops with "unsupported
+  type `VariadicPack(Int)`" in `Cube.__getitem__`.
+  - The `__setitem__` form (`*indices: Int, *, value: Int`) is the same
+    shape.
+  - Pinned on the VM by `vm_test`'s
+    `multi_index_dispatch_supports_variadic_getitem` and
+    `multidimensional_assignment_supports_variadic_setitem`.
+  - Found while triaging the 2026-10-12 overnight gate.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

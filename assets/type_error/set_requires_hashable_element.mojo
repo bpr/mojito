@@ -1,4 +1,4 @@
-# expect: no constructor overload matches
+# expect: does not conform to trait 'Hashable'
 # Set requires a Hashable element: upstream's KeyElement bound (Equatable &
 # Hashable & Movable) and Mojito's T bound both reject an element type
 # without hash support. (Set imported explicitly — required upstream;

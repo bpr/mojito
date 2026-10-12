@@ -1,4 +1,4 @@
-# expect: no constructor overload matches
+# expect: does not conform to trait 'Hashable'
 # Tuple's Hashable conformance is conditional on every element: a tuple whose
 # element type lacks `__hash__` cannot satisfy Dict's Hashable key bound.
 @fieldwise_init

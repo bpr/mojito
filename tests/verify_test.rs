@@ -149,7 +149,7 @@ fn consuming_nominal_element_read_has_complete_dispatch_metadata() {
             Path::new("owned_nominal_element_copy.mojo"),
         )
         .expect("compile owned nominal element copy");
-    let mir = mojito::mir::lower_checked_program(compiled.checked());
+    let mir = compiled.mir().clone();
     assert!(
         mir.invariant_errors.is_empty(),
         "{:?}",

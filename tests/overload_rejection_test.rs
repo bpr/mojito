@@ -8,11 +8,11 @@
 //! The rest of the suite pins correct-by-design behavior — including the deliberately
 //! literal-default ranking and the ambiguity rejections that remain after it.
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use mojito::mir::lower_program;
-use mojito::{Compiler, ComptimeError, TypeError, check, elaborate, link, parse};
+use mojito::{Compiler, ComptimeError, ModuleError, TypeError, check, elaborate, link, parse};
 
 /// Parse + elaborate + type-check, returning the checker's verdict.
 fn check_source(source: &str) -> Result<(), TypeError> {
@@ -112,10 +112,6 @@ impl Drop for TempDir {
     fn drop(&mut self) {
         let _ = std::fs::remove_dir_all(&self.0);
     }
-}
-
-fn check_linked(entry: &Path) -> Result<(), TypeError> {
-    check_elaborated(link(entry).expect("link error"))
 }
 
 // =========================================================================
@@ -295,9 +291,9 @@ fn rejects_imported_duplicate_signature_across_modules() {
         "main.mojo",
         "from lib import f\n\ndef f(x: Int) -> Int:\n    return 20\n\ndef main():\n    print(f(1))\n",
     );
-    match check_linked(&entry) {
-        Err(TypeError::Redeclaration(n)) => assert!(n.ends_with('f')),
-        other => panic!("expected Redeclaration(f), got: {other:?}"),
+    match link(&entry).err() {
+        Some(ModuleError::Redefinition { name }) => assert_eq!(name, "f"),
+        other => panic!("expected Redefinition(f), got: {other:?}"),
     }
 }
 
@@ -642,17 +638,19 @@ fn explicit_parameter_arguments_select_the_generic_candidate() {
 }
 
 #[test]
-fn importing_a_name_extends_the_local_overload_set() {
+fn a_local_def_cannot_overload_an_imported_name() {
+    // The pin: "invalid redefinition of 'f'", the import being "this
+    // non-function definition".
     let d = TempDir::new();
     d.write("lib.mojo", "def f(x: Int) -> Int:\n    return 10\n");
     let entry = d.write(
         "main.mojo",
         "from lib import f\n\ndef f(x: StringLiteral) -> Int:\n    return 20\n\ndef main():\n    var i: Int = 1\n    print(f(i), f(\"abc\"))\n",
     );
-    let compiler = Compiler::default();
-    let program = compiler.compile_path(&entry).expect("compile error");
-    let execution = compiler.execute(&program).expect("runtime error");
-    assert_eq!(execution.output, "10 20\n");
+    match link(&entry).err() {
+        Some(ModuleError::Redefinition { name }) => assert_eq!(name, "f"),
+        other => panic!("expected Redefinition(f), got: {other:?}"),
+    }
 }
 
 // =========================================================================

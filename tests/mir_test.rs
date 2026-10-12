@@ -57,7 +57,7 @@ fn nominal_membership_retains_the_borrowed_container_place() {
     let compiled = compiler
         .compile_source(source, Path::new("mir_test.mojo"))
         .expect("compile nominal membership");
-    let mir = mojito::mir::lower_checked_program(compiled.checked());
+    let mir = compiled.mir().clone();
     let main = &mir
         .functions
         .iter()
@@ -102,7 +102,7 @@ fn consuming_nominal_element_read_retains_explicit_accessor_dispatch() {
     let compiled = compiler
         .compile_source(source, Path::new("owned_nominal_element_copy.mojo"))
         .expect("compile owned nominal element copy");
-    let mir = mojito::mir::lower_checked_program(compiled.checked());
+    let mir = compiled.mir().clone();
     let dispatches = mir
         .functions
         .iter()
@@ -137,7 +137,7 @@ fn consuming_dict_element_arguments_retain_explicit_accessor_dispatch() {
     let compiled = compiler
         .compile_source(source, Path::new("owned_dict_element_copy.mojo"))
         .expect("compile owned Dict element copies");
-    let mir = mojito::mir::lower_checked_program(compiled.checked());
+    let mir = compiled.mir().clone();
     let dispatches = mir
         .functions
         .iter()
@@ -174,7 +174,7 @@ fn projected_nominal_reference_executes_accessor_before_extending_the_place() {
     let compiled = compiler
         .compile_source(source, Path::new("projected_subscript_reference.mojo"))
         .expect("compile projected nominal reference");
-    let mir = mojito::mir::lower_checked_program(compiled.checked());
+    let mir = compiled.mir().clone();
     let main = &mir
         .functions
         .iter()
@@ -230,7 +230,7 @@ fn projected_pointer_actual_retains_one_accessor_handle_and_one_dynamic_index() 
     let compiled = compiler
         .compile_source(source, Path::new("projected_pointer_subscript.mojo"))
         .expect("compile projected pointer actuals");
-    let mir = mojito::mir::lower_checked_program(compiled.checked());
+    let mir = compiled.mir().clone();
     let main = &mir
         .functions
         .iter()
@@ -295,7 +295,7 @@ fn augmented_nominal_subscript_retains_both_calls_and_one_operand_evaluation() {
     let compiled = compiler
         .compile_source(source, Path::new("augmented_subscript_contract.mojo"))
         .expect("compile augmented nominal subscript");
-    let mir = mojito::mir::lower_checked_program(compiled.checked());
+    let mir = compiled.mir().clone();
     let main = &mir
         .functions
         .iter()
@@ -395,7 +395,7 @@ fn augmented_mutating_index_reloads_typed_source_before_setter() {
     let compiled = compiler
         .compile_source(source, Path::new("augmented_mutating_index.mojo"))
         .expect("compile augmented mutating index");
-    let mir = mojito::mir::lower_checked_program(compiled.checked());
+    let mir = compiled.mir().clone();
     let main = &mir
         .functions
         .iter()
@@ -465,7 +465,7 @@ fn implicitly_copied_tuple_transform_receivers_do_not_retain_a_consuming_place()
         "{checked_calls:#?}"
     );
 
-    let mir = mojito::mir::lower_checked_program(compiled.checked());
+    let mir = compiled.mir().clone();
     let main = &mir
         .functions
         .iter()
@@ -949,7 +949,7 @@ fn checked_indexer_normalization_becomes_explicit_typed_mir_calls() {
         ["Offset.__mlir_index__", "Offset.__mlir_index__"]
     );
 
-    let lowered = mojito::mir::lower_checked_program(compiled.checked());
+    let lowered = compiled.mir().clone();
     let main = &lowered
         .functions
         .iter()
@@ -1143,7 +1143,7 @@ fn production_tstrings_call_the_bundled_entry_point() {
     let compiled = compiler
         .compile_source(source, Path::new("mir_test.mojo"))
         .expect("compile the t-string program");
-    let mir = mojito::mir::lower_checked_program(compiled.checked());
+    let mir = compiled.mir().clone();
     let main = &mir
         .functions
         .iter()
@@ -1188,7 +1188,7 @@ fn inferred_generic_method_calls_retain_parameter_declarations() {
     let compiled = compiler
         .compile_source(source, Path::new("mir_test.mojo"))
         .expect("compile generic method");
-    let mir = mojito::mir::lower_checked_program(compiled.checked());
+    let mir = compiled.mir().clone();
     let main = &mir
         .functions
         .iter()
@@ -1631,7 +1631,7 @@ fn reference_iteration_binding_reestablishes_the_source_loans() {
     let compiled = compiler
         .compile_source(source, Path::new("mir_test.mojo"))
         .expect("compile reference-yielding iteration");
-    let mir = mojito::mir::lower_checked_program(compiled.checked());
+    let mir = compiled.mir().clone();
     let (_, main) = mir
         .functions
         .iter()
@@ -1685,7 +1685,7 @@ fn nested_call_transfer_installs_loans_on_the_carrier() {
     let compiled = compiler
         .compile_source(source, Path::new("mir_test.mojo"))
         .expect("compile nested transfer call");
-    let mir = mojito::mir::lower_checked_program(compiled.checked());
+    let mir = compiled.mir().clone();
     let (_, main) = mir
         .functions
         .iter()
@@ -1734,7 +1734,7 @@ fn captured_owner_transfer_installs_loans_in_the_owning_frame() {
     let compiled = compiler
         .compile_source(source, Path::new("mir_test.mojo"))
         .expect("compile captured-owner transfer");
-    let mir = mojito::mir::lower_checked_program(compiled.checked());
+    let mir = compiled.mir().clone();
     let (_, main) = mir
         .functions
         .iter()
@@ -1776,7 +1776,7 @@ fn interior_destination_transfers_carry_their_domain() {
     let compiled = compiler
         .compile_source(source, Path::new("mir_test.mojo"))
         .expect("compile interior-destination transfer");
-    let mir = mojito::mir::lower_checked_program(compiled.checked());
+    let mir = compiled.mir().clone();
     let (_, main) = mir
         .functions
         .iter()
@@ -1818,7 +1818,7 @@ fn nested_call_transfer_to_an_enclosing_parameter_defers_to_the_caller() {
     let compiled = compiler
         .compile_source(source, Path::new("mir_test.mojo"))
         .expect("compile enclosing-parameter transfer");
-    let mir = mojito::mir::lower_checked_program(compiled.checked());
+    let mir = compiled.mir().clone();
     let (_, outer) = mir
         .functions
         .iter()
@@ -1880,7 +1880,7 @@ fn method_call_temporary_view_argument_anchors_its_source_loan() {
     let compiled = compiler
         .compile_source(source, Path::new("mir_test.mojo"))
         .expect("compile method-call temporary view argument");
-    let mir = mojito::mir::lower_checked_program(compiled.checked());
+    let mir = compiled.mir().clone();
     let (_, main) = mir
         .functions
         .iter()
@@ -1935,7 +1935,7 @@ fn parameterized_static_temporary_view_arguments_anchor_their_source_loans() {
     let compiled = compiler
         .compile_source(source, Path::new("mir_test.mojo"))
         .expect("compile parameterized-static temporary view arguments");
-    let mir = mojito::mir::lower_checked_program(compiled.checked());
+    let mir = compiled.mir().clone();
     let (_, main) = mir
         .functions
         .iter()
@@ -1998,7 +1998,7 @@ fn assignment_flushes_temporary_argument_anchors_before_the_store() {
     let compiled = compiler
         .compile_source(source, Path::new("mir_test.mojo"))
         .expect("compile assignment over a plain view temporary");
-    let mir = mojito::mir::lower_checked_program(compiled.checked());
+    let mir = compiled.mir().clone();
     let (_, main) = mir
         .functions
         .iter()
@@ -2069,7 +2069,7 @@ fn borrowed_list_iteration_lowers_a_reference_bind_and_interior_loan() {
     let compiled = compiler
         .compile_source(source, Path::new("mir_test.mojo"))
         .expect("compile borrowed List iteration");
-    let mir = mojito::mir::lower_checked_program(compiled.checked());
+    let mir = compiled.mir().clone();
     let (_, main) = mir
         .functions
         .iter()
@@ -2154,7 +2154,7 @@ fn borrowed_named_user_source_lowers_a_reference_bind_and_whole_place_loan() {
     let compiled = compiler
         .compile_source(source, Path::new("mir_test.mojo"))
         .expect("compile borrowed named user-source iteration");
-    let mir = mojito::mir::lower_checked_program(compiled.checked());
+    let mir = compiled.mir().clone();
     let (_, main) = mir
         .functions
         .iter()
@@ -2228,7 +2228,7 @@ fn borrowed_comprehension_sources_lower_like_statement_loops() {
     let compiled = compiler
         .compile_source(source, Path::new("mir_test.mojo"))
         .expect("compile borrowed List comprehension");
-    let mir = mojito::mir::lower_checked_program(compiled.checked());
+    let mir = compiled.mir().clone();
     let (_, main) = mir
         .functions
         .iter()
@@ -2297,7 +2297,7 @@ fn borrowed_comprehension_sources_lower_like_statement_loops() {
     let compiled = compiler
         .compile_source(source, Path::new("mir_test.mojo"))
         .expect("compile borrowed named-source comprehension");
-    let mir = mojito::mir::lower_checked_program(compiled.checked());
+    let mir = compiled.mir().clone();
     let (_, main) = mir
         .functions
         .iter()
@@ -2368,7 +2368,7 @@ fn reference_row_iteration_loans_keep_the_invalidation_owner_domain() {
     let compiled = compiler
         .compile_source(source, Path::new("mir_test.mojo"))
         .expect("compile nested reference-row iteration");
-    let mir = mojito::mir::lower_checked_program(compiled.checked());
+    let mir = compiled.mir().clone();
     let (_, main) = mir
         .functions
         .iter()
@@ -2437,7 +2437,7 @@ fn reference_list_iteration_lowers_through_the_generic_protocol() {
     let compiled = compiler
         .compile_source(source, Path::new("mir_test.mojo"))
         .expect("compile List reference iteration");
-    let mir = mojito::mir::lower_checked_program(compiled.checked());
+    let mir = compiled.mir().clone();
     assert!(
         mir.invariant_errors.is_empty(),
         "{:?}",
@@ -3568,7 +3568,7 @@ fn bare_element_call_lowers_subscript_then_indirect_call() {
     let compiled = compiler
         .compile_source(source, Path::new("mir_test.mojo"))
         .expect("compile bare element call");
-    let mir = mojito::mir::lower_checked_program(compiled.checked());
+    let mir = compiled.mir().clone();
     let (_, main) = mir
         .functions
         .iter()
@@ -3619,7 +3619,7 @@ fn multi_index_element_call_lowers_variadic_subscript_then_indirect_call() {
     let compiled = compiler
         .compile_source(source, Path::new("mir_test.mojo"))
         .expect("compile multi-index element call");
-    let mir = mojito::mir::lower_checked_program(compiled.checked());
+    let mir = compiled.mir().clone();
     let (_, main) = mir
         .functions
         .iter()
@@ -3671,7 +3671,7 @@ fn stored_span_iterator_lends_the_span_place() {
     let compiled = compiler
         .compile_source(source, Path::new("mir_test.mojo"))
         .expect("compile the stored Span iterator");
-    let mir = mojito::mir::lower_checked_program(compiled.checked());
+    let mir = compiled.mir().clone();
     let main = &mir
         .functions
         .iter()
