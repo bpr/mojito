@@ -893,10 +893,10 @@ lowering unit, one record per library declaration, and one module table
 holding each module's link record, one file per package. The bundled library's is the
 only producer today (`src/package.rs`). No part of a package is MIR text:
 it is a header followed by bytecode records, as upstream's package is
-MLIR bytecode throughout. The format line is `mojito-package 35`.
+MLIR bytecode throughout. The format line is `mojito-package 36`.
 
 ```text
-mojito-package 35
+mojito-package 36
 <the header's length, 8 bytes little-endian>
 <the header, as bytecode>
 <the payload: every record, as bytecode, then the type section>
@@ -1025,7 +1025,7 @@ mojito-package 35
   kind (a struct method's with its position and the symbol it lowers
   to), a member's struct's `Origin`/`OriginSet` parameter names, a
   wrapper's or trait default's declaration less its body, and the unit's
-  `CheckedTables` (format 31): its checked expression and statement
+  `CheckedTables` (format 36): its checked expression and statement
   nodes and its declarations, each node holding its own op, type, and
   attributes as the check left them, as upstream's body is typed ops; its
   root statements and a wrapper's; and each location a spelled sugar was

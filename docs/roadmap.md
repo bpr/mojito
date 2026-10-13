@@ -4694,22 +4694,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on R594.
   - Model: Fable, Not Planned.
 
-- [ ] **R657 A trait default's body is built as checked nodes twice**
-
-  The whole program builds a trait default's body once under the trait
-  op's `CheckedTraitMethod::default_body` and again under the member's own
-  `def` node (`CheckedTables::member_root`), which MIR lowers.
-  - Upstream emits the default once, as a function op its trait names.
-  - Nothing lowers the `default_body` copy; only whole-program walks
-    (`CheckedStmtOp::bodies`, `checked_var_types`) still visit it.
-  - The lever: the trait op names its member's `def` node instead of
-    holding a body, and `bodies()` yields the member's.
-  - Done when the whole program builds each default body's nodes once and
-    the probe fixtures' MIR is unchanged in both std modes.
-  - Found while landing R643 (2026-10-13).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R600 An overloaded declaration's symbol is spelled from its
   syntax, and its call's from its checked type**
 

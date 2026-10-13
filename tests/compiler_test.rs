@@ -1,4 +1,5 @@
 use mojito::Ty;
+use mojito::ast::StmtKind;
 use mojito::checked::{CheckedStmtOp, WalkResult, Walked};
 use mojito::{Compiler, CompilerError, SemanticAdjustment, ValueCategory};
 
@@ -1313,6 +1314,70 @@ fn comptime_for_shapes_are_unrolled_per_instance() {
         Compiler::default().execute(&served).expect("run").output,
         "11\n21\n6\n8\n5\n6\n7\n8\n6\n11\n11\n16\n3\n6\n0\n1\n2\nx\ny\nx\ny\n2\n8\n4\n0\n0\n"
     );
+}
+
+const TRAIT_DEFAULT_MEMBER: &str = "
+trait T:
+    def d(self) -> Int:
+        return 7
+
+    def r(self) -> Int: ...
+
+@fieldwise_init
+struct S(T):
+    var x: Int
+
+    def r(self) -> Int:
+        return self.x
+
+def main():
+    print(S(1).d(), S(2).r())
+";
+
+#[test]
+fn trait_default_body_is_one_member_node() {
+    // The trait's op names its member's `def` node, built once, as
+    // upstream's trait names its member function; the method without a
+    // default names none.
+    let program = Compiler::default()
+        .compile_unlinked(TRAIT_DEFAULT_MEMBER)
+        .expect("compile");
+    let checked = program.checked();
+    let tables = checked.tables();
+    let methods = tables
+        .roots()
+        .iter()
+        .filter_map(|root| tables.statement(*root))
+        .find_map(|statement| match &statement.op {
+            CheckedStmtOp::Trait(declaration) if declaration.name == "T" => {
+                Some(declaration.methods.clone())
+            }
+            _ => None,
+        })
+        .expect("the trait's checked node");
+    let member_name = match &checked.trait_members()[0].declaration.kind {
+        StmtKind::Def { name, .. } => Some(name.clone()),
+        _ => None,
+    }
+    .expect("the member is a def");
+    let default = methods[0].default.expect("`d` names its member");
+    assert!(
+        matches!(
+            &tables.statement(default).expect("member node").op,
+            CheckedStmtOp::Def(def) if def.name == member_name
+        ),
+        "`d`'s default is the member `def` {member_name}"
+    );
+    assert_eq!(methods[1].default, None, "`r` declares no default");
+    let returns = tables
+        .statements
+        .iter()
+        .filter(|statement| {
+            matches!(statement.op, CheckedStmtOp::Return(Some(value))
+                if checked.expression(value).is_some_and(|node| node.ty == Some(Ty::int_literal())))
+        })
+        .count();
+    assert_eq!(returns, 1, "the program holds the default's return once");
 }
 
 #[test]

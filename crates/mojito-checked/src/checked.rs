@@ -1791,8 +1791,8 @@ impl CheckedStmtOp {
     }
 
     /// The statement's nested statement lists, in source order: a `def`'s
-    /// body, a struct's method bodies, a trait's default bodies, a branch,
-    /// loop, `with`, `try`, or scope body.
+    /// body, a struct's method bodies, a trait's default members' `def`
+    /// nodes, a branch, loop, `with`, `try`, or scope body.
     pub fn bodies(&self) -> Vec<&[CheckedStmtId]> {
         match self {
             Self::Def(def) => vec![def.body.as_slice()],
@@ -1804,7 +1804,7 @@ impl CheckedStmtOp {
             Self::Trait(declaration) => declaration
                 .methods
                 .iter()
-                .filter_map(|method| method.default_body.as_deref())
+                .filter_map(|method| method.default.as_ref().map(std::slice::from_ref))
                 .collect(),
             Self::ComptimeIf { branches, orelse } | Self::If { branches, orelse } => branches
                 .iter()
@@ -2017,7 +2017,8 @@ pub struct CheckedTrait {
     pub comptime_members: Vec<CheckedTraitComptime>,
 }
 
-/// A trait method requirement, and its default's body when it has one.
+/// A trait method requirement, and its default's member node when it has
+/// one.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct CheckedTraitMethod {
     pub name: String,
@@ -2031,7 +2032,10 @@ pub struct CheckedTraitMethod {
     pub raises_type: Option<Type>,
     pub ret: Option<Type>,
     pub where_clauses: Vec<CheckedNodeId>,
-    pub default_body: Option<Vec<CheckedStmtId>>,
+    /// The `def` node of its trait's member
+    /// ([`CheckedProgram::trait_members`]) when the method declares a
+    /// default, as upstream's trait names its member function.
+    pub default: Option<CheckedStmtId>,
 }
 
 /// A trait's `comptime` member requirement.
@@ -2151,11 +2155,6 @@ pub struct CheckedTables {
     /// Each default wrapper's root statements, parallel to
     /// [`CheckedProgram::default_wrappers`].
     wrapper_roots: Vec<Vec<CheckedStmtId>>,
-    /// Each trait member's own `def` node, parallel to
-    /// [`CheckedProgram::trait_members`]. A package unit's member is its
-    /// root, so a unit encodes none.
-    #[serde(skip)]
-    member_roots: Vec<CheckedStmtId>,
 }
 
 impl CheckedTables {
@@ -2410,12 +2409,6 @@ impl CheckedTables {
         self.wrapper_roots.get(index).map_or(&[][..], Vec::as_slice)
     }
 
-    /// The `def` node of trait member `index`, parallel to
-    /// [`CheckedProgram::trait_members`].
-    pub fn member_root(&self, index: usize) -> Option<CheckedStmtId> {
-        self.member_roots.get(index).copied()
-    }
-
     /// Visit the statement nodes `statements` and every node under them in
     /// source preorder: a statement, then its annotations' lifted
     /// applications and its expressions (an `if` condition before its own
@@ -2471,6 +2464,10 @@ impl CheckedTables {
         };
         let optional_block = |ids: &Option<Vec<CheckedStmtId>>| {
             ids.as_ref().map_or(Some(None), |ids| block(ids).map(Some))
+        };
+        let member_body = |id: CheckedStmtId| match &self.statement(id)?.op {
+            CheckedStmtOp::Def(def) => block(&def.body),
+            _ => None,
         };
         let params = |params: &[CheckedFnParam]| {
             params
@@ -2614,7 +2611,9 @@ impl CheckedTables {
                             raises_type: method.raises_type.clone(),
                             ret: method.ret.clone(),
                             where_clauses: exprs(&method.where_clauses)?,
-                            default_body: optional_block(&method.default_body)?,
+                            default_body: method
+                                .default
+                                .map_or(Some(None), |id| member_body(id).map(Some))?,
                         })
                     })
                     .collect::<Option<_>>()?,
@@ -2741,7 +2740,6 @@ impl CheckedTables {
             mut statements,
             roots,
             wrapper_roots,
-            member_roots,
         } = arena;
         let declared: HashMap<&SourceSpan, CheckedDeclId> = declarations
             .iter()
@@ -2757,7 +2755,6 @@ impl CheckedTables {
             declarations,
             roots,
             wrapper_roots,
-            member_roots,
         }
     }
 
@@ -2897,7 +2894,8 @@ pub struct CheckedTraitMember {
     pub method_index: usize,
     /// A `def` named by the member symbol, over `[_Self, ...]` and
     /// `(self: _Self, ...)`, whose body is the default's. The whole program
-    /// holds it as its node too, [`CheckedTables::member_root`]; a package
+    /// holds it as its node too, where its trait is, and the trait's
+    /// [`CheckedTraitMethod::default`] names it; a package
     /// unit holds it as its checked nodes, and [`CheckedProgram::installed`]
     /// rebuilds it from them.
     #[serde(skip, default = "unrebuilt_declaration")]
@@ -3782,22 +3780,18 @@ fn build_checked_expressions(
         nodes: Vec::new(),
         statements: Vec::new(),
         facts,
+        trait_members,
     };
     let roots = builder.block(statements);
     let wrapper_roots = default_wrappers
         .iter()
         .map(|wrapper| builder.block(&wrapper.body))
         .collect();
-    let member_roots = trait_members
-        .iter()
-        .map(|member| builder.stmt(&member.declaration))
-        .collect();
     CheckedArena {
         nodes: builder.nodes,
         statements: builder.statements,
         roots,
         wrapper_roots,
-        member_roots,
     }
 }
 
@@ -3807,7 +3801,6 @@ struct CheckedArena {
     statements: Vec<CheckedStmt>,
     roots: Vec<CheckedStmtId>,
     wrapper_roots: Vec<Vec<CheckedStmtId>>,
-    member_roots: Vec<CheckedStmtId>,
 }
 
 /// The checked arena under construction.
@@ -3818,11 +3811,31 @@ struct ArenaBuilder<'a, 's> {
     nodes: Vec<CheckedExpr>,
     statements: Vec<CheckedStmt>,
     facts: &'a HashMap<SourceSpan, NodeFacts>,
+    /// The members whose `def` nodes a trait's defaults are built as.
+    trait_members: &'a [CheckedTraitMember],
 }
 
 impl<'a> ArenaBuilder<'a, '_> {
     fn facts(&self, span: &SourceSpan) -> &'a NodeFacts {
         self.facts.get(span).unwrap_or(&NodeFacts::EMPTY)
+    }
+
+    /// The `def` of the member method `index` of trait `trait_name`, which
+    /// `statement` declares, defaults to.
+    fn member_declaration(
+        &self,
+        statement: &Stmt,
+        trait_name: &str,
+        index: usize,
+    ) -> Option<&'a Stmt> {
+        self.trait_members
+            .iter()
+            .find(|member| {
+                member.module == statement.module
+                    && member.trait_name == trait_name
+                    && member.method_index == index
+            })
+            .map(|member| &member.declaration)
     }
 
     fn expr(&mut self, expression: &Expr) -> CheckedNodeId {
@@ -4386,7 +4399,8 @@ impl<'a> ArenaBuilder<'a, '_> {
             } => {
                 let methods = methods
                     .iter()
-                    .map(|method| CheckedTraitMethod {
+                    .enumerate()
+                    .map(|(index, method)| CheckedTraitMethod {
                         name: method.name.clone(),
                         type_params: method.type_params.clone(),
                         self_convention: method.self_convention,
@@ -4398,7 +4412,11 @@ impl<'a> ArenaBuilder<'a, '_> {
                         raises_type: method.raises_type.clone(),
                         ret: method.ret.clone(),
                         where_clauses: values(self, &method.where_clauses),
-                        default_body: optional_block(self, &method.default_body),
+                        default: method
+                            .default_body
+                            .as_ref()
+                            .and_then(|_| self.member_declaration(statement, name, index))
+                            .map(|member| self.stmt(member)),
                     })
                     .collect();
                 let comptime_members = comptime_members

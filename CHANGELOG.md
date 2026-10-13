@@ -8,6 +8,12 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A trait default's body is built as checked nodes once (R657): the
+  trait's op names its member's `def` node (`CheckedTraitMethod::default`)
+  instead of holding a second copy of the body, as upstream's trait names
+  its member function, and lowering units find the member through its
+  trait. No program's output or MIR changes.
+
 - MIR reads each declaration it lowers from its checked op (R643): a
   `def`'s name, parameters, markers, and defaults from its `CheckedDef`, a
   struct's fields and methods from its `CheckedStruct`, and a trait

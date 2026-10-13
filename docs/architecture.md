@@ -1744,8 +1744,8 @@ declaration. A function's root statements are its op's body; the tables keep
 the module's and each default wrapper's. A lambda's op names its `def`'s
 statement node. HIR walks the statement and expression nodes, and every CFG
 builder is handed its body's statement ids: a unit's from its declaration's
-op (a `def`'s body, a method's, a trait member's own `def` node
-(`CheckedTables::member_root`), a wrapper's `CheckedTables::wrapper_roots`), the top level's from
+op (a `def`'s body, a method's, a trait member's `def` node, which its
+trait's op names (`CheckedTraitMethod::default`), a wrapper's `CheckedTables::wrapper_roots`), the top level's from
 `CheckedTables::roots`, a nested `def`'s or lambda's from its `CheckedDef`,
 a `try` region's from the op, and an expression thunk's its prologue
 bindings' nodes and its returned value's node (`Cfg::build_checked_thunk`).

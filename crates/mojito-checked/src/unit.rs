@@ -133,14 +133,18 @@ impl CheckedProgram {
                 StmtKind::Trait { name, .. } => units.extend(
                     self.trait_members()
                         .iter()
-                        .enumerate()
-                        .filter(|(_, member)| {
+                        .filter(|member| {
                             member.trait_name == *name && member.module == statement.module
                         })
-                        .filter_map(|(index, member)| {
+                        .filter_map(|member| {
+                            let CheckedStmtOp::Trait(declaration) =
+                                &self.tables().statement(*root)?.op
+                            else {
+                                return None;
+                            };
                             Some(LoweringUnit::TraitMember {
                                 member,
-                                root: self.tables().member_root(index)?,
+                                root: declaration.methods.get(member.method_index)?.default?,
                             })
                         }),
                 ),
