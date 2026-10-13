@@ -66,17 +66,26 @@ pub(super) fn elaborate_drops(
         })
         .collect();
 
-    // First compute ordinary variable liveness without folding loan owners into
-    // the sets. Owner retention is generation-sensitive, so adding it here would
-    // lose path correlation at CFG joins and make every historical owner of a
-    // rebound aggregate appear live forever.
+    // First compute ordinary variable liveness, with each instruction's
+    // register-loan uses folded in at their exact consuming point (so a
+    // register loaded in one block and consumed in another keeps its owner
+    // live across the edge), but without folding loan generation owners into
+    // the sets. Generation retention is joined at CFG merges, so adding it
+    // here would lose path correlation and make every historical owner of a
+    // rebound aggregate appear live forever; `effective_drop_liveness` adds
+    // it per edge instead.
     let predecessors = block_predecessors(&f.blocks);
     let mut live_in: Vec<HashSet<VarId>> = vec![HashSet::new(); nb];
     let mut worklist = Worklist::backward(&f.blocks);
     while let Some(b) = worklist.pop() {
         let live_out = block_live_out(f, b, &live_in);
-        let new_in =
-            transfer_drop_liveness(&f.blocks[b].instrs, live_out, &live_in, &function_defs);
+        let new_in = transfer_drop_liveness(
+            &f.blocks[b].instrs,
+            &register_loan_uses[b],
+            live_out,
+            &live_in,
+            &function_defs,
+        );
         if new_in != live_in[b] {
             live_in[b] = new_in;
             for predecessor in &predecessors[b] {
@@ -541,21 +550,6 @@ pub(super) fn elaborate_region_drops(
         return seeds.fall_off.clone();
     }
 
-    let predecessors = block_predecessors(blocks);
-    let mut live_in: Vec<HashSet<VarId>> = vec![HashSet::new(); nb];
-    let mut worklist = Worklist::backward(blocks);
-    while let Some(b) = worklist.pop() {
-        let live_out = region_block_live_out(blocks, b, &live_in, seeds);
-        let new_in =
-            transfer_region_drop_liveness(&blocks[b].instrs, live_out, seeds, ctx.function_defs);
-        if new_in != live_in[b] {
-            live_in[b] = new_in;
-            for predecessor in &predecessors[b] {
-                worklist.push(*predecessor);
-            }
-        }
-    }
-
     let generation_entries =
         loan_generation_entries_over(blocks, entry_generations, ctx.generation_dests);
     let RegisterLoans {
@@ -570,6 +564,27 @@ pub(super) fn elaborate_region_drops(
         &f.reg_types,
         ctx.passing,
     );
+
+    let predecessors = block_predecessors(blocks);
+    let mut live_in: Vec<HashSet<VarId>> = vec![HashSet::new(); nb];
+    let mut worklist = Worklist::backward(blocks);
+    while let Some(b) = worklist.pop() {
+        let live_out = region_block_live_out(blocks, b, &live_in, seeds);
+        let new_in = transfer_region_drop_liveness(
+            &blocks[b].instrs,
+            &register_uses[b],
+            live_out,
+            seeds,
+            ctx.function_defs,
+        );
+        if new_in != live_in[b] {
+            live_in[b] = new_in;
+            for predecessor in &predecessors[b] {
+                worklist.push(*predecessor);
+            }
+        }
+    }
+
     let generation_exits: Vec<LoanGenerationState> = blocks
         .iter()
         .zip(&generation_entries)
@@ -741,18 +756,13 @@ pub(super) fn region_block_live_out(
 /// reach it.
 pub(super) fn transfer_region_drop_liveness(
     instrs: &[MirInstr],
+    register_uses: &[RegisterUses],
     mut live: HashSet<VarId>,
     seeds: &RegionSeeds,
     function_defs: &HashMap<VarId, usize>,
 ) -> HashSet<VarId> {
-    for instr in instrs.iter().rev() {
-        if let Some(d) = var_def(instr) {
-            live.remove(&d);
-        }
-        live.extend(drop_liveness_uses(instr, function_defs));
-        if let MirInstr::ConsumeVar { var } = instr {
-            live.insert(*var);
-        }
+    for (instr, uses) in instrs.iter().zip(register_uses).rev() {
+        transfer_instruction_drop_liveness(&mut live, instr, uses, function_defs);
         live.extend(escape_live_in(instr, seeds.effective_live_in));
         if may_raise(instr) {
             live.extend(seeds.raise.iter().copied());
@@ -946,21 +956,14 @@ pub(super) fn active_drop_loan_roots(
 
 pub(super) fn transfer_drop_liveness(
     instrs: &[MirInstr],
+    register_uses: &[RegisterUses],
     mut live: HashSet<VarId>,
     live_in: &[HashSet<VarId>],
     function_defs: &HashMap<VarId, usize>,
 ) -> HashSet<VarId> {
-    for instr in instrs.iter().rev() {
-        if let Some(d) = var_def(instr) {
-            live.remove(&d);
-        }
-        live.extend(drop_liveness_uses(instr, function_defs));
+    for (instr, uses) in instrs.iter().zip(register_uses).rev() {
+        transfer_instruction_drop_liveness(&mut live, instr, uses, function_defs);
         live.extend(escape_live_in(instr, live_in));
-        // A pending `ConsumeVar` is the variable's teardown: keep it live up
-        // to that point so no earlier death splices a competing `DropVar`.
-        if let MirInstr::ConsumeVar { var } = instr {
-            live.insert(*var);
-        }
     }
     live
 }
@@ -1499,10 +1502,31 @@ impl InPlaceDeaths {
     }
 }
 
-/// The variables `live` keeps alive through the loan generations of `state`
-/// beyond itself: the owner roots of every generation a live reference (or a
-/// root kept alive this way) holds, as [`effective_drop_liveness`] closes
-/// them.
+/// One instruction's step of the backward drop-liveness transfer: its def
+/// dies, and its direct reads, its pending `ConsumeVar`, and the roots it
+/// consumes through its operand registers become live. Counting the register
+/// uses here is what keeps an owner live across an edge when the register is
+/// loaded in one block and consumed in another, as the replay counts them
+/// within a block.
+fn transfer_instruction_drop_liveness(
+    live: &mut HashSet<VarId>,
+    instr: &MirInstr,
+    register_uses: &RegisterUses,
+    function_defs: &HashMap<VarId, usize>,
+) {
+    if let Some(d) = var_def(instr) {
+        live.remove(&d);
+    }
+    live.extend(drop_liveness_uses(instr, function_defs));
+    // A pending `ConsumeVar` is the variable's teardown: keep it live up to
+    // that point so no earlier death splices a competing `DropVar`.
+    if let MirInstr::ConsumeVar { var } = instr {
+        live.insert(*var);
+    }
+    live.extend(&register_uses.retained);
+    live.extend(&register_uses.loaded);
+}
+
 /// The variables an instruction reads, for drop liveness: [`var_uses`], less
 /// a `try` body's locals. `Try.cleanup` destroys those on every exit from
 /// the body, so their slots are empty whenever the `try` is entered and
@@ -1521,6 +1545,10 @@ fn drop_liveness_uses(instr: &MirInstr, function_defs: &HashMap<VarId, usize>) -
     }
 }
 
+/// The variables `live` keeps alive through the loan generations of `state`
+/// beyond itself: the owner roots of every generation a live reference (or a
+/// root kept alive this way) holds, as [`effective_drop_liveness`] closes
+/// them.
 fn loan_extras(
     live: &DenseSet,
     state: &LoanGenerationState,

@@ -287,21 +287,6 @@ Track: `ownership`.
 
 Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the track, an entry Mojito runs to a wrong result, or accepts where the pin rejects, comes first; then one it rejects where the pin runs it; then a verdict that is right with the wrong words.
 
-- [ ] **R745 A read temporary whose call has a conditional argument after
-  it is destroyed before the call**
-
-  Problem: `show_n(M(2), 3 if c else 4)` over `def show_n(s: M, n: Int)`
-  prints `del 2` before `show_n 2 3`, where the pin destroys the temporary
-  after the call returns.
-  - The callee reads a destroyed value.
-  - Drop elaboration puts the `$tmp_arg_r` slot's `DropVar` at the end of
-    the block that loads it, before the conditional's branch.
-  - The loaded register stays live into the join block holding the call,
-    but liveness does not keep its slot alive across that edge.
-  - Found while landing R736 (2026-10-13).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R473 A discard `_ = x` copies its source instead of taking it**
 
   Problem: `var x = Q(1, "y")` then `_ = x` as `x`'s last use prints

@@ -8,6 +8,11 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A read temporary whose call takes a conditional expression argument after
+  it is destroyed when the call returns, as the pin does (R745):
+  `show_n(M(2), 3 if c else 4)` prints `show_n 2 3` before `del 2`, at top
+  level, inside a `try`, round a loop, and as a method receiver, where the
+  callee used to read a destroyed value.
 - A copy construction a read parameter or read operator operand takes at
   its source's last use lends the source's storage, as the pin does
   (R736): `show(M(copy=a))` runs neither the copy nor the move

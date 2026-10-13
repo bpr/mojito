@@ -4535,7 +4535,12 @@ instruction. The liveness pass handles these by inserting drops:
 - in a fresh split block for critical edges
 
 This keeps ASAP destruction precise across branches, both in a function's
-top-level CFG and inside each `try` region's mini-CFG.
+top-level CFG and inside each `try` region's mini-CFG. The block-level
+backward liveness, top-level and per region, counts each instruction's
+register-loan uses (`RegisterUses`) as the per-instruction replay does, so a
+register loaded in one block and consumed in another — a read temporary
+loaded before a later conditional argument's branch — keeps its owner live
+across the edge until the consuming call.
 
 ### Try Region Drops
 

@@ -537,6 +537,18 @@ fn copy_construction_read_argument_lends_its_source() {
 }
 
 #[test]
+fn read_temporary_outlives_conditional_argument() {
+    // A read temporary loaded before a later conditional argument's branch is
+    // consumed by the call in the join block, so it dies when the call
+    // returns: at top level, inside a `try`, round a loop, and as a receiver.
+    let src = "struct M(Movable):\n    var v: Int\n    def __init__(out self, v: Int):\n        self.v = v\n    def __deinit__(deinit self):\n        print(\"del\", self.v)\n\nstruct H(Movable):\n    var v: Int\n    def __init__(out self, v: Int):\n        self.v = v\n    def show(self, n: Int):\n        print(\"H.show\", self.v, n)\n    def __deinit__(deinit self):\n        print(\"del H\", self.v)\n\ndef show_n(s: M, n: Int):\n    print(\"show_n\", s.v, n)\n\ndef main():\n    var c = True\n    show_n(M(2), 3 if c else 4)\n    try:\n        show_n(M(7), 3 if c else 4)\n    except e:\n        print(e)\n    for i in range(2):\n        show_n(M(10 + i), 1 if c else 0)\n    H(9).show(3 if c else 4)\n";
+    assert_eq!(
+        vm(src),
+        "show_n 2 3\ndel 2\nshow_n 7 3\ndel 7\nshow_n 10 1\ndel 10\nshow_n 11 1\ndel 11\nH.show 9 3\ndel H 9\n"
+    );
+}
+
+#[test]
 fn conditional_expression_result_is_taken_not_copied() {
     // Each arm initializes the conditional's owned result once (a `^` arm by
     // a move, a place arm by a copy), and its consumer takes it as any other
