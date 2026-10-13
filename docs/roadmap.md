@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R754**.
+Next free ID: **R755**.
 
 ## Ordered Work
 
@@ -5516,20 +5516,21 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R658 A bracket argument written as a value but resolved to a
-  type or an origin is a name node, where upstream's is an attribute**
+- [ ] **R754 A type-keyed subscript's type is an index node, where
+  upstream's is the accessor call's parameter attribute**
 
-  `CheckedParamArg::Value` holds a node for `List[String]`'s `String` or
-  `Pointer[UInt8, MutUntrackedOrigin]`'s origin when the parser read the
-  argument as an expression.
-  - MIR tells such a node apart by its missing type
-    (`type_keyed_accessor_call`) and the checker's
-    `EraseCompileTimeArgument` adjustment.
-  - The lever: the check records an attribute for every bracket argument
-    (`NodeFacts::parameter_attributes`), and a value-shaped one it
-    resolved to a type or an origin becomes `CheckedParamArg::Attribute`.
-  - Done when no MIR code reads `EraseCompileTimeArgument`.
-  - Found while landing R628 (2026-10-13).
+  `v[Int]` on the bundled `Variant`/`Tuple` keeps `Int` as the
+  `CheckedOp::Index` index node, and MIR recognises it by its missing type.
+  - Site: `type_keyed_accessor_call` (`mir.rs`), used by
+    `expr_access.rs` and `lower_stmt.rs`.
+  - The check already binds the index as the accessor's type argument
+    (`indexing.rs`, a synthesised `ParamArg::Value`), so it records a
+    `NodeFacts::argument_attribute` at the index.
+  - The lever: the checked op for a type-keyed subscript carries that
+    attribute, as upstream's `__getitem__[T]()` call does, and MIR decides
+    by the op.
+  - Done when `type_keyed_accessor_call` reads no `ty.is_none()`.
+  - Found while landing R658 (2026-10-13).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

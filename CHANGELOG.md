@@ -8,6 +8,12 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A bracket argument written as a value that the check binds to a type or
+  an origin (`List[String]()`'s `String`, `Pointer[Int, origin_of(x)]`'s
+  origin) is now the call's parameter attribute rather than a name node,
+  as upstream's call op carries it (R658). The check records it as it
+  binds the argument, and MIR no longer reads an erasure mark to skip it;
+  the generated MIR is unchanged. The bundled package format is 46.
 - A copy construction a read receiver takes at its source's last use
   (`M(copy=d).show()`) lends the source's storage to the method, as the pin
   does (R746): no copy or move initializer runs, and the source dies when

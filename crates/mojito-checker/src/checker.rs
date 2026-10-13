@@ -1258,7 +1258,7 @@ impl Checker {
     /// The value expressions among `param_args` that binding left as runtime
     /// values. A bare type argument (`hash[MyHasher](x)`) is a value
     /// expression syntactically; binding already resolved it as a type and
-    /// erased it, so it is not one of them.
+    /// recorded it as an attribute, so it is not one of them.
     fn runtime_param_arg_expressions<'a>(
         &self,
         param_args: &'a [mojito_ast::ast::ParamArg],
@@ -1276,15 +1276,9 @@ impl Checker {
                 mojito_ast::ast::ParamArg::Type(_) => None,
             })
             .filter(|expression| {
-                !records
+                records
                     .get(&expression.source_span())
-                    .and_then(|facts| facts.adjustment.as_deref())
-                    .is_some_and(|adjustment| {
-                        matches!(
-                            adjustment,
-                            mojito_checked::checked::SemanticAdjustment::EraseCompileTimeArgument
-                        )
-                    })
+                    .is_none_or(|facts| facts.argument_attribute.is_none())
             })
             .collect()
     }

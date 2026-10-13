@@ -149,15 +149,9 @@ impl Checker {
                 let operand = match argument {
                     mojito_ast::ast::ParamArg::Type(_) => None,
                     mojito_ast::ast::ParamArg::Value(expression) => {
-                        let erased = self.has_fact(&expression.source_span(), |facts| {
-                            matches!(
-                                facts.adjustment.as_deref(),
-                                Some(
-                                    mojito_checked::checked::SemanticAdjustment::EraseCompileTimeArgument
-                                )
-                            )
-                        });
-                        if erased {
+                        if self.has_fact(&expression.source_span(), |facts| {
+                            facts.argument_attribute.is_some()
+                        }) {
                             return None;
                         }
                         Some(position)

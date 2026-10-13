@@ -781,12 +781,12 @@ impl Checker {
             }
             supplied[index] = true;
             if let Some(origin_index) = parameter.origin {
+                let origin = self.explicit_origin_argument(&value)?;
                 if let ParamArg::Value(expression) = &value {
-                    self.record_at(expression.source_span()).adjustment = Some(Box::new(
-                        mojito_checked::checked::SemanticAdjustment::EraseCompileTimeArgument,
-                    ));
+                    self.record_at(expression.source_span()).argument_attribute =
+                        Some(mojito_types::types::TyArg::Origin(origin.clone()));
                 }
-                origins[origin_index] = Some(self.explicit_origin_argument(&value)?);
+                origins[origin_index] = Some(origin);
             } else if parameter.ordinary {
                 ordinary.push(if is_named {
                     ParamArg::Named {

@@ -3203,21 +3203,12 @@ impl<'a> Flatten<'a> {
             // A type or an origin argument is compile-time data on the call.
             CheckedParamArg::Attribute { .. } => return None,
         }?;
-        if operand.adjustments().iter().any(|adjustment| {
-            matches!(
-                adjustment,
-                mojito_checked::checked::SemanticAdjustment::EraseCompileTimeArgument
-            )
-        }) {
-            None
-        } else {
-            // An argument read off a local display binding (`g[L[0]]()`) is
-            // the application the elaborator runs.
-            Some(match self.display_read(operand) {
-                Some((value, _)) => value,
-                None => self.expr(operand),
-            })
-        }
+        // An argument read off a local display binding (`g[L[0]]()`) is the
+        // application the elaborator runs.
+        Some(match self.display_read(operand) {
+            Some((value, _)) => value,
+            None => self.expr(operand),
+        })
     }
 
     /// The register of a compile-time value a type-shaped bracket argument
@@ -3254,34 +3245,19 @@ impl<'a> Flatten<'a> {
     /// for the checker to solve reference and capture contracts, but they have
     /// no slot in `ParamDecl`.  Drop those arguments from the runtime parameter
     /// vector instead of emitting an ambiguous `None` that would shift every
-    /// following callable/scalar value parameter. A type-shaped argument the
-    /// check resolved to an origin (`V[Self.o]`) is one, as is a value-shaped
-    /// one it marked `EraseCompileTimeArgument`. A closed value the call
-    /// carries in its instantiated arguments (`folded`) is compile-time data
-    /// on the call, as at Mojo's.
-    fn param_arg_has_no_runtime_form(
-        call: Node<'a>,
-        argument: &CheckedParamArg,
-        folded: bool,
-    ) -> bool {
-        let operand = match argument {
-            CheckedParamArg::Value(_) => call.param_value(argument),
+    /// following callable/scalar value parameter. An argument the check
+    /// resolved to an origin (`V[Self.o]`, `Pointer[Int, origin_of(x)]`) is
+    /// one. A closed value the call carries in its instantiated arguments
+    /// (`folded`) is compile-time data on the call, as at Mojo's.
+    fn param_arg_has_no_runtime_form(argument: &CheckedParamArg, folded: bool) -> bool {
+        match argument {
+            CheckedParamArg::Value(_) => folded,
             CheckedParamArg::Named { value, .. } => match &**value {
-                CheckedParamArg::Value(_) => call.param_value(value),
-                CheckedParamArg::Attribute { value, .. } => return resolved_origin(value.as_ref()),
-                CheckedParamArg::Named { .. } => None,
+                CheckedParamArg::Attribute { value, .. } => resolved_origin(value.as_ref()),
+                CheckedParamArg::Value(_) | CheckedParamArg::Named { .. } => folded,
             },
-            CheckedParamArg::Attribute { value, .. } => return resolved_origin(value.as_ref()),
-        };
-        folded
-            || operand.is_some_and(|operand| {
-                operand.adjustments().iter().any(|adjustment| {
-                    matches!(
-                        adjustment,
-                        mojito_checked::checked::SemanticAdjustment::EraseCompileTimeArgument
-                    )
-                })
-            })
+            CheckedParamArg::Attribute { value, .. } => resolved_origin(value.as_ref()),
+        }
     }
 
     /// `Self.n` in a bracket slot, where `n` is the enclosing struct's own
@@ -3550,11 +3526,8 @@ impl<'a> Flatten<'a> {
                 CheckedParamArg::Named { name, .. } => Some(name.clone()),
                 CheckedParamArg::Attribute { .. } | CheckedParamArg::Value(_) => None,
             };
-            let value = if Self::param_arg_has_no_runtime_form(
-                call,
-                argument,
-                folded.contains(&position),
-            ) {
+            let value = if Self::param_arg_has_no_runtime_form(argument, folded.contains(&position))
+            {
                 None
             } else {
                 self.param_arg_reg(call, argument, &site)
@@ -4813,7 +4786,7 @@ mod nested;
 use nested::*;
 use node::Node;
 
-/// Whether a type-shaped bracket argument resolved to an origin.
+/// Whether a bracket argument's attribute is an origin.
 const fn resolved_origin(value: Option<&TyArg>) -> bool {
     matches!(value, Some(TyArg::Origin(_)))
 }

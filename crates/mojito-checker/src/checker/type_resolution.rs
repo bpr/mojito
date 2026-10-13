@@ -896,7 +896,13 @@ impl Checker {
                     if strict == super::StorageStrictness::Full {
                         return Err(TypeError::NotConcrete(name.to_string()));
                     }
-                    self.accept_origin_argument(name, param, argument, None)?;
+                    self.accept_origin_argument(
+                        name,
+                        param,
+                        argument,
+                        mojito_types::origin::Origin::Unbound,
+                        None,
+                    )?;
                     continue;
                 }
                 match self.resolve_origin_param_arg(argument) {
@@ -908,7 +914,13 @@ impl Checker {
                         if self.signature_origin_leniency.get()
                             && syntactic_origin_argument(argument)
                         {
-                            self.accept_origin_argument(name, param, argument, None)?;
+                            self.accept_origin_argument(
+                                name,
+                                param,
+                                argument,
+                                mojito_types::origin::Origin::Unbound,
+                                None,
+                            )?;
                             continue;
                         }
                         // An origin-shaped argument that does not resolve is
@@ -923,7 +935,7 @@ impl Checker {
             }
             let mut explicit_origins = Vec::with_capacity(resolved.len());
             for (param, argument, (origin, mutability)) in resolved {
-                self.accept_origin_argument(name, param, argument, mutability)?;
+                self.accept_origin_argument(name, param, argument, origin.clone(), mutability)?;
                 explicit_origins.push(ExplicitStructOrigin {
                     id: slot_id(param),
                     origin,
@@ -956,13 +968,25 @@ impl Checker {
                     if strict == super::StorageStrictness::Full {
                         return Err(TypeError::NotConcrete(name.to_string()));
                     }
-                    self.accept_origin_argument(name, param, argument, None)?;
+                    self.accept_origin_argument(
+                        name,
+                        param,
+                        argument,
+                        mojito_types::origin::Origin::Unbound,
+                        None,
+                    )?;
                     supplied_origins.push(&param.name);
                     continue;
                 }
                 match self.resolve_origin_param_arg(argument) {
                     Ok((origin, mutability)) => {
-                        self.accept_origin_argument(name, param, argument, mutability)?;
+                        self.accept_origin_argument(
+                            name,
+                            param,
+                            argument,
+                            origin.clone(),
+                            mutability,
+                        )?;
                         supplied_origins.push(&param.name);
                         explicit_origins.push(ExplicitStructOrigin {
                             id: slot_id(param),
@@ -1062,15 +1086,15 @@ impl Checker {
 
     /// Accept one resolved origin argument against its declared slot: a slot
     /// declared `Origin[mut=True]` rejects a provably immutable argument, and
-    /// the accepted argument is marked erased — it is a compile-time fact, so
-    /// at a constructor expression MIR must not emit it as a runtime value
-    /// register. A storage annotation is never lowered, so its arguments
-    /// record nothing.
+    /// a value-shaped accepted argument records `origin` as its attribute —
+    /// it is compile-time data on the construction, never a runtime value. A
+    /// storage annotation is never lowered, so its arguments record nothing.
     fn accept_origin_argument(
         &self,
         struct_name: &str,
         param: &mojito_ast::ast::TypeParam,
         argument: &mojito_ast::ast::ParamArg,
+        origin: mojito_types::origin::Origin,
         mutability: Option<mojito_types::origin::Mutability>,
     ) -> Result<(), TypeError> {
         let requires_mut = matches!(
@@ -1099,9 +1123,8 @@ impl Checker {
         if self.strict_storage_annotation.get() == super::StorageStrictness::Off
             && let mojito_ast::ast::ParamArg::Value(expression) = value
         {
-            self.record_at(expression.source_span()).adjustment = Some(Box::new(
-                mojito_checked::checked::SemanticAdjustment::EraseCompileTimeArgument,
-            ));
+            self.record_at(expression.source_span()).argument_attribute =
+                Some(TyArg::Origin(origin));
         }
         Ok(())
     }
@@ -1810,11 +1833,11 @@ impl Checker {
         match decl {
             ParamDecl::Type { name, bounds, .. } => {
                 // A bare or parameterized type argument the parser encoded as a
-                // value expression carries a fact, recorded only once the
-                // argument resolves and satisfies its bounds: an overload
-                // probe that rejects this declaration leaves no fact behind
-                // for the declaration that wins.
-                let (ty, fact) = match arg {
+                // value expression records the type as its attribute, only
+                // once the argument resolves and satisfies its bounds: an
+                // overload probe that rejects this declaration leaves no fact
+                // behind for the declaration that wins.
+                let (ty, value_span) = match arg {
                     ParamArg::Type(t) => (self.ty_from_anno(t)?, None),
                     ParamArg::Value(
                         expression @ Expr {
@@ -1822,13 +1845,10 @@ impl Checker {
                             ..
                         },
                     ) => {
-                        // Once it resolves as a type, MIR must not emit it as
-                        // a runtime value register: the type is compile-time
-                        // data on the call.
+                        // Once it resolves as a type, it is the call's
+                        // parameter attribute, never a runtime value.
                         let ty = self.ty_from_anno(&SourceType::Named(id.clone(), vec![]))?;
-                        let fact =
-                            mojito_checked::checked::SemanticAdjustment::EraseCompileTimeArgument;
-                        (ty, Some((expression.source_span(), fact)))
+                        (ty, Some(expression.source_span()))
                     }
                     // A parameterized type argument (`Dict[Variant[Int, String],
                     // Int]()`): specialization has already rewritten a variadic
@@ -1845,10 +1865,7 @@ impl Checker {
                         },
                     ) => (
                         self.ty_from_anno(&SourceType::Named(applied.clone(), args.clone()))?,
-                        Some((
-                            expression.source_span(),
-                            mojito_checked::checked::SemanticAdjustment::EraseCompileTimeArgument,
-                        )),
+                        Some(expression.source_span()),
                     ),
                     ParamArg::Value(_) => {
                         return Err(TypeError::TypeMismatch {
@@ -1871,8 +1888,8 @@ impl Checker {
                         });
                     }
                 }
-                if let Some((span, fact)) = fact {
-                    self.record_at(span).adjustment = Some(Box::new(fact));
+                if let Some(span) = value_span {
+                    self.record_at(span).argument_attribute = Some(TyArg::Ty(ty.clone()));
                 }
                 Ok(TyArg::Ty(ty))
             }
@@ -2015,10 +2032,11 @@ impl Checker {
         }
     }
 
-    /// Record what each type-shaped bracket argument of call, invoke, or
-    /// type application `expr` resolved to
-    /// ([`mojito_checked::checked::NodeFacts::parameter_attributes`]), as
-    /// upstream's op carries each bracket argument as the parameter
+    /// Record what each bracket argument of call, invoke, or type
+    /// application `expr` resolved to that is not a run-time value — a
+    /// type-shaped one, or a value-shaped one binding bound to a type or an
+    /// origin ([`mojito_checked::checked::NodeFacts::parameter_attributes`])
+    /// — as upstream's op carries each bracket argument as the parameter
     /// attribute its check produced.
     pub(super) fn record_parameter_attributes(&self, expr: &Expr) {
         // A type application in receiver position resolves as the
@@ -2049,13 +2067,13 @@ impl Checker {
         else {
             return;
         };
-        if !param_args.iter().any(type_shaped) {
-            return;
-        }
-        let attributes = param_args
+        let attributes: Vec<_> = param_args
             .iter()
             .map(|argument| self.parameter_attribute(argument))
             .collect();
+        if attributes.iter().all(Option::is_none) {
+            return;
+        }
         self.record_at(expr.source_span()).parameter_attributes = Some(attributes);
     }
 
@@ -3047,13 +3065,19 @@ impl Checker {
     /// [`Self::resolve_param_arg`] decides it for whichever parameter it
     /// binds: a value pack spread whole (`*vs`), an origin (`Self.o`,
     /// `MutUntrackedOrigin`), the struct's own value parameter (`Self.n`),
-    /// a local display's element (`L[0]`), or a type. `None` for a
-    /// value-shaped argument, and for one that resolves as none of these.
+    /// a local display's element (`L[0]`), or a type. A value-shaped
+    /// argument answers what binding recorded for it
+    /// ([`mojito_checked::checked::NodeFacts::argument_attribute`]): `None`
+    /// for a run-time value.
     fn parameter_attribute(&self, argument: &mojito_ast::ast::ParamArg) -> Option<TyArg> {
         use mojito_ast::ast::ParamArg;
         let ty = match argument {
             ParamArg::Named { value, .. } => return self.parameter_attribute(value),
-            ParamArg::Value(_) => return None,
+            ParamArg::Value(value) => {
+                return self.fact(&value.source_span(), |facts| {
+                    facts.argument_attribute.as_ref()
+                });
+            }
             ParamArg::Type(ty) => ty,
         };
         if let Some(pack) = self.value_pack_spread(argument) {
@@ -3119,15 +3143,6 @@ impl Checker {
             CtValue::Type(ty) => Some(TyArg::Ty(ty)),
             value => Some(TyArg::Val(value)),
         }
-    }
-}
-
-/// Whether a bracket argument is written in type position.
-fn type_shaped(argument: &mojito_ast::ast::ParamArg) -> bool {
-    match argument {
-        mojito_ast::ast::ParamArg::Type(_) => true,
-        mojito_ast::ast::ParamArg::Value(_) => false,
-        mojito_ast::ast::ParamArg::Named { value, .. } => type_shaped(value),
     }
 }
 

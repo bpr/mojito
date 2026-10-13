@@ -902,10 +902,13 @@ names it (`CheckedOp::TypeValue`, `CheckedParamArg::Attribute`,
 `CheckedStmtOp::VarDecl`'s `applications`), apart from its operands. A type
 operand of an op is never the annotation as written: as upstream's call op
 carries each bracket argument as the parameter attribute its check produced,
-the check records each type-shaped bracket argument's `TyArg` — a type, a
+the check records the `TyArg` of each bracket argument that is not a
+run-time value at the occurrence (`NodeFacts::parameter_attributes`,
+`Checker::record_parameter_attributes`): a type-shaped one's — a type, a
 value it names (`Self.n`, a pack spread `*vs`, a display element `L[0]`), or
-an origin — at the occurrence (`NodeFacts::parameter_attributes`,
-`Checker::record_parameter_attributes`), and a type in value position its
+an origin — and a value-shaped one's it bound to a type or an origin
+(`List[String]`, `Pointer[Int, origin_of(x)]`), which binding records as it
+binds (`NodeFacts::argument_attribute`), and a type in value position its
 `Ty` (`NodeFacts::type_operand`, `Checker::type_value`); the op holds them,
 and MIR reads them instead of the spelling. A closed one in a plain `def`
 (`g[h(3)]()`) is lifted the same way, over no binder. A call of a

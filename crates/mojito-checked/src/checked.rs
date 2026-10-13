@@ -813,10 +813,6 @@ pub enum SemanticAdjustment {
     /// non-escaping callable arguments; MIR translates stable owner identities
     /// to function-local slots and loan analysis treats them as call effects.
     CallableCaptureAccesses(Vec<mojito_types::origin::CaptureOrigin>),
-    /// This checked compile-time argument is semantic-only. MIR retains its
-    /// source position for declaration alignment but must not evaluate it into
-    /// a runtime register (notably an explicitly supplied `Origin`).
-    EraseCompileTimeArgument,
     /// Every compile-time argument a call of a generic `def` or a
     /// construction solved, in declaration order
     /// ([`GenericInstantiation::arguments`]), those it inferred from its
@@ -1553,8 +1549,9 @@ pub enum CheckedParamArg {
     /// A bracket argument written in type position, as the check resolved
     /// it: a type, a compile-time value the spelling names (`Self.n`, a
     /// value-pack spread, a display element `L[0]`), or an origin; `None`
-    /// where the check resolved none. With the nodes of the applications
-    /// the check lifted out of it.
+    /// where the check resolved none. Or one written as a value and bound
+    /// to a type or an origin (`List[String]`, `Pointer[Int, origin_of(x)]`).
+    /// With the nodes of the applications the check lifted out of it.
     Attribute {
         value: Option<mojito_types::types::TyArg>,
         applications: Vec<CheckedNodeId>,
@@ -3669,10 +3666,11 @@ impl<'a> ArenaBuilder<'a, '_> {
             .collect()
     }
 
-    /// The bracket arguments of `expression`. A type-shaped argument is
-    /// the attribute the check recorded at its position
-    /// ([`NodeFacts::parameter_attributes`]), and builds the nodes of its
-    /// lifted applications only.
+    /// The bracket arguments of `expression`. An argument the check
+    /// resolved to an attribute — a type-shaped one, or a value-shaped one
+    /// it bound to a type or an origin — is the attribute it recorded at
+    /// its position ([`NodeFacts::parameter_attributes`]), and builds the
+    /// nodes of its lifted applications only.
     fn param_args(&mut self, expression: &Expr, arguments: &[ParamArg]) -> Vec<CheckedParamArg> {
         let attributes = self
             .facts(&expression.source_span())
@@ -3699,6 +3697,10 @@ impl<'a> ArenaBuilder<'a, '_> {
                 value: attribute,
                 applications: self.type_applications(ty),
             },
+            ParamArg::Value(value) if attribute.is_some() => CheckedParamArg::Attribute {
+                value: attribute,
+                applications: self.expression_applications(value),
+            },
             ParamArg::Value(value) => CheckedParamArg::Value(self.expr(value)),
             ParamArg::Named { name, value } => CheckedParamArg::Named {
                 name: name.clone(),
@@ -3712,32 +3714,25 @@ impl<'a> ArenaBuilder<'a, '_> {
     /// MIR lowers it in that function, away from the annotation that
     /// spells it. Any other expression of an annotation has no node.
     fn type_applications(&mut self, ty: &mojito_ast::ast::Type) -> Vec<CheckedNodeId> {
-        struct Applied<'a> {
-            facts: &'a HashMap<SourceSpan, NodeFacts>,
-            found: Vec<Expr>,
-        }
-        impl mojito_ast::visit::Visitor for Applied<'_> {
-            fn visit_expr(&mut self, expression: &Expr) {
-                let nested = self.found.last().is_some_and(|outer| {
-                    outer.span.0 <= expression.span.0 && expression.span.1 <= outer.span.1
-                });
-                if !nested
-                    && matches!(
-                        self.facts
-                            .get(&expression.source_span())
-                            .and_then(|facts| facts.adjustment.as_deref()),
-                        Some(SemanticAdjustment::ComptimeApplication { .. })
-                    )
-                {
-                    self.found.push(expression.clone());
-                }
-            }
-        }
-        let mut applied = Applied {
+        self.applications(|applied| mojito_ast::visit::walk_type(applied, ty))
+    }
+
+    /// [`Self::type_applications`] for a bracket argument written as a
+    /// value that the check bound to a type or an origin: the argument is
+    /// an attribute, and only its lifted applications are nodes.
+    fn expression_applications(&mut self, value: &Expr) -> Vec<CheckedNodeId> {
+        self.applications(|applied| mojito_ast::visit::walk_expr(applied, value))
+    }
+
+    fn applications(
+        &mut self,
+        walk: impl FnOnce(&mut LiftedApplications<'_>),
+    ) -> Vec<CheckedNodeId> {
+        let mut applied = LiftedApplications {
             facts: self.facts,
             found: Vec::new(),
         };
-        mojito_ast::visit::walk_type(&mut applied, ty);
+        walk(&mut applied);
         applied
             .found
             .iter()
@@ -4070,6 +4065,31 @@ impl<'a> ArenaBuilder<'a, '_> {
 
 /// The adjustments the check's `facts` at `expression` record, in the
 /// order lowering applies them.
+/// The outermost expressions of a walked annotation or bracket argument
+/// the check named a lifted function for.
+struct LiftedApplications<'a> {
+    facts: &'a HashMap<SourceSpan, NodeFacts>,
+    found: Vec<Expr>,
+}
+
+impl mojito_ast::visit::Visitor for LiftedApplications<'_> {
+    fn visit_expr(&mut self, expression: &Expr) {
+        let nested = self.found.last().is_some_and(|outer| {
+            outer.span.0 <= expression.span.0 && expression.span.1 <= outer.span.1
+        });
+        if !nested
+            && matches!(
+                self.facts
+                    .get(&expression.source_span())
+                    .and_then(|facts| facts.adjustment.as_deref()),
+                Some(SemanticAdjustment::ComptimeApplication { .. })
+            )
+        {
+            self.found.push(expression.clone());
+        }
+    }
+}
+
 fn node_adjustments(facts: &NodeFacts, expression: &Expr) -> Vec<SemanticAdjustment> {
     let mut adjustments = Vec::new();
     if let Some(target) = &facts.overload_target {
@@ -4610,10 +4630,15 @@ node_facts! {
         reference_value_use: bool => ReferenceValueUse,
         rebind_assertion: RebindAssertion => RebindAssertion,
         /// What each bracket argument of a call or type application
-        /// resolved to, in source order: `Some` for a type-shaped one
-        /// ([`CheckedParamArg::Attribute`]), `None` for a value-shaped one,
-        /// which is a node of its own.
+        /// resolved to, in source order: `Some` for a type-shaped one or a
+        /// value-shaped one the check bound to a type or an origin
+        /// ([`CheckedParamArg::Attribute`]), `None` for a value-shaped one
+        /// that is a run-time value, which is a node of its own.
         parameter_attributes: Vec<Option<mojito_types::types::TyArg>> => ParameterAttributes,
+        /// The type or origin a value-shaped bracket argument resolved to
+        /// when the check bound it, which the call's `parameter_attributes`
+        /// carries in its place.
+        argument_attribute: mojito_types::types::TyArg => ArgumentAttribute,
         /// The type a type in value position resolved to.
         type_operand: Ty => TypeOperand,
         /// The dunder each link of a chained comparison selected, in link

@@ -3141,19 +3141,67 @@ fn display_argument_to_generic_constructor_constructs_its_parameter() {
 #[test]
 fn losing_overload_probe_leaves_no_compile_time_argument_fact() {
     // `kind[T]` is probed first and tries `n` as a type; the winning
-    // `kind[n]` passes `n` as a runtime value register.
+    // `kind[n]` passes `n` as a runtime value node, while `kind[T]`'s
+    // value-shaped `T` is the type attribute binding recorded.
     let source = "def kind[T: AnyType](a: Int) -> Int:\n    return a\n\ndef kind[n: Int](a: Float64) -> Int:\n    return n\n\ndef both[n: Int, T: AnyType](a: Float64) -> Int:\n    return kind[T](1) + kind[n](a)\n\ndef main():\n    print(both[5, Int](1.0))\n";
     let checked = check_program(&parse(source).expect("parse")).expect("check");
-    let erased = |name: &str| {
-        checked.expressions().iter().any(|expression| {
-            matches!(&expression.op, mojito::checked::CheckedOp::Identifier(id) if id == name)
-                && expression.adjustments.iter().any(|adjustment| {
-                    matches!(adjustment, SemanticAdjustment::EraseCompileTimeArgument)
-                })
+    let kind_arguments = bracket_arguments(&checked, "kind");
+    assert!(
+        kind_arguments.iter().any(|arguments| matches!(
+            arguments.as_slice(),
+            [mojito::checked::CheckedParamArg::Attribute {
+                value: Some(mojito::types::TyArg::Ty(_)),
+                ..
+            }]
+        )),
+        "{kind_arguments:#?}"
+    );
+    assert!(
+        kind_arguments.iter().any(|arguments| matches!(
+            arguments.as_slice(),
+            [mojito::checked::CheckedParamArg::Value(_)]
+        )),
+        "{kind_arguments:#?}"
+    );
+}
+
+#[test]
+fn value_shaped_origin_argument_is_an_attribute() {
+    let source = "def keep[o: ImmOrigin](n: Int) -> Int:\n    return n\n\ndef run(x: Int):\n    print(keep[origin_of(x)](1))\n\ndef main():\n    run(1)\n";
+    let linked =
+        mojito::link_source(source, std::path::Path::new("checker_test.mojo")).expect("link");
+    let checked = check_program(&mojito::elaborate(linked).expect("elaborate")).expect("check");
+    let keep_arguments = bracket_arguments(&checked, "keep");
+    assert!(
+        matches!(
+            keep_arguments.as_slice(),
+            [arguments] if matches!(
+                arguments.as_slice(),
+                [mojito::checked::CheckedParamArg::Attribute {
+                    value: Some(mojito::types::TyArg::Origin(_)),
+                    ..
+                }]
+            )
+        ),
+        "{keep_arguments:#?}"
+    );
+}
+
+/// The bracket arguments of every checked call of `callee`.
+fn bracket_arguments(
+    checked: &mojito::checked::CheckedProgram,
+    callee: &str,
+) -> Vec<Vec<mojito::checked::CheckedParamArg>> {
+    checked
+        .expressions()
+        .iter()
+        .filter_map(|expression| match &expression.op {
+            mojito::checked::CheckedOp::Call {
+                name, param_args, ..
+            } if name == callee => Some(param_args.clone()),
+            _ => None,
         })
-    };
-    assert!(erased("T"));
-    assert!(!erased("n"));
+        .collect()
 }
 
 #[test]
