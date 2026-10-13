@@ -8,6 +8,18 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A checked op's type operand is the attribute the check resolved, not the
+  annotation as written (R628): a bracket argument written as a type is a
+  `CheckedParamArg::Attribute` holding its `TyArg` — a type, a value it
+  names (`Self.n`, a pack spread `*vs`, a display element `L[0]`), or an
+  origin — and a type in value position holds its `Ty`, as upstream's call
+  op carries each bracket argument as a parameter attribute. The check
+  records them at the occurrence (`NodeFacts::parameter_attributes`,
+  `type_operand`), and MIR reads them instead of guessing the decision
+  again from the spelling, so its annotation-index folder, display-element
+  and pack-spread spelling matchers, and origin-name list are gone. The
+  package format is 37. No program's output or MIR instructions change.
+
 - A lifted thunk's prologue is the statement nodes of the `comptime`
   bindings it reads (R655), handed to `Cfg::build_checked_thunk` and
   nested discovery as ids, as upstream's thunk region holds the bindings'

@@ -897,8 +897,16 @@ declares its binders, and reads the expression as that application wherever
 it denotes one (`Flatten::comptime_application`). The checked arena holds a
 node for such an expression inside an annotation, which has none otherwise
 (`type_applications`, `checked.rs`), and the op that spells the annotation
-names it (`CheckedOp::TypeValue`, `CheckedParamArg::Type`,
-`CheckedStmtOp::VarDecl`'s `applications`), apart from its operands. A closed one in a plain `def`
+names it (`CheckedOp::TypeValue`, `CheckedParamArg::Attribute`,
+`CheckedStmtOp::VarDecl`'s `applications`), apart from its operands. A type
+operand of an op is never the annotation as written: as upstream's call op
+carries each bracket argument as the parameter attribute its check produced,
+the check records each type-shaped bracket argument's `TyArg` — a type, a
+value it names (`Self.n`, a pack spread `*vs`, a display element `L[0]`), or
+an origin — at the occurrence (`NodeFacts::parameter_attributes`,
+`Checker::record_parameter_attributes`), and a type in value position its
+`Ty` (`NodeFacts::type_operand`, `Checker::type_value`); the op holds them,
+and MIR reads them instead of the spelling. A closed one in a plain `def`
 (`g[h(3)]()`) is lifted the same way, over no binder. A call of a
 module `def` or a static method over `Int` and `Bool` values lifts nothing:
 it is the application of that callable to the parameter expressions of its

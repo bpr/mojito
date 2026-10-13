@@ -21,13 +21,13 @@
 
 use mojito_ast::ast::DeclaredParam;
 use mojito_ast::ast::{
-    ArgConvention, Dtype, Expr, ExprKind, InfixOp, ParamArg, ParamKind, PrefixOp, StmtKind,
+    ArgConvention, Dtype, Expr, ExprKind, InfixOp, ParamKind, PrefixOp, StmtKind,
 };
 use mojito_ast::call::{effective_keyword_only_index, regular_marker_index};
 use mojito_checked::checked::{AnnotationSite, GenericSite};
 use mojito_checked::checked::{
     CheckedConst, CheckedNodeId, CheckedOp, CheckedParamArg, CheckedProgram, CheckedStmt,
-    CheckedStmtId, CheckedStmtOp, WalkResult, Walked, origin_parameter_names,
+    CheckedStmtId, CheckedStmtOp, WalkResult, Walked,
 };
 pub use mojito_checked::declaration::{
     FunctionDeclaration as MirFunctionDeclaration, StructDeclaration as MirStructDeclaration,
@@ -74,7 +74,6 @@ pub fn lower_cfg(cfg: &Cfg) -> MirFunction {
         &[],
         &[],
         None,
-        &[],
         &EnclosingBinders::default(),
         &mut ComptimeThunks::default(),
     )
@@ -470,7 +469,6 @@ pub fn lower_unit(
                     self_convention: m.self_convention,
                     positional_only: m.positional_only,
                     keyword_only: m.keyword_only,
-                    type_params: &m.type_params,
                     statements: &m.body,
                     defaults: m.params.iter().map(|param| param.default).collect(),
                 },
@@ -492,7 +490,6 @@ pub fn lower_unit(
                     self_convention: wrapper.self_convention,
                     positional_only: None,
                     keyword_only: None,
-                    type_params: &[],
                     statements: checked.tables().wrapper_roots(index),
                     defaults: Vec::new(),
                 },
@@ -627,7 +624,6 @@ fn lower_program(
             &[],
             &[],
             None,
-            &[],
             &EnclosingBinders::default(),
             &mut thunks,
         );
@@ -1064,7 +1060,6 @@ fn lower_function(
             value_parameter_locals,
             receiver_value_parameters: Vec::new(),
             static_receiver: None,
-            enclosing_origin_parameters: origin_parameter_names(type_params),
             enclosing_binders,
             owned_parameters: owned,
             deinit_parameters: deinit,
@@ -1097,7 +1092,6 @@ fn lower_struct_member<P: DeclaredParam>(
         overloads,
         module,
         name,
-        origin_parameters,
     } = *structure;
     let module = module.cloned();
     let method_index = m.index;
@@ -1374,11 +1368,6 @@ fn lower_struct_member<P: DeclaredParam>(
             value_parameter_locals,
             receiver_value_parameters,
             static_receiver,
-            enclosing_origin_parameters: origin_parameters
-                .iter()
-                .cloned()
-                .chain(origin_parameter_names(m.type_params))
-                .collect(),
             enclosing_binders,
             owned_parameters: owned,
             deinit_parameters: deinit,
@@ -1404,22 +1393,16 @@ struct StructLowering<'a> {
     overloads: &'a std::sync::Arc<mojito_checked::package::ProgramOverloads>,
     module: Option<&'a String>,
     name: &'a str,
-    /// The struct's `Origin` and `OriginSet` parameters.
-    origin_parameters: &'a [String],
 }
 
 impl<'a> StructLowering<'a> {
     /// The struct `name` of `module`, as `checked` lowers its members.
-    fn new(checked: &'a CheckedProgram, module: Option<&'a String>, name: &'a str) -> Self {
+    const fn new(checked: &'a CheckedProgram, module: Option<&'a String>, name: &'a str) -> Self {
         Self {
             checked,
             overloads: checked.overloads(),
             module,
             name,
-            origin_parameters: checked.origin_parameters_at(&GenericSite::Struct {
-                module: module.cloned(),
-                declaration: name.to_string(),
-            }),
         }
     }
 }
@@ -1440,8 +1423,6 @@ struct StructMember<'a, P> {
     self_convention: Option<ArgConvention>,
     positional_only: Option<usize>,
     keyword_only: Option<usize>,
-    /// Its own compile-time parameters.
-    type_params: &'a [mojito_ast::ast::TypeParam],
     /// Its body's statement nodes.
     statements: &'a [CheckedStmtId],
     /// Each parameter's checked default node.
@@ -1567,7 +1548,6 @@ fn lower_expression_thunk(
             value_parameter_locals: parameter_locals,
             receiver_value_parameters: Vec::new(),
             static_receiver: None,
-            enclosing_origin_parameters: Vec::new(),
             enclosing_binders: binders.clone(),
             owned_parameters: Vec::new(),
             deinit_parameters: Vec::new(),
@@ -2301,10 +2281,6 @@ struct Flatten<'a> {
     /// of a value-parameterized struct: the type of the receiver-less `self`
     /// slot a `Self.n` read projects from, as the expression `Self.n` does.
     static_receiver: Option<Ty>,
-    /// The enclosing declaration's origin binder names: a type-shaped bracket
-    /// argument naming one (`V[Self.o]`) is erased, as the checker's
-    /// `EraseCompileTimeArgument` marks a value-shaped one.
-    enclosing_origin_parameters: Vec<String>,
     /// The enclosing struct's binders, then the function's own: a bracket
     /// argument forwarding a type binder (`hash[Self.H](key)`) records the
     /// binder it names, and one built from value binders (`f[1 + n]()`) the
@@ -3149,26 +3125,14 @@ impl<'a> Flatten<'a> {
             CheckedParamArg::Value(_) => call.param_value(argument),
             CheckedParamArg::Named { value, .. } => match &**value {
                 CheckedParamArg::Value(_) => call.param_value(value),
-                CheckedParamArg::Type { .. } | CheckedParamArg::Named { .. } => return None,
+                CheckedParamArg::Attribute { .. } | CheckedParamArg::Named { .. } => return None,
             },
-            CheckedParamArg::Type {
-                ty: mojito_ast::ast::Type::SelfParam(name),
+            CheckedParamArg::Attribute {
+                value: Some(TyArg::Val(value)),
                 ..
-            } if let Some(reg) = self.receiver_value_parameter_read(name, site) => {
-                return Some(reg);
-            }
-            CheckedParamArg::Type { ty, .. }
-                if let Some(element) = self.display_element_argument(ty) =>
-            {
-                return Some(element);
-            }
-            CheckedParamArg::Type { ty, .. }
-                if let Some(pack) = self.value_pack_spread(ty, site) =>
-            {
-                return Some(pack);
-            }
-            // A type argument is compile-time data on the call.
-            CheckedParamArg::Type { .. } => return None,
+            } => return self.attribute_value_reg(value, site),
+            // A type or an origin argument is compile-time data on the call.
+            CheckedParamArg::Attribute { .. } => return None,
         }?;
         if operand.adjustments().iter().any(|adjustment| {
             matches!(
@@ -3187,22 +3151,30 @@ impl<'a> Flatten<'a> {
         }
     }
 
-    /// A value pack still a parameter spread whole into a bracket (`*vs`,
-    /// `*Self.vs`): the parameter constant of its list, which the elaborator
-    /// folds per instance and a backend binds to the callee's own pack.
-    fn value_pack_spread(&mut self, ty: &mojito_ast::ast::Type, site: &SourceSpan) -> Option<Reg> {
-        let (name, of_self) = match ty {
-            mojito_ast::ast::Type::Named(name, args) if args.is_empty() => (name, false),
-            mojito_ast::ast::Type::SelfParam(name) => (name, true),
-            _ => return None,
+    /// The register of a compile-time value a type-shaped bracket argument
+    /// resolved to. A value pack still a parameter, spread whole (`*vs`,
+    /// `*Self.vs`), is the parameter constant of its list, which the
+    /// elaborator folds per instance and a backend binds to the callee's
+    /// own pack. An enclosing value binder (`Self.n`) is read where it
+    /// lives: the receiver's reified parameter for the struct's own. Any
+    /// other expression (a display element `L[0]`) is the parameter
+    /// constant the elaborator evaluates. `None` for a binder not in scope.
+    fn attribute_value_reg(&mut self, value: &CtValue, site: &SourceSpan) -> Option<Reg> {
+        let CtValue::Expr(expr) = value else {
+            let constant = ParamContext::detached().constant(value.clone()).ok()?;
+            return Some(self.param_value_register_at(site.clone(), None, constant));
         };
-        let (pack, element) = self
-            .enclosing_binders
-            .value_pack(name.strip_prefix('*')?, of_self)?;
+        if !matches!(expr.kind(), mojito_types::param_expr::ParamKind::DeclRef(_)) {
+            return Some(self.param_value_register_at(site.clone(), None, expr.clone()));
+        }
+        let mojito_types::param_expr::MetaTy::ParamList(element) = expr.meta() else {
+            return self.enclosing_value_binder_read(expr, site);
+        };
+        let element = element.as_value()?.clone();
         let dest = self.fresh_typed(site.clone(), None, TyKind::VariadicPack(element).into());
         self.emit(MirInstr::Const {
             dest,
-            k: Const::Param(pack),
+            k: Const::Param(expr.clone()),
         });
         Some(dest)
     }
@@ -3213,13 +3185,12 @@ impl<'a> Flatten<'a> {
     /// for the checker to solve reference and capture contracts, but they have
     /// no slot in `ParamDecl`.  Drop those arguments from the runtime parameter
     /// vector instead of emitting an ambiguous `None` that would shift every
-    /// following callable/scalar value parameter. A type-shaped origin
-    /// argument (`V[Self.o]`) has no span for the checker's
-    /// `EraseCompileTimeArgument` adjustment, so it is erased by name. A closed
-    /// value the call carries in its instantiated arguments (`folded`) is
-    /// compile-time data on the call, as at Mojo's.
+    /// following callable/scalar value parameter. A type-shaped argument the
+    /// check resolved to an origin (`V[Self.o]`) is one, as is a value-shaped
+    /// one it marked `EraseCompileTimeArgument`. A closed value the call
+    /// carries in its instantiated arguments (`folded`) is compile-time data
+    /// on the call, as at Mojo's.
     fn param_arg_has_no_runtime_form(
-        &self,
         call: Node<'a>,
         argument: &CheckedParamArg,
         folded: bool,
@@ -3228,12 +3199,10 @@ impl<'a> Flatten<'a> {
             CheckedParamArg::Value(_) => call.param_value(argument),
             CheckedParamArg::Named { value, .. } => match &**value {
                 CheckedParamArg::Value(_) => call.param_value(value),
-                CheckedParamArg::Type { ty, .. } => {
-                    return self.names_enclosing_origin_parameter(ty);
-                }
+                CheckedParamArg::Attribute { value, .. } => return resolved_origin(value.as_ref()),
                 CheckedParamArg::Named { .. } => None,
             },
-            CheckedParamArg::Type { ty, .. } => return self.names_enclosing_origin_parameter(ty),
+            CheckedParamArg::Attribute { value, .. } => return resolved_origin(value.as_ref()),
         };
         folded
             || operand.is_some_and(|operand| {
@@ -3244,17 +3213,6 @@ impl<'a> Flatten<'a> {
                     )
                 })
             })
-    }
-
-    /// Whether a type-shaped bracket argument names one of the enclosing
-    /// declaration's origin binders (`Self.o`, or a bare `o`).
-    fn names_enclosing_origin_parameter(&self, ty: &mojito_ast::ast::Type) -> bool {
-        let name = match ty {
-            mojito_ast::ast::Type::SelfParam(name) => name,
-            mojito_ast::ast::Type::Named(name, args) if args.is_empty() => name,
-            _ => return false,
-        };
-        self.enclosing_origin_parameters.contains(name)
     }
 
     /// `Self.n` in a bracket slot, where `n` is the enclosing struct's own
@@ -3307,15 +3265,12 @@ impl<'a> Flatten<'a> {
     fn forwarded_value(&self, argument: &CheckedParamArg) -> Option<ParamExpr> {
         let expr = match argument {
             CheckedParamArg::Named { value, .. } => return self.forwarded_value(value),
-            CheckedParamArg::Type {
-                ty: mojito_ast::ast::Type::SelfParam(name),
+            // An enclosing value binder the argument names (`Self.n`).
+            CheckedParamArg::Attribute {
+                value: Some(TyArg::Val(CtValue::Expr(expr))),
                 ..
-            } => self.enclosing_binders.value(name, true),
-            CheckedParamArg::Type {
-                ty: mojito_ast::ast::Type::Named(name, args),
-                ..
-            } if args.is_empty() => self.enclosing_binders.value(name, false),
-            CheckedParamArg::Type { .. } => None,
+            } => self.enclosing_binders.binder_value(expr),
+            CheckedParamArg::Attribute { .. } => None,
             CheckedParamArg::Value(value) => self.value_binder_node(*value),
         }?;
         expr.as_constant().is_none().then_some(expr)
@@ -3393,32 +3348,6 @@ impl<'a> Flatten<'a> {
                 mojito_types::param_expr::ParamKind::Apply { function, .. }
                     if *function == self.comptime_thunks.owner)
         })
-    }
-
-    /// The element of a local display binding a type-shaped bracket
-    /// argument spells (`g[L[0]]()`, which parses as a type application
-    /// under a capitalized name): the element of the binding's sequence at
-    /// the index over the binders, which the elaborator evaluates.
-    fn display_element_argument(&mut self, ty: &mojito_ast::ast::Type) -> Option<Reg> {
-        let mojito_ast::ast::Type::Named(name, args) = ty else {
-            return None;
-        };
-        let [ParamArg::Value(index)] = args.as_slice() else {
-            return None;
-        };
-        let sequence = self
-            .comptime_thunks
-            .displays
-            .iter()
-            .rev()
-            .find(|display| display.name == *name || display.aliases.contains(name))?
-            .sequence
-            .clone();
-        let position = self.value_binder_annotation(index)?;
-        let element = ParamContext::detached()
-            .list_get(&sequence, &position)
-            .ok()?;
-        Some(self.param_value_register_at(index.source_span(), None, element))
     }
 
     /// Build a local display binding into its slot, for the crossing that
@@ -3512,43 +3441,6 @@ impl<'a> Flatten<'a> {
         }
     }
 
-    /// [`Self::value_binder_node`] for an index written inside an
-    /// annotation's brackets (`g[L[0]]()`), which the check leaves
-    /// without a node; R628 gives it one and deletes this.
-    fn value_binder_annotation(&self, expression: &Expr) -> Option<ParamExpr> {
-        let context = ParamContext::detached();
-        match &expression.kind {
-            ExprKind::Int(value) => context
-                .constant(mojito_types::ct::CtValue::IntLiteral(value.clone()))
-                .ok(),
-            ExprKind::Identifier(name) => self.enclosing_binders.value(name, false),
-            ExprKind::Member { object, field } if matches!(&object.kind, ExprKind::Identifier(name) if name == "Self") => {
-                self.enclosing_binders.value(field, true)
-            }
-            ExprKind::Prefix(PrefixOp::Neg, value) => {
-                context.neg(&self.value_binder_annotation(value)?).ok()
-            }
-            ExprKind::Infix(
-                op @ (InfixOp::Add
-                | InfixOp::Sub
-                | InfixOp::Mul
-                | InfixOp::FloorDiv
-                | InfixOp::Mod
-                | InfixOp::Pow
-                | InfixOp::Shl),
-                left,
-                right,
-            ) => context
-                .infix(
-                    *op,
-                    &self.value_binder_annotation(left)?,
-                    &self.value_binder_annotation(right)?,
-                )
-                .ok(),
-            _ => None,
-        }
-    }
-
     /// An erased argument keeps its (empty) slot: every backend aligns the
     /// slots with the callee's declarations positionally, so a dropped slot
     /// would shift the reified arguments after it (`Dict[String, Int, H]`).
@@ -3585,14 +3477,17 @@ impl<'a> Flatten<'a> {
         for (position, argument) in call.param_args().iter().enumerate() {
             let name = match argument {
                 CheckedParamArg::Named { name, .. } => Some(name.clone()),
-                CheckedParamArg::Type { .. } | CheckedParamArg::Value(_) => None,
+                CheckedParamArg::Attribute { .. } | CheckedParamArg::Value(_) => None,
             };
-            let value =
-                if self.param_arg_has_no_runtime_form(call, argument, folded.contains(&position)) {
-                    None
-                } else {
-                    self.param_arg_reg(call, argument, &site)
-                };
+            let value = if Self::param_arg_has_no_runtime_form(
+                call,
+                argument,
+                folded.contains(&position),
+            ) {
+                None
+            } else {
+                self.param_arg_reg(call, argument, &site)
+            };
             let expr = value.and_then(|_| self.forwarded_value(argument));
             registers.push(MirParamArg { name, value, expr });
         }
@@ -3779,7 +3674,6 @@ fn lower_cfg_nested(
     capture_bindings: &[mojito_types::origin::OwnerId],
     receiver_value_parameters: &[(String, Ty)],
     static_receiver: Option<&Ty>,
-    enclosing_origin_parameters: &[String],
     enclosing_binders: &EnclosingBinders,
     comptime_thunks: &mut ComptimeThunks,
 ) -> MirFunction {
@@ -3831,7 +3725,6 @@ fn lower_cfg_nested(
             nested: nested.clone(),
             receiver_value_parameters: receiver_value_parameters.to_vec(),
             static_receiver: static_receiver.cloned(),
-            enclosing_origin_parameters: enclosing_origin_parameters.to_vec(),
             enclosing_binders: enclosing_binders.clone(),
             comptime_thunks: std::mem::take(comptime_thunks),
             parameter_reads: enclosing_binders.loop_bindings.iter().cloned().collect(),
@@ -4688,7 +4581,9 @@ impl EnclosingBinders {
     }
 
     /// Whether checked node `node` of `tables` spells `Self` or one of these
-    /// binders: a name or a call it reaches, or a name in a type it holds.
+    /// binders: a name or a call it reaches, a bracket argument or a type
+    /// in value position the check resolved over one of them, or a name in
+    /// a nested declaration's annotations.
     fn named_by(
         &self,
         tables: &mojito_checked::checked::CheckedTables,
@@ -4707,14 +4602,15 @@ impl EnclosingBinders {
                 }
             }
         }
-        fn param_arg_type(argument: &CheckedParamArg) -> Option<&mojito_ast::ast::Type> {
+        fn attribute(argument: &CheckedParamArg) -> Option<&TyArg> {
             match argument {
-                CheckedParamArg::Type { ty, .. } => Some(ty),
-                CheckedParamArg::Named { value, .. } => param_arg_type(value),
+                CheckedParamArg::Attribute { value, .. } => value.as_ref(),
+                CheckedParamArg::Named { value, .. } => attribute(value),
                 CheckedParamArg::Value(_) => None,
             }
         }
         let mut names = Names(Vec::new());
+        let mut resolved = false;
         tables.walk_expression(node, &mut |walked| {
             let types: Vec<&mojito_ast::ast::Type> = match walked {
                 Walked::Expression(expression) => {
@@ -4723,15 +4619,25 @@ impl EnclosingBinders {
                     {
                         names.0.push(name.clone());
                     }
-                    match &expression.op {
-                        CheckedOp::TypeValue { ty, .. } => vec![ty],
-                        CheckedOp::Call { param_args, .. }
-                        | CheckedOp::Invoke { param_args, .. }
-                        | CheckedOp::TypeApply {
-                            args: param_args, ..
-                        } => param_args.iter().filter_map(param_arg_type).collect(),
-                        _ => Vec::new(),
-                    }
+                    resolved |=
+                        match &expression.op {
+                            CheckedOp::TypeValue { ty, .. } => {
+                                ty.as_ref().is_some_and(|ty| self.mentioned_in(ty))
+                            }
+                            CheckedOp::Call { param_args, .. }
+                            | CheckedOp::Invoke { param_args, .. }
+                            | CheckedOp::TypeApply {
+                                args: param_args, ..
+                            } => param_args.iter().filter_map(attribute).any(|argument| {
+                                match argument {
+                                    TyArg::Ty(ty) => self.mentioned_in(ty),
+                                    TyArg::Val(value) => self.mentioned_in_value(value),
+                                    TyArg::Origin(_) => false,
+                                }
+                            }),
+                            _ => false,
+                        };
+                    Vec::new()
                 }
                 Walked::Statement(statement) => match &statement.op {
                     CheckedStmtOp::Def(def) => def
@@ -4749,14 +4655,58 @@ impl EnclosingBinders {
             }
             WalkResult::Advance
         });
-        names.0.iter().any(|name| {
-            name == "Self"
-                || self
-                    .types
-                    .iter()
-                    .chain(self.values.iter().map(|(binder, _)| binder))
-                    .any(|binder| binder.name.as_ref() == name)
-        })
+        resolved
+            || names.0.iter().any(|name| {
+                name == "Self"
+                    || self
+                        .types
+                        .iter()
+                        .chain(self.values.iter().map(|(binder, _)| binder))
+                        .any(|binder| binder.name.as_ref() == name)
+            })
+    }
+
+    /// Whether resolved type `ty` mentions one of these binders.
+    fn mentioned_in(&self, ty: &Ty) -> bool {
+        let mut referenced = HashSet::new();
+        mojito_types::types::referenced_parameters(ty, &mut referenced);
+        mojito_types::types::mentions(
+            ty,
+            &|ty| matches!(ty.kind(), TyKind::Param { binder, .. } if self.types.contains(binder)),
+        ) || self.names_any(&referenced)
+    }
+
+    /// Whether resolved compile-time value `value` reads one of these
+    /// binders.
+    fn mentioned_in_value(&self, value: &CtValue) -> bool {
+        match value {
+            CtValue::Expr(expr) => {
+                let mut referenced = HashSet::new();
+                expr.referenced_parameters(&mut referenced);
+                self.names_any(&referenced)
+            }
+            CtValue::Type(ty) => self.mentioned_in(ty),
+            _ => false,
+        }
+    }
+
+    /// Whether any of `names` spells one of these binders.
+    fn names_any(&self, names: &HashSet<String>) -> bool {
+        self.types
+            .iter()
+            .chain(self.values.iter().map(|(binder, _)| binder))
+            .any(|binder| names.contains(binder.name.as_ref()))
+    }
+
+    /// `expr` when it is the reference to one of these value binders.
+    fn binder_value(&self, expr: &ParamExpr) -> Option<ParamExpr> {
+        let mojito_types::param_expr::ParamKind::DeclRef(reference) = expr.kind() else {
+            return None;
+        };
+        self.values
+            .iter()
+            .any(|(binder, _)| binder == reference)
+            .then(|| expr.clone())
     }
 
     /// The expression the local `comptime` binding `owner` denotes.
@@ -4779,39 +4729,6 @@ impl EnclosingBinders {
 
     /// The reference a value binder's spelling denotes: `Self.n` names the
     /// struct's, declared first; a bare `n` the innermost declaration's.
-    /// The value pack a bracket spread names (`*vs`, or `*Self.vs` when
-    /// `of_self`), as the parameter list it binds: `Self.vs` names the
-    /// struct's, declared first; a bare `vs` the innermost declaration's.
-    fn value_pack(&self, name: &str, of_self: bool) -> Option<(ParamExpr, Ty)> {
-        let mut packs = self
-            .declarations
-            .iter()
-            .filter_map(|declaration| match declaration {
-                ParamDecl::Value {
-                    name: declared,
-                    ty,
-                    variadic: true,
-                    ..
-                } if declared.trim_start_matches('*') == name => Some((declaration, ty)),
-                _ => None,
-            });
-        let (declaration, ty) = if of_self {
-            packs.next()
-        } else {
-            packs.next_back()
-        }?;
-        Some((
-            ParamContext::detached().decl_ref(
-                declaration.id().clone(),
-                name,
-                mojito_types::param_expr::MetaTy::ParamList(Box::new(
-                    mojito_types::param_expr::MetaTy::value((*ty).clone()),
-                )),
-            ),
-            (*ty).clone(),
-        ))
-    }
-
     fn value(&self, name: &str, of_self: bool) -> Option<ParamExpr> {
         let mut binders = self.values.iter();
         let named =
@@ -4834,6 +4751,11 @@ mod nested;
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use nested::*;
 use node::Node;
+
+/// Whether a type-shaped bracket argument resolved to an origin.
+const fn resolved_origin(value: Option<&TyArg>) -> bool {
+    matches!(value, Some(TyArg::Origin(_)))
+}
 
 fn sorted_map<K: Ord + serde::Serialize, V: serde::Serialize, S: serde::Serializer>(
     map: &HashMap<K, V>,

@@ -186,6 +186,7 @@ impl Checker {
                     let template = self.lower_parameterized_member(
                         member_type_scope(&member_owner, &member.params),
                         &member.params,
+                        &member.value,
                         &source_ty,
                     )?;
                     Ok((None, Some(template)))
@@ -241,6 +242,7 @@ impl Checker {
         &mut self,
         scope: HashMap<String, Ty>,
         params: &[mojito_ast::ast::TypeParam],
+        body: &Expr,
         source_ty: &SourceType,
     ) -> Result<Ty, TypeError> {
         // Member type parameters resolve as `TyKind::Param` (via the `tparams` scope
@@ -251,6 +253,17 @@ impl Checker {
         let saved = self.enclosing_type_params.len();
         self.enclosing_type_params.extend(params.iter().cloned());
         let template = self.ty_from_anno(source_ty);
+        // The body's own occurrence records what it resolved to, under the
+        // member's parameters.
+        if let Ok(template) = &template {
+            match &body.kind {
+                ExprKind::TypeValue(_) => {
+                    self.record_at(body.source_span()).type_operand = Some(template.clone());
+                }
+                ExprKind::TypeApply { .. } => self.record_parameter_attributes(body),
+                _ => {}
+            }
+        }
         self.enclosing_type_params.truncate(saved);
         self.tparams.pop();
         template
@@ -270,7 +283,7 @@ impl Checker {
             ExprKind::Float(value) => Ok(CtValue::FloatLiteral(value.clone())),
             ExprKind::Bool(b) => Ok(CtValue::Bool(*b)),
             ExprKind::Str(s) => Ok(CtValue::Str(s.clone())),
-            ExprKind::TypeValue(ty) => self.ty_from_anno(ty).map(CtValue::Type),
+            ExprKind::TypeValue(ty) => self.type_value(expr, ty).map(CtValue::Type),
             ExprKind::Identifier(name) => {
                 // A value parameter of an enclosing declaration is its typed
                 // reference: `Buf[n + 1]` stays symbolic in the template.
@@ -307,9 +320,13 @@ impl Checker {
                 self.ty_value_from_name(name, &[])?
                     .ok_or_else(|| TypeError::NotComptime(name.clone()))
             }
-            ExprKind::TypeApply { name, args } => self
-                .ty_value_from_name(name, args)?
-                .ok_or_else(|| TypeError::NotComptime(name.clone())),
+            ExprKind::TypeApply { name, args } => {
+                let ty = self
+                    .ty_value_from_name(name, args)?
+                    .ok_or_else(|| TypeError::NotComptime(name.clone()))?;
+                self.record_parameter_attributes(expr);
+                Ok(ty)
+            }
             ExprKind::Call {
                 name,
                 param_args,
@@ -1394,7 +1411,9 @@ impl Checker {
                         "{name}[T] takes exactly one type argument"
                     )));
                 }
-                GenericConstraint::Trivial(kind, self.predicate_operand(&args[0])?)
+                let operand = self.predicate_operand(&args[0])?;
+                self.record_parameter_attributes(expr);
+                GenericConstraint::Trivial(kind, operand)
             }
             // A single non-scalar bracket argument (`IsTriviallyMovable[T]`)
             // parses as runtime indexing; recognize the predicate here too.
@@ -1508,6 +1527,7 @@ impl Checker {
         let Some(receiver) = self.typelist_receiver(object)? else {
             return Ok(None);
         };
+        self.record_parameter_attributes(expr);
         let single = |what: &str| -> Result<&mojito_ast::ast::ParamArg, TypeError> {
             match param_args.as_slice() {
                 [only] => Ok(only),
@@ -1780,6 +1800,7 @@ impl Checker {
                         )
                     })?);
                 }
+                self.record_parameter_attributes(expr);
                 Ok(Some(TypeListReceiver::Concrete(types)))
             }
             _ => Ok(None),
@@ -2112,10 +2133,12 @@ impl Checker {
             ExprKind::Int(value) => ConstraintOperand::Value(CtValue::IntLiteral(value.clone())),
             ExprKind::Bool(value) => ConstraintOperand::Value(CtValue::Bool(*value)),
             ExprKind::Str(value) => ConstraintOperand::Value(CtValue::Str(value.clone())),
-            ExprKind::TypeValue(ty) => ConstraintOperand::Type(self.ty_from_anno(ty)?),
-            ExprKind::TypeApply { name, args } => ConstraintOperand::Type(
-                self.ty_from_anno(&SourceType::Named(name.clone(), args.clone()))?,
-            ),
+            ExprKind::TypeValue(ty) => ConstraintOperand::Type(self.type_value(expr, ty)?),
+            ExprKind::TypeApply { name, args } => {
+                let ty = self.ty_from_anno(&SourceType::Named(name.clone(), args.clone()))?;
+                self.record_parameter_attributes(expr);
+                ConstraintOperand::Type(ty)
+            }
             // A pack element (`Self.Ts[i]`) is a type operand.
             ExprKind::Index { .. } if let Some(ty) = self.comptime_type_operand(expr)? => {
                 ConstraintOperand::Type(ty)

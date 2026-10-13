@@ -953,9 +953,11 @@ impl Checker {
                 }
             }
             ExprKind::TypeApply { name, args } => {
-                self.ty_from_anno(&SourceType::Named(name.clone(), args.clone()))
+                let ty = self.ty_from_anno(&SourceType::Named(name.clone(), args.clone()))?;
+                self.record_parameter_attributes(value);
+                Ok(ty)
             }
-            ExprKind::TypeValue(ty) => self.ty_from_anno(ty),
+            ExprKind::TypeValue(ty) => self.type_value(value, ty),
             _ => Err(TypeError::TypeMismatch {
                 expected: "a type".to_string(),
                 found: "a value".to_string(),

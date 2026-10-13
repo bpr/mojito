@@ -1636,7 +1636,6 @@ impl<'a> Flatten<'a> {
                 nested: self.nested.clone(), // a `try` region may call a nested `def`
                 receiver_value_parameters: self.receiver_value_parameters.clone(),
                 static_receiver: self.static_receiver.clone(),
-                enclosing_origin_parameters: self.enclosing_origin_parameters.clone(),
                 enclosing_binders: self.enclosing_binders.clone(),
                 comptime_thunks: std::mem::take(&mut self.comptime_thunks),
                 parameter_reads: self.parameter_reads.clone(),

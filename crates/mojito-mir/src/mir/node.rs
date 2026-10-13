@@ -145,7 +145,7 @@ impl<'a> Node<'a> {
         match argument {
             CheckedParamArg::Value(value) => self.operand_of(*value),
             CheckedParamArg::Named { value, .. } => self.param_value(value),
-            CheckedParamArg::Type { .. } => None,
+            CheckedParamArg::Attribute { .. } => None,
         }
     }
 

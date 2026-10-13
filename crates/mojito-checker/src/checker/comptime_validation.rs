@@ -1874,14 +1874,16 @@ impl Checker {
                     None
                 }
             }
-            ExprKind::TypeValue(ty) => Some(self.ty_from_anno(ty)?),
+            ExprKind::TypeValue(ty) => Some(self.type_value(expr, ty)?),
             // A reflection handle is a compile-time value, not a type.
             ExprKind::TypeApply { name, .. } if name == "reflect" => None,
             ExprKind::TypeApply { name, args }
                 if !self.comptime_aliases.contains_key(name)
                     && mojito_types::types::trivial_predicate_name(name).is_none() =>
             {
-                Some(self.ty_from_anno(&SourceType::Named(name.clone(), args.clone()))?)
+                let ty = self.ty_from_anno(&SourceType::Named(name.clone(), args.clone()))?;
+                self.record_parameter_attributes(expr);
+                Some(ty)
             }
             ExprKind::Member { object, field } if matches!(&object.kind, ExprKind::Identifier(name) if name == "Self") => {
                 Some(self.ty_from_anno(&SourceType::SelfParam(field.clone()))?)

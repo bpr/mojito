@@ -2006,6 +2006,58 @@ impl Checker {
         }
     }
 
+    /// Record what each type-shaped bracket argument of call, invoke, or
+    /// type application `expr` resolved to
+    /// ([`mojito_checked::checked::NodeFacts::parameter_attributes`]), as
+    /// upstream's op carries each bracket argument as the parameter
+    /// attribute its check produced.
+    pub(super) fn record_parameter_attributes(&self, expr: &Expr) {
+        // A type application in receiver position resolves as the
+        // receiver's type, and is never inferred on its own.
+        let receiver = match &expr.kind {
+            ExprKind::MethodCall { object, .. }
+            | ExprKind::Member { object, .. }
+            | ExprKind::Index { object, .. } => Some(&**object),
+            ExprKind::Invoke { callee, .. } => match &callee.kind {
+                ExprKind::Member { object, .. } => Some(&**object),
+                _ => None,
+            },
+            _ => None,
+        };
+        if let Some(object) = receiver
+            && matches!(object.kind, ExprKind::TypeApply { .. })
+            && !self.has_fact(&object.source_span(), |facts| {
+                facts.parameter_attributes.is_some()
+            })
+        {
+            self.record_parameter_attributes(object);
+        }
+        let (ExprKind::Call { param_args, .. }
+        | ExprKind::Invoke { param_args, .. }
+        | ExprKind::TypeApply {
+            args: param_args, ..
+        }) = &expr.kind
+        else {
+            return;
+        };
+        if !param_args.iter().any(type_shaped) {
+            return;
+        }
+        let attributes = param_args
+            .iter()
+            .map(|argument| self.parameter_attribute(argument))
+            .collect();
+        self.record_at(expr.source_span()).parameter_attributes = Some(attributes);
+    }
+
+    /// Resolve the type in value position `expr`, `ty`, recording the type
+    /// at it ([`mojito_checked::checked::NodeFacts::type_operand`]).
+    pub(super) fn type_value(&self, expr: &Expr, ty: &SourceType) -> Result<Ty, TypeError> {
+        let resolved = self.ty_from_anno(ty)?;
+        self.record_at(expr.source_span()).type_operand = Some(resolved.clone());
+        Ok(resolved)
+    }
+
     /// Resolve `List[T]` from its single type argument.
     pub(super) fn list_type(&self, args: &[mojito_ast::ast::ParamArg]) -> Result<Ty, TypeError> {
         if args.is_empty() {
@@ -2980,6 +3032,93 @@ impl Checker {
             .or_else(|| self.installed_type_alias(name))
             .or_else(|| self.tparams.iter().rev().find_map(|scope| scope.get(name)))
             .cloned()
+    }
+
+    /// The attribute a type-shaped bracket argument denotes, as
+    /// [`Self::resolve_param_arg`] decides it for whichever parameter it
+    /// binds: a value pack spread whole (`*vs`), an origin (`Self.o`,
+    /// `MutUntrackedOrigin`), the struct's own value parameter (`Self.n`),
+    /// a local display's element (`L[0]`), or a type. `None` for a
+    /// value-shaped argument, and for one that resolves as none of these.
+    fn parameter_attribute(&self, argument: &mojito_ast::ast::ParamArg) -> Option<TyArg> {
+        use mojito_ast::ast::ParamArg;
+        let ty = match argument {
+            ParamArg::Named { value, .. } => return self.parameter_attribute(value),
+            ParamArg::Value(_) => return None,
+            ParamArg::Type(ty) => ty,
+        };
+        if let Some(pack) = self.value_pack_spread(argument) {
+            return Some(TyArg::Val(CtValue::Expr(pack)));
+        }
+        if (matches!(ty, SourceType::Named(_, args) if args.is_empty())
+            || matches!(ty, SourceType::SelfParam(_)))
+            && let Ok((origin, _)) = self.resolve_origin_param_arg(argument)
+        {
+            return Some(TyArg::Origin(origin));
+        }
+        if let SourceType::SelfParam(param) = ty
+            && matches!(self.self_param_ct_value(param), Some(CtValue::Expr(_)))
+        {
+            return self.self_param_value(param).map(TyArg::Val);
+        }
+        if let Some(element) = self.display_element_argument(ty) {
+            return element
+                .ok()
+                .map(|element| TyArg::Val(CtValue::Expr(element)));
+        }
+        self.ty_from_anno(ty)
+            .ok()
+            .map(TyArg::Ty)
+            .or_else(|| self.member_value_attribute(ty))
+    }
+
+    /// The value a member chain in type position names (`Float32.dtype`,
+    /// `Self.e.rows`), as the expression it spells evaluates.
+    fn member_value_attribute(&self, ty: &SourceType) -> Option<TyArg> {
+        fn spelled(ty: &SourceType) -> Option<Expr> {
+            let expr = |kind| Expr::new(kind, mojito_common::token::Span::default());
+            Some(match ty {
+                SourceType::Named(name, args) if args.is_empty() => {
+                    expr(ExprKind::Identifier(name.clone()))
+                }
+                SourceType::SelfParam(field) => expr(ExprKind::Member {
+                    object: Box::new(expr(ExprKind::Identifier("Self".to_string()))),
+                    field: field.clone(),
+                }),
+                SourceType::Assoc { base, name, args } if args.is_empty() => {
+                    expr(ExprKind::Member {
+                        object: Box::new(spelled(base)?),
+                        field: name.clone(),
+                    })
+                }
+                _ => return None,
+            })
+        }
+        let SourceType::Assoc { .. } = ty else {
+            return None;
+        };
+        if let Ok(dtype) = self.dtype_from_arg(&mojito_ast::ast::ParamArg::Type(ty.clone())) {
+            return Some(TyArg::Val(match dtype {
+                SimdDtype::Known(dtype) => CtValue::Dtype(dtype),
+                SimdDtype::Expr(expr) => CtValue::Expr(expr),
+            }));
+        }
+        match self
+            .eval_associated_ct(&spelled(ty)?, &HashMap::new())
+            .ok()?
+        {
+            CtValue::Type(ty) => Some(TyArg::Ty(ty)),
+            value => Some(TyArg::Val(value)),
+        }
+    }
+}
+
+/// Whether a bracket argument is written in type position.
+fn type_shaped(argument: &mojito_ast::ast::ParamArg) -> bool {
+    match argument {
+        mojito_ast::ast::ParamArg::Type(_) => true,
+        mojito_ast::ast::ParamArg::Value(_) => false,
+        mojito_ast::ast::ParamArg::Named { value, .. } => type_shaped(value),
     }
 }
 

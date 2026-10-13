@@ -411,6 +411,7 @@ impl Checker {
                 self.record_literal_materializations(expr, &literal_ty, ty)?;
             }
             self.record_at(expr.source_span()).ty = Some(ty.clone());
+            self.record_parameter_attributes(expr);
             self.record_linear_temporary(expr, ty);
             self.materialize_parameter_read(expr, ty);
             if let Some(mojito_checked::checked::SemanticAdjustment::ReferenceResult { reference }) =
@@ -1389,7 +1390,12 @@ impl Checker {
             {
                 Some(mojito_ast::ast::ParamArg::Value(index.clone()))
             }
-            ExprKind::TypeValue(ty) => Some(mojito_ast::ast::ParamArg::Type(ty.clone())),
+            // The accessor resolves the argument; the type value records
+            // the type it names at its own occurrence.
+            ExprKind::TypeValue(ty) => {
+                self.type_value(index, ty).ok();
+                Some(mojito_ast::ast::ParamArg::Type(ty.clone()))
+            }
             _ => None,
         }
     }

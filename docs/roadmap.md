@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R658**.
+Next free ID: **R660**.
 
 ## Ordered Work
 
@@ -4907,16 +4907,37 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R628 A checked op's type operand is annotation syntax, where
-  upstream's is a resolved type attribute**
+- [ ] **R658 A bracket argument written as a value but resolved to a
+  type or an origin is a name node, where upstream's is an attribute**
 
-  `CheckedOp::TypeValue` and `CheckedParamArg::Type` hold the `ast::Type`
-  as written, which can itself hold `Expr`s.
-  - The lever: the op holds the checked `Ty` or `ParamValue`, with an
-    annotation's `ComptimeApplication` nodes as its operands rather than
-    nodes MIR finds by span.
-  - Done when no `CheckedOp` variant holds an `ast::Type`.
-  - Depends on R623.
+  `CheckedParamArg::Value` holds a node for `List[String]`'s `String` or
+  `Pointer[UInt8, MutUntrackedOrigin]`'s origin when the parser read the
+  argument as an expression.
+  - MIR tells such a node apart by its missing type
+    (`type_keyed_accessor_call`) and the checker's
+    `EraseCompileTimeArgument` adjustment.
+  - The lever: the check records an attribute for every bracket argument
+    (`NodeFacts::parameter_attributes`), and a value-shaped one it
+    resolved to a type or an origin becomes `CheckedParamArg::Attribute`.
+  - Done when no MIR code reads `EraseCompileTimeArgument`.
+  - Found while landing R628 (2026-10-13).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R659 The check resolves each type-shaped bracket argument twice**
+
+  `Checker::record_parameter_attributes` resolves a type-shaped bracket
+  argument again after the check bound it (`parameter_attribute`), by
+  what its spelling names rather than by the parameter it binds.
+  - Upstream's check produces each argument's attribute once, as it binds
+    the parameter.
+  - The lever: `resolve_use_params`, SIMD's `simd_dims`, and the origin
+    partition return each source argument's `TyArg` beside the bound
+    list, and the call site records those.
+  - Done when `parameter_attribute` is deleted and the attributes are
+    unchanged on the probe fixtures.
+  - Found while landing R628 (2026-10-13).
+  - Depends on nothing.
   - Model: Opus, Not Planned.
 
 - [ ] **R644 MIR still matches operator and lambda syntax at two sites

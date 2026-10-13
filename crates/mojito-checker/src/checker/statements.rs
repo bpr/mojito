@@ -3339,7 +3339,12 @@ impl Checker {
         // elaboration evaluates and folds at each runtime use.
         let body = match super::constraints::assoc_body_source_type(value) {
             Ok(source_ty) => {
-                match self.lower_parameterized_member(type_scope(&decls), type_params, &source_ty) {
+                match self.lower_parameterized_member(
+                    type_scope(&decls),
+                    type_params,
+                    value,
+                    &source_ty,
+                ) {
                     Ok(template) => AliasBody::Type(template),
                     Err(type_error) => AliasBody::Predicate(Box::new(
                         self.compile_predicate_alias_body(&decls, value)

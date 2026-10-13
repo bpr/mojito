@@ -27,11 +27,6 @@ pub(super) struct FunctionLowering<'a> {
     /// The enclosing struct at its own binders (a static method of a
     /// value-parameterized struct), typing its receiver-less `self` slot.
     pub(super) static_receiver: Option<Ty>,
-    /// The names of the enclosing struct's and the function's own
-    /// `Origin`/`OriginSet` binders: a `Self.o` (or bare `o`) bracket
-    /// argument naming one is an erased origin argument that carries no
-    /// register.
-    pub(super) enclosing_origin_parameters: Vec<String>,
     /// The enclosing struct's binders, then the function's own.
     pub(super) enclosing_binders: EnclosingBinders,
     pub(super) owned_parameters: Vec<bool>,
@@ -65,7 +60,6 @@ pub(super) fn lower_fn_nested(
         value_parameter_locals,
         receiver_value_parameters,
         static_receiver,
-        enclosing_origin_parameters,
         enclosing_binders,
         owned_parameters: owned_params,
         deinit_parameters: deinit_params,
@@ -117,7 +111,6 @@ pub(super) fn lower_fn_nested(
         &[],
         &receiver_value_parameters,
         static_receiver.as_ref(),
-        &enclosing_origin_parameters,
         &enclosing_binders,
         &mut thunks,
     );
@@ -668,7 +661,6 @@ fn lower_nested_node(
             .collect::<Vec<_>>(),
         &[],
         None,
-        &[],
         enclosing_binders,
         &mut thunks,
     );

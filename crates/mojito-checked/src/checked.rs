@@ -1219,7 +1219,8 @@ impl CheckedExpr {
 /// A checked expression's own operation.
 ///
 /// It is the node's [`ExprKind`], with each child expression replaced by
-/// the child's node. A type operand stays the annotation as written. A
+/// the child's node. A type operand is the check's resolved attribute
+/// ([`CheckedParamArg::Attribute`]), never the annotation as written. A
 /// lambda names its hidden `def`'s statement node, as upstream's closure
 /// names the function it closes over; the node's `binding` is that
 /// function's identity.
@@ -1233,10 +1234,11 @@ pub enum CheckedOp {
     Uninitialized,
     EmptySubscript,
     Identifier(String),
-    /// A type in value position, with the nodes of the applications the
+    /// A type in value position, as the check resolved it (`None` where
+    /// the check resolved none), with the nodes of the applications the
     /// check lifted out of it ([`CheckedArenaBuilder::type_applications`]).
     TypeValue {
-        ty: Type,
+        ty: Option<Ty>,
         applications: Vec<CheckedNodeId>,
     },
     Prefix(PrefixOp, CheckedNodeId),
@@ -1490,10 +1492,13 @@ impl CheckedOp {
 /// A compile-time parameter argument of a checked call or type application.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub enum CheckedParamArg {
-    /// A type argument, with the nodes of the applications the check lifted
-    /// out of it.
-    Type {
-        ty: Type,
+    /// A bracket argument written in type position, as the check resolved
+    /// it: a type, a compile-time value the spelling names (`Self.n`, a
+    /// value-pack spread, a display element `L[0]`), or an origin; `None`
+    /// where the check resolved none. With the nodes of the applications
+    /// the check lifted out of it.
+    Attribute {
+        value: Option<mojito_types::types::TyArg>,
         applications: Vec<CheckedNodeId>,
     },
     Value(CheckedNodeId),
@@ -1506,7 +1511,7 @@ pub enum CheckedParamArg {
 impl CheckedParamArg {
     fn operands(&self, operands: &mut Vec<CheckedNodeId>) {
         match self {
-            Self::Type { .. } => {}
+            Self::Attribute { .. } => {}
             Self::Value(value) => operands.push(*value),
             Self::Named { value, .. } => value.operands(operands),
         }
@@ -1514,7 +1519,7 @@ impl CheckedParamArg {
 
     fn reached(&self, nodes: &mut Vec<CheckedNodeId>) {
         match self {
-            Self::Type { applications, .. } => nodes.extend(applications),
+            Self::Attribute { applications, .. } => nodes.extend(applications),
             Self::Value(value) => nodes.push(*value),
             Self::Named { value, .. } => value.reached(nodes),
         }
@@ -2187,7 +2192,7 @@ impl CheckedTables {
         let param_args = |arguments: &[CheckedParamArg]| {
             arguments
                 .iter()
-                .map(|argument| self.param_arg_syntax(argument))
+                .map(|argument| self.param_arg_syntax(argument, node.span))
                 .collect::<Option<Vec<_>>>()
         };
         let kind = match &node.op {
@@ -2199,7 +2204,9 @@ impl CheckedTables {
             CheckedOp::Uninitialized => ExprKind::Uninitialized,
             CheckedOp::EmptySubscript => ExprKind::EmptySubscript,
             CheckedOp::Identifier(name) => ExprKind::Identifier(name.clone()),
-            CheckedOp::TypeValue { ty, .. } => ExprKind::TypeValue(ty.clone()),
+            CheckedOp::TypeValue { ty, .. } => {
+                ExprKind::TypeValue(type_operand_syntax(ty.as_ref(), node.span))
+            }
             CheckedOp::Prefix(op, value) => ExprKind::Prefix(*op, boxed(value)?),
             CheckedOp::Infix(op, left, right) => ExprKind::Infix(*op, boxed(left)?, boxed(right)?),
             CheckedOp::Call {
@@ -2811,13 +2818,29 @@ impl CheckedTables {
         }
     }
 
-    fn param_arg_syntax(&self, argument: &CheckedParamArg) -> Option<ParamArg> {
+    /// A bracket argument's syntax. An attribute renders as a display
+    /// spelling of what the check resolved, which no reader of a rebuilt
+    /// statement consults.
+    fn param_arg_syntax(&self, argument: &CheckedParamArg, span: Span) -> Option<ParamArg> {
         Some(match argument {
-            CheckedParamArg::Type { ty, .. } => ParamArg::Type(ty.clone()),
+            CheckedParamArg::Attribute { value, .. } => match value {
+                Some(mojito_types::types::TyArg::Ty(ty)) => {
+                    ParamArg::Type(type_operand_syntax(Some(ty), span))
+                }
+                Some(mojito_types::types::TyArg::Val(value)) => {
+                    ParamArg::Value(value.materialize(span).unwrap_or_else(|| {
+                        Expr::new(ExprKind::Identifier(value.to_string()), span)
+                    }))
+                }
+                Some(mojito_types::types::TyArg::Origin(origin)) => {
+                    ParamArg::Type(Type::Named(origin.to_string(), Vec::new()))
+                }
+                None => ParamArg::Type(Type::None),
+            },
             CheckedParamArg::Value(value) => ParamArg::Value(self.syntax_of(*value)?),
             CheckedParamArg::Named { name, value } => ParamArg::Named {
                 name: name.clone(),
-                value: Box::new(self.param_arg_syntax(value)?),
+                value: Box::new(self.param_arg_syntax(value, span)?),
             },
         })
     }
@@ -3949,7 +3972,7 @@ impl<'a> ArenaBuilder<'a, '_> {
             ExprKind::EmptySubscript => CheckedOp::EmptySubscript,
             ExprKind::Identifier(name) => CheckedOp::Identifier(name.clone()),
             ExprKind::TypeValue(ty) => CheckedOp::TypeValue {
-                ty: ty.clone(),
+                ty: self.facts(&expression.source_span()).type_operand.clone(),
                 applications: self.type_applications(ty),
             },
             ExprKind::Prefix(op, value) => CheckedOp::Prefix(*op, self.expr(value)),
@@ -3974,7 +3997,7 @@ impl<'a> ArenaBuilder<'a, '_> {
                 kwargs,
             } => CheckedOp::Call {
                 name: name.clone(),
-                param_args: self.param_args(param_args),
+                param_args: self.param_args(expression, param_args),
                 args: values(self, args),
                 kwargs: self.kwargs(kwargs),
             },
@@ -3985,7 +4008,7 @@ impl<'a> ArenaBuilder<'a, '_> {
                 kwargs,
             } => CheckedOp::Invoke {
                 callee: self.expr(callee),
-                param_args: self.param_args(param_args),
+                param_args: self.param_args(expression, param_args),
                 args: values(self, args),
                 kwargs: self.kwargs(kwargs),
             },
@@ -4006,7 +4029,7 @@ impl<'a> ArenaBuilder<'a, '_> {
             },
             ExprKind::TypeApply { name, args } => CheckedOp::TypeApply {
                 name: name.clone(),
-                args: self.param_args(args),
+                args: self.param_args(expression, args),
             },
             ExprKind::ListLit(items) => CheckedOp::ListLit(values(self, items)),
             ExprKind::TupleLit(items) => CheckedOp::TupleLit(values(self, items)),
@@ -4144,24 +4167,40 @@ impl<'a> ArenaBuilder<'a, '_> {
             .collect()
     }
 
-    /// A type argument builds the nodes of its lifted applications only.
-    fn param_args(&mut self, arguments: &[ParamArg]) -> Vec<CheckedParamArg> {
+    /// The bracket arguments of `expression`. A type-shaped argument is
+    /// the attribute the check recorded at its position
+    /// ([`NodeFacts::parameter_attributes`]), and builds the nodes of its
+    /// lifted applications only.
+    fn param_args(&mut self, expression: &Expr, arguments: &[ParamArg]) -> Vec<CheckedParamArg> {
+        let attributes = self
+            .facts(&expression.source_span())
+            .parameter_attributes
+            .as_deref()
+            .unwrap_or_default();
         arguments
             .iter()
-            .map(|argument| self.param_arg(argument))
+            .enumerate()
+            .map(|(position, argument)| {
+                let attribute = attributes.get(position).cloned().flatten();
+                self.param_arg(argument, attribute)
+            })
             .collect()
     }
 
-    fn param_arg(&mut self, argument: &ParamArg) -> CheckedParamArg {
+    fn param_arg(
+        &mut self,
+        argument: &ParamArg,
+        attribute: Option<mojito_types::types::TyArg>,
+    ) -> CheckedParamArg {
         match argument {
-            ParamArg::Type(ty) => CheckedParamArg::Type {
-                ty: ty.clone(),
+            ParamArg::Type(ty) => CheckedParamArg::Attribute {
+                value: attribute,
                 applications: self.type_applications(ty),
             },
             ParamArg::Value(value) => CheckedParamArg::Value(self.expr(value)),
             ParamArg::Named { name, value } => CheckedParamArg::Named {
                 name: name.clone(),
-                value: Box::new(self.param_arg(value)),
+                value: Box::new(self.param_arg(value, attribute)),
             },
         }
     }
@@ -4944,6 +4983,15 @@ fn fact_index<V: Clone>(
         .collect()
 }
 
+/// The display spelling of a resolved type operand in a rebuilt statement:
+/// its source type where it has one, else its rendering.
+fn type_operand_syntax(ty: Option<&Ty>, span: Span) -> Type {
+    ty.map_or(Type::None, |ty| {
+        mojito_types::ct::source_type(ty, span)
+            .unwrap_or_else(|| Type::Named(ty.to_string(), Vec::new()))
+    })
+}
+
 /// Write `map` sorted by key, so a record encodes the same bytes in every
 /// build.
 fn sorted<V: serde::Serialize, S: serde::Serializer>(
@@ -5062,6 +5110,13 @@ node_facts! {
         /// A reference read as a value: whether it is writable.
         reference_value_use: bool => ReferenceValueUse,
         rebind_assertion: RebindAssertion => RebindAssertion,
+        /// What each bracket argument of a call or type application
+        /// resolved to, in source order: `Some` for a type-shaped one
+        /// ([`CheckedParamArg::Attribute`]), `None` for a value-shaped one,
+        /// which is a node of its own.
+        parameter_attributes: Vec<Option<mojito_types::types::TyArg>> => ParameterAttributes,
+        /// The type a type in value position resolved to.
+        type_operand: Ty => TypeOperand,
     }
     flags {
         explicit_destroy_call => ExplicitDestroyCall,
