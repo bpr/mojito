@@ -39,11 +39,8 @@ impl VmBackend {
             (argv, slots)
         };
         let function = &prog.mir.functions[idx].1;
-        let ref_params = function.ref_params.clone();
         let mut reference_inputs = Vec::new();
-        for (i, is_ref) in ref_params.iter().enumerate() {
-            // The reference parameter's caller place: it must have been supplied by
-            // a positional argument that is a simple place.
+        for i in 0..function.ref_params.len() {
             let place = bound_argument_place(
                 slots.get(i),
                 prog.sigs
@@ -54,26 +51,15 @@ impl VmBackend {
                 &keyword_names,
                 kwarg_places,
             );
-            if !is_ref {
-                // A shared-read place lent to a borrowing-view result binds
-                // the caller's storage too (see the continuation path).
-                if let Some(place) = place
-                    && !function.owned_params.get(i).copied().unwrap_or(false)
-                    && !function.deinit_params.get(i).copied().unwrap_or(false)
-                {
-                    reference_inputs.push((
-                        i,
-                        Self::reference_to_place_parts(frame_id, regs, vars, place)?,
-                    ));
-                }
-                continue;
-            }
-            let place = place.ok_or_else(|| {
+            let Some(place) = caller_handle_place(function, i, place).map_err(|_| {
                 RuntimeError::Unsupported(format!(
                     "vm: a mut/ref argument to '{name}' must be a plain variable or field \
                      (not a temporary, an indexed place, a default, or a forwarded keyword)"
                 ))
-            })?;
+            })?
+            else {
+                continue;
+            };
             reference_inputs.push((
                 i,
                 Self::reference_to_place_parts(frame_id, regs, vars, place)?,
@@ -650,7 +636,7 @@ impl VmBackend {
                         Self::reference_to_place_parts(frame_id, regs, vars, place)?,
                     ));
                 }
-                for (i, is_ref) in ref_params.iter().enumerate().skip(1) {
+                for i in 1..ref_params.len() {
                     let place = bound_argument_place(
                         slots.get(i - 1),
                         prog.sigs
@@ -661,26 +647,15 @@ impl VmBackend {
                         &keyword_names,
                         kwarg_places,
                     );
-                    if !is_ref {
-                        // A shared-read place lent to a borrowing-view result
-                        // binds the caller's storage (as for free functions).
-                        if let Some(place) = place
-                            && !function.owned_params.get(i).copied().unwrap_or(false)
-                            && !function.deinit_params.get(i).copied().unwrap_or(false)
-                        {
-                            reference_inputs.push((
-                                i,
-                                Self::reference_to_place_parts(frame_id, regs, vars, place)?,
-                            ));
-                        }
-                        continue;
-                    }
-                    let place = place.ok_or_else(|| {
+                    let Some(place) = caller_handle_place(function, i, place).map_err(|_| {
                         RuntimeError::Unsupported(format!(
                             "vm: a mut/ref argument to method '{fname}' must be a plain \
                              variable or field (not a temporary or indexed place)"
                         ))
-                    })?;
+                    })?
+                    else {
+                        continue;
+                    };
                     reference_inputs.push((
                         i,
                         Self::reference_to_place_parts(frame_id, regs, vars, place)?,

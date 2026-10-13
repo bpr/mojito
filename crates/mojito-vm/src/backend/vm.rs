@@ -20,8 +20,8 @@ use mojito_checked::checked::CheckedConst;
 use mojito_common::timing;
 use mojito_hir::hir::VarId;
 use mojito_mir::mir::{
-    ConcreteMir, Const, MirBlock, MirCaptureMode, MirInstr, MirIntrinsicSubscript, MirPlace,
-    MirProgram, MirSubscriptArg, MirTerm, Proj, Reg,
+    ConcreteMir, Const, MirBlock, MirCaptureMode, MirFunction, MirInstr, MirIntrinsicSubscript,
+    MirPlace, MirProgram, MirSubscriptArg, MirTerm, Proj, Reg,
 };
 use mojito_types::ct::CtValue;
 use mojito_types::types::Ty;
@@ -1047,6 +1047,27 @@ fn bound_argument_place<'a>(
         ArgSlot::Default => None,
     }
 }
+
+/// The caller place one parameter slot binds as a handle. A `mut`/`ref`
+/// slot requires its retained place (`Err` when the argument retained none).
+/// A read-convention slot binds a retained place too — the call's result
+/// borrows that argument, so the callee must see the caller's storage rather
+/// than a frame copy the returned handle would outlive — while an owned or
+/// deinit slot keeps its value transfer.
+fn caller_handle_place<'a>(
+    function: &MirFunction,
+    parameter: usize,
+    place: Option<&'a MirPlace>,
+) -> Result<Option<&'a MirPlace>, MissingCallerPlace> {
+    let flag = |flags: &[bool]| flags.get(parameter).copied().unwrap_or(false);
+    if flag(&function.ref_params) {
+        return place.map(Some).ok_or(MissingCallerPlace);
+    }
+    Ok(place.filter(|_| !flag(&function.owned_params) && !flag(&function.deinit_params)))
+}
+
+/// A `mut`/`ref` parameter whose argument retained no caller place.
+struct MissingCallerPlace;
 
 #[derive(Default)]
 struct HeapAllocation {

@@ -371,7 +371,8 @@ impl<'a> Flatten<'a> {
     }
 
     /// Whether a method call's reference result has an origin rooted at one
-    /// of the call's own arguments rather than at its receiver.
+    /// of the call's own arguments — a place, or the hidden slot a
+    /// temporary argument materialized into — rather than at its receiver.
     fn reference_result_borrows_argument(&self, expression: Node<'a>) -> bool {
         let CheckedOp::MethodCall { args, kwargs, .. } = expression.op() else {
             return false;
@@ -383,7 +384,13 @@ impl<'a> Flatten<'a> {
         origin_place_roots(&reference.origin, &mut roots);
         args.iter()
             .chain(kwargs.iter().map(|keyword| &keyword.value))
-            .filter_map(|argument| self.place_root_binding(*argument))
+            .filter_map(|argument| {
+                self.place_root_binding(*argument).or_else(|| {
+                    self.checked.expression(*argument).and_then(|node| {
+                        mojito_checked::checked::materialized_borrow_owner(&node.adjustments)
+                    })
+                })
+            })
             .any(|owner| roots.contains(&owner))
     }
 

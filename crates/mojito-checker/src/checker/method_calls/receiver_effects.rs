@@ -502,21 +502,38 @@ impl Checker {
         let Some(signature) = &resolved.ref_return else {
             return Ok(None);
         };
-        let actual: Vec<_> = resolved
+        let actual = resolved
             .slots
             .iter()
-            .map(|slot| match slot {
-                ArgSlot::Positional(position) => self
-                    .reference_actual(&args[*position])
-                    .ok()
-                    .map(|reference| reference.origin),
-                ArgSlot::Keyword(position) => self
-                    .reference_actual(&kwargs[*position].value)
-                    .ok()
-                    .map(|reference| reference.origin),
-                ArgSlot::Default => None,
+            .enumerate()
+            .map(|(index, slot)| {
+                let expression = match slot {
+                    ArgSlot::Positional(position) => &args[*position],
+                    ArgSlot::Keyword(position) => &kwargs[*position].value,
+                    ArgSlot::Default => return Ok(None),
+                };
+                match self.reference_actual(expression) {
+                    Ok(reference) => Ok(Some(reference.origin)),
+                    // A temporary at a read slot the result borrows lives as
+                    // long as the reference, as at a free call (see
+                    // `solve_call_origins_with_bool_bindings`).
+                    Err(TypeError::Unsupported(message))
+                        if message.contains("reference binding to a non-place expression")
+                            && reads_slot(resolved, index)
+                            && sig_origin_mentions_param(&signature.origin, index) =>
+                    {
+                        let owner = self.materialize_borrow_owner(expression, false)?;
+                        Ok(Some(mojito_types::origin::Origin::Place(
+                            mojito_types::origin::OriginPlace {
+                                root: owner,
+                                path: Vec::new(),
+                            },
+                        )))
+                    }
+                    Err(_) => Ok(None),
+                }
             })
-            .collect();
+            .collect::<Result<Vec<_>, TypeError>>()?;
         // A temporary receiver of a `ref[self]`-returning method
         // (`FormatStruct(writer, "P").params(...)`) materializes as an
         // anonymous owned binding, as a temporary bound to a `ref`
@@ -540,7 +557,8 @@ impl Checker {
             mojito_types::origin::SigMutability::Mutable => {
                 mojito_types::origin::Mutability::Mutable
             }
-            _ if self_reference.mutability == mojito_types::origin::Mutability::Mutable
+            _ if (self_reference.mutability == mojito_types::origin::Mutability::Mutable
+                && origin_may_name_receiver(&signature.origin, resolved))
                 || solved_return.is_some_and(|reference| {
                     reference.mutability == mojito_types::origin::Mutability::Mutable
                 }) =>
@@ -580,5 +598,32 @@ impl Checker {
                 .insert(span.clone());
         }
         Ok(Some(reference))
+    }
+}
+
+/// Whether argument slot `index` takes the read convention.
+fn reads_slot(resolved: &MethodCallResolution, index: usize) -> bool {
+    matches!(
+        resolved.conventions.get(index),
+        Some(None | Some(ArgConvention::Imm))
+    )
+}
+
+/// Whether a returned reference's signature origin may borrow the receiver,
+/// so the receiver's mutability can make the result mutable. Only a member
+/// naming a read-convention argument slot is ruled out: that borrow is
+/// immutable whatever the receiver is, as the pin rejects `h.pick(w) = 5`.
+fn origin_may_name_receiver(
+    origin: &mojito_types::origin::SigOrigin,
+    resolved: &MethodCallResolution,
+) -> bool {
+    use mojito_types::origin::SigOrigin;
+    match origin {
+        SigOrigin::Param(index) => !reads_slot(resolved, *index),
+        SigOrigin::Projected(base, _) => origin_may_name_receiver(base, resolved),
+        SigOrigin::Union(members) => members
+            .iter()
+            .any(|member| origin_may_name_receiver(member, resolved)),
+        _ => true,
     }
 }

@@ -78,8 +78,9 @@ impl<'a> Flatten<'a> {
                 .unwrap_or_default();
             let saved_anchor_permission = self.allow_argument_anchors;
             self.allow_argument_anchors = call.call_anchors_arguments();
-            let (regs, arg_places) = self.lower_call_arguments(args, false);
-            let (kw, kwarg_places) = self.lower_call_keywords(kwargs, false);
+            let lends_reads = call.lends_read_arguments();
+            let (regs, arg_places) = self.lower_call_arguments(args, lends_reads);
+            let (kw, kwarg_places) = self.lower_call_keywords(kwargs, lends_reads);
             self.allow_argument_anchors = saved_anchor_permission;
             let place = self.var_place(variable);
             let callee_place = place.is_typed().then_some(place);
@@ -588,7 +589,7 @@ impl<'a> Flatten<'a> {
         // level up — installs them). The stringify conversion is the
         // exception: its result is a fresh owned string that carries
         // no loans, so a view argument anchors as in a plain call.
-        let view_result = call.borrows_view_result();
+        let lends_reads = call.lends_read_arguments();
         let saved_anchor_permission = self.allow_argument_anchors;
         self.allow_argument_anchors = (stringify
             || !matches!(
@@ -596,7 +597,7 @@ impl<'a> Flatten<'a> {
                 Some(TyKind::Struct(constructed, _)) if *constructed == *name
             ))
             && call.call_anchors_arguments();
-        let (regs, arg_places) = self.lower_call_arguments(args, view_result);
+        let (regs, arg_places) = self.lower_call_arguments(args, lends_reads);
         self.allow_argument_anchors = saved_anchor_permission;
         let copy_construction = args.is_empty()
             && matches!(
@@ -606,7 +607,7 @@ impl<'a> Flatten<'a> {
         let (kw, kwarg_places) = copy_construction
             .then(|| self.copy_construction_keywords(kwargs))
             .flatten()
-            .unwrap_or_else(|| self.lower_call_keywords(kwargs, view_result));
+            .unwrap_or_else(|| self.lower_call_keywords(kwargs, lends_reads));
         let (regs, arg_places, kw, kwarg_places) = match node.ty.clone().as_ref().map(Ty::kind) {
             Some(TyKind::Struct(constructed, _)) if *constructed == *name => self
                 .fieldwise_keywords_positional(constructed, (regs, arg_places, kw, kwarg_places)),
@@ -827,9 +828,10 @@ impl<'a> Flatten<'a> {
             };
             let saved_anchor_permission = self.allow_argument_anchors;
             self.allow_argument_anchors = call.call_anchors_arguments();
-            let (regs, arg_places) = self.lower_call_arguments(args, false);
+            let lends_reads = call.lends_read_arguments();
+            let (regs, arg_places) = self.lower_call_arguments(args, lends_reads);
             self.allow_argument_anchors = saved_anchor_permission;
-            let (kw, kwarg_places) = self.lower_call_keywords(kwargs, false);
+            let (kw, kwarg_places) = self.lower_call_keywords(kwargs, lends_reads);
             let dest = self.fresh(call.location(), None);
             let target =
                 callable_target(&node.adjustments).unwrap_or_else(|| format!("{name}.{field}"));
@@ -876,9 +878,10 @@ impl<'a> Flatten<'a> {
         };
         let saved_anchor_permission = self.allow_argument_anchors;
         self.allow_argument_anchors = call.call_anchors_arguments();
-        let (argument_regs, arg_places) = self.lower_call_arguments(args, false);
+        let lends_reads = call.lends_read_arguments();
+        let (argument_regs, arg_places) = self.lower_call_arguments(args, lends_reads);
         self.allow_argument_anchors = saved_anchor_permission;
-        let (keyword_regs, kwarg_places) = self.lower_call_keywords(kwargs, false);
+        let (keyword_regs, kwarg_places) = self.lower_call_keywords(kwargs, lends_reads);
         let dest = self.fresh(call.location(), None);
         self.emit_interior_invalidations(object, None);
         self.emit_call_invalidations(call, args, kwargs);

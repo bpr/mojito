@@ -66,13 +66,13 @@ impl<'a> Flatten<'a> {
             .unwrap_or_else(|| self.expr(expression))
     }
 
-    /// `view_result`: the enclosing call carries `BorrowViewResult`, so a
-    /// shared read of a place argument retains that place (see
-    /// [`Self::borrows_view_result`]).
+    /// `lends_reads`: the enclosing call's result borrows its read
+    /// arguments, so a shared read of a place argument retains that place
+    /// (see [`Self::lends_read_arguments`]).
     fn lower_call_argument_with(
         &mut self,
         expression: Node<'a>,
-        view_result: bool,
+        lends_reads: bool,
     ) -> (Reg, Option<MirPlace>) {
         if let Some(operand) = expression.spread_operand() {
             return self.lower_pack_spread_argument(expression, operand);
@@ -88,7 +88,7 @@ impl<'a> Flatten<'a> {
                 )
             })
         {
-            return self.lower_call_argument_with(inner, view_result);
+            return self.lower_call_argument_with(inner, lends_reads);
         }
         // A temporary bound to a `ref [origin]` parameter: store the value in
         // a hidden slot registered under the checker-minted owner identity and
@@ -108,7 +108,12 @@ impl<'a> Flatten<'a> {
             matches!(
                 adjustment,
                 mojito_checked::checked::SemanticAdjustment::RetainCallPlace
-            )
+            ) || (lends_reads
+                && !converted
+                && matches!(
+                    adjustment,
+                    mojito_checked::checked::SemanticAdjustment::BorrowReadArgument
+                ))
         });
         if !retains_place {
             // An implicit conversion supersedes the shallow-read shortcut:
@@ -123,14 +128,15 @@ impl<'a> Flatten<'a> {
             }) && expression.implicit_conversion().is_none()
                 && let Some(register) = self.lower_borrowed_read_argument(expression)
             {
-                // A borrowing-view call retains the place as a SHARED read:
+                // A call whose result borrows its reads retains the place as
+                // a SHARED read:
                 // the ownership analysis classifies a retained place by the
                 // callee's declared convention (a non-`mut`/`ref` slot reads),
                 // and the VM binds it as a caller-place handle so the view's
                 // reference fields root in caller storage. Every other call
                 // retains no place: owner liveness through the call comes from
                 // the register's place provenance.
-                if view_result {
+                if lends_reads {
                     return (register, self.simple_place(expression));
                 }
                 return (register, None);
@@ -526,32 +532,32 @@ impl<'a> Flatten<'a> {
         (value, Some(place))
     }
 
-    /// `view_result`: see [`Self::borrows_view_result`].
+    /// `lends_reads`: see [`Self::lends_read_arguments`].
     pub(super) fn lower_call_arguments(
         &mut self,
         arguments: &[Node<'a>],
-        view_result: bool,
+        lends_reads: bool,
     ) -> (Vec<Reg>, Vec<Option<MirPlace>>) {
         let mut registers = Vec::with_capacity(arguments.len());
         let mut places = Vec::with_capacity(arguments.len());
         for &argument in arguments {
-            let (register, place) = self.lower_call_argument_with(argument, view_result);
+            let (register, place) = self.lower_call_argument_with(argument, lends_reads);
             registers.push(register);
             places.push(place);
         }
         (registers, places)
     }
 
-    /// `view_result`: see [`Self::borrows_view_result`].
+    /// `lends_reads`: see [`Self::lends_read_arguments`].
     pub(super) fn lower_call_keywords(
         &mut self,
         arguments: &[(&str, Node<'a>)],
-        view_result: bool,
+        lends_reads: bool,
     ) -> LoweredKeywords {
         let mut registers = Vec::with_capacity(arguments.len());
         let mut places = Vec::with_capacity(arguments.len());
         for &(name, value) in arguments {
-            let (register, place) = self.lower_call_argument_with(value, view_result);
+            let (register, place) = self.lower_call_argument_with(value, lends_reads);
             registers.push((name.to_string(), register));
             places.push(place);
         }

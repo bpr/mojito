@@ -375,6 +375,16 @@ impl<'a> Node<'a> {
         })
     }
 
+    /// Whether this call's result borrows its read-convention place
+    /// arguments — a borrowing view ([`Self::borrows_view_result`]) or a
+    /// reference result — so each must reach the callee as the caller's
+    /// storage, as upstream passes a memory-only `read` argument by address:
+    /// a result rooted in a callee-local copy would dangle once the frame
+    /// unwinds.
+    pub(super) fn lends_read_arguments(self) -> bool {
+        self.borrows_view_result() || self.reference_result().is_some()
+    }
+
     /// Whether a checked method call writes through its receiver place. The
     /// checker's effective receiver convention already collapses a `ref self`
     /// reached through an immutable reference to `Imm`; a call without a

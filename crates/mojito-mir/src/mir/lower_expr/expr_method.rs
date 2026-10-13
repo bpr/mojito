@@ -140,14 +140,15 @@ impl<'a> Flatten<'a> {
     ) -> Reg {
         let saved_anchor_permission = self.allow_argument_anchors;
         self.allow_argument_anchors = call.call_anchors_arguments();
+        let lends_reads = call.lends_read_arguments();
         let (mut regs, mut arg_places) = (Vec::new(), Vec::new());
         for slice in [leading.as_slice(), args] {
-            let (slice_regs, slice_places) = self.lower_call_arguments(slice, false);
+            let (slice_regs, slice_places) = self.lower_call_arguments(slice, lends_reads);
             regs.extend(slice_regs);
             arg_places.extend(slice_places);
         }
         self.allow_argument_anchors = saved_anchor_permission;
-        let (kw, kwarg_places) = self.lower_call_keywords(kwargs, false);
+        let (kw, kwarg_places) = self.lower_call_keywords(kwargs, lends_reads);
         let dest = self.fresh(call.location(), None);
         if let Some(leading) = leading {
             self.emit_interior_invalidations(leading, None);
@@ -768,16 +769,16 @@ impl<'a> Flatten<'a> {
         };
         // Retain checker-selected `mut`/`ref` ordinary-argument places,
         // mirroring a free-function `Call` — and the shared-read places
-        // a borrowing-view result lends to. Loan-carrying temporary
+        // a borrowing-view or reference result lends to. Loan-carrying temporary
         // arguments anchor exactly as in a free call unless the
         // callee's `ref`-argument borrows or transfer effects already
         // carry their loans (see `call_anchors_arguments`).
-        let view_result = call.borrows_view_result();
+        let lends_reads = call.lends_read_arguments();
         let saved_anchor_permission = self.allow_argument_anchors;
         self.allow_argument_anchors = call.call_anchors_arguments();
-        let (regs, arg_places) = self.lower_call_arguments(args, view_result);
+        let (regs, arg_places) = self.lower_call_arguments(args, lends_reads);
         self.allow_argument_anchors = saved_anchor_permission;
-        let (kw, kwarg_places) = self.lower_call_keywords(kwargs, view_result);
+        let (kw, kwarg_places) = self.lower_call_keywords(kwargs, lends_reads);
         let d = self.fresh(call.location(), None);
         self.emit_interior_invalidations(receiver_expr, None);
         self.emit_call_invalidations(call, args, kwargs);

@@ -520,15 +520,24 @@ impl Checker {
             &format!("method '{method}'"),
         )?;
         // `mut`/`ref` arguments keep their caller places and alias-check as
-        // on an instance call (statics return before that shared tail).
-        let (effective_conventions, _) = self.solve_call_origins(
+        // on an instance call (statics return before that shared tail). A
+        // static has no receiver, so its return origin names argument slots
+        // exactly as a free function's does.
+        let (effective_conventions, returned, _) = self.solve_call_origins_with_bool_bindings(
             &selected.slots,
             &selected.conventions,
             &selected.ref_params,
             selected.ref_return.as_ref(),
             args,
             kwargs,
+            true,
         )?;
+        if let Some(mut reference) = returned {
+            reference.referent = selected.return_type.clone();
+            self.record_at(span.clone()).adjustment = Some(Box::new(
+                mojito_checked::checked::SemanticAdjustment::ReferenceResult { reference },
+            ));
+        }
         let copied_reads = selected
             .slots
             .iter()

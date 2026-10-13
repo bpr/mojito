@@ -227,7 +227,9 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   the parametric and the bare non-parametric path — binding `ref [Self.o]`
   slots and explicit origins through the constructor's
   `bind_constructor_origins`/`record_constructor_reference_borrows`, retaining
-  `mut`/`ref` argument places via `solve_call_origins`, and alias-checking;
+  `mut`/`ref` argument places and solving a reference result's origin over
+  the argument slots via `solve_call_origins_with_bool_bindings`, as a free
+  call does, and alias-checking;
   both method paths and the constructor paths record
   `checked::MethodInstantiation`s, which name the method's template
   (`method_calls/resolution.rs:record_method_call_instantiation`); the

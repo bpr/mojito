@@ -289,13 +289,30 @@ impl Checker {
                     ArgSlot::Keyword(position) => &kwargs[*position].value,
                     ArgSlot::Default => continue,
                 };
-                if let Ok(place) = self.origin_place(expression) {
-                    let carried = self.aggregate_origins(expression);
-                    origins[index] = Some(if carried.is_empty() {
-                        Origin::Place(place)
-                    } else {
-                        Origin::union(carried)
-                    });
+                match self.origin_place(expression) {
+                    Ok(place) => {
+                        let carried = self.aggregate_origins(expression);
+                        origins[index] = Some(if carried.is_empty() {
+                            Origin::Place(place)
+                        } else {
+                            Origin::union(carried)
+                        });
+                    }
+                    // A temporary the result borrows (`field(W(3))`) lives
+                    // as long as the reference, as upstream extends it:
+                    // lowering stores it in a hidden slot the call reads
+                    // through, immutably — a read borrow grants no write.
+                    Err(TypeError::Unsupported(message))
+                        if message.contains("reference binding to a non-place expression")
+                            && self.infer_reference_value(expression).is_none() =>
+                    {
+                        let owner = self.materialize_borrow_owner(expression, false)?;
+                        origins[index] = Some(Origin::Place(mojito_types::origin::OriginPlace {
+                            root: owner,
+                            path: Vec::new(),
+                        }));
+                    }
+                    Err(_) => {}
                 }
             }
         }

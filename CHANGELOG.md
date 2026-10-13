@@ -8,6 +8,15 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A reference result through a read parameter borrows the caller's
+  argument (R672): `def field(w: W) -> ref[origin_of(w.t)] Int` no longer
+  stops with "stale reference" on the VM. A call whose result borrows its
+  reads retains each read argument's place, the VM binds it as a caller
+  handle on every call path, and a temporary argument the result names
+  materializes and lives as long as the reference, for free calls,
+  methods, statics, keywords, function values, and nested defs. A static
+  method's reference result is now read through, and `h.pick(w) = 5`
+  through a read parameter is rejected as the pin rejects it.
 - A result names `origin_of(p)` only when `p` has memory to borrow, as the
   pin judges it (R668): a `ref` parameter or receiver always, any other
   only when its type is proven not `RegisterPassable`. A generic, an

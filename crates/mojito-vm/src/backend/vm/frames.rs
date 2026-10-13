@@ -360,9 +360,6 @@ impl VmBackend {
             let definition = &prog.mir.functions[index].1;
             if let Some(receiver) = nominal_receiver {
                 for parameter in 1..definition.ref_params.len() {
-                    if !definition.ref_params[parameter] {
-                        continue;
-                    }
                     let place = bound_argument_place(
                         slots.get(parameter - 1),
                         prog.sigs
@@ -372,12 +369,16 @@ impl VmBackend {
                         arg_places,
                         &keyword_names,
                         kwarg_places,
-                    )
-                    .ok_or_else(|| {
-                        RuntimeError::Unsupported(format!(
-                            "vm: a mut/ref argument to callable '{function_name}' must be a place"
-                        ))
-                    })?;
+                    );
+                    let Some(place) = caller_handle_place(definition, parameter, place)
+                        .map_err(|_| {
+                            RuntimeError::Unsupported(format!(
+                                "vm: a mut/ref argument to callable '{function_name}' must be a place"
+                            ))
+                        })?
+                    else {
+                        continue;
+                    };
                     bound[parameter - 1] = self.reference_to_place(caller, place)?;
                 }
                 // As in the synchronous method path: a borrowed receiver whose
@@ -402,9 +403,6 @@ impl VmBackend {
                 bound.insert(0, receiver);
             } else {
                 for (parameter, is_ref) in definition.ref_params.iter().enumerate() {
-                    if !is_ref {
-                        continue;
-                    }
                     let captured_argument = match slots.get(parameter) {
                         Some(ArgSlot::Positional(argument)) if *argument < capture_count => {
                             Some(*argument)
@@ -412,7 +410,7 @@ impl VmBackend {
                         _ => None,
                     };
                     if let Some(argument) = captured_argument {
-                        if !matches!(bound[parameter], Value::Ref { .. }) {
+                        if *is_ref && !matches!(bound[parameter], Value::Ref { .. }) {
                             return Err(RuntimeError::TypeError(format!(
                                 "vm: reference capture {argument} for '{function_name}' lost its handle"
                             )));
@@ -428,12 +426,16 @@ impl VmBackend {
                         arg_places,
                         &keyword_names,
                         kwarg_places,
-                    )
-                    .ok_or_else(|| {
-                        RuntimeError::Unsupported(format!(
-                            "vm: a mut/ref argument to callable '{function_name}' must be a place"
-                        ))
-                    })?;
+                    );
+                    let Some(place) = caller_handle_place(definition, parameter, place)
+                        .map_err(|_| {
+                            RuntimeError::Unsupported(format!(
+                                "vm: a mut/ref argument to callable '{function_name}' must be a place"
+                            ))
+                        })?
+                    else {
+                        continue;
+                    };
                     bound[parameter] = self.reference_to_place(caller, place)?;
                 }
             }
@@ -501,9 +503,6 @@ impl VmBackend {
             };
             let definition = &prog.mir.functions[index].1;
             for parameter in 1..definition.ref_params.len() {
-                if !definition.ref_params[parameter] {
-                    continue;
-                }
                 let place = bound_argument_place(
                     slots.get(parameter - 1),
                     prog.sigs
@@ -513,12 +512,16 @@ impl VmBackend {
                     arg_places,
                     &keyword_names,
                     kwarg_places,
-                )
-                .ok_or_else(|| {
-                    RuntimeError::Unsupported(format!(
-                        "vm: a mut/ref argument to method '{function_name}' must be a place"
-                    ))
-                })?;
+                );
+                let Some(place) =
+                    caller_handle_place(definition, parameter, place).map_err(|_| {
+                        RuntimeError::Unsupported(format!(
+                            "vm: a mut/ref argument to method '{function_name}' must be a place"
+                        ))
+                    })?
+                else {
+                    continue;
+                };
                 bound[parameter - 1] = self.reference_to_place(caller, place)?;
             }
             // A ref-returning method's result handle roots in its receiver's
@@ -592,7 +595,7 @@ impl VmBackend {
             ),
         };
         let function = &prog.mir.functions[index].1;
-        for (parameter, is_ref) in function.ref_params.iter().enumerate() {
+        for (parameter, _) in function.ref_params.iter().enumerate() {
             let place = bound_argument_place(
                 slots.get(parameter),
                 prog.sigs
@@ -603,33 +606,15 @@ impl VmBackend {
                 &keyword_names,
                 kwarg_places,
             );
-            if !is_ref {
-                // A place retained at a read-convention slot is a shared
-                // read lent to a borrowing-view result: bind the caller's
-                // storage, or the result's `ref` fields root in the callee
-                // frame. Owned/deinit slots keep the value transfer.
-                if let Some(place) = place
-                    && !function
-                        .owned_params
-                        .get(parameter)
-                        .copied()
-                        .unwrap_or(false)
-                    && !function
-                        .deinit_params
-                        .get(parameter)
-                        .copied()
-                        .unwrap_or(false)
-                {
-                    bound[parameter] = self.reference_to_place(caller, place)?;
-                }
-                continue;
-            }
-            let place = place.ok_or_else(|| {
+            let Some(place) = caller_handle_place(function, parameter, place).map_err(|_| {
                 RuntimeError::Unsupported(format!(
                     "vm: a mut/ref argument to '{}' must be a place",
                     func.0
                 ))
-            })?;
+            })?
+            else {
+                continue;
+            };
             bound[parameter] = self.reference_to_place(caller, place)?;
         }
         self.make_frame(

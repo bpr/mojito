@@ -547,9 +547,6 @@ impl VmBackend {
                 let mut reference_inputs: Vec<(usize, Value)> = Vec::new();
                 if let Some(receiver) = nominal_receiver {
                     for parameter in 1..definition.ref_params.len() {
-                        if !definition.ref_params[parameter] {
-                            continue;
-                        }
                         let place = bound_argument_place(
                             slots.get(parameter - 1),
                             prog.sigs
@@ -559,12 +556,16 @@ impl VmBackend {
                             arg_places,
                             &keyword_names,
                             kwarg_places,
-                        )
-                        .ok_or_else(|| {
-                            RuntimeError::Unsupported(format!(
-                                "vm: a mut/ref argument to callable '{function}' must be a place"
-                            ))
-                        })?;
+                        );
+                        let Some(place) = caller_handle_place(definition, parameter, place)
+                            .map_err(|_| {
+                                RuntimeError::Unsupported(format!(
+                                    "vm: a mut/ref argument to callable '{function}' must be a place"
+                                ))
+                            })?
+                        else {
+                            continue;
+                        };
                         let handle = Self::reference_to_place_parts(frame_id, regs, vars, place)?;
                         reference_inputs.push((parameter, handle));
                     }
@@ -582,9 +583,6 @@ impl VmBackend {
                     bound.insert(0, receiver);
                 } else {
                     for (parameter, is_ref) in definition.ref_params.iter().enumerate() {
-                        if !is_ref {
-                            continue;
-                        }
                         let captured_argument = match slots.get(parameter) {
                             Some(ArgSlot::Positional(argument)) if *argument < capture_count => {
                                 Some(*argument)
@@ -592,6 +590,9 @@ impl VmBackend {
                             _ => None,
                         };
                         let handle = if let Some(argument) = captured_argument {
+                            if !is_ref {
+                                continue;
+                            }
                             let handle = bound[parameter].clone();
                             if !matches!(handle, Value::Ref { .. }) {
                                 return Err(RuntimeError::TypeError(format!(
@@ -609,12 +610,16 @@ impl VmBackend {
                                 arg_places,
                                 &keyword_names,
                                 kwarg_places,
-                            )
-                                .ok_or_else(|| {
+                            );
+                            let Some(place) = caller_handle_place(definition, parameter, place)
+                                .map_err(|_| {
                                     RuntimeError::Unsupported(format!(
                                         "vm: a mut/ref argument to callable '{function}' must be a place"
                                     ))
-                                })?;
+                                })?
+                            else {
+                                continue;
+                            };
                             Self::reference_to_place_parts(frame_id, regs, vars, place)?
                         };
                         reference_inputs.push((parameter, handle));

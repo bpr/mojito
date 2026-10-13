@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R675**.
+Next free ID: **R680**.
 
 ## Ordered Work
 
@@ -69,6 +69,24 @@ change that needs a new `MJRT_ABI_VERSION`.
     `_FormatCurlyEntry._format`, so native `format` of such a struct is
     wrong too.
   - Found while landing R421 (2026-10-06).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R676 Natively, a function value or nested def returning a
+  reference is rejected**
+
+  Problem: `var f = field; print(f(w))` over `def field(w: W) ->
+  ref[origin_of(w.t)] Int` prints `1` on the VM and at the pin, but the
+  native backend stops with "unsupported reference-returning indirect
+  call".
+  - A nested `def inner(w: W) -> ref[origin_of(w.t)] Int` called directly
+    fails the same way, since it lowers through the closure path.
+  - `ContractAbi` (`contract_abi` in `mojito-pliron`) refuses any contract
+    with a `ref_return`.
+  - When it lands, add the function-value and nested-def cases to
+    `assets/ok/ref_result_through_read_param.mojo`, both over a place and a
+    temporary (`f(W(10))`).
+  - Found while landing R672 (2026-10-13).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -298,18 +316,15 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R672 A reference result through a read parameter is stale on the
-  VM**
+- [ ] **R675 Values that die at one point are destroyed in reverse order**
 
-  Problem: `def field(w: W) -> ref[origin_of(w.t)] Int: return w.t` over a
-  non-register-passable struct `W` stops on the VM with "stale reference to
-  frame 2", where the pin prints the field.
-  - The same holds for `-> ref[origin_of(w)] W[T]` over a read `w: W[T]`.
-  - A `mut` parameter of the same type returns and reads correctly.
-  - The read argument is apparently copied into the callee's frame, so the
-    returned handle roots at a slot the callee drops; the pin borrows the
-    caller's memory.
-  - Found while landing R668 (2026-10-13).
+  Problem: `var a = W(1); var b = W(2); print(a.t + b.t)` prints `del 2`
+  before `del 1` on the VM, where the pin destroys `a` first.
+  - Temporaries dying together do the same: `print(f(W(6)) + f(W(7)))`
+    destroys `W(7)` first, and the pin destroys `W(6)` first.
+  - The pin destroys values whose last use is the same point in creation
+    order; drop elaboration emits them reversed.
+  - Found while landing R672 (2026-10-13).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -1023,6 +1038,50 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
     read reaches the storage after that.
   - Depends on nothing.
   - Model: Opus, Planned.
+
+- [ ] **R679 Returning a field of a call's reference result is rejected**
+
+  Problem: `def outer(ref w: W) -> ref[w.t] Int: return inner(w).t`, over
+  `def inner(ref w: W) -> ref[w] W`, fails with "reference binding to a
+  non-place expression", where the pin prints the field.
+  - The same holds over read parameters with `origin_of(w.t)`.
+  - Spelled `-> ref[origin_of(w)] Int`, the pin rejects it with "cannot
+    return reference with incompatible origin", and Mojito keeps its own
+    words.
+  - Found while landing R672 (2026-10-13).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R677 A read argument reaches the VM callee as a frame value unless
+  the result borrows it**
+
+  Problem: upstream passes every memory-only `read` argument by address,
+  but the VM binds a read argument as the caller's storage only when the
+  call's result borrows it.
+  - A borrowing view or a reference result lends its read arguments
+    (`lends_read_arguments`); every other call copies the value into the
+    callee frame.
+  - Nothing observes the difference yet: pointer comparison on an
+    origin-bearing pointer is rejected, so `UnsafePointer(to=w)` inside the
+    callee cannot be compared with the caller's.
+  - It becomes a defect once pointer identity lands.
+  - Found while landing R672 (2026-10-13).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R678 A callee's returned reference register is typed mutable and
+  untracked**
+
+  Problem: in `def field(w: W) -> ref[origin_of(w.t)] Int: return w.t`, MIR
+  types the `ref.make` register as `ref { Int, origin_untracked { mutable:
+  true }, mutable }`, where the declared result is an immutable reference
+  rooted at `w.t`.
+  - Callers are unaffected, because the call site re-derives the origin
+    from the contract.
+  - It is a verifier-facing inaccuracy in `ref.make` typing.
+  - Found while landing R672 (2026-10-13).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
 
 ### Catch Up To Current Mojo: Calls, Overloads, Conversions, And Traits
 

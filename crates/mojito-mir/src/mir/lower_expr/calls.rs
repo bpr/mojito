@@ -40,9 +40,10 @@ impl<'a> Flatten<'a> {
         };
         let saved_anchor_permission = self.allow_argument_anchors;
         self.allow_argument_anchors = call.call_anchors_arguments();
-        let (regs, arg_places) = self.lower_call_arguments(args, false);
+        let lends_reads = call.lends_read_arguments();
+        let (regs, arg_places) = self.lower_call_arguments(args, lends_reads);
         self.allow_argument_anchors = saved_anchor_permission;
-        let (kw, kwarg_places) = self.lower_call_keywords(kwargs, false);
+        let (kw, kwarg_places) = self.lower_call_keywords(kwargs, lends_reads);
         let dest = self.fresh(call.location(), None);
         self.emit_call_invalidations(call, args, kwargs);
         self.emit(MirInstr::Call {
@@ -89,8 +90,9 @@ impl<'a> Flatten<'a> {
             .unwrap_or_default();
         let saved_anchor_permission = self.allow_argument_anchors;
         self.allow_argument_anchors = call.call_anchors_arguments();
-        let (arg_regs, arg_places) = self.lower_call_arguments(args, false);
-        let (kw_regs, kwarg_places) = self.lower_call_keywords(kwargs, false);
+        let lends_reads = call.lends_read_arguments();
+        let (arg_regs, arg_places) = self.lower_call_arguments(args, lends_reads);
+        let (kw_regs, kwarg_places) = self.lower_call_keywords(kwargs, lends_reads);
         self.allow_argument_anchors = saved_anchor_permission;
         let dest = self.fresh(call.location(), None);
         if call_site_invalidations {
@@ -290,8 +292,9 @@ impl<'a> Flatten<'a> {
             .unwrap_or_default();
         let saved_anchor_permission = self.allow_argument_anchors;
         self.allow_argument_anchors = call.call_anchors_arguments();
-        let (arg_regs, arg_places) = self.lower_call_arguments(args, false);
-        let (kw_regs, kwarg_places) = self.lower_call_keywords(kwargs, false);
+        let lends_reads = call.lends_read_arguments();
+        let (arg_regs, arg_places) = self.lower_call_arguments(args, lends_reads);
+        let (kw_regs, kwarg_places) = self.lower_call_keywords(kwargs, lends_reads);
         self.allow_argument_anchors = saved_anchor_permission;
         let d = self.fresh(call.location(), None);
         self.emit_call_invalidations(call, args, kwargs);
