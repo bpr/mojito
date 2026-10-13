@@ -169,55 +169,14 @@ pub(super) fn elaborate_drops(
                     })
                     .collect();
                 fill_escape_cleanups(cloned, &base, &effective_live_in);
-                // Raise-edge backstop for rebound outer variables: the
-                // per-instruction region drops below place each rebind's death
-                // on the *normal* path, so a value rebound in the body and
-                // unobservable after the block would still leak when a raise
-                // lands between the rebind and its in-region drop. Seed the
-                // scope-exit cleanup with the body-defined non-locals that
-                // cannot be observed after the body is left — dead on the
-                // normal continuation, unused by the handler/`else`/`finally`,
-                // and dead at every escape target. `set_try_cleanups` keeps
-                // this seed beside the body-locals.
-                if let MirInstr::Try {
-                    body,
-                    handler,
-                    orelse,
-                    finalbody,
-                    cleanup,
-                } = cloned
-                {
-                    let mut counts = HashMap::new();
-                    let (mut order, mut moved) = (Vec::new(), HashSet::new());
-                    collect_region_defs(body, &mut counts, &mut order, &mut moved);
-                    let mut survivors = HashSet::new();
-                    if let Some((_, h)) = handler {
-                        survivors.extend(region_uses(h));
-                    }
-                    if let Some(e) = orelse {
-                        survivors.extend(region_uses(e));
-                    }
-                    if let Some(fb) = finalbody {
-                        survivors.extend(region_uses(fb));
-                    }
-                    let mut escape_targets = HashSet::new();
-                    try_escape_targets(instr, &mut escape_targets);
-                    *cleanup = order
-                        .into_iter()
-                        .filter(|v| {
-                            counts.get(v) != function_defs.get(v)
-                                && droppable(*v)
-                                && !moved.contains(v)
-                                && !point.live_after.contains(v)
-                                && !survivors.contains(v)
-                                && !escape_targets.iter().any(|t| {
-                                    effective_live_in
-                                        .get(*t)
-                                        .is_some_and(|live| live.contains(v))
-                                })
-                        })
-                        .collect();
-                }
+                seed_raise_cleanup(
+                    cloned,
+                    point,
+                    &HashSet::new(),
+                    &function_defs,
+                    &effective_live_in,
+                    droppable,
+                );
                 // Elaborate per-instruction/edge drops inside the regions,
                 // seeded from this walk's liveness at the `try`.
                 let body_entry_live = elaborate_try_interior(
@@ -623,6 +582,19 @@ pub(super) fn elaborate_region_drops(
             },
             |v| ctx.droppable(v),
             |point, cloned| {
+                let observed = seeds
+                    .raise
+                    .union(seeds.finally_live)
+                    .copied()
+                    .collect::<HashSet<_>>();
+                seed_raise_cleanup(
+                    cloned,
+                    point,
+                    &observed,
+                    ctx.function_defs,
+                    seeds.effective_live_in,
+                    |v| ctx.droppable(v),
+                );
                 let nested_entry = elaborate_try_interior(
                     ctx,
                     cloned,
@@ -1582,4 +1554,74 @@ fn loan_extras(
 fn push_drops_reversed(reversed: &mut Vec<MirInstr>, mut vars: Vec<VarId>) {
     vars.sort_unstable();
     reversed.extend(vars.into_iter().map(|var| MirInstr::DropVar { var }));
+}
+
+/// Seed a `try`'s scope-exit cleanup with the outer variables a raise in
+/// its body must destroy: the per-instruction region drops place each
+/// death on the *normal* path, so an outer value the body uses or rebinds
+/// would leak when a raise lands before its in-region death. A candidate is
+/// a non-local the body defines or any variable live entering the `try`
+/// that the body uses, and it is seeded when nothing can observe it once
+/// the body is left — dead on the normal continuation, unused by the
+/// handler, `else`, `finally`, and the enclosing raise and exit observers
+/// in `observed`, dead at every escape target, and not consumed in place by
+/// the body (a `UseVar` move empties its slot, which a cleanup skips).
+/// `set_try_cleanups` keeps this seed beside the body-locals.
+fn seed_raise_cleanup(
+    cloned: &mut MirInstr,
+    point: &TryPoint,
+    observed: &HashSet<VarId>,
+    function_defs: &HashMap<VarId, usize>,
+    effective_live_in: &[HashSet<VarId>],
+    droppable: impl Fn(VarId) -> bool,
+) {
+    let MirInstr::Try {
+        body,
+        handler,
+        orelse,
+        finalbody,
+        cleanup,
+    } = cloned
+    else {
+        return;
+    };
+    let mut counts = HashMap::new();
+    let (mut order, mut moved) = (Vec::new(), HashSet::new());
+    collect_region_defs(body, &mut counts, &mut order, &mut moved);
+    let mut survivors = observed.clone();
+    for region in handler
+        .iter()
+        .map(|(_, h)| h)
+        .chain(orelse.iter())
+        .chain(finalbody.iter())
+    {
+        survivors.extend(region_uses(region));
+    }
+    let mut escape_targets = HashSet::new();
+    try_escape_targets(point.instr, &mut escape_targets);
+    let consumed = consumed_in_place(body);
+    let used = region_uses(body);
+    let mut outer: Vec<VarId> = point
+        .live_before
+        .iter()
+        .copied()
+        .filter(|v| used.contains(v) && !counts.contains_key(v))
+        .collect();
+    outer.sort_unstable();
+    *cleanup = order
+        .into_iter()
+        .filter(|v| counts.get(v) != function_defs.get(v))
+        .chain(outer)
+        .filter(|v| {
+            droppable(*v)
+                && !consumed.contains(v)
+                && !point.live_after.contains(v)
+                && !survivors.contains(v)
+                && !escape_targets.iter().any(|t| {
+                    effective_live_in
+                        .get(*t)
+                        .is_some_and(|live| live.contains(v))
+                })
+        })
+        .collect();
 }

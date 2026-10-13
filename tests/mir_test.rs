@@ -267,6 +267,62 @@ fn dying_copy_receiver_forwards_its_source() {
 }
 
 #[test]
+fn owned_operand_transfers_at_the_call_after_a_raising_operand() {
+    // `two(x^, boom(1))` forwards `x` after `boom` runs, right before `two`,
+    // and `two(M(7), boom(1))` binds the temporary to a forwarding slot it
+    // forwards there too. Inside a `try`, the slot and the outer `x` are in
+    // the scope-exit cleanup, so a raise in `boom` destroys both.
+    let source = "struct M(Movable):\n    var v: Int\n    def __init__(out self, v: Int):\n        self.v = v\n    def __deinit__(deinit self):\n        pass\n\ndef two(var a: M, n: Int):\n    pass\n\ndef boom(n: Int) raises -> Int:\n    raise Error(\"boom\")\n\ndef main():\n    var x = M(5)\n    try:\n        two(x^, boom(1))\n        two(M(7), boom(1))\n    except:\n        pass\n";
+    let compiled = Compiler::default()
+        .compile_source(source, Path::new("mir_test.mojo"))
+        .expect("compile");
+    let main = mir_function(compiled.elaborated_mir(), "main");
+    let slot = |prefix: &str| {
+        main.var_names
+            .iter()
+            .position(|name| name.starts_with(prefix))
+            .unwrap_or_else(|| panic!("{prefix} slot")) as u32
+    };
+    let (x, forwarded) = (slot("x"), slot(mojito::mir::FORWARDED_ARGUMENT_SLOT));
+    let (body, cleanup) = main
+        .blocks
+        .iter()
+        .flat_map(|block| &block.instrs)
+        .find_map(|instr| match instr {
+            MirInstr::Try { body, cleanup, .. } => Some((body, cleanup)),
+            _ => None,
+        })
+        .expect("try");
+    assert!(
+        cleanup.contains(&x) && cleanup.contains(&forwarded),
+        "{main:#?}"
+    );
+    let instrs = body
+        .iter()
+        .flat_map(|block| &block.instrs)
+        .collect::<Vec<_>>();
+    for var in [x, forwarded] {
+        let forward_at = instrs
+            .iter()
+            .position(|instr| {
+                matches!(
+                    instr,
+                    MirInstr::UseVar { var: used, mode: UseMode::Forward, .. } if *used == var
+                )
+            })
+            .expect("forward");
+        assert!(
+            matches!(&instrs[forward_at - 1], MirInstr::Call { func, .. } if func.0 == "boom"),
+            "{main:#?}"
+        );
+        assert!(
+            matches!(&instrs[forward_at + 1], MirInstr::Call { func, .. } if func.0 == "two"),
+            "{main:#?}"
+        );
+    }
+}
+
+#[test]
 fn split_iterator_slot_is_typed_by_its_iter_result() {
     let source = "def first_or[C: Iterable](items: C, default: C.Element) -> C.Element:\n\
                   \x20   for item in items:\n        return item.copy()\n\

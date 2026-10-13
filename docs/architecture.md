@@ -4226,11 +4226,13 @@ current Mojo:
   or owned (`var`/`deinit`) receiver takes (`take(M(copy=y))`,
   `M(copy=y).consume()`) is bound in place to a hidden forwarding slot
   (`$fwd_arg_r`, `mir::FORWARDED_ARGUMENT_SLOT`) that the call takes
-  through `UseVar Forward`; when `y` dies there and nothing from the
-  forwarding use to the call can raise (`forwarding_use`), the load,
-  construction, binding, and `DropVar` go and the call forwards `y` itself,
-  so no move initializer runs, as at Mojo. A raising argument evaluated
-  after the forwarding use keeps `y`'s move into the slot, as at the pin. A copy construction a read parameter or
+  through `UseVar Forward` at its setup, as is every other fresh owned
+  temporary such a parameter takes; when `y` dies there and nothing from
+  `y`'s death to the call can raise or names `y` (`forwarding_use`), the
+  load, construction, binding, and `DropVar` go and the call forwards `y`
+  itself, so no move initializer runs, as at Mojo, and the slot leaves
+  every cleanup list. A raising argument evaluated after the construction
+  keeps `y`'s move into the slot, as at the pin. A copy construction a read parameter or
   read operator operand takes (`show(M(copy=a))`) is bound to its
   read-temporary slot (`mir::READ_TEMPORARY_SLOT`, below); when `a` dies
   there, nothing from the binding to the call can raise, and only the
@@ -4357,7 +4359,14 @@ current Mojo:
   `two(c.t, bump(c))` reads `c.t` after `bump` writes it,
   `two(tup[0], bt(tup))` reads the element `bt` wrote, `two(a.t, take(a^))`
   is a use of the moved `a`, and `two(lst[0], bl(lst))` uses an invalidated
-  interior reference. A display is its constructor's call, so it opens its
+  interior reference. The call consumes its owned operands itself, as
+  Mojo's call does: an operand whose lowering ends in a `UseVar Forward` (a
+  `^` transfer, a forwarding slot, a conditional's result) has that forward
+  moved into the frame's transfers (`CallSetup::forwards`), which
+  `close_call_setup` emits after every read, immediately before the call.
+  So `two(x^, look(x))` and `owe(k.v, k^)` read the value before it moves,
+  and a raise in a later operand finds every earlier owned operand still in
+  its slot, where the `try` cleanup destroys it. A display is its constructor's call, so it opens its
   own frame (`display_elements`) over its elements, a dictionary display
   lowering every key and then every value into it, before the collection is
   built: `(u.t, bump(u))` reads `u.t` after `bump` writes it. A list, set,
@@ -4592,12 +4601,20 @@ continue. The set holds the body's *locals* — variables whose every def site
 (`DefVar` or `DeclareVar`) in the function lies within the body region (a
 reassignment is also a `DefVar`, and a `var x: T` declaration is a
 `DeclareVar`, so an outer variable merely rebound or first assigned inside the
-body is not a local and survives the exit) — plus the liveness-guarded rebound outer variables that cannot be
-observed after the body is left: dead on the normal continuation, unused by the
-handler/`else`/`finally` regions, and dead at every escape target. That second
-set is the raise-edge backstop for rebound values whose per-instruction drop
-sits on the normal path: a raise landing between the rebind and that drop
-would otherwise leak the value. The list is stored in descending `VarId`
+body is not a local and survives the exit) — plus the liveness-guarded outer
+variables the body rebinds or uses that cannot be observed after the body is
+left: dead on the normal continuation, unused by the handler/`else`/`finally`
+regions and by an enclosing region's raise and exit observers, and dead at
+every escape target (`seed_raise_cleanup`, for a top-level `try` and a nested
+one alike). That second set is the raise-edge backstop for outer values whose
+per-instruction death sits on the normal path: a raise landing before a
+rebound value's drop, or before the last use of a value used later in the
+body (an owned call operand the call has not yet consumed), would otherwise
+leak the value, where Mojo destroys it on the raise edge. A variable a
+`UseVar` moves stays listed, since the move empties its slot (the VM's slot
+is `Moved`, the native drop flag clear) and the cleanup skips it; only a
+variable consumed in place (`consumed_in_place`: a `ConsumeVar`, a
+whole-root move capture) is left out. The list is stored in descending `VarId`
 order — reverse declaration order, the order of every shared death point and of
 `EscapeJump` cleanups — and both backends run it front to back, so a raise
 destroys the body's live values newest declaration first, as Mojo does. Since

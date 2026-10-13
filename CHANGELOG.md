@@ -8,6 +8,13 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A call consumes its owned operands itself, after every operand is
+  evaluated, as the pin does (R747): a raise in a later operand destroys a
+  `^` transfer, a temporary, a copy construction, a keyword or `*xs`
+  collector argument, a conditional's result, or an owned receiver before
+  the `try` handler runs, where they used to leak, and `two(x^, look(x))`
+  and `owe(k.v, k^)` are accepted. An outer value whose last use in a `try`
+  body follows a raise now dies on the raise edge, before the handler.
 - A copy construction an owned (`var`/`deinit`) receiver takes at its
   source's last use forwards the source's storage, as the pin does (R737):
   `M(copy=d).consume()` runs neither the copy nor the move initializer. A

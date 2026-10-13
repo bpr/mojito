@@ -619,6 +619,17 @@ fn raise_seed_keeps_handler_observed_values_alive_through_the_body() {
 }
 
 #[test]
+fn owned_operands_die_on_a_later_operand_raise() {
+    // The call consumes its owned operands: a raise in a later operand
+    // destroys a transferred outer value and a temporary, in reverse
+    // declaration order, before the handler runs.
+    let src = format!(
+        "{TRY_NOISY}def two(var a: Noisy, var b: Noisy, n: Int):\n    pass\n\ndef main():\n    var x = Noisy(1)\n    try:\n        two(x^, Noisy(2), may(-1))\n    except e:\n        print(\"caught\")\n    print(\"done\")\n"
+    );
+    assert_eq!(vm(&src), "deinit 2\ndeinit 1\ncaught\ndone\n");
+}
+
+#[test]
 fn read_borrowed_owner_outlives_the_call_inside_a_try() {
     // The borrowed-argument retention rule holds under region elaboration:
     // the owner's drop lands right after the call that borrows it, not

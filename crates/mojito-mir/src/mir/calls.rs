@@ -36,6 +36,12 @@ pub(super) struct CallSetup {
     /// Each deferred read sequence with the operand it reads: `None` for a
     /// receiver or an operator operand, which precede every argument.
     reads: Vec<(Option<CheckedCallArgumentSource>, Vec<MirInstr>)>,
+    /// Each owned operand's transfer (its `UseVar` forward) with the operand
+    /// it transfers, emitted after every read: the call consumes its owned
+    /// operands, so a raise in a later operand finds them still in their
+    /// slots and an earlier operand may still read a value a later `^`
+    /// transfers.
+    forwards: Vec<(Option<CheckedCallArgumentSource>, Vec<MirInstr>)>,
 }
 
 /// A by-value operand whose reference result is read at its call's setup.
@@ -162,21 +168,23 @@ impl<'a> Flatten<'a> {
         self.call_setups.push(CallSetup {
             depth: self.argument_depth,
             reads: Vec::new(),
+            forwards: Vec::new(),
         });
     }
 
-    /// Close the innermost setup frame, emitting its deferred reads: the
-    /// receiver and operator operands first, then the arguments in the
-    /// parameter order `call`'s checked contract binds them in, as Mojo's
-    /// call setup reads them; a call without a contract keeps source order.
+    /// Close the innermost setup frame, emitting its deferred reads and then
+    /// its owned operands' transfers, each ranked with the receiver and
+    /// operator operands first, then the arguments in the parameter order
+    /// `call`'s checked contract binds them in, as Mojo's call setup reads
+    /// them and its call consumes them; a call without a contract keeps
+    /// source order.
     pub(super) fn close_call_setup(&mut self, call: Option<Node<'a>>) {
         let Some(setup) = self.call_setups.pop() else {
             return;
         };
         let mut reads = setup.reads;
-        if reads.len() > 1
-            && let Some(contract) = call.and_then(Node::call_contract)
-        {
+        let mut forwards = setup.forwards;
+        if let Some(contract) = call.and_then(Node::call_contract) {
             let rank = |source: &Option<CheckedCallArgumentSource>| {
                 source.map_or(0, |source| {
                     contract
@@ -187,8 +195,13 @@ impl<'a> Flatten<'a> {
                 })
             };
             reads.sort_by_key(|(source, _)| rank(source));
+            forwards.sort_by_key(|(source, _)| rank(source));
         }
-        for instr in reads.into_iter().flat_map(|(_, instrs)| instrs) {
+        for instr in reads
+            .into_iter()
+            .chain(forwards)
+            .flat_map(|(_, instrs)| instrs)
+        {
             self.emit(instr);
         }
     }
@@ -237,7 +250,10 @@ impl<'a> Flatten<'a> {
     /// ([`Self::materialize_reference_result_place`]), or everything after
     /// the elements of a `bound` [`Self::setup_display`]
     /// ([`Self::display_elements`]). A read that split the block stays where
-    /// written.
+    /// written. Otherwise an operand whose lowering ends in a `UseVar`
+    /// forward (a `^` transfer or a [`Self::bind_forwarded_temporary`]
+    /// slot) defers that forward to the frame's transfers; the slot it
+    /// empties is defined where written, which dominates the call.
     fn defer_to_setup<R>(
         &mut self,
         expression: Node<'a>,
@@ -268,6 +284,18 @@ impl<'a> Flatten<'a> {
         {
             let instrs = self.f.blocks[block].instrs.drain(start..).collect();
             setup.reads.push((source, instrs));
+        } else if (self.cur != block || self.f.blocks[block].instrs.len() > start)
+            && matches!(
+                self.f.blocks[self.cur].instrs.last(),
+                Some(MirInstr::UseVar {
+                    mode: UseMode::Forward,
+                    ..
+                })
+            )
+            && let Some(setup) = self.call_setups.last_mut()
+        {
+            let forward = self.f.blocks[self.cur].instrs.pop().into_iter().collect();
+            setup.forwards.push((source, forward));
         }
         lowered
     }
@@ -487,7 +515,7 @@ impl<'a> Flatten<'a> {
             let read = |this: &mut Self| {
                 let value = this.expr(expression);
                 this.anchor_temporary_argument(expression, value, adjustments, converted);
-                let value = this.bind_forwarded_copy(expression, value);
+                let value = this.bind_forwarded_temporary(expression, value);
                 this.bind_read_temporary(expression, value)
             };
             let value = match setup {
@@ -1308,7 +1336,7 @@ impl<'a> Flatten<'a> {
             )
         });
         if owned && place.is_none() {
-            return (self.bind_forwarded_copy(receiver, value), None);
+            return (self.bind_forwarded_temporary(receiver, value), None);
         }
         if place.is_some() || !receiver.is_fresh_temporary() || owned {
             return (value, place);
@@ -1498,30 +1526,43 @@ impl<'a> Flatten<'a> {
     /// Bind `value`, the lowered `expression` an owned argument or owned
     /// receiver takes, to a forwarding slot
     /// ([`crate::mir::FORWARDED_ARGUMENT_SLOT`]) when the checker marked it
-    /// `ForwardedArgument` and it is a non-raising copy construction
-    /// (`Name(copy=v)`): the construction initializes the slot in place, and
-    /// the call takes the slot's storage. Anything else is `value`
-    /// unchanged.
-    fn bind_forwarded_copy(&mut self, expression: Node<'a>, value: Reg) -> Reg {
+    /// `ForwardedArgument` and it is a fresh temporary owning droppable
+    /// storage: the call takes the slot's storage at its setup, and until
+    /// then a raise in a later operand destroys the temporary through the
+    /// slot. A non-raising call that produced the temporary initializes the
+    /// slot in place. A borrowing or origin-bearing temporary, or one already
+    /// forwarded, is `value` unchanged.
+    fn bind_forwarded_temporary(&mut self, expression: Node<'a>, value: Reg) -> Reg {
         let forwarded = expression.adjustments().iter().any(|adjustment| {
             matches!(
                 adjustment,
                 mojito_checked::checked::SemanticAdjustment::ForwardedArgument
             )
         });
-        let copies = matches!(
+        let in_place = matches!(
             self.f.blocks[self.cur].instrs.last(),
-            Some(MirInstr::Call { dest, raises: None, args, kwargs, .. })
-                if *dest == value
-                    && args.is_empty()
-                    && matches!(kwargs.as_slice(), [(keyword, _)] if keyword == "copy")
+            Some(MirInstr::Call { dest, raises: None, .. }) if *dest == value
         );
+        let forwarded_already = matches!(
+            self.f.blocks[self.cur].instrs.last(),
+            Some(MirInstr::UseVar { dest, mode: UseMode::Forward, .. }) if *dest == value
+        );
+        if !forwarded
+            || forwarded_already
+            || !expression.is_fresh_temporary()
+            || mojito_checked::checked::materialized_borrow_owner(expression.adjustments())
+                .is_some()
+            || !self.aggregate_borrows(expression).is_empty()
+        {
+            return value;
+        }
         let Some(ty) = self
             .f
             .reg_types
             .get(&value.0)
             .cloned()
-            .filter(|_| forwarded && copies)
+            .filter(owns_droppable_storage)
+            .filter(|ty| mojito_types::types::erase_origin_arguments(ty) == *ty)
         else {
             return value;
         };
@@ -1535,7 +1576,7 @@ impl<'a> Flatten<'a> {
             var: variable,
             src: value,
             binding_ty: Some(ty.clone()),
-            in_place: true,
+            in_place,
         });
         let forwarded = self.fresh_typed(expression.location(), Some(variable), ty);
         self.emit(MirInstr::UseVar {

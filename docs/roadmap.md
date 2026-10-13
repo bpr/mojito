@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R748**.
+Next free ID: **R750**.
 
 ## Ordered Work
 
@@ -298,21 +298,32 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R747 An owned call operand evaluated before a raising argument
-  leaks when that argument raises**
+- [ ] **R748 A discard of a transfer `_ = a^` runs the move initializer**
 
-  Problem: `try: two(M(copy=c), boom(8))` prints `move 1003` / `caught`,
-  where the pin prints `move 1003` / `del 1003` / `caught`.
-  - `try: two(x^, boom(1))` prints only `caught2`, where the pin prints
-    `del 5` first.
-  - The receiver form `M(copy=c).with_arg(boom(8))` leaks the same way.
-  - The moved or forwarded register is never destroyed on the raise edge
-    of a later operand.
-  - Not R20 (a raise leaving the function) nor R733 (an outer value used
-    after the raise).
-  - Probes: `conformance/probes/owned_argument_leaks_on_later_argument_raise.mojo`,
-    `conformance/probes/owned_receiver_leaks_on_later_argument_raise.mojo`.
-  - Found while landing R737 (2026-10-13).
+  Problem: `var a = M(50)` then `_ = a^` prints `move 1050` / `del 1050`,
+  where the pin prints only `del 50`.
+  - The pin destroys `a` in place; Mojito moves it into new storage first.
+  - Not R473 (`_ = x` without `^`, which copies).
+  - Found while landing R747 (2026-10-13).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R749 A linear temporary abandoned by a later operand's raise is
+  accepted**
+
+  Problem: `take(L(1), boom(1))`, where `L` is `@explicit_destroy` and
+  `take` takes `var a: L`, checks and runs, where the pin rejects it:
+  "'(expression temporary)' abandoned without being explicitly destroyed
+  ... value was not consumed when an error is thrown".
+  - A transfer does the same: `var l = L(1); take(l^, boom(1))` runs, where
+    the pin reports "'l' abandoned".
+  - The call consumes its owned operands only after every operand ran, so
+    the temporary is still owned on `boom`'s raise edge.
+  - The abstract destruction walk (`explicit_destroy.rs`) does not see a
+    raise edge between an operand and its call.
+  - Lowering leaves a linear temporary out of the forwarding slot, so
+    nothing destroys it implicitly meanwhile.
+  - Found while landing R747 (2026-10-13).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

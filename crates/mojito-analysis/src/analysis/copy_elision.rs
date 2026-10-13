@@ -12,12 +12,13 @@
 //! only on a successor edge keeps its copy.
 //!
 //! A copy an owned parameter or owned receiver takes is bound in place to a
-//! forwarding slot ([`FORWARDED_ARGUMENT_SLOT`]) that the call takes. When
-//! its source dies there and nothing evaluated from the forwarding use to
-//! the call can raise, the construction, the slot, and the source's death
-//! all go, and the call takes the source's storage itself: no move
-//! initializer runs, as Mojo's lifetime checker hands a dying source to an
-//! owned argument. A raising operand after the forwarding use keeps the
+//! forwarding slot ([`FORWARDED_ARGUMENT_SLOT`]) whose forwarding use sits
+//! at the call's setup, after the later operands. When its source dies there
+//! and nothing from the source's death to the call can raise or names the
+//! source, the construction, the slot (cleanup lists included), and the
+//! source's death all go, and the call takes the source's storage itself: no
+//! move initializer runs, as Mojo's lifetime checker hands a dying source to
+//! an owned argument. A raising operand after the construction keeps the
 //! move, as at the pin.
 //!
 //! A copy a read parameter or read operator operand takes is bound to a
@@ -54,13 +55,15 @@ pub(super) fn elide_dying_copies(function: &mut MirFunction, declarations: &MirD
         mentions: count_slot_mentions(&function.blocks),
     };
     let mut lent = Vec::new();
-    rewrite_blocks(&mut function.blocks, &elision, &mut lent);
+    let mut forwarded = Vec::new();
+    rewrite_blocks(&mut function.blocks, &elision, &mut lent, &mut forwarded);
     for loan in &lent {
         if let Some((_, origin)) = function.spans.0.get_mut(&loan.load.0) {
             *origin = Some(loan.source);
         }
     }
     rename_lent_slots(&mut function.blocks, &lent);
+    strip_forwarded_slots(&mut function.blocks, &forwarded);
 }
 
 /// What the rewrite reads of the whole function.
@@ -129,11 +132,16 @@ fn count_slot_mentions(blocks: &[MirBlock]) -> HashMap<VarId, usize> {
     mentions
 }
 
-fn rewrite_blocks(blocks: &mut [MirBlock], elision: &Elision, lent: &mut Vec<Loan>) {
+fn rewrite_blocks(
+    blocks: &mut [MirBlock],
+    elision: &Elision,
+    lent: &mut Vec<Loan>,
+    forwarded: &mut Vec<VarId>,
+) {
     for block in blocks {
         for instruction in &mut block.instrs {
             for region in try_regions_mut(instruction) {
-                rewrite_blocks(region, elision, lent);
+                rewrite_blocks(region, elision, lent, forwarded);
             }
         }
         let mut at = 1;
@@ -144,7 +152,7 @@ fn rewrite_blocks(blocks: &mut [MirBlock], elision: &Elision, lent: &mut Vec<Loa
                 continue;
             };
             if let Some(forward_at) = forwarding_use(instrs, source, elision.var_names) {
-                forward(instrs, at, source, forward_at);
+                forwarded.push(forward(instrs, at, source, forward_at));
             } else if let Some(lending) = lending_use(instrs, at, source, elision) {
                 lent.push(lend(instrs, at, source, lending));
             } else {
@@ -223,10 +231,9 @@ fn dying_copy(
 }
 
 /// Where the call takes the forwarding slot the dying copy is bound to: the
-/// slot's forwarding use, when it is the first instruction past the run of
-/// drops that holds the source's death, so nothing between can raise or
-/// name the source, and nothing from it to the call that consumes it can
-/// raise.
+/// slot's one forwarding use later in the block, when nothing past the
+/// source's death up to the call that consumes the slot can raise, names
+/// the source, or names the slot.
 fn forwarding_use(instrs: &[MirInstr], source: DyingCopy, var_names: &[String]) -> Option<usize> {
     let MirInstr::DefVar { var: slot, .. } = instrs[source.binding_at?] else {
         return None;
@@ -237,43 +244,50 @@ fn forwarding_use(instrs: &[MirInstr], source: DyingCopy, var_names: &[String]) 
     {
         return None;
     }
-    let forward_at = (source.drop_at + 1..instrs.len()).find(|&at| !is_drop(&instrs[at]))?;
-    let MirInstr::UseVar {
-        dest: forwarded,
-        var,
-        mode: UseMode::Forward,
-    } = instrs[forward_at]
-    else {
-        return None;
-    };
-    if var != slot {
-        return None;
-    }
+    let (forward_at, forwarded) = instrs
+        .iter()
+        .enumerate()
+        .skip(source.drop_at + 1)
+        .find_map(|(at, instruction)| match instruction {
+            MirInstr::UseVar {
+                dest,
+                var,
+                mode: UseMode::Forward,
+            } if *var == slot => Some((at, *dest)),
+            _ => None,
+        })?;
     let mut operands = Vec::new();
     let consumer_at = (forward_at + 1..instrs.len()).find(|&at| {
         operands.clear();
         instruction_operand_regs(&instrs[at], &mut operands);
         operands.contains(&forwarded)
     })?;
-    instrs[forward_at + 1..consumer_at]
-        .iter()
-        .all(cannot_raise)
+    (source.drop_at + 1..consumer_at)
+        .all(|at| {
+            let instruction = &instrs[at];
+            (is_drop(instruction) || cannot_raise(instruction))
+                && !names(instruction, source.var)
+                && (at == forward_at || !names(instruction, slot))
+        })
         .then_some(forward_at)
 }
 
 /// Hand the dying source to the call that takes the forwarding slot: the
 /// load, the construction, the slot's binding, and the source's death go,
-/// and the slot's forwarding use forwards the source instead.
-fn forward(instrs: &mut Vec<MirInstr>, at: usize, source: DyingCopy, forward_at: usize) {
-    if let MirInstr::UseVar { var, .. } = &mut instrs[forward_at] {
-        *var = source.var;
-    }
+/// and the slot's forwarding use forwards the source instead. The slot is
+/// gone, so the caller strips it from every cleanup list.
+fn forward(instrs: &mut Vec<MirInstr>, at: usize, source: DyingCopy, forward_at: usize) -> VarId {
+    let slot = match &mut instrs[forward_at] {
+        MirInstr::UseVar { var, .. } => std::mem::replace(var, source.var),
+        _ => source.var,
+    };
     instrs.remove(source.drop_at);
     if let Some(binding) = source.binding_at {
         instrs.remove(binding);
     }
     instrs.remove(at);
     instrs.remove(at - 1);
+    slot
 }
 
 /// Where a read call takes the read-temporary slot the dying copy is bound
@@ -478,6 +492,29 @@ fn rename_lent_slots(blocks: &mut [MirBlock], lent: &[Loan]) {
         .map(|loan| (loan.slot, loan.source))
         .collect::<HashMap<_, _>>();
     rename_deaths(blocks, &sources);
+}
+
+/// Strip every forwarding slot an elided copy no longer binds from the
+/// cleanup lists that name it.
+fn strip_forwarded_slots(blocks: &mut [MirBlock], forwarded: &[VarId]) {
+    if forwarded.is_empty() {
+        return;
+    }
+    for block in blocks {
+        for instruction in &mut block.instrs {
+            if let MirInstr::Try { cleanup, .. } = instruction {
+                cleanup.retain(|var| !forwarded.contains(var));
+            }
+            for region in try_regions_mut(instruction) {
+                strip_forwarded_slots(region, forwarded);
+            }
+        }
+        if let MirTerm::ReturnWithCleanup { cleanup, .. } | MirTerm::EscapeJump { cleanup, .. } =
+            &mut block.term
+        {
+            cleanup.retain(|var| !forwarded.contains(var));
+        }
+    }
 }
 
 fn rename_deaths(blocks: &mut [MirBlock], sources: &HashMap<VarId, VarId>) {

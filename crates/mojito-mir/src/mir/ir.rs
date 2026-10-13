@@ -674,9 +674,11 @@ impl UseMode {
 
 /// The name prefix of a forwarding slot.
 ///
-/// A copy construction an owned parameter takes (`take(M(copy=y))`) is
-/// materialized in it, bound in place and forwarded once. When the copy's
-/// source dies there, copy elision forwards the source's storage instead.
+/// A fresh temporary an owned parameter or owned receiver takes
+/// (`take(M(copy=y))`, `take(M(7))`) is materialized in it and forwarded
+/// once, at the call, so a raise in a later operand destroys it through the
+/// slot. A copy construction is bound in place. When the copy's source dies
+/// there, copy elision forwards the source's storage instead.
 pub const FORWARDED_ARGUMENT_SLOT: &str = "$fwd_arg_r";
 
 /// The name prefix of a read-temporary slot.

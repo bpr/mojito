@@ -225,9 +225,10 @@ pub(super) fn place_loan_uses(place: &MirPlace, reg: Reg) -> Vec<(VarId, Reg)> {
 
 /// The variables **local** to a `try` region's blocks — those whose every
 /// def site (`DefVar` or `DeclareVar`) in the whole function lies within the
-/// region (at any nesting), excluding those moved out with `^` — the
+/// region (at any nesting), excluding those [`consumed_in_place`] — the
 /// body-local values to destroy when the body is left (the exceptional-edge /
-/// scope-exit cleanup). A variable declared outside the region — a
+/// scope-exit cleanup). A local a `UseVar` transfers stays listed: the
+/// transfer empties its slot, which the cleanup then skips. A variable declared outside the region — a
 /// `DeclareVar` or a `DefVar` beyond it — has a def site there and survives
 /// the exit, however many of its stores lie inside; `function_defs` supplies
 /// the function-wide def-site counts to compare against.
@@ -239,8 +240,22 @@ pub(super) fn region_cleanup_vars(
     let mut order: Vec<VarId> = Vec::new();
     let mut moved: HashSet<VarId> = HashSet::new();
     collect_region_defs(blocks, &mut counts, &mut order, &mut moved);
-    order.retain(|v| !moved.contains(v) && counts.get(v) == function_defs.get(v));
+    let consumed = consumed_in_place(blocks);
+    order.retain(|v| !consumed.contains(v) && counts.get(v) == function_defs.get(v));
     order
+}
+
+/// The variables a region moves out other than by a `UseVar` (which
+/// empties its slot), deep through `try` regions: a `ConsumeVar` or a
+/// whole-root move capture, which a cleanup must not destroy again.
+pub(super) fn consumed_in_place(blocks: &[MirBlock]) -> HashSet<VarId> {
+    let mut consumed = HashSet::new();
+    for_each_instr_deep(blocks, &mut |instruction| {
+        if !matches!(instruction, MirInstr::UseVar { .. }) {
+            consumed.extend(vars_moved(instruction));
+        }
+    });
+    consumed
 }
 
 /// Count every def site (a `DefVar` write or a `DeclareVar`) per variable
