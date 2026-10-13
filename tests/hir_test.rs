@@ -46,11 +46,21 @@ fn function_body(
 fn loop_body_region(src: &str, header: BlockId, exit: BlockId) -> Cfg {
     let program = parse(src).expect("parse error");
     let checked = check_program(&program).expect("type error");
-    let (_, body) = function_body(&checked, "main");
-    let loop_body = body
+    let tables = checked.tables();
+    let statement = |id: &mojito::checked::CheckedStmtId| tables.statement(*id).map(|s| &s.op);
+    let main = tables
+        .roots()
         .iter()
-        .find_map(|statement| match &statement.kind {
-            mojito::ast::StmtKind::While { body, .. } => Some(body.clone()),
+        .find_map(|id| match statement(id) {
+            Some(mojito::checked::CheckedStmtOp::Def(def)) if def.name == "main" => Some(def),
+            _ => None,
+        })
+        .expect("function main");
+    let loop_body = main
+        .body
+        .iter()
+        .find_map(|id| match statement(id) {
+            Some(mojito::checked::CheckedStmtOp::While { body, .. }) => Some(body.clone()),
             _ => None,
         })
         .expect("a loop in main");
@@ -58,7 +68,7 @@ fn loop_body_region(src: &str, header: BlockId, exit: BlockId) -> Cfg {
         Vec::new(),
         &loop_body,
         &[(header, exit, Vec::new())],
-        std::sync::Arc::clone(checked.tables()),
+        std::sync::Arc::clone(tables),
     )
 }
 

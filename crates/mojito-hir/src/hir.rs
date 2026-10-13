@@ -290,16 +290,16 @@ impl Cfg {
         Self::build_fn_with_context(params, shadow_captures, body, Arc::clone(checked.tables()))
     }
 
-    /// Lower a checked `try` region into a CFG whose variable interner
-    /// **starts** seeded with `seed_vars` (so the region shares the enclosing
-    /// frame's `VarId`s — a name already interned keeps its id, new names
-    /// append). The region's loop stack starts with the enclosing function's
+    /// Lower a checked `try` region, the statement nodes `body`, into a CFG
+    /// whose variable interner **starts** seeded with `seed_vars` (so the
+    /// region shares the enclosing frame's `VarId`s — a name already interned
+    /// keeps its id, new names append). The region's loop stack starts with the enclosing function's
     /// loops (`external_loops`, innermost-last, as `(header, exit, cleanup)`
     /// in the *enclosing* CFG): a `break`/`continue` that targets one of them
     /// lowers to a [`Terminator::EscapeJump`]. `n_params` is 0.
     pub fn build_seeded_checked_region(
         seed_vars: Vec<String>,
-        body: &[Stmt],
+        body: &[CheckedStmtId],
         external_loops: &[(BlockId, BlockId, Vec<VarId>)],
         checked: Arc<CheckedTables>,
     ) -> Self {
@@ -325,8 +325,8 @@ impl Cfg {
             checked,
             slots: HashMap::new(),
         };
-        for root in lower.roots(body) {
-            lower.root(root);
+        for id in body {
+            lower.stmt(*id);
         }
         lower.seal(Terminator::FallOff); // region completed normally (not a return)
         lower.finish(entry, 0)

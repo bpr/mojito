@@ -8,6 +8,14 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- MIR lowers straight-line statements and `try` from their checked
+  statement ops (R622), as upstream lowers a statement from its typed op:
+  the op decides each statement's lowering, a `ref` declaration binds the
+  slot HIR declared for it, a `try`'s bodies are its op's statement nodes,
+  which HIR lowers directly rather than finding each by span, and the
+  break/continue escape check and reassigned-name scan walk the ops. No
+  program's output or MIR changes.
+
 - MIR lowers list, dict, set, and tuple displays and comprehensions from
   their checked ops (R621), as upstream's lowering consumes a typed
   collection construction: the constructor and insertion method come from

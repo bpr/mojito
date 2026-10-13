@@ -1729,6 +1729,38 @@ impl CheckedStmtOp {
             | Self::Continue => Vec::new(),
         }
     }
+
+    /// The statement kind's name, for diagnostics.
+    pub const fn kind_name(&self) -> &'static str {
+        match self {
+            Self::VarDecl { .. } => "VarDecl",
+            Self::RefDecl { .. } => "RefDecl",
+            Self::Assign { .. } => "Assign",
+            Self::AugAssign { .. } => "AugAssign",
+            Self::Unpack { .. } => "Unpack",
+            Self::SetPlace { .. } => "SetPlace",
+            Self::Def(_) => "Def",
+            Self::Struct(_) => "Struct",
+            Self::Trait(_) => "Trait",
+            Self::Comptime { .. } => "Comptime",
+            Self::ComptimeIf { .. } => "ComptimeIf",
+            Self::ComptimeFor { .. } => "ComptimeFor",
+            Self::If { .. } => "If",
+            Self::While { .. } => "While",
+            Self::For { .. } => "For",
+            Self::Return(_) => "Return",
+            Self::Raise(_) => "Raise",
+            Self::Import { .. } => "Import",
+            Self::FromImport { .. } => "FromImport",
+            Self::With { .. } => "With",
+            Self::Try { .. } => "Try",
+            Self::Scope(_) => "Scope",
+            Self::Pass => "Pass",
+            Self::Break => "Break",
+            Self::Continue => "Continue",
+            Self::Expr(_) => "Expr",
+        }
+    }
 }
 
 /// A checked `def`: its signature as written, its parameter defaults and

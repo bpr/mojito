@@ -1740,8 +1740,11 @@ declaration. A function's root statements are its op's body; the tables keep
 the module's and each default wrapper's. A lambda's op names its `def`'s
 statement node. HIR walks the statement and expression nodes; its callers
 still hand it a body's syntax roots, which `Lower::roots` maps to their
-nodes through the transitional `CheckedTables::statement_at` (R629). MIR
-still walks statement syntax. Source spans index
+nodes through the transitional `CheckedTables::statement_at` (R629); a
+`try` region hands it the op's statement ids directly. MIR lowers an opaque
+statement and a `try` by matching its `CheckedStmtOp`, reading only the
+expression operands it still lowers from rebuilt syntax; its declaration
+walks still read statement syntax (R643). Source spans index
 diagnostics and associate a checker-approved compile-time value argument with
 the register produced from that same source occurrence; they are not used to
 re-resolve a type, overload, effect, or origin decision.

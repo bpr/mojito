@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R643**.
+Next free ID: **R644**.
 
 ## Ordered Work
 
@@ -4821,14 +4821,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R622 MIR lowers statements and control flow from syntax**
-
-  `mir/lower_stmt.rs` matches `StmtKind`, where it should match the
-  statement's `CheckedStmt`.
-  - Plan: `R604-a-package-s-checked-body-is-plan.md`, slice 6.
-  - Depends on R617.
-  - Model: Opus, Not Planned.
-
 - [ ] **R635 MIR lowers operators, transfers, spreads, lambdas, type
   values, and t-strings from syntax**
 
@@ -4895,6 +4887,26 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Done when `statement_at` and `statements_by_span` are deleted.
   - Found while landing R615 (2026-10-11).
   - Depends on R617, R622.
+  - Model: Opus, Not Planned.
+
+- [ ] **R643 MIR reads declarations and finds nested defs from syntax**
+
+  MIR still reads a declaration's kind, name, and body from statement
+  syntax, so R623's done-condition cannot hold.
+  - `lower_function`, `struct_declaration`, `StructLowering::of`, and the
+    top-level filter (`mir.rs`) match `StmtKind::{Def, Struct, Trait,
+    Comptime}` over `CheckedProgram::statements()`.
+  - `find_nested_defs`, `lower_nested_def`, `analyze_node`,
+    `checked_nested_declaration`, and `analyze_root_children`
+    (`mir/nested.rs`) walk a `def`'s syntax body.
+  - Upstream reads a declaration from its op; the fix walks
+    `CheckedTables::roots` and each `CheckedDef::body` by id, which R629's
+    id-taking HIR builders need anyway.
+  - Done when `rg 'StmtKind::' crates/mojito-mir/src/mir/nested.rs` is
+    empty, `mir.rs` names `StmtKind::` only at R623's bridges and R629's,
+    R640's, and R642's sites, and the probe fixtures' MIR is unchanged.
+  - Found while landing R622 (2026-10-12).
+  - Depends on R629.
   - Model: Opus, Not Planned.
 
 - [ ] **R634 HIR types a slot by its name's spelling anywhere in the

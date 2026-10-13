@@ -4,7 +4,7 @@
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
-use mojito_checked::checked::CheckedOp;
+use mojito_checked::checked::{CheckedOp, CheckedTables};
 use mojito_types::types::TyKind;
 
 impl Flatten<'_> {
@@ -78,36 +78,15 @@ impl Flatten<'_> {
             // outward `break`/`continue` becomes an `EscapeJump` resolved via
             // `outer_map`.
             HirInstr::Try { stmt, loop_targets } => {
-                let syntax = self.hir_statement_syntax(stmt);
-                self.with_hir_statement(&syntax, stmt, |this| {
-                    if let StmtKind::Try {
-                        body,
-                        except,
-                        orelse,
-                        finalbody,
-                    } = &syntax.kind
-                    {
-                        let handler_binding = this
-                            .checked
-                            .statement(stmt.node)
-                            .and_then(|node| node.binding);
-                        this.emit_try(
-                            TryRegions {
-                                body,
-                                except,
-                                orelse,
-                                finalbody,
-                                handler_binding,
-                            },
-                            loop_targets,
-                            outer_map,
-                        );
-                    } else {
-                        this.emit(MirInstr::Unsupported(
-                            "malformed HIR try instruction".to_string(),
-                        ));
-                    }
-                });
+                let tables = std::sync::Arc::clone(&self.checked);
+                match tables.statement(stmt.node).and_then(TryRegions::of) {
+                    Some(regions) => self.with_statement_loans(|this| {
+                        this.emit_try(regions, loop_targets, outer_map);
+                    }),
+                    None => self.emit(MirInstr::Unsupported(
+                        "malformed HIR try instruction".to_string(),
+                    )),
+                }
             }
             HirInstr::Drop(var) => {
                 self.emit(MirInstr::DropVar { var: *var });
@@ -1636,7 +1615,7 @@ impl Flatten<'_> {
     /// blocks; the VM runs it recursively.
     pub(super) fn lower_region(
         &mut self,
-        body: &[Stmt],
+        body: &[CheckedStmtId],
         ext_loops: &[(hir::BlockId, hir::BlockId, Vec<VarId>)],
         outer_map: &HashMap<hir::BlockId, MirBlockId>,
     ) -> Vec<MirBlock> {
@@ -1759,7 +1738,7 @@ impl Flatten<'_> {
         let body_blocks = self.lower_region(body, ext_loops, outer_map);
         let handler = match except {
             Some((name, ex_body)) => {
-                let slot = name.as_ref().map(|name| match handler_binding {
+                let slot = name.map(|name| match handler_binding {
                     Some(binding) => self.declare_binding_var(binding, name),
                     None => self.var(name),
                 });
@@ -1776,12 +1755,8 @@ impl Flatten<'_> {
             }
             None => None,
         };
-        let orelse_blocks = orelse
-            .as_ref()
-            .map(|b| self.lower_region(b, ext_loops, outer_map));
-        let finalbody_blocks = finalbody
-            .as_ref()
-            .map(|b| self.lower_region(b, ext_loops, outer_map));
+        let orelse_blocks = orelse.map(|b| self.lower_region(b, ext_loops, outer_map));
+        let finalbody_blocks = finalbody.map(|b| self.lower_region(b, ext_loops, outer_map));
         self.emit(MirInstr::Try {
             body: body_blocks,
             handler,
@@ -1978,13 +1953,18 @@ impl Flatten<'_> {
         }
     }
 
-    /// Lower the "catch-all" straight-line statements. Every reachable case is
-    /// handled; the categorization decisions are documented per arm. `outer_map`
-    /// threads the enclosing function's block map for a fallback-path `try`.
+    /// Lower the "catch-all" straight-line statements. Statement node `node`
+    /// decides the lowering; `s`, the syntax rebuilt from it, binds only the
+    /// expression operands still lowered from syntax. `declared` is the slot
+    /// HIR interned for the binding the statement declares. Every reachable
+    /// case is handled; the categorization decisions are documented per arm.
+    /// `outer_map` threads the enclosing function's block map for a
+    /// fallback-path `try`.
     pub(super) fn lower_stmt(
         &mut self,
         s: &Stmt,
-        statement_binding: Option<mojito_types::origin::OwnerId>,
+        node: &CheckedStmt,
+        declared: Option<VarId>,
         outer_map: &HashMap<hir::BlockId, MirBlockId>,
     ) {
         // Bracket the statement for temporary-argument anchors: hidden
@@ -1996,7 +1976,7 @@ impl Flatten<'_> {
         // Nested statement lowering saves and restores the enclosing list, so
         // each statement flushes exactly its own anchors.
         let saved = std::mem::take(&mut self.pending_argument_anchors);
-        self.lower_stmt_dispatch(s, statement_binding, outer_map);
+        self.lower_stmt_dispatch(s, node, declared, outer_map);
         self.flush_argument_anchors();
         self.pending_argument_anchors = saved;
     }
@@ -2015,12 +1995,19 @@ impl Flatten<'_> {
     fn lower_stmt_dispatch(
         &mut self,
         s: &Stmt,
-        statement_binding: Option<mojito_types::origin::OwnerId>,
+        node: &CheckedStmt,
+        declared: Option<VarId>,
         outer_map: &HashMap<hir::BlockId, MirBlockId>,
     ) {
-        match &s.kind {
-            StmtKind::RefDecl { name, value } => {
-                let reference = self.var(name);
+        let statement_binding = node.binding;
+        match (&node.op, &s.kind) {
+            (CheckedStmtOp::RefDecl { .. }, StmtKind::RefDecl { value, .. }) => {
+                let Some(reference) = declared else {
+                    self.emit(MirInstr::Unsupported(
+                        "a ref declaration without its HIR slot reached MIR".into(),
+                    ));
+                    return;
+                };
                 if let Some(binding) = statement_binding {
                     self.owner_vars.insert(binding, reference);
                 }
@@ -2165,7 +2152,7 @@ impl Flatten<'_> {
                     }
                     if let Some(first) = loans.first() {
                         let marker =
-                            self.fresh_typed(s.source_span(), Some(first.place.root), Ty::none());
+                            self.fresh_typed(node.location(), Some(first.place.root), Ty::none());
                         self.aggregate_loans.insert(reference, loans.clone());
                         self.emit(MirInstr::EstablishLoans {
                             reference,
@@ -2238,7 +2225,7 @@ impl Flatten<'_> {
                 }
                 self.aliases.insert(reference, loans[0].clone());
                 self.aggregate_loans.insert(reference, loans.clone());
-                let marker = self.fresh_typed(s.source_span(), Some(place.root), Ty::none());
+                let marker = self.fresh_typed(node.location(), Some(place.root), Ty::none());
                 self.emit(MirInstr::EstablishLoans {
                     reference,
                     loans,
@@ -2247,7 +2234,7 @@ impl Flatten<'_> {
                 });
             }
             // --- Writes through a place (any nesting) --------------------------
-            StmtKind::SetPlace { place, value } => {
+            (CheckedStmtOp::SetPlace { .. }, StmtKind::SetPlace { place, value }) => {
                 if self.lower_subscript_reference_set(place, value) {
                     return;
                 }
@@ -2327,7 +2314,7 @@ impl Flatten<'_> {
                     }
                 }
             }
-            StmtKind::AugAssign { place, op, value } => {
+            (CheckedStmtOp::AugAssign { op, .. }, StmtKind::AugAssign { place, value, .. }) => {
                 if self.lower_augmented_subscript(place, *op, value) {
                     return;
                 }
@@ -2487,41 +2474,40 @@ impl Flatten<'_> {
             }
 
             // --- Simple effectful statements -----------------------------------
-            StmtKind::Raise(e) => {
+            (CheckedStmtOp::Raise(_), StmtKind::Raise(e)) => {
                 let src = self.expr(e);
                 self.emit(MirInstr::Raise { src });
             }
-            StmtKind::Comptime { name, value, .. } => {
+            (CheckedStmtOp::Comptime { name, .. }, StmtKind::Comptime { value, .. }) => {
                 self.lower_comptime_binding(s, name, value, statement_binding);
             }
             // `pass` has no runtime effect. Imports were consumed by linking and
             // are no-ops in a lowered module body.
-            StmtKind::Pass | StmtKind::Import { .. } | StmtKind::FromImport { .. } => {}
+            (
+                CheckedStmtOp::Pass
+                | CheckedStmtOp::Import { .. }
+                | CheckedStmtOp::FromImport { .. },
+                _,
+            ) => {}
 
             // `try`/`except`/`else`/`finally` — each part lowers to a mini-CFG that
             // shares this function's slots; the VM runs them with `exec_try`
             // semantics. `cleanup` (the exceptional-edge drops) is filled by the
             // drop-elaboration pass.
-            StmtKind::Try {
-                body,
-                except,
-                orelse,
-                finalbody,
-            } => {
+            (CheckedStmtOp::Try { .. }, _) => {
+                let Some(regions) = TryRegions::of(node) else {
+                    return;
+                };
                 // A `break`/`continue` that leaves the `try` (targeting an enclosing
                 // loop) needs the outer loop's target block, which the self-contained
                 // mini-CFG region can't name — refuse cleanly rather than build an
                 // ill-formed region. (A `return` crossing out is fine: it surfaces as
                 // a `Flow::Return` the block driver handles.)
-                let crosses = region_crosses_control(body)
-                    || except
-                        .as_ref()
-                        .is_some_and(|(_, b)| region_crosses_control(b))
-                    || orelse.as_ref().is_some_and(|b| region_crosses_control(b))
-                    || finalbody
-                        .as_ref()
-                        .is_some_and(|b| region_crosses_control(b));
-                if crosses {
+                let tables = std::sync::Arc::clone(&self.checked);
+                if regions
+                    .bodies()
+                    .any(|body| region_crosses_control(&tables, body))
+                {
                     self.emit(MirInstr::Unsupported(
                         "try with break/continue crossing the try boundary".into(),
                     ));
@@ -2529,30 +2515,20 @@ impl Flatten<'_> {
                 }
                 // Fallback path (a `try` whose enclosing loops are region-local, so
                 // the HIR left it as an opaque `Stmt`): no escapable loops.
-                self.emit_try(
-                    TryRegions {
-                        body,
-                        except,
-                        orelse,
-                        finalbody,
-                        handler_binding: statement_binding,
-                    },
-                    &[],
-                    outer_map,
-                );
+                self.emit_try(regions, &[], outer_map);
             }
             // A direct nested declaration creates its closure exactly here. Copy
             // and move captures therefore snapshot/transfer before any following
             // statement can mutate or use the source binding. Later calls and
             // first-class uses load this internal closure slot.
-            StmtKind::Def { name, .. } => {
+            (CheckedStmtOp::Def(def), _) => {
                 let info = statement_binding
                     .and_then(|binding| self.nested.get(&binding))
                     .filter(|info| info.materialized_here)
                     .cloned();
                 if let Some(info) = info {
-                    let src = self.emit_nested_closure(&info, s.source_span(), false);
-                    let var = self.declare_binding_var(info.binding, name);
+                    let src = self.emit_nested_closure(&info, node.location(), false);
+                    let var = self.declare_binding_var(info.binding, &def.name);
                     if let Some(ty) = &info.callable_ty {
                         self.var_types.entry(var).or_insert_with(|| ty.clone());
                     }
@@ -2569,13 +2545,13 @@ impl Flatten<'_> {
             }
             // A nested `def` we couldn't lift because it nests another declaration,
             // or a nested `struct`/`trait`, stays a clean `Unsupported`.
-            StmtKind::Struct { .. } | StmtKind::Trait { .. } => self.emit(MirInstr::Unsupported(
-                "nested def/struct/trait declaration".into(),
-            )),
+            (CheckedStmtOp::Struct(_) | CheckedStmtOp::Trait(_), _) => self.emit(
+                MirInstr::Unsupported("nested def/struct/trait declaration".into()),
+            ),
 
             // Tuple unpacking `a, b = t`: evaluate the tuple once, then bind each
             // target from its element (a NAME → `DefVar`; a place → `Store`).
-            StmtKind::Unpack { targets, value, .. } => {
+            (CheckedStmtOp::Unpack { .. }, StmtKind::Unpack { targets, value, .. }) => {
                 let plan = self
                     .tuple_unpack_plan(value)
                     .expect("checked tuple unpack carries an extraction plan");
@@ -2731,29 +2707,48 @@ impl Flatten<'_> {
             // --- Unreachable after the checker ---------------------------------
             // Parse-only statements are flagged `Unsupported`, so a checked program
             // never reaches MIR with them.
-            StmtKind::With { .. } | StmtKind::ComptimeIf { .. } | StmtKind::ComptimeFor { .. } => {
+            (
+                CheckedStmtOp::With { .. }
+                | CheckedStmtOp::ComptimeIf { .. }
+                | CheckedStmtOp::ComptimeFor { .. },
+                _,
+            ) => {
                 self.emit(MirInstr::Unsupported(format!(
-                    "unchecked statement reached MIR lowering: {:?}",
-                    s.kind
+                    "unchecked statement reached MIR lowering: {}",
+                    node.op.kind_name()
                 )));
             }
             // These are lowered by `hir::Lower` directly (to instrs/terminators), so
             // they never arrive here wrapped in a `HirInstr::Stmt`.
-            StmtKind::If { .. }
-            | StmtKind::While { .. }
-            | StmtKind::For { .. }
-            | StmtKind::Scope(_)
-            | StmtKind::Break
-            | StmtKind::Continue
-            | StmtKind::Return(_)
-            | StmtKind::VarDecl { .. }
-            | StmtKind::Assign { .. }
-            | StmtKind::Expr(_) => {
+            (
+                CheckedStmtOp::If { .. }
+                | CheckedStmtOp::While { .. }
+                | CheckedStmtOp::For { .. }
+                | CheckedStmtOp::Scope(_)
+                | CheckedStmtOp::Break
+                | CheckedStmtOp::Continue
+                | CheckedStmtOp::Return(_)
+                | CheckedStmtOp::VarDecl { .. }
+                | CheckedStmtOp::Assign { .. }
+                | CheckedStmtOp::Expr(_),
+                _,
+            ) => {
                 self.emit(MirInstr::Unsupported(format!(
-                    "malformed HIR statement instruction: {:?}",
-                    s.kind
+                    "malformed HIR statement instruction: {}",
+                    node.op.kind_name()
                 )));
             }
+            (
+                CheckedStmtOp::RefDecl { .. }
+                | CheckedStmtOp::SetPlace { .. }
+                | CheckedStmtOp::AugAssign { .. }
+                | CheckedStmtOp::Raise(_)
+                | CheckedStmtOp::Comptime { .. }
+                | CheckedStmtOp::Unpack { .. },
+                _,
+            ) => self.emit(MirInstr::Unsupported(
+                "a statement's syntax does not match its checked node".into(),
+            )),
         }
     }
 
@@ -2763,6 +2758,8 @@ impl Flatten<'_> {
     /// A display the elaborator evaluates (`comptime L = [n, n + 1]`) has no
     /// runtime form either: it is recorded here for the loops that iterate
     /// the name and the thunks that read it, and only a thunk binds it.
+    /// `statement` is the binding's rebuilt syntax, which a thunk keeps as
+    /// its prologue until thunk bodies are statement nodes (R629, R642).
     fn lower_comptime_binding(
         &mut self,
         statement: &Stmt,
@@ -2913,13 +2910,16 @@ impl Flatten<'_> {
         statement: &mojito_hir::hir::HirStmt,
         outer_map: &HashMap<hir::BlockId, MirBlockId>,
     ) {
+        let tables = std::sync::Arc::clone(&self.checked);
+        let Some(node) = tables.statement(statement.node) else {
+            self.emit(MirInstr::Unsupported(
+                "a HIR statement without its checked node reached MIR".into(),
+            ));
+            return;
+        };
         let syntax = self.hir_statement_syntax(statement);
-        let binding = self
-            .checked
-            .statement(statement.node)
-            .and_then(|node| node.binding);
         self.with_hir_statement(&syntax, statement, |this| {
-            this.lower_stmt(&syntax, binding, outer_map);
+            this.lower_stmt(&syntax, node, statement.declared, outer_map);
         });
     }
 
@@ -3048,10 +3048,16 @@ impl Flatten<'_> {
             index_hir_expression(&self.checked, root, expression, &mut index);
         }
         self.active_semantics.push(index);
+        self.with_statement_loans(lower);
+        self.active_semantics.pop();
+    }
+
+    /// Lower one statement through `lower` with no conversion-view loans of
+    /// an enclosing statement in scope.
+    fn with_statement_loans(&mut self, lower: impl FnOnce(&mut Self)) {
         let outer = std::mem::take(&mut self.conversion_view_loans);
         lower(self);
         self.conversion_view_loans = outer;
-        self.active_semantics.pop();
     }
 
     pub(super) fn lower_return_value(&mut self, expression: &hir::HirExpr) -> Reg {
@@ -3296,4 +3302,37 @@ enum SetArguments<'a> {
         &'a [mojito_checked::checked::CheckedSubscriptArg],
         &'a [mojito_ast::ast::SubscriptArg],
     ),
+}
+
+/// Whether a `try` region's statements contain a `break`/`continue` that **leaves**
+/// the region — targeting a loop *outside* it. Such an escape would need to name the
+/// outer loop's target block, which the self-contained mini-CFG region can't express
+/// (unlike a `return`, which surfaces as a `Flow::Return` the block driver handles).
+/// Nested loops absorb their own `break`/`continue` (tracked via `loop_depth`);
+/// nested `def`/`struct` bodies have their own control flow and are not scanned.
+fn region_crosses_control(checked: &CheckedTables, body: &[CheckedStmtId]) -> bool {
+    fn walk(checked: &CheckedTables, statements: &[CheckedStmtId], loop_depth: usize) -> bool {
+        statements.iter().any(|id| {
+            let Some(node) = checked.statement(*id) else {
+                return false;
+            };
+            match &node.op {
+                CheckedStmtOp::Break | CheckedStmtOp::Continue => loop_depth == 0,
+                CheckedStmtOp::If { branches, orelse } => {
+                    branches.iter().any(|(_, b)| walk(checked, b, loop_depth))
+                        || orelse
+                            .as_ref()
+                            .is_some_and(|b| walk(checked, b, loop_depth))
+                }
+                CheckedStmtOp::While { body, .. } | CheckedStmtOp::For { body, .. } => {
+                    walk(checked, body, loop_depth + 1)
+                }
+                CheckedStmtOp::Scope(body) => walk(checked, body, loop_depth),
+                CheckedStmtOp::Try { .. } => TryRegions::of(node)
+                    .is_some_and(|regions| regions.bodies().any(|b| walk(checked, b, loop_depth))),
+                _ => false,
+            }
+        })
+    }
+    walk(checked, body, 0)
 }

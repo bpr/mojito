@@ -599,39 +599,6 @@ fn try_regions_mut(instruction: &mut MirInstr) -> Vec<&mut Vec<MirBlock>> {
     }
 }
 
-/// Whether a `try` region's statements contain a `break`/`continue` that **leaves**
-/// the region — targeting a loop *outside* it. Such an escape would need to name the
-/// outer loop's target block, which the self-contained mini-CFG region can't express
-/// (unlike a `return`, which surfaces as a `Flow::Return` the block driver handles).
-/// Nested loops absorb their own `break`/`continue` (tracked via `loop_depth`);
-/// nested `def`/`struct` bodies have their own control flow and are not scanned.
-pub(super) fn region_crosses_control(body: &[Stmt]) -> bool {
-    fn walk(stmts: &[Stmt], loop_depth: usize) -> bool {
-        stmts.iter().any(|s| match &s.kind {
-            StmtKind::Break | StmtKind::Continue => loop_depth == 0,
-            StmtKind::If { branches, orelse } => {
-                branches.iter().any(|(_, b)| walk(b, loop_depth))
-                    || orelse.as_ref().is_some_and(|b| walk(b, loop_depth))
-            }
-            StmtKind::While { body, .. } | StmtKind::For { body, .. } => walk(body, loop_depth + 1),
-            StmtKind::Scope(body) => walk(body, loop_depth),
-            StmtKind::Try {
-                body,
-                except,
-                orelse,
-                finalbody,
-            } => {
-                walk(body, loop_depth)
-                    || except.as_ref().is_some_and(|(_, b)| walk(b, loop_depth))
-                    || orelse.as_ref().is_some_and(|b| walk(b, loop_depth))
-                    || finalbody.as_ref().is_some_and(|b| walk(b, loop_depth))
-            }
-            _ => false,
-        })
-    }
-    walk(body, 0)
-}
-
 /// Whether an argument convention is a written-back reference (`mut`/`ref`).
 #[allow(
     clippy::ref_option,

@@ -26,7 +26,10 @@ use mojito_ast::ast::{
 };
 use mojito_ast::call::{effective_keyword_only_index, regular_marker_index};
 use mojito_checked::checked::{AnnotationSite, GenericSite};
-use mojito_checked::checked::{CheckedConst, CheckedOp, CheckedProgram, origin_parameter_names};
+use mojito_checked::checked::{
+    CheckedConst, CheckedOp, CheckedProgram, CheckedStmt, CheckedStmtId, CheckedStmtOp,
+    origin_parameter_names,
+};
 pub use mojito_checked::declaration::{
     FunctionDeclaration as MirFunctionDeclaration, StructDeclaration as MirStructDeclaration,
     TraitDeclaration, TraitRequirement,
@@ -2507,66 +2510,62 @@ fn reassigned_names(
     fn bump(counts: &mut HashMap<String, usize>, name: &str) {
         *counts.entry(name.to_string()).or_default() += 1;
     }
-    fn scan(stmt: &Stmt, counts: &mut HashMap<String, usize>) {
-        match &stmt.kind {
-            StmtKind::VarDecl { name, .. }
-            | StmtKind::Assign { name, .. }
-            | StmtKind::RefDecl { name, .. }
-            | StmtKind::Comptime { name, .. } => bump(counts, name),
-            StmtKind::AugAssign { place, .. } | StmtKind::SetPlace { place, .. } => {
-                if let ExprKind::Identifier(name) = &place.kind {
+    /// Count the names statement `id` binds; `declared` is HIR's runtime name
+    /// for the `ref` it declares, which only a top-level statement has.
+    fn scan(
+        checked: &mojito_checked::checked::CheckedTables,
+        id: CheckedStmtId,
+        declared: Option<&str>,
+        counts: &mut HashMap<String, usize>,
+    ) {
+        let identifier = |node| match checked.expression(node).map(|node| &node.op) {
+            Some(CheckedOp::Identifier(name)) => Some(name.as_str()),
+            _ => None,
+        };
+        let scan_all = |body: &[CheckedStmtId], counts: &mut HashMap<String, usize>| {
+            for inner in body {
+                scan(checked, *inner, None, counts);
+            }
+        };
+        let Some(node) = checked.statement(id) else {
+            return;
+        };
+        match &node.op {
+            CheckedStmtOp::VarDecl { name, .. }
+            | CheckedStmtOp::Assign { name, .. }
+            | CheckedStmtOp::Comptime { name, .. } => bump(counts, name),
+            CheckedStmtOp::RefDecl { name, .. } => bump(counts, declared.unwrap_or(name)),
+            CheckedStmtOp::AugAssign { place, .. } | CheckedStmtOp::SetPlace { place, .. } => {
+                if let Some(name) = identifier(*place) {
                     bump(counts, name);
                 }
             }
-            StmtKind::Unpack { targets, .. } => {
-                for target in targets {
-                    if let ExprKind::Identifier(name) = &target.kind {
-                        bump(counts, name);
-                    }
+            CheckedStmtOp::Unpack { targets, .. } => {
+                for name in targets.iter().filter_map(|target| identifier(*target)) {
+                    bump(counts, name);
                 }
             }
-            StmtKind::If { branches, orelse } => {
+            CheckedStmtOp::If { branches, orelse } => {
                 for (_, body) in branches {
-                    for inner in body {
-                        scan(inner, counts);
-                    }
+                    scan_all(body, counts);
                 }
-                for inner in orelse.iter().flatten() {
-                    scan(inner, counts);
-                }
+                scan_all(orelse.as_deref().unwrap_or_default(), counts);
             }
-            StmtKind::While { body, orelse, .. } => {
-                for inner in body.iter().chain(orelse.iter().flatten()) {
-                    scan(inner, counts);
-                }
+            CheckedStmtOp::While { body, orelse, .. } => {
+                scan_all(body, counts);
+                scan_all(orelse.as_deref().unwrap_or_default(), counts);
             }
-            StmtKind::Scope(body) => {
-                for inner in body {
-                    scan(inner, counts);
-                }
-            }
-            StmtKind::For {
+            CheckedStmtOp::Scope(body) => scan_all(body, counts),
+            CheckedStmtOp::For {
                 var, body, orelse, ..
             } => {
                 bump(counts, var);
-                for inner in body.iter().chain(orelse.iter().flatten()) {
-                    scan(inner, counts);
-                }
+                scan_all(body, counts);
+                scan_all(orelse.as_deref().unwrap_or_default(), counts);
             }
-            StmtKind::Try {
-                body,
-                except,
-                orelse,
-                finalbody,
-            } => {
-                let handler = except.iter().flat_map(|(_, handler)| handler.iter());
-                for inner in body
-                    .iter()
-                    .chain(handler)
-                    .chain(orelse.iter().flatten())
-                    .chain(finalbody.iter().flatten())
-                {
-                    scan(inner, counts);
+            CheckedStmtOp::Try { .. } => {
+                for body in TryRegions::of(node).iter().flat_map(TryRegions::bodies) {
+                    scan_all(body, counts);
                 }
             }
             _ => {}
@@ -2582,7 +2581,12 @@ fn reassigned_names(
                     }
                 }
                 HirInstr::Stmt(statement) => scan(
-                    &hir_statement_syntax(&cfg.checked, &cfg.slots, &cfg.vars, statement),
+                    &cfg.checked,
+                    statement.node,
+                    statement
+                        .declared
+                        .and_then(|slot| cfg.vars.get(slot as usize))
+                        .map(String::as_str),
                     &mut counts,
                 ),
                 _ => {}
@@ -4436,10 +4440,11 @@ fn name_spelling(
     }
 }
 
-/// The syntax MIR lowers opaque HIR statement `statement` through: its
-/// node's, with source spellings, which MIR resolves by binding; a `ref`
-/// declaration binds HIR's runtime name for it and reads its value as
-/// [`hir_syntax`] spells it. Transitional, as [`hir_syntax`] is.
+/// The syntax MIR lowers opaque HIR statement `statement`'s operands
+/// through: its node's, with source spellings, which MIR resolves by binding;
+/// a `ref` declaration's value is read as [`hir_syntax`] spells it (the
+/// declaration itself binds [`mojito_hir::hir::HirStmt::declared`]).
+/// Transitional, as [`hir_syntax`] is.
 fn hir_statement_syntax(
     checked: &mojito_checked::checked::CheckedTables,
     slots: &HashMap<mojito_checked::checked::CheckedNodeId, VarId>,
@@ -4449,14 +4454,9 @@ fn hir_statement_syntax(
     let mut syntax = checked
         .statement_syntax_of(statement.node)
         .expect("a HIR statement names a statement node of its tables");
-    if let (StmtKind::RefDecl { name, value }, Some(declared), [expression]) = (
-        &mut syntax.kind,
-        statement.declared,
-        statement.expressions.as_slice(),
-    ) {
-        if let Some(runtime) = vars.get(declared as usize) {
-            name.clone_from(runtime);
-        }
+    if let (StmtKind::RefDecl { value, .. }, [expression]) =
+        (&mut syntax.kind, statement.expressions.as_slice())
+    {
         *value = hir_syntax(checked, slots, vars, expression);
     }
     syntax
@@ -5059,15 +5059,47 @@ fn statement_expression_roots(statement: &Stmt) -> Vec<&Expr> {
     }
 }
 
-/// Borrowed syntax and checked binder data for one structured `try`.
-/// Keeping these parts together makes the primary HIR and fallback lowering
-/// paths share one region-lowering contract.
+/// The checked bodies and handler binder of one structured `try`, read from
+/// its statement node. Keeping these parts together makes the primary HIR and
+/// fallback lowering paths share one region-lowering contract.
 struct TryRegions<'a> {
-    body: &'a [Stmt],
-    except: &'a Option<(Option<String>, Vec<Stmt>)>,
-    orelse: &'a Option<Vec<Stmt>>,
-    finalbody: &'a Option<Vec<Stmt>>,
+    body: &'a [CheckedStmtId],
+    except: Option<(Option<&'a str>, &'a [CheckedStmtId])>,
+    orelse: Option<&'a [CheckedStmtId]>,
+    finalbody: Option<&'a [CheckedStmtId]>,
     handler_binding: Option<mojito_types::origin::OwnerId>,
+}
+
+impl<'a> TryRegions<'a> {
+    /// The regions of `node`, when it is a `try`.
+    fn of(node: &'a CheckedStmt) -> Option<Self> {
+        let CheckedStmtOp::Try {
+            body,
+            except,
+            orelse,
+            finalbody,
+        } = &node.op
+        else {
+            return None;
+        };
+        Some(Self {
+            body,
+            except: except
+                .as_ref()
+                .map(|(name, body)| (name.as_deref(), body.as_slice())),
+            orelse: orelse.as_deref(),
+            finalbody: finalbody.as_deref(),
+            handler_binding: node.binding,
+        })
+    }
+
+    /// Every statement list the `try` runs.
+    fn bodies(&self) -> impl Iterator<Item = &'a [CheckedStmtId]> {
+        std::iter::once(self.body)
+            .chain(self.except.map(|(_, body)| body))
+            .chain(self.orelse)
+            .chain(self.finalbody)
+    }
 }
 
 /// The invariant construction state shared by every recursive level of a
