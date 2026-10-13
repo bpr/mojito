@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R667**.
+Next free ID: **R672**.
 
 ## Ordered Work
 
@@ -295,6 +295,27 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
   - Mojito copies `x` into the discard and destroys both, where the pin
     moves the last use.
   - Found while landing R467 (2026-10-07).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R668 A generic return type may name a non-`ref` parameter's
+  origin**
+
+  Problem: `def it_of[C: Iterable & Copyable](items: C) ->
+  C.IteratorType[origin_of(items)]` checks and runs, but the pin rejects
+  it: "cannot return 'items's origin, because it might expand to a
+  RegisterPassable type".
+  - The same holds for a `var` or `mut` parameter of a generic type.
+  - The pin accepts the spelling only over a `ref` parameter, as upstream's
+    `iter()` declares it.
+  - The lever: the return-annotation resolution
+    (`resolve_return_annotation`,
+    `crates/mojito-checker/src/checker/type_resolution.rs`) should reject
+    `origin_of(p)` whose parameter is not `ref` and whose type is not proven
+    non-register-passable.
+  - Probe the struct-tail spelling (`-> Span[T, origin_of(items)]`) at the
+    pin too, and fix it in the same session if it diverges the same way.
+  - Found while landing R665 (2026-10-13).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -996,6 +1017,29 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
+- [ ] **R667 An associated projection is treated as `Deinitable` and
+  `Movable` whatever its bounds**
+
+  Problem: `def g[T: Iterator](mut it: T)` doing `_ = it.__next__()`
+  checks, but the pin rejects it: "'(expression temporary)' abandoned
+  without being explicitly destroyed".
+  - `Iterator.Element` is bound only by `Movable`. Upstream's own
+    `_DropIterator` asserts `conforms_to(Self.Element, Deinitable)` before
+    it discards one.
+  - The cause: `is_deinitable` and `is_movable`
+    (`crates/mojito-checker/src/checker/traits.rs`) fall through to
+    `leaf_conforms(..).unwrap_or(true)` for every `Assoc`.
+  - The lever: answer an `Assoc` from `projection_bounds`, as
+    `assoc_member_bound_proves` already does for `Copyable`.
+  - Expect fallout in generic bundled-std bodies that drop a projected
+    value.
+  - `moving_an_iterable_while_its_generic_iterator_lives_rejects`
+    (`tests/vm_test.rs`) discards an element. If it starts failing for
+    this reason, give it a non-discarding read.
+  - Found while landing R665 (2026-10-13).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
 - [ ] **R510 A user trait named like a prelude trait replaces it**
 
   Problem: a module declaring `trait Sized: comptime size: Int` prints `1`
@@ -1618,22 +1662,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - The result type through the bound keeps the requirement's binder
     instead of the call's argument.
   - Found while landing a function applied in a signature (2026-10-06).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **R665 A generic iterable's explicit `__iter__()` result has no
-  iterator methods**
-
-  `var it = items.__iter__()` in `def count[C: Iterable](items: C)` checks
-  and elaborates, but `it.__next__()` is rejected: "type
-  'C.IteratorType[origin_of(self)]' has no method '__next__'".
-  - Upstream, `IteratorType`'s `Iterator` bound supplies `__next__` and
-    `Element`.
-  - The call-site type also keeps `origin_of(self)` where it should name
-    `origin_of(items)`.
-  - Unverified against the pin, which was not installed when it was
-    found: run the probe through the pin before fixing.
-  - Found while landing R661 (2026-10-13).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -5671,6 +5699,34 @@ residue found inside a task moves to the task that owns its fix.
     collision is R40's to fix.
   - Depends on R40, whose `comptime for` scoping fix lets the `var v` repro
     run without a block per body.
+  - Model: Opus, Not Planned.
+
+- [ ] **R669 The bundled `Iterator` trait is not upstream's**
+
+  Problem: `it.bounds()` on an `Iterator` is rejected ("has no method
+  'bounds'"), where the pin answers it.
+  - Upstream declares `trait Iterator(Deinitable, Movable)` with a defaulted
+    `def bounds(self) -> Tuple[Int, Optional[Int]]` returning `(0, None)`.
+  - The bundled trait (`stdlib/std/iter.mojo`) refines nothing and has no
+    `bounds`.
+  - Every bundled conformer must still conform once the refinement lands.
+  - Found while landing R665 (2026-10-13).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R670 The free `iter()` function is missing**
+
+  Problem: `var it = iter(xs)` is rejected with "Undefined variable
+  'iter'", where the pin runs it.
+  - Upstream declares a borrowed overload,
+    `iter[IterableType: Iterable](ref iterable: IterableType) ->
+    IterableType.IteratorType[origin_of(iterable)]`, and an owned one over
+    `Some[IterableOwned]`.
+  - The borrowed overload's body is `return iterable.__iter__()`, which
+    checks since R665 (`assets/ok/generic_iterable_explicit_iter.mojo`).
+  - Add both to `stdlib/std/iter.mojo` beside `next`.
+  - Found while landing R665 (2026-10-13).
+  - Depends on nothing.
   - Model: Opus, Not Planned.
 
 - [ ] **R493 The bundled `ParameterList` lacks most of upstream's members**

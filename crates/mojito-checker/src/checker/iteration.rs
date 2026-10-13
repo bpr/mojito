@@ -841,13 +841,14 @@ impl Checker {
         else {
             return;
         };
+        let place = Origin::Place(source.clone());
+        let bound =
+            crate::checker::origins::bind_self_origin_arguments(&protocol.iterator_ty, &place);
         let resolve = |argument: &TyArg| match argument {
-            TyArg::Origin(Origin::SelfParam | Origin::Param(_)) => {
-                TyArg::Origin(Origin::Place(source.clone()))
-            }
+            TyArg::Origin(Origin::Param(_)) => TyArg::Origin(place.clone()),
             other => other.clone(),
         };
-        let resolved = match protocol.iterator_ty.kind() {
+        let resolved = match bound.kind() {
             TyKind::Struct(name, args) => {
                 TyKind::Struct(name.clone(), args.iter().map(resolve).collect())
             }

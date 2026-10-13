@@ -1436,6 +1436,19 @@ fn abort_is_not_catchable() {
 }
 
 #[test]
+fn moving_an_iterable_while_its_generic_iterator_lives_rejects() {
+    // `items.__iter__()` names `origin_of(items)` under a generic `C: Iterable`,
+    // so the iterator borrows `items` and moving it out is rejected, as its
+    // concrete `List` twin is.
+    let src = "def consume[C: Iterable & Movable & Deinitable](var items: C):\n    _ = items^\n\ndef count[C: Iterable & Movable & Deinitable](var items: C) -> Int:\n    var it = items.__iter__()\n    consume(items^)\n    try:\n        _ = it.__next__()\n    except:\n        pass\n    return 0\n\ndef main():\n    var xs: List[Int] = [1, 2, 3]\n    print(count(xs^))\n";
+    let err = run_compiled(src).expect_err("moving a borrowed iterable rejects");
+    assert!(
+        err.contains("conflicts with live reference"),
+        "unexpected error: {err}"
+    );
+}
+
+#[test]
 fn string_mutation_during_grapheme_iteration_rejects() {
     // Grapheme iteration borrows the String for the whole loop: mutating it
     // inside the body is rejected.

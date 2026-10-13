@@ -343,10 +343,7 @@ impl Checker {
             kwargs,
             ..
         } = call;
-        let mut effective_bounds = match obj_ty.kind() {
-            TyKind::Param { bounds, .. } => bounds.clone(),
-            _ => Vec::new(),
-        };
+        let mut effective_bounds = self.projection_bounds(obj_ty).unwrap_or_default();
         // `Copyable.copy` is proven by any route that proves
         // copyability (a refining bound, a member bound, or a
         // `conforms_to(T, Copyable)` availability assumption), not
@@ -375,6 +372,12 @@ impl Checker {
                 method: method.to_string(),
             });
         }
+        // `origin_of(self)` in the result names the receiver's place; a
+        // temporary receiver keeps the abstract origin.
+        let receiver_origin = self
+            .reference_actual(object)
+            .ok()
+            .map(|reference| reference.origin);
         let single_candidate = signatures.len() == 1;
         let mut matches = Vec::new();
         let mut requirements = Vec::new();
@@ -438,6 +441,10 @@ impl Checker {
             ) else {
                 continue;
             };
+            let return_type = self.resolve_assoc_ty(&substitute(
+                &substitute_self(&sig.ret, obj_ty),
+                &method_subst,
+            ));
             matches.push(MethodCallResolution {
                 conversion_score: scored.rank,
                 simd_erasures: scored.simd_erasures,
@@ -450,10 +457,12 @@ impl Checker {
                 keyword_element: kw_variadic.clone(),
                 conventions: sig.conventions.clone(),
                 self_convention: sig.self_convention,
-                return_type: self.resolve_assoc_ty(&substitute(
-                    &substitute_self(&sig.ret, obj_ty),
-                    &method_subst,
-                )),
+                return_type: receiver_origin.as_ref().map_or_else(
+                    || return_type.clone(),
+                    |origin| {
+                        crate::checker::origins::bind_self_origin_arguments(&return_type, origin)
+                    },
+                ),
                 result_adapter: (method == "__next__" && sig.ref_return.is_none()).then_some(
                     mojito_checked::checked::CheckedResultAdapter::CopyIteratorReference,
                 ),

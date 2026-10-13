@@ -170,8 +170,9 @@ impl Checker {
     }
 
     /// A method whose non-consuming receiver hands back a ref-field
-    /// struct (a borrowing view/iterator) lends the receiver to the
-    /// result, exactly as a view-typed subscript does: the loan keeps
+    /// struct (a borrowing view/iterator), or an associated projection
+    /// applied at an origin (`C.IteratorType[origin_of(items)]`), lends
+    /// the receiver to the result, exactly as a view-typed subscript does: the loan keeps
     /// the source alive while the view does and rejects source
     /// mutation. Capture-carrying calls keep their capture adjustment;
     /// reference results already carry their own loan channel. A
@@ -192,12 +193,19 @@ impl Checker {
         } = site;
         let MethodCallArguments { args, kwargs, .. } = call;
         let lends_receiver = !resolved.consumes_receiver
-            && matches!(return_type.kind(), TyKind::Struct(..))
-            && self.type_carries_loans(return_type)
-            && resolved
-                .declared_return
-                .as_ref()
-                .is_none_or(|declared| self.type_carries_loans(declared));
+            && match return_type.kind() {
+                TyKind::Struct(..) => {
+                    self.type_carries_loans(return_type)
+                        && resolved
+                            .declared_return
+                            .as_ref()
+                            .is_none_or(|declared| self.type_carries_loans(declared))
+                }
+                TyKind::Assoc { args, .. } => args
+                    .iter()
+                    .any(|argument| matches!(argument, TyArg::Origin(_))),
+                _ => false,
+            };
         if !lends_receiver {
             return;
         }

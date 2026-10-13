@@ -541,37 +541,52 @@ fn reconcile_origin_tails(
         {
             found.reusing(TyKind::Struct(
                 found_name.clone(),
-                found_args
-                    .iter()
-                    .zip(declared_args)
-                    .zip(bound_args)
-                    .map(
-                        |((found, declared), bound)| match (found, declared, bound) {
-                            (TyArg::Ty(found), TyArg::Ty(declared), TyArg::Ty(bound)) => TyArg::Ty(
-                                reconcile_origin_tails(found, declared, bound, fits, mismatch),
-                            ),
-                            (
-                                TyArg::Origin(Origin::Unbound),
-                                TyArg::Origin(_),
-                                TyArg::Origin(_),
-                            ) => found.clone(),
-                            (
-                                TyArg::Origin(actual),
-                                TyArg::Origin(expected),
-                                TyArg::Origin(bound),
-                            ) => {
-                                if fits(actual, bound) {
-                                    TyArg::Origin(expected.clone())
-                                } else {
-                                    *mismatch |= body_place_origin(actual);
-                                    found.clone()
-                                }
-                            }
-                            _ => found.clone(),
-                        },
-                    )
-                    .collect(),
+                reconcile_tail_arguments(found_args, declared_args, bound_args, fits, mismatch),
             ))
+        }
+        // An associated application's origin is part of the projection's
+        // identity and, unlike a struct tail, converts to no other origin:
+        // `C.IteratorType[origin_of(items)]` is returned as itself, never as
+        // the `C.IteratorType[o]` of a `ref[o] items` binder.
+        (
+            TyKind::Assoc {
+                base: found_base,
+                name: found_name,
+                args: found_args,
+            },
+            TyKind::Assoc {
+                base: declared_base,
+                name: declared_name,
+                args: declared_args,
+            },
+            TyKind::Assoc {
+                base: bound_base,
+                name: bound_name,
+                args: bound_args,
+            },
+        ) if found_name == declared_name
+            && declared_name == bound_name
+            && found_args.len() == declared_args.len()
+            && declared_args.len() == bound_args.len() =>
+        {
+            let same = |actual: &Origin, bound: &Origin| actual == bound;
+            found.reusing(TyKind::Assoc {
+                base: reconcile_origin_tails(
+                    found_base,
+                    declared_base,
+                    bound_base,
+                    &same,
+                    mismatch,
+                ),
+                name: found_name.clone(),
+                args: reconcile_tail_arguments(
+                    found_args,
+                    declared_args,
+                    bound_args,
+                    &same,
+                    mismatch,
+                ),
+            })
         }
         (
             TyKind::Tuple(found_elements),
@@ -624,6 +639,41 @@ fn reconcile_origin_tails(
         }
         _ => found.clone(),
     }
+}
+
+/// [`reconcile_origin_tails`] over one application's arguments.
+fn reconcile_tail_arguments(
+    found_args: &[TyArg],
+    declared_args: &[TyArg],
+    bound_args: &[TyArg],
+    fits: &dyn Fn(&mojito_types::origin::Origin, &mojito_types::origin::Origin) -> bool,
+    mismatch: &mut bool,
+) -> Vec<TyArg> {
+    use mojito_types::origin::Origin;
+    found_args
+        .iter()
+        .zip(declared_args)
+        .zip(bound_args)
+        .map(
+            |((found, declared), bound)| match (found, declared, bound) {
+                (TyArg::Ty(found), TyArg::Ty(declared), TyArg::Ty(bound)) => TyArg::Ty(
+                    reconcile_origin_tails(found, declared, bound, fits, mismatch),
+                ),
+                (TyArg::Origin(Origin::Unbound), TyArg::Origin(_), TyArg::Origin(_)) => {
+                    found.clone()
+                }
+                (TyArg::Origin(actual), TyArg::Origin(expected), TyArg::Origin(bound)) => {
+                    if fits(actual, bound) {
+                        TyArg::Origin(expected.clone())
+                    } else {
+                        *mismatch |= body_place_origin(actual);
+                        found.clone()
+                    }
+                }
+                _ => found.clone(),
+            },
+        )
+        .collect()
 }
 
 /// Whether a found tail names the body's own storage — a place, or a union

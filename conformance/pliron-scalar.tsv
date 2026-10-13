@@ -226,6 +226,7 @@ assets/ok/generic_display_argument_infers_parameter.mojo	-	ineligible	no-scalar-
 assets/ok/generic_display_argument_typed_by_parameter.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/generic_equatable_dispatch.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/generic_field_pointer_deref_in_place.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/generic_iterable_explicit_iter.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/generic_method_per_call_clones.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/generic_nested_def_captures.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/generic_param_string_literal_materializes.mojo	-	ineligible	no-scalar-entry-shape

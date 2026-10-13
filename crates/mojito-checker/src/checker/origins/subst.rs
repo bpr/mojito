@@ -475,6 +475,34 @@ pub(in crate::checker) fn substitute_struct_origin_tails(
     }
 }
 
+/// Bind a trait method's `origin_of(self)` arguments to the receiver's
+/// `origin`: `C.IteratorType[origin_of(self)]` from `items.__iter__()` names
+/// `C.IteratorType[origin_of(items)]`, recursing through an associated
+/// projection's base (`C.IteratorType[o].Element`) and struct arguments.
+pub(in crate::checker) fn bind_self_origin_arguments(
+    ty: &Ty,
+    origin: &mojito_types::origin::Origin,
+) -> Ty {
+    use mojito_types::origin::Origin;
+    let bind = |argument: &TyArg| match argument {
+        TyArg::Origin(Origin::SelfParam) => TyArg::Origin(origin.clone()),
+        TyArg::Ty(ty) => TyArg::Ty(bind_self_origin_arguments(ty, origin)),
+        other => other.clone(),
+    };
+    match ty.kind() {
+        TyKind::Struct(name, arguments) => ty.reusing(TyKind::Struct(
+            name.clone(),
+            arguments.iter().map(bind).collect(),
+        )),
+        TyKind::Assoc { base, name, args } => ty.reusing(TyKind::Assoc {
+            base: bind_self_origin_arguments(base, origin),
+            name: name.clone(),
+            args: args.iter().map(bind).collect(),
+        }),
+        _ => ty.clone(),
+    }
+}
+
 /// Replace each `Origin::Param(id)` for which `concrete` yields a binding with that
 /// concrete origin, recursing through unions and leaving every other origin as-is.
 pub(in crate::checker) fn substitute_origin_params(

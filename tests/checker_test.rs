@@ -5891,6 +5891,29 @@ fn conformer_return_application_resolves_to_the_concrete_member() {
 }
 
 #[test]
+fn bound_projection_answers_its_declared_bound_methods() {
+    // `items.__iter__()` under `C: Iterable` is `C.IteratorType[origin_of(items)]`,
+    // whose declared `Iterator` bound answers `__next__` and, through the nested
+    // projection, `Element` (upstream's own `iter()` signature).
+    ok_std(
+        "def first[C: Iterable](ref items: C) raises StopIteration -> C.IteratorType[origin_of(items)].Element:\n    var it = items.__iter__()\n    return it.__next__()\n",
+    );
+}
+
+#[test]
+fn bound_projection_origin_converts_to_no_binder() {
+    // As the pin: `origin_of(items)` for `ref[o] items` is not `o` inside an
+    // associated application, unlike a struct's origin tail.
+    let error = err_std(
+        "def it_of[o: ImmOrigin, C: Iterable, //](ref[o] items: C) -> C.IteratorType[o]:\n    return items.__iter__()\n",
+    );
+    assert!(
+        matches!(&error, TypeError::OriginIdentityMismatch { .. }),
+        "got {error:?}"
+    );
+}
+
+#[test]
 fn parameterized_associated_application_rejects_a_wrong_explicit_arity() {
     // The application supplies the explicit (post-`//`) arguments; one origin
     // argument under-applies a two-explicit-parameter member.

@@ -8,6 +8,13 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A generic iterable's explicit `items.__iter__()` result answers its
+  `Iterator` bound's methods (R665): a method on an associated projection
+  resolves through the projection's declared bound, the result names
+  `origin_of(items)` and borrows `items`, and a signature may spell
+  `-> C.IteratorType[origin_of(items)]` over a `ref` parameter. As in the
+  pin, that origin converts to no other, so returning it as
+  `C.IteratorType[o]` for `ref[o] items` is rejected.
 - A split loop iterator slot is typed by its `__iter__` result (R661):
   the check records `IterationProtocol::iterator_ty`, and MIR types the
   `$iterobj<N>` and `$compiterobj<N>` slots at the `GetIter` that

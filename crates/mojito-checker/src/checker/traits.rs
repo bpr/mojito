@@ -2460,21 +2460,16 @@ impl Checker {
     /// `ImplicitlyCopyable`, or a refining trait; `ImplicitlyCopyable`
     /// requires the exact marker, matching the `TyKind::Param` rule.
     fn assoc_member_bound_proves(&self, ty: &Ty, required: &str) -> bool {
-        let TyKind::Assoc { base, name, .. } = ty.kind() else {
+        let TyKind::Assoc { .. } = ty.kind() else {
             return false;
         };
-        let TyKind::Param { bounds, .. } = base.kind() else {
-            return false;
-        };
-        self.lookup_trait_assoc_type(bounds, name)
-            .is_some_and(|associated_bounds| {
-                associated_bounds.iter().any(|bound| {
-                    bound == required
-                        || (required == "Copyable"
-                            && (bound == "ImplicitlyCopyable"
-                                || self.trait_refines(bound, "Copyable")))
-                })
+        self.projection_bounds(ty).is_some_and(|associated_bounds| {
+            associated_bounds.iter().any(|bound| {
+                bound == required
+                    || (required == "Copyable"
+                        && (bound == "ImplicitlyCopyable" || self.trait_refines(bound, "Copyable")))
             })
+        })
     }
 
     /// Every initialized value of a concrete type is movable by default; only
@@ -2995,6 +2990,19 @@ impl Checker {
                 Some(CtMemberReq::Type { bounds, .. }) => Some(bounds.clone()),
                 _ => None,
             })
+    }
+
+    /// The bounds an archetype conforms to: a type parameter's declared
+    /// bounds, or an associated projection's (`C.IteratorType[o]`, nested
+    /// `C.IteratorType[o].Element`) as its declaring trait requires them.
+    pub(super) fn projection_bounds(&self, ty: &Ty) -> Option<Vec<String>> {
+        match ty.kind() {
+            TyKind::Param { bounds, .. } => Some(bounds.clone()),
+            TyKind::Assoc { base, name, .. } => {
+                self.lookup_trait_assoc_type(&self.projection_bounds(base)?, name)
+            }
+            _ => None,
+        }
     }
 
     /// The parameter list of a parameterized associated type required by one of

@@ -693,9 +693,20 @@ impl Checker {
     ) -> Result<TyArg, TypeError> {
         use mojito_ast::ast::ParamArg;
         if is_origin_parameter(param) {
-            return Ok(TyArg::Origin(
-                self.explicit_origin_argument(&ParamArg::Value(arg.clone()))?,
-            ));
+            let argument = ParamArg::Value(arg.clone());
+            return match self.explicit_origin_argument(&argument) {
+                Ok(origin) => Ok(TyArg::Origin(origin)),
+                // A signature may name a parameter's place only the body can
+                // resolve (`C.IteratorType[origin_of(items)]`), as a struct
+                // application's origin tail may: it is left to the call.
+                Err(_)
+                    if self.signature_origin_leniency.get()
+                        && syntactic_origin_argument(&argument) =>
+                {
+                    Ok(TyArg::Origin(mojito_types::origin::Origin::Unbound))
+                }
+                Err(error) => Err(error),
+            };
         }
         if is_value_parameter(param) {
             return Ok(TyArg::Val(self.eval_associated_ct(arg, &HashMap::new())?));
