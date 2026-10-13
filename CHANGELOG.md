@@ -8,6 +8,14 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A package unit installs as its checked nodes alone (R650): a lowering
+  unit names its declaration's statement node, never its syntax, and
+  `CheckedProgram::installed` rebuilds no statements, wrapper body, or
+  trait member declaration from the nodes, as upstream's importer
+  materializes ops, never source. The node-to-syntax rebuilder
+  (`CheckedTables::statement_syntax_of`, `syntax_of`) is deleted. No
+  program's output or MIR changes.
+
 - MIR decides whether a parameter default reads an enclosing binder from
   resolved attributes alone (R656): a lambda in the default answers through
   its checked function type, as upstream's closure op carries its resolved

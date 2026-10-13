@@ -65,9 +65,8 @@ its declaration-site facts, `mojito_checked::unit::CheckedUnit`);
 `PackageBodies::get` installs a body's unit as its checked program, lowers
 it (HIR CFG, MIR), and inserts its drops when the elaborator first reaches
 it. What remains is representation: a node's annotation operands and a
-declaration's signature are still syntax (R628, R630), and the importer
-still rebuilds statement syntax from the nodes for HIR and MIR's
-declaration readers (R650).
+declaration's signature are still syntax (R630); the importer rebuilds no
+statement syntax from the nodes (R650, 2026-10-13).
 
 ## Finding: the package names no install path
 

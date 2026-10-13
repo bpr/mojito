@@ -342,7 +342,8 @@ fn build(root: &Path, header: &PackageHeader) -> Result<Vec<u8>, CompilerError> 
         }
         program.functions.push((name.clone(), function.clone()));
     }
-    let units = packaged_units(&compiled, &exports.facts);
+    let units = packaged_units(&compiled, &exports.facts)
+        .map_err(|error| CompilerError::Verify(vec![error]))?;
     // The checker encodes its residues inside the package's type encoding,
     // so they refer to the package's type section as its other records do.
     let records = || {
@@ -384,12 +385,12 @@ fn refuse_install_paths(bytes: &[u8], root: &LibraryRoot) -> Result<(), Compiler
 fn packaged_units(
     compiled: &crate::compiler::CompiledProgram,
     facts: &crate::checked::DiscoveryResult,
-) -> Vec<(crate::checked_unit::CheckedUnit, Vec<String>)> {
+) -> Result<Vec<(crate::checked_unit::CheckedUnit, Vec<String>)>, String> {
     let checked = compiled.checked();
     let (lowered, ranges) = crate::mir::lower_checked_program_units(checked);
     let mut placed = std::collections::HashSet::new();
-    facts
-        .units(&checked.lowering_units())
+    Ok(facts
+        .units(checked.tables(), &checked.lowering_units())?
         .into_iter()
         .zip(ranges)
         .map(|(unit, range)| {
@@ -401,7 +402,7 @@ fn packaged_units(
                 .collect();
             (unit, names)
         })
-        .collect()
+        .collect())
 }
 
 /// Refuse the package `bytes` unless each of its units, lowered alone as

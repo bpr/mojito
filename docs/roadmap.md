@@ -4821,18 +4821,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R650 A package unit's statements are rebuilt as syntax**
-
-  `CheckedTables::statement_syntax_of` rebuilds a unit's statements,
-  wrapper body, and trait member for `CheckedProgram::installed`, because
-  MIR's declaration readers and HIR's `Lower::statements` still walk
-  `Stmt` syntax.
-  - Done when `statement_syntax_of` and `installed`'s rebuilt statements
-    are deleted.
-  - Found while landing R623 (2026-10-12).
-  - Depends on R629, R643, R649.
-  - Model: Opus, Not Planned.
-
 - [ ] **R651 A local display binding's HIR is copied at each crossing**
 
   `build_display` and `crossing_display` copy the binding's `HirExpr` into

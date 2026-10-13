@@ -2167,235 +2167,6 @@ impl CheckedTables {
         self.expressions.get(id.0 as usize)
     }
 
-    /// The syntax of node `id` and its operands, rebuilt from their ops, each
-    /// name as written: a spelled sugar's place holds the construction the
-    /// check spelled for it. Transitional, for [`Self::statement_syntax_of`],
-    /// whose deletion (R650) deletes it.
-    pub fn syntax_of(&self, id: CheckedNodeId) -> Option<Expr> {
-        let node = self.expression(id)?;
-        let child = |id: &CheckedNodeId| self.syntax_of(*id);
-        let boxed = |id: &CheckedNodeId| child(id).map(Box::new);
-        let optional =
-            |id: &Option<CheckedNodeId>| id.as_ref().map_or(Some(None), |id| boxed(id).map(Some));
-        let values = |ids: &[CheckedNodeId]| ids.iter().map(child).collect::<Option<Vec<_>>>();
-        let kwargs = |kwargs: &[CheckedKwArg]| {
-            kwargs
-                .iter()
-                .map(|kwarg| {
-                    Some(KwArg {
-                        name: kwarg.name.clone(),
-                        value: child(&kwarg.value)?,
-                    })
-                })
-                .collect::<Option<Vec<_>>>()
-        };
-        let param_args = |arguments: &[CheckedParamArg]| {
-            arguments
-                .iter()
-                .map(|argument| self.param_arg_syntax(argument, node.span))
-                .collect::<Option<Vec<_>>>()
-        };
-        let kind = match &node.op {
-            CheckedOp::Int(value) => ExprKind::Int(value.clone()),
-            CheckedOp::Float(value) => ExprKind::Float(value.clone()),
-            CheckedOp::Bool(value) => ExprKind::Bool(*value),
-            CheckedOp::Str(value) => ExprKind::Str(value.clone()),
-            CheckedOp::None => ExprKind::None,
-            CheckedOp::Uninitialized => ExprKind::Uninitialized,
-            CheckedOp::EmptySubscript => ExprKind::EmptySubscript,
-            CheckedOp::Identifier(name) => ExprKind::Identifier(name.clone()),
-            CheckedOp::TypeValue { ty, .. } => {
-                ExprKind::TypeValue(type_operand_syntax(ty.as_ref(), node.span))
-            }
-            CheckedOp::Prefix(op, value) => ExprKind::Prefix(*op, boxed(value)?),
-            CheckedOp::Infix(op, left, right) => ExprKind::Infix(*op, boxed(left)?, boxed(right)?),
-            CheckedOp::Call {
-                name,
-                param_args: parameters,
-                args,
-                kwargs: keywords,
-            } => ExprKind::Call {
-                name: name.clone(),
-                param_args: param_args(parameters)?,
-                args: values(args)?,
-                kwargs: kwargs(keywords)?,
-            },
-            CheckedOp::Invoke {
-                callee,
-                param_args: parameters,
-                args,
-                kwargs: keywords,
-            } => ExprKind::Invoke {
-                callee: boxed(callee)?,
-                param_args: param_args(parameters)?,
-                args: values(args)?,
-                kwargs: kwargs(keywords)?,
-            },
-            CheckedOp::Member { object, field } => ExprKind::Member {
-                object: boxed(object)?,
-                field: field.clone(),
-            },
-            CheckedOp::MethodCall {
-                object,
-                method,
-                args,
-                kwargs: keywords,
-            } => ExprKind::MethodCall {
-                object: boxed(object)?,
-                method: method.clone(),
-                args: values(args)?,
-                kwargs: kwargs(keywords)?,
-            },
-            CheckedOp::Index { object, index } => ExprKind::Index {
-                object: boxed(object)?,
-                index: boxed(index)?,
-            },
-            CheckedOp::TypeApply { name, args } => ExprKind::TypeApply {
-                name: name.clone(),
-                args: param_args(args)?,
-            },
-            CheckedOp::Spread(value) => ExprKind::Spread(boxed(value)?),
-            CheckedOp::Transfer(value) => ExprKind::Transfer(boxed(value)?),
-            CheckedOp::ListLit(items) => ExprKind::ListLit(values(items)?),
-            CheckedOp::TupleLit(items) => ExprKind::TupleLit(values(items)?),
-            CheckedOp::BraceLit(entries) => ExprKind::BraceLit(
-                entries
-                    .iter()
-                    .map(|(key, value)| {
-                        Some((
-                            child(key)?,
-                            value
-                                .as_ref()
-                                .map_or(Some(None), |id| child(id).map(Some))?,
-                        ))
-                    })
-                    .collect::<Option<_>>()?,
-            ),
-            CheckedOp::Comprehension {
-                kind,
-                key,
-                value,
-                clauses,
-            } => ExprKind::Comprehension {
-                kind: *kind,
-                key: optional(key)?,
-                value: boxed(value)?,
-                clauses: clauses
-                    .iter()
-                    .map(|clause| {
-                        Some(match clause {
-                            CheckedComprehensionClause::For { var, binding, iter } => {
-                                ComprehensionClause::For {
-                                    var: var.clone(),
-                                    binding: *binding,
-                                    iter: boxed(iter)?,
-                                }
-                            }
-                            CheckedComprehensionClause::If(condition) => {
-                                ComprehensionClause::If(boxed(condition)?)
-                            }
-                        })
-                    })
-                    .collect::<Option<_>>()?,
-            },
-            CheckedOp::Lambda { def } => ExprKind::Lambda {
-                def: Box::new(self.statement_syntax_of(*def)?),
-            },
-            CheckedOp::Named { name, value } => ExprKind::Named {
-                name: name.clone(),
-                value: boxed(value)?,
-            },
-            CheckedOp::IfExpr {
-                cond,
-                then_branch,
-                else_branch,
-            } => ExprKind::IfExpr {
-                cond: boxed(cond)?,
-                then_branch: boxed(then_branch)?,
-                else_branch: boxed(else_branch)?,
-            },
-            CheckedOp::Compare { first, rest } => ExprKind::Compare {
-                first: boxed(first)?,
-                rest: rest
-                    .iter()
-                    .map(|(op, value)| Some((*op, child(value)?)))
-                    .collect::<Option<_>>()?,
-            },
-            CheckedOp::Slice {
-                object,
-                lower,
-                upper,
-                step,
-                explicit_step,
-            } => ExprKind::Slice {
-                object: boxed(object)?,
-                lower: optional(lower)?,
-                upper: optional(upper)?,
-                step: optional(step)?,
-                explicit_step: *explicit_step,
-            },
-            CheckedOp::MultiIndex { object, args } => ExprKind::MultiIndex {
-                object: boxed(object)?,
-                args: args
-                    .iter()
-                    .map(|argument| {
-                        Some(match argument {
-                            CheckedSubscriptArg::Index(value) => SubscriptArg::Index(child(value)?),
-                            CheckedSubscriptArg::Keyword { name, value } => SubscriptArg::Keyword {
-                                name: name.clone(),
-                                value: child(value)?,
-                            },
-                            CheckedSubscriptArg::Slice {
-                                lower,
-                                upper,
-                                step,
-                                explicit_step,
-                            } => SubscriptArg::Slice {
-                                lower: optional(lower)?,
-                                upper: optional(upper)?,
-                                step: optional(step)?,
-                                explicit_step: *explicit_step,
-                            },
-                            CheckedSubscriptArg::KeywordSlice {
-                                name,
-                                lower,
-                                upper,
-                                step,
-                                explicit_step,
-                            } => SubscriptArg::KeywordSlice {
-                                name: name.clone(),
-                                lower: optional(lower)?,
-                                upper: optional(upper)?,
-                                step: optional(step)?,
-                                explicit_step: *explicit_step,
-                            },
-                        })
-                    })
-                    .collect::<Option<_>>()?,
-            },
-            CheckedOp::TString { parts, raw } => ExprKind::TString {
-                parts: parts
-                    .iter()
-                    .map(|part| {
-                        Some(match part {
-                            CheckedTStringPart::Literal(text) => TStringPart::Literal(text.clone()),
-                            CheckedTStringPart::Expr(value) => {
-                                TStringPart::Expr(Box::new(self.syntax_of(*value)?))
-                            }
-                        })
-                    })
-                    .collect::<Option<_>>()?,
-                raw: *raw,
-            },
-        };
-        Some(Expr {
-            kind,
-            span: node.span,
-            source: node.source.clone(),
-            syntax_id: node.syntax_id,
-        })
-    }
-
     pub fn declaration(&self, id: CheckedDeclId) -> Option<&CheckedDeclaration> {
         self.declarations.get(id.0 as usize)
     }
@@ -2451,292 +2222,6 @@ impl CheckedTables {
         for operand in node.op.reached() {
             self.walk_expression(operand, visit);
         }
-    }
-
-    /// The syntax of statement `id` and its bodies, rebuilt from their ops,
-    /// each expression through [`Self::syntax_of`].
-    /// Transitional, for the readers of a package unit's rebuilt statements;
-    /// R650 deletes it.
-    pub fn statement_syntax_of(&self, id: CheckedStmtId) -> Option<Stmt> {
-        use mojito_ast::ast::{
-            FnParam, Method, StmtKind, StructComptime, TraitComptime, TraitMethod, WithItem,
-        };
-        let node = self.statement(id)?;
-        let expr = |id: &CheckedNodeId| self.syntax_of(*id);
-        let exprs = |ids: &[CheckedNodeId]| ids.iter().map(expr).collect::<Option<Vec<_>>>();
-        let block = |ids: &[CheckedStmtId]| {
-            ids.iter()
-                .map(|id| self.statement_syntax_of(*id))
-                .collect::<Option<Vec<_>>>()
-        };
-        let optional_block = |ids: &Option<Vec<CheckedStmtId>>| {
-            ids.as_ref().map_or(Some(None), |ids| block(ids).map(Some))
-        };
-        let member_body = |id: CheckedStmtId| match &self.statement(id)?.op {
-            CheckedStmtOp::Def(def) => block(&def.body),
-            _ => None,
-        };
-        let params = |params: &[CheckedFnParam]| {
-            params
-                .iter()
-                .map(|param| {
-                    Some(FnParam {
-                        name: param.name.clone(),
-                        ty: param.ty.clone(),
-                        default: param
-                            .default
-                            .as_ref()
-                            .map_or(Some(None), |id| expr(id).map(Some))?,
-                        kind: param.kind,
-                        convention: param.convention,
-                        origin: param.origin.clone(),
-                    })
-                })
-                .collect::<Option<Vec<_>>>()
-        };
-        let branches = |branches: &[(CheckedNodeId, Vec<CheckedStmtId>)]| {
-            branches
-                .iter()
-                .map(|(condition, body)| Some((expr(condition)?, block(body)?)))
-                .collect::<Option<Vec<_>>>()
-        };
-        let kind = match &node.op {
-            CheckedStmtOp::VarDecl {
-                name, ty, value, ..
-            } => StmtKind::VarDecl {
-                name: name.clone(),
-                ty: ty.clone(),
-                value: expr(value)?,
-            },
-            CheckedStmtOp::RefDecl { name, value } => StmtKind::RefDecl {
-                name: name.clone(),
-                value: expr(value)?,
-            },
-            CheckedStmtOp::Assign { name, value } => StmtKind::Assign {
-                name: name.clone(),
-                value: expr(value)?,
-            },
-            CheckedStmtOp::AugAssign { place, op, value } => StmtKind::AugAssign {
-                place: expr(place)?,
-                op: *op,
-                value: expr(value)?,
-            },
-            CheckedStmtOp::Unpack {
-                targets,
-                value,
-                declares,
-            } => StmtKind::Unpack {
-                targets: exprs(targets)?,
-                value: expr(value)?,
-                declares: *declares,
-            },
-            CheckedStmtOp::SetPlace { place, value } => StmtKind::SetPlace {
-                place: expr(place)?,
-                value: expr(value)?,
-            },
-            CheckedStmtOp::Def(def) => StmtKind::Def {
-                name: def.name.clone(),
-                decorators: def.decorators.clone(),
-                type_params: def.type_params.clone(),
-                params: params(&def.params)?,
-                positional_only: def.positional_only,
-                keyword_only: def.keyword_only,
-                captures: def.captures.clone(),
-                raises: def.raises,
-                raises_type: def.raises_type.clone(),
-                ret: def.ret.clone(),
-                where_clauses: exprs(&def.where_clauses)?,
-                body: block(&def.body)?,
-            },
-            CheckedStmtOp::Struct(declaration) => StmtKind::Struct {
-                name: declaration.name.clone(),
-                decorators: declaration.decorators.clone(),
-                type_params: declaration.type_params.clone(),
-                conforms: declaration.conforms.clone(),
-                callable_conformance: declaration.callable_conformance.clone(),
-                conformance_conditions: declaration
-                    .conformance_conditions
-                    .iter()
-                    .map(|(name, value)| Some((name.clone(), expr(value)?)))
-                    .collect::<Option<_>>()?,
-                where_clauses: exprs(&declaration.where_clauses)?,
-                fields: declaration.fields.clone(),
-                associated: declaration
-                    .associated
-                    .iter()
-                    .map(|member| {
-                        Some(StructComptime {
-                            name: member.name.clone(),
-                            params: member.params.clone(),
-                            ty: member.ty.clone(),
-                            where_clauses: exprs(&member.where_clauses)?,
-                            value: expr(&member.value)?,
-                        })
-                    })
-                    .collect::<Option<_>>()?,
-                methods: declaration
-                    .methods
-                    .iter()
-                    .map(|method| {
-                        Some(Method {
-                            name: method.name.clone(),
-                            type_params: method.type_params.clone(),
-                            has_self: method.has_self,
-                            self_convention: method.self_convention,
-                            self_origin: method.self_origin.clone(),
-                            decorators: method.decorators.clone(),
-                            params: params(&method.params)?,
-                            positional_only: method.positional_only,
-                            keyword_only: method.keyword_only,
-                            raises: method.raises,
-                            raises_type: method.raises_type.clone(),
-                            ret: method.ret.clone(),
-                            where_clauses: exprs(&method.where_clauses)?,
-                            body: block(&method.body)?,
-                            provenance: method.provenance,
-                        })
-                    })
-                    .collect::<Option<_>>()?,
-                fieldwise_init: declaration.fieldwise_init,
-            },
-            CheckedStmtOp::Trait(declaration) => StmtKind::Trait {
-                name: declaration.name.clone(),
-                refines: declaration.refines.clone(),
-                methods: declaration
-                    .methods
-                    .iter()
-                    .map(|method| {
-                        Some(TraitMethod {
-                            name: method.name.clone(),
-                            type_params: method.type_params.clone(),
-                            self_convention: method.self_convention,
-                            self_origin: method.self_origin.clone(),
-                            params: params(&method.params)?,
-                            positional_only: method.positional_only,
-                            keyword_only: method.keyword_only,
-                            raises: method.raises,
-                            raises_type: method.raises_type.clone(),
-                            ret: method.ret.clone(),
-                            where_clauses: exprs(&method.where_clauses)?,
-                            default_body: method
-                                .default
-                                .map_or(Some(None), |id| member_body(id).map(Some))?,
-                        })
-                    })
-                    .collect::<Option<_>>()?,
-                comptime_members: declaration
-                    .comptime_members
-                    .iter()
-                    .map(|member| {
-                        Some(TraitComptime {
-                            name: member.name.clone(),
-                            params: member.params.clone(),
-                            ty: member.ty.clone(),
-                            where_clauses: exprs(&member.where_clauses)?,
-                        })
-                    })
-                    .collect::<Option<_>>()?,
-            },
-            CheckedStmtOp::Comptime {
-                name,
-                type_params,
-                ty,
-                where_clauses,
-                value,
-            } => StmtKind::Comptime {
-                name: name.clone(),
-                type_params: type_params.clone(),
-                ty: ty.clone(),
-                where_clauses: exprs(where_clauses)?,
-                value: expr(value)?,
-            },
-            CheckedStmtOp::ComptimeIf {
-                branches: arms,
-                orelse,
-            } => StmtKind::ComptimeIf {
-                branches: branches(arms)?,
-                orelse: optional_block(orelse)?,
-            },
-            CheckedStmtOp::ComptimeFor { var, iter, body } => StmtKind::ComptimeFor {
-                var: var.clone(),
-                iter: expr(iter)?,
-                body: block(body)?,
-            },
-            CheckedStmtOp::If {
-                branches: arms,
-                orelse,
-            } => StmtKind::If {
-                branches: branches(arms)?,
-                orelse: optional_block(orelse)?,
-            },
-            CheckedStmtOp::While { cond, body, orelse } => StmtKind::While {
-                cond: expr(cond)?,
-                body: block(body)?,
-                orelse: optional_block(orelse)?,
-            },
-            CheckedStmtOp::For {
-                var,
-                binding,
-                iter,
-                body,
-                orelse,
-            } => StmtKind::For {
-                var: var.clone(),
-                binding: *binding,
-                iter: expr(iter)?,
-                body: block(body)?,
-                orelse: optional_block(orelse)?,
-            },
-            CheckedStmtOp::Return(value) => {
-                StmtKind::Return(value.as_ref().map_or(Some(None), |id| expr(id).map(Some))?)
-            }
-            CheckedStmtOp::Raise(value) => StmtKind::Raise(expr(value)?),
-            CheckedStmtOp::Import { path, alias } => StmtKind::Import {
-                path: path.clone(),
-                alias: alias.clone(),
-            },
-            CheckedStmtOp::FromImport { level, path, names } => StmtKind::FromImport {
-                level: *level,
-                path: path.clone(),
-                names: names.clone(),
-            },
-            CheckedStmtOp::With { items, body } => StmtKind::With {
-                items: items
-                    .iter()
-                    .map(|item| {
-                        Some(WithItem {
-                            context: expr(&item.context)?,
-                            var: item.var.clone(),
-                        })
-                    })
-                    .collect::<Option<_>>()?,
-                body: block(body)?,
-            },
-            CheckedStmtOp::Try {
-                body,
-                except,
-                orelse,
-                finalbody,
-            } => StmtKind::Try {
-                body: block(body)?,
-                except: except.as_ref().map_or(Some(None), |(name, body)| {
-                    block(body).map(|body| Some((name.clone(), body)))
-                })?,
-                orelse: optional_block(orelse)?,
-                finalbody: optional_block(finalbody)?,
-            },
-            CheckedStmtOp::Scope(body) => StmtKind::Scope(block(body)?),
-            CheckedStmtOp::Pass => StmtKind::Pass,
-            CheckedStmtOp::Break => StmtKind::Break,
-            CheckedStmtOp::Continue => StmtKind::Continue,
-            CheckedStmtOp::Expr(value) => StmtKind::Expr(expr(value)?),
-        };
-        Some(Stmt {
-            kind,
-            span: node.span,
-            module: node.module.clone(),
-            syntax_id: node.syntax_id,
-        })
     }
 
     /// Each statement node takes the last declaration recorded at its
@@ -2817,33 +2302,6 @@ impl CheckedTables {
             }
         }
     }
-
-    /// A bracket argument's syntax. An attribute renders as a display
-    /// spelling of what the check resolved, which no reader of a rebuilt
-    /// statement consults.
-    fn param_arg_syntax(&self, argument: &CheckedParamArg, span: Span) -> Option<ParamArg> {
-        Some(match argument {
-            CheckedParamArg::Attribute { value, .. } => match value {
-                Some(mojito_types::types::TyArg::Ty(ty)) => {
-                    ParamArg::Type(type_operand_syntax(Some(ty), span))
-                }
-                Some(mojito_types::types::TyArg::Val(value)) => {
-                    ParamArg::Value(value.materialize(span).unwrap_or_else(|| {
-                        Expr::new(ExprKind::Identifier(value.to_string()), span)
-                    }))
-                }
-                Some(mojito_types::types::TyArg::Origin(origin)) => {
-                    ParamArg::Type(Type::Named(origin.to_string(), Vec::new()))
-                }
-                None => ParamArg::Type(Type::None),
-            },
-            CheckedParamArg::Value(value) => ParamArg::Value(self.syntax_of(*value)?),
-            CheckedParamArg::Named { name, value } => ParamArg::Named {
-                name: name.clone(),
-                value: Box::new(self.param_arg_syntax(value, span)?),
-            },
-        })
-    }
 }
 
 /// One erased `rebind` the check judged, at its operand (or, for a rebound
@@ -2893,8 +2351,8 @@ pub struct CheckedDefaultWrapper {
     pub self_convention: Option<mojito_ast::ast::ArgConvention>,
     /// Every declared parameter but the receiver, in order.
     pub params: Vec<SignatureParam>,
-    /// A package unit holds the body as its checked nodes, and
-    /// [`CheckedProgram::installed`] rebuilds it from them.
+    /// The check's syntax of the body. A package unit does not hold it:
+    /// its nodes are the unit's [`CheckedTables::wrapper_roots`].
     #[serde(skip)]
     pub body: Vec<Stmt>,
 }
@@ -2918,10 +2376,9 @@ pub struct CheckedTraitMember {
     /// A `def` named by the member symbol, over `[_Self, ...]` and
     /// `(self: _Self, ...)`, whose body is the default's. The whole program
     /// holds it as its node too, where its trait is, and the trait's
-    /// [`CheckedTraitMethod::default`] names it; a package
-    /// unit holds it as its checked nodes, and [`CheckedProgram::installed`]
-    /// rebuilds it from them.
-    #[serde(skip, default = "unrebuilt_declaration")]
+    /// [`CheckedTraitMethod::default`] names it. A package unit does not
+    /// hold its syntax: its node is the unit's root.
+    #[serde(skip, default = "absent_declaration")]
     pub declaration: Stmt,
 }
 
@@ -3522,41 +2979,21 @@ impl CheckedProgram {
     /// package holds them, its declaration-site facts `sites`, and
     /// `wrapper` or `trait_member` when it is one.
     ///
-    /// Its statements, and the wrapper's body and the member's declaration,
-    /// are rebuilt from the nodes, which HIR and MIR still walk as syntax.
-    /// The location maps unit lowering reads are built from the nodes'
+    /// It holds the unit's nodes and no syntax, as upstream's package
+    /// holds each body as its IR: no statements, and neither the wrapper's
+    /// body nor the member's declaration, whose nodes are the tables'. The
+    /// location maps unit lowering reads are built from the nodes'
     /// attributes; the instantiation tables, which only whole-program
     /// passes read, are empty.
-    ///
-    /// # Errors
-    ///
-    /// When a root names no statement node.
     pub fn installed(
         tables: CheckedTables,
         sites: InstalledSites,
         overloads: Arc<crate::package::ProgramOverloads>,
         constants: Arc<crate::package::ProgramConstants>,
-        mut wrapper: Option<CheckedDefaultWrapper>,
-        mut trait_member: Option<CheckedTraitMember>,
-    ) -> Result<Self, String> {
+        wrapper: Option<CheckedDefaultWrapper>,
+        trait_member: Option<CheckedTraitMember>,
+    ) -> Self {
         let tables = tables.reindexed();
-        let rebuilt = |roots: &[CheckedStmtId]| {
-            roots
-                .iter()
-                .map(|root| tables.statement_syntax_of(*root))
-                .collect::<Option<Vec<_>>>()
-                .ok_or("a unit's root names no statement node")
-        };
-        let statements = rebuilt(tables.roots())?;
-        if let Some(wrapper) = &mut wrapper {
-            wrapper.body = rebuilt(tables.wrapper_roots(0))?;
-        }
-        if let Some(member) = &mut trait_member {
-            member.declaration = statements
-                .first()
-                .cloned()
-                .ok_or("a trait member's unit has no declaration")?;
-        }
         let mut overload_targets = HashMap::new();
         let mut implicit_conversions = HashMap::new();
         let mut implicit_conversion_types = HashMap::new();
@@ -3591,8 +3028,8 @@ impl CheckedProgram {
             declaration_effects,
             origin_parameters,
         } = sites;
-        Ok(Self {
-            statements,
+        Self {
+            statements: Vec::new(),
             compatibility_overload_targets: overload_targets,
             generic_instantiations: HashMap::new(),
             method_instantiations: HashMap::new(),
@@ -3611,10 +3048,11 @@ impl CheckedProgram {
             constants,
             default_wrappers: wrapper.into_iter().collect(),
             trait_members: trait_member.into_iter().collect(),
-        })
+        }
     }
 
-    /// Elaborated statements accepted by semantic checking.
+    /// Elaborated statements accepted by semantic checking; a package
+    /// unit's program holds none.
     pub fn statements(&self) -> &[Stmt] {
         &self.statements
     }
@@ -4963,9 +4401,9 @@ pub fn materialized_borrow_owner(
     })
 }
 
-/// The declaration of a decoded trait member before
-/// [`CheckedProgram::installed`] rebuilds it.
-fn unrebuilt_declaration() -> Stmt {
+/// The declaration syntax of a decoded trait member, which a package unit
+/// does not hold.
+fn absent_declaration() -> Stmt {
     Stmt::new(
         mojito_ast::ast::StmtKind::Pass,
         mojito_common::token::DUMMY_SPAN,
@@ -4981,15 +4419,6 @@ fn fact_index<V: Clone>(
         .iter()
         .filter_map(|(span, facts)| Some((span.clone(), fact(facts)?.clone())))
         .collect()
-}
-
-/// The display spelling of a resolved type operand in a rebuilt statement:
-/// its source type where it has one, else its rendering.
-fn type_operand_syntax(ty: Option<&Ty>, span: Span) -> Type {
-    ty.map_or(Type::None, |ty| {
-        mojito_types::ct::source_type(ty, span)
-            .unwrap_or_else(|| Type::Named(ty.to_string(), Vec::new()))
-    })
 }
 
 /// Write `map` sorted by key, so a record encodes the same bytes in every

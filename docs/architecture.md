@@ -165,8 +165,8 @@ import (every compilation that links the bundled library):
   enters the pipeline at HIR: the importer installs the unit's tables as
   its checked program (`CheckedUnit::program`, `CheckedProgram::installed`,
   over the package's own overload sets and constants, rebuilding no
-  arena; HIR and MIR walk the nodes, and the statements of a unit are rebuilt
-  as syntax until R650), lowers it (`mir::lower_package_unit`), and then inserts drops, as
+  arena and no syntax: the installed program holds the unit's nodes alone,
+  which HIR and MIR walk), lowers it (`mir::lower_package_unit`), and then inserts drops, as
   upstream's importer lowers its semantic control flow and runs its
   lifetime pass on a body it materializes.
 - **A declaration's record** (`checked::package`) holds the declaration

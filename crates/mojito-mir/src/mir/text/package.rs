@@ -265,7 +265,7 @@ impl PackageBodies {
                     .structure(name)
                     .map(|declaration| declaration.param_decls.clone())
             },
-        )?;
+        );
         crate::mir::lower_package_unit(&program, &self.declarations)
     }
 

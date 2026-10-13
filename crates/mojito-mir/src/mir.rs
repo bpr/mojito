@@ -532,7 +532,7 @@ pub fn lower_package_unit(
 ) -> Result<Vec<(String, MirFunction)>, String> {
     let lowering = unit
         .unit()
-        .ok_or_else(|| "the unit's syntax is not of its kind".to_string())?;
+        .ok_or_else(|| "the unit's nodes are not of its kind".to_string())?;
     let mut functions = Vec::new();
     let mut invariant_errors = Vec::new();
     lower_unit(
