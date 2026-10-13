@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R661**.
+Next free ID: **R664**.
 
 ## Ordered Work
 
@@ -4821,23 +4821,50 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R660 A value binder's local slot has no type in its function's
-  MIR**
+- [ ] **R661 An iterator slot over a generic iterable has no type in
+  its function's MIR**
 
-  In `def plain[n: Int]() -> Int: return n`, `var.use $v0` and
-  `drop.var $v0` read a slot that `var_types` does not type.
-  - Upstream, a parameter value has its declared type; here only a
-    callable-typed value parameter's slot is declared
-    (`callable_parameter_locals`), and a scalar binder's slot is one HIR
-    interns from its reads.
-  - The lever: seed `lower_fn_nested`'s `declared` map from the
-    function's `ParamDecl::Value` binders whose names the CFG interns, as
-    `enclosing_value_binder_read` (`mir.rs`) already types the slot on
-    the `ParamExpr` route.
-  - Done when every slot a `UseVar` or `DropVar` names is typed, and the
-    fixtures' VM and `--backend pliron` output is unchanged.
-  - Found while landing R634 (2026-10-13).
+  The `$iterobj<N>` slot HIR's split-source `for` lowering creates over a
+  generic iterable is untyped, e.g. `first_or[C: Iterable]`'s `$v3`.
+  - Its `iter.init` and `drop.var` name it; `Set.__hash__`,
+    `Dict._find_index`, `StringDict.find_index`, `Path.listdir`, the
+    `tempfile` helpers, and `_FormatUtils.format_precompiled` show it.
+  - Upstream, the iterator is a value of `C.__iter__`'s result type.
+  - Done when the slot is typed by that result type and `mir::verify`
+    rejects a `UseVar` or `DropVar` slot with no type.
+  - Found while landing R660 (2026-10-13).
   - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R662 A value binder read is a frame slot, not a parameter
+  reference**
+
+  `identifier_read` lowers a read of a scalar value binder (`n` in
+  `def plain[n: Int]`) to a slot `Flatten::var` interns, which holds
+  nothing until mono rewrites each read.
+  - Upstream reads a parameter as an attribute (a decl-ref), with no
+    storage.
+  - The lever: lower the read as `param_value_register` lowers a recorded
+    parameter value (`Const::Param`, answered by mono), from the checked
+    binding the read names, as a lifted thunk's `parameter_reads` already
+    does.
+  - Done when a value binder's read takes no slot in MIR, and VM and
+    `--backend pliron` output is unchanged.
+  - Found while landing R660 (2026-10-13).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R663 Mono still rewrites value binder slots MIR no longer
+  creates**
+
+  Once binder reads are parameter references, the binder half of mono's
+  slot machinery is dead weight.
+  - `materialized_parameter_slots`' binder role,
+    `substitute_value_parameter_reads`' binder half, and
+    `seed_captured_parameter_slots` exist to serve the slot.
+  - Done when they serve only what still takes a slot, or are deleted.
+  - Found while landing R660 (2026-10-13).
+  - Depends on R662.
   - Model: Opus, Not Planned.
 
 - [ ] **R636 HIR gives an `except` name or a `with` target the slot of

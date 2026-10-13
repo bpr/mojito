@@ -1032,7 +1032,9 @@ default construction — before unrolling for a parameter or a literal index,
 and in each unrolled copy for the loop's index — and a binding of the
 element under the loop takes the copy's own slot at its element type. A
 type parameter has no frame slot (`callable_parameter_locals`), as Mojo
-gives a type parameter no storage.
+gives a type parameter no storage. A non-callable value binder's slot,
+interned at its first read by `Flatten::var`, is typed by the binder's
+declared type, which mono substitutes.
 
 **One check.** `prepare` normalizes declarations
 without selecting an arm, unrolling a loop, stubbing a template, or minting a

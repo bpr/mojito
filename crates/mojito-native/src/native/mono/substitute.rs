@@ -115,25 +115,6 @@ pub(super) fn substitute_function(
         &locals,
         &bindings.callables,
     )?;
-    for (var, name) in function.var_names.iter().enumerate() {
-        let Some(value) = locals
-            .get(name.as_str())
-            .or_else(|| constructed.get(name.as_str()))
-        else {
-            continue;
-        };
-        // A binder typed by a type binder (`v: T`) holds a value of `T`'s
-        // binding.
-        let ty = match scalar_parameter_ty(value, name, scope) {
-            Some(ty) => Some(ty),
-            None => mojito_mir::mir::materialized_parameter_ty(name, scope)
-                .map(|ty| substitute_ty(ty, bindings))
-                .transpose()?,
-        };
-        if let Some(ty) = ty {
-            function.var_tys.insert(var as u32, ty);
-        }
-    }
     seed_captured_parameter_slots(function, &locals, &bindings.callables);
     for ty in &mut function.param_types {
         *ty = substitute_ty(ty, bindings)?;
@@ -1595,50 +1576,6 @@ pub(super) fn bound_parameter_locals<'a>(
             Some((binder.name.trim_start_matches('*').to_string(), value))
         })
         .collect()
-}
-
-/// The type of the local a scalar value parameter's read binds: the
-/// binder's declared scalar type (`Int`, `UInt`, `Bool`, `Float64`,
-/// `StringLiteral`, `DType`), or the bound value's own scalar type where the
-/// declaration names none (`v: T`, the value materialized at `T`'s binding).
-fn scalar_parameter_ty(value: &CtValue, name: &str, scope: &[ParamDecl]) -> Option<Ty> {
-    let declared = scope.iter().find_map(|decl| match decl {
-        ParamDecl::Value {
-            name: declared,
-            ty,
-            variadic: false,
-            ..
-        } if declared == name => Some(ty),
-        _ => None,
-    });
-    match (value, declared) {
-        (
-            CtValue::Int(_)
-            | CtValue::UInt(_)
-            | CtValue::Float(_)
-            | CtValue::Bool(_)
-            | CtValue::Dtype(_)
-            | CtValue::Str(_),
-            Some(ty),
-        ) if matches!(
-            ty.kind(),
-            TyKind::Int
-                | TyKind::UInt
-                | TyKind::Bool
-                | TyKind::Float64
-                | TyKind::StringLiteral
-                | TyKind::Dtype
-        ) =>
-        {
-            Some(ty.clone())
-        }
-        (CtValue::Int(_), _) => Some(Ty::int()),
-        (CtValue::UInt(_), _) => Some(Ty::uint()),
-        (CtValue::Float(_), _) => Some(Ty::float64()),
-        (CtValue::Bool(_), _) => Some(Ty::bool()),
-        (CtValue::Dtype(_), _) => Some(Ty::dtype()),
-        _ => None,
-    }
 }
 
 /// The associated type `name` of the instance `base` resolves to, read off

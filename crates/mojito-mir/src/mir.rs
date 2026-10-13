@@ -2943,13 +2943,28 @@ impl<'a> Flatten<'a> {
     }
 
     /// Intern a variable name to a stable `VarId` (matches `hir::Lower::var`).
+    /// HIR interns every local at its declaring op, so a name first interned
+    /// here that names a value binder in scope is that binder's slot, typed by
+    /// the binder's declared type. A struct's own binder is read through the
+    /// receiver, never by a bare name.
     fn var(&mut self, name: &str) -> VarId {
         if let Some(i) = self.vars.iter().position(|n| n == name) {
-            i as VarId
-        } else {
-            self.vars.push(name.to_string());
-            (self.vars.len() - 1) as VarId
+            return i as VarId;
         }
+        self.vars.push(name.to_string());
+        let var = (self.vars.len() - 1) as VarId;
+        let struct_binder = self
+            .receiver_value_parameters
+            .iter()
+            .any(|(parameter, _)| parameter == name);
+        if let Some(ty) = self
+            .enclosing_binders
+            .value_named(name)
+            .filter(|_| !struct_binder)
+        {
+            self.var_types.entry(var).or_insert_with(|| ty.clone());
+        }
+        var
     }
 
     /// Intern the runtime slot for one checked binding. Same-spelled lexical
@@ -3590,7 +3605,6 @@ impl<'a> Flatten<'a> {
             return self.receiver_value_parameter_read(&reference.name, site);
         }
         let var = self.var(&reference.name);
-        self.var_types.entry(var).or_insert_with(|| ty.clone());
         let dest = self.fresh_typed(site.clone(), Some(var), ty);
         self.emit(MirInstr::UseVar {
             dest,
@@ -4549,6 +4563,14 @@ impl EnclosingBinders {
             binders.declarations.push(declaration.clone());
         }
         binders
+    }
+
+    /// The declared type of the innermost value binder named `name`.
+    fn value_named(&self, name: &str) -> Option<&Ty> {
+        self.values
+            .iter()
+            .rfind(|(binder, _)| binder.name.as_ref() == name)
+            .map(|(_, ty)| ty)
     }
 
     /// These binders, then the indices of the `comptime for` loops

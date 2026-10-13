@@ -1249,7 +1249,8 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `renumber_blocks`, `addressed_slots`, and `retire_slots`, shared by
   runtime promotion (`mono/promote.rs`) and unrolling. A type parameter
   has no frame slot (`callable_parameter_locals`, `mir.rs`), as Mojo gives
-  it no storage. The comptime
+  it no storage; a non-callable value binder's slot, interned at its first
+  read by `Flatten::var`, is typed by the binder's declared type. The comptime
   elaborator keeps a `comptime for`'s index symbolic
   (`Elab::keep_template_comptime_for`, `comptime/elab.rs`), so a struct
   applied over it (`Lanes[i]`) reaches the check as a parameter expression.
@@ -1507,8 +1508,7 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   condition, `demand_layout` and `LayoutOracle` (`Bindings::layout`, read by
   `eval_ct` for `size_of[T]()`), `select_comptime_branches`, and
   `FunctionFrame` around a nested materialization. No `def` is keyed on
-  its compile-time control flow; native `mono::substitute`'s
-  `scalar_parameter_ty` types the read of a scalar value parameter an
-  application binds (`Int`, `UInt`, `Bool`, `Float64`, `StringLiteral`,
-  `DType`) at the declared type; `CtMarker::Applied` keeps
+  its compile-time control flow; MIR types a value parameter's slot at
+  its declared type, which native `mono::substitute_function` substitutes
+  under the application's bindings; `CtMarker::Applied` keeps
   an applied constant, a layout constant among them, symbolic through elaboration.

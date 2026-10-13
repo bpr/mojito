@@ -8,6 +8,14 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A value binder's frame slot is typed in MIR (R660): `Flatten::var`
+  types the slot it interns at a binder's first read with the binder's
+  declared type, as an upstream parameter has its declared type, so `n`
+  in `def plain[n: Int]` is no longer an untyped slot. Mono's
+  `scalar_parameter_ty` backfill is gone; `substitute_function`
+  substitutes the declared type. Only `var_types` changes; no program's
+  output does.
+
 - HIR's CFG no longer types slots (R634): it typed each slot by the
   first same-spelled name read anywhere in the program, so another
   function's local could type it. MIR types each slot from the op that

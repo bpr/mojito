@@ -41,6 +41,82 @@ fn free_function_union_reference_result_retains_a_typed_handle_slot() {
     );
 }
 
+#[test]
+fn value_binder_slot_is_typed_by_its_declaration() {
+    let source = "def plain[n: Int]() -> Int:\n    return n\n\n\
+                  def gt[T: Copyable & ImplicitlyCopyable, v: T]() -> T:\n    return v\n\n\
+                  def main():\n    print(plain[3]())\n    print(gt[Int, 4]())\n";
+    let mir = checked_program_mir(source);
+    let plain = mir_function(&mir, "plain");
+    assert!(
+        matches!(binder_slot_ty(plain, "n"), Some(TyKind::Int)),
+        "{plain:#?}"
+    );
+    for var in plain
+        .blocks
+        .iter()
+        .flat_map(|block| &block.instrs)
+        .filter_map(|instr| match instr {
+            MirInstr::UseVar { var, .. } | MirInstr::DropVar { var, .. } => Some(*var),
+            _ => None,
+        })
+    {
+        assert!(
+            plain.var_tys.contains_key(&var),
+            "untyped slot ${var}: {plain:#?}"
+        );
+    }
+    let gt = mir_function(&mir, "gt");
+    assert!(
+        matches!(binder_slot_ty(gt, "v"), Some(TyKind::Param { .. })),
+        "{gt:#?}"
+    );
+}
+
+#[test]
+fn struct_binder_named_local_keeps_its_own_type() {
+    let source = "struct S[k: Int]:\n    var x: Int\n\
+                  \x20   def __init__(out self):\n        self.x = 1\n\
+                  \x20   def m(self) -> String:\n        var k = String(\"x\")\n\
+                  \x20       return k + String(Self.k)\n\n\
+                  def main():\n    print(S[2]().m())\n";
+    let mir = checked_program_mir(source);
+    let method = mir_function(&mir, "S.m");
+    assert!(
+        matches!(binder_slot_ty(method, "k"), Some(TyKind::Struct(..))),
+        "{method:#?}"
+    );
+}
+
+/// Compile `source` and lower its checked program to MIR.
+fn checked_program_mir(source: &str) -> mojito::mir::MirProgram {
+    let compiled = Compiler::default()
+        .compile_source(source, Path::new("mir_test.mojo"))
+        .expect("compile");
+    let mir = mojito::mir::lower_checked_program(compiled.checked());
+    assert!(
+        mir.invariant_errors.is_empty(),
+        "{:?}",
+        mir.invariant_errors
+    );
+    mir
+}
+
+/// The MIR function `mir` lowers for `name`.
+fn mir_function<'a>(mir: &'a mojito::mir::MirProgram, name: &str) -> &'a MirFunction {
+    &mir.functions
+        .iter()
+        .find(|(lowered, _)| lowered == name)
+        .unwrap_or_else(|| panic!("{name} MIR"))
+        .1
+}
+
+/// The type of `function`'s slot named `name`.
+fn binder_slot_ty<'a>(function: &'a MirFunction, name: &str) -> Option<&'a TyKind> {
+    let var = function.var_names.iter().position(|slot| slot == name)? as u32;
+    function.var_tys.get(&var).map(Ty::kind)
+}
+
 /// Compile `src` and lower its `main`'s checked CFG to MIR.
 fn checked_main(src: &str) -> (Cfg, MirFunction) {
     let compiled = Compiler::default()
