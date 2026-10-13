@@ -475,7 +475,7 @@ impl Checker {
         self.record_argument_borrows(
             &resolved.slots,
             &effective_conventions,
-            resolved.read_collected_arguments(),
+            resolved.gathered_arguments(),
             args,
             kwargs,
             Some((object, resolved.self_convention)),

@@ -1495,7 +1495,7 @@ impl Checker {
         self.record_argument_borrows(
             &slots,
             &effective_conventions,
-            self.read_collected_arguments(name, &overflow),
+            self.gathered_arguments(name, &overflow),
             args,
             kwargs,
             None,
@@ -1784,7 +1784,7 @@ impl Checker {
         self.record_argument_borrows(
             &slots,
             &effective_conventions,
-            self.read_collected_arguments(name, &overflow),
+            self.gathered_arguments(name, &overflow),
             args,
             kwargs,
             None,

@@ -135,7 +135,9 @@ pub enum HirInstr {
     /// Iterator protocol over compiler-private iterator storage (a runtime pack
     /// or a compile-time list): `dest = whether `iter` yields another element`
     /// (a `Bool`), a pure read of the iterator's state. `iter`/`dest` are
-    /// variable slots so both IRs and the backend address them uniformly.
+    /// variable slots so both IRs and the backend address them uniformly. A
+    /// borrowed runtime pack yields element references, and MIR indexes it
+    /// in place rather than advancing a consuming iterator.
     HasNext { iter: VarId, dest: VarId },
     /// Iterator protocol over compiler-private iterator storage: `raw =
     /// iter.next()` — retain the element in a compiler-owned slot and advance

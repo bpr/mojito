@@ -598,7 +598,7 @@ impl Checker {
         self.record_argument_borrows(
             &selected.slots,
             &effective_conventions,
-            selected.read_collected_arguments(),
+            selected.gathered_arguments(),
             args,
             kwargs,
             None,

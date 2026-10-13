@@ -610,15 +610,7 @@ impl<'a> Flatten<'a> {
                 } else {
                     iterator
                 };
-                self.emit(MirInstr::GetIter {
-                    source: iterator,
-                    dest: iterator_object,
-                    mode: protocol.mode,
-                    prepare: protocol.prepare.clone(),
-                });
-                if borrowed && split_source && protocol.source_retained {
-                    self.reestablish_source_loans(iterator, iterator_object);
-                }
+                self.normalize_iterator(iterator, iterator_object, &protocol);
 
                 let header = self.new_block();
                 let body = self.new_block();
@@ -654,10 +646,7 @@ impl<'a> Flatten<'a> {
                         exhaustion,
                     });
                 } else {
-                    self.emit(MirInstr::HasNext {
-                        dest: has_next,
-                        iter: iterator_object,
-                    });
+                    self.emit_has_next(has_next, iterator_object);
                 }
                 self.f.blocks[self.cur].term = MirTerm::Branch {
                     cond: has_next,
@@ -667,10 +656,7 @@ impl<'a> Flatten<'a> {
 
                 self.cur = body;
                 if protocol.exhaustion.is_none() {
-                    self.emit(MirInstr::Next {
-                        dest: element_value,
-                        iter: iterator_object,
-                    });
+                    self.emit_next(element_value, iterator_object);
                 }
                 let binding_var = self.var(&format!("$comp{}${}", var, binding.owner.0));
                 // Retain the raw `__next__` result in a compiler-owned slot, then

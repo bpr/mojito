@@ -2714,7 +2714,15 @@ exit:
 
 A nonraising `__next__` has no loop shape: the checker rejects it with upstream's
 `__has_next__` diagnostic, and only compiler-private carriers (the CTFE
-`ComptimeList` and the runtime pack) test `has_next` before a method-free `next`.
+`ComptimeList` and an owned runtime pack) test `has_next` before a method-free
+`next`. A borrowed loop over a named homogeneous runtime pack yields element
+references, as upstream's `VariadicListMem.__iter__` does
+(`IterationProtocol::indexes_pack`): the pack is borrowed whole through
+`BorrowIter`, and MIR inlines upstream's `_VariadicListMemIter` as a
+`PackCursor` — the iterator slot holds the pack's handle and loans, an `Int`
+index slot counts the yielded elements, `has_next` compares it with `len`,
+and `next` is a `MakeRef` of the pack element at the index. No element is
+copied or moved out.
 For a concrete borrowed List, Set, or Dict place, the preheader carries its
 checked interior origin through `BorrowIter`; `for ref` binds the protocol's
 yielded reference handles directly — the former List-only indexed-place
@@ -3262,8 +3270,10 @@ register, so no move initializer runs, as Mojo's owned argument convention
 binds the caller's storage. MIR emits `Forward` for a whole-slot `x^` the
 checker marked `SemanticAdjustment::ForwardedArgument`: an argument, a
 receiver, or an operator operand bound to a regular owned parameter
-(`checker/places.rs`, `forwarded_arguments`; a collector's elements are not
-among them).
+(`checker/places.rs`, `forwarded_arguments`), and an element an owning
+(`var *xs`) collector gathers (`Gathered`, in `record_argument_borrows`), so
+the pack holds the caller's storage as upstream's owned `VariadicListMem`
+does.
 
 ### Partial Moves
 

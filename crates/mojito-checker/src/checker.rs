@@ -2716,13 +2716,10 @@ struct MethodCallResolution {
 }
 
 impl MethodCallResolution {
-    /// The positions the positional collector gathers, when it reads them
-    /// rather than owning them.
-    fn read_collected_arguments(&self) -> &[usize] {
-        match self.variadic_convention {
-            None | Some(ArgConvention::Imm) => &self.positional_overflow,
-            _ => &[],
-        }
+    /// The positions the positional collector gathers and whether it owns
+    /// them.
+    fn gathered_arguments(&self) -> Gathered<'_> {
+        Gathered::of_convention(self.variadic_convention, &self.positional_overflow)
     }
 }
 

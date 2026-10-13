@@ -634,7 +634,13 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   with: a conformer's from `struct_iteration_protocol`, a bounded
   parameter's from its bound's own `__iter__` (`generic_iterator_ty`), with
   `origin_of(self)` resolved to the named source by
-  `resolve_iterator_origin`.
+  `resolve_iterator_origin`. A borrowed loop over a named homogeneous
+  runtime pack yields element references (`pack_iteration_reference`),
+  which `IterationProtocol::indexes_pack` names for MIR. Both MIR loop sites
+  normalize through `Flatten::normalize_iterator` and advance through
+  `emit_has_next`/`emit_next` (`lower_stmt.rs`), which index such a pack in
+  place through a `PackCursor` (`mir.rs`) opened by `open_pack_cursor` over
+  the place `borrow_iteration_source` records in `Flatten::pack_sources`.
 - `checker/calls.rs` adapts neutral call matching to `TypeError` and validates
   checker-only signature rules.
 - `checker/places.rs` owns call-site place classification and alias rejection
@@ -643,8 +649,12 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   parameters bind their arguments (`record_argument_borrows`: the borrowable
   place reads and the owned temporaries the caller destroys after the call,
   `read_temporary_arguments`; the arguments a read `*args` collector gathers
-  bind the same way; the arguments and receiver a regular `var`/`deinit`
-  parameter owns are marked `ForwardedArgument`, `forwarded_arguments`, and
+  bind the same way, a collector's positions and convention spelled
+  `Gathered` by `Checker::gathered_arguments`,
+  `MethodCallResolution::gathered_arguments`, and
+  `ConstructorBinding::of_signature`; the arguments and receiver a regular
+  `var`/`deinit` parameter owns, and the elements an owning collector
+  gathers, are marked `ForwardedArgument`, `forwarded_arguments`, and
   so is an operator operand an owned dunder parameter takes,
   `record_forwarded_operand` from `checker/operators.rs`; a construction binds through it from
   `Checker::record_constructor_call` in `checker/declarations.rs`, which

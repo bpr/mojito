@@ -2262,6 +2262,12 @@ struct Flatten<'a> {
     slots: HashMap<mojito_checked::checked::CheckedNodeId, VarId>,
     /// Local reference slot to its frozen owner place and permission.
     aliases: HashMap<VarId, MirLoan>,
+    /// A borrowed loop's retained-source slot over a runtime pack to the
+    /// pack's owner place, until `GetIter` turns it into a cursor.
+    pack_sources: HashMap<VarId, MirPlace>,
+    /// A borrowed loop's iterator slot over a runtime pack to its
+    /// [`PackCursor`].
+    pack_cursors: HashMap<VarId, PackCursor>,
     runtime_aliases: std::collections::HashSet<VarId>,
     /// Persistent owner loans carried by reference-bearing aggregate variables.
     /// The runtime value contains the handles; this map transfers their static
@@ -2326,6 +2332,19 @@ struct Flatten<'a> {
     /// whole live range, so deref sites may substitute the owner place.
     reassigned_names: std::collections::HashSet<String>,
     returns_reference: bool,
+}
+
+/// A borrowed loop's in-place cursor over a runtime pack: upstream's
+/// `_VariadicListMemIter` inlined. The loop's iterator slot holds the pack's
+/// handle and its loans; `index` holds the next element's position.
+#[derive(Clone)]
+struct PackCursor {
+    /// The pack's owner place.
+    pack: MirPlace,
+    /// The pack's element type.
+    element: Ty,
+    /// The `Int` slot counting the elements yielded.
+    index: VarId,
 }
 
 /// A `comptime for` index in scope: the binder the checker recorded on the
@@ -3783,6 +3802,8 @@ fn lower_cfg_nested(
             displays: Vec::new(),
             slots: cfg.slots.clone(),
             aliases: HashMap::new(),
+            pack_sources: HashMap::new(),
+            pack_cursors: HashMap::new(),
             runtime_aliases: reference_parameters
                 .iter()
                 .take(cfg.n_params)

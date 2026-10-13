@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R742**.
+Next free ID: **R744**.
 
 ## Ordered Work
 
@@ -286,21 +286,6 @@ change that needs a new `MJRT_ABI_VERSION`.
 Track: `ownership`.
 
 Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the track, an entry Mojito runs to a wrong result, or accepts where the pin rejects, comes first; then one it rejects where the pin runs it; then a verdict that is right with the wrong words.
-
-- [ ] **R734 An owning variadic collector over transfers copies its
-  elements and destroys the sources early**
-
-  Problem: `many(a^, b^)` over `def many(var *xs: M)` that prints each
-  element prints `del 1002`, `del 1001`, `x 2101`, `del 2101`, `x 2102`,
-  `del 2102`, where the pin prints `x 1`, `x 2`, `del 2`, `del 1`.
-  - `M`'s move initializer adds 1000 and its copy initializer adds 100.
-  - Mojito moves each source into the pack, destroys the moved values,
-    and iterates copies.
-  - The pin hands each source's storage to the pack and destroys the
-    elements when the pack dies.
-  - Found while landing R730 (2026-10-13).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
 
 - [ ] **R473 A discard `_ = x` copies its source instead of taking it**
 
@@ -681,6 +666,20 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
   - The same holds for `var t = a`, `(a, 5)`, `[a, 5]`, and an `Int`-returning call `keep(a, 5)`.
   - The copy is an owned `Int`, so it carries no loan on `left`.
   - Found while planning R529 (2026-10-09).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R742 An indexed element of a `var` collector cannot be mutated**
+
+  Problem: `xs[0].v += 7` over `def refs(var *xs: M)` is rejected with
+  `type '$variadic[M]' cannot be indexed here`.
+  - Upstream's owned `VariadicListMem` hands out mutable element
+    references, so the pin is expected to run it; observe the pin first,
+    since its environment was missing when this was filed.
+  - `for ref x in xs: x.v += 10` over the same collector already runs.
+  - The rejection comes from the checker's pack-index place rule
+    (`crates/mojito-checker/src/checker/indexing.rs`).
+  - Found while landing R734 (2026-10-13).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -5443,6 +5442,24 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Found while landing R661 (2026-10-13).
   - Depends on nothing.
   - Model: Opus, Not Planned.
+
+- [ ] **R743 A runtime variadic pack is a builtin type, where upstream's is
+  the library's `VariadicListMem`**
+
+  A `*xs: T` collector is the compiler's `$variadic[T]`
+  (`TyKind::VariadicPack`), while upstream lowers it to the nominal
+  `VariadicListMem[T, origin, is_owned]` with its `_VariadicListMemIter`.
+  - A borrowed loop over a pack is upstream's iterator inlined in MIR: the
+    `PackCursor` in `crates/mojito-mir/src/mir/lower_stmt.rs`
+    (`normalize_iterator`, `emit_has_next`, `emit_next`).
+  - Owned iteration (`for var v in xs^`) keeps the builtin consuming
+    `iter.next` on the VM and natively.
+  - Closing it declares the pack in the bundled
+    `stdlib/std/builtin/variadics.mojo`, beside `ParameterList`, and deletes
+    the cursor and the pack arms of `HasNext`/`Next`.
+  - Found while landing R734 (2026-10-13).
+  - Depends on nothing.
+  - Model: Fable, Planned.
 
 - [ ] **R662 A value binder read is a frame slot, not a parameter
   reference**

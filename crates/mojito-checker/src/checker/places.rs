@@ -29,21 +29,22 @@ impl Checker {
     /// the place arguments it may borrow instead of copying
     /// ([`borrowable_read_arguments`]) and the owned temporaries it borrows,
     /// which the caller destroys once the call returns
-    /// ([`read_temporary_arguments`]). `collected` holds the positions of
-    /// the arguments a read `*args` collector gathers, which bind the same
-    /// way; an owning (`var`) collector passes none. It also records the
-    /// arguments and the receiver that bind an owned parameter
+    /// ([`read_temporary_arguments`]). The arguments a read `*args`
+    /// collector gathers bind the same way. It also records the arguments
+    /// and the receiver that bind an owned parameter, among them the
+    /// elements an owning (`var`) collector gathers
     /// ([`forwarded_arguments`]).
     pub(super) fn record_argument_borrows(
         &self,
         slots: &[ArgSlot],
         conventions: &[Option<ArgConvention>],
-        collected: &[usize],
+        gathered: Gathered<'_>,
         args: &[Expr],
         kwargs: &[mojito_ast::ast::KwArg],
         receiver: Option<(&Expr, Option<ArgConvention>)>,
     ) {
         let designates_place = |arg: &Expr| self.designates_place(arg);
+        let collected = gathered.read();
         for span in borrowable_read_arguments(
             slots,
             conventions,
@@ -72,8 +73,13 @@ impl Checker {
         let owned_receiver = receiver
             .filter(|(_, convention)| owns_argument(*convention))
             .map(|(receiver, _)| receiver.source_span());
+        let owned_elements = gathered
+            .owned()
+            .iter()
+            .map(|position| args[*position].source_span());
         for span in forwarded_arguments(slots, conventions, args, kwargs)
             .into_iter()
+            .chain(owned_elements)
             .chain(owned_receiver)
         {
             self.record_at(span).forwarded_argument = true;
@@ -90,18 +96,16 @@ impl Checker {
         is_place_expr(expr) && !self.is_owned_subscript(expr)
     }
 
-    /// The positions `name`'s positional collector gathers, when it reads
-    /// them: a `var` collector owns its elements, and overloads that
-    /// disagree leave the convention unknown.
-    pub(super) fn read_collected_arguments<'a>(
-        &self,
-        name: &str,
-        overflow: &'a [usize],
-    ) -> &'a [usize] {
-        match self.owned_collectors.get(name) {
-            Some(false) => overflow,
-            _ => &[],
-        }
+    /// The positions `name`'s positional collector gathers and whether it
+    /// owns them (a `var` collector). Overloads that disagree leave the
+    /// convention unknown, which gathers none.
+    pub(super) fn gathered_arguments<'a>(&self, name: &str, overflow: &'a [usize]) -> Gathered<'a> {
+        self.owned_collectors
+            .get(name)
+            .map_or(Gathered::NONE, |owning| Gathered {
+                positions: overflow,
+                owning: *owning,
+            })
     }
 
     /// Record an expression whose value nothing takes ownership of: a
@@ -258,6 +262,51 @@ impl Checker {
                 .as_ref()
                 .is_some_and(|call| call.reference_result.is_none())
         })
+    }
+}
+
+/// The argument positions a call's positional `*args` collector gathers,
+/// and whether it owns them (`var *xs`) or reads them (`*xs`).
+#[derive(Clone, Copy)]
+pub(super) struct Gathered<'a> {
+    pub(super) positions: &'a [usize],
+    pub(super) owning: bool,
+}
+
+impl<'a> Gathered<'a> {
+    pub(super) const NONE: Self = Self {
+        positions: &[],
+        owning: false,
+    };
+
+    /// A collector with convention `convention` over `positions`: a read
+    /// (`None`/`read`) or owning (`var`/`deinit`) one gathers them, and a
+    /// `mut` or `ref` one is borrowed apart.
+    pub(super) const fn of_convention(
+        convention: Option<ArgConvention>,
+        positions: &'a [usize],
+    ) -> Self {
+        match convention {
+            None | Some(ArgConvention::Imm) => Self {
+                positions,
+                owning: false,
+            },
+            Some(ArgConvention::Var | ArgConvention::Deinit) => Self {
+                positions,
+                owning: true,
+            },
+            _ => Self::NONE,
+        }
+    }
+
+    /// The positions a read collector gathers; none for an owning one.
+    const fn read(self) -> &'a [usize] {
+        if self.owning { &[] } else { self.positions }
+    }
+
+    /// The positions an owning collector gathers; none for a read one.
+    const fn owned(self) -> &'a [usize] {
+        if self.owning { self.positions } else { &[] }
     }
 }
 
@@ -444,8 +493,8 @@ pub(super) fn read_temporary_arguments(
 
 /// Arguments a call binds to regular owned (`var`/`deinit`) parameters,
 /// which take the caller's storage: a `^` transfer among them hands its
-/// slot over without the move initializer. A collector's elements are not
-/// among them.
+/// slot over without the move initializer. An owning collector's elements
+/// are added by [`Checker::record_argument_borrows`].
 pub(super) fn forwarded_arguments(
     slots: &[ArgSlot],
     conventions: &[Option<ArgConvention>],

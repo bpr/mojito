@@ -8,6 +8,13 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A `^` transfer an owning `var *xs` collector gathers hands over the
+  source's storage without running its move initializer, and a loop or
+  comprehension over a named homogeneous collector, read or owning,
+  borrows each element in place instead of copying the pack and moving
+  its elements out, as the pin does (R734): `many(a^, b^)` printing each
+  element prints `x 1`, `x 2`, `del 2`, `del 1`. MIR indexes the pack
+  through a cursor where upstream iterates `VariadicListMem` (R743).
 - A `^` transfer that an owned (`var`/`deinit`) parameter takes, whether
   an argument, a keyword argument, a receiver, or a struct operator's
   operand, hands over the source's storage without running its move

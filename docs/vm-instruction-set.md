@@ -774,9 +774,11 @@ iter.has_next %dest, $iterator
 
 Writes whether `$iterator` holds another element. The operand is restricted to
 `Value::ComptimeList` while the VM is running in CTFE mode and private
-`Value::Tuple` runtime-pack storage; every nominal iterator, generic or
-concrete, advances through `iter.try_next` instead. A public Tuple is a nominal
-struct and cannot reach either path.
+`Value::Tuple` runtime-pack storage an owned loop (`for v in xs^`) consumes;
+every nominal iterator, generic or concrete, advances through `iter.try_next`
+instead, and a borrowed loop over a runtime pack indexes it in place through
+`ref.make` with no `iter.*` instruction. A public Tuple is a nominal struct
+and cannot reach either path.
 
 ### `iter.next` — Advance Compiler-Private Iterator Storage
 
@@ -784,8 +786,9 @@ struct and cannot reach either path.
 iter.next %dest, $iterator
 ```
 
-Removes the first element of the CTFE-only `Value::ComptimeList` or private
-runtime-pack `Value::Tuple` in `$iterator` and writes it to `%dest`.
+Removes the first element of the CTFE-only `Value::ComptimeList` or an owned
+loop's private runtime-pack `Value::Tuple` in `$iterator` and writes it to
+`%dest`.
 
 Calling this instruction when no element remains is invalid; the generated loop
 tests `iter.has_next` first.

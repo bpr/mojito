@@ -114,29 +114,11 @@ impl<'a> Flatten<'a> {
                 if source != dest {
                     self.var_types.insert(*dest, protocol.iterator_ty.clone());
                 }
-                self.emit(MirInstr::GetIter {
-                    source: *source,
-                    dest: *dest,
-                    mode: protocol.mode,
-                    prepare: protocol.prepare.clone(),
-                });
-                // A borrowed source is normalized into its own iterator slot
-                // (`source != dest`); when the iterator may refer to it,
-                // re-establish its source loans on the long-lived iterator
-                // variable so they stay live through the whole loop, rejecting
-                // mutation of the source during iteration. An iterator that
-                // cannot refer to its source leaves it free to die ASAP.
-                if protocol.borrowed_origin.is_some() && protocol.source_retained && source != dest
-                {
-                    self.reestablish_source_loans(*source, *dest);
-                }
+                self.normalize_iterator(*source, *dest, protocol);
             }
             HirInstr::HasNext { iter, dest } => {
                 let r = self.fresh(SourceSpan::new(None, DUMMY_SPAN), None);
-                self.emit(MirInstr::HasNext {
-                    dest: r,
-                    iter: *iter,
-                });
+                self.emit_has_next(r, *iter);
                 self.emit(MirInstr::DefVar {
                     var: *dest,
                     src: r,
@@ -154,10 +136,7 @@ impl<'a> Flatten<'a> {
                     Some(*iter),
                     element_ty.clone(),
                 );
-                self.emit(MirInstr::Next {
-                    dest: r,
-                    iter: *iter,
-                });
+                self.emit_next(r, *iter);
                 // The raw element is retained untouched in a compiler-owned
                 // slot; `BindIteration` adapts it to the loop target only on the
                 // yielded edge.
@@ -350,6 +329,12 @@ impl<'a> Flatten<'a> {
             mutability: mojito_types::origin::Mutability::Immutable,
         }));
         self.var_types.insert(dest, ref_ty.clone());
+        if matches!(
+            place.ty.as_ref().map(Ty::kind),
+            Some(TyKind::VariadicPack(_))
+        ) {
+            self.pack_sources.insert(dest, place.clone());
+        }
         let handle = self.fresh_typed(span.clone(), Some(place.root), ref_ty.clone());
         self.emit(MirInstr::MakeRef {
             dest: handle,
@@ -376,6 +361,173 @@ impl<'a> Flatten<'a> {
             dest_interior: None,
         });
         self.aggregate_loans.insert(dest, loans);
+    }
+
+    /// Normalize the iterable in `source` into the iterator slot `dest`
+    /// (`GetIter`). A borrowed source is normalized into its own slot
+    /// (`source != dest`); when the iterator may refer to it, its source
+    /// loans are re-established on the long-lived iterator slot so they stay
+    /// live through the whole loop, rejecting mutation of the source during
+    /// iteration. An iterator that cannot refer to its source leaves it free
+    /// to die ASAP. A borrowed runtime pack is not normalized: it opens a
+    /// [`PackCursor`] instead. Shared by `for` statements and comprehension
+    /// clauses.
+    pub(super) fn normalize_iterator(
+        &mut self,
+        source: VarId,
+        dest: VarId,
+        protocol: &mojito_checked::checked::IterationProtocol,
+    ) {
+        if protocol.indexes_pack()
+            && let Some(pack) = self.pack_sources.remove(&source)
+            && let Some(TyKind::VariadicPack(element)) = pack.ty.as_ref().map(Ty::kind)
+        {
+            let element = element.clone();
+            self.open_pack_cursor(source, dest, pack, element);
+            return;
+        }
+        self.emit(MirInstr::GetIter {
+            source,
+            dest,
+            mode: protocol.mode,
+            prepare: protocol.prepare.clone(),
+        });
+        if protocol.borrowed_origin.is_some() && protocol.source_retained && source != dest {
+            self.reestablish_source_loans(source, dest);
+        }
+    }
+
+    /// `dest = whether iterator iter yields another element` (`HasNext`); a
+    /// [`PackCursor`] compares its index with the pack's length.
+    pub(super) fn emit_has_next(&mut self, dest: Reg, iter: VarId) {
+        let Some(cursor) = self.pack_cursors.get(&iter).cloned() else {
+            self.emit(MirInstr::HasNext { dest, iter });
+            return;
+        };
+        let span = SourceSpan::new(None, DUMMY_SPAN);
+        let pack_ty = Ty::new(TyKind::VariadicPack(cursor.element));
+        let pack = self.fresh_typed(span.clone(), Some(cursor.pack.root), pack_ty);
+        let mut place = cursor.pack;
+        place.through = Some(iter);
+        self.emit(MirInstr::LoadPlace { dest: pack, place });
+        let length = self.fresh_typed(span.clone(), None, Ty::int());
+        self.emit(MirInstr::Call {
+            dest: length,
+            func: FuncRef::named("len"),
+            raises: None,
+            args: vec![pack],
+            kwargs: Vec::new(),
+            arg_places: vec![None],
+            kwarg_places: Vec::new(),
+            capture_accesses: Vec::new(),
+            param_arg_regs: Vec::new(),
+            receiver: None,
+            instantiated_args: Vec::new(),
+            spread: None,
+        });
+        let index = self.fresh_typed(span, Some(cursor.index), Ty::int());
+        self.emit(MirInstr::UseVar {
+            dest: index,
+            var: cursor.index,
+            mode: UseMode::Copy,
+        });
+        self.f.reg_types.insert(dest.0, Ty::bool());
+        self.emit(MirInstr::BinOp {
+            op: InfixOp::Lt,
+            dest,
+            a: index,
+            b: length,
+            resolved: None,
+        });
+    }
+
+    /// `dest = iter.next()` (`Next`); a [`PackCursor`] takes a reference to
+    /// the pack's element at its index, then advances the index.
+    pub(super) fn emit_next(&mut self, dest: Reg, iter: VarId) {
+        let Some(cursor) = self.pack_cursors.get(&iter).cloned() else {
+            self.emit(MirInstr::Next { dest, iter });
+            return;
+        };
+        let span = SourceSpan::new(None, DUMMY_SPAN);
+        let index = self.fresh_typed(span.clone(), Some(cursor.index), Ty::int());
+        self.emit(MirInstr::UseVar {
+            dest: index,
+            var: cursor.index,
+            mode: UseMode::Copy,
+        });
+        let element = cursor.element;
+        let mut place = cursor.pack;
+        place.proj.push(Proj::Index(index));
+        place.projection_tys.push(element.clone());
+        place.ty = Some(element);
+        place.through = Some(iter);
+        self.emit(MirInstr::MakeRef { dest, place });
+        let one = self.fresh_typed(span.clone(), None, Ty::int());
+        self.emit(MirInstr::Const {
+            dest: one,
+            k: Const::Int(1),
+        });
+        let advanced = self.fresh_typed(span, Some(cursor.index), Ty::int());
+        self.emit(MirInstr::BinOp {
+            op: InfixOp::Add,
+            dest: advanced,
+            a: index,
+            b: one,
+            resolved: None,
+        });
+        self.emit(MirInstr::DefVar {
+            var: cursor.index,
+            src: advanced,
+            binding_ty: None,
+            in_place: false,
+        });
+    }
+
+    /// Open a [`PackCursor`] over `pack`, a borrowed pack of `element`s
+    /// whose handle `source` retains: the iterator slot `dest` takes the
+    /// handle and its loans, and a fresh index slot starts at the first
+    /// element.
+    fn open_pack_cursor(&mut self, source: VarId, dest: VarId, pack: MirPlace, element: Ty) {
+        let span = SourceSpan::new(None, DUMMY_SPAN);
+        let handle_ty = self
+            .var_types
+            .get(&source)
+            .cloned()
+            .expect("a borrowed pack's handle slot is typed");
+        self.var_types.insert(dest, handle_ty.clone());
+        let handle = self.fresh_typed(span.clone(), Some(source), handle_ty.clone());
+        self.emit(MirInstr::MakeRef {
+            dest: handle,
+            place: MirPlace::root(source, Some(handle_ty.clone())),
+        });
+        self.emit(MirInstr::DefVar {
+            var: dest,
+            src: handle,
+            binding_ty: Some(handle_ty),
+            in_place: false,
+        });
+        self.reestablish_source_loans(source, dest);
+        let index = self.var(&format!("$packindex{}", self.vars.len()));
+        self.var_types.insert(index, Ty::int());
+        let zero = self.fresh_typed(span, None, Ty::int());
+        self.emit(MirInstr::Const {
+            dest: zero,
+            k: Const::Int(0),
+        });
+        self.emit(MirInstr::DefVar {
+            var: index,
+            src: zero,
+            binding_ty: Some(Ty::int()),
+            in_place: false,
+        });
+        self.pack_cursors.insert(
+            dest,
+            PackCursor {
+                pack,
+                element,
+                index,
+            },
+        );
     }
 
     /// Copy a normalized borrowed source's loans onto the long-lived iterator
@@ -1671,6 +1823,8 @@ impl<'a> Flatten<'a> {
                 displays: self.displays.clone(),
                 slots: region_cfg.slots.clone(),
                 aliases: self.aliases.clone(),
+                pack_sources: self.pack_sources.clone(),
+                pack_cursors: self.pack_cursors.clone(),
                 runtime_aliases: self.runtime_aliases.clone(),
                 aggregate_loans: self.aggregate_loans.clone(),
                 conversion_view_loans: self.conversion_view_loans.clone(),

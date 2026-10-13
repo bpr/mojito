@@ -39,6 +39,11 @@ impl Checker {
     ) -> Result<(mojito_checked::checked::IterationProtocol, IteratorRaises), TypeError> {
         let mut raises = Vec::new();
         let (mut yielded_ty, mut protocol) = self.iteration_protocol(iter_ty, mode, &mut raises)?;
+        if let Some(reference) =
+            Self::pack_iteration_reference(iter_ty, source, source_mutable, &mut protocol)
+        {
+            yielded_ty = reference;
+        }
         self.attach_borrowed_iteration_origin(source, iter_ty, mode, &mut protocol);
         Self::resolve_iterator_origin(source, &mut protocol);
         if let Some(resolved) =
@@ -217,6 +222,41 @@ impl Checker {
             origin.path.extend(protocol.yield_interior.iter().cloned());
             protocol.borrowed_origin = Some(origin);
         }
+    }
+
+    /// A borrowed loop over a named homogeneous runtime pack yields
+    /// references to its elements, as upstream's `VariadicListMem.__iter__`
+    /// yields `ref` elements of the list: the loop borrows the pack whole
+    /// and indexes it in place, mutably when the pack is a `var` collector.
+    /// Owned iteration (`xs^`) and a heterogeneous pack keep the builtin
+    /// protocol. Returns the yielded reference type.
+    fn pack_iteration_reference(
+        iter_ty: &Ty,
+        source: Option<&mojito_types::origin::OriginPlace>,
+        source_mutable: bool,
+        protocol: &mut mojito_checked::checked::IterationProtocol,
+    ) -> Option<Ty> {
+        use mojito_types::origin::{Mutability, Origin, RefTy};
+
+        let TyKind::VariadicPack(element) = iter_ty.kind() else {
+            return None;
+        };
+        if protocol.mode != mojito_checked::checked::IterationMode::Borrowed
+            || mojito_types::types::pack_spread(std::slice::from_ref(element)).is_some()
+        {
+            return None;
+        }
+        let source = source?;
+        protocol.borrowed_origin = Some(source.clone());
+        Some(Ty::new(TyKind::Ref(RefTy {
+            referent: element.clone(),
+            origin: Origin::Place(source.clone()),
+            mutability: if source_mutable {
+                Mutability::Mutable
+            } else {
+                Mutability::Immutable
+            },
+        })))
     }
 
     /// Whether a protocol advances through the abstract `__iterator_dispatch`

@@ -2307,7 +2307,7 @@ impl Checker {
                         slots: &selected.slots,
                         conventions: &selected.conventions,
                         ref_params: &selected.ref_params,
-                        collected: selected.read_collected_arguments(),
+                        collected: selected.gathered_arguments(),
                         raises: selected.raises,
                         error: selected.error.as_ref(),
                         exclusivity: ConstructorExclusivity {
@@ -4061,8 +4061,8 @@ struct ConstructorBinding<'a> {
     slots: &'a [ArgSlot],
     conventions: &'a [Option<ArgConvention>],
     ref_params: &'a [Option<mojito_types::origin::RefSig>],
-    /// The positions a read `*args` collector gathers.
-    collected: &'a [usize],
+    /// The positions the `*args` collector gathers.
+    collected: Gathered<'a>,
     raises: bool,
     error: Option<&'a Ty>,
     exclusivity: ConstructorExclusivity<'a>,
@@ -4070,17 +4070,14 @@ struct ConstructorBinding<'a> {
 
 impl<'a> ConstructorBinding<'a> {
     /// `overflow` holds the positions the signature's `*args` collector
-    /// gathers; only a read collector borrows them.
+    /// gathers.
     fn of_signature(
         sig: &'a MethodSig,
         slots: &'a [ArgSlot],
         overflow: &'a [usize],
         exclusivity: ConstructorExclusivity<'a>,
     ) -> Self {
-        let collected = match sig.variadic_convention {
-            None | Some(ArgConvention::Imm) => overflow,
-            _ => &[],
-        };
+        let collected = Gathered::of_convention(sig.variadic_convention, overflow);
         Self {
             slots,
             conventions: &sig.conventions,
