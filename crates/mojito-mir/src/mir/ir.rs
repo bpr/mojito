@@ -679,6 +679,14 @@ impl UseMode {
 /// source dies there, copy elision forwards the source's storage instead.
 pub const FORWARDED_ARGUMENT_SLOT: &str = "$fwd_arg_r";
 
+/// The name prefix of a read-temporary slot.
+///
+/// A loan-free owned temporary a read parameter or a read operator operand
+/// takes (`show(B(2))`) is bound to it and read once by the call. When the
+/// temporary is a copy whose source dies there, copy elision lends the
+/// source's storage instead.
+pub const READ_TEMPORARY_SLOT: &str = "$tmp_arg_r";
+
 /// One already-evaluated argument to a multi-dimensional subscript.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub enum MirSubscriptArg {

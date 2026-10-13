@@ -162,6 +162,61 @@ fn transfer_into_owned_parameter_forwards_and_binding_moves() {
 }
 
 #[test]
+fn dying_copy_at_read_parameter_lends_its_source() {
+    // `show(M(copy=a))` at `a`'s last use binds no read temporary and runs
+    // no copy: the call reads `a` where it lies, and `a` dies after it.
+    let source = "struct M(Copyable, Movable):\n    var v: Int\n    def __init__(out self, v: Int):\n        self.v = v\n\ndef show(s: M):\n    pass\n\ndef main():\n    var a = M(1)\n    show(M(copy=a))\n";
+    let compiled = Compiler::default()
+        .compile_source(source, Path::new("mir_test.mojo"))
+        .expect("compile");
+    let main = mir_function(compiled.elaborated_mir(), "main");
+    let instrs = main
+        .blocks
+        .iter()
+        .flat_map(|block| &block.instrs)
+        .collect::<Vec<_>>();
+    let a = main
+        .var_names
+        .iter()
+        .position(|slot| slot == "a")
+        .expect("a slot") as u32;
+    assert!(
+        !instrs.iter().any(|instr| match instr {
+            MirInstr::DefVar { var, .. } => {
+                main.var_names[*var as usize].starts_with(mojito::mir::READ_TEMPORARY_SLOT)
+            }
+            MirInstr::Call { kwargs, .. } => kwargs.iter().any(|(name, _)| name == "copy"),
+            _ => false,
+        }),
+        "{main:#?}"
+    );
+    let argument = instrs
+        .iter()
+        .find_map(|instr| match instr {
+            MirInstr::Call { func, args, .. } if func.0 == "show" => args.first().copied(),
+            _ => None,
+        })
+        .expect("show call");
+    let call_at = instrs
+        .iter()
+        .position(|instr| matches!(instr, MirInstr::Call { func, .. } if func.0 == "show"))
+        .expect("show call");
+    assert!(
+        instrs.iter().any(|instr| matches!(
+            instr,
+            MirInstr::LoadPlace { dest, place } if *dest == argument && place.root == a
+        )),
+        "{main:#?}"
+    );
+    assert!(
+        instrs[call_at..]
+            .iter()
+            .any(|instr| matches!(instr, MirInstr::DropVar { var } if *var == a)),
+        "{main:#?}"
+    );
+}
+
+#[test]
 fn split_iterator_slot_is_typed_by_its_iter_result() {
     let source = "def first_or[C: Iterable](items: C, default: C.Element) -> C.Element:\n\
                   \x20   for item in items:\n        return item.copy()\n\

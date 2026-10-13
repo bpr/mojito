@@ -16,27 +16,66 @@
 //! dies there, the construction, the slot, and the source's death all go,
 //! and the call takes the source's storage itself: no move initializer
 //! runs, as Mojo's lifetime checker hands a dying source to an owned
-//! argument. A copy any other binding takes still becomes a move.
+//! argument.
+//!
+//! A copy a read parameter or read operator operand takes is bound to a
+//! read-temporary slot ([`READ_TEMPORARY_SLOT`]) the call reads once. When
+//! its source dies there and nothing evaluated between the binding and the
+//! call can raise, the source is lent instead: the construction, the
+//! binding, and the source's death go, the call reads the source where it
+//! lies, and every death of the slot — its `DropVar`, a `try` body's or a
+//! return's cleanup — becomes the source's, as Mojo binds the borrowed
+//! temporary to the dead source's own storage. A raising argument after the
+//! construction keeps the move, as at Mojo. A copy any other binding takes
+//! still becomes a move.
 
+use super::scan::{for_each_instr_deep, may_raise, var_def, var_uses, vars_moved};
 use mojito_hir::hir::VarId;
 use mojito_mir::mir::verify::instruction_operand_regs;
 use mojito_mir::mir::{
-    FORWARDED_ARGUMENT_SLOT, MirBlock, MirDeclarations, MirInstr, MirPlace, MirTerm, UseMode,
+    FORWARDED_ARGUMENT_SLOT, MirBlock, MirDeclarations, MirFunction, MirInstr, MirPlace, MirTerm,
+    READ_TEMPORARY_SLOT, Reg, UseMode,
 };
 use std::collections::HashMap;
 
-/// Rewrite every dying named-struct copy construction in `blocks`, `Try`
-/// regions included, into a move of its source, or into its source's
-/// forwarding when an owned parameter takes it. `var_names` names the
-/// function's slots.
-pub(super) fn elide_dying_copies(
-    blocks: &mut [MirBlock],
-    var_names: &[String],
-    declarations: &MirDeclarations,
-) {
+/// Rewrite every dying named-struct copy construction in `function`, `Try`
+/// regions included, into a move of its source, into its source's
+/// forwarding when an owned parameter takes it, or into its source's loan
+/// when a read parameter takes it.
+pub(super) fn elide_dying_copies(function: &mut MirFunction, declarations: &MirDeclarations) {
     let mut uses = HashMap::new();
-    count_operand_uses(blocks, &mut uses);
-    rewrite_blocks(blocks, var_names, declarations, &uses);
+    count_operand_uses(&function.blocks, &mut uses);
+    let elision = Elision {
+        var_names: &function.var_names,
+        declarations,
+        uses,
+        mentions: count_slot_mentions(&function.blocks),
+    };
+    let mut lent = Vec::new();
+    rewrite_blocks(&mut function.blocks, &elision, &mut lent);
+    for loan in &lent {
+        if let Some((_, origin)) = function.spans.0.get_mut(&loan.load.0) {
+            *origin = Some(loan.source);
+        }
+    }
+    rename_lent_slots(&mut function.blocks, &lent);
+}
+
+/// What the rewrite reads of the whole function.
+struct Elision<'a> {
+    var_names: &'a [String],
+    declarations: &'a MirDeclarations,
+    /// Operand uses of each register.
+    uses: HashMap<u32, usize>,
+    /// Mentions of each slot outside its `DropVar`s and cleanup lists.
+    mentions: HashMap<VarId, usize>,
+}
+
+/// A read-temporary slot whose binding a lent source replaced.
+struct Loan {
+    slot: VarId,
+    source: VarId,
+    load: Reg,
 }
 
 fn count_operand_uses(blocks: &[MirBlock], uses: &mut HashMap<u32, usize>) {
@@ -64,28 +103,51 @@ fn count_operand_uses(blocks: &[MirBlock], uses: &mut HashMap<u32, usize>) {
     }
 }
 
-fn rewrite_blocks(
-    blocks: &mut [MirBlock],
-    var_names: &[String],
-    declarations: &MirDeclarations,
-    uses: &HashMap<u32, usize>,
-) {
+/// How often each slot is named outside its `DropVar`s and cleanup lists:
+/// a read-temporary slot that only its binding and its one load name is
+/// one a lent source can stand in for.
+fn count_slot_mentions(blocks: &[MirBlock]) -> HashMap<VarId, usize> {
+    let mut mentions = HashMap::new();
+    for_each_instr_deep(blocks, &mut |instruction| {
+        // A `try` reports its regions' uses as its own; the walk visits them.
+        let uses = if matches!(instruction, MirInstr::Try { .. }) {
+            Vec::new()
+        } else {
+            var_uses(instruction)
+        };
+        for var in uses
+            .into_iter()
+            .map(|(var, _)| var)
+            .chain(var_def(instruction))
+            .chain(vars_moved(instruction))
+        {
+            *mentions.entry(var).or_default() += 1;
+        }
+    });
+    mentions
+}
+
+fn rewrite_blocks(blocks: &mut [MirBlock], elision: &Elision, lent: &mut Vec<Loan>) {
     for block in blocks {
         for instruction in &mut block.instrs {
             for region in try_regions_mut(instruction) {
-                rewrite_blocks(region, var_names, declarations, uses);
+                rewrite_blocks(region, elision, lent);
             }
         }
         let mut at = 1;
         while at < block.instrs.len() {
-            if let Some(source) = dying_copy(&block.instrs, at, declarations, uses) {
-                match forwarding_use(&block.instrs, source, var_names) {
-                    Some(forward_at) => forward(&mut block.instrs, at, source, forward_at),
-                    None => elide(&mut block.instrs, at, source),
-                }
-                at -= 1;
+            let instrs = &mut block.instrs;
+            let Some(source) = dying_copy(instrs, at, elision.declarations, &elision.uses) else {
+                at += 1;
+                continue;
+            };
+            if let Some(forward_at) = forwarding_use(instrs, source, elision.var_names) {
+                forward(instrs, at, source, forward_at);
+            } else if let Some(lending) = lending_use(instrs, at, source, elision) {
+                lent.push(lend(instrs, at, source, lending));
+            } else {
+                elide(instrs, at, source);
             }
-            at += 1;
         }
     }
 }
@@ -145,12 +207,7 @@ fn dying_copy(
     };
     let drop_at = instrs[binding_at.unwrap_or(at) + 1..]
         .iter()
-        .take_while(|instruction| {
-            matches!(
-                instruction,
-                MirInstr::DropVar { .. } | MirInstr::Drop { .. } | MirInstr::DropPlace { .. }
-            )
-        })
+        .take_while(|instruction| is_drop(instruction))
         .position(
             |instruction| matches!(instruction, MirInstr::DropVar { var: dying } if *dying == var),
         )?
@@ -177,12 +234,7 @@ fn forwarding_use(instrs: &[MirInstr], source: DyingCopy, var_names: &[String]) 
     {
         return None;
     }
-    let forward_at = (source.drop_at + 1..instrs.len()).find(|&at| {
-        !matches!(
-            instrs[at],
-            MirInstr::DropVar { .. } | MirInstr::Drop { .. } | MirInstr::DropPlace { .. }
-        )
-    })?;
+    let forward_at = (source.drop_at + 1..instrs.len()).find(|&at| !is_drop(&instrs[at]))?;
     matches!(
         instrs[forward_at],
         MirInstr::UseVar {
@@ -209,6 +261,107 @@ fn forward(instrs: &mut Vec<MirInstr>, at: usize, source: DyingCopy, forward_at:
     instrs.remove(at - 1);
 }
 
+/// Where a read call takes the read-temporary slot the dying copy is bound
+/// to.
+#[derive(Clone, Copy)]
+struct Lending {
+    binding_at: usize,
+    load_at: usize,
+    load: Reg,
+    slot: VarId,
+}
+
+/// The read-temporary slot the dying copy at `at` binds right past the run
+/// of drops holding its source's death, when the source can stand in for
+/// it: only the binding and one whole load name the slot, that load's one
+/// use is a later instruction of the block, nothing from the binding to that
+/// use can raise, and nothing from the binding to the slot's last death in
+/// the block names the source.
+fn lending_use(
+    instrs: &[MirInstr],
+    at: usize,
+    source: DyingCopy,
+    elision: &Elision,
+) -> Option<Lending> {
+    let MirInstr::Call { dest, .. } = &instrs[at] else {
+        return None;
+    };
+    if source.binding_at.is_some() {
+        return None;
+    }
+    let binding_at = (source.drop_at + 1..instrs.len()).find(|&at| !is_drop(&instrs[at]))?;
+    let MirInstr::DefVar {
+        var: slot,
+        src,
+        in_place: false,
+        ..
+    } = &instrs[binding_at]
+    else {
+        return None;
+    };
+    let slot = *slot;
+    let read_temporary = elision
+        .var_names
+        .get(slot as usize)
+        .is_some_and(|name| name.starts_with(READ_TEMPORARY_SLOT));
+    if src != dest || !read_temporary || elision.mentions.get(&slot) != Some(&2) {
+        return None;
+    }
+    let (load_at, load) =
+        instrs
+            .iter()
+            .enumerate()
+            .skip(binding_at + 1)
+            .find_map(|(load_at, instruction)| match instruction {
+                MirInstr::LoadPlace { dest, place } if place.root == slot => {
+                    (place.proj.is_empty() && place.through.is_none()).then_some((load_at, *dest))
+                }
+                _ => None,
+            })?;
+    if elision.uses.get(&load.0) != Some(&1) {
+        return None;
+    }
+    let mut operands = Vec::new();
+    let consumer_at = (load_at + 1..instrs.len()).find(|&at| {
+        operands.clear();
+        instruction_operand_regs(&instrs[at], &mut operands);
+        operands.contains(&load)
+    })?;
+    let last_death = instrs
+        .iter()
+        .rposition(|instruction| matches!(instruction, MirInstr::DropVar { var } if *var == slot))
+        .filter(|&death| death > consumer_at)?;
+    let silent = instrs[binding_at + 1..consumer_at].iter().all(cannot_raise);
+    let untouched = !instrs[binding_at + 1..=last_death]
+        .iter()
+        .any(|instruction| names(instruction, source.var));
+    (silent && untouched).then_some(Lending {
+        binding_at,
+        load_at,
+        load,
+        slot,
+    })
+}
+
+/// Lend the dying source to the read call that takes the read-temporary
+/// slot: the load, the construction, the source's death, and the slot's
+/// binding go, and the slot's load reads the source instead. The slot's
+/// deaths become the source's once the whole function is rewritten.
+fn lend(instrs: &mut Vec<MirInstr>, at: usize, source: DyingCopy, lending: Lending) -> Loan {
+    if let MirInstr::LoadPlace { place, .. } = &mut instrs[lending.load_at] {
+        place.root = source.var;
+    }
+    instrs.remove(lending.binding_at);
+    instrs.remove(source.drop_at);
+    instrs.remove(at);
+    instrs.remove(at - 1);
+    Loan {
+        slot: lending.slot,
+        source: source.var,
+        load: lending.load,
+    }
+}
+
 /// Replace the construction at `at` with its source's move: the source's
 /// death and the dead load go, and the binding is no longer in place.
 fn elide(instrs: &mut Vec<MirInstr>, at: usize, source: DyingCopy) {
@@ -228,6 +381,38 @@ fn elide(instrs: &mut Vec<MirInstr>, at: usize, source: DyingCopy) {
         mode: UseMode::Move,
     };
     instrs.remove(at - 1);
+}
+
+const fn is_drop(instruction: &MirInstr) -> bool {
+    matches!(
+        instruction,
+        MirInstr::DropVar { .. } | MirInstr::Drop { .. } | MirInstr::DropPlace { .. }
+    )
+}
+
+/// Whether `instruction` cannot raise: a silent instruction, a read, a
+/// constant, or a call whose contract does not raise.
+const fn cannot_raise(instruction: &MirInstr) -> bool {
+    !may_raise(instruction)
+        || matches!(
+            instruction,
+            MirInstr::LoadPlace { .. }
+                | MirInstr::Const { .. }
+                | MirInstr::MaterializeLiteral { .. }
+                | MirInstr::Call { raises: None, .. }
+                | MirInstr::MethodCall { raises: None, .. }
+                | MirInstr::CallIndirect { raises: None, .. }
+        )
+}
+
+/// Whether `instruction` reads, writes, moves, declares, or destroys `var`.
+fn names(instruction: &MirInstr, var: VarId) -> bool {
+    matches!(
+        instruction,
+        MirInstr::DropVar { var: named } | MirInstr::DeclareVar { var: named } if *named == var
+    ) || var_def(instruction) == Some(var)
+        || vars_moved(instruction).contains(&var)
+        || var_uses(instruction).iter().any(|(named, _)| *named == var)
 }
 
 fn try_regions(instruction: &MirInstr) -> Vec<&[MirBlock]> {
@@ -264,4 +449,53 @@ fn try_regions_mut(instruction: &mut MirInstr) -> Vec<&mut [MirBlock]> {
         .chain(orelse.iter_mut().map(Vec::as_mut_slice))
         .chain(finalbody.iter_mut().map(Vec::as_mut_slice))
         .collect()
+}
+
+/// Make every death of a lent slot its source's: its `DropVar`s, and its
+/// place in a `try` body's or an exit's cleanup, where a source already
+/// listed keeps its one entry.
+fn rename_lent_slots(blocks: &mut [MirBlock], lent: &[Loan]) {
+    if lent.is_empty() {
+        return;
+    }
+    let sources = lent
+        .iter()
+        .map(|loan| (loan.slot, loan.source))
+        .collect::<HashMap<_, _>>();
+    rename_deaths(blocks, &sources);
+}
+
+fn rename_deaths(blocks: &mut [MirBlock], sources: &HashMap<VarId, VarId>) {
+    for block in blocks {
+        for instruction in &mut block.instrs {
+            match instruction {
+                MirInstr::DropVar { var } => {
+                    if let Some(&source) = sources.get(var) {
+                        *var = source;
+                    }
+                }
+                MirInstr::Try { cleanup, .. } => rename_cleanup(cleanup, sources),
+                _ => {}
+            }
+            for region in try_regions_mut(instruction) {
+                rename_deaths(region, sources);
+            }
+        }
+        if let MirTerm::ReturnWithCleanup { cleanup, .. } | MirTerm::EscapeJump { cleanup, .. } =
+            &mut block.term
+        {
+            rename_cleanup(cleanup, sources);
+        }
+    }
+}
+
+fn rename_cleanup(cleanup: &mut Vec<VarId>, sources: &HashMap<VarId, VarId>) {
+    let mut renamed = Vec::with_capacity(cleanup.len());
+    for var in cleanup.iter() {
+        let var = sources.get(var).copied().unwrap_or(*var);
+        if !renamed.contains(&var) {
+            renamed.push(var);
+        }
+    }
+    *cleanup = renamed;
 }

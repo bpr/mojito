@@ -4227,9 +4227,20 @@ current Mojo:
   (`$fwd_arg_r`, `mir::FORWARDED_ARGUMENT_SLOT`) that the call takes next
   through `UseVar Forward`; when `y` dies there, the load, construction,
   binding, and `DropVar` go and the call forwards `y` itself, so no move
-  initializer runs, as at Mojo. A type parameter's `T(copy=x)` (still
-  `ConstructTypeParam` at that point), a field source, `.copy()`, and a
-  source that dies only on a successor edge stay copies.
+  initializer runs, as at Mojo. A copy construction a read parameter or
+  read operator operand takes (`show(M(copy=a))`) is bound to its
+  read-temporary slot (`mir::READ_TEMPORARY_SLOT`, below); when `a` dies
+  there, nothing from the binding to the call can raise, and only the
+  binding and one whole load name the slot (`lending_use`), the load,
+  construction, binding, and `a`'s `DropVar` go and the slot's load reads
+  `a` itself (`lend`). Every death of the slot — its `DropVar`, a `try`
+  body's `cleanup`, an exit's `ReturnWithCleanup`/`EscapeJump` cleanup — is
+  then renamed to `a` function-wide, so `a` dies when the call returns, or
+  on its raise before the handler, as Mojo binds the borrowed temporary to
+  the dead source's storage. A raising argument evaluated after the
+  construction keeps the move, as at the pin. A type parameter's
+  `T(copy=x)` (still `ConstructTypeParam` at that point), a field source,
+  `.copy()`, and a source that dies only on a successor edge stay copies.
   A `_ = e` statement is the same discard: HIR binds its value to a fresh
   per-statement `$discard_s` slot, typed by that value alone and dead at its
   definition, so `_` never names a function-wide local.
@@ -4241,7 +4252,7 @@ current Mojo:
   the callee owns the temporary. A receiver whose result borrows it takes the
   `$mat_r` path above instead, and lives as long as the borrower.
 - An owning temporary at a read parameter (`take(B(2))`) is bound to a
-  hidden `$tmp_arg_r` slot and the call reads that slot, the shape a named
+  hidden `$tmp_arg_r` slot (`mir::READ_TEMPORARY_SLOT`) and the call reads that slot, the shape a named
   local takes there (`bind_temporary_argument`); the loaded register retains
   the slot through the call, so the `DropVar` follows it. The checker decides
   which arguments qualify: `read_temporary_arguments` (`checker/places.rs`)

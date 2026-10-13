@@ -1446,7 +1446,8 @@ impl<'a> Flatten<'a> {
     /// Give a loan-free owned temporary bound to a read parameter
     /// (`take(B(2))`, or the `String` an implicit conversion builds for
     /// `take("abc")`) frame storage, as [`Self::lower_method_receiver`] does
-    /// for a receiver: bind it to a hidden `$tmp_arg_r` slot and hand the call
+    /// for a receiver: bind it to a hidden read-temporary slot
+    /// ([`crate::mir::READ_TEMPORARY_SLOT`]) and hand the call
     /// a shallow read of that slot — the shape a named local takes at a read
     /// parameter. The loaded register retains the slot through the call, so
     /// drop elaboration destroys the temporary once the callee returns. A
@@ -1480,7 +1481,7 @@ impl<'a> Flatten<'a> {
         else {
             return value;
         };
-        let variable = self.var(&format!("$tmp_arg_r{}", value.0));
+        let variable = self.var(&format!("{}{}", crate::mir::READ_TEMPORARY_SLOT, value.0));
         self.var_types.insert(variable, ty.clone());
         self.emit(MirInstr::DefVar {
             var: variable,

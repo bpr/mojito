@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R745**.
+Next free ID: **R747**.
 
 ## Ordered Work
 
@@ -287,6 +287,21 @@ Track: `ownership`.
 
 Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the track, an entry Mojito runs to a wrong result, or accepts where the pin rejects, comes first; then one it rejects where the pin runs it; then a verdict that is right with the wrong words.
 
+- [ ] **R745 A read temporary whose call has a conditional argument after
+  it is destroyed before the call**
+
+  Problem: `show_n(M(2), 3 if c else 4)` over `def show_n(s: M, n: Int)`
+  prints `del 2` before `show_n 2 3`, where the pin destroys the temporary
+  after the call returns.
+  - The callee reads a destroyed value.
+  - Drop elaboration puts the `$tmp_arg_r` slot's `DropVar` at the end of
+    the block that loads it, before the conditional's branch.
+  - The loaded register stays live into the join block holding the call,
+    but liveness does not keep its slot alive across that edge.
+  - Found while landing R736 (2026-10-13).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
 - [ ] **R473 A discard `_ = x` copies its source instead of taking it**
 
   Problem: `var x = Q(1, "y")` then `_ = x` as `x`'s last use prints
@@ -298,21 +313,6 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R736 A copy construction a read parameter takes at its source's
-  last use runs the move initializer the pin elides**
-
-  Problem: `show(M(copy=a))` over `def show(s: M)` at `a`'s last use
-  prints `show 1001`, where the pin prints `show 1`.
-  - The pin lends `a`'s storage to the read parameter.
-  - Copy elision (`analysis/copy_elision.rs`) moves `a` into the
-    `$tmp_arg_r` slot, which runs the move initializer.
-  - Copy elision already forwards the source for an owned parameter
-    through a `$fwd_arg_r` slot; a read parameter's temporary slot is the
-    lever.
-  - Found while landing R730 (2026-10-13).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R737 A copy-constructed receiver at its source's last use runs the
   move initializer the pin elides**
 
@@ -321,6 +321,20 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
   - MIR binds a forwarding slot for an owned call argument only, so copy
     elision turns the receiver's copy into a move.
   - Found while landing R730 (2026-10-13).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R746 A copy-constructed read receiver at its source's last use
+  runs the move initializer the pin elides**
+
+  Problem: `M(copy=d).show()` over `def show(self)` at `d`'s last use
+  prints `recv 1001`, where the pin prints `recv 1`.
+  - The pin lends `d`'s storage to the receiver.
+  - The receiver binds a `$tmp_recv_r` slot, which copy elision does not
+    lend, so it turns the copy into a move.
+  - Copy elision lends a read-temporary argument slot
+    (`READ_TEMPORARY_SLOT`); the receiver slot needs the same rule.
+  - Found while landing R736 (2026-10-13).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

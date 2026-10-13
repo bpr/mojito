@@ -8,6 +8,12 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A copy construction a read parameter or read operator operand takes at
+  its source's last use lends the source's storage, as the pin does
+  (R736): `show(M(copy=a))` runs neither the copy nor the move
+  initializer, and `a` dies when the call returns, inside a `try` too. A
+  raising argument evaluated after the construction keeps the move, as at
+  the pin.
 - A conditional expression's result is an owned temporary its consumer
   takes, as the pin does (R735): `take(y^ if c else z^)` runs one move
   initializer and no copy, a binding, `return`, or receiver takes the

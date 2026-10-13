@@ -524,6 +524,19 @@ fn transfer_into_owned_argument_runs_no_move_initializer() {
 }
 
 #[test]
+fn copy_construction_read_argument_lends_its_source() {
+    // A read parameter that takes a copy construction at its source's last
+    // use borrows the source's storage, which dies when the call returns,
+    // inside a `try` too; a source read afterwards still copies, and a
+    // raising argument after the construction makes it a move.
+    let src = "struct M(Copyable, Movable):\n    var v: Int\n    def __init__(out self, v: Int):\n        self.v = v\n    def __init__(out self, *, copy: Self):\n        self.v = copy.v + 100\n    def __init__(out self, *, deinit move: Self):\n        self.v = move.v + 1000\n    def __deinit__(deinit self):\n        print(\"del\", self.v)\n\ndef boom(x: Int) raises -> Int:\n    raise Error(\"boom\")\n\ndef show(s: M):\n    print(\"show\", s.v)\n\ndef show_n(s: M, n: Int):\n    print(\"show_n\", s.v, n)\n\ndef show_r(s: M) raises:\n    print(\"show_r\", s.v)\n    raise Error(\"r\")\n\ndef main():\n    var a = M(1)\n    show(M(copy=a))\n    var b = M(2)\n    show(M(copy=b))\n    print(\"b\", b.v)\n    var c = M(3)\n    try:\n        show_n(M(copy=c), boom(1))\n    except e:\n        print(\"caught\", e)\n    var d = M(4)\n    try:\n        show_r(M(copy=d))\n    except e:\n        print(\"caught\", e)\n";
+    assert_eq!(
+        vm(src),
+        "show 1\ndel 1\nshow 102\ndel 102\nb 2\ndel 2\ndel 1003\ncaught boom\nshow_r 4\ndel 4\ncaught r\n"
+    );
+}
+
+#[test]
 fn conditional_expression_result_is_taken_not_copied() {
     // Each arm initializes the conditional's owned result once (a `^` arm by
     // a move, a place arm by a copy), and its consumer takes it as any other
