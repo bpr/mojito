@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R727**.
+Next free ID: **R729**.
 
 ## Ordered Work
 
@@ -56,6 +56,24 @@ Track: `native`.
 
 The ABI-bump collector is last whatever else moves, because it batches every
 change that needs a new `MJRT_ABI_VERSION`.
+
+- [ ] **R727 Natively, a late-initialized local fails to lower**
+
+  Problem: `var a: Int` followed by `a = 1` stops natively with
+  "unsupported read of erased analysis register" at the declaration, where
+  the VM and the pin run it.
+  - A struct local (`var a: S` then `a = S(1)`) stops the same way, with
+    "undefined aggregate register", in a `try` body or outside one.
+  - It fails in `main` and in a helper `def`, and after an `if`/`else`
+    that assigns both arms.
+  - No `assets/ok` fixture declares a function local without an
+    initializer, so the parity manifest never ran the shape.
+  - Once fixed, add the declared-before-initialized `try` shape (`var a:
+    S; var b = S(2); a = S(1)` before a raise, destroying `b` then `a`)
+    to `assets/ok/try_raise_edge_drop_order.mojo`.
+  - Found while landing R720 (2026-10-13).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
 
 - [ ] **R433 Natively, a struct pack element's `write_to` takes the
   reflective default**
@@ -295,20 +313,6 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
   - Mojito copies `x` into the discard and destroys both, where the pin
     moves the last use.
   - Found while landing R467 (2026-10-07).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **R720 A raising struct operator destroys its operands in the wrong
-  order when it raises**
-
-  Problem: `var x = S(1) + S(9)` in a `try`, over an `__add__` that
-  raises, prints `del 1`, `del 9`, `caught big`, where the pin prints
-  `del 9`, `del 1`, `caught big`.
-  - A `BinOp` carries no raising contract in MIR (`Call` and `MethodCall`
-    carry `raises`), so its raise edge is not modeled and the operands
-    drop through the region's cleanup backstop instead.
-  - The checker records the dunder's effect at the operator since R714.
-  - Found while landing R714 (2026-10-13).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -6118,6 +6122,22 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     target, so the VM resolves no name; failing that, an index by name.
   - Found while landing R580 (2026-10-10), which moved the elaborator's
     resolution onto by-name lookups.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R728 A struct infix operator's concrete call says it cannot
+  raise**
+
+  Problem: `native::mono` rewrites a struct `BinOp` to its dunder's
+  `MethodCall` through `dunder_method_call` (`mono/equiv.rs`) with
+  `raises: None`, even over a raising `__add__`.
+  - Mojo's `a + b` is the dunder's call, and that call carries its effect.
+  - Execution is right only because the VM propagates through Rust's `?`
+    and native lowering reads the effect from the callee's declaration.
+  - Fix: lower a struct operator to the dunder's call carrying the
+    checker's effect, by giving MIR `BinOp` a `raises` contract or by
+    making the struct operator a `MethodCall` before mono.
+  - Found while landing R720 (2026-10-13).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

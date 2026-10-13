@@ -165,8 +165,8 @@ pub(super) fn elaborate_drops(
                 // scope-exit cleanup with the body-defined non-locals that
                 // cannot be observed after the body is left — dead on the
                 // normal continuation, unused by the handler/`else`/`finally`,
-                // and dead at every escape target. `set_try_cleanups` prepends
-                // the body-locals and keeps this seed.
+                // and dead at every escape target. `set_try_cleanups` keeps
+                // this seed beside the body-locals.
                 if let MirInstr::Try {
                     body,
                     handler,
@@ -1118,8 +1118,8 @@ pub(super) fn fill_escape_cleanups(
 /// variables (dropped when the body is left, normally or via a raise);
 /// `function_defs` is the function-wide def count that locality is judged
 /// against. A cleanup seeded earlier (the liveness-guarded unobservable
-/// rebound variables from `elaborate_drops`) is kept, appended after the
-/// locals.
+/// rebound variables from `elaborate_drops`) is kept. The list is stored in
+/// reverse declaration order, the order of every shared death point.
 pub(super) fn set_try_cleanups(blocks: &mut [MirBlock], function_defs: &HashMap<VarId, usize>) {
     for b in blocks.iter_mut() {
         for instr in &mut b.instrs {
@@ -1137,6 +1137,7 @@ pub(super) fn set_try_cleanups(blocks: &mut [MirBlock], function_defs: &HashMap<
                         vars.push(v);
                     }
                 }
+                vars.sort_unstable_by(|a, b| b.cmp(a));
                 *cleanup = vars;
                 set_try_cleanups(body, function_defs);
                 if let Some((_, h)) = handler {

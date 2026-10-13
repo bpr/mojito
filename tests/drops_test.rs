@@ -485,6 +485,21 @@ fn overwritten_try_rebind_value_drops_at_the_rebind() {
 }
 
 #[test]
+fn try_raise_edge_destroys_live_values_in_reverse_declaration_order() {
+    // A raise inside a `try` destroys the body's live values newest
+    // declaration first: two temporaries of a raising call, a named local
+    // beside them, and a variable declared before another but initialized
+    // after it.
+    let src = format!(
+        "{TRY_NOISY}def g(a: Noisy, b: Noisy) raises -> Int:\n    return may(-b.tag)\n\ndef main():\n    try:\n        var x = g(Noisy(1), Noisy(9))\n        print(x)\n    except e:\n        print(\"caught\")\n    try:\n        var a = Noisy(5)\n        var x = g(Noisy(1), Noisy(9))\n        print(a.tag, x)\n    except e:\n        print(\"caught\")\n    try:\n        var a: Noisy\n        var b = Noisy(2)\n        a = Noisy(1)\n        var n = may(-1)\n        print(a.tag, b.tag, n)\n    except e:\n        print(\"caught\")\n"
+    );
+    assert_eq!(
+        vm(&src),
+        "deinit 9\ndeinit 1\ncaught\ndeinit 9\ndeinit 1\ndeinit 5\ncaught\ndeinit 2\ndeinit 1\ncaught\n"
+    );
+}
+
+#[test]
 fn silent_try_rebind_drops_the_old_value_before_the_region() {
     // When nothing before the rebind can raise (a `^` move is provably
     // silent), the overwritten value is unobservable on every region path and

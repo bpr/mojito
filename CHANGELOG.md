@@ -8,6 +8,10 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A raise in a `try` body destroys the body's live values in reverse
+  declaration order, as the pin does (R720): `S(1) + S(9)` over a raising
+  `__add__`, a raising method or free call over temporaries, and a raising
+  constructor destroy `9` before `1`, and a named local after both.
 - A construction is alias-checked as its initializer's call, as the pin
   has it (R721): `P(s, s)` over `__init__(out self, mut a: S, b: S)`, its
   keyword and generic forms, a `*rest` collector beside a `mut` argument,

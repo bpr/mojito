@@ -4527,7 +4527,10 @@ observed after the body is left: dead on the normal continuation, unused by the
 handler/`else`/`finally` regions, and dead at every escape target. That second
 set is the raise-edge backstop for rebound values whose per-instruction drop
 sits on the normal path: a raise landing between the rebind and that drop
-would otherwise leak the value.
+would otherwise leak the value. The list is stored in descending `VarId`
+order — reverse declaration order, the order of every shared death point and of
+`EscapeJump` cleanups — and both backends run it front to back, so a raise
+destroys the body's live values newest declaration first, as Mojo does.
 
 `EscapeJump` also carries cleanup for cross-region loop escapes. This makes
 hidden try-region exits explicit enough for the VM to run destructors before
