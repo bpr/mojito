@@ -232,6 +232,19 @@ impl Decoder {
                     .collect()
             })
             .unwrap_or_default();
+        // Schema 1.46 carries the parameterized members; an older artifact
+        // has none.
+        let parameterized_associated_types = self
+            .field(fields, "parameterized_associated_types")
+            .ok()
+            .and_then(|members| self.list(members).ok())
+            .map(|members| {
+                members
+                    .iter()
+                    .filter_map(|member| self.parameterized_associated_type(member))
+                    .collect()
+            })
+            .unwrap_or_default();
         // Schema 1.36 carries the value members; an older artifact has none.
         let associated_values = self
             .field(fields, "associated_values")
@@ -265,6 +278,7 @@ impl Decoder {
                 "conformances",
                 "declared",
                 "associated_types",
+                "parameterized_associated_types",
                 "associated_values",
             ],
         );
@@ -279,7 +293,50 @@ impl Decoder {
             conformances,
             declared,
             associated_types,
+            parameterized_associated_types,
             associated_values,
+        })
+    }
+
+    fn parameterized_associated_type(
+        &mut self,
+        value: &Value,
+    ) -> Option<mojito_checked::declaration::ParameterizedAssociatedType> {
+        use mojito_checked::declaration::AssociatedParameter;
+        let fields = self.record(value, "parameterized_associated_type").ok()?;
+        let name = self.req(value, fields, "name", Self::symbol);
+        let params = self.req(value, fields, "params", |d, params| {
+            let params = d.list(params).ok()?;
+            params
+                .iter()
+                .map(|param| {
+                    let ValueKind::Positional(tag, inner) = &param.kind else {
+                        d.error(param.span, "expected associated parameter");
+                        return None;
+                    };
+                    match tag.as_str() {
+                        "type_param" => d.binder_ref(inner).map(AssociatedParameter::Type),
+                        "value_param" => d.symbol(inner).map(AssociatedParameter::Value),
+                        "origin_param" => d
+                            .uint32(inner)
+                            .map(|id| AssociatedParameter::Origin(OriginParamId(id))),
+                        other => {
+                            d.error(
+                                param.span,
+                                format!("unknown associated parameter `{other}`"),
+                            );
+                            None
+                        }
+                    }
+                })
+                .collect::<Option<Vec<_>>>()
+        });
+        let template = self.req(value, fields, "type", Self::ty);
+        self.unknown(fields, &["name", "params", "type"]);
+        Some(mojito_checked::declaration::ParameterizedAssociatedType {
+            name: name?,
+            params: params?,
+            template: template?,
         })
     }
 

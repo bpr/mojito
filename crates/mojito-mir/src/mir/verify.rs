@@ -13,7 +13,7 @@
 //!
 //! Check classes:
 //! - typed-place completeness and projection consistency;
-//! - register bounds and register-type completeness;
+//! - register bounds, and register- and used-slot type completeness;
 //! - instruction and call type consistency (via the checker's coercion
 //!   predicate; calls are compared against `MirFunctionDeclaration` facts when
 //!   the callee is declared — builtin callees have no declaration and only

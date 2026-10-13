@@ -2202,6 +2202,61 @@ pub fn erase_origin_arguments(ty: &Ty) -> Ty {
     }
 }
 
+/// The type with each origin parameter `origins` binds replaced by its
+/// argument.
+///
+/// It reaches struct and associated-type applications and references: a
+/// parameterized associated type's template (`_ListIter[Self.T, o]`) at an
+/// application's origin arguments. An origin id is a slot number, so this
+/// runs while the template names only its own origins, before its type
+/// binders are substituted.
+pub fn substitute_origin_params<S: std::hash::BuildHasher>(
+    ty: &Ty,
+    origins: &HashMap<u32, crate::origin::Origin, S>,
+) -> Ty {
+    let recur = |ty: &Ty| substitute_origin_params(ty, origins);
+    let map_args = |args: &[TyArg]| -> Vec<TyArg> {
+        args.iter()
+            .map(|argument| match argument {
+                TyArg::Ty(inner) => TyArg::Ty(recur(inner)),
+                TyArg::Val(value) => TyArg::Val(value.clone()),
+                TyArg::Origin(origin) => TyArg::Origin(origin.substitute_params(origins)),
+            })
+            .collect()
+    };
+    match ty.kind() {
+        TyKind::Struct(name, args) => TyKind::Struct(name.clone(), map_args(args)).into(),
+        TyKind::Assoc { base, name, args } => TyKind::Assoc {
+            base: recur(base),
+            name: name.clone(),
+            args: map_args(args),
+        }
+        .into(),
+        TyKind::Pointer { element, origin } => TyKind::Pointer {
+            element: recur(element),
+            origin: origin.clone(),
+        }
+        .into(),
+        TyKind::Ref(reference) => {
+            let mut reference = reference.clone();
+            reference.referent = recur(&reference.referent);
+            reference.origin = reference.origin.substitute_params(origins);
+            TyKind::Ref(reference).into()
+        }
+        TyKind::Tuple(elements) => TyKind::Tuple(elements.iter().map(recur).collect()).into(),
+        TyKind::RuntimePack(elements) => {
+            TyKind::RuntimePack(elements.iter().map(recur).collect()).into()
+        }
+        TyKind::VariadicPack(element) => TyKind::VariadicPack(recur(element)).into(),
+        TyKind::Variant(alternatives) => {
+            TyKind::Variant(alternatives.iter().map(recur).collect()).into()
+        }
+        TyKind::ComptimeList(element) => TyKind::ComptimeList(recur(element)).into(),
+        TyKind::Dependent(dependent) => dependent.map_types(recur),
+        _ => ty.clone(),
+    }
+}
+
 /// The checker's value-coercion predicate, shared with MIR verification so the
 /// verifier never re-derives conversion rules.
 pub fn value_coerces(from: &Ty, to: &Ty) -> bool {

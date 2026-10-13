@@ -210,6 +210,34 @@ fn generic_dispatch_iteration_unrolls_to_a_typed_concrete_chain() {
 }
 
 #[test]
+fn parameterized_associated_type_resolves_from_the_conformer_member() {
+    let source = "def count[C: Iterable](items: C) -> Int:\n\
+                  \x20   var it = items.__iter__()\n    return 1\n\n\
+                  def main():\n    var l: List[Int] = [3, 4, 5]\n    print(count(l))\n";
+    let specialized = specialized_main(source);
+    let count = &specialized
+        .program
+        .functions
+        .iter()
+        .find(|(name, _)| name.starts_with("count"))
+        .expect("the generic body was specialized")
+        .1;
+    let it = count
+        .var_names
+        .iter()
+        .position(|slot| slot == "it")
+        .expect("`it` slot") as u32;
+    assert!(
+        matches!(
+            count.var_tys.get(&it).map(Ty::kind),
+            Some(TyKind::Struct(name, _)) if name.contains("_ListIter")
+        ),
+        "`C.IteratorType[o]` must resolve to the List iterator instance: {:?}",
+        count.var_tys.get(&it)
+    );
+}
+
+#[test]
 fn structural_inference_rejects_conflicting_solutions() {
     let parameter = Ty::new(TyKind::Param {
         binder: mojito_types::param_expr::ParamRef {

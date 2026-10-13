@@ -102,6 +102,11 @@ impl<'a> Flatten<'a> {
                 dest,
                 protocol,
             } => {
+                // `GetIter` declares a split iterator slot, typed by the
+                // checked `__iter__` result.
+                if source != dest {
+                    self.var_types.insert(*dest, protocol.iterator_ty.clone());
+                }
                 self.emit(MirInstr::GetIter {
                     source: *source,
                     dest: *dest,

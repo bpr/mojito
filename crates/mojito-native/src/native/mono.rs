@@ -360,6 +360,7 @@ impl LayoutOracle {
 struct StructShape {
     param_decls: Vec<ParamDecl>,
     members: Vec<(String, Ty)>,
+    parameterized: Vec<mojito_checked::declaration::ParameterizedAssociatedType>,
     values: Vec<(String, ParamExpr)>,
     fields: Vec<(String, Ty)>,
 }

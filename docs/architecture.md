@@ -1536,7 +1536,8 @@ records the compile-time arguments the checker solved on the call
 parameter no runtime parameter or result spells (`bytes[Int]()`); an
 associated type the signature does not spell (`C.Element` as a loop
 variable's type) is solved from `MirStructDeclaration.associated_types` once
-`C` is bound. `native::mono` finds the closed instances a template body
+`C` is bound, and a parameterized one (`C.IteratorType[origin_of(xs)]`, a
+split loop iterator's type) from `parameterized_associated_types`. `native::mono` finds the closed instances a template body
 reaches (`Box[List[Self.T]]`) from its MIR, transitively, and selects the
 receiver's own overload where a
 bound dispatch spells the requirement's parameter otherwise than the
@@ -2977,7 +2978,25 @@ struct's own binders (`ConformanceFacts::associated`, text schema 1.12). The
 elaborator unifies a signature's `C.Element` against a call's types first
 (`mono/unify.rs`); one no signature spells it substitutes from the member of
 the struct `C` is bound to (`declared_associated_type`,
-`mono/substitute.rs`). Elaborated MIR carries no associated types.
+`mono/substitute.rs`). A parameterized member rides in
+`MirStructDeclaration.parameterized_associated_types`
+(`ConformanceFacts::parameterized_associated`, text schema 1.46): its
+template plus its explicit parameters, each keyed as the template names it.
+`declared_associated_type` binds the application's origin arguments into
+the template (`mojito_types::types::substitute_origin_params`, which the
+checker's `substitute_assoc` shares) and its type arguments as binders,
+then substitutes under the instance. Elaborated MIR carries no associated
+types.
+
+A borrowed loop or comprehension that splits its source from its iterator
+types the iterator slot (`$iterobj<N>`, `$compiterobj<N>`) at the `GetIter`
+that declares it, with `IterationProtocol::iterator_ty`: the checked
+`__iter__` result, its `origin_of(self)` resolved to the named source
+(`Checker::resolve_iterator_origin`), symbolic in a generic body
+(`C.IteratorType[origin_of(xs)]`, read off the bound's own `__iter__`).
+`mir::verify` rejects a `UseVar` or `DropVar` slot with no type, and
+`rewrite_get_iter` keeps a split slot's declared type, typing only a source
+normalized in place (R664).
 
 A struct's compile-time value members ride beside them:
 `MirStructDeclaration.associated_values` holds each member's value as a

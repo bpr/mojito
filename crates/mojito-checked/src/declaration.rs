@@ -7,7 +7,8 @@
 use crate::checked::{CheckedConst, ExplicitDestroyInfo, StructConformance};
 use mojito_ast::ast::ArgConvention;
 use mojito_symbol::symbol::{OverloadFamily, OverloadSets, overload_family, split_method_symbol};
-use mojito_types::param_expr::ParamExpr;
+use mojito_types::origin::OriginParamId;
+use mojito_types::param_expr::{ParamExpr, ParamRef};
 use mojito_types::types::{GenericConstraint, ParamDecl, Ty};
 use std::collections::{HashMap, HashSet};
 
@@ -46,13 +47,42 @@ pub struct StructDeclaration {
     /// The struct's unparameterized associated types (`Element` of `List`),
     /// sorted by member, each over the struct's own binders: the elaborator
     /// solves `C.Element` from them once `C` is bound to an instance, so
-    /// elaborated MIR carries none.
+    /// elaborated MIR carries none. Members with parameters of their own are
+    /// [`Self::parameterized_associated_types`].
     pub associated_types: Vec<(String, Ty)>,
+    /// The struct's parameterized associated types (`IteratorType[o]` of
+    /// `List`), sorted by member: the elaborator answers
+    /// `C.IteratorType[origin_of(xs)]` from them once `C` is bound to an
+    /// instance, so elaborated MIR carries none.
+    pub parameterized_associated_types: Vec<ParameterizedAssociatedType>,
     /// The struct's compile-time value members (`K` of `comptime K = 7`),
     /// sorted by member, each a parameter expression over the struct's own
     /// binders: the elaborator answers `T.K` from them once `T` is bound to
     /// an instance, so elaborated MIR carries none.
     pub associated_values: Vec<(String, ParamExpr)>,
+}
+
+/// An associated type with explicit parameters of its own (`comptime
+/// IteratorType[mut: Bool, //, o: Origin[mut=mut]] = _ListIter[Self.T, o]`):
+/// its template over the struct's binders and its own.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct ParameterizedAssociatedType {
+    pub name: String,
+    /// The member's explicit parameters, in application order.
+    pub params: Vec<AssociatedParameter>,
+    pub template: Ty,
+}
+
+/// One explicit parameter of a [`ParameterizedAssociatedType`], keyed as its
+/// template names it.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum AssociatedParameter {
+    /// A type parameter, by its binder.
+    Type(ParamRef),
+    /// A value parameter, by its spelling.
+    Value(String),
+    /// An origin parameter, by the id its template's `Origin::Param` holds.
+    Origin(OriginParamId),
 }
 
 impl StructDeclaration {

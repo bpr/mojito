@@ -525,6 +525,7 @@ impl<'a> Flatten<'a> {
                         yield_interior: Vec::new(),
                         source_retained: true,
                         prepare: Vec::new(),
+                        iterator_ty: iterator_ty.clone().unwrap_or_else(Ty::error),
                         next: None,
                         exhaustion: None,
                     });
@@ -562,7 +563,9 @@ impl<'a> Flatten<'a> {
                     mojito_checked::checked::IterationMode::Borrowed
                 ) && (borrowed || !protocol.prepare.is_empty());
                 let iterator_object = if split_source {
-                    self.var(&format!("$compiterobj{}", self.vars.len()))
+                    let object = self.var(&format!("$compiterobj{}", self.vars.len()));
+                    self.var_types.insert(object, protocol.iterator_ty.clone());
+                    object
                 } else {
                     iterator
                 };

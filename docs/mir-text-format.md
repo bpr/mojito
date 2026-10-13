@@ -1,4 +1,4 @@
-# Mojito Textual MIR Format, Version 1.45
+# Mojito Textual MIR Format, Version 1.46
 
 This document is the normative specification of Mojito's textual verified-MIR
 artifact. The Rust data model in `src/mir.rs` and `src/mir/ir.rs` remains the
@@ -6,7 +6,7 @@ in-memory authority; this format is its stable inspection and interchange
 boundary. `docs/vm-instruction-set.md` explains execution semantics, while this
 document defines syntax and serialized data.
 
-Version 1.45 is implemented end to end for inspection and loading: canonical
+Version 1.46 is implemented end to end for inspection and loading: canonical
 in-memory disassembly, full-grammar assembly parsing, and artifact-loading
 verification (`mir::text::load_artifact`, which reports canonical-verifier
 findings at artifact source spans). Lossless print → parse → print round trips
@@ -22,10 +22,10 @@ which may be generic; it is always elaborated before it runs.
 Every artifact begins with exactly:
 
 ```text
-mojito-mir 1.45
+mojito-mir 1.46
 ```
 
-The writer emits 1.45. The reader accepts 1.0 through 1.45; *Schema 1.0*
+The writer emits 1.46. The reader accepts 1.0 through 1.46; *Schema 1.0*
 below says how a 1.0 artifact is read, and *Binder identity* under *Types*
 how a binder without an identity is.
 
@@ -123,6 +123,16 @@ Minor version 45 drops a `param_arg`'s `binder`: a type argument is
 compile-time data on the call, carried by its instantiated arguments, and
 its slot holds neither a register nor the binder it forwards. A 1.45
 consumer reads an older `param_arg`'s `binder` and ignores it.
+
+Minor version 46 carries a struct's parameterized associated types
+(`parameterized_associated_types` on a `struct` record, after
+`associated_types`): a list of `parameterized_associated_type { name:
+symbol, params: [param...], type: type }`, sorted by name. `params` lists
+the member's explicit parameters in application order, each
+`type_param(binder)`, `value_param(symbol)`, or `origin_param(int)` keyed as
+`type` names it. The elaborator answers `C.IteratorType[origin_of(xs)]` from
+them once `C` is bound to an instance, and elaborated MIR carries an empty
+list. An older artifact reads as carrying none.
 
 Minor version 10 adds the signature origin `sig_carried(type)`: the source of
 a transfer effect whose body stores a value of a type over its binders. It
@@ -405,6 +415,7 @@ struct {
   conformances: [],
   declared: [],
   associated_types: [],
+  parameterized_associated_types: [],
   associated_values: []
 }
 ```
@@ -422,7 +433,8 @@ symbol }`, sorted by name. A `Deinitable` struct's message is `absent`, its
 empty. Schema 1.41 added the last two fields and widened
 `explicit_destructors` to every struct; a 1.40 or older artifact reads as
 undeclared with no obligated field. `associated_types` contains
-`associated_type { name: symbol, type: type }` records sorted by name, and
+`associated_type { name: symbol, type: type }` records sorted by name,
+`parameterized_associated_types` the minor-46 records sorted by name, and
 `associated_values` contains `associated_value { name: symbol, value:
 param-expr }` records sorted by name.
 
@@ -852,7 +864,7 @@ Unknown terminators and instructions are fatal for schema major version 1.
 ## Complete Artifact Example
 
 ```text
-mojito-mir 1.45
+mojito-mir 1.46
 artifact {
   features: [],
   files: [file { id: file0, path: present("main.mojo"), module: absent }],
@@ -893,10 +905,10 @@ lowering unit, one record per library declaration, and one module table
 holding each module's link record, one file per package. The bundled library's is the
 only producer today (`src/package.rs`). No part of a package is MIR text:
 it is a header followed by bytecode records, as upstream's package is
-MLIR bytecode throughout. The format line is `mojito-package 37`.
+MLIR bytecode throughout. The format line is `mojito-package 38`.
 
 ```text
-mojito-package 37
+mojito-package 38
 <the header's length, 8 bytes little-endian>
 <the header, as bytecode>
 <the payload: every record, as bytecode, then the type section>

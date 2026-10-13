@@ -692,14 +692,12 @@ impl Checker {
         arg: &Expr,
     ) -> Result<TyArg, TypeError> {
         use mojito_ast::ast::ParamArg;
-        if matches!(param.bounds.as_slice(), [only] if only == "Origin" || only == "OriginSet") {
+        if is_origin_parameter(param) {
             return Ok(TyArg::Origin(
                 self.explicit_origin_argument(&ParamArg::Value(arg.clone()))?,
             ));
         }
-        let is_value = param.value_type.is_some()
-            || matches!(param.bounds.as_slice(), [only] if scalar_type_name(only).is_some());
-        if is_value {
+        if is_value_parameter(param) {
             return Ok(TyArg::Val(self.eval_associated_ct(arg, &HashMap::new())?));
         }
         // A type parameter: a bare identifier names a type; otherwise the
@@ -3176,6 +3174,18 @@ fn type_is_symbolic(ty: &Ty) -> bool {
 /// Append an interior-generation tag to a tracked pointer origin — the
 /// resolution of a `._get_owned_interior["tag"]` projection in a `Pointer`
 /// origin argument. Untracked provenances have no place to project into.
+/// Whether a parameterized member's own parameter is an origin
+/// (`o: Origin[mut=m]`).
+pub(super) fn is_origin_parameter(param: &mojito_ast::ast::TypeParam) -> bool {
+    matches!(param.bounds.as_slice(), [only] if only == "Origin" || only == "OriginSet")
+}
+
+/// Whether a parameterized member's own parameter is a value (`n: Int`).
+pub(super) fn is_value_parameter(param: &mojito_ast::ast::TypeParam) -> bool {
+    param.value_type.is_some()
+        || matches!(param.bounds.as_slice(), [only] if scalar_type_name(only).is_some())
+}
+
 pub(in crate::checker) fn append_interior_tag(
     mut origin: mojito_types::origin::PointerOrigin,
     tag: &str,

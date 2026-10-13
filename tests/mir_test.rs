@@ -4,10 +4,12 @@
 
 use mojito::hir::Cfg;
 use mojito::mir::{
-    MirFunction, MirInstr, MirPlace, MirSubscriptArg, MirTerm, Proj, lower_cfg, lower_program,
+    MirBlock, MirDeclarations, MirFunction, MirInstr, MirPlace, MirProgram, MirSubscriptArg,
+    MirTerm, Proj, Reg, SpanTable, UseMode, lower_cfg, lower_program,
 };
 use mojito::types::TyKind;
 use mojito::{Compiler, SemanticAdjustment, Ty, parse};
+use std::collections::HashMap;
 use std::path::Path;
 
 #[test]
@@ -88,12 +90,164 @@ fn struct_binder_named_local_keeps_its_own_type() {
     );
 }
 
+#[test]
+fn split_iterator_slot_is_typed_by_its_iter_result() {
+    let source = "def first_or[C: Iterable](items: C, default: C.Element) -> C.Element:\n\
+                  \x20   for item in items:\n        return item.copy()\n\
+                  \x20   return default.copy()\n\n\
+                  def total(xs: List[Int]) -> Int:\n    var s = 0\n\
+                  \x20   for x in xs:\n        s += x\n    return s\n\n\
+                  def main():\n    var l: List[Int] = [3, 4]\n\
+                  \x20   print(first_or(l, 0))\n    print(total(l))\n\
+                  \x20   var c = [x * 2 for x in l]\n    print(c[1])\n";
+    let mir = driver_mir(source);
+    let slot_ty = |function: &MirFunction, prefix: &str| {
+        let var = function
+            .var_names
+            .iter()
+            .position(|slot| slot.starts_with(prefix))
+            .unwrap_or_else(|| panic!("{prefix} slot: {function:#?}")) as u32;
+        function.var_tys.get(&var).map(Ty::kind).cloned()
+    };
+    let total = mir_function(&mir, "total");
+    assert!(
+        matches!(
+            slot_ty(total, "$iterobj"),
+            Some(TyKind::Struct(ref name, _)) if name.ends_with("_ListIter")
+        ),
+        "{total:#?}"
+    );
+    let first_or = mir_function(&mir, "first_or");
+    assert!(
+        matches!(
+            slot_ty(first_or, "$iterobj"),
+            Some(TyKind::Assoc { ref name, ref base, .. })
+                if name == "IteratorType" && matches!(base.kind(), TyKind::Param { .. })
+        ),
+        "{first_or:#?}"
+    );
+    let main = mir_function(&mir, "main");
+    assert!(slot_ty(main, "$compiterobj").is_some(), "{main:#?}");
+    for function in [total, first_or, main] {
+        for var in function
+            .blocks
+            .iter()
+            .flat_map(|block| &block.instrs)
+            .filter_map(|instr| match instr {
+                MirInstr::UseVar { var, .. } | MirInstr::DropVar { var, .. } => Some(*var),
+                _ => None,
+            })
+        {
+            assert!(
+                function.var_tys.contains_key(&var),
+                "untyped slot ${var}: {function:#?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn owned_iteration_slot_keeps_its_source_type() {
+    let source = "def main():\n    var l: List[Int] = [3, 4]\n    var s = 0\n\
+                  \x20   for x in l^:\n        s += x\n    print(s)\n";
+    let mir = driver_mir(source);
+    let main = mir_function(&mir, "main");
+    assert!(
+        !main
+            .var_names
+            .iter()
+            .any(|slot| slot.starts_with("$iterobj")),
+        "{main:#?}"
+    );
+    let source_slot = main
+        .var_names
+        .iter()
+        .position(|slot| slot.starts_with("$iter"))
+        .expect("$iter slot") as u32;
+    assert!(
+        matches!(
+            main.var_tys.get(&source_slot).map(Ty::kind),
+            Some(TyKind::Struct(name, _)) if name == "List"
+        ),
+        "{main:#?}"
+    );
+}
+
+#[test]
+fn verify_rejects_an_untyped_used_slot() {
+    let program = |typed: bool| {
+        let mut var_tys = HashMap::from([(0, Ty::int())]);
+        if typed {
+            var_tys.insert(1, Ty::int());
+        }
+        MirProgram {
+            functions: vec![(
+                "f".into(),
+                MirFunction {
+                    blocks: vec![MirBlock {
+                        instrs: vec![
+                            MirInstr::UseVar {
+                                dest: Reg(0),
+                                var: 0,
+                                mode: UseMode::Copy,
+                            },
+                            MirInstr::DropVar { var: 1 },
+                        ],
+                        term: MirTerm::Return(Some(Reg(0))),
+                    }],
+                    n_regs: 1,
+                    n_vars: 2,
+                    var_names: vec!["value".into(), "local".into()],
+                    n_params: 1,
+                    param_types: vec![Ty::int()],
+                    owned_params: vec![false],
+                    deinit_params: vec![false],
+                    ref_params: vec![false],
+                    returns_reference: false,
+                    var_tys,
+                    ret_ty: Some(Ty::int()),
+                    raises: false,
+                    error_ty: None,
+                    spans: SpanTable::default(),
+                    reg_types: HashMap::from([(0, Ty::int())]),
+                },
+            )],
+            declarations: MirDeclarations::default(),
+            invariant_errors: Vec::new(),
+        }
+    };
+    let errors = mojito::mir::verify::verify(&program(false));
+    assert!(
+        errors
+            .iter()
+            .any(|error| error.contains("untyped variable slot $1 ('local')")),
+        "{errors:?}"
+    );
+    let errors = mojito::mir::verify::verify(&program(true));
+    assert!(errors.is_empty(), "{errors:?}");
+}
+
 /// Compile `source` and lower its checked program to MIR.
 fn checked_program_mir(source: &str) -> mojito::mir::MirProgram {
     let compiled = Compiler::default()
         .compile_source(source, Path::new("mir_test.mojo"))
         .expect("compile");
     let mir = mojito::mir::lower_checked_program(compiled.checked());
+    assert!(
+        mir.invariant_errors.is_empty(),
+        "{:?}",
+        mir.invariant_errors
+    );
+    mir
+}
+
+/// Compile `source` and return the driver's verified MIR, which checks the
+/// program against the imported std package's declarations.
+fn driver_mir(source: &str) -> mojito::mir::MirProgram {
+    let compiled = Compiler::default()
+        .compile_source(source, Path::new("mir_test.mojo"))
+        .expect("compile");
+    let mir = compiled.mir().clone();
     assert!(
         mir.invariant_errors.is_empty(),
         "{:?}",

@@ -137,6 +137,7 @@ impl StructCatalog {
                                 constraints: Vec::new(),
                             }],
                             members: Vec::new(),
+                            parameterized: Vec::new(),
                             values: Vec::new(),
                             fields: Vec::new(),
                         },
@@ -191,6 +192,7 @@ impl StructShape {
         Self {
             param_decls: declaration.param_decls.clone(),
             members: declaration.associated_types.clone(),
+            parameterized: declaration.parameterized_associated_types.clone(),
             values: declaration.associated_values.clone(),
             fields: declaration.fields.clone(),
         }

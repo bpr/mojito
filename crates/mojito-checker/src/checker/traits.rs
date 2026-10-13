@@ -1933,11 +1933,25 @@ impl Checker {
             })
             .filter(|(_, members)| !members.is_empty())
             .collect();
+        let parameterized_associated = own
+            .iter()
+            .map(|(name, info)| {
+                let mut members = info
+                    .parameterized_associated
+                    .iter()
+                    .map(|(member, declared)| declared.checked_fact(member))
+                    .collect::<Vec<_>>();
+                members.sort_by(|left, right| left.name.cmp(&right.name));
+                (name.clone(), members)
+            })
+            .filter(|(_, members)| !members.is_empty())
+            .collect();
         mojito_checked::checked::ConformanceFacts {
             traits,
             structs,
             declared,
             associated,
+            parameterized_associated,
             associated_values,
         }
     }

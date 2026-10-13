@@ -518,9 +518,9 @@ impl Specializer<'_> {
     /// Fold a `GetIter` normalization chain: retarget every `prepare` step to
     /// its concrete instance, statically unroll dynamic `__trait_dispatch.`
     /// normalization (the VM repeats that step at runtime until the value has a
-    /// `__next__`; the receiver is concrete here), and record the chain's final
-    /// return type as the iterator variable's type — HIR leaves the split
-    /// `$iterobj` slot untyped.
+    /// `__next__`; the receiver is concrete here). A split iterator slot keeps
+    /// the type MIR declared it with, the checked `__iter__` result; a source
+    /// normalized in place takes the chain's final return type.
     pub(super) fn rewrite_get_iter(
         &mut self,
         owner: &str,
@@ -573,7 +573,9 @@ impl Specializer<'_> {
                 current = result;
             }
         }
-        function.var_tys.insert(dest, current);
+        if source == dest || !function.var_tys.contains_key(&dest) {
+            function.var_tys.insert(dest, current);
+        }
         Ok(())
     }
 

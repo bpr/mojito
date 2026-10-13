@@ -1458,6 +1458,35 @@ fn declaration_metadata_reprints_byte_identically() {
             }
             .into(),
         )],
+        parameterized_associated_types: vec![
+            mojito_checked::declaration::ParameterizedAssociatedType {
+                name: "IteratorType".into(),
+                params: vec![
+                    mojito_checked::declaration::AssociatedParameter::Type(test_binder("U")),
+                    mojito_checked::declaration::AssociatedParameter::Value("n".into()),
+                    mojito_checked::declaration::AssociatedParameter::Origin(
+                        mojito_types::origin::OriginParamId(3),
+                    ),
+                ],
+                template: TyKind::Struct(
+                    "_Iter".into(),
+                    vec![
+                        TyArg::Ty(
+                            TyKind::Param {
+                                binder: test_binder("U"),
+                                bounds: Vec::new(),
+                                callable_bound: None,
+                            }
+                            .into(),
+                        ),
+                        TyArg::Origin(mojito_types::origin::Origin::Param(
+                            mojito_types::origin::OriginParamId(3),
+                        )),
+                    ],
+                )
+                .into(),
+            },
+        ],
         associated_values: vec![
             ("K".into(), constant(CtValue::Int(7))),
             (
@@ -1488,6 +1517,7 @@ fn declaration_metadata_reprints_byte_identically() {
         conformances: Vec::new(),
         declared: Vec::new(),
         associated_types: Vec::new(),
+        parameterized_associated_types: Vec::new(),
         associated_values: Vec::new(),
     };
     let add = MirFunctionDeclaration {

@@ -2550,6 +2550,38 @@ struct ParameterizedMember {
     param_base: usize,
 }
 
+impl ParameterizedMember {
+    /// The member as the checked declaration fact names it: its explicit
+    /// parameters keyed exactly as `resolve_parameterized_member` binds an
+    /// application's arguments.
+    fn checked_fact(&self, name: &str) -> mojito_checked::declaration::ParameterizedAssociatedType {
+        use mojito_checked::declaration::AssociatedParameter;
+
+        let params = self
+            .params
+            .iter()
+            .enumerate()
+            .filter(|(_, param)| !param.infer_only)
+            .map(|(index, param)| {
+                if type_resolution::is_origin_parameter(param) {
+                    AssociatedParameter::Origin(mojito_types::origin::OriginParamId(
+                        (self.param_base + index) as u32,
+                    ))
+                } else if type_resolution::is_value_parameter(param) {
+                    AssociatedParameter::Value(param.name.clone())
+                } else {
+                    AssociatedParameter::Type(member_binder(&self.binder_owner, index, &param.name))
+                }
+            })
+            .collect();
+        mojito_checked::declaration::ParameterizedAssociatedType {
+            name: name.to_string(),
+            params,
+            template: self.template.clone(),
+        }
+    }
+}
+
 /// A struct's checked associated compile-time members: the eagerly evaluated
 /// monomorphic values, and the parameterized members lowered to their symbolic
 /// templates for later concrete substitution.

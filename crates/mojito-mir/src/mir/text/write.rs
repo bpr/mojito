@@ -235,6 +235,15 @@ fn write_structs(output: &mut String, declarations: &[MirStructDeclaration]) {
                     })),
                 ),
                 (
+                    "parameterized_associated_types",
+                    list(
+                        declaration
+                            .parameterized_associated_types
+                            .iter()
+                            .map(parameterized_associated_type),
+                    ),
+                ),
+                (
                     "associated_values",
                     list(declaration.associated_values.iter().map(|(name, value)| {
                         record(
@@ -1489,6 +1498,30 @@ fn capture_access(value: &MirCaptureAccess) -> String {
             ("root", var_value(value.root)),
             ("path", list(value.path.iter().map(origin_seg))),
             ("access", capture_access_kind(value.access).into()),
+        ],
+    )
+}
+fn parameterized_associated_type(
+    value: &mojito_checked::declaration::ParameterizedAssociatedType,
+) -> String {
+    use mojito_checked::declaration::AssociatedParameter;
+    record(
+        "parameterized_associated_type",
+        &[
+            ("name", symbol(&value.name)),
+            (
+                "params",
+                list(value.params.iter().map(|param| match param {
+                    AssociatedParameter::Type(binder) => {
+                        positional("type_param", &binder_ref(binder))
+                    }
+                    AssociatedParameter::Value(name) => positional("value_param", &symbol(name)),
+                    AssociatedParameter::Origin(id) => {
+                        positional("origin_param", &id.0.to_string())
+                    }
+                })),
+            ),
+            ("type", ty_value(&value.template)),
         ],
     )
 }

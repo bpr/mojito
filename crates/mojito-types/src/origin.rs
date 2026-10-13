@@ -168,6 +168,25 @@ impl Origin {
             },
         }
     }
+
+    /// The origin with each origin parameter `origins` binds replaced by its
+    /// argument, through unions.
+    #[must_use]
+    pub fn substitute_params<S: std::hash::BuildHasher>(
+        &self,
+        origins: &std::collections::HashMap<u32, Self, S>,
+    ) -> Self {
+        match self {
+            Self::Param(id) => origins.get(&id.0).cloned().unwrap_or_else(|| self.clone()),
+            Self::Union(members) => Self::Union(
+                members
+                    .iter()
+                    .map(|member| member.substitute_params(origins))
+                    .collect(),
+            ),
+            _ => self.clone(),
+        }
+    }
 }
 
 impl std::fmt::Display for Origin {

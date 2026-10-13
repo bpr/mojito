@@ -149,6 +149,7 @@ fn metadata_program() -> MirProgram {
             conformances: Vec::new(),
             declared: Vec::new(),
             associated_types: Vec::new(),
+            parameterized_associated_types: Vec::new(),
             associated_values: Vec::new(),
         }],
         functions: vec![MirFunctionDeclaration {

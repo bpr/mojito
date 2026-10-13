@@ -400,6 +400,11 @@ pub struct IterationProtocol {
     /// ASAP destruction does.
     pub source_retained: bool,
     pub prepare: Vec<String>,
+    /// The type of the iterator the `prepare` chain produces: its last
+    /// `__iter__` result, resolved at the loop site (`_ListIter[Int,
+    /// origin_of(xs)]`, or `C.IteratorType[origin_of(self)]` over a generic
+    /// `C: Iterable`). An empty chain's iterator is the iterable itself.
+    pub iterator_ty: Ty,
     pub next: Option<Box<CheckedIteratorCall>>,
     pub exhaustion: Option<Ty>,
 }
@@ -2580,6 +2585,11 @@ pub struct ConformanceFacts {
     /// sorted by member, each over the struct's own binders. The elaborator
     /// solves `C.Element` from them once `C` is bound to an instance.
     pub associated: HashMap<String, Vec<(String, mojito_types::types::Ty)>>,
+    /// Each struct's parameterized associated types (`IteratorType[o]` of
+    /// `List`), sorted by member; see
+    /// [`crate::declaration::StructDeclaration::parameterized_associated_types`].
+    pub parameterized_associated:
+        HashMap<String, Vec<crate::declaration::ParameterizedAssociatedType>>,
     /// Each struct's compile-time value members (`K` of `comptime K = 7`),
     /// sorted by member, each a parameter expression over the struct's own
     /// binders (`Self.n + 1`). The elaborator answers `T.K` from them once

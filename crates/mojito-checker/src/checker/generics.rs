@@ -591,22 +591,12 @@ pub(super) struct AssocBindings {
 /// and a last pass replaces symbolic value parameters (`CtValue::Expr`),
 /// which the type-only pass carries through.
 pub(super) fn substitute_assoc(ty: &Ty, bindings: &AssocBindings) -> Ty {
-    let no_origins = HashMap::new();
-    let bound = if bindings.origins.is_empty() {
-        ty.clone()
-    } else {
-        substitute_values_and_origins(ty, &HashMap::new(), &bindings.origins)
-    };
-    let typed = substitute(&bound, &bindings.types);
-    substitute_values_and_origins(&typed, &bindings.values, &no_origins)
+    let bound = mojito_types::types::substitute_origin_params(ty, &bindings.origins);
+    substitute_values(&substitute(&bound, &bindings.types), &bindings.values)
 }
 
-fn substitute_values_and_origins(
-    ty: &Ty,
-    values: &HashMap<String, CtValue>,
-    origins: &HashMap<u32, mojito_types::origin::Origin>,
-) -> Ty {
-    let recur = |t: &Ty| substitute_values_and_origins(t, values, origins);
+fn substitute_values(ty: &Ty, values: &HashMap<String, CtValue>) -> Ty {
+    let recur = |t: &Ty| substitute_values(t, values);
     let context = ParamContext::detached();
     let bindings = mojito_types::param_expr::ParamBindings::from_named_values(&context, values);
     let map_args = |args: &[TyArg]| -> Vec<TyArg> {
@@ -617,7 +607,7 @@ fn substitute_values_and_origins(
                     mojito_types::types::replace_value_parameters(&context, value, &bindings)
                         .unwrap_or_else(|_| value.clone()),
                 ),
-                TyArg::Origin(origin) => TyArg::Origin(substitute_origin(origin, origins)),
+                TyArg::Origin(origin) => TyArg::Origin(origin.clone()),
             })
             .collect()
     };
@@ -637,7 +627,6 @@ fn substitute_values_and_origins(
         TyKind::Ref(reference) => {
             let mut reference = reference.clone();
             reference.referent = recur(&reference.referent);
-            reference.origin = substitute_origin(&reference.origin, origins);
             TyKind::Ref(reference).into()
         }
         TyKind::Tuple(elements) => TyKind::Tuple(elements.iter().map(recur).collect()).into(),
@@ -664,26 +653,6 @@ fn substitute_values_and_origins(
                 .unwrap_or_else(|_| ty.clone())
         }
         _ => ty.clone(),
-    }
-}
-
-fn substitute_origin(
-    origin: &mojito_types::origin::Origin,
-    origins: &HashMap<u32, mojito_types::origin::Origin>,
-) -> mojito_types::origin::Origin {
-    use mojito_types::origin::Origin;
-    match origin {
-        Origin::Param(id) => origins
-            .get(&id.0)
-            .cloned()
-            .unwrap_or_else(|| origin.clone()),
-        Origin::Union(members) => Origin::Union(
-            members
-                .iter()
-                .map(|m| substitute_origin(m, origins))
-                .collect(),
-        ),
-        _ => origin.clone(),
     }
 }
 

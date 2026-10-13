@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R664**.
+Next free ID: **R667**.
 
 ## Ordered Work
 
@@ -1618,6 +1618,22 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - The result type through the bound keeps the requirement's binder
     instead of the call's argument.
   - Found while landing a function applied in a signature (2026-10-06).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R665 A generic iterable's explicit `__iter__()` result has no
+  iterator methods**
+
+  `var it = items.__iter__()` in `def count[C: Iterable](items: C)` checks
+  and elaborates, but `it.__next__()` is rejected: "type
+  'C.IteratorType[origin_of(self)]' has no method '__next__'".
+  - Upstream, `IteratorType`'s `Iterator` bound supplies `__next__` and
+    `Element`.
+  - The call-site type also keeps `origin_of(self)` where it should name
+    `origin_of(items)`.
+  - Unverified against the pin, which was not installed when it was
+    found: run the probe through the pin before fixing.
+  - Found while landing R661 (2026-10-13).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -3684,6 +3700,23 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
+- [ ] **R666 An associated type's value parameter is not elaborated**
+
+  The elaborator answers `C.Member[o]` for a parameterized associated type
+  whose explicit parameters are types or origins, but rejects one with a
+  value parameter (`comptime Buf[n: Int] = InlineArray[Self.T, n]`) as
+  unsupported.
+  - `declared_associated_type` (`mono/substitute.rs`) has no value
+    binding to give `AssociatedParameter::Value`, which names its
+    parameter by spelling.
+  - The checker binds it by spelling too (`resolve_parameterized_member`).
+  - No executing fixture reaches it.
+  - Done when the member's value parameter keys by a binder identity and
+    the elaborator binds it from the application's `TyArg::Val`.
+  - Found while landing R661 (2026-10-13).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
 ### Behavioral Divergences From The Pinned Mojo *(recurring — reopens at every nightly re-pin)*
 
 Track: `divergences`.
@@ -4821,18 +4854,20 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R661 An iterator slot over a generic iterable has no type in
-  its function's MIR**
+- [ ] **R664 Owned or empty-chain iteration normalizes its iterator into
+  the source slot**
 
-  The `$iterobj<N>` slot HIR's split-source `for` lowering creates over a
-  generic iterable is untyped, e.g. `first_or[C: Iterable]`'s `$v3`.
-  - Its `iter.init` and `drop.var` name it; `Set.__hash__`,
-    `Dict._find_index`, `StringDict.find_index`, `Path.listdir`, the
-    `tempfile` helpers, and `_FormatUtils.format_precompiled` show it.
-  - Upstream, the iterator is a value of `C.__iter__`'s result type.
-  - Done when the slot is typed by that result type and `mir::verify`
-    rejects a `UseVar` or `DropVar` slot with no type.
-  - Found while landing R660 (2026-10-13).
+  `GetIter` with `source == dest` leaves `$iter<N>` typed by the iterable
+  (`List[Int]`) while it holds the iterator (`_ListOwnedIter`).
+  - Mono's `rewrite_get_iter` retypes the slot after the fact, from the
+    resolved chain.
+  - Upstream, `for x in l^` takes `l^.__iter__()` into its own iterator
+    value.
+  - The split path already types its slot by
+    `IterationProtocol::iterator_ty`.
+  - Done when every `GetIter` has its own `dest` slot typed by
+    `iterator_ty`, and `rewrite_get_iter` writes no slot type.
+  - Found while landing R661 (2026-10-13).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

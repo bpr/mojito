@@ -792,6 +792,12 @@ fn struct_declaration(
             .get(name)
             .cloned()
             .unwrap_or_default(),
+        parameterized_associated_types: checked
+            .conformances()
+            .parameterized_associated
+            .get(name)
+            .cloned()
+            .unwrap_or_default(),
         associated_values: checked
             .conformances()
             .associated_values

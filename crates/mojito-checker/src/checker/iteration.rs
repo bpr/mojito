@@ -40,6 +40,7 @@ impl Checker {
         let mut raises = Vec::new();
         let (mut yielded_ty, mut protocol) = self.iteration_protocol(iter_ty, mode, &mut raises)?;
         self.attach_borrowed_iteration_origin(source, iter_ty, mode, &mut protocol);
+        Self::resolve_iterator_origin(source, &mut protocol);
         if let Some(resolved) =
             Self::resolve_borrowed_iteration_reference(source_mutable, &mut protocol)
         {
@@ -318,6 +319,7 @@ impl Checker {
                     yield_interior: Vec::new(),
                     source_retained: true,
                     prepare: Vec::new(),
+                    iterator_ty: ty.clone(),
                     next: None,
                     exhaustion: None,
                 },
@@ -384,6 +386,7 @@ impl Checker {
                     args: Vec::new(),
                 });
                 let exhaustion = self.generic_iterator_exhaustion(bounds, required)?;
+                let iterator_ty = self.generic_iterator_ty(ty, bounds, mode);
                 Ok((
                     element.clone(),
                     IterationProtocol {
@@ -396,6 +399,7 @@ impl Checker {
                             IterationMode::Borrowed => mojito_ast::ast::ArgConvention::Imm,
                             IterationMode::Owned => mojito_ast::ast::ArgConvention::Var,
                         })],
+                        iterator_ty,
                         next: Some(Box::new(mojito_checked::checked::CheckedIteratorCall {
                             target: "__iterator_dispatch.__next__".to_string(),
                             result_ty: element,
@@ -623,6 +627,7 @@ impl Checker {
                 yield_interior,
                 source_retained: reference_result.is_some() || struct_may_refer_elsewhere(iinfo),
                 prepare: vec![prepare_symbol],
+                iterator_ty: it_ty.clone(),
                 next: Some(Box::new(checked_next)),
                 exhaustion: Some(exhaustion),
             },
@@ -817,6 +822,89 @@ impl Checker {
                     "generic iteration requires the bundled 'std.iter' Iterator trait".to_string(),
                 )
             })
+    }
+
+    /// Resolve a borrowed one-step iterator type's abstract origin argument at
+    /// the loop site: `__iter__(ref self)` borrows the named source, so its
+    /// `origin_of(self)` is the source place (`_ListIter[Int,
+    /// origin_of(xs)]`). A temporary source keeps the abstract origin, as the
+    /// yielded reference does, and a deeper chain's intermediate iterator is
+    /// itself a temporary.
+    fn resolve_iterator_origin(
+        source: Option<&mojito_types::origin::OriginPlace>,
+        protocol: &mut mojito_checked::checked::IterationProtocol,
+    ) {
+        use mojito_types::origin::Origin;
+
+        let (mojito_checked::checked::IterationMode::Borrowed, [_], Some(source)) =
+            (protocol.mode, protocol.prepare.as_slice(), source)
+        else {
+            return;
+        };
+        let resolve = |argument: &TyArg| match argument {
+            TyArg::Origin(Origin::SelfParam | Origin::Param(_)) => {
+                TyArg::Origin(Origin::Place(source.clone()))
+            }
+            other => other.clone(),
+        };
+        let resolved = match protocol.iterator_ty.kind() {
+            TyKind::Struct(name, args) => {
+                TyKind::Struct(name.clone(), args.iter().map(resolve).collect())
+            }
+            TyKind::Assoc { base, name, args } => TyKind::Assoc {
+                base: base.clone(),
+                name: name.clone(),
+                args: args.iter().map(resolve).collect(),
+            },
+            _ => return,
+        };
+        protocol.iterator_ty = Ty::new(resolved);
+    }
+
+    /// The iterator a generic iterable's loop holds: its bound's own
+    /// `__iter__` result read at `ty` (`C.IteratorType[origin_of(self)]` under
+    /// `Iterable`, `C.IteratorOwnedType` under `IterableOwned`). A bound that
+    /// declares no `__iter__` of the loop's receiver convention (Mojito's
+    /// `Element`-only iteration, R178) names the standard trait's member.
+    fn generic_iterator_ty(
+        &self,
+        ty: &Ty,
+        bounds: &[String],
+        mode: mojito_checked::checked::IterationMode,
+    ) -> Ty {
+        use mojito_ast::ast::ArgConvention;
+        use mojito_checked::checked::IterationMode;
+
+        let declared = self
+            .lookup_trait_methods(bounds, "__iter__", 0)
+            .into_iter()
+            .filter(|sig| match mode {
+                IterationMode::Owned => sig.self_convention == Some(ArgConvention::Var),
+                IterationMode::Borrowed => matches!(
+                    sig.self_convention,
+                    None | Some(ArgConvention::Imm | ArgConvention::Ref)
+                ),
+            })
+            .map(|sig| self.resolve_assoc_ty(&substitute_self(&sig.ret, ty)))
+            .collect::<Vec<_>>();
+        if let [declared] = declared.as_slice() {
+            return declared.clone();
+        }
+        let owned = mode == IterationMode::Owned;
+        Ty::new(TyKind::Assoc {
+            base: ty.clone(),
+            name: if owned {
+                "IteratorOwnedType"
+            } else {
+                "IteratorType"
+            }
+            .to_string(),
+            args: if owned {
+                Vec::new()
+            } else {
+                vec![TyArg::Origin(mojito_types::origin::Origin::SelfParam)]
+            },
+        })
     }
 }
 

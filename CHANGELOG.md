@@ -8,6 +8,17 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A split loop iterator slot is typed by its `__iter__` result (R661):
+  the check records `IterationProtocol::iterator_ty`, and MIR types the
+  `$iterobj<N>` and `$compiterobj<N>` slots at the `GetIter` that
+  declares them, as an upstream iterator is a value of `__iter__`'s result
+  type. Over a generic `C: Iterable` the type is `C.IteratorType[origin_of(xs)]`,
+  which the elaborator now answers from the conformer's declared member
+  (`StructDeclaration::parameterized_associated_types`, MIR text 1.46,
+  package format 38), so `var it = items.__iter__()` in a generic body
+  runs. `mir::verify` rejects a `UseVar` or `DropVar` slot with no type,
+  and mono no longer retypes a split slot. No program's output changes.
+
 - A value binder's frame slot is typed in MIR (R660): `Flatten::var`
   types the slot it interns at a binder's first read with the binder's
   declared type, as an upstream parameter has its declared type, so `n`

@@ -3,6 +3,7 @@
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
+use mojito_checked::declaration::AssociatedParameter;
 use mojito_mir::mir::Proj;
 use mojito_types::types::TyKind;
 use mojito_types::types::{FuncTy, VariantIndex};
@@ -1580,30 +1581,64 @@ pub(super) fn bound_parameter_locals<'a>(
 
 /// The associated type `name` of the instance `base` resolves to, read off
 /// the member its struct declares: the member's type under the instance's
-/// own arguments. `None` where `base` is no struct that declares the member,
-/// or the member takes arguments of its own.
+/// own arguments and, for a parameterized member (`C.IteratorType[o]`), the
+/// application's. `None` where `base` is no struct that declares the member.
 fn declared_associated_type(
     base: &Ty,
     name: &str,
     args: &[TyArg],
     bindings: &Bindings,
 ) -> Result<Option<Ty>, MonoError> {
-    if !args.is_empty() {
-        return Ok(None);
-    }
     let base = substitute_ty(base, bindings)?;
     let Some(instance) = struct_instance(peel_refs(&base), bindings)? else {
         return Ok(None);
     };
-    let Some((_, member)) = instance
+    if args.is_empty()
+        && let Some((_, member)) = instance
+            .shape
+            .members
+            .iter()
+            .find(|(member, _)| member == name)
+    {
+        return substitute_ty(member, &instance.bindings).map(Some);
+    }
+    let Some(member) = instance
         .shape
-        .members
+        .parameterized
         .iter()
-        .find(|(member, _)| member == name)
+        .find(|member| member.name == name)
     else {
         return Ok(None);
     };
-    substitute_ty(member, &instance.bindings).map(Some)
+    if member.params.len() != args.len() {
+        return Ok(None);
+    }
+    let mut member_bindings = instance.bindings.clone();
+    let mut origins = HashMap::new();
+    for (param, arg) in member.params.iter().zip(args) {
+        match (param, arg) {
+            (AssociatedParameter::Type(binder), TyArg::Ty(ty)) => {
+                member_bindings
+                    .types
+                    .insert(binder.clone(), substitute_ty(ty, bindings)?);
+            }
+            (AssociatedParameter::Origin(id), TyArg::Origin(origin)) => {
+                origins.insert(id.0, origin.clone());
+            }
+            _ => {
+                return Err(MonoError {
+                    kind: MonoErrorKind::Unsupported,
+                    function: None,
+                    construct: format!(
+                        "associated type `{base}.{name}`: a value parameter of an associated \
+                         type is not elaborated"
+                    ),
+                });
+            }
+        }
+    }
+    let template = mojito_types::types::substitute_origin_params(&member.template, &origins);
+    substitute_ty(&template, &member_bindings).map(Some)
 }
 
 /// The type a nullary construction builds under `bindings`: the binder's

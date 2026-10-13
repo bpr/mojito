@@ -620,7 +620,12 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   nonraising one) and records `IterationProtocol::source_retained`, which HIR
   (`hir.rs` loop lowering) and MIR (`lower_stmt.rs` `GetIter`,
   `lower_expr/ctrl.rs` comprehensions) read to decide whether a loop keeps its
-  source alive and loaned.
+  source alive and loaned. It also records `IterationProtocol::iterator_ty`,
+  the `__iter__` result those two `GetIter` sites type a split iterator slot
+  with: a conformer's from `struct_iteration_protocol`, a bounded
+  parameter's from its bound's own `__iter__` (`generic_iterator_ty`), with
+  `origin_of(self)` resolved to the named source by
+  `resolve_iterator_origin`.
 - `checker/calls.rs` adapts neutral call matching to `TypeError` and validates
   checker-only signature rules.
 - `checker/places.rs` owns call-site place classification and alias rejection
@@ -935,9 +940,13 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   where it is reached (`mono/failure.rs`). Every generic `def` keeps its
   template at every call; a `DType`- or lane-keyed `def`, overloaded or
   not, is an ordinary generic `def`. An associated type its body names is
-  solved below the waist, from `MirStructDeclaration.associated_types`
-  (`declared_associated_type` over `struct_instance`,
-  `native/mono/substitute.rs`). `checker/origins/transfer.rs` owns the
+  solved below the waist, from `MirStructDeclaration.associated_types`, or
+  for a parameterized member (`C.IteratorType[o]`) from
+  `parameterized_associated_types` (`ParameterizedAssociatedType`,
+  `AssociatedParameter` in `mojito-checked/src/declaration.rs`, built by
+  `ParameterizedMember::checked_fact`) (`declared_associated_type` over
+  `struct_instance`, `native/mono/substitute.rs`; the template's origins
+  bind through `mojito_types::types::substitute_origin_params`). `checker/origins/transfer.rs` owns the
   carried source (`SigOrigin::Carried`, recorded by
   `record_transfer_effect` and closed by `replay_transfer_effects` with the
   receiver's arguments and the call's own bindings, `call_closed`).
