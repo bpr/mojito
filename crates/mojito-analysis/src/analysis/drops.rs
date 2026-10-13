@@ -17,7 +17,9 @@ use super::*;
 pub(super) fn elaborate_drops(
     function: MirFunction,
     value_parameters: &HashSet<VarId>,
+    declarations: &MirDeclarations,
 ) -> MirFunction {
+    let passing = ArgumentPassing::new(declarations);
     let f = &function;
     let nb = f.blocks.len();
     // Function-wide `DefVar` counts (deep through `try` regions): the reference
@@ -47,6 +49,7 @@ pub(super) fn elaborate_drops(
         &loan_roots,
         &generation_dests,
         &f.reg_types,
+        &passing,
     );
     let generation_exits: Vec<LoanGenerationState> = f
         .blocks
@@ -101,6 +104,7 @@ pub(super) fn elaborate_drops(
         loan_roots: &loan_roots,
         generation_dests: &generation_dests,
         effective_live_in: &effective_live_in,
+        passing: &passing,
     };
 
     // (1) Block-internal drops: replay each block, tracking the live set after each
@@ -111,6 +115,7 @@ pub(super) fn elaborate_drops(
         let replay = BlockReplay {
             instrs,
             register_uses: &register_loan_uses[b],
+            deinit_params: &f.deinit_params,
             generation_entry: &generation_entries[b],
             loan_roots: &loan_roots,
             generation_dests: &generation_dests,
@@ -353,6 +358,8 @@ pub(super) struct RegionDropCtx<'a> {
     generation_dests: &'a BTreeMap<u32, Option<MirInteriorOrigin>>,
     /// Top-level effective live-in sets, bounding `EscapeJump` targets.
     effective_live_in: &'a [HashSet<VarId>],
+    /// Which operands each instruction receives by value.
+    passing: &'a ArgumentPassing<'a>,
 }
 
 impl RegionDropCtx<'_> {
@@ -553,6 +560,7 @@ pub(super) fn elaborate_region_drops(
         ctx.loan_roots,
         ctx.generation_dests,
         &f.reg_types,
+        ctx.passing,
     );
     let generation_exits: Vec<LoanGenerationState> = blocks
         .iter()
@@ -576,6 +584,7 @@ pub(super) fn elaborate_region_drops(
         let replay = BlockReplay {
             instrs,
             register_uses: &register_uses[b],
+            deinit_params: &f.deinit_params,
             generation_entry: &generation_entries[b],
             loan_roots: ctx.loan_roots,
             generation_dests: ctx.generation_dests,
@@ -1234,7 +1243,11 @@ pub(super) fn transfer_liveness(instrs: &[MirInstr], mut live: HashSet<VarId>) -
 /// the block.
 struct BlockReplay<'a> {
     instrs: Vec<MirInstr>,
-    register_uses: &'a [Vec<VarId>],
+    register_uses: &'a [RegisterUses],
+    /// The function's `deinit` parameters, whose fields
+    /// [`refine_deinit_fields`] destroys one by one: the variable's own
+    /// teardown stays after the instruction.
+    deinit_params: &'a [bool],
     generation_entry: &'a LoanGenerationState,
     loan_roots: &'a BTreeMap<u32, DropLoanGeneration>,
     generation_dests: &'a BTreeMap<u32, Option<MirInteriorOrigin>>,
@@ -1312,7 +1325,11 @@ impl BlockReplay<'_> {
             if let MirInstr::ConsumeVar { var } = &instr {
                 entering.push(*var);
             }
-            entering.extend(&self.register_uses[i]);
+            // What the instruction itself, or an edge leaving it, still reads.
+            let observed = entering.len();
+            let register_uses = &self.register_uses[i];
+            entering.extend(&register_uses.retained);
+            entering.extend(&register_uses.loaded);
             let mut added = Vec::new();
             for v in &entering {
                 if live.insert(*v) && !(removed_def && def == Some(*v)) {
@@ -1361,16 +1378,40 @@ impl BlockReplay<'_> {
                 .chain(extra_before.iter())
                 .chain(uses)
                 .chain(def)
-                .chain(self.register_uses[i].iter().copied())
-                .chain(retired);
+                .chain(register_uses.retained.iter().copied())
+                .chain(register_uses.loaded.iter().copied())
+                .chain(retired.iter().copied());
             let mut dying: Vec<VarId> = Vec::new();
             for v in deaths {
                 if droppable(v) && !moved.contains(&v) && !live_after(v) && !dying.contains(&v) {
                     dying.push(v);
                 }
             }
+            // An owner whose last use is a scalar the instruction loads by
+            // value dies at that load, before the instruction runs.
+            let deinit = |v: VarId| self.deinit_params.get(v as usize).copied() == Some(true);
+            let loaded: Vec<VarId> = register_uses
+                .loaded
+                .iter()
+                .copied()
+                .filter(|v| {
+                    dying.contains(v)
+                        && !deinit(*v)
+                        && !entering[..observed].contains(v)
+                        && def != Some(*v)
+                        && !retired.contains(v)
+                        && !extra_before.contains(*v)
+                })
+                .collect();
+            dying.retain(|v| !loaded.contains(v));
             push_drops_reversed(&mut reversed, dying);
             reversed.push(cloned.unwrap_or(instr));
+            reversed.extend(
+                loaded
+                    .into_iter()
+                    .rev()
+                    .map(|var| MirInstr::DropVar { var }),
+            );
             push_drops_reversed(&mut reversed, entry_dead);
         }
         reversed.reverse();

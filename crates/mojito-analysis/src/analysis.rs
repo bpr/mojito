@@ -26,9 +26,9 @@ use mojito_common::error::OwnershipError;
 use mojito_common::timing;
 use mojito_hir::hir::VarId;
 use mojito_mir::mir::{
-    MirBlock, MirCaptureMode, MirDeclarations, MirFunction, MirInstr, MirInteriorOrigin,
-    MirIntrinsicSubscript, MirPlace, MirProgram, MirTerm, Proj, Reg, UseMode, binder_scope,
-    materialized_parameter_slots,
+    MirBlock, MirCaptureMode, MirDeclarations, MirFunction, MirFunctionDeclaration, MirInstr,
+    MirInteriorOrigin, MirIntrinsicSubscript, MirPlace, MirProgram, MirSubscriptArg, MirTerm, Proj,
+    Reg, UseMode, binder_scope, materialized_parameter_slots,
 };
 #[allow(clippy::wildcard_imports, reason = "pages of this split module")]
 use moves::*;
@@ -205,7 +205,7 @@ pub fn elaborate_drops_function(
     elaborate_store_drops(&mut function, name, declarations);
     let scope = binder_scope(name, |name| declarations.function(name));
     let slots = materialized_parameter_slots(&function, &scope);
-    let mut elaborated = elaborate_drops(function, &slots);
+    let mut elaborated = elaborate_drops(function, &slots, declarations);
     refine_deinit_fields(&mut elaborated, declarations);
     elaborated
 }

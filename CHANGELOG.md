@@ -8,6 +8,16 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- Values whose last use is the same call are destroyed in the pin's order
+  (R675): a scalar read passed by value, to a concrete register-passable
+  `read` or `var` parameter, a built-in operator, or a slice bound, is
+  loaded at call setup, so its owner dies before the call in parameter
+  order. `a.t + b.t` now destroys `a` first, and `two(h.t, e.t)` destroys
+  `h` and `e` before `two` runs, including for methods, keywords,
+  subscripts, function values, nested defs, and a `deinit self` body's
+  fields. An argument passed by address (`print`, a generic `T`, a `*xs`
+  collector, a by-reference argument) still keeps its owner through the
+  call.
 - Natively, a function value or nested def returning a reference runs
   (R676): `var f = field; print(f(w))`, a nested
   `def inner(w: W) -> ref[origin_of(w.t)] Int`, and a raising

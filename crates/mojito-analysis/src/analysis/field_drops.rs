@@ -17,9 +17,18 @@ use mojito_types::types::TyKind;
 /// Splice `DropPlace`s for every refinable field of every `deinit`
 /// parameter of struct type with a known declaration.
 pub(super) fn refine_deinit_fields(f: &mut MirFunction, declarations: &MirDeclarations) {
+    let register_types = &f.reg_types;
     let roots: Vec<DeinitRoot> = (0..f.n_params)
         .filter(|&i| f.deinit_params.get(i).copied().unwrap_or(false))
-        .filter_map(|i| deinit_root(f, i as VarId, declarations))
+        .filter_map(|i| {
+            deinit_root(
+                &f.blocks,
+                &f.var_tys,
+                register_types,
+                i as VarId,
+                declarations,
+            )
+        })
         .collect();
     for root in roots {
         let top_live_in = top_level_field_liveness(&f.blocks, &root);
@@ -38,7 +47,7 @@ pub(super) fn refine_deinit_fields(f: &mut MirFunction, declarations: &MirDeclar
 /// Declaration positions of a receiver's refinable fields.
 type FieldSet = BTreeSet<usize>;
 
-struct DeinitRoot {
+struct DeinitRoot<'a> {
     var: VarId,
     root_ty: Ty,
     /// Every field in declaration order (name, type).
@@ -46,9 +55,13 @@ struct DeinitRoot {
     /// The positions the pass may destroy individually: droppable, and never
     /// borrowed or moved below depth one anywhere in the body.
     all: FieldSet,
+    /// Which operands each instruction receives by value, over the
+    /// function's register types.
+    passing: ArgumentPassing<'a>,
+    register_types: &'a HashMap<u32, Ty>,
 }
 
-impl DeinitRoot {
+impl DeinitRoot<'_> {
     fn position(&self, name: &str) -> Option<usize> {
         self.fields
             .iter()
@@ -73,14 +86,20 @@ struct FieldSeeds<'a> {
     top_live_in: &'a [FieldSet],
 }
 
-fn deinit_root(f: &MirFunction, var: VarId, declarations: &MirDeclarations) -> Option<DeinitRoot> {
-    let root_ty = f.var_tys.get(&var)?.clone();
+fn deinit_root<'a>(
+    blocks: &[MirBlock],
+    var_tys: &HashMap<VarId, Ty>,
+    register_types: &'a HashMap<u32, Ty>,
+    var: VarId,
+    declarations: &'a MirDeclarations,
+) -> Option<DeinitRoot<'a>> {
+    let root_ty = var_tys.get(&var)?.clone();
     let TyKind::Struct(name, _) = root_ty.kind() else {
         return None;
     };
     let decl = declarations.structure(name)?;
     let mut pinned: HashSet<String> = HashSet::new();
-    for_each_instr_deep(&f.blocks, &mut |instr| {
+    for_each_instr_deep(blocks, &mut |instr| {
         let borrowing = matches!(
             instr,
             MirInstr::MakeRef { .. }
@@ -119,6 +138,8 @@ fn deinit_root(f: &MirFunction, var: VarId, declarations: &MirDeclarations) -> O
         root_ty,
         fields: decl.fields.clone(),
         all,
+        passing: ArgumentPassing::new(declarations),
+        register_types,
     })
 }
 
@@ -131,7 +152,7 @@ fn top_level_field_liveness(blocks: &[MirBlock], root: &DeinitRoot) -> Vec<Field
         finally_live: FieldSet::new(),
         top_live_in: &empty,
     };
-    region_field_liveness(blocks, root, &seeds).0
+    region_field_liveness(blocks, root, &seeds).live_in
 }
 
 /// Elaborate one region (a function body or a `try` mini-CFG) in place:
@@ -148,7 +169,11 @@ fn refine_region(
     if nb == 0 {
         return seeds.fall_off.clone();
     }
-    let (live_in, uses) = region_field_liveness(blocks, root, seeds);
+    let FieldLiveness {
+        live_in,
+        uses,
+        loaded,
+    } = region_field_liveness(blocks, root, seeds);
 
     // (1) Block-internal deaths.
     for b in 0..nb {
@@ -175,11 +200,29 @@ fn refine_region(
                 refine_try(&mut instr, root, &live_after[i], seeds);
             }
             let moved = moved_fields(&instrs[i], root);
-            let dying: Vec<usize> = live_before[i]
+            let mut dying: Vec<usize> = live_before[i]
                 .difference(&live_after[i])
                 .copied()
                 .filter(|position| !moved.contains(position))
                 .collect();
+            // A field whose last use is a scalar the instruction loads by
+            // value dies at that load, before the instruction runs, unless
+            // the raise edge leaving it still observes the field.
+            let direct = direct_field_uses(&instrs[i], root);
+            let raises = may_raise(&instrs[i]);
+            let before: Vec<usize> = loaded[b][i]
+                .iter()
+                .copied()
+                .filter(|position| {
+                    dying.contains(position)
+                        && !direct.contains(position)
+                        && !(raises && seeds.raise.contains(position))
+                })
+                .collect();
+            dying.retain(|position| !before.contains(position));
+            rebuilt.extend(before.into_iter().map(|position| MirInstr::DropPlace {
+                place: root.place(position),
+            }));
             rebuilt.push(instr);
             i += 1;
             // Keep the variable pass's trailing drop group together; a
@@ -293,7 +336,7 @@ fn refine_try(try_instr: &mut MirInstr, root: &DeinitRoot, after: &FieldSet, see
     // alive at any of the body's raise points are present on handler entry.
     let handler_entry = handler.as_ref().map(|(_, h)| {
         region_field_liveness(h, root, &inner_seeds)
-            .0
+            .live_in
             .first()
             .cloned()
             .unwrap_or_default()
@@ -314,16 +357,27 @@ fn refine_try(try_instr: &mut MirInstr, root: &DeinitRoot, after: &FieldSet, see
     refine_region(body, root, &body_seeds, None);
 }
 
-/// Backward field liveness over a region's blocks: per-block live-in sets and
-/// the per-instruction field uses (direct place uses plus register-carried
-/// provenance), recursing into nested `try`s without mutating them.
+/// One region's backward field liveness.
+struct FieldLiveness {
+    /// Per block, the fields live on entry.
+    live_in: Vec<FieldSet>,
+    /// Per block, per instruction, the fields it uses: direct place uses plus
+    /// register-carried provenance.
+    uses: Vec<Vec<FieldSet>>,
+    /// Per block, per instruction, the fields of the scalars it loads by
+    /// value, in load order.
+    loaded: Vec<Vec<Vec<usize>>>,
+}
+
+/// Backward field liveness over a region's blocks, recursing into nested
+/// `try`s without mutating them.
 fn region_field_liveness(
     blocks: &[MirBlock],
     root: &DeinitRoot,
     seeds: &FieldSeeds,
-) -> (Vec<FieldSet>, Vec<Vec<FieldSet>>) {
+) -> FieldLiveness {
     let nb = blocks.len();
-    let carried = register_field_provenance(blocks, root);
+    let (carried, loaded) = register_field_provenance(blocks, root);
     let mut uses: Vec<Vec<FieldSet>> = blocks
         .iter()
         .enumerate()
@@ -364,13 +418,17 @@ fn region_field_liveness(
             }
         }
     }
-    (live_in, uses)
+    FieldLiveness {
+        live_in,
+        uses,
+        loaded,
+    }
 }
 
 /// The fields alive at any potentially-raising instruction of a region —
 /// what its handler may still find on entry.
 fn raise_point_liveness(blocks: &[MirBlock], root: &DeinitRoot, seeds: &FieldSeeds) -> FieldSet {
-    let (live_in, uses) = region_field_liveness(blocks, root, seeds);
+    let FieldLiveness { live_in, uses, .. } = region_field_liveness(blocks, root, seeds);
     let mut present = FieldSet::new();
     for b in 0..blocks.len() {
         let mut live = block_field_live_out(blocks, b, &live_in, seeds, root);
@@ -411,7 +469,7 @@ fn try_entry_liveness(
         if blocks.is_empty() {
             seeds.fall_off.clone()
         } else {
-            region_field_liveness(blocks, root, seeds).0[0].clone()
+            region_field_liveness(blocks, root, seeds).live_in[0].clone()
         }
     };
     let fin_live = match finalbody {
@@ -564,7 +622,12 @@ fn moved_fields(instr: &MirInstr, root: &DeinitRoot) -> FieldSet {
 /// value; a scalar load borrows for one hop only), mirroring
 /// the register-loan transfer of
 /// [`register_loan_uses_over`](super::register_loans::register_loan_uses_over).
-fn register_field_provenance(blocks: &[MirBlock], root: &DeinitRoot) -> Vec<Vec<FieldSet>> {
+/// Beside them, per instruction, the fields of the scalars it loads by value,
+/// in load order.
+fn register_field_provenance(
+    blocks: &[MirBlock],
+    root: &DeinitRoot,
+) -> (Vec<Vec<FieldSet>>, Vec<Vec<Vec<usize>>>) {
     type Carry = BTreeMap<u32, (FieldSet, FieldSet)>;
     fn join(mut left: Carry, right: &Carry) -> Carry {
         for (register, (carry, single)) in right {
@@ -574,18 +637,25 @@ fn register_field_provenance(blocks: &[MirBlock], root: &DeinitRoot) -> Vec<Vec<
         }
         left
     }
-    fn transfer(state: &mut Carry, instr: &MirInstr, root: &DeinitRoot) -> FieldSet {
+    fn transfer(state: &mut Carry, instr: &MirInstr, root: &DeinitRoot) -> (FieldSet, Vec<usize>) {
         let mut operands = Vec::new();
         instruction_operand_regs(instr, &mut operands);
         let mut carried = FieldSet::new();
         let mut uses = FieldSet::new();
+        let mut single_hop = Vec::new();
         for operand in operands {
             if let Some((carry, single)) = state.get(&operand.0) {
                 carried.extend(carry.iter().copied());
                 uses.extend(carry.iter().copied());
-                uses.extend(single.iter().copied());
+                if !single.is_empty() {
+                    single_hop.push((operand.0, single.clone()));
+                }
             }
         }
+        let loaded = split_single_hop(&mut uses, single_hop, || {
+            root.passing.by_value(instr, root.register_types)
+        });
+        uses.extend(loaded.iter().copied());
         let mut single_hop = FieldSet::new();
         if let MirInstr::MakeRef { place, .. } | MirInstr::LoadPlace { place, .. } = instr
             && place.root == root.var
@@ -625,7 +695,7 @@ fn register_field_provenance(blocks: &[MirBlock], root: &DeinitRoot) -> Vec<Vec<
                 state.insert(result.0, (carried.clone(), single_hop.clone()));
             }
         }
-        uses
+        (uses, loaded)
     }
 
     let nb = blocks.len();
@@ -672,9 +742,9 @@ fn register_field_provenance(blocks: &[MirBlock], root: &DeinitRoot) -> Vec<Vec<
                 .instrs
                 .iter()
                 .map(|instr| transfer(&mut state, instr, root))
-                .collect()
+                .unzip()
         })
-        .collect()
+        .unzip()
 }
 
 const fn is_drop_instr(instr: &MirInstr) -> bool {

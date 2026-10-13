@@ -78,12 +78,292 @@ pub(super) fn may_alias_owned_storage(ty: &mojito_types::types::Ty) -> bool {
     )
 }
 
+/// The roots one instruction consumes through its operand registers.
+pub(super) struct RegisterUses {
+    /// Roots the instruction keeps alive through itself: owner provenance,
+    /// and the owners of scalars it receives by address.
+    pub(super) retained: Vec<VarId>,
+    /// The owners of scalars the instruction receives by value, in the order
+    /// it loads them (parameter-slot order): each read is a load at call
+    /// setup, so an owner whose last use it is dies before the instruction.
+    pub(super) loaded: Vec<VarId>,
+}
+
+/// Which operand registers an instruction receives by value, as the callee's
+/// declared contract says: a concrete register-passable `read` or `var`
+/// parameter is loaded at call setup, while a memory-only one — a generic
+/// `T`, a variadic collector, a callee with no declaration (`print`) — takes
+/// the argument's address for the whole call.
+pub(super) struct ArgumentPassing<'a> {
+    declarations: &'a MirDeclarations,
+}
+
+impl<'a> ArgumentPassing<'a> {
+    pub(super) const fn new(declarations: &'a MirDeclarations) -> Self {
+        Self { declarations }
+    }
+
+    /// The operand registers `instruction` loads by value, each with its
+    /// load rank.
+    pub(super) fn by_value(
+        &self,
+        instruction: &MirInstr,
+        register_types: &HashMap<u32, mojito_types::types::Ty>,
+    ) -> Vec<(u32, usize)> {
+        match instruction {
+            MirInstr::Call {
+                func,
+                args,
+                kwargs,
+                arg_places,
+                kwarg_places,
+                spread,
+                ..
+            } => self
+                .callee(&func.0)
+                .map(|declaration| {
+                    let mut loaded = Vec::new();
+                    let arguments = CallArguments {
+                        args,
+                        kwargs,
+                        arg_places,
+                        kwarg_places,
+                        spread: *spread,
+                    };
+                    arguments.by_value(&declaration.into(), 0, &mut loaded);
+                    loaded
+                })
+                .unwrap_or_default(),
+            MirInstr::MethodCall {
+                recv,
+                resolved,
+                recv_place,
+                args,
+                kwargs,
+                arg_places,
+                kwarg_places,
+                spread,
+                ..
+            } => resolved
+                .as_deref()
+                .and_then(|name| self.declarations.function(name))
+                .map(|declaration| {
+                    let mut loaded = Vec::new();
+                    if recv_place.is_none() {
+                        receiver_by_value(declaration, *recv, register_types, &mut loaded);
+                    }
+                    let arguments = CallArguments {
+                        args,
+                        kwargs,
+                        arg_places,
+                        kwarg_places,
+                        spread: *spread,
+                    };
+                    arguments.by_value(&declaration.into(), 1, &mut loaded);
+                    loaded
+                })
+                .unwrap_or_default(),
+            MirInstr::BinOp {
+                a,
+                b,
+                resolved: Some(name),
+                ..
+            } => self
+                .declarations
+                .function(name)
+                .map(|declaration| {
+                    let mut loaded = Vec::new();
+                    receiver_by_value(declaration, *a, register_types, &mut loaded);
+                    let arguments = CallArguments {
+                        args: std::slice::from_ref(b),
+                        ..CallArguments::default()
+                    };
+                    arguments.by_value(&declaration.into(), 1, &mut loaded);
+                    loaded
+                })
+                .unwrap_or_default(),
+            MirInstr::CallIndirect {
+                callee,
+                resolved,
+                args,
+                kwargs,
+                arg_places,
+                kwarg_places,
+                instantiated_contract,
+                spread,
+                ..
+            } => {
+                let arguments = CallArguments {
+                    args,
+                    kwargs,
+                    arg_places,
+                    kwarg_places,
+                    spread: *spread,
+                };
+                let mut loaded = Vec::new();
+                let contract = instantiated_contract
+                    .as_ref()
+                    .or_else(|| register_types.get(&callee.0));
+                if let Some(mojito_types::types::TyKind::Func(function)) =
+                    contract.map(mojito_types::types::Ty::kind)
+                {
+                    arguments.by_value(&function.as_ref().into(), 0, &mut loaded);
+                } else if let Some(declaration) = resolved
+                    .as_deref()
+                    .and_then(|name| self.declarations.function(name))
+                {
+                    arguments.by_value(&declaration.into(), 1, &mut loaded);
+                }
+                loaded
+            }
+            MirInstr::Index {
+                base,
+                index,
+                base_place,
+                index_place,
+                call: Some(call),
+                ..
+            } => self
+                .declarations
+                .function(&call.target)
+                .map(|declaration| {
+                    let mut loaded = Vec::new();
+                    if base_place.is_none() {
+                        receiver_by_value(declaration, *base, register_types, &mut loaded);
+                    }
+                    if index_place.is_none()
+                        && ParameterContract::from(declaration).loads_positional(0)
+                    {
+                        loaded.push((index.0, 1));
+                    }
+                    loaded
+                })
+                .unwrap_or_default(),
+            MirInstr::Slice {
+                object,
+                lower,
+                upper,
+                step,
+                object_place,
+                call: Some(call),
+                ..
+            } => self
+                .declarations
+                .function(&call.target)
+                .map(|declaration| {
+                    let mut loaded = Vec::new();
+                    slice_bounds_loaded(*lower, *upper, *step, 0, &mut loaded);
+                    if object_place.is_none() {
+                        receiver_by_value(declaration, *object, register_types, &mut loaded);
+                    }
+                    loaded
+                })
+                .unwrap_or_default(),
+            MirInstr::MultiIndex {
+                object,
+                args,
+                object_place,
+                arg_places,
+                call: Some(call),
+                ..
+            } => self
+                .declarations
+                .function(&call.target)
+                .map(|declaration| {
+                    // Every slice descriptor is built before the call loads
+                    // its receiver and plain indices.
+                    let mut loaded = Vec::new();
+                    for argument in args {
+                        if let MirSubscriptArg::Slice {
+                            lower, upper, step, ..
+                        } = argument
+                        {
+                            slice_bounds_loaded(*lower, *upper, *step, 0, &mut loaded);
+                        }
+                    }
+                    if object_place.is_none() {
+                        receiver_by_value(declaration, *object, register_types, &mut loaded);
+                    }
+                    let contract = ParameterContract::from(declaration);
+                    for (index, argument) in args.iter().enumerate() {
+                        let placed = arg_places.get(index).is_some_and(Option::is_some);
+                        if let MirSubscriptArg::Index(register) = argument
+                            && !placed
+                            && contract.loads_positional(index)
+                        {
+                            loaded.push((register.0, index + 1));
+                        }
+                    }
+                    loaded
+                })
+                .unwrap_or_default(),
+            // The rest run callee code or consume a whole value: none loads a
+            // scalar operand.
+            MirInstr::MultiSet { .. }
+            | MirInstr::Try { .. }
+            | MirInstr::Raise { .. }
+            | MirInstr::GetIter { .. }
+            | MirInstr::HasNext { .. }
+            | MirInstr::Next { .. }
+            | MirInstr::TryNext { .. } => Vec::new(),
+            _ => {
+                let mut operands = Vec::new();
+                mojito_mir::mir::verify::instruction_operand_regs(instruction, &mut operands);
+                operands
+                    .into_iter()
+                    .enumerate()
+                    .map(|(rank, operand)| (operand.0, rank))
+                    .collect()
+            }
+        }
+    }
+
+    /// The declaration a direct call of `callee` binds: a struct name calls
+    /// its `__init__`.
+    fn callee(&self, callee: &str) -> Option<&'a MirFunctionDeclaration> {
+        if self.declarations.structure(callee).is_some() {
+            self.declarations.function(&format!("{callee}.__init__"))
+        } else {
+            self.declarations.function(callee)
+        }
+    }
+}
+
+/// Split per-operand single-hop provenance by how the instruction receives
+/// each operand: an addressed operand's items join `retained`, and a by-value
+/// one's are returned in load-rank order, less any also retained.
+pub(super) fn split_single_hop<T: Ord + Copy>(
+    retained: &mut BTreeSet<T>,
+    single_hop: Vec<(u32, BTreeSet<T>)>,
+    by_value: impl FnOnce() -> Vec<(u32, usize)>,
+) -> Vec<T> {
+    if single_hop.is_empty() {
+        return Vec::new();
+    }
+    let by_value = by_value();
+    let mut ranked = Vec::new();
+    for (register, items) in single_hop {
+        match by_value.iter().find(|(operand, _)| *operand == register) {
+            Some((_, rank)) => ranked.extend(items.into_iter().map(|item| (*rank, item))),
+            None => retained.extend(items),
+        }
+    }
+    ranked.sort_by_key(|(rank, _)| *rank);
+    let mut loaded = Vec::new();
+    for (_, item) in ranked {
+        if !retained.contains(&item) && !loaded.contains(&item) {
+            loaded.push(item);
+        }
+    }
+    loaded
+}
+
 /// One function body's (or `try` region's) register-loan facts: the roots
 /// each instruction consumes, and the register-loan state entering each
 /// `try`, which seeds its body region.
 pub(super) struct RegisterLoans {
     /// Per block, per instruction, the roots the instruction consumes.
-    pub(super) uses: Vec<Vec<Vec<VarId>>>,
+    pub(super) uses: Vec<Vec<RegisterUses>>,
     /// The state entering each `try`, keyed by block and instruction index.
     pub(super) before_try: HashMap<(usize, usize), RegisterLoanState>,
 }
@@ -102,6 +382,7 @@ pub(super) fn register_loan_uses_over(
     loan_roots: &BTreeMap<u32, DropLoanGeneration>,
     generation_dests: &BTreeMap<u32, Option<MirInteriorOrigin>>,
     reg_types: &HashMap<u32, mojito_types::types::Ty>,
+    passing: &ArgumentPassing,
 ) -> RegisterLoans {
     let nb = blocks.len();
     let steps: Vec<Vec<RegisterLoanStep>> = blocks
@@ -145,7 +426,7 @@ pub(super) fn register_loan_uses_over(
         }
         let mut new_out = new_in.clone();
         for (index, step) in steps[block].iter().enumerate() {
-            step.transfer(&mut new_out, false);
+            step.transfer(&mut new_out, None);
             liveness.leaving(block, index, &mut new_out);
         }
         incoming[block] = Some(new_in);
@@ -170,7 +451,11 @@ pub(super) fn register_loan_uses_over(
                     if matches!(instruction, MirInstr::Try { .. }) {
                         before_try.insert((block, index), registers.clone());
                     }
-                    let uses = step.transfer(&mut registers, true).into_iter().collect();
+                    let mut single_hop = Vec::new();
+                    let retained = step.transfer(&mut registers, Some(&mut single_hop));
+                    let uses = split_register_uses(retained, single_hop, || {
+                        passing.by_value(instruction, reg_types)
+                    });
                     liveness.leaving(block, index, &mut registers);
                     uses
                 })
@@ -398,20 +683,27 @@ impl RegisterLoanStep {
         }
     }
 
-    /// Advance `registers` past the instruction. With `uses`, also return the
-    /// roots it consumes; otherwise the returned set is meaningless.
-    fn transfer(&self, registers: &mut RegisterLoanState, uses: bool) -> BTreeSet<VarId> {
+    /// Advance `registers` past the instruction. With `single_hop_uses`, also
+    /// return the roots it retains and record, per operand register, the
+    /// roots a scalar read borrows for this one hop; otherwise the returned
+    /// set is meaningless.
+    fn transfer(
+        &self,
+        registers: &mut RegisterLoanState,
+        mut single_hop_uses: Option<&mut Vec<(u32, BTreeSet<VarId>)>>,
+    ) -> BTreeSet<VarId> {
         let inherits = !self.call_result && !self.results.is_empty();
         let mut owners = BTreeSet::new();
-        let mut single_hop_uses: BTreeSet<VarId> = BTreeSet::new();
-        if uses || inherits {
+        if single_hop_uses.is_some() || inherits {
             owners.clone_from(&self.owners);
             for operand in &self.operands {
                 if let Some(provenance) = registers.owners.get(&operand.0) {
                     owners.extend(provenance);
                 }
-                if uses && let Some(provenance) = registers.single_hop.get(&operand.0) {
-                    single_hop_uses.extend(provenance);
+                if let Some(uses) = single_hop_uses.as_deref_mut()
+                    && let Some(provenance) = registers.single_hop.get(&operand.0)
+                {
+                    uses.push((operand.0, provenance.clone()));
                 }
             }
         }
@@ -430,8 +722,164 @@ impl RegisterLoanStep {
                 registers.owners.insert(result.0, result_owners.clone());
             }
         }
-        owners.extend(single_hop_uses);
         owners
+    }
+}
+
+/// An instruction's uses from the roots it retains and the per-operand roots
+/// its scalar reads borrow: a by-value operand's roots load in rank order, an
+/// addressed one's are retained, and a root also retained is not loaded.
+fn split_register_uses(
+    mut retained: BTreeSet<VarId>,
+    single_hop: Vec<(u32, BTreeSet<VarId>)>,
+    by_value: impl FnOnce() -> Vec<(u32, usize)>,
+) -> RegisterUses {
+    let loaded = split_single_hop(&mut retained, single_hop, by_value);
+    RegisterUses {
+        retained: retained.into_iter().collect(),
+        loaded,
+    }
+}
+
+/// The parameters a call binds its arguments to, as a declaration or a
+/// function type spells them.
+struct ParameterContract<'c> {
+    names: &'c [String],
+    types: &'c [mojito_types::types::Ty],
+    conventions: &'c [Option<mojito_ast::ast::ArgConvention>],
+    /// The first positional argument the variadic collector takes.
+    collector: Option<usize>,
+}
+
+impl<'c> From<&'c MirFunctionDeclaration> for ParameterContract<'c> {
+    fn from(declaration: &'c MirFunctionDeclaration) -> Self {
+        Self {
+            names: &declaration.param_names,
+            types: &declaration.param_types,
+            conventions: &declaration.param_conventions,
+            collector: declaration.variadic_index,
+        }
+    }
+}
+
+impl<'c> From<&'c mojito_types::types::FuncTy> for ParameterContract<'c> {
+    fn from(function: &'c mojito_types::types::FuncTy) -> Self {
+        Self {
+            names: &function.names,
+            types: &function.params,
+            conventions: &function.conventions,
+            collector: function
+                .variadic
+                .as_ref()
+                .map(|_| function.keyword_only.unwrap_or(function.params.len())),
+        }
+    }
+}
+
+impl ParameterContract<'_> {
+    /// Whether positional argument `index` binds a parameter that receives
+    /// it by value, rather than the variadic collector.
+    fn loads_positional(&self, index: usize) -> bool {
+        self.collector.is_none_or(|collector| index < collector) && self.loads(index)
+    }
+
+    /// Whether parameter `slot` receives its argument by value: a `read` or
+    /// `var` convention over a concrete register-passable type.
+    fn loads(&self, slot: usize) -> bool {
+        use mojito_ast::ast::ArgConvention;
+        self.types
+            .get(slot)
+            .is_some_and(|ty| !may_alias_owned_storage(ty))
+            && matches!(
+                self.conventions.get(slot).copied().flatten(),
+                None | Some(ArgConvention::Imm | ArgConvention::Var)
+            )
+    }
+}
+
+/// A call's argument registers and their retained caller places.
+#[derive(Default)]
+struct CallArguments<'c> {
+    args: &'c [Reg],
+    kwargs: &'c [(String, Reg)],
+    arg_places: &'c [Option<MirPlace>],
+    kwarg_places: &'c [Option<MirPlace>],
+    spread: Option<usize>,
+}
+
+impl CallArguments<'_> {
+    /// Push each argument `contract` loads by value, ranked by its parameter
+    /// slot after `offset` receiver slots: a retained place, a spread pack,
+    /// and a variadic element are addressed.
+    fn by_value(
+        &self,
+        contract: &ParameterContract,
+        offset: usize,
+        loaded: &mut Vec<(u32, usize)>,
+    ) {
+        let placed = |places: &[Option<MirPlace>], index: usize| {
+            places.get(index).is_some_and(Option::is_some)
+        };
+        for (index, argument) in self.args.iter().enumerate() {
+            if self.spread != Some(index)
+                && !placed(self.arg_places, index)
+                && contract.loads_positional(index)
+            {
+                loaded.push((argument.0, offset + index));
+            }
+        }
+        for (index, (name, argument)) in self.kwargs.iter().enumerate() {
+            if placed(self.kwarg_places, index) {
+                continue;
+            }
+            if let Some(slot) = contract
+                .names
+                .iter()
+                .position(|parameter| parameter == name)
+                && contract.loads(slot)
+            {
+                loaded.push((argument.0, offset + slot));
+            }
+        }
+    }
+}
+
+/// Push a slice's present bounds at `rank`: the slice descriptor the call
+/// receives is built from them by value before the call loads anything else.
+fn slice_bounds_loaded(
+    lower: Option<Reg>,
+    upper: Option<Reg>,
+    step: Option<Reg>,
+    rank: usize,
+    loaded: &mut Vec<(u32, usize)>,
+) {
+    loaded.extend(
+        [lower, upper, step]
+            .into_iter()
+            .flatten()
+            .map(|bound| (bound.0, rank)),
+    );
+}
+
+/// Push `receiver` at rank zero when `declaration` takes its receiver by
+/// value: a `read` or `var` `self` of a register-passable type.
+fn receiver_by_value(
+    declaration: &MirFunctionDeclaration,
+    receiver: Reg,
+    register_types: &HashMap<u32, mojito_types::types::Ty>,
+    loaded: &mut Vec<(u32, usize)>,
+) {
+    use mojito_ast::ast::ArgConvention;
+    if declaration.has_receiver
+        && matches!(
+            declaration.receiver_convention,
+            None | Some(ArgConvention::Imm | ArgConvention::Var)
+        )
+        && register_types
+            .get(&receiver.0)
+            .is_some_and(|ty| !may_alias_owned_storage(ty))
+    {
+        loaded.push((receiver.0, 0));
     }
 }
 

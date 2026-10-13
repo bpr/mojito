@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R681**.
+Next free ID: **R685**.
 
 ## Ordered Work
 
@@ -84,6 +84,26 @@ change that needs a new `MJRT_ABI_VERSION`.
   - The native call lowering builds a fresh collector from the keyword
     overflow, so the forwarded `**` collector lands as one element.
   - Found while landing R551 (2026-10-10).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R683 Natively, a field argument beside a destructor's call fails
+  IR verification**
+
+  Problem: a function running `_ = two(p.n, q.n)` and then
+  `var pair = Pair(); _ = pair^` stops natively with "Number or types of
+  operands does not match intrinsic type", where the VM and the pin run
+  it.
+  - `Pair.__deinit__` calls `two(self.a.t, self.b.t)`, and `p`, `q` own a
+    `W` beside their `n`.
+  - Either half alone compiles: dropping the `Pair` lines or the `two`
+    line passes.
+  - The failure predates R675: the old drop order fails the same way.
+  - Probe: `conformance/probes/native_field_argument_beside_deinit_call.mojo`.
+    When it compiles, fold it into
+    `assets/ok/by_value_argument_drop_order.mojo`, which keeps the two
+    halves in separate functions for now.
+  - Found while landing R675 (2026-10-13).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -298,15 +318,40 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R675 Values that die at one point are destroyed in reverse order**
+- [ ] **R681 A by-value place argument is read where it is written, not at
+  the call**
 
-  Problem: `var a = W(1); var b = W(2); print(a.t + b.t)` prints `del 2`
-  before `del 1` on the VM, where the pin destroys `a` first.
-  - Temporaries dying together do the same: `print(f(W(6)) + f(W(7)))`
-    destroys `W(7)` first, and the pin destroys `W(6)` first.
-  - The pin destroys values whose last use is the same point in creation
-    order; drop elaboration emits them reversed.
-  - Found while landing R672 (2026-10-13).
+  Problem: `two(c.t, bump(c))`, with `bump(mut w)` adding 100 to `w.t`,
+  prints `two 103 0` at the pin and `two 3 0` in Mojito.
+  - `d.t + bump(d)` gives 104 at the pin and 4 in Mojito.
+  - `own(c.t, g(d))` over `own(var x: Int, var y: Int)` destroys `c` before
+    `g` runs in Mojito; the pin destroys it after `g`, at the call's setup.
+  - The pin loads a register-passable `read` or `var` argument at call
+    setup, in parameter order. Mojito's lowering emits the `LoadPlace` (and
+    an owned argument's `CopyValue`) where the argument is written.
+  - The fix is in MIR lowering: defer a by-value place operand's load to
+    call setup in `Flatten::lower_call_argument_with`,
+    `lower_call_keywords`, `lower_operator_operand`, and the method,
+    indirect, and subscript call lowerers. Drop elaboration already drops
+    a loaded owner just before its consumer (`RegisterUses::loaded`).
+  - Found while landing R675 (2026-10-13).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R682 A call through a trait bound keeps a by-value argument's owner
+  alive through the call**
+
+  Problem: in `def run[T: Sh](s: T)`, `var b = W(31)` then
+  `var q = s.sh(b.t)` over the requirement `def sh(self, x: Int) -> Int`
+  prints `sh` before `del 31` in Mojito; the pin prints `del 31` first.
+  - The pin loads `b.t` at call setup, as it does for a concrete callee.
+  - The call's `resolved` target is `__trait_dispatch.sh$ov$Int`, which
+    has no declaration, so `ArgumentPassing` (`register_loans.rs`) sees no
+    parameter contract and treats the argument as addressed.
+  - MIR keeps no signature for a trait requirement, only its name and
+    arity: the fix gives the trait-dispatch call, or the trait
+    declaration's requirement, its parameter types and conventions.
+  - Found while landing R675 (2026-10-13).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -1574,6 +1619,16 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Found while probing deferred slots (2026-09-26).
   - Depends on nothing.
   - Model: Fable, Not Planned.
+
+- [ ] **R684 An explicit dunder call on a scalar is rejected**
+
+  Problem: `var q = 5; print(q.__add__(2))` prints `7` at the pin, but
+  Mojito rejects it: "type 'Int' has no method '__add__'".
+  - The operator spelling `q + 2` runs; only the explicit method call on
+    a compiler-known scalar has no member to resolve.
+  - Found while landing R675 (2026-10-13).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
 
 - [ ] **R97 `and`/`or` over a non-`Bool` operand is rejected**
 

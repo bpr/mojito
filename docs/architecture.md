@@ -4173,11 +4173,22 @@ current Mojo:
   retains the slot through the instruction consuming the field, and a
   consuming context's `CopyPlaceValue` copies an owning field out before the
   slot dies. A reference-typed field keeps the register `GetField`.
-- A scalar `LoadPlace` (`t.n` fed to `print`) keeps its owner alive through
-  the one instruction consuming the loaded register (the register-loan
-  dataflow's single-hop retention), so the owner's `DropVar` follows the call
-  that reads the field rather than the load; an aggregate load retains its
-  owner through every consumer as before.
+- A scalar `LoadPlace` borrows its owner for the one instruction consuming
+  the loaded register (the register-loan dataflow's single-hop retention), and
+  how long depends on how that instruction receives the register, as the
+  callee's declared contract says (`ArgumentPassing`, `register_loans.rs`). A
+  memory-only parameter takes the argument's address: a generic `T`, a
+  variadic collector, or a callee with no declaration (`t.n` fed to `print`).
+  Its owner then lives through the call, so the owner's `DropVar` follows the
+  call, and owners dying together there drop in descending `VarId`. A
+  concrete register-passable `read` or `var` parameter, a built-in operator's
+  operand, or a slice bound is loaded at call setup instead, in parameter
+  order (slice descriptors first), so an owner whose last use it is drops just
+  before the consumer, in that load order (`RegisterUses::loaded`).
+  `refine_deinit_fields` applies the same split to a `deinit self` receiver's
+  fields. The load itself still sits where the argument is written, not at
+  call setup. An aggregate load retains its owner through every consumer as
+  before.
 - An element read out of pack storage (an intrinsic `TupleStorage` or
   `VariadicStorage` `Index` with a retained base place) is the same shallow
   read: an aggregate element retains the pack through every consumer of the
