@@ -120,6 +120,7 @@ assets/ok/comptime_local_display_applications.mojo	main	exe-differential	sanitiz
 assets/ok/comptime_local_over_binder.mojo	main	exe-differential	sanitized
 assets/ok/comptime_module_constant_parameter_values.mojo	main	exe-differential	sanitized
 assets/ok/comptime_shadowed_locals.mojo	main	exe-differential	sanitized
+assets/ok/comptime_sized_scalar_constant.mojo	main	exe-differential	sanitized
 assets/ok/comptime_string_value.mojo	main	exe-differential	sanitized
 assets/ok/comptime_struct_string_field.mojo	main	exe-differential	sanitized
 assets/ok/comptime_template_body_bindings.mojo	main	exe-differential	sanitized

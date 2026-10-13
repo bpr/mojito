@@ -129,19 +129,6 @@ change that needs a new `MJRT_ABI_VERSION`.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R654 Natively, a folded `hash` constant fails IR verification**
-
-  Problem: `comptime C = hash(Int(1))`, then `print(C)`, prints the hash on
-  the VM and at the pin, and stops natively with "argument 0 type mismatch:
-  expected builtin.integer i64, got llvm.ptr".
-  - `assets/ok/comptime_hash.mojo` hits it, so its `exe-differential`
-    parity row is stale; R652's binary fails the same way.
-  - `hash` returns `UInt64`, so this is likely R541's and R576's
-    sized-scalar constant failure, and one fix may close all three.
-  - Found while landing R653 (2026-10-13).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R277 Native `Tuple.concat` double-frees a `String` element of its
   argument**
 

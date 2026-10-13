@@ -540,6 +540,12 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- A module constant of a one-lane SIMD type — declared (`comptime S: UInt8
+  = 2`, the bundled `SEEK_END`), folded from a call (`comptime C =
+  hash(Int(1))`, a `lane(...) -> Int32` application) — compiles natively and
+  prints what the VM and the pin print, where IR verification used to stop
+  it: the native backend binds the folded value as its lane scalar, not a
+  pointer to storage (R654; also fixes R541 and R576).
 - A static call through a type name (`Point.origin()`) calls the static
   even after a block's local spelled `Point` has gone out of scope, as at
   the pin, where it used to call the method on the dead local's value

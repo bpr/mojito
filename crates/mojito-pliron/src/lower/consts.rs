@@ -128,8 +128,9 @@ impl FnLowering<'_> {
 
     /// A closed vector, struct, or tuple parameter value (`Self.key`,
     /// `Self.e`, a `comptime for` variable over pairs): a vector built lane
-    /// by lane as its explicit construction is, an aggregate fieldwise into
-    /// fresh storage as its fieldwise constructor is.
+    /// by lane as its explicit construction is (a one-lane vector is its
+    /// lane scalar), an aggregate fieldwise into fresh storage as its
+    /// fieldwise constructor is.
     fn lower_parameter_value(
         &mut self,
         ctx: &mut Context,
@@ -140,7 +141,13 @@ impl FnLowering<'_> {
         match value {
             CtValue::Simd { dtype, lanes } => {
                 let vector = self.parameter_vector(ctx, *dtype, lanes, dest)?;
-                self.simd_store_vector(ctx, dest, *dtype, lanes.len(), vector);
+                // A width-1 SIMD register is its lane scalar, as `lower_ty` lays it out.
+                match self.func.reg_types.get(&dest.0).map(Ty::kind) {
+                    Some(ty) if scalar_simd_dtype(ty).is_some() => {
+                        self.reg_values.insert(dest.0, vector);
+                    }
+                    _ => self.simd_store_vector(ctx, dest, *dtype, lanes.len(), vector),
+                }
                 Ok(())
             }
             CtValue::Struct { .. } | CtValue::Tuple(_) => {
