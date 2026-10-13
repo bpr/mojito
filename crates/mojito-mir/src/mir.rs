@@ -20,9 +20,7 @@
 //! `xs[i] += e` lower uniformly (indices evaluated once).
 
 use mojito_ast::ast::DeclaredParam;
-use mojito_ast::ast::{
-    ArgConvention, Dtype, Expr, ExprKind, InfixOp, ParamKind, PrefixOp, StmtKind,
-};
+use mojito_ast::ast::{ArgConvention, Dtype, InfixOp, ParamKind, PrefixOp, StmtKind};
 use mojito_ast::call::{effective_keyword_only_index, regular_marker_index};
 use mojito_checked::checked::{AnnotationSite, GenericSite};
 use mojito_checked::checked::{
@@ -4582,26 +4580,13 @@ impl EnclosingBinders {
 
     /// Whether checked node `node` of `tables` spells `Self` or one of these
     /// binders: a name or a call it reaches, a bracket argument or a type
-    /// in value position the check resolved over one of them, or a name in
-    /// a nested declaration's annotations.
+    /// in value position the check resolved over one of them, or a lambda
+    /// whose checked function type mentions one.
     fn named_by(
         &self,
         tables: &mojito_checked::checked::CheckedTables,
         node: CheckedNodeId,
     ) -> bool {
-        struct Names(Vec<String>);
-        impl mojito_ast::visit::Visitor for Names {
-            fn visit_expr(&mut self, expr: &Expr) {
-                if let ExprKind::Identifier(name) | ExprKind::Call { name, .. } = &expr.kind {
-                    self.0.push(name.clone());
-                }
-            }
-            fn visit_type(&mut self, ty: &mojito_ast::ast::Type) {
-                if let mojito_ast::ast::Type::Named(name, _) = ty {
-                    self.0.push(name.clone());
-                }
-            }
-        }
         fn attribute(argument: &CheckedParamArg) -> Option<&TyArg> {
             match argument {
                 CheckedParamArg::Attribute { value, .. } => value.as_ref(),
@@ -4609,54 +4594,41 @@ impl EnclosingBinders {
                 CheckedParamArg::Value(_) => None,
             }
         }
-        let mut names = Names(Vec::new());
+        let mut names: Vec<String> = Vec::new();
         let mut resolved = false;
         tables.walk_expression(node, &mut |walked| {
-            let types: Vec<&mojito_ast::ast::Type> = match walked {
-                Walked::Expression(expression) => {
-                    if let CheckedOp::Identifier(name) | CheckedOp::Call { name, .. } =
-                        &expression.op
-                    {
-                        names.0.push(name.clone());
-                    }
-                    resolved |=
-                        match &expression.op {
-                            CheckedOp::TypeValue { ty, .. } => {
-                                ty.as_ref().is_some_and(|ty| self.mentioned_in(ty))
-                            }
-                            CheckedOp::Call { param_args, .. }
-                            | CheckedOp::Invoke { param_args, .. }
-                            | CheckedOp::TypeApply {
-                                args: param_args, ..
-                            } => param_args.iter().filter_map(attribute).any(|argument| {
-                                match argument {
-                                    TyArg::Ty(ty) => self.mentioned_in(ty),
-                                    TyArg::Val(value) => self.mentioned_in_value(value),
-                                    TyArg::Origin(_) => false,
-                                }
-                            }),
-                            _ => false,
-                        };
-                    Vec::new()
-                }
-                Walked::Statement(statement) => match &statement.op {
-                    CheckedStmtOp::Def(def) => def
-                        .params
-                        .iter()
-                        .map(|parameter| &parameter.ty)
-                        .chain(&def.ret)
-                        .collect(),
-                    CheckedStmtOp::VarDecl { ty, .. } => ty.iter().collect(),
-                    _ => Vec::new(),
-                },
+            let Walked::Expression(expression) = walked else {
+                return WalkResult::Advance;
             };
-            for ty in types {
-                mojito_ast::visit::walk_type(&mut names, ty);
+            if let CheckedOp::Identifier(name) | CheckedOp::Call { name, .. } = &expression.op {
+                names.push(name.clone());
             }
+            resolved |= match &expression.op {
+                CheckedOp::TypeValue { ty, .. } => {
+                    ty.as_ref().is_some_and(|ty| self.mentioned_in(ty))
+                }
+                CheckedOp::Lambda { .. } => expression
+                    .ty
+                    .as_ref()
+                    .is_some_and(|ty| self.mentioned_in(ty)),
+                CheckedOp::Call { param_args, .. }
+                | CheckedOp::Invoke { param_args, .. }
+                | CheckedOp::TypeApply {
+                    args: param_args, ..
+                } => param_args
+                    .iter()
+                    .filter_map(attribute)
+                    .any(|argument| match argument {
+                        TyArg::Ty(ty) => self.mentioned_in(ty),
+                        TyArg::Val(value) => self.mentioned_in_value(value),
+                        TyArg::Origin(_) => false,
+                    }),
+                _ => false,
+            };
             WalkResult::Advance
         });
         resolved
-            || names.0.iter().any(|name| {
+            || names.iter().any(|name| {
                 name == "Self"
                     || self
                         .types

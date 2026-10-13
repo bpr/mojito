@@ -4821,22 +4821,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R656 MIR finds a binder's name in annotation syntax**
-
-  `named_by`'s `Names` visitor (`mir.rs`) walks the `ast::Type`s that
-  `CheckedOp::TypeValue`, `CheckedParamArg::Type`, a `CheckedDef`'s
-  signature, and a `VarDecl`'s annotation hold as written, matching
-  `ExprKind::{Identifier, Call}` inside them.
-  - Upstream reads a resolved type attribute, whose parameter references
-    name their binders directly.
-  - R628 covers the ops; a def's signature and a `VarDecl`'s annotation
-    are statement fields it does not name.
-  - Done when `rg 'ExprKind::' crates/mojito-mir/src/mir.rs` finds only
-    R644's `value_binder_annotation`.
-  - Found while landing R649 (2026-10-13).
-  - Depends on R628.
-  - Model: Opus, Not Planned.
-
 - [ ] **R650 A package unit's statements are rebuilt as syntax**
 
   `CheckedTables::statement_syntax_of` rebuilds a unit's statements,

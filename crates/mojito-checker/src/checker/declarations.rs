@@ -1779,6 +1779,7 @@ impl Checker {
     /// Each method parameter default fits its parameter's type and names no
     /// runtime binding.
     fn check_method_defaults(&self, m: &Method) -> Result<(), TypeError> {
+        super::statements::reject_default_lambdas(&m.params)?;
         for param in &m.params {
             let Some(default) = &param.default else {
                 continue;

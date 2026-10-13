@@ -6753,6 +6753,17 @@ fn lambda_omitted_capture_list_imm_captures_free_variables() {
 }
 
 #[test]
+fn lambda_in_a_method_parameter_default_is_rejected_contextually() {
+    let error = err(
+        "struct Box[n: Int]:\n    def __init__(out self):\n        pass\n\n    def show(self, f: def() thin -> Int = lambda {} -> Int: Self.n) -> Int:\n        return f()\n",
+    );
+    assert!(
+        matches!(&error, TypeError::Unsupported(message) if message == "lambda expressions in parameter default values"),
+        "unexpected error: {error:?}"
+    );
+}
+
+#[test]
 fn lambda_omitted_return_type_is_fixed_none() {
     let error = err("def main():\n    var f: def() thin = lambda: 1 + 1\n    f()\n");
     assert!(

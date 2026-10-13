@@ -2386,19 +2386,7 @@ impl Checker {
                 "lambda expressions outside a function body".to_string(),
             ));
         }
-        // Parameter defaults are inferred without scoped pre-registration, so a
-        // lambda there has no declaration point.
-        for param in params {
-            if let Some(default) = &param.default {
-                let mut lambdas = Vec::new();
-                mojito_ast::ast::lambdas_in_expr(default, &mut lambdas);
-                if !lambdas.is_empty() {
-                    return Err(TypeError::Unsupported(
-                        "lambda expressions in parameter default values".to_string(),
-                    ));
-                }
-            }
-        }
+        reject_default_lambdas(params)?;
         if RESERVED_FUNCTION_NAMES.contains(&name.as_str()) {
             return Err(TypeError::ReservedName(name.clone()));
         }
@@ -3369,6 +3357,23 @@ impl Checker {
 }
 
 const RESERVED_FUNCTION_NAMES: &[&str] = &["class", "del", "match", "yield"];
+
+/// Rejects a lambda in any of `params`' defaults: a default is inferred
+/// without scoped pre-registration, so a lambda there has no declaration
+/// point.
+pub(super) fn reject_default_lambdas(params: &[FnParam]) -> Result<(), TypeError> {
+    let mut lambdas = Vec::new();
+    for default in params.iter().filter_map(|param| param.default.as_ref()) {
+        mojito_ast::ast::lambdas_in_expr(default, &mut lambdas);
+    }
+    if lambdas.is_empty() {
+        Ok(())
+    } else {
+        Err(TypeError::Unsupported(
+            "lambda expressions in parameter default values".to_string(),
+        ))
+    }
+}
 
 /// Whether a value of `ty` is, or stores, a closure: a callable whose
 /// environment is not `thin`, directly or as a struct argument, tuple or

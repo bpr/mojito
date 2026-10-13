@@ -8,6 +8,15 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- MIR decides whether a parameter default reads an enclosing binder from
+  resolved attributes alone (R656): a lambda in the default answers through
+  its checked function type, as upstream's closure op carries its resolved
+  signature, instead of a walk over its hidden `def`'s annotations as
+  written, so `mir.rs` matches no `ExprKind`. A lambda in a struct method's
+  parameter default is now the contextual `lambda expressions in parameter
+  default values` error, as in a free `def`, instead of an invariant
+  violation. No program's output or MIR changes.
+
 - A checked op's type operand is the attribute the check resolved, not the
   annotation as written (R628): a bracket argument written as a type is a
   `CheckedParamArg::Attribute` holding its `TyArg` — a type, a value it

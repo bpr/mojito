@@ -1789,7 +1789,9 @@ lowering: a binding's value, a store's place and value, an augmented
 assignment's place and operand, a subscript store's slice bounds and
 multi-subscript arguments (the ids the op names), and a parameter default's
 binder scan (`EnclosingBinders::named_by`, a `CheckedTables::walk_expression`
-over the default's node). `Flatten` borrows its CFG's
+over the default's node that reads only resolved attributes: a bracket
+argument's `TyArg`, a type operand's `Ty`, and a lambda's checked function
+type, never a nested signature's annotation syntax). `Flatten` borrows its CFG's
 tables and HIR for its own lifetime, so a handle outlives the `&mut self`
 calls it is passed to; a local display binding's HIR, which can cross after
 a `try` region's CFG is dropped, is copied into the function's arena
