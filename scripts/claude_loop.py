@@ -25,7 +25,10 @@ Entries are named by their stable IDs (`R12`), which never change, and the
 order is `scripts/roadmap.py`'s work order, recomputed before every task: the
 open entries top-down, each preceded by its open prerequisites from any track.
 `--track` and `--task` narrow the entries the run is for; their prerequisites
-still run first. `--only` runs exactly the named entries.
+still run first. `--only` runs exactly the named entries. `--start` and
+`--until` cut a range out of the work order as it stands at launch, and the run
+keeps to that range: an entry filed while it runs waits for a later run, even
+one that sorts inside the range.
 
 Each entry's `Model:` bullet, `Opus|Fable, Planned|Not Planned`, picks the
 Claude model and whether the task is planned first. A `Planned` entry with no
@@ -89,11 +92,13 @@ import roadmap  # noqa: E402
 Task = roadmap.Entry
 
 
-def pending(args, done: set[str], troubled: set[str], skip: set[str]) -> list[Task]:
+def pending(args, done: set[str], troubled: set[str],
+            fixed: set[str] | None = None) -> list[Task]:
     """The run's remaining tasks in work order, read afresh from the roadmap.
 
-    Leaves out what this run already took on, what `--start` skipped, and
-    every entry that waits, directly or not, on a task that left work behind.
+    Keeps to `fixed`, the `--start`/`--until` range taken at launch, when there
+    is one, and leaves out what this run already took on and every entry that
+    waits, directly or not, on a task that left work behind.
     """
     rm = roadmap.parse()
     if args.only:
@@ -106,7 +111,8 @@ def pending(args, done: set[str], troubled: set[str], skip: set[str]) -> list[Ta
     for t in rm.work_order():
         if any(d.id in blocked for d in rm.prerequisites(t)):
             blocked.add(t.id)
-    return [t for t in order if t.id not in done | skip | blocked]
+    return [t for t in order
+            if t.id not in done | blocked and (fixed is None or t.id in fixed)]
 
 
 def on_roadmap(task: Task) -> bool:
@@ -384,7 +390,7 @@ def main() -> int:
                    help="only this entry and its open prerequisites (repeatable)")
     p.add_argument("--only", action="append", metavar="ID",
                    help="exactly this entry, prerequisites or not (repeatable)")
-    p.add_argument("--start", metavar="ID", help="skip the work order up to this entry")
+    p.add_argument("--start", metavar="ID", help="begin the run at this entry of the launch-time work order")
     p.add_argument("--until", metavar="ID", help="stop after this entry")
     p.add_argument("--list", action="store_true", help="list the work order and exit")
     p.add_argument("--dry-run", action="store_true", help="print each prompt instead of running it")
@@ -422,8 +428,7 @@ def main() -> int:
 
     done: set[str] = set()
     troubled: set[str] = set()
-    skip: set[str] = set()
-    tasks = pending(args, done, troubled, skip)
+    tasks = pending(args, done, troubled)
     if args.list:
         for t in tasks:
             print(t.describe())
@@ -432,11 +437,14 @@ def main() -> int:
     for flag, ident in (("--start", args.start), ("--until", args.until)):
         if ident and ident not in ids:
             sys.exit(f"claude_loop: {flag} {ident} is not in this run's work order")
-    if args.start:
-        skip = set(ids[: ids.index(args.start)])
     until = args.until
-    if until and until in skip:
-        sys.exit(f"claude_loop: --until {until} comes before the start task {args.start}")
+    fixed = None
+    if args.start or until:
+        first = ids.index(args.start) if args.start else 0
+        last = ids.index(until) if until else len(ids) - 1
+        if last < first:
+            sys.exit(f"claude_loop: --until {until} comes before the start task {args.start}")
+        fixed = set(ids[first:last + 1])
     if not tasks:
         print("claude_loop: no open tasks")
         return 0
@@ -449,7 +457,7 @@ def main() -> int:
 
     ran = 0
     quick = 0
-    while tasks := pending(args, done, troubled, skip):
+    while tasks := pending(args, done, troubled, fixed):
         current = tasks[0]
         modes = modes_for(args, current)
         for stale in stale_plans(current):
