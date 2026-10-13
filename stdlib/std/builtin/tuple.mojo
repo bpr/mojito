@@ -19,6 +19,7 @@ struct Tuple[*Ts: Movable](
     ImplicitlyCopyable where conforms_to(Ts.values, ImplicitlyCopyable),
     Deinitable where conforms_to(Ts.values, Deinitable),
     Movable,
+    RegisterPassable where conforms_to(Ts.values, RegisterPassable),
     Sized,
     Writable where conforms_to(Ts.values, Writable),
 ):

@@ -292,7 +292,9 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   bind_parameter, check_method_body}`).
 - `checker/traits.rs` owns trait/struct declaration checking, conformance
   (nominal and built-in), and type-capability queries (`is_deinitable`,
-  `is_movable`, `is_copyable`, …). A type parameter is movable or
+  `is_movable`, `is_copyable`, …, and the three-valued
+  `register_passability`, which `conforms_to(_, RegisterPassable)` and a
+  result origin read). A type parameter is movable or
   destructible only where its bounds prove it (`bounds_prove_movable`,
   `bounds_prove_deinitable`), and `overload_support::builtin_trait_implies`
   is the one table of which built-in trait proves which, for an assumed
@@ -340,7 +342,10 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   lowering (including the shared `SigOrigin` instantiation helpers
   `instantiate_sig_origin`/`instantiate_bound_origin` used by the iteration
   protocol and delegated-call expression-origin resolution,
-  `lower_ref_sig_resolved`), and cross-call transfer effects (`abstract_body_origin`,
+  `lower_ref_sig_resolved`; `origins/sig.rs`'s `check_result_origins` is the
+  one rule for which parameter or receiver a result may name the origin
+  of, called once per struct method, trait requirement, and `def`
+  signature), and cross-call transfer effects (`abstract_body_origin`,
   `record_transfer_effect`, which a symbolic outward store reaches as a
   latent effect the frame keeps unpublished (`TransferFrame::record`), the
   `apply_transfer_effects` callable-keyed wrapper

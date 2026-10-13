@@ -18,6 +18,19 @@ pub(super) enum ConsumeKind {
     Deinit,
 }
 
+/// Whether a type conforms to `RegisterPassable`, as a result origin asks
+/// it: a register-passed value has no memory a result could borrow.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum RegisterPassability {
+    /// It conforms, under every binding of what it names.
+    Proven,
+    /// It might conform: a type parameter, an associated or abstract
+    /// `Self` type, or a struct whose declared conformance is conditional.
+    Possible,
+    /// It does not conform.
+    Excluded,
+}
+
 impl Checker {
     /// A trait name is valid if it is a built-in, a user trait defined so
     /// far, or a same-module trait predeclared ahead of the struct shells.
@@ -207,6 +220,12 @@ impl Checker {
                 })();
                 self.tparams.pop();
                 let (all_types, ret, error) = signature?;
+                self.check_result_origins(
+                    m.ret.as_ref(),
+                    &m.params,
+                    &all_types,
+                    Some((m.self_convention, &Ty::self_type())),
+                )?;
                 let collectors = Collectors::of(&m.params, m.keyword_only, &all_types);
                 if let Some(index) = collectors.kw_variadic_index {
                     self.kwargs_collector_ty(
@@ -739,6 +758,15 @@ impl Checker {
                     let signature = (|| {
                         let all_types = self.param_tys(&m.params)?;
                         let sig = self.method_sig(m, method_decls, &all_types)?;
+                        if !name.contains('$') && !m.name.contains('$') {
+                            let receiver = self.self_ty.as_ref().filter(|_| m.has_self);
+                            self.check_result_origins(
+                                m.ret.as_ref(),
+                                &m.params,
+                                &all_types,
+                                receiver.map(|ty| (m.self_convention, ty)),
+                            )?;
+                        }
                         Ok::<_, TypeError>((all_types, sig))
                     })();
                     self.assumed_conformances.pop();
@@ -1817,6 +1845,7 @@ impl Checker {
                         || matches!(ty.kind(), TyKind::Struct(name, args)
                             if self.struct_conformance_applies(name, args, tr))
                 }
+                "RegisterPassable" => self.register_passability(ty) == RegisterPassability::Proven,
                 // Layout/backend markers and future operation traits stay shallow.
                 _ => true,
             };
@@ -2542,6 +2571,61 @@ impl Checker {
                 }
                 _ => false,
             }
+    }
+
+    /// Whether `ty` conforms to `RegisterPassable`: a trivially
+    /// register-passable type (whose trait refines it), a struct whose
+    /// declared conformance holds, or a parameter bounded or assumed by it.
+    /// A struct whose conditional conformance does not hold, as upstream
+    /// judges it whether or not its arguments are closed, and any other
+    /// parameter or abstract type, only might.
+    pub(super) fn register_passability(&self, ty: &Ty) -> RegisterPassability {
+        use RegisterPassability::{Excluded, Possible, Proven};
+        if let Some(element) = self.opaque_element(ty) {
+            return self.register_passability(&element);
+        }
+        if self.is_trivial_register_passable(ty) {
+            return Proven;
+        }
+        let proves = |bound: &str| {
+            matches!(bound, "RegisterPassable" | "TrivialRegisterPassable")
+                || self.trait_refines(bound, "RegisterPassable")
+                || self.trait_refines(bound, "TrivialRegisterPassable")
+        };
+        match ty.kind() {
+            TyKind::StringLiteral | TyKind::None => Proven,
+            TyKind::Tuple(elements) => elements.iter().fold(Proven, |joined, element| {
+                match (joined, self.register_passability(element)) {
+                    (Excluded, _) | (_, Excluded) => Excluded,
+                    (Possible, _) | (_, Possible) => Possible,
+                    (Proven, Proven) => Proven,
+                }
+            }),
+            TyKind::Struct(name, args) => {
+                if self.struct_conformance_applies(name, args, "RegisterPassable")
+                    || self.struct_conformance_applies(name, args, "TrivialRegisterPassable")
+                {
+                    return Proven;
+                }
+                let conditional = self.structs.get(name).is_some_and(|info| {
+                    info.conforms.iter().any(|declared| {
+                        proves(declared) && info.conformance_conditions.contains_key(declared)
+                    })
+                });
+                if conditional { Possible } else { Excluded }
+            }
+            TyKind::Param { bounds, .. } => {
+                if bounds.iter().any(|bound| proves(bound))
+                    || self.has_assumed_conformance(ty, "RegisterPassable")
+                {
+                    Proven
+                } else {
+                    Possible
+                }
+            }
+            TyKind::Assoc { .. } | TyKind::SelfType | TyKind::Dependent(_) => Possible,
+            _ => Excluded,
+        }
     }
 
     /// The `IsTrivially{Movable,Copyable,Deinitable}[T]` predicate: the type

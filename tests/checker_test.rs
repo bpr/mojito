@@ -6249,6 +6249,22 @@ fn parameter_rooted_transfers_stay_accepted() {
 }
 
 #[test]
+fn result_names_origin_of_non_register_passable_generic_struct() {
+    // A generic struct that never declares `RegisterPassable` has memory
+    // whatever its arguments, so a result may name the origin of a
+    // non-`ref` parameter or receiver of it, or of a field path under one.
+    ok_std(
+        "@fieldwise_init\nstruct W[T: Copyable & Deinitable](Copyable, Deinitable):\n    var t: Self.T\n\n    def get(self) -> ref[origin_of(self.t)] Self.T:\n        return self.t\n\ndef whole[T: Copyable & Deinitable](mut w: W[T]) -> ref[origin_of(w)] W[T]:\n    return w\n\ndef field[T: Copyable & Deinitable](w: W[T]) -> ref[origin_of(w.t)] T:\n    return w.t\n\ndef main():\n    var w = W(1)\n    print(whole(w).t, w.get())\n",
+    );
+    let TypeError::ReturnedOriginRegisterPassable { place, ty: None } = err_std(
+        "def keep[T: Copyable](mut items: Optional[T]) -> ref[origin_of(items)] Optional[T]:\n    return items\n",
+    ) else {
+        panic!("expected a possibly register-passable result origin");
+    };
+    assert_eq!(place, "items");
+}
+
+#[test]
 fn rejects_bare_move_initializer_parameter() {
     let TypeError::Unsupported(message) = err(
         "struct Buf:\n    var n: Int\n    def __init__(out self, n: Int):\n        self.n = n\n    def __init__(out self, *, move: Self):\n        self.n = move.n\n",

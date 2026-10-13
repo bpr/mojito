@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R672**.
+Next free ID: **R675**.
 
 ## Ordered Work
 
@@ -298,24 +298,35 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R668 A generic return type may name a non-`ref` parameter's
-  origin**
+- [ ] **R672 A reference result through a read parameter is stale on the
+  VM**
 
-  Problem: `def it_of[C: Iterable & Copyable](items: C) ->
-  C.IteratorType[origin_of(items)]` checks and runs, but the pin rejects
-  it: "cannot return 'items's origin, because it might expand to a
-  RegisterPassable type".
-  - The same holds for a `var` or `mut` parameter of a generic type.
-  - The pin accepts the spelling only over a `ref` parameter, as upstream's
-    `iter()` declares it.
-  - The lever: the return-annotation resolution
-    (`resolve_return_annotation`,
-    `crates/mojito-checker/src/checker/type_resolution.rs`) should reject
-    `origin_of(p)` whose parameter is not `ref` and whose type is not proven
-    non-register-passable.
-  - Probe the struct-tail spelling (`-> Span[T, origin_of(items)]`) at the
-    pin too, and fix it in the same session if it diverges the same way.
-  - Found while landing R665 (2026-10-13).
+  Problem: `def field(w: W) -> ref[origin_of(w.t)] Int: return w.t` over a
+  non-register-passable struct `W` stops on the VM with "stale reference to
+  frame 2", where the pin prints the field.
+  - The same holds for `-> ref[origin_of(w)] W[T]` over a read `w: W[T]`.
+  - A `mut` parameter of the same type returns and reads correctly.
+  - The read argument is apparently copied into the callee's frame, so the
+    returned handle roots at a slot the callee drops; the pin borrows the
+    caller's memory.
+  - Found while landing R668 (2026-10-13).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R673 A read register-passable value's origin is accepted outside a
+  result**
+
+  Problem: `def g(items: Int, ref[origin_of(items)] other: Int) -> Int`
+  checks and runs, but the pin rejects it: "value of type 'Int' doesn't
+  have a memory origin in origin specifier".
+  - The pin rejects `origin_of(p)` over a read trivially register-passable
+    `p` in any origin position, a body-local annotation included; a result
+    is already judged by `Checker::check_result_origins`
+    (`crates/mojito-checker/src/checker/origins/sig.rs`).
+  - The lever: judge every origin specifier's `origin_of` place the same
+    way, at `validate_origin_expr` and the body's origin resolution, with
+    `Checker::register_passability`.
+  - Found while landing R668 (2026-10-13).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -629,6 +640,24 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
     pins it.
   - Found while judging variadic elements in argument exclusivity
     (2026-09-29).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R674 A parameter annotation cannot name an earlier parameter's
+  origin**
+
+  Problem: `def f[T: Copyable](items: T, s: Span[Int, origin_of(items)]) ->
+  Int` is rejected with "Undefined variable 'items'", where the pin accepts
+  it.
+  - The same error rejects a named `out` result annotation
+    (`out r: Span[Int, origin_of(items)]`), which the pin rejects for a
+    different reason: "cannot return 'items's origin, because it might
+    expand to a RegisterPassable type".
+  - Parameter annotations resolve before the parameters are in scope.
+  - Once the names resolve, `Checker::check_result_origins`
+    (`crates/mojito-checker/src/checker/origins/sig.rs`) already judges the
+    named result, so the `out` case should then report the pin's text.
+  - Found while landing R668 (2026-10-13).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

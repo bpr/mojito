@@ -2521,6 +2521,9 @@ impl Checker {
                 (None, Some(result)) => self.ty_from_anno(&result.ty)?,
                 (None, None) => Ty::none(),
             };
+            if !name.contains('$') {
+                self.check_result_origins(ret_anno.as_ref(), params, &param_tys, None)?;
+            }
             Ok::<_, TypeError>((param_tys, ret_ty))
         })();
         let (param_tys, ret_ty) = match signature {

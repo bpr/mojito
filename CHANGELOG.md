@@ -8,6 +8,15 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A result names `origin_of(p)` only when `p` has memory to borrow, as the
+  pin judges it (R668): a `ref` parameter or receiver always, any other
+  only when its type is proven not `RegisterPassable`. A generic, an
+  associated type, a trait's `Self`, or a conditionally register-passable
+  struct is rejected with "might expand to a RegisterPassable type", a
+  proven one with "has RegisterPassable type", and a read trivially
+  register-passable one with "doesn't have a memory origin". The bundled
+  `Optional` and `Tuple` declare upstream's conditional `RegisterPassable`,
+  and `conforms_to(_, RegisterPassable)` is no longer answered shallowly.
 - A generic iterable's explicit `items.__iter__()` result answers its
   `Iterator` bound's methods (R665): a method on an associated projection
   resolves through the projection's declared bound, the result names

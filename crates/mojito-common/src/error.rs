@@ -206,6 +206,17 @@ pub enum TypeError {
     /// that origin itself (a field of the declared owner, an element of the
     /// declared container).
     ReturnOriginIncompatible,
+    /// A result names the origin of a parameter or receiver whose type is,
+    /// or might expand to, `RegisterPassable` (`ty` is `None` for the
+    /// latter): a register-passed value has no memory to borrow.
+    ReturnedOriginRegisterPassable {
+        place: String,
+        ty: Option<String>,
+    },
+    /// An origin specifier names a read value of a register-passable type.
+    NoMemoryOrigin {
+        ty: String,
+    },
     /// A store into storage that outlives the frame carries a loan rooted in
     /// frame-local storage — the store-outward twin of the return escape.
     StoredReferenceEscapesOrigin,
@@ -686,6 +697,27 @@ impl fmt::Display for TypeError {
                 write!(
                     f,
                     "cannot return reference with incompatible origin: the returned place lies within the declared origin but is not that origin"
+                )
+            }
+            Self::ReturnedOriginRegisterPassable {
+                place,
+                ty: Some(ty),
+            } => {
+                write!(
+                    f,
+                    "cannot return '{place}'s origin, because it has RegisterPassable type '{ty}'"
+                )
+            }
+            Self::ReturnedOriginRegisterPassable { place, ty: None } => {
+                write!(
+                    f,
+                    "cannot return '{place}'s origin, because it might expand to a RegisterPassable type"
+                )
+            }
+            Self::NoMemoryOrigin { ty } => {
+                write!(
+                    f,
+                    "value of type '{ty}' doesn't have a memory origin in origin specifier"
                 )
             }
             Self::TransferEffectDivergence { rounds, callable } => {

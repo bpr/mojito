@@ -358,6 +358,68 @@ pub(in crate::checker) fn callable_origin_signature(
 }
 
 impl Checker {
+    /// Reject a result that names the origin of a value with no memory to
+    /// borrow, as upstream does: every `origin_of(p)` in the result
+    /// annotation (`ret`, else the named `out` result's) judges its root `p`
+    /// — a parameter of `params`, typed by `param_tys`, or the `receiver` —
+    /// by convention and type. A `ref` place always has memory. Any other
+    /// may not name a type that is, or might expand to, `RegisterPassable`,
+    /// and a read trivially register-passable one has no memory origin at
+    /// all. A root the
+    /// signature cannot resolve is left to origin lowering.
+    pub(in crate::checker) fn check_result_origins(
+        &self,
+        ret: Option<&SourceType>,
+        params: &[FnParam],
+        param_tys: &[Ty],
+        receiver: Option<(Option<ArgConvention>, &Ty)>,
+    ) -> Result<(), TypeError> {
+        use super::traits::RegisterPassability;
+        let Some(annotation) =
+            ret.or_else(|| mojito_ast::ast::named_result(params).map(|result| &result.ty))
+        else {
+            return Ok(());
+        };
+        let mut roots = Vec::new();
+        result_origin_roots(annotation, &mut roots);
+        for root in roots {
+            let (convention, ty) = if root == "self" {
+                match receiver {
+                    Some(receiver) => receiver,
+                    None => continue,
+                }
+            } else {
+                match params.iter().position(|param| param.name == root) {
+                    Some(index) if index < param_tys.len() => {
+                        (params[index].convention, &param_tys[index])
+                    }
+                    _ => continue,
+                }
+            };
+            if matches!(convention, Some(ArgConvention::Ref | ArgConvention::Out)) {
+                continue;
+            }
+            let read = matches!(convention, None | Some(ArgConvention::Imm));
+            let place = root.to_string();
+            match self.register_passability(ty) {
+                RegisterPassability::Excluded => {}
+                RegisterPassability::Possible => {
+                    return Err(TypeError::ReturnedOriginRegisterPassable { place, ty: None });
+                }
+                RegisterPassability::Proven if read && self.is_trivial_register_passable(ty) => {
+                    return Err(TypeError::NoMemoryOrigin { ty: ty.to_string() });
+                }
+                RegisterPassability::Proven => {
+                    return Err(TypeError::ReturnedOriginRegisterPassable {
+                        place,
+                        ty: Some(ty.to_string()),
+                    });
+                }
+            }
+        }
+        Ok(())
+    }
+
     /// The origin slots a struct-typed return annotation binds to the
     /// callee's places (`-> P[origin_of(xs)]`, `-> Wrap[origin_of(self.xs)]`),
     /// one [`ViewReturnOrigin`] per resolvable slot. Each slot's argument
@@ -705,4 +767,71 @@ pub(in crate::checker) fn sig_origin_for_binder(
         [single] => single.clone(),
         _ => SigOrigin::union(members),
     })
+}
+
+/// The root of every `origin_of(...)` place a result annotation names, in
+/// source order: in a `ref [...]` clause, in a struct or associated-type
+/// application's arguments, at any depth. A function type's own origins
+/// are its contract's, not the result's.
+fn result_origin_roots<'a>(annotation: &'a SourceType, roots: &mut Vec<&'a str>) {
+    fn argument_roots<'a>(argument: &'a mojito_ast::ast::ParamArg, roots: &mut Vec<&'a str>) {
+        match argument {
+            mojito_ast::ast::ParamArg::Type(ty) => result_origin_roots(ty, roots),
+            mojito_ast::ast::ParamArg::Value(expression) => origin_roots(expression, roots),
+            mojito_ast::ast::ParamArg::Named { value, .. } => argument_roots(value, roots),
+        }
+    }
+    match annotation {
+        SourceType::Ref { referent, origin } => {
+            for expression in origin.iter().flatten() {
+                origin_roots(expression, roots);
+            }
+            result_origin_roots(referent, roots);
+        }
+        SourceType::Named(_, arguments) => {
+            for argument in arguments {
+                argument_roots(argument, roots);
+            }
+        }
+        SourceType::Assoc {
+            base,
+            args: arguments,
+            ..
+        } => {
+            result_origin_roots(base, roots);
+            for argument in arguments {
+                argument_roots(argument, roots);
+            }
+        }
+        SourceType::IndexedProjection { base, index } => {
+            result_origin_roots(base, roots);
+            origin_roots(index, roots);
+        }
+        _ => {}
+    }
+}
+
+/// The `origin_of(...)` place roots of one origin expression, under its
+/// immutable cast and interior projections.
+fn origin_roots<'a>(expression: &'a Expr, roots: &mut Vec<&'a str>) {
+    let mut expression = expression;
+    loop {
+        if let Some(Ok(inner)) = immutable_origin_cast(expression) {
+            expression = inner;
+        } else if let Some((base, _)) = interior_origin_syntax(expression) {
+            expression = base;
+        } else if let Some(base) = subtree_origin_syntax(expression) {
+            expression = base;
+        } else {
+            break;
+        }
+    }
+    if let ExprKind::Call { name, args, .. } = &expression.kind
+        && name == "origin_of"
+    {
+        roots.extend(
+            args.iter()
+                .filter_map(|argument| place_path(argument).map(|(root, _)| root)),
+        );
+    }
 }
