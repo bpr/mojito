@@ -8,6 +8,14 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A construction is its `__init__`'s call, as the pin has it (R717):
+  `P(S(1), S(2))` destroys each `S` temporary when the initializer
+  returns instead of leaking it, and `P(s, s)` reads `s` in place instead
+  of copying it and leaking the copies. A raising `__init__` makes the
+  construction a raising call: its result is taken after its argument
+  temporaries die, and using it outside `try` or a `raises` function is
+  rejected. Natively, a construction's read argument is borrowed as a
+  call's is, so it runs no copy.
 - A non-raising call writes its result in place, as the pin does (R714):
   a discarded result (`mk(S(2), S(3))`, `S(1) + S(2)`, `1 + S(18)`, a
   method, function-value, or generic call) and an unused

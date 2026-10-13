@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R721**.
+Next free ID: **R726**.
 
 ## Ordered Work
 
@@ -84,6 +84,20 @@ change that needs a new `MJRT_ABI_VERSION`.
   - The native call lowering builds a fresh collector from the keyword
     overflow, so the forwarded `**` collector lands as one element.
   - Found while landing R551 (2026-10-10).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R725 Natively, a same-arity static overload returning a scalar
+  names an untyped variable**
+
+  Problem: `print(Box[String].pick(4))`, beside `pick(var item: Self.T)
+  -> Self`, stops natively with "unsupported untyped variable `Box`",
+  where the VM and the pin print `40`.
+  - `assets/ok/parametric_static_methods.mojo` hits it, so its
+    `exe-differential` parity row is stale; HEAD before R717 fails the
+    same way.
+  - `Box[String].pick(String("z"))`, the other overload, runs natively.
+  - Found while landing R717 (2026-10-13).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -298,18 +312,16 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R717 A constructor call's read temporaries are never destroyed**
+- [ ] **R721 A constructor call is never alias-checked**
 
-  Problem: `P(S(1), S(2))` over `__init__(out self, x: S, y: S)` prints
-  only `delP 3`, where the pin prints `delP 3`, `del 2`, `del 1`.
-  - `var p = P(S(3), S(4))` and `_ = P(S(5), S(6))` leak their `S`
-    temporaries the same way; the pin prints `delP 7, del 4, del 3` and
-    `del 6, del 5, delP 11`.
-  - A constructor's read arguments get no `$tmp_arg_r` slot
-    (`bind_temporary_argument`), as a plain call's do.
-  - The construction should then bind its result in place
-    (`DefVar::in_place`), as a non-raising call does.
-  - Found while landing R714 (2026-10-13).
+  Problem: `P(s, s)` over `__init__(out self, mut a: S, b: S)` runs,
+  where the pin rejects it: "aliasing values passed mutably to 'a'
+  argument and passed immutably to 'b' argument in 'P' initializer call".
+  - `infer_construction` never calls `check_call_aliasing` or
+    `check_argument_origin_exclusivity`, as `finish_static_call` does.
+  - `record_constructor_call` (`checker/declarations.rs`) is where the
+    checks plug in: every constructor path already runs through it.
+  - Found while landing R717 (2026-10-13).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -324,6 +336,33 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
     drop through the region's cleanup backstop instead.
   - The checker records the dunder's effect at the operator since R714.
   - Found while landing R714 (2026-10-13).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R722 A raising call destroys its read temporaries in creation
+  order when it raises**
+
+  Problem: `P(S(3), S(4), 1)` in a `try`, over a raising `__init__` that
+  raises, prints `del 3`, `del 4`, `caught boom`, where the pin prints
+  `del 4`, `del 3`, `caught boom`.
+  - A raising free call (`mk(S(3), S(4), 1)`) does the same.
+  - On the raise edge the `$tmp_arg_r` slots drop through the region's
+    cleanup backstop, which may share R720's cause; fix them together if
+    so.
+  - Found while landing R717 (2026-10-13).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R723 `T(copy=x)` over a temporary or a last use runs the copy the
+  pin elides**
+
+  Problem: `S(copy=S(1))`, over a copy constructor that adds 100, prints
+  `del 101` and leaks `S(1)`, where the pin prints `del 1`: the temporary
+  is taken, not copied.
+  - `var s = S(2); var d = S(copy=s)` with `s` unused after prints
+    `del 102`, `del 2`, where the pin prints `del 2`.
+  - The path is `Checker::infer_copy_construction`.
+  - Found while landing R717 (2026-10-13).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -1168,6 +1207,20 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
     result (`crates/mojito-checker/src/checker.rs`), which treats the
     `ref` slot as a consuming read.
   - Found while landing R700 (2026-10-13).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R724 `S(copy=s)` over a synthesized copy constructor fails at run
+  time**
+
+  Problem: `var d = S(copy=s)` over a `@fieldwise_init struct S(Copyable,
+  Movable)` with no spelled copy constructor stops with "unsupported
+  feature: vm: struct 'S' has no copy constructor", where the pin prints
+  the copy.
+  - A spelled `__init__(out self, *, copy: Self)` runs.
+  - The explicit `copy=` construction does not reach the synthesized
+    copy the implicit copy path uses.
+  - Found while landing R717 (2026-10-13).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

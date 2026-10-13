@@ -4199,6 +4199,14 @@ current Mojo:
   `ReadTemporaryArgument`, so a `var`/`deinit` slot — which moves the
   temporary into the callee — carries no marker, and MIR never guesses a
   callee's conventions.
+- A construction is its `__init__`'s call, so its arguments bind the same
+  way: `record_constructor_call` (`checker/declarations.rs`) runs every
+  `infer_construction` path through `record_argument_borrows`, so
+  `P(S(1), S(2))` destroys each `S` when `__init__` returns and `P(s, s)`
+  reads `s` in place. A raising `__init__` records the construction's call
+  effect, so it is a raising call: its result is taken after its argument
+  temporaries die, and outside `try` or a `raises` function it is
+  rejected.
 - A struct operator is its dunder's call, so its operands bind the same way
   (`bind_read_temporary`): the checker marks each non-place operand the
   selected dunder reads, the receiver and the argument, a prefix operator's

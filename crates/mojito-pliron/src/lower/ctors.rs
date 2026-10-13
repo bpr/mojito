@@ -74,7 +74,14 @@ impl FnLowering<'_> {
                         continue;
                     }
                     let owned = rest_owned.get(i).copied().unwrap_or(false);
-                    lowered.push(self.arg_value(ctx, *arg, expected, owned, dest)?);
+                    lowered.push(self.place_backed_arg_value(
+                        ctx,
+                        *arg,
+                        expected,
+                        owned,
+                        arg_places.get(i).and_then(Option::as_ref),
+                        dest,
+                    )?);
                 }
             } else {
                 lowered.extend(self.bind_call_slots(

@@ -716,7 +716,12 @@ fn borrowed_operands(
             kwarg_places,
             ..
         } => {
-            let mut borrowed = match declarations.get(&func.0) {
+            // A construction of a struct with one `__init__` names the
+            // struct; its arguments bind by that initializer's conventions.
+            let declaration = declarations
+                .get(&func.0)
+                .or_else(|| declarations.get(&format!("{}.__init__", func.0)));
+            let mut borrowed = match declaration {
                 Some(declaration) if declaration.kw_variadic.is_none() => {
                     borrowed_slots(declaration, args, kwargs)
                 }

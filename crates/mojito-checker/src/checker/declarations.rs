@@ -1776,6 +1776,41 @@ impl Checker {
         }
     }
 
+    /// A construction is its `__init__`'s call: its arguments bind as a
+    /// call's do, and a raising initializer makes it a raising call.
+    fn record_constructor_call(
+        &self,
+        span: &SourceSpan,
+        name: &str,
+        binding: &ConstructorBinding<'_>,
+        args: &[Expr],
+        kwargs: &[mojito_ast::ast::KwArg],
+    ) -> Result<(), TypeError> {
+        let (effective, _) = self.solve_call_origins(
+            binding.slots,
+            binding.conventions,
+            binding.ref_params,
+            None,
+            args,
+            kwargs,
+        )?;
+        self.record_argument_borrows(
+            binding.slots,
+            &effective,
+            binding.collected,
+            args,
+            kwargs,
+            None,
+        );
+        self.record_constructor_reference_borrows(span, binding.ref_params, binding.slots);
+        if binding.raises {
+            let error = binding.error.cloned().unwrap_or_else(Ty::error);
+            self.record_call_effect(span.clone(), error.clone());
+            self.require_error(format!("call to raising constructor '{name}'"), error)?;
+        }
+        Ok(())
+    }
+
     /// Each method parameter default fits its parameter's type and names no
     /// runtime binding.
     fn check_method_defaults(&self, m: &Method) -> Result<(), TypeError> {
@@ -2229,19 +2264,20 @@ impl Checker {
                 // overload selection so MIR does not have to inspect the
                 // constructor declaration (and rejected candidates cannot leak
                 // facts into the selected call).
-                self.solve_call_origins(
-                    &selected.slots,
-                    &selected.conventions,
-                    &selected.ref_params,
-                    None,
+                self.record_constructor_call(
+                    span,
+                    name,
+                    &ConstructorBinding {
+                        slots: &selected.slots,
+                        conventions: &selected.conventions,
+                        ref_params: &selected.ref_params,
+                        collected: selected.read_collected_arguments(),
+                        raises: selected.raises,
+                        error: selected.error.as_ref(),
+                    },
                     args,
                     kwargs,
                 )?;
-                self.record_constructor_reference_borrows(
-                    span,
-                    &selected.ref_params,
-                    &selected.slots,
-                );
                 for (index, slot) in selected.slots.iter().enumerate() {
                     let Some(Some(convention @ (ArgConvention::Var | ArgConvention::Deinit))) =
                         selected.conventions.get(index)
@@ -2398,15 +2434,13 @@ impl Checker {
                     }
                 }
                 let slots = (0..args.len()).map(ArgSlot::Positional).collect::<Vec<_>>();
-                self.solve_call_origins(
-                    &slots,
-                    &sig.conventions,
-                    &sig.ref_params,
-                    None,
+                self.record_constructor_call(
+                    span,
+                    name,
+                    &ConstructorBinding::of_signature(sig, &slots, &[]),
                     args,
                     kwargs,
                 )?;
-                self.record_constructor_reference_borrows(span, &sig.ref_params, &slots);
                 return Ok(self.constructed_type(
                     name,
                     tyargs,
@@ -2753,15 +2787,13 @@ impl Checker {
                         .chain(constructor_own_arguments(&sig, &subst))
                         .collect(),
                 );
-                self.solve_call_origins(
-                    &slots,
-                    &sig.conventions,
-                    &sig.ref_params,
-                    None,
+                self.record_constructor_call(
+                    span,
+                    name,
+                    &ConstructorBinding::of_signature(&sig, &slots, &overflow),
                     args,
                     kwargs,
                 )?;
-                self.record_constructor_reference_borrows(span, &sig.ref_params, &slots);
                 return Ok(self.constructed_type(
                     name,
                     tyargs,
@@ -3925,4 +3957,35 @@ struct GenericConstructorMatch {
     overflow: Vec<usize>,
     subst: TySubst,
     pointer_origins: ConstructorOriginBindings,
+}
+
+/// How a selected `__init__` binds a construction's arguments, as
+/// [`Checker::record_constructor_call`] records them.
+struct ConstructorBinding<'a> {
+    slots: &'a [ArgSlot],
+    conventions: &'a [Option<ArgConvention>],
+    ref_params: &'a [Option<mojito_types::origin::RefSig>],
+    /// The positions a read `*args` collector gathers.
+    collected: &'a [usize],
+    raises: bool,
+    error: Option<&'a Ty>,
+}
+
+impl<'a> ConstructorBinding<'a> {
+    /// `overflow` holds the positions the signature's `*args` collector
+    /// gathers; only a read collector borrows them.
+    fn of_signature(sig: &'a MethodSig, slots: &'a [ArgSlot], overflow: &'a [usize]) -> Self {
+        let collected = match sig.variadic_convention {
+            None | Some(ArgConvention::Imm) => overflow,
+            _ => &[],
+        };
+        Self {
+            slots,
+            conventions: &sig.conventions,
+            ref_params: &sig.ref_params,
+            collected,
+            raises: sig.raises,
+            error: sig.error.as_ref(),
+        }
+    }
 }

@@ -643,9 +643,11 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   parameters bind their arguments (`record_argument_borrows`: the borrowable
   place reads and the owned temporaries the caller destroys after the call,
   `read_temporary_arguments`; the arguments a read `*args` collector gathers
-  bind the same way). `Checker::designates_place` is the semantic place test:
-  a syntactic place other than a subscript whose selected getter returns by
-  value.
+  bind the same way; a construction binds through it from
+  `Checker::record_constructor_call` in `checker/declarations.rs`, which
+  also makes a raising `__init__` a raising call).
+  `Checker::designates_place` is the semantic place test: a syntactic place
+  other than a subscript whose selected getter returns by value.
 - `checker/generics.rs` owns unification, substitution, and callable/method
   specialization; `solve_value_args` solves value binders from argument
   types, a vector's width slot solving only a binder declared `SIMDLength`

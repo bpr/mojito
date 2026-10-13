@@ -72,6 +72,40 @@ fn dead_declaration_of_a_call_result_dies_before_its_temporaries() {
 }
 
 #[test]
+fn constructor_read_temporaries_die_when_the_initializer_returns() {
+    // A construction is its `__init__`'s call: the caller destroys its read
+    // temporaries once the initializer returns, after an unused `var` result
+    // written in place and before a `_ =` store, as the pin orders them.
+    let src = "@fieldwise_init\nstruct S(Copyable, Movable):\n    var v: Int\n    def __init__(out self, *, copy: Self):\n        self.v = copy.v + 100\n        print(\"copy\", copy.v)\n    def __deinit__(deinit self):\n        print(\"del\", self.v)\n\nstruct P(Movable):\n    var t: Int\n    def __init__(out self, x: S, y: S):\n        self.t = x.v + y.v\n    def __deinit__(deinit self):\n        print(\"delP\", self.t)\n\nstruct V(Movable):\n    var n: Int\n    def __init__(out self, *xs: S):\n        self.n = len(xs)\n    def __deinit__(deinit self):\n        print(\"delV\", self.n)\n\ndef take(p: P):\n    print(\"take\", p.t)\n\ndef main():\n    print(P(S(1), S(2)).t)\n    var p = P(S(3), S(4))\n    _ = P(S(5), S(6))\n    var z = P(y=S(9), x=S(10))\n    take(P(S(11), S(12)))\n    var v = V(S(18), S(19))\n";
+    assert_eq!(
+        vm(src),
+        "del 2\ndel 1\n3\ndelP 3\ndelP 7\ndel 4\ndel 3\ndel 6\ndel 5\ndelP 11\ndelP 19\ndel 10\ndel 9\ndel 12\ndel 11\ntake 23\ndelP 23\ndelV 2\ndel 19\ndel 18\n"
+    );
+}
+
+#[test]
+fn constructor_reads_a_place_argument_without_copying() {
+    // `P(s, s)` borrows `s` at both read parameters, as the pin does: no
+    // copy runs, so none leaks.
+    let src = "@fieldwise_init\nstruct S(Copyable, Movable):\n    var v: Int\n    def __init__(out self, *, copy: Self):\n        self.v = copy.v + 100\n        print(\"copy\", copy.v)\n    def __deinit__(deinit self):\n        print(\"del\", self.v)\n\nstruct P(Movable):\n    var t: Int\n    def __init__(out self, x: S, y: S):\n        self.t = x.v + y.v\n    def __deinit__(deinit self):\n        print(\"delP\", self.t)\n\ndef main():\n    var s = S(13)\n    var q = P(s, s)\n";
+    assert_eq!(vm(src), "delP 26\ndel 13\n");
+}
+
+#[test]
+fn raising_constructor_result_is_taken_after_its_temporaries() {
+    // A raising `__init__` makes its construction a raising call, whose
+    // result is bound after its argument temporaries die.
+    let src = "@fieldwise_init\nstruct S(Copyable, Movable):\n    var v: Int\n    def __init__(out self, *, copy: Self):\n        self.v = copy.v + 100\n        print(\"copy\", copy.v)\n    def __deinit__(deinit self):\n        print(\"del\", self.v)\n\nstruct P(Movable):\n    var t: Int\n    def __init__(out self, x: S, y: S, z: Int) raises:\n        self.t = x.v + y.v + z\n    def __deinit__(deinit self):\n        print(\"delP\", self.t)\n\ndef main() raises:\n    var r = P(S(20), S(21), 1)\n";
+    assert_eq!(vm(src), "del 21\ndel 20\ndelP 42\n");
+}
+
+#[test]
+fn raising_constructor_outside_a_raising_context_is_rejected() {
+    let src = "@fieldwise_init\nstruct S(Copyable, Movable):\n    var v: Int\n    def __init__(out self, *, copy: Self):\n        self.v = copy.v + 100\n        print(\"copy\", copy.v)\n    def __deinit__(deinit self):\n        print(\"del\", self.v)\n\nstruct P(Movable):\n    var t: Int\n    def __init__(out self, x: S, y: S, z: Int) raises:\n        self.t = x.v + y.v + z\n    def __deinit__(deinit self):\n        print(\"delP\", self.t)\n\ndef f():\n    var r = P(S(1), S(2), 1)\n\ndef main():\n    f()\n";
+    assert!(compile_error(src).contains("requires a surrounding 'try' block"));
+}
+
+#[test]
 fn trait_bound_call_loads_by_value_argument_before_the_call() {
     // `s.sh(b.t)` through the bound passes `b.t` by the requirement's `read`
     // `Int` parameter, so `b` dies at call setup, as the pin orders it; the
