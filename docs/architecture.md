@@ -4151,6 +4151,9 @@ current Mojo:
   result of a non-consuming `__enter__`) is an owned temporary: MIR lowering
   binds it to a hidden `$discard_r` slot that is dead at its definition, so
   its `DropVar` follows the call immediately — before the next statement.
+  A `_ = e` statement is the same discard: HIR binds its value to a fresh
+  per-statement `$discard_s` slot, typed by that value alone and dead at its
+  definition, so `_` never names a function-wide local.
 - An owning temporary receiver of a method (`B(3).show()`, `print(B(2).get())`)
   is bound to a hidden `$tmp_recv_r` slot whose place the call retains, as a
   named receiver's is (`lower_method_receiver`): the call is the slot's last

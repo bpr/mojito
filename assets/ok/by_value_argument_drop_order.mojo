@@ -139,13 +139,10 @@ def subscripts():
     print(g[i.t, e.t : h.t])
 
 
-def field_owners():
+def owners_and_fields():
     var p = P(W(21), 3)
     var q = P(W(22), 4)
     _ = two(p.n, q.n)
-
-
-def destroy_pair():
     var pair = Pair()
     _ = pair^
 
@@ -163,7 +160,6 @@ def main():
     operators_and_calls()
     callees()
     subscripts()
-    field_owners()
-    destroy_pair()
+    owners_and_fields()
     by_address()
     print("end")

@@ -536,3 +536,4 @@ format-literal-template-runtime	mojito-only	conformance/fixtures/format_literal_
 string-format-declared	run	assets/ok/string_format_declared.mojo
 static-method-pack-spread	run	assets/ok/static_method_pack_spread.mojo
 by-value-argument-drop-order	run	assets/ok/by_value_argument_drop_order.mojo
+discard-slots-typed-per-statement	run	assets/ok/discard_slots_typed_per_statement.mojo

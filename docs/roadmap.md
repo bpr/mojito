@@ -87,26 +87,6 @@ change that needs a new `MJRT_ABI_VERSION`.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R683 Natively, a field argument beside a destructor's call fails
-  IR verification**
-
-  Problem: a function running `_ = two(p.n, q.n)` and then
-  `var pair = Pair(); _ = pair^` stops natively with "Number or types of
-  operands does not match intrinsic type", where the VM and the pin run
-  it.
-  - `Pair.__deinit__` calls `two(self.a.t, self.b.t)`, and `p`, `q` own a
-    `W` beside their `n`.
-  - Either half alone compiles: dropping the `Pair` lines or the `two`
-    line passes.
-  - The failure predates R675: the old drop order fails the same way.
-  - Probe: `conformance/probes/native_field_argument_beside_deinit_call.mojo`.
-    When it compiles, fold it into
-    `assets/ok/by_value_argument_drop_order.mojo`, which keeps the two
-    halves in separate functions for now.
-  - Found while landing R675 (2026-10-13).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R434 Natively, a struct without its own `write_repr_to` cannot be
   formatted through a pack**
 

@@ -443,7 +443,7 @@ fn collect_function_implicit_names(
     for statement in body.iter().filter_map(|id| checked.statement(*id)) {
         let bodies: Vec<&[CheckedStmtId]> = match &statement.op {
             CheckedStmtOp::Assign { name, .. } => {
-                if !explicit.contains(name) {
+                if name != "_" && !explicit.contains(name) {
                     names.insert(name.clone());
                 }
                 Vec::new()
@@ -1126,6 +1126,17 @@ impl Lower {
                     expressions: vec![value],
                     declared: Some(runtime),
                 }));
+            }
+            // `_` discards: each statement binds a fresh unnamed slot.
+            CheckedStmtOp::Assign { name, value } if name == "_" => {
+                let value = self.expr(*value);
+                let dest = self.var(&format!("$discard_s{}", self.vars.len()));
+                self.push(HirInstr::Bind {
+                    dest,
+                    expr: value,
+                    binding_ty: None,
+                    binding: s.binding,
+                });
             }
             CheckedStmtOp::Assign { name, value } => {
                 let value = self.expr(*value);

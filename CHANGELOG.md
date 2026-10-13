@@ -8,6 +8,11 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- Each `_ = e` statement owns its own discard slot (R683): two discards in
+  one function no longer share one slot typed by the last of them, so
+  natively `_ = two(p.n, q.n)` beside `_ = pair^` no longer fails LLVM
+  verification, and `_ = pair^` followed by `_ = 5` runs `Pair`'s
+  destructor instead of silently skipping it.
 - Values whose last use is the same call are destroyed in the pin's order
   (R675): a scalar read passed by value, to a concrete register-passable
   `read` or `var` parameter, a built-in operator, or a slice bound, is

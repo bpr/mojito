@@ -663,3 +663,32 @@ def outer[n: Int]():
         0
     );
 }
+
+/// The `Bind` destinations of every block, in graph order.
+fn bind_dests(cfg: &Cfg) -> Vec<mojito::hir::VarId> {
+    cfg.g
+        .node_weights()
+        .flat_map(|block| &block.instrs)
+        .filter_map(|instruction| match instruction {
+            mojito::hir::HirInstr::Bind { dest, .. } => Some(*dest),
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn discard_assignments_bind_distinct_slots() {
+    let cfg = checked_function_cfg("def f():\n    _ = 1\n    _ = \"s\"\n", "f");
+    let dests = bind_dests(&cfg);
+    assert_eq!(dests.len(), 2);
+    assert_ne!(dests[0], dests[1]);
+    assert!(!cfg.vars.iter().any(|name| name == "_"));
+}
+
+#[test]
+fn named_local_rebinds_one_slot() {
+    let cfg = checked_function_cfg("def f():\n    var x = 1\n    x = 2\n", "f");
+    let dests = bind_dests(&cfg);
+    assert_eq!(dests.len(), 2);
+    assert_eq!(dests[0], dests[1]);
+}

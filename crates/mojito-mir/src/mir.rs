@@ -2446,6 +2446,7 @@ fn reassigned_names(
             return;
         };
         match &node.op {
+            CheckedStmtOp::Assign { name, .. } if name == "_" => {}
             CheckedStmtOp::VarDecl { name, .. }
             | CheckedStmtOp::Assign { name, .. }
             | CheckedStmtOp::Comptime { name, .. } => bump(counts, name),
