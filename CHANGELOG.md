@@ -8,6 +8,12 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- MIR holds no syntax rebuilder or address-keyed fact index (R649): the
+  scaffolding R646 listed was deleted as R647, R652, R653, and R648 moved
+  each lowering onto node handles. A lifted thunk's prologue still
+  rebuilds its bindings' statements (R655), and a binder scan still walks
+  annotation syntax (R656). No program's output or MIR changes.
+
 - MIR lowers a straight-line statement from its checked node (R648): the
   op alone decides the lowering, and each operand is the handle of the
   statement's matching HIR expression, a subscript store's slice bounds and

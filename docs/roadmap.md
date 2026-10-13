@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R655**.
+Next free ID: **R657**.
 
 ## Ordered Work
 
@@ -4821,20 +4821,37 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R649 MIR keeps the syntax rebuilder and the address-keyed fact
-  index**
+- [ ] **R655 A lifted thunk's prologue is rebuilt as syntax**
 
-  Once nothing in MIR lowers syntax, the scaffolding that serves it is
-  dead weight.
-  - Delete `ExprFacts`, `Flatten::{active_semantics, facts}`, R646's
-    bridges, `index_hir_expression`, `expression_children`,
-    `statement_expression_roots`, `hir_syntax`, `hir_statement_syntax`,
-    `CheckedTables::syntax_of_spelled`, and `param_arg_syntax`.
-  - Done when none of those remains, `rg 'ExprKind::'
-    crates/mojito-mir/src` finds only R638's and R644's sites, and the
-    probe fixtures' MIR and output are unchanged on both backends.
-  - Plan: `R623-hir-and-mir-keep-transitional-syntax-plan.md`, slice 7.
-  - Depends on R648.
+  `thunk_prologue` (`mir.rs`) rebuilds the evaluated `comptime` bindings a
+  lifted thunk reads with `CheckedTables::statement_syntax_of`, and
+  `lower_fn_nested` hands them to HIR and nested-def discovery as
+  `&[Stmt]`.
+  - Upstream's thunk region holds the bindings' ops; the fix hands
+    `Cfg::build_checked_thunk` the bindings' statement ids, which R629's
+    id-taking builders and R643's id walk for nested defs make possible.
+  - With R650's `installed`, this is `statement_syntax_of`'s last caller,
+    and `CheckedTables::syntax_of` and `param_arg_syntax` die with it.
+  - Done when `mir.rs` names no `statement_syntax_of`, and the probe
+    fixtures' MIR and output are unchanged.
+  - Found while landing R649 (2026-10-13).
+  - Depends on R629, R643.
+  - Model: Opus, Not Planned.
+
+- [ ] **R656 MIR finds a binder's name in annotation syntax**
+
+  `named_by`'s `Names` visitor (`mir.rs`) walks the `ast::Type`s that
+  `CheckedOp::TypeValue`, `CheckedParamArg::Type`, a `CheckedDef`'s
+  signature, and a `VarDecl`'s annotation hold as written, matching
+  `ExprKind::{Identifier, Call}` inside them.
+  - Upstream reads a resolved type attribute, whose parameter references
+    name their binders directly.
+  - R628 covers the ops; a def's signature and a `VarDecl`'s annotation
+    are statement fields it does not name.
+  - Done when `rg 'ExprKind::' crates/mojito-mir/src/mir.rs` finds only
+    R644's `value_binder_annotation`.
+  - Found while landing R649 (2026-10-13).
+  - Depends on R628.
   - Model: Opus, Not Planned.
 
 - [ ] **R650 A package unit's statements are rebuilt as syntax**
