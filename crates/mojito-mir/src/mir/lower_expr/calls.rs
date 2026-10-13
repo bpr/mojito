@@ -3,6 +3,7 @@
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
+use mojito_checked::checked::CheckedOp;
 use mojito_types::types::TyKind;
 
 /// The argument position of a call's pack spread (`f(*a)`), the slot the
@@ -137,7 +138,8 @@ impl Flatten<'_> {
     }
 
     /// Lower the bare element-call spelling (`objs[0](3)`, `a.b[i](x)`,
-    /// `grid[i, j](x)`): read the element through the checker-selected
+    /// `grid[i, j](x)`), given its lowered receiver and the receiver's
+    /// place: read the element through the checker-selected
     /// `__getitem__` contract, then dispatch the element value through the
     /// shared indirect-call emission. The receiver's call-span invalidations
     /// fire before any reference materialization so a generation-replacing
@@ -146,7 +148,7 @@ impl Flatten<'_> {
     pub(super) fn lower_element_invocation(
         &mut self,
         e: &Expr,
-        receiver: &Expr,
+        (base, base_place): (Reg, Option<MirPlace>),
         plan: mojito_checked::checked::CheckedElementInvocation,
         // Original checked-tree nodes: MIR fact lookup is pointer-keyed, so a
         // cloned index subtree would lower without its recorded facts (caller
@@ -155,7 +157,6 @@ impl Flatten<'_> {
         args: &[Expr],
         kwargs: &[mojito_ast::ast::KwArg],
     ) -> Reg {
-        let (base, base_place) = self.lower_call_receiver(receiver);
         // The getter's reference designates storage inside the receiver, so
         // the receiver's root owns a loan the checked origin cannot name.
         let receiver_root = base_place.as_ref().map(|place| place.root);
@@ -409,13 +410,14 @@ impl Flatten<'_> {
             .iter()
             .chain(kwargs.iter().map(|argument| &argument.value))
         {
-            let expression = match &expression.kind {
-                ExprKind::Named { value, .. } => value.as_ref(),
+            let expression = match (&expression.kind, self.op_of(expression)) {
+                (ExprKind::Named { value, .. }, Some(CheckedOp::Named { .. })) => value.as_ref(),
                 _ => expression,
             };
             // A closure argument is either a binding naming a nested def or a
             // lambda expression materialized in place.
-            let (ExprKind::Identifier(_) | ExprKind::Lambda { .. }) = &expression.kind else {
+            let Some(CheckedOp::Identifier(_) | CheckedOp::Lambda { .. }) = self.op_of(expression)
+            else {
                 continue;
             };
             let Some(info) = self.nested_info(expression) else {
@@ -591,6 +593,27 @@ impl Flatten<'_> {
 
     /// Emit a `Const` writing a fresh register.
     pub(in crate::mir) fn constant(&mut self, e: &Expr, k: Const) -> Reg {
+        let function_ty = self.checked_ty(e);
+        self.constant_at(span(e), function_ty, k)
+    }
+
+    /// Emit the `Const` literal node `node` denotes.
+    pub(in crate::mir) fn literal(
+        &mut self,
+        node: &mojito_checked::checked::CheckedExpr,
+        k: Const,
+    ) -> Reg {
+        self.constant_at(node.location(), node.ty.clone(), k)
+    }
+
+    /// Emit a `Const` writing a fresh register at `location`; a function
+    /// constant takes `function_ty`, its expression's checked type.
+    pub(in crate::mir) fn constant_at(
+        &mut self,
+        location: SourceSpan,
+        function_ty: Option<Ty>,
+        k: Const,
+    ) -> Reg {
         let constant_ty = match &k {
             Const::Int(_) => Some(Ty::int()),
             Const::Float(_) => Some(Ty::float64()),
@@ -600,15 +623,15 @@ impl Flatten<'_> {
             Const::Str(_) => Some(Ty::string_literal()),
             Const::None => Some(Ty::none()),
             Const::Dtype(_) => Some(Ty::dtype()),
-            Const::Function(_) => self.checked_ty(e),
+            Const::Function(_) => function_ty,
             Const::Param(value) => value.meta().as_value().cloned(),
             Const::Value(value) => mojito_types::param_expr::MetaTy::of_value(value)
                 .as_value()
                 .cloned(),
         };
         let d = match constant_ty {
-            Some(ty) => self.fresh_typed(span(e), None, ty),
-            None => self.fresh(span(e), None),
+            Some(ty) => self.fresh_typed(location, None, ty),
+            None => self.fresh(location, None),
         };
         self.emit(MirInstr::Const { dest: d, k });
         d

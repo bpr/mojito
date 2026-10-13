@@ -82,29 +82,28 @@ impl Flatten<'_> {
     /// application that parses as a value subscript over such a name
     /// (`Box[String]`). The bracket content is a compile-time argument the
     /// checker already resolved into its symbol selection — never lowered.
-    pub(super) fn type_receiver_name<'e>(&self, object: &'e Expr) -> Option<&'e str> {
+    pub(super) fn type_receiver_name(&self, object: &Expr) -> Option<String> {
         // A value binder of the enclosing declaration (`dt.is_integral()` in
         // a `DType`-keyed body) is a value, read through its slot, and so is
         // a name the check bound (`lane.is_floating_point()` over `comptime
         // lane = dt`, which a lifted thunk reads as the expression it
         // denotes).
-        let not_a_local = |name: &'e String| {
-            (!self.vars.iter().any(|local| local == name)
+        let not_a_local = |name: String| {
+            (!self.vars.contains(&name)
                 && self.checked_owner(object).is_none()
                 && !self
                     .enclosing_binders
                     .values
                     .iter()
                     .any(|(binder, _)| binder.name.as_ref() == name.as_str()))
-            .then_some(name.as_str())
+            .then_some(name)
         };
+        if let Some(name) = self.name_spelled(object) {
+            return not_a_local(name);
+        }
         match &object.kind {
-            ExprKind::TypeApply { name, .. } => Some(name.as_str()),
-            ExprKind::Identifier(name) => not_a_local(name),
-            ExprKind::Index { object: base, .. } => match &base.kind {
-                ExprKind::Identifier(name) => not_a_local(name),
-                _ => None,
-            },
+            ExprKind::TypeApply { name, .. } => Some(name.clone()),
+            ExprKind::Index { object: base, .. } => self.name_spelled(base).and_then(not_a_local),
             _ => None,
         }
     }

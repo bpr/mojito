@@ -42,7 +42,7 @@ application is typed as a parameter list, so `XS[0]` is a `ListGet` over
 it). A body's read of the constant is a `SemanticAdjustment::ParamValue`
 fact (`Checker::module_constant_value`) lowered as `Const::Param`
 (`identifier_read`; a receiver or place position materializes it into a
-hidden slot, `expression_place_root`, `reference_handle`,
+hidden slot, `name_place_root`, `reference_handle`,
 `lower_call_receiver`), the toplevel lowers no `comptime` declaration, and
 `ComptimeThunks::request_applications` lifts the module-scope thunks from
 the declarations alone. Every display constant, a dictionary or set one

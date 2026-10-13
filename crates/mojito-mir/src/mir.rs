@@ -2079,6 +2079,72 @@ fn thunk_prologue(
     statements
 }
 
+/// The call the check selected for an expression, among the expression's
+/// `adjustments`.
+fn selected_call(
+    adjustments: &[mojito_checked::checked::SemanticAdjustment],
+) -> Option<mojito_checked::checked::CheckedCallContract> {
+    adjustments.iter().find_map(|adjustment| match adjustment {
+        mojito_checked::checked::SemanticAdjustment::SelectedCall(contract) => {
+            Some((**contract).clone())
+        }
+        _ => None,
+    })
+}
+
+/// The function an expression names, among its `adjustments`: its selected
+/// call's target, else the callable the check resolved it to.
+fn callable_target(adjustments: &[mojito_checked::checked::SemanticAdjustment]) -> Option<String> {
+    selected_call(adjustments)
+        .map(|contract| contract.target)
+        .or_else(|| {
+            adjustments.iter().find_map(|adjustment| match adjustment {
+                mojito_checked::checked::SemanticAdjustment::ResolveCallable(target) => {
+                    Some(target.clone())
+                }
+                _ => None,
+            })
+        })
+}
+
+/// The parameter value the check recorded for an expression read as a
+/// runtime value, among the expression's `adjustments`.
+fn recorded_param_value(
+    adjustments: &[mojito_checked::checked::SemanticAdjustment],
+) -> Option<ParamExpr> {
+    adjustments.iter().find_map(|adjustment| match adjustment {
+        mojito_checked::checked::SemanticAdjustment::ParamValue { value, .. } => {
+            Some(value.clone())
+        }
+        _ => None,
+    })
+}
+
+/// Whether an expression reads a parameter value the check recorded with no
+/// materialized borrow source of its own (a module constant), among the
+/// expression's `adjustments`.
+fn constant_param_value(adjustments: &[mojito_checked::checked::SemanticAdjustment]) -> bool {
+    adjustments.iter().any(|adjustment| {
+        matches!(
+            adjustment,
+            mojito_checked::checked::SemanticAdjustment::ParamValue {
+                materialized: None,
+                ..
+            }
+        )
+    })
+}
+
+/// Whether checked type `ty` is a pointer whose provenance designates a
+/// single checked place.
+fn origin_bearing_pointer(ty: Option<&Ty>) -> bool {
+    matches!(
+        ty.map(Ty::kind),
+        Some(TyKind::Pointer { origin, .. })
+            if origin.as_origin().is_some() && !origin.multi_element()
+    )
+}
+
 /// The application the check lifted an expression as, among the
 /// expression's `adjustments`.
 fn lifted_application(
@@ -2549,10 +2615,9 @@ impl Flatten<'_> {
     /// is heap storage: it keeps allocation arithmetic and carries its loan
     /// on the binding instead.
     fn is_origin_bearing_pointer(&self, expression: &Expr) -> bool {
-        matches!(
-            self.checked_ty(expression).as_ref().map(Ty::kind),
-            Some(TyKind::Pointer { origin, .. })
-                if origin.as_origin().is_some() && !origin.multi_element()
+        origin_bearing_pointer(
+            self.checked_node(expression)
+                .and_then(|node| node.ty.as_ref()),
         )
     }
 
@@ -2593,10 +2658,8 @@ impl Flatten<'_> {
     /// pointer, or a handle loaded from a field, reads through its runtime
     /// handle instead.
     fn pointer_deref_place(&mut self, object: &Expr) -> Option<MirPlace> {
-        let ExprKind::Identifier(name) = &object.kind else {
-            return None;
-        };
-        if !self.is_origin_bearing_pointer(object) || self.reassigned_names.contains(name) {
+        let name = self.name_spelled(object)?;
+        if !self.is_origin_bearing_pointer(object) || self.reassigned_names.contains(&name) {
             return None;
         }
         // A subtree origin deliberately forgets which exact descendant the
@@ -2608,7 +2671,7 @@ impl Flatten<'_> {
         ) {
             return None;
         }
-        let var = self.expression_var(name, object);
+        let var = self.expression_var(&name, object);
         let loans = self.aggregate_loans.get(&var)?;
         let [loan] = loans.as_slice() else {
             return None;
@@ -2682,18 +2745,8 @@ impl Flatten<'_> {
     }
 
     fn resolved_callable(&self, expression: &Expr) -> Option<String> {
-        self.checked_call_contract(expression)
-            .map(|contract| contract.target)
-            .or_else(|| {
-                self.checked_adjustments(expression)
-                    .into_iter()
-                    .find_map(|adjustment| match adjustment {
-                        mojito_checked::checked::SemanticAdjustment::ResolveCallable(target) => {
-                            Some(target)
-                        }
-                        _ => None,
-                    })
-            })
+        self.checked_node(expression)
+            .and_then(|node| callable_target(&node.adjustments))
     }
 
     fn implicit_conversion(&self, expression: &Expr) -> Option<String> {
@@ -2771,8 +2824,7 @@ impl Flatten<'_> {
         // dependent accessors of a variadic struct index by a checked Int).
         let type_index = match &index.kind {
             ExprKind::TypeValue(_) => true,
-            ExprKind::Identifier(_) => self.checked_ty(index).is_none(),
-            _ => false,
+            _ => self.is_name(index) && self.checked_ty(index).is_none(),
         };
         let contract = self.checked_call_contract(expression)?;
         (type_index
@@ -2964,8 +3016,8 @@ impl Flatten<'_> {
             }
             return result;
         }
-        if let ExprKind::Identifier(name) = &expression.kind {
-            let var = self.expression_var(name, expression);
+        if let Some(name) = self.name_spelled(expression) {
+            let var = self.expression_var(&name, expression);
             if let Some(loan) = self.aliases.get(&var).cloned() {
                 let handle_ty = self
                     .var_types
@@ -3225,24 +3277,30 @@ impl Flatten<'_> {
         )
     }
 
-    fn expression_place_root(&mut self, name: &str, expression: &Expr) -> MirPlace {
+    /// The place name `expression` roots, spelled `name` at runtime: its
+    /// node's binding's slot, else the slot of that spelling.
+    fn name_place_root(&mut self, name: &str, expression: &Expr) -> MirPlace {
         if let Some(place) = self.materialized_parameter_place(expression) {
             return place;
         }
+        let tables = std::sync::Arc::clone(&self.checked);
+        let node = self
+            .node_of(expression)
+            .and_then(|node| tables.expression(node));
+        let binding = node.and_then(|node| node.binding);
         // A module constant read where a place is needed (a method's
         // receiver) is materialized into a hidden slot of its own.
-        if self.constant_param_value(expression)
-            && let Some(value) = self.param_value(expression)
-            && let Some(owner) = self.checked_owner(expression)
+        if let Some(node) = node
+            && constant_param_value(&node.adjustments)
+            && let Some(value) = recorded_param_value(&node.adjustments)
+            && let Some(owner) = binding
         {
             let value = self.param_value_register(expression, value);
             if let (_, Some(place)) = self.materialize_borrow_slot(expression, owner, value) {
                 return place;
             }
         }
-        let checked_var = self
-            .checked_owner(expression)
-            .map(|owner| self.binding_var(owner, name));
+        let checked_var = binding.map(|owner| self.binding_var(owner, name));
         let mut place = if let Some(var) = checked_var {
             self.aliases.get(&var).map_or_else(
                 || MirPlace::root(var, self.var_types.get(&var).cloned()),
@@ -3256,9 +3314,13 @@ impl Flatten<'_> {
             self.resolved_place(name)
         };
         if place.root_ty.is_none() {
-            let ty = self
-                .checked_place_ty(expression)
-                .or_else(|| self.checked_ty(expression));
+            // HIR's place for a name, whose type the place fact is, exists
+            // only where the check bound the name.
+            let ty = node.and_then(|node| {
+                node.binding
+                    .and_then(|_| node.place_ty.clone())
+                    .or_else(|| node.ty.clone())
+            });
             place.root_ty.clone_from(&ty);
             place.ty.clone_from(&ty);
             if let Some(ty) = ty {
@@ -3458,36 +3520,31 @@ impl Flatten<'_> {
         found
     }
 
-    /// The checked bindings `expression` reads by name, under `facts` when
-    /// it is a recorded display's copy and the active facts otherwise.
+    /// The checked bindings the name nodes among `expression`'s node and its
+    /// operands read; its node is found under `facts` when it is a recorded
+    /// display's copy and the active facts otherwise.
     fn bindings_named(
         &self,
         expression: &Expr,
         facts: Option<&HashMap<usize, ExprFacts>>,
     ) -> HashSet<mojito_types::origin::OwnerId> {
-        struct Names(Vec<usize>);
-        impl mojito_ast::visit::Visitor for Names {
-            fn visit_expr(&mut self, expression: &Expr) {
-                if matches!(expression.kind, ExprKind::Identifier(_)) {
-                    self.0.push(std::ptr::from_ref::<Expr>(expression) as usize);
-                }
+        let key = std::ptr::from_ref::<Expr>(expression) as usize;
+        let root = match facts {
+            Some(facts) => facts.get(&key),
+            None => self.facts(expression),
+        };
+        let mut pending: Vec<_> = root.map(|facts| facts.node).into_iter().collect();
+        let mut bindings = HashSet::new();
+        while let Some(id) = pending.pop() {
+            let Some(node) = self.checked.expression(id) else {
+                continue;
+            };
+            if matches!(node.op, mojito_checked::checked::CheckedOp::Identifier(_)) {
+                bindings.extend(node.binding);
             }
+            pending.extend(node.op.operands());
         }
-        let mut names = Names(Vec::new());
-        mojito_ast::visit::walk_expr(&mut names, expression);
-        names
-            .0
-            .iter()
-            .filter_map(|key| match facts {
-                Some(facts) => facts.get(key),
-                None => self
-                    .active_semantics
-                    .iter()
-                    .rev()
-                    .find_map(|index| index.get(key)),
-            })
-            .filter_map(|facts| facts.owner)
-            .collect()
+        bindings
     }
 
     /// Lower a compile-time `expression` of this function's body that reads
@@ -3532,7 +3589,13 @@ impl Flatten<'_> {
     /// function [`ComptimeThunks::request_applications`] lifts for it.
     /// `None` inside that function, which computes the expression.
     fn comptime_application(&self, expression: &Expr) -> Option<ParamExpr> {
-        lifted_application(&self.checked_adjustments(expression)).filter(|application| {
+        self.checked_node(expression)
+            .and_then(|node| self.node_application(node))
+    }
+
+    /// [`Self::comptime_application`] of node `node`.
+    fn node_application(&self, node: &mojito_checked::checked::CheckedExpr) -> Option<ParamExpr> {
+        lifted_application(&node.adjustments).filter(|application| {
             !matches!(application.kind(),
                 mojito_types::param_expr::ParamKind::Apply { function, .. }
                     if *function == self.comptime_thunks.owner)
@@ -3590,7 +3653,7 @@ impl Flatten<'_> {
 
     /// The local display binding `expression` names.
     fn named_display(&self, expression: &Expr) -> Option<DisplayBinding> {
-        matches!(expression.kind, ExprKind::Identifier(_))
+        self.is_name(expression)
             .then(|| self.checked_owner(expression))
             .flatten()
             .and_then(|owner| self.comptime_thunks.display(owner))
@@ -3611,29 +3674,85 @@ impl Flatten<'_> {
         }
     }
 
-    /// `expression` over the enclosing value binders, through the shared
-    /// typed builder: names resolve here, operator semantics and canonical
-    /// form are [`ParamContext`]'s.
+    /// `expression` over the enclosing value binders: its node's
+    /// [`Self::value_binder_node`], else, for bracket syntax inside an
+    /// annotation, which has no node, [`Self::value_binder_annotation`].
     fn value_binder_expr(&self, expression: &Expr) -> Option<ParamExpr> {
+        match self.node_of(expression) {
+            Some(node) => self.value_binder_node(node),
+            None => self.value_binder_annotation(expression),
+        }
+    }
+
+    /// Node `id` over the enclosing value binders, through the shared typed
+    /// builder: names resolve here, operator semantics and canonical form
+    /// are [`ParamContext`]'s.
+    fn value_binder_node(&self, id: mojito_checked::checked::CheckedNodeId) -> Option<ParamExpr> {
+        use mojito_checked::checked::CheckedOp;
+        let node = self.checked.expression(id)?;
         // A compile-time query the checker recorded (`Self.Ts.length`, a
         // `comptime for` index) is its parameter expression.
-        if let Some(value) = self
-            .param_value(expression)
-            .or_else(|| self.comptime_application(expression))
+        if let Some(value) =
+            recorded_param_value(&node.adjustments).or_else(|| self.node_application(node))
         {
             return Some(value);
         }
+        let context = ParamContext::detached();
+        match &node.op {
+            CheckedOp::Int(value) => context
+                .constant(mojito_types::ct::CtValue::IntLiteral(value.clone()))
+                .ok(),
+            // A binder, or a local `comptime` binding of an expression over
+            // them.
+            CheckedOp::Identifier(name) => self
+                .enclosing_binders
+                .value(&self.spelling(node, name), false)
+                .or_else(|| {
+                    node.binding
+                        .and_then(|owner| self.comptime_thunks.bound_value(owner))
+                }),
+            CheckedOp::Member { object, field }
+                if self.checked.expression(*object).is_some_and(|object| {
+                    matches!(&object.op, CheckedOp::Identifier(name)
+                        if self.spelling(object, name) == "Self")
+                }) =>
+            {
+                self.enclosing_binders.value(field, true)
+            }
+            CheckedOp::Prefix(PrefixOp::Neg, value) => {
+                context.neg(&self.value_binder_node(*value)?).ok()
+            }
+            CheckedOp::Infix(
+                op @ (InfixOp::Add
+                | InfixOp::Sub
+                | InfixOp::Mul
+                | InfixOp::FloorDiv
+                | InfixOp::Mod
+                | InfixOp::Pow
+                | InfixOp::Shl),
+                left,
+                right,
+            ) => context
+                .infix(
+                    *op,
+                    &self.value_binder_node(*left)?,
+                    &self.value_binder_node(*right)?,
+                )
+                .ok(),
+            _ => None,
+        }
+    }
+
+    /// [`Self::value_binder_node`] for an index written inside an
+    /// annotation's brackets (`g[L[0]]()`), which the check leaves
+    /// without a node; R628 gives it one and deletes this.
+    fn value_binder_annotation(&self, expression: &Expr) -> Option<ParamExpr> {
         let context = ParamContext::detached();
         match &expression.kind {
             ExprKind::Int(value) => context
                 .constant(mojito_types::ct::CtValue::IntLiteral(value.clone()))
                 .ok(),
-            // A binder, or a local `comptime` binding of an expression over
-            // them.
-            ExprKind::Identifier(name) => self.enclosing_binders.value(name, false).or_else(|| {
-                self.checked_owner(expression)
-                    .and_then(|owner| self.comptime_thunks.bound_value(owner))
-            }),
+            ExprKind::Identifier(name) => self.enclosing_binders.value(name, false),
             ExprKind::Member { object, field } if matches!(&object.kind, ExprKind::Identifier(name) if name == "Self") => {
                 self.enclosing_binders.value(field, true)
             }
@@ -3895,14 +4014,16 @@ struct NestedInfo {
     callable_ty: Option<Ty>,
 }
 
+/// What MIR knows of one piece of rebuilt syntax: the checked node it was
+/// rebuilt from, whose attributes are its facts, and the two facts of HIR's
+/// place for it.
 #[derive(Clone)]
 struct ExprFacts {
-    ty: Option<Ty>,
+    node: mojito_checked::checked::CheckedNodeId,
+    /// The type HIR's place for it stores (`HirPlace::ty`).
     place_ty: Option<Ty>,
+    /// Its binding, else its place root's binding (`HirPlace::owner`).
     owner: Option<mojito_types::origin::OwnerId>,
-    raises: Option<Ty>,
-    adjustments: Vec<mojito_checked::checked::SemanticAdjustment>,
-    comprehension_bindings: Vec<mojito_checked::checked::CheckedComprehensionBinding>,
 }
 
 /// [`lower_cfg`] with a nested-`def` registry in scope: a call to a registered
@@ -4240,22 +4361,17 @@ fn index_hir_expression(
     expression: &mojito_hir::hir::HirExpr,
     index: &mut HashMap<usize, ExprFacts>,
 ) {
-    let node = checked.expression(expression.node);
+    let node = checked
+        .expression(expression.node)
+        .expect("a HIR expression names a node of its tables");
     index.insert(
         std::ptr::from_ref::<Expr>(syntax) as usize,
         ExprFacts {
-            ty: node.and_then(|node| node.ty.clone()),
+            node: node.id,
             place_ty: expression.place.as_ref().map(|place| place.ty.clone()),
             owner: node
-                .and_then(|node| node.binding)
+                .binding
                 .or_else(|| expression.place.as_ref().map(|place| place.owner)),
-            raises: node.and_then(|node| node.effects.raises.clone()),
-            adjustments: node
-                .map(|node| node.adjustments.clone())
-                .unwrap_or_default(),
-            comprehension_bindings: node
-                .map(|node| node.comprehension_bindings.clone())
-                .unwrap_or_default(),
         },
     );
     for (child_syntax, child) in expression_children(syntax)
@@ -4279,20 +4395,29 @@ fn hir_syntax(
     expression: &mojito_hir::hir::HirExpr,
 ) -> Expr {
     checked
-        .syntax_of_spelled(expression.node, &|node| {
-            if let Some(slot) = slots.get(&node.id) {
-                return vars.get(*slot as usize).cloned();
-            }
-            match &node.op {
-                mojito_checked::checked::CheckedOp::Identifier(name)
-                    if name == mojito_ast::ast::CONTEXTUAL_SENTINEL =>
-                {
-                    node.contextual_base.clone()
-                }
-                _ => None,
-            }
-        })
+        .syntax_of_spelled(expression.node, &|node| name_spelling(slots, vars, node))
         .expect("a HIR expression names a node of its tables")
+}
+
+/// The runtime spelling of name node `node`: the slot HIR resolved it to,
+/// a `$contextual` root's resolved base type, else `None`, for a name
+/// spelled as written or a node that is not a name.
+fn name_spelling(
+    slots: &HashMap<mojito_checked::checked::CheckedNodeId, VarId>,
+    vars: &[String],
+    node: &mojito_checked::checked::CheckedExpr,
+) -> Option<String> {
+    if let Some(slot) = slots.get(&node.id) {
+        return vars.get(*slot as usize).cloned();
+    }
+    match &node.op {
+        mojito_checked::checked::CheckedOp::Identifier(name)
+            if name == mojito_ast::ast::CONTEXTUAL_SENTINEL =>
+        {
+            node.contextual_base.clone()
+        }
+        _ => None,
+    }
 }
 
 /// The syntax MIR lowers opaque HIR statement `statement` through: its
@@ -4888,8 +5013,9 @@ fn member_defaults(
 /// a runtime scalar. This intentionally recognizes only exact literal syntax:
 /// arbitrary index expressions still lower through a register and retain their
 /// ordinary evaluation semantics.
-fn exact_nonnegative_index(expression: &Expr) -> Option<usize> {
-    let ExprKind::Int(value) = &expression.kind else {
+/// The value of integer literal node `node`, when it is a nonnegative index.
+fn exact_nonnegative_index(node: Option<&mojito_checked::checked::CheckedExpr>) -> Option<usize> {
+    let mojito_checked::checked::CheckedOp::Int(value) = &node?.op else {
         return None;
     };
     value.to_u64().and_then(|value| usize::try_from(value).ok())

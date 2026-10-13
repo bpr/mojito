@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R635**.
+Next free ID: **R638**.
 
 ## Ordered Work
 
@@ -4774,17 +4774,19 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R618 MIR lowers literals and names from syntax**
+- [ ] **R637 A call through a shadowed local callable calls the outer one**
 
-  MIR lowering matches `ExprKind` for literals and name reads, where it
-  should match the checked node's `CheckedOp`.
-  - The fact a lowering reads becomes a field of the node it lowers,
-    not an `ExprFacts` lookup.
-  - Each of R618–R622 is one op family of the 199 `ExprKind::` matches
-    under `crates/mojito-mir/src`; run the probe fixtures on the VM and
-    with `--backend pliron` after each.
-  - Plan: `R604-a-package-s-checked-body-is-plan.md`, slice 6.
-  - Depends on R617.
+  `f()` in a nested scope that redeclares `var f` calls the enclosing
+  scope's `f`, because MIR finds a local callee's slot by the call's
+  source spelling (`call_expr`, `var(name)`), not the call node's binding.
+  - Probe: `var f = one`, then in a `for` body `var f = two` and
+    `print(f())`, then `print(f())` after the loop; it prints `1` twice,
+    where `2` then `1` is meant (HIR names the inner slot `f$shadowN`).
+  - The lever: the callee is the call node's binding's slot
+    (`binding_var`), as a name read's is since R618; confirm the probe
+    against the pin first.
+  - Found while landing R618 (2026-10-12).
+  - Depends on nothing.
   - Model: Opus, Not Planned.
 
 - [ ] **R619 MIR lowers calls and method calls from syntax**
@@ -4819,6 +4821,25 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   statement's `CheckedStmt`.
   - Plan: `R604-a-package-s-checked-body-is-plan.md`, slice 6.
   - Depends on R617.
+  - Model: Opus, Not Planned.
+
+- [ ] **R635 MIR lowers operators, transfers, spreads, lambdas, type
+  values, and t-strings from syntax**
+
+  No entry of R619–R622 owns these op families, so R623's done-condition
+  cannot hold until MIR matches their `CheckedOp` instead of `ExprKind`.
+  - `Prefix`, `Infix`, `Compare`, and `IfExpr` (with `short_circuit`,
+    `compare_chain`, `ternary`), plus `comptime_condition_of`'s
+    `Not`/`And`/`Or` arms.
+  - `Transfer`, `Spread`, `Lambda`, `TypeValue`, and `TString`.
+  - The walrus (`walrus`) and `emit_nested_closure_argument_keepalives`
+    still reach a walrus's value through its syntax child, which the
+    operand carrier change in R623 removes.
+  - Done when `rg 'ExprKind::(Prefix|Infix|Compare|IfExpr|Transfer|Spread|Lambda|TypeValue|TString)'
+    crates/mojito-mir/src` finds only `expression_children`, and the probe
+    fixtures' MIR is unchanged on the VM and with `--backend pliron`.
+  - Found while landing R618 (2026-10-12).
+  - Depends on nothing.
   - Model: Opus, Not Planned.
 
 - [ ] **R623 HIR and MIR keep transitional syntax rebuilders and
@@ -4867,6 +4888,29 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Done when no HIR or MIR slot type comes from a spelling match and the
     probe fixtures' MIR is unchanged on the VM and with `--backend pliron`.
   - Found while landing R617 (2026-10-12).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R636 HIR gives an `except` name or a `with` target the slot of
+  an earlier same-spelled one**
+
+  HIR resolves every handler's `e` (and each `with … as h`) to one slot
+  per spelling, where the check gives each its own binding and MIR its
+  own `e$bindingN` slot.
+  - `Cfg::slots` therefore disagrees with MIR's slot for 24 name reads
+    and places, in `template_raise_forms`, `template_method_raises`,
+    `pliron_finally_overrides`, `raise_borrowed_string_parameter`,
+    `os_dir_operations`, `optional_raising_subscript`, `errno_strerror`,
+    `string_format_declared`, `template_def_slice_stringify`,
+    `template_method_inplace_place`, `template_method_with_statement`,
+    and `with_enter_only`.
+  - MIR reads a name's slot by its binding, so `Cfg::slots` only spells
+    such a name today.
+  - The lever: HIR declares a slot per checked binding, as MIR's
+    `binding_var` does; related to R634.
+  - Done when every name node's `Cfg::slots` slot is the one MIR reads,
+    and the fixtures' MIR is unchanged.
+  - Found while landing R618 (2026-10-12).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

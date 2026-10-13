@@ -235,13 +235,21 @@ impl Flatten<'_> {
                     _ => None,
                 })
                 .collect();
-            let receiver = Expr {
-                kind: ExprKind::Identifier(name.to_owned()),
-                span: e.span,
-                source: e.source.clone(),
-                syntax_id: mojito_common::token::SyntaxId::fresh(),
-            };
-            return self.lower_element_invocation(e, &receiver, plan, &indices, args, kwargs);
+            // The receiver is the local the call names, read as its place.
+            let place = self.resolved_place(name);
+            let value = self.fresh(span(e), Some(place.root));
+            self.emit(MirInstr::LoadPlace {
+                dest: value,
+                place: place.clone(),
+            });
+            return self.lower_element_invocation(
+                e,
+                (value, Some(place)),
+                plan,
+                &indices,
+                args,
+                kwargs,
+            );
         }
         // A call to a nested `def` (a closure, called by name in scope):
         // rewrite to its lifted function, prepending the captured enclosing
@@ -253,12 +261,8 @@ impl Flatten<'_> {
         // A local with a function type (normally a callable parameter)
         // shadows any global function of the same name.
         if self.vars.iter().any(|candidate| candidate == name) {
-            let callee = self.expr(&Expr {
-                kind: ExprKind::Identifier(name.to_owned()),
-                span: e.span,
-                source: e.source.clone(),
-                syntax_id: mojito_common::token::SyntaxId::fresh(),
-            });
+            let variable = self.var(name);
+            let callee = self.read_slot(variable, span(e), None);
             let callable_ty = self
                 .vars
                 .iter()
@@ -324,7 +328,7 @@ impl Flatten<'_> {
                 },
             ] = args
                 && matches!(&spread.kind, ExprKind::Transfer(inner)
-                    if matches!(inner.kind, ExprKind::Identifier(_)))
+                    if self.is_name(inner))
             {
                 return self.expr(spread);
             }
@@ -464,7 +468,8 @@ impl Flatten<'_> {
                     _ => None,
                 })
                 .collect();
-            return self.lower_element_invocation(e, callee, plan, &indices, args, kwargs);
+            let receiver = self.lower_call_receiver(callee);
+            return self.lower_element_invocation(e, receiver, plan, &indices, args, kwargs);
         }
         if let Some(param_decls) = self
             .checked_adjustments(e)

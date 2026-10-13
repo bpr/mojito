@@ -8,6 +8,14 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- MIR lowers literals and names from their checked ops (R618), as
+  upstream's lowering consumes a constant or a value use as a typed op:
+  each rebuilt expression's facts name its node, whose attributes are
+  read in place, a literal or name read lowers by matching its node's
+  `CheckedOp`, a name's slot is its binding's and its spelling is
+  `name_spelling` alone, and MIR no longer makes up name syntax for a
+  call through a local callable. No program's output or MIR changes.
+
 - HIR lowers checked nodes (R617), as upstream's control-flow lowering
   consumes typed ops: `hir::Lower` walks each body's `CheckedStmtOp`s
   and `CheckedOp`s, a `HirExpr` names its node with its operands' trees

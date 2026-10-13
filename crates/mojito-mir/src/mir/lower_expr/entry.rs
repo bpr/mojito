@@ -60,6 +60,16 @@ impl Flatten<'_> {
             .expect("a HIR expression names a node of its tables")
     }
 
+    /// The runtime spelling of name node `node`, written `name`, in this
+    /// function's frame ([`name_spelling`]).
+    pub(in crate::mir) fn spelling(
+        &self,
+        node: &mojito_checked::checked::CheckedExpr,
+        name: &str,
+    ) -> String {
+        name_spelling(&self.slots, &self.vars, node).unwrap_or_else(|| name.to_owned())
+    }
+
     /// [`hir_syntax`] in this function's frame.
     pub(in crate::mir) fn hir_syntax(&self, expression: &mojito_hir::hir::HirExpr) -> Expr {
         hir_syntax(&self.checked, &self.slots, &self.vars, expression)
@@ -104,8 +114,12 @@ impl Flatten<'_> {
                 &Clone::clone,
             );
         }
+        if let Some(mojito_checked::checked::CheckedOp::Bool(value)) =
+            self.checked_node(expression).map(|node| &node.op)
+        {
+            return GenericConstraint::Bool(*value);
+        }
         match &expression.kind {
-            ExprKind::Bool(value) => GenericConstraint::Bool(*value),
             ExprKind::Prefix(PrefixOp::Not, inner) => {
                 GenericConstraint::Not(Box::new(self.comptime_condition_of(inner)))
             }

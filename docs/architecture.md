@@ -1754,8 +1754,14 @@ each; it holds no syntax and no copy of a node attribute. MIR rebuilds the
 syntax it still lowers from the ops through the transitional
 `CheckedTables::syntax_of_spelled` (`hir_syntax`), which yields the
 construction the check spelled where a sugar was written and spells each local
-name as the slot `Cfg::slots` resolved it to, and pairs that syntax tree with
-the recursive node tree by address for the length of one lowering. One narrow association remains span-keyed:
+name as the slot `Cfg::slots` resolved it to (`name_spelling`), and pairs
+that syntax tree with the recursive node tree by address for the length of one
+lowering: each piece of syntax's `ExprFacts` names its node, whose attributes
+are its facts, beside the two facts of HIR's place for it. Literals and name
+reads lower by matching the node's `CheckedOp`, reading the node's own
+attributes (`Flatten::literal_or_name`); a name's slot is its binding's
+(`binding_var`), the slot only spelling it, and the name predicates of the
+other families match the op too. One narrow association remains span-keyed:
 source-ordered compile-time value arguments reuse registers already evaluated
 for the corresponding checked subscript operand. This is a register handoff,
 not semantic reconstruction. Register spans otherwise serve diagnostics only.

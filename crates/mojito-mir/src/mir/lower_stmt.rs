@@ -4,6 +4,7 @@
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
+use mojito_checked::checked::CheckedOp;
 use mojito_types::types::TyKind;
 
 impl Flatten<'_> {
@@ -471,8 +472,10 @@ impl Flatten<'_> {
         {
             return MirPlace::root(var, self.var_types.get(&var).cloned());
         }
+        if let Some(name) = self.name_spelled(e) {
+            return self.name_place_root(&name, e);
+        }
         match &e.kind {
-            ExprKind::Identifier(name) => self.expression_place_root(name, e),
             ExprKind::Member { object, field } => {
                 let mut p = self.place(object);
                 if let Some(ty) = self.checked_place_ty(e).or_else(|| self.checked_ty(e)) {
@@ -531,7 +534,7 @@ impl Flatten<'_> {
                 // storage is the element's static place, as in `try_place`.
                 if let (Some(TyKind::Tuple(_)), Some(index)) = (
                     object_ty.as_ref().map(Ty::kind),
-                    exact_nonnegative_index(index),
+                    exact_nonnegative_index(self.checked_node(index)),
                 ) {
                     let element = self
                         .checked_place_ty(e)
@@ -1803,11 +1806,12 @@ impl Flatten<'_> {
     }
 
     fn simple_place_unrebound(&mut self, e: &Expr) -> Option<MirPlace> {
-        match &e.kind {
+        if let Some(name) = self.name_spelled(e) {
             // A module constant read is the parameter value the check
             // recorded: a value, never a place.
-            ExprKind::Identifier(_) if self.constant_param_value(e) => None,
-            ExprKind::Identifier(name) => Some(self.expression_place_root(name, e)),
+            return (!self.constant_param_value(e)).then(|| self.name_place_root(&name, e));
+        }
+        match &e.kind {
             ExprKind::Index { object, .. } if self.variant_projection_index(e).is_some() => {
                 let index = self.variant_projection_index(e)?;
                 let mut p = self.simple_place(object)?;
@@ -1852,16 +1856,16 @@ impl Flatten<'_> {
     }
 
     fn pure_field_place_unrebound(&mut self, e: &Expr) -> Option<MirPlace> {
+        if let Some(name) = self.name_spelled(e) {
+            // `Self.<name>` (a reified value-parameter read, e.g. `Self.size`)
+            // resolves off the receiver `self`: `Self` in expression position is
+            // an alias for `self`, and the backend's field navigation also
+            // searches a struct's `value_params`. `Self` never appears bare in an
+            // expression (only `Self.field`), so this alias is safe.
+            let root = if name == "Self" { "self" } else { &name };
+            return Some(self.name_place_root(root, e));
+        }
         match &e.kind {
-            ExprKind::Identifier(name) => {
-                // `Self.<name>` (a reified value-parameter read, e.g. `Self.size`)
-                // resolves off the receiver `self`: `Self` in expression position is
-                // an alias for `self`, and the backend's field navigation also
-                // searches a struct's `value_params`. `Self` never appears bare in an
-                // expression (only `Self.field`), so this alias is safe.
-                let root = if name == "Self" { "self" } else { name };
-                Some(self.expression_place_root(root, e))
-            }
             ExprKind::Member { object, field } => {
                 // A compile-time member read (`T.K`, `A.K`) is a value.
                 if self.is_slice_descriptor(object)
@@ -1888,8 +1892,10 @@ impl Flatten<'_> {
     }
 
     fn try_place_unrebound(&mut self, e: &Expr) -> Option<MirPlace> {
+        if let Some(name) = self.name_spelled(e) {
+            return Some(self.name_place_root(&name, e));
+        }
         match &e.kind {
-            ExprKind::Identifier(name) => Some(self.expression_place_root(name, e)),
             ExprKind::MultiIndex { .. } if pointer_keyword_subscript(e).is_some() => {
                 let (object, offset) = pointer_keyword_subscript(e).expect("guarded");
                 let mut p = self.try_place(object)?;
@@ -1909,7 +1915,7 @@ impl Flatten<'_> {
                 {
                     return None;
                 }
-                if matches!(&object.kind, ExprKind::Identifier(name) if name == "Self")
+                if self.name_spelled(object).is_some_and(|name| name == "Self")
                     && let Some(place) = self.receiver_value_parameter_place(field)
                 {
                     return Some(place);
@@ -1935,7 +1941,7 @@ impl Flatten<'_> {
                 // element 1 while every dynamic/nominal subscript retains the
                 // ordinary single-evaluation Index(Reg) path.
                 let projection = match self.checked_ty(object).as_ref().map(Ty::kind) {
-                    Some(TyKind::Tuple(_)) => exact_nonnegative_index(index)
+                    Some(TyKind::Tuple(_)) => exact_nonnegative_index(self.checked_node(index))
                         .map_or_else(|| Proj::Index(self.expr(index)), Proj::ConstIndex),
                     _ => Proj::Index(self.expr(index)),
                 };
@@ -2039,11 +2045,13 @@ impl Flatten<'_> {
                 if materialized.is_none()
                     && (self.reference_result(value).is_some()
                         || !(matches!(
-                            value.kind,
-                            ExprKind::Identifier(_)
-                                | ExprKind::Member { .. }
-                                | ExprKind::Index { .. }
-                                | ExprKind::TypeApply { .. }
+                            self.op_of(value),
+                            Some(
+                                CheckedOp::Identifier(_)
+                                    | CheckedOp::Member { .. }
+                                    | CheckedOp::Index { .. }
+                                    | CheckedOp::TypeApply { .. }
+                            )
                         ) || pointer_keyword_subscript(value).is_some()))
                 {
                     let source = self.expr(value);
@@ -2312,12 +2320,12 @@ impl Flatten<'_> {
                 // variable uses the `UseVar`/`DefVar` fast path (what move-analysis
                 // reads for a var); a projected place uses `LoadPlace`/`Store`, with
                 // the place flattened once so its indices are evaluated once.
-                if let ExprKind::Identifier(name) = &place.kind {
+                if let Some(name) = self.name_spelled(place) {
                     // Opaque structured statements retain the source spelling,
                     // while HIR may give a same-spelled sibling declaration a
                     // distinct runtime slot. Resolve the checked owner for the
                     // write half just as `self.expr(place)` does for the read.
-                    let var = self.expression_var(name, place);
+                    let var = self.expression_var(&name, place);
                     let cur = self.expr(place);
                     let rhs = self.expr(value);
                     let res = self.fresh(span(place), None);
@@ -2593,7 +2601,7 @@ impl Flatten<'_> {
                 for (i, (target, extraction)) in targets.iter().zip(plan).enumerate() {
                     // `_` discards its element of a place without reading it.
                     if extraction.reference.is_some()
-                        && matches!(&target.kind, ExprKind::Identifier(name) if name == "_")
+                        && self.name_spelled(target).is_some_and(|name| name == "_")
                     {
                         continue;
                     }
@@ -2667,8 +2675,8 @@ impl Flatten<'_> {
                     } else {
                         raw
                     };
-                    if let ExprKind::Identifier(name) = &target.kind {
-                        let var = self.expression_var(name, target);
+                    if let Some(name) = self.name_spelled(target) {
+                        let var = self.expression_var(&name, target);
                         self.emit_interior_invalidations(target, Some(var));
                         let binding_ty = self
                             .checked_place_ty(target)
@@ -2781,7 +2789,7 @@ impl Flatten<'_> {
         }
         // An alias of a display binding (`comptime A = L`) is another name
         // of it, which the check binds to the display's own owner.
-        if matches!(value.kind, ExprKind::Identifier(_))
+        if self.is_name(value)
             && statement_binding
                 .is_some_and(|owner| self.comptime_thunks.alias_display(owner, name))
         {
@@ -2984,7 +2992,6 @@ impl Flatten<'_> {
         &self,
         expression: &hir::HirExpr,
     ) -> Option<(Option<mojito_types::origin::OwnerId>, String)> {
-        use mojito_checked::checked::CheckedOp;
         let CheckedOp::Call { name, args, .. } = &self.hir_node(expression).op else {
             return None;
         };

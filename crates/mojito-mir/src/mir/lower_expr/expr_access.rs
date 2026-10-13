@@ -12,29 +12,16 @@ impl Flatten<'_> {
         &self,
         e: &Expr,
     ) -> Option<mojito_types::param_expr::ParamExpr> {
-        self.checked_adjustments(e)
-            .into_iter()
-            .find_map(|adjustment| match adjustment {
-                mojito_checked::checked::SemanticAdjustment::ParamValue { value, .. } => {
-                    Some(value)
-                }
-                _ => None,
-            })
+        self.checked_node(e)
+            .and_then(|node| recorded_param_value(&node.adjustments))
     }
 
     /// Whether `e` reads a parameter value the check recorded with no
     /// materialized borrow source of its own (a module constant), which
     /// lowers as a value wherever it stands.
     pub(in crate::mir) fn constant_param_value(&self, e: &Expr) -> bool {
-        self.checked_adjustments(e).into_iter().any(|adjustment| {
-            matches!(
-                adjustment,
-                mojito_checked::checked::SemanticAdjustment::ParamValue {
-                    materialized: None,
-                    ..
-                }
-            )
-        })
+        self.checked_node(e)
+            .is_some_and(|node| constant_param_value(&node.adjustments))
     }
 
     /// The runtime value of a compile-time `operand` crossing explicitly
@@ -110,8 +97,7 @@ impl Flatten<'_> {
         if let Some(folded) = folded {
             // A value receiver (`f().dtype`) still runs; a type operand
             // or `DType` itself was never typed as a value.
-            if !matches!(object.kind, ExprKind::Identifier(_)) && self.checked_ty(object).is_some()
-            {
+            if !self.is_name(object) && self.checked_ty(object).is_some() {
                 self.expr(object);
             }
             return match folded {

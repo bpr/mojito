@@ -2,21 +2,35 @@
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
+use mojito_checked::checked::{CheckedExpr, CheckedOp};
 use mojito_types::types::TyKind;
 
 impl Flatten<'_> {
     pub(in crate::mir) fn expr_unconverted(&mut self, e: &Expr) -> Reg {
+        if let Some(value) = self.literal_or_name(e) {
+            return value;
+        }
         match &e.kind {
-            // --- Literals ------------------------------------------------------
-            ExprKind::Int(n) => self.constant(e, Const::IntLiteral(n.clone())),
-            ExprKind::Float(x) => self.constant(e, Const::FloatLiteral(x.clone())),
-            ExprKind::Bool(b) => self.constant(e, Const::Bool(*b)),
-            ExprKind::Str(s) => self.constant(e, Const::Str(s.clone())),
-            ExprKind::None => self.constant(e, Const::None),
-            ExprKind::Uninitialized => self.constant(e, Const::None),
-            // The `p[]` dereference marker: the checker validated the pointer
-            // receiver, and offset 0 is the whole lowering.
-            ExprKind::EmptySubscript => self.constant(e, Const::Int(0)),
+            // Every literal and name MIR lowers was rebuilt from its node.
+            ExprKind::Int(_)
+            | ExprKind::Float(_)
+            | ExprKind::Bool(_)
+            | ExprKind::Str(_)
+            | ExprKind::None
+            | ExprKind::Uninitialized
+            | ExprKind::EmptySubscript
+            | ExprKind::Identifier(_)
+            | ExprKind::Named { .. } => {
+                let dest = self.fresh(span(e), None);
+                self.emit(MirInstr::Unsupported(
+                    "a literal or name without a checked node reached MIR".to_string(),
+                ));
+                self.emit(MirInstr::Const {
+                    dest,
+                    k: Const::None,
+                });
+                dest
+            }
             ExprKind::Spread(_) => {
                 let dest = self.fresh(span(e), None);
                 self.emit(MirInstr::Unsupported(
@@ -29,13 +43,6 @@ impl Flatten<'_> {
                 dest
             }
 
-            // --- Variable reads ------------------------------------------------
-            // A bare read defaults to `Copy` — the lifecycle copy for owned
-            // storage. Consuming conventions keep it; a read-convention call
-            // argument is instead bound as a shallow place read where the
-            // checker marked `BorrowReadArgument` (`lower_call_argument`), and
-            // `x^` lowers as `Move` below.
-            ExprKind::Identifier(name) => self.identifier_read(e, name),
             // `x^`: a move out of a variable. `p.a^` (a pure field chain) is a
             // partial move of that field. A constant index into compiler-private
             // Tuple storage is also an independently tracked slot; this is the
@@ -178,18 +185,6 @@ impl Flatten<'_> {
             } => self.comprehension(e, *kind, key.as_deref(), value, clauses),
             ExprKind::TupleLit(elems) => self.tuple_literal(e, elems),
 
-            // Walrus `:=` reaches MIR after type checking. Preserve an explicit
-            // unsupported boundary rather than assigning accidental semantics.
-            ExprKind::Named { name, value } => {
-                let value = self.expr(value);
-                let var = self.var(name);
-                self.emit(MirInstr::DefVar {
-                    var,
-                    src: value,
-                    binding_ty: None,
-                });
-                value
-            }
             // Ternary `a if cond else b` — a value-producing branch (like the
             // short-circuit lowering, but both arms assign the result).
             ExprKind::IfExpr {
@@ -282,36 +277,16 @@ impl Flatten<'_> {
         }
     }
 
-    pub(super) fn identifier_read(&mut self, e: &Expr, name: &str) -> Reg {
-        if let Some(target) = self.resolved_callable(e) {
-            return self.constant(e, Const::Function(target));
-        }
-        if let Some(info) = self.nested_info(e) {
-            return self.load_nested_closure(name, &info, span(e));
-        }
-        if !self.vars.iter().any(|candidate| candidate == name) && self.overloads.is_function(name)
-        {
-            return self.constant(e, Const::Function(name.to_owned()));
-        }
-        // A module constant is the parameter value the check recorded.
-        if let Some(value) = self.param_value(e) {
-            return self.param_value_register(e, value);
-        }
-        // In a lifted thunk, an enclosing `comptime for` index or local
-        // `comptime` binding is the parameter expression it denotes.
-        let denoted = self.checked_owner(e).and_then(|owner| {
-            self.parameter_reads
-                .get(&owner)
-                .and_then(|binder| self.enclosing_binders.value_of(binder))
-                .or_else(|| self.enclosing_binders.comptime_value(owner))
-                .or_else(|| self.comptime_thunks.bound_value(owner))
-        });
-        if let Some(value) = denoted {
-            return self.param_value_register(e, value);
-        }
-        let var = self.expression_var(name, e);
-        let d = self.fresh(span(e), Some(var));
-        if self.is_origin_bearing_pointer(e) {
+    /// Read slot `var` at `location`; `node` is the name node read, whose
+    /// type and adjustments decide a pointer read and a checked value copy.
+    pub(in crate::mir) fn read_slot(
+        &mut self,
+        var: VarId,
+        location: SourceSpan,
+        node: Option<&CheckedExpr>,
+    ) -> Reg {
+        let d = self.fresh(location.clone(), Some(var));
+        if origin_bearing_pointer(node.and_then(|node| node.ty.as_ref())) {
             // A pointer variable's read is its pointer value: both
             // backends read a pointer-typed slot as the handle it
             // stores (the VM keys `UseVar` on the variable's pointer
@@ -330,7 +305,7 @@ impl Flatten<'_> {
             place.through = Some(var);
             self.emit(MirInstr::LoadPlace { dest: d, place });
         } else if self.runtime_aliases.contains(&var) {
-            let handle = self.fresh(e.source_span(), Some(var));
+            let handle = self.fresh(location.clone(), Some(var));
             self.emit(MirInstr::MakeRef {
                 dest: handle,
                 place: {
@@ -357,15 +332,16 @@ impl Flatten<'_> {
         // storage — the alias slot's referent stays live in its
         // collection. Ordinary variables keep the `UseVar` path above:
         // their copy/move lifecycle is drop-elaborated.
-        if self.checked_adjustments(e).iter().any(|adjustment| {
+        let Some(node) = node else {
+            return d;
+        };
+        if node.adjustments.iter().any(|adjustment| {
             matches!(
                 adjustment,
                 mojito_checked::checked::SemanticAdjustment::CopyPlaceValue
             )
-        }) && !matches!(
-            self.checked_ty(e).as_ref().map(Ty::kind),
-            Some(TyKind::Ref(_))
-        ) {
+        }) && !matches!(node.ty.as_ref().map(Ty::kind), Some(TyKind::Ref(_)))
+        {
             // The copy has the read register's exact type: the
             // variable's recorded type can keep a literal element
             // (`var t = 4, "four"` binds `Tuple[IntLiteral, ...]`)
@@ -376,9 +352,9 @@ impl Flatten<'_> {
                 .reg_types
                 .get(&d.0)
                 .cloned()
-                .or_else(|| self.checked_ty(e))
+                .or_else(|| node.ty.clone())
                 .unwrap_or_else(Ty::error);
-            let copied = self.fresh_typed(span(e), Some(var), ty);
+            let copied = self.fresh_typed(location, Some(var), ty);
             self.emit(MirInstr::CopyValue {
                 dest: copied,
                 value: d,
@@ -389,8 +365,8 @@ impl Flatten<'_> {
     }
 
     pub(in crate::mir) fn transfer(&mut self, e: &Expr, inner: &Expr) -> Reg {
-        if let ExprKind::Identifier(name) = &inner.kind {
-            let var = self.expression_var(name, inner);
+        if let Some(name) = self.name_spelled(inner) {
+            let var = self.expression_var(&name, inner);
             // A `mut` parameter's slot holds the handle to the caller's
             // storage, so the transfer takes the referent out through it. A
             // value that owns no storage transfers as a copy and leaves the
@@ -736,5 +712,85 @@ impl Flatten<'_> {
             self.f.reg_types.insert(dest.0, specialized);
         }
         dest
+    }
+
+    /// Lower `e` by its node's op when that op is a literal or a name:
+    /// `None` for any other op, which the syntax dispatch lowers.
+    fn literal_or_name(&mut self, e: &Expr) -> Option<Reg> {
+        let tables = std::sync::Arc::clone(&self.checked);
+        let node = tables.expression(self.node_of(e)?)?;
+        Some(match &node.op {
+            CheckedOp::Int(n) => self.literal(node, Const::IntLiteral(n.clone())),
+            CheckedOp::Float(x) => self.literal(node, Const::FloatLiteral(x.clone())),
+            CheckedOp::Bool(b) => self.literal(node, Const::Bool(*b)),
+            CheckedOp::Str(s) => self.literal(node, Const::Str(s.clone())),
+            CheckedOp::None | CheckedOp::Uninitialized => self.literal(node, Const::None),
+            // The `p[]` dereference marker: the checker validated the pointer
+            // receiver, and offset 0 is the whole lowering.
+            CheckedOp::EmptySubscript => self.literal(node, Const::Int(0)),
+            // A bare read defaults to `Copy` — the lifecycle copy for owned
+            // storage. Consuming conventions keep it; a read-convention call
+            // argument is instead bound as a shallow place read where the
+            // checker marked `BorrowReadArgument` (`lower_call_argument`), and
+            // `x^` lowers as `Move`.
+            CheckedOp::Identifier(name) => self.identifier_read(e, node, name),
+            CheckedOp::Named { name, .. } => match &e.kind {
+                ExprKind::Named { value, .. } => self.walrus(value, node, name),
+                _ => return None,
+            },
+            _ => return None,
+        })
+    }
+
+    /// Walrus node `node`, `name := value`: bind the value's slot and yield
+    /// the value.
+    fn walrus(&mut self, value: &Expr, node: &CheckedExpr, name: &str) -> Reg {
+        let value = self.expr(value);
+        let var = self.var(&self.spelling(node, name));
+        self.emit(MirInstr::DefVar {
+            var,
+            src: value,
+            binding_ty: None,
+        });
+        value
+    }
+
+    /// Read name node `node`, written `name`, which `e` was rebuilt from.
+    fn identifier_read(&mut self, e: &Expr, node: &CheckedExpr, name: &str) -> Reg {
+        let name = self.spelling(node, name);
+        if let Some(target) = callable_target(&node.adjustments) {
+            return self.literal(node, Const::Function(target));
+        }
+        if let Some(info) = node
+            .binding
+            .and_then(|binding| self.nested.get(&binding))
+            .cloned()
+        {
+            return self.load_nested_closure(&name, &info, node.location());
+        }
+        if !self.vars.contains(&name) && self.overloads.is_function(&name) {
+            return self.literal(node, Const::Function(name));
+        }
+        // A module constant is the parameter value the check recorded.
+        if let Some(value) = recorded_param_value(&node.adjustments) {
+            return self.param_value_register(e, value);
+        }
+        // In a lifted thunk, an enclosing `comptime for` index or local
+        // `comptime` binding is the parameter expression it denotes.
+        let denoted = node.binding.and_then(|owner| {
+            self.parameter_reads
+                .get(&owner)
+                .and_then(|binder| self.enclosing_binders.value_of(binder))
+                .or_else(|| self.enclosing_binders.comptime_value(owner))
+                .or_else(|| self.comptime_thunks.bound_value(owner))
+        });
+        if let Some(value) = denoted {
+            return self.param_value_register(e, value);
+        }
+        let var = match node.binding {
+            Some(owner) => self.binding_var(owner, &name),
+            None => self.var(&name),
+        };
+        self.read_slot(var, node.location(), Some(node))
     }
 }

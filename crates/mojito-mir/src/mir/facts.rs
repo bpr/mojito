@@ -4,6 +4,7 @@
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
+use mojito_checked::checked::CheckedOp;
 use mojito_types::types::TyKind;
 
 #[allow(clippy::too_many_lines, reason = "TODO: split this pass")]
@@ -16,8 +17,46 @@ impl Flatten<'_> {
             .find_map(|index| index.get(&key))
     }
 
+    /// The checked node `expression` was rebuilt from.
+    pub(super) fn node_of(
+        &self,
+        expression: &Expr,
+    ) -> Option<mojito_checked::checked::CheckedNodeId> {
+        self.facts(expression).map(|facts| facts.node)
+    }
+
+    /// The runtime spelling of the name `expression` was rebuilt from:
+    /// `None` when its node is not a name.
+    pub(super) fn name_spelled(&self, expression: &Expr) -> Option<String> {
+        let node = self.checked_node(expression)?;
+        match &node.op {
+            CheckedOp::Identifier(name) => Some(self.spelling(node, name)),
+            _ => None,
+        }
+    }
+
+    /// The op of the node `expression` was rebuilt from.
+    pub(super) fn op_of(&self, expression: &Expr) -> Option<&CheckedOp> {
+        self.checked_node(expression).map(|node| &node.op)
+    }
+
+    /// Whether `expression` was rebuilt from a name node.
+    pub(super) fn is_name(&self, expression: &Expr) -> bool {
+        matches!(self.op_of(expression), Some(CheckedOp::Identifier(_)))
+    }
+
+    /// The checked node `expression` was rebuilt from, as its record.
+    pub(super) fn checked_node(
+        &self,
+        expression: &Expr,
+    ) -> Option<&mojito_checked::checked::CheckedExpr> {
+        self.node_of(expression)
+            .and_then(|id| self.checked.expression(id))
+    }
+
     pub(super) fn checked_ty(&self, expression: &Expr) -> Option<Ty> {
-        self.facts(expression).and_then(|facts| facts.ty.clone())
+        self.checked_node(expression)
+            .and_then(|node| node.ty.clone())
     }
 
     pub(super) fn checked_place_ty(&self, expression: &Expr) -> Option<Ty> {
@@ -29,8 +68,8 @@ impl Flatten<'_> {
         self.checked_call_contract(expression)
             .and_then(|contract| contract.raises)
             .or_else(|| {
-                self.facts(expression)
-                    .and_then(|facts| facts.raises.clone())
+                self.checked_node(expression)
+                    .and_then(|node| node.effects.raises.clone())
             })
     }
 
@@ -42,8 +81,8 @@ impl Flatten<'_> {
         &self,
         expression: &Expr,
     ) -> Vec<mojito_checked::checked::CheckedComprehensionBinding> {
-        self.facts(expression)
-            .map(|facts| facts.comprehension_bindings.clone())
+        self.checked_node(expression)
+            .map(|node| node.comprehension_bindings.clone())
             .unwrap_or_default()
     }
 
@@ -93,8 +132,8 @@ impl Flatten<'_> {
                     )
                 })
             && matches!(
-                expression.kind,
-                ExprKind::Identifier(_) | ExprKind::Member { .. }
+                self.op_of(expression),
+                Some(CheckedOp::Identifier(_) | CheckedOp::Member { .. })
             )
         {
             let place = self.place(expression);
@@ -207,8 +246,8 @@ impl Flatten<'_> {
     /// o]` field is lent exactly like a `ref xs: List[Int]` source.
     pub(super) fn view_lends_argument(&self, argument: &Expr) -> bool {
         matches!(
-            argument.kind,
-            ExprKind::Identifier(_) | ExprKind::Member { .. }
+            self.op_of(argument),
+            Some(CheckedOp::Identifier(_) | CheckedOp::Member { .. })
         ) && (matches!(
             self.checked_ty(argument).as_ref().map(Ty::kind),
             Some(TyKind::Struct(..))
@@ -238,7 +277,7 @@ impl Flatten<'_> {
                     current = object;
                 }
                 ExprKind::Member { object, .. } => current = object,
-                ExprKind::Identifier(_) => break,
+                _ if self.is_name(current) => break,
                 _ => return None,
             }
         }
@@ -251,15 +290,15 @@ impl Flatten<'_> {
         &self,
         expression: &Expr,
     ) -> Vec<mojito_checked::checked::SemanticAdjustment> {
-        self.facts(expression)
-            .map(|facts| facts.adjustments.clone())
+        self.checked_node(expression)
+            .map(|node| node.adjustments.clone())
             .unwrap_or_default()
     }
 
     /// The operand and target types of the `rebind` `expression` is the
     /// operand of, where the two differ.
     pub(super) fn rebind_target(&self, expression: &Expr) -> Option<(Ty, Ty)> {
-        self.facts(expression)?
+        self.checked_node(expression)?
             .adjustments
             .iter()
             .find_map(|adjustment| match adjustment {
@@ -316,14 +355,8 @@ impl Flatten<'_> {
         &self,
         expression: &Expr,
     ) -> Option<mojito_checked::checked::CheckedCallContract> {
-        self.checked_adjustments(expression)
-            .into_iter()
-            .find_map(|adjustment| match adjustment {
-                mojito_checked::checked::SemanticAdjustment::SelectedCall(contract) => {
-                    Some(*contract)
-                }
-                _ => None,
-            })
+        self.checked_node(expression)
+            .and_then(|node| selected_call(&node.adjustments))
     }
 
     /// The in-place dunder contract for `place OP= rhs` on a user-defined value
@@ -510,8 +543,8 @@ impl Flatten<'_> {
                 _ => None,
             });
         if let Some(mutable) = borrow
-            && let ExprKind::Identifier(name) = &expression.kind
-            && let Some(var) = self.existing_expression_var(name, expression)
+            && let Some(name) = self.name_spelled(expression)
+            && let Some(var) = self.existing_expression_var(&name, expression)
         {
             if let Some(loans) = self.aggregate_loans.get(&var) {
                 return loans
@@ -568,8 +601,8 @@ impl Flatten<'_> {
                 })
                 .collect();
         }
-        if let ExprKind::Identifier(name) = &expression.kind
-            && let Some(var) = self.existing_expression_var(name, expression)
+        if let Some(name) = self.name_spelled(expression)
+            && let Some(var) = self.existing_expression_var(&name, expression)
             && let Some(loans) = self.aggregate_loans.get(&var)
         {
             return loans.clone();
@@ -582,8 +615,8 @@ impl Flatten<'_> {
         // declaration-to-call capture model is preserved; owned copy/move
         // captures are self-contained.
         if matches!(
-            expression.kind,
-            ExprKind::Identifier(_) | ExprKind::Lambda { .. }
+            self.op_of(expression),
+            Some(CheckedOp::Identifier(_) | CheckedOp::Lambda { .. })
         ) && let Some(info) = self.nested_info(expression)
         {
             let mut loans = Vec::new();
@@ -740,8 +773,8 @@ impl Flatten<'_> {
                     // A receiver that is itself the owning place lends that
                     // place to the view.
                     if matches!(
-                        object.kind,
-                        ExprKind::Identifier(_) | ExprKind::Member { .. }
+                        self.op_of(object),
+                        Some(CheckedOp::Identifier(_) | CheckedOp::Member { .. })
                     ) {
                         return vec![MirLoan {
                             place: self.place(object),
@@ -898,8 +931,8 @@ impl Flatten<'_> {
                             return loans;
                         }
                         if !matches!(
-                            source.kind,
-                            ExprKind::Identifier(_) | ExprKind::Member { .. }
+                            this.op_of(source),
+                            Some(CheckedOp::Identifier(_) | CheckedOp::Member { .. })
                         ) {
                             return loans;
                         }

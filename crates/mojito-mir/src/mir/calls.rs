@@ -541,7 +541,7 @@ impl Flatten<'_> {
         operand: &Expr,
     ) -> (Reg, Option<MirPlace>) {
         if let ExprKind::Transfer(moved) = &operand.kind
-            && matches!(moved.kind, ExprKind::Identifier(_))
+            && self.is_name(moved)
         {
             return (self.transfer(operand, moved), None);
         }
@@ -816,7 +816,7 @@ impl Flatten<'_> {
             {
                 let mut place = base_place(self, object)?;
                 let projection = match self.checked_ty(object).as_ref().map(Ty::kind) {
-                    Some(TyKind::Tuple(_)) => exact_nonnegative_index(index)
+                    Some(TyKind::Tuple(_)) => exact_nonnegative_index(self.checked_node(index))
                         .map_or_else(|| Proj::Index(self.expr(index)), Proj::ConstIndex),
                     _ => Proj::Index(self.expr(index)),
                 };
@@ -944,7 +944,7 @@ impl Flatten<'_> {
         // local `comptime` binding of a parameter expression (`lane` of
         // `comptime lane = dt`), is a value the elaborator folds, not a
         // place: the receiver is read as such and no place is retained.
-        if let ExprKind::Identifier(name) = &expression.kind
+        if let Some(name) = self.name_spelled(expression)
             && (self.constant_param_value(expression)
                 || self
                     .enclosing_binders
@@ -1672,16 +1672,13 @@ impl Flatten<'_> {
         if let ExprKind::Index { object, .. } = &expression.kind {
             return self.lower_borrowed_element_read(expression, object);
         }
-        let ExprKind::Identifier(name) = &expression.kind else {
-            return None;
-        };
+        let name = self.name_spelled(expression)?;
         // A module constant read is a value with no slot of its own.
         if self.resolved_callable(expression).is_some()
             || self.nested_info(expression).is_some()
             || self.is_origin_bearing_pointer(expression)
             || self.constant_param_value(expression)
-            || (!self.vars.iter().any(|candidate| candidate == name)
-                && self.overloads.is_function(name))
+            || (!self.vars.contains(&name) && self.overloads.is_function(&name))
         {
             return None;
         }
@@ -1710,7 +1707,7 @@ impl Flatten<'_> {
         ) {
             return None;
         }
-        let var = self.expression_var(name, expression);
+        let var = self.expression_var(&name, expression);
         if self.aliases.contains_key(&var) || self.runtime_aliases.contains(&var) {
             return None;
         }
