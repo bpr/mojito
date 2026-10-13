@@ -418,7 +418,7 @@ impl Flatten<'_> {
                 adjustment,
                 mojito_checked::checked::SemanticAdjustment::PointerOriginCast { .. }
             )
-        }) && let ExprKind::Member { object, .. } = &callee.kind
+        }) && let Some(object) = self.member_object(callee)
         {
             return self.expr(object);
         }
@@ -435,7 +435,7 @@ impl Flatten<'_> {
                 _ => None,
             });
         if let Some((dtype, width)) = simd_cast
-            && let ExprKind::Member { object, .. } = &callee.kind
+            && let Some(object) = self.member_object(callee)
         {
             let value = self.expr(object);
             let dest = self.fresh(span(e), None);
@@ -459,7 +459,7 @@ impl Flatten<'_> {
                 _ => None,
             });
         if let Some((dtype, width)) = simd_to_bits
-            && let ExprKind::Member { object, .. } = &callee.kind
+            && let Some(object) = self.member_object(callee)
         {
             let value = self.expr(object);
             let dest = self.fresh(span(e), None);
@@ -481,7 +481,7 @@ impl Flatten<'_> {
                 _ => None,
             });
         if let Some((mask, joined)) = simd_shuffle
-            && let ExprKind::Member { object, .. } = &callee.kind
+            && let Some(object) = self.member_object(callee)
         {
             let value = self.expr(object);
             let other = joined.then(|| self.expr(&args[0]));
@@ -681,7 +681,7 @@ impl Flatten<'_> {
         args: &[Expr],
         kwargs: &[KwArg],
     ) -> Reg {
-        let ExprKind::Member { object, .. } = &callee.kind else {
+        let Some(object) = self.member_object(callee) else {
             unreachable!("checked Variant operation has a member callee")
         };
         match operation.clone() {
@@ -825,7 +825,9 @@ impl Flatten<'_> {
         args: &[Expr],
         kwargs: &[KwArg],
     ) -> Reg {
-        let ExprKind::Member { object, field } = &callee.kind else {
+        let (Some(CheckedOp::Member { field, .. }), Some(object)) =
+            (self.op_of(callee).cloned(), self.member_object(callee))
+        else {
             unreachable!("checked parameterized method call has a member callee")
         };
         let param_decls = parameterized_method_decls(node).unwrap_or_default();
@@ -909,7 +911,7 @@ impl Flatten<'_> {
         self.emit(MirInstr::MethodCall {
             dest,
             recv,
-            method: field.clone(),
+            method: field,
             resolved: callable_target(&node.adjustments),
             raises: self.checked_raises(e),
             reference_result: (self

@@ -7,8 +7,11 @@ use mojito_types::types::TyKind;
 
 impl Flatten<'_> {
     pub(in crate::mir) fn expr_unconverted(&mut self, e: &Expr) -> Reg {
-        if self.variant_projection_index(e).is_some() { eprintln!("R638PROBE top kind={:?} op={:?}", std::mem::discriminant(&e.kind), self.op_of(e).map(|o| format!("{o:?}").chars().take(40).collect::<String>())); }
-        if let Some(value) = self.literal_or_name(e).or_else(|| self.call_family(e)) {
+        if let Some(value) = self
+            .literal_or_name(e)
+            .or_else(|| self.call_family(e))
+            .or_else(|| self.access_family(e))
+        {
             return value;
         }
         match &e.kind {
@@ -111,21 +114,22 @@ impl Flatten<'_> {
                 });
                 dest
             }
-            ExprKind::Member { object, field } => self.member_expr(e, object, field),
-            // A variant projection spelled with a struct-name index
-            // (`v[String]`) carries the same checked adjustment as the
-            // type-token spelling below and lowers identically.
-            ExprKind::Index { object, .. }
-                if self.checked_adjustments(e).iter().any(|adjustment| {
-                    matches!(
-                        adjustment,
-                        mojito_checked::checked::SemanticAdjustment::VariantProject { .. }
-                    )
-                }) =>
-            {
-                self.variant_project_index(e, object)
+            // Every member read and subscript MIR lowers was rebuilt from
+            // its node.
+            ExprKind::Member { .. }
+            | ExprKind::Index { .. }
+            | ExprKind::Slice { .. }
+            | ExprKind::MultiIndex { .. } => {
+                let dest = self.fresh(span(e), None);
+                self.emit(MirInstr::Unsupported(
+                    "a member or subscript without a checked node reached MIR".to_string(),
+                ));
+                self.emit(MirInstr::Const {
+                    dest,
+                    k: Const::None,
+                });
+                dest
             }
-            ExprKind::Index { object, index } => self.index_expr(e, object, index),
 
             // --- Aggregates ----------------------------------------------------
             ExprKind::ListLit(elems) => self.list_literal(e, elems),
@@ -148,21 +152,6 @@ impl Flatten<'_> {
             // Chained comparison `a < b < c` — each operand evaluated once, folded
             // into short-circuiting `and`s.
             ExprKind::Compare { first, rest } => self.compare_chain(first, rest, span(e)),
-            // Slice `object[lower:upper:step]` → a new List/String.
-            ExprKind::Slice {
-                object,
-                lower,
-                upper,
-                step,
-                ..
-            } => self.slice_expr(
-                e,
-                object,
-                lower.as_deref(),
-                upper.as_deref(),
-                step.as_deref(),
-            ),
-            ExprKind::MultiIndex { object, args } => self.multi_index_expr(e, object, args),
             // HIR lowers the construction the checker spelled for a
             // t-string in its place, so a checked program never reaches one.
             ExprKind::TString { .. } => {
@@ -176,17 +165,6 @@ impl Flatten<'_> {
                     k: Const::None,
                 });
                 dest
-            }
-            ExprKind::TypeApply { name, .. }
-                if self.checked_adjustments(e).iter().any(|adjustment| {
-                    matches!(
-                        adjustment,
-                        mojito_checked::checked::SemanticAdjustment::VariantProject { .. }
-                    )
-                }) =>
-            {
-                eprintln!("R638PROBE expr_unconverted op={:?} binding={:?}", self.op_of(e).map(|o| std::mem::discriminant(o)), self.checked_node(e).and_then(|n| n.binding));
-                self.variant_project_type_apply(e, name)
             }
             // A lambda expression materializes its hidden definition's
             // closure at the expression's evaluation point — copy/move
@@ -343,7 +321,7 @@ impl Flatten<'_> {
             let d = self.fresh(span(e), Some(place.root));
             self.emit(MirInstr::MovePlace { dest: d, place });
             d
-        } else if let ExprKind::Index { object, .. } = &inner.kind
+        } else if let Some((object, _)) = self.index_operands(inner)
             && matches!(
                 self.checked_ty(object).as_ref().map(Ty::kind),
                 Some(TyKind::Tuple(_))
@@ -743,6 +721,59 @@ impl Flatten<'_> {
                 } else {
                     self.literal(node, Const::Function(callable_target(&node.adjustments)?))
                 }
+            }
+            _ => return None,
+        })
+    }
+
+    /// Lower `e` by its node's op when that op is a member read, a
+    /// subscript, a slice, a multi-subscript, or a `Variant` projection:
+    /// `None` for any other op, which the syntax dispatch lowers. The op
+    /// decides; the syntax only binds the operands still lowered from it.
+    fn access_family(&mut self, e: &Expr) -> Option<Reg> {
+        let tables = std::sync::Arc::clone(&self.checked);
+        let node = tables.expression(self.node_of(e)?)?;
+        Some(match (&node.op, &e.kind) {
+            (CheckedOp::Member { field, .. }, ExprKind::Member { object, .. }) => {
+                self.member_expr(e, node, object, field)
+            }
+            // A variant projection spelled with a struct-name index
+            // (`v[String]`) carries the same checked adjustment as the
+            // type-token spelling below and lowers identically.
+            (CheckedOp::Index { .. }, ExprKind::Index { object, .. })
+                if variant_projection(node) =>
+            {
+                self.variant_project_index(e, node, object)
+            }
+            (CheckedOp::Index { .. }, ExprKind::Index { object, index }) => {
+                self.index_expr(e, node, object, index)
+            }
+            // Slice `object[lower:upper:step]` → a new List/String.
+            (
+                CheckedOp::Slice { .. },
+                ExprKind::Slice {
+                    object,
+                    lower,
+                    upper,
+                    step,
+                    ..
+                },
+            ) => self.slice_expr(
+                e,
+                node,
+                object,
+                lower.as_deref(),
+                upper.as_deref(),
+                step.as_deref(),
+            ),
+            (
+                CheckedOp::MultiIndex {
+                    args: checked_args, ..
+                },
+                ExprKind::MultiIndex { object, args },
+            ) => self.multi_index_expr(e, node, object, checked_args, args),
+            (CheckedOp::TypeApply { name, .. }, _) if variant_projection(node) => {
+                self.variant_project_type_apply(e, node, name)
             }
             _ => return None,
         })

@@ -8,6 +8,15 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- MIR lowers member reads, subscripts, slices, multi-subscripts, and
+  `Variant` projections from their checked ops (R620), as upstream's
+  lowering consumes a typed member or subscript op: the op decides, and
+  the field name, the subscript arguments' kinds and keywords, and every
+  adjustment are read from the node; the place builders, subscript
+  stores, and projection predicates decide by the op too. A leftover
+  probe that kept the bundled library from being packaged is gone. No
+  program's output or MIR changes.
+
 - MIR lowers literals and names from their checked ops (R618), as
   upstream's lowering consumes a constant or a value use as a typed op:
   each rebuilt expression's facts name its node, whose attributes are

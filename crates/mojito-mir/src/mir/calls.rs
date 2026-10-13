@@ -791,8 +791,13 @@ impl Flatten<'_> {
                 this.materialized_temporary_base_place(base)
             }
         };
-        match &expression.kind {
-            ExprKind::Member { object, field } => {
+        let tables = std::sync::Arc::clone(&self.checked);
+        let op = self
+            .node_of(expression)
+            .and_then(|id| tables.expression(id))
+            .map(|node| &node.op);
+        match (op, &expression.kind) {
+            (Some(CheckedOp::Member { field, .. }), ExprKind::Member { object, .. }) => {
                 let mut place = base_place(self, object)?;
                 if let Some(ty) = self
                     .checked_place_ty(expression)
@@ -804,7 +809,7 @@ impl Flatten<'_> {
                 }
                 Some(place)
             }
-            ExprKind::Index { object, index }
+            (Some(CheckedOp::Index { .. }), ExprKind::Index { object, index })
                 if self.checked_call_contract(expression).is_none()
                     && matches!(
                         self.intrinsic_index_dispatch(object),
@@ -1323,8 +1328,8 @@ impl Flatten<'_> {
         converted: bool,
     ) {
         let subscript_view = matches!(
-            expression.kind,
-            ExprKind::Index { .. } | ExprKind::MultiIndex { .. } | ExprKind::Slice { .. }
+            self.op_of(expression),
+            Some(CheckedOp::Index { .. } | CheckedOp::MultiIndex { .. } | CheckedOp::Slice { .. })
         );
         let call_temporary = self.allow_argument_anchors
             && matches!(
@@ -1441,14 +1446,15 @@ impl Flatten<'_> {
     /// materialized as a pointer-field holder.
     pub(super) fn rooted_at_materialized_temporary(&self, expression: &Expr) -> bool {
         let mut root = expression;
-        loop {
-            root = match &root.kind {
-                ExprKind::Member { object, .. } | ExprKind::Index { object, .. } => object,
-                _ => match pointer_keyword_subscript(root) {
-                    Some((object, _)) => object,
-                    None => break,
-                },
-            };
+        while let Some(object) = self
+            .member_object(root)
+            .or_else(|| self.index_operands(root).map(|(object, _)| object))
+            .or_else(|| {
+                self.pointer_keyword_subscript(root)
+                    .map(|(object, _)| object)
+            })
+        {
+            root = object;
         }
         self.is_call(root)
             && mojito_checked::checked::materialized_borrow_owner(&self.checked_adjustments(root))
@@ -1657,7 +1663,7 @@ impl Flatten<'_> {
     /// ASAP destruction, which aggregate `LoadPlace` results deliberately
     /// trade for owner retention through the call.
     fn lower_borrowed_read_argument(&mut self, expression: &Expr) -> Option<Reg> {
-        if let ExprKind::Index { object, .. } = &expression.kind {
+        if let Some((object, _)) = self.index_operands(expression) {
             return self.lower_borrowed_element_read(expression, object);
         }
         let name = self.name_spelled(expression)?;

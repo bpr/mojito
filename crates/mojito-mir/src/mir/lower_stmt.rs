@@ -483,8 +483,13 @@ impl Flatten<'_> {
         {
             return place;
         }
-        match &e.kind {
-            ExprKind::Member { object, field } => {
+        let tables = std::sync::Arc::clone(&self.checked);
+        let op = self
+            .node_of(e)
+            .and_then(|id| tables.expression(id))
+            .map(|node| &node.op);
+        match (op, &e.kind) {
+            (Some(CheckedOp::Member { field, .. }), ExprKind::Member { object, .. }) => {
                 let mut p = self.place(object);
                 if let Some(ty) = self.checked_place_ty(e).or_else(|| self.checked_ty(e)) {
                     p.project(Proj::Field(field.clone()), ty);
@@ -494,8 +499,10 @@ impl Flatten<'_> {
                 p
             }
             // `p[unsafe_offset=i]`: the pointer element place, as `p[i]`.
-            ExprKind::MultiIndex { .. } if pointer_keyword_subscript(e).is_some() => {
-                let (object, offset) = pointer_keyword_subscript(e).expect("guarded");
+            (Some(CheckedOp::MultiIndex { .. }), _)
+                if self.pointer_keyword_subscript(e).is_some() =>
+            {
+                let (object, offset) = self.pointer_keyword_subscript(e).expect("guarded");
                 let mut p = self.place(object);
                 let idx = self.expr(offset);
                 if let Some(ty) = self.checked_place_ty(e).or_else(|| self.checked_ty(e)) {
@@ -505,7 +512,7 @@ impl Flatten<'_> {
                 }
                 p
             }
-            ExprKind::Index { object, index } => {
+            (Some(CheckedOp::Index { .. }), ExprKind::Index { object, index }) => {
                 // A type-keyed projection (`v[Int]` on the self-hosted
                 // `Variant`), or a `Tuple` element the checker resolved to
                 // its compile-time-index accessor (`t[0]`, upstream's
@@ -559,18 +566,9 @@ impl Flatten<'_> {
                 }
                 p
             }
-            ExprKind::TypeApply { name, .. } => {
-eprintln!("R638PROBE place_unrebound op={:?} binding={:?}", self.op_of(e).map(|o| std::mem::discriminant(o)), self.checked_node(e).and_then(|n| n.binding));
+            (Some(CheckedOp::TypeApply { name, .. }), _) => {
                 let index = self
-                    .checked_adjustments(e)
-                    .into_iter()
-                    .find_map(|adjustment| match adjustment {
-                        mojito_checked::checked::SemanticAdjustment::VariantProject {
-                            index,
-                            ..
-                        } => Some(index),
-                        _ => None,
-                    })
+                    .variant_projection_index(e)
                     .expect("only checked Variant projection is a place TypeApply");
                 let mut p = self.resolved_place(name);
                 let ty = self
@@ -580,7 +578,7 @@ eprintln!("R638PROBE place_unrebound op={:?} binding={:?}", self.op_of(e).map(|o
                 p.project(Proj::Variant(index), ty);
                 p
             }
-            other => {
+            (_, other) => {
                 // A borrowing view a call returns is a place only as the base
                 // of a projection into its borrowed storage
                 // (`make(b).src[] = Box(11)`).
@@ -734,7 +732,7 @@ eprintln!("R638PROBE place_unrebound op={:?} binding={:?}", self.op_of(e).map(|o
         let Some(plan) = self.checked_augmented_subscript(target) else {
             return false;
         };
-        let ExprKind::Index { object, index } = &target.kind else {
+        let Some((object, index)) = self.index_operands(target) else {
             return false;
         };
         let (receiver, receiver_place) = self.lower_call_receiver(object);
@@ -799,8 +797,13 @@ eprintln!("R638PROBE place_unrebound op={:?} binding={:?}", self.op_of(e).map(|o
             })
             .expect("checked augmented subscript has descriptor metadata");
 
-        match &target.kind {
-            ExprKind::Index { object, index } => {
+        let tables = std::sync::Arc::clone(&self.checked);
+        let checked_op = self
+            .node_of(target)
+            .and_then(|id| tables.expression(id))
+            .map(|node| &node.op);
+        match (checked_op, &target.kind) {
+            (Some(CheckedOp::Index { .. }), ExprKind::Index { object, index }) => {
                 debug_assert_eq!(descriptors, vec![None]);
                 let (receiver, receiver_place) = self.lower_call_receiver(object);
                 let index_source =
@@ -1002,13 +1005,16 @@ eprintln!("R638PROBE place_unrebound op={:?} binding={:?}", self.op_of(e).map(|o
                 });
                 true
             }
-            ExprKind::Slice {
-                object,
-                lower,
-                upper,
-                step,
-                ..
-            } => {
+            (
+                Some(CheckedOp::Slice { .. }),
+                ExprKind::Slice {
+                    object,
+                    lower,
+                    upper,
+                    step,
+                    ..
+                },
+            ) => {
                 let kind = descriptors
                     .first()
                     .copied()
@@ -1169,50 +1175,66 @@ eprintln!("R638PROBE place_unrebound op={:?} binding={:?}", self.op_of(e).map(|o
                 });
                 true
             }
-            ExprKind::MultiIndex {
-                object,
-                args: source,
-            } => {
+            (
+                Some(CheckedOp::MultiIndex { args: checked, .. }),
+                ExprKind::MultiIndex {
+                    object,
+                    args: source,
+                },
+            ) => {
+                debug_assert!(subscript_args_pair(checked, source));
                 let (receiver, receiver_place) = self.lower_call_receiver(object);
                 let mut source_places = Vec::with_capacity(source.len());
                 let mut source_spans = Vec::with_capacity(source.len());
-                let raw_args = source
+                let raw_args = checked
                     .iter()
+                    .zip(source)
                     .zip(&descriptors)
                     .enumerate()
-                    .map(|(position, (argument, descriptor))| match argument {
-                        mojito_ast::ast::SubscriptArg::Keyword { .. }
-                        | mojito_ast::ast::SubscriptArg::KeywordSlice { .. } => {
-                            unreachable!("keyword subscript assignment is rejected at checking")
-                        }
-                        mojito_ast::ast::SubscriptArg::Index(index) => {
-                            debug_assert!(descriptor.is_none());
-                            let argument_source =
-                                mojito_checked::checked::CheckedCallArgumentSource::Positional(
-                                    position,
-                                );
-                            let retain_place = Self::checked_call_source_requires_place(
-                                &plan.getter,
-                                argument_source,
-                            ) || plan.setter.as_ref().is_some_and(|setter| {
-                                Self::checked_call_source_requires_place(setter, argument_source)
-                            });
-                            let (register, place) =
-                                self.lower_augmented_argument_source(index, retain_place);
-                            source_places.push(place);
-                            source_spans.push(Some(index.source_span()));
-                            MirSubscriptArg::Index(register)
-                        }
-                        mojito_ast::ast::SubscriptArg::Slice {
-                            lower, upper, step, ..
-                        } => {
-                            source_places.push(None);
-                            source_spans.push(None);
-                            MirSubscriptArg::Slice {
-                                kind: descriptor.expect("slice argument has a descriptor kind"),
-                                lower: lower.as_ref().map(|bound| self.expr(bound)),
-                                upper: upper.as_ref().map(|bound| self.expr(bound)),
-                                step: step.as_ref().map(|bound| self.expr(bound)),
+                    .map(|(position, ((checked, argument), descriptor))| {
+                        match (checked, argument) {
+                            (
+                                mojito_checked::checked::CheckedSubscriptArg::Index(_),
+                                mojito_ast::ast::SubscriptArg::Index(index),
+                            ) => {
+                                debug_assert!(descriptor.is_none());
+                                let argument_source =
+                                    mojito_checked::checked::CheckedCallArgumentSource::Positional(
+                                        position,
+                                    );
+                                let retain_place =
+                                    Self::checked_call_source_requires_place(
+                                        &plan.getter,
+                                        argument_source,
+                                    ) || plan.setter.as_ref().is_some_and(|setter| {
+                                        Self::checked_call_source_requires_place(
+                                            setter,
+                                            argument_source,
+                                        )
+                                    });
+                                let (register, place) =
+                                    self.lower_augmented_argument_source(index, retain_place);
+                                source_places.push(place);
+                                source_spans.push(Some(index.source_span()));
+                                MirSubscriptArg::Index(register)
+                            }
+                            (
+                                mojito_checked::checked::CheckedSubscriptArg::Slice { .. },
+                                mojito_ast::ast::SubscriptArg::Slice {
+                                    lower, upper, step, ..
+                                },
+                            ) => {
+                                source_places.push(None);
+                                source_spans.push(None);
+                                MirSubscriptArg::Slice {
+                                    kind: descriptor.expect("slice argument has a descriptor kind"),
+                                    lower: lower.as_ref().map(|bound| self.expr(bound)),
+                                    upper: upper.as_ref().map(|bound| self.expr(bound)),
+                                    step: step.as_ref().map(|bound| self.expr(bound)),
+                                }
+                            }
+                            _ => {
+                                unreachable!("keyword subscript assignment is rejected at checking")
                             }
                         }
                     })
@@ -1475,7 +1497,7 @@ eprintln!("R638PROBE place_unrebound op={:?} binding={:?}", self.op_of(e).map(|o
         if self.checked_call_contract(target).is_none() {
             return false;
         }
-        if let ExprKind::Index { object, index } = &target.kind {
+        if let Some((object, index)) = self.index_operands(target) {
             let Some(value_keyword) = self.checked_adjustments(target).into_iter().find_map(
                 |adjustment| match adjustment {
                     mojito_checked::checked::SemanticAdjustment::SliceDescriptors {
@@ -1515,12 +1537,34 @@ eprintln!("R638PROBE place_unrebound op={:?} binding={:?}", self.op_of(e).map(|o
             });
             return true;
         }
-        let (object, source_arguments): (&Expr, Option<&[mojito_ast::ast::SubscriptArg]>) =
-            match &target.kind {
-                ExprKind::Slice { object, .. } => (object, None),
-                ExprKind::MultiIndex { object, args } => (object, Some(args)),
-                _ => return false,
-            };
+        let tables = std::sync::Arc::clone(&self.checked);
+        let op = self
+            .node_of(target)
+            .and_then(|id| tables.expression(id))
+            .map(|node| &node.op);
+        let (object, source_arguments) = match (op, &target.kind) {
+            (
+                Some(CheckedOp::Slice { .. }),
+                ExprKind::Slice {
+                    object,
+                    lower,
+                    upper,
+                    step,
+                    ..
+                },
+            ) => (
+                object,
+                SetArguments::Slice([lower.as_deref(), upper.as_deref(), step.as_deref()]),
+            ),
+            (
+                Some(CheckedOp::MultiIndex { args: checked, .. }),
+                ExprKind::MultiIndex { object, args },
+            ) => {
+                debug_assert!(subscript_args_pair(checked, args));
+                (object, SetArguments::Multi(checked, args))
+            }
+            _ => return false,
+        };
         let Some((descriptors, value_keyword)) = self
             .checked_adjustments(target)
             .into_iter()
@@ -1543,63 +1587,68 @@ eprintln!("R638PROBE place_unrebound op={:?} binding={:?}", self.op_of(e).map(|o
         let (receiver, receiver_place) = self.lower_call_receiver(object);
         let mut arg_places = Vec::with_capacity(descriptors.len());
         let mut parameter_sources = Vec::new();
-        let args = if let Some(arguments) = source_arguments {
-            arguments
+        let args = match source_arguments {
+            SetArguments::Multi(checked, arguments) => checked
                 .iter()
+                .zip(arguments)
                 .zip(descriptors)
-                .map(|(argument, descriptor)| match argument {
-                    mojito_ast::ast::SubscriptArg::Keyword { .. }
-                    | mojito_ast::ast::SubscriptArg::KeywordSlice { .. } => {
-                        unreachable!("keyword subscript assignment is rejected at checking")
-                    }
-                    mojito_ast::ast::SubscriptArg::Index(value) => {
-                        debug_assert!(descriptor.is_none());
-                        let (register, place) = self.lower_call_argument(value);
-                        arg_places.push(place);
-                        parameter_sources.push((value.source_span(), register));
-                        MirSubscriptArg::Index(register)
-                    }
-                    mojito_ast::ast::SubscriptArg::Slice {
-                        lower, upper, step, ..
-                    } => {
-                        arg_places.push(None);
-                        MirSubscriptArg::Slice {
-                            kind: descriptor
-                                .expect("slice assignment argument has descriptor kind"),
-                            lower: lower.as_ref().map(|bound| self.expr(bound)),
-                            upper: upper.as_ref().map(|bound| self.expr(bound)),
-                            step: step.as_ref().map(|bound| self.expr(bound)),
+                .map(
+                    |((checked, argument), descriptor)| match (checked, argument) {
+                        (
+                            mojito_checked::checked::CheckedSubscriptArg::Index(_),
+                            mojito_ast::ast::SubscriptArg::Index(value),
+                        ) => {
+                            debug_assert!(descriptor.is_none());
+                            let (register, place) = self.lower_call_argument(value);
+                            arg_places.push(place);
+                            parameter_sources.push((value.source_span(), register));
+                            MirSubscriptArg::Index(register)
                         }
-                    }
-                })
-                .collect()
-        } else {
-            arg_places.push(None);
-            let ExprKind::Slice {
-                lower, upper, step, ..
-            } = &target.kind
-            else {
-                unreachable!("single descriptor assignment is a Slice")
-            };
-            vec![MirSubscriptArg::Slice {
-                kind: descriptors
-                    .first()
-                    .copied()
-                    .flatten()
-                    .expect("slice assignment has descriptor kind"),
-                lower: lower.as_ref().map(|bound| self.expr(bound)),
-                upper: upper.as_ref().map(|bound| self.expr(bound)),
-                step: step.as_ref().map(|bound| self.expr(bound)),
-            }]
+                        (
+                            mojito_checked::checked::CheckedSubscriptArg::Slice { .. },
+                            mojito_ast::ast::SubscriptArg::Slice {
+                                lower, upper, step, ..
+                            },
+                        ) => {
+                            arg_places.push(None);
+                            MirSubscriptArg::Slice {
+                                kind: descriptor
+                                    .expect("slice assignment argument has descriptor kind"),
+                                lower: lower.as_ref().map(|bound| self.expr(bound)),
+                                upper: upper.as_ref().map(|bound| self.expr(bound)),
+                                step: step.as_ref().map(|bound| self.expr(bound)),
+                            }
+                        }
+                        _ => unreachable!("keyword subscript assignment is rejected at checking"),
+                    },
+                )
+                .collect(),
+            SetArguments::Slice([lower, upper, step]) => {
+                arg_places.push(None);
+                vec![MirSubscriptArg::Slice {
+                    kind: descriptors
+                        .first()
+                        .copied()
+                        .flatten()
+                        .expect("slice assignment has descriptor kind"),
+                    lower: lower.map(|bound| self.expr(bound)),
+                    upper: upper.map(|bound| self.expr(bound)),
+                    step: step.map(|bound| self.expr(bound)),
+                }]
+            }
         };
         let (value, value_place) = self.lower_assignment_value(target, value_expression);
         parameter_sources.push((value_expression.source_span(), value));
         let call = self
             .subscript_call_contract(target, &parameter_sources)
             .expect("checked nominal subscript setter has a call contract");
-        if let Some(arguments) = source_arguments {
-            for argument in arguments {
-                if let mojito_ast::ast::SubscriptArg::Index(argument) = argument {
+        if let SetArguments::Multi(checked, arguments) = source_arguments {
+            for pair in checked.iter().zip(arguments) {
+                if let (
+                    mojito_checked::checked::CheckedSubscriptArg::Index(_),
+                    mojito_ast::ast::SubscriptArg::Index(argument),
+                ) = pair
+                {
                     self.emit_interior_invalidations(argument, None);
                 }
             }
@@ -1813,15 +1862,22 @@ eprintln!("R638PROBE place_unrebound op={:?} binding={:?}", self.op_of(e).map(|o
             // recorded: a value, never a place.
             return (!self.constant_param_value(e)).then(|| self.name_place_root(&name, e));
         }
-        match &e.kind {
-            ExprKind::Index { object, .. } if self.variant_projection_index(e).is_some() => {
+        let tables = std::sync::Arc::clone(&self.checked);
+        let op = self
+            .node_of(e)
+            .and_then(|id| tables.expression(id))
+            .map(|node| &node.op);
+        match (op, &e.kind) {
+            (Some(CheckedOp::Index { .. }), ExprKind::Index { object, .. })
+                if self.variant_projection_index(e).is_some() =>
+            {
                 let index = self.variant_projection_index(e)?;
                 let mut p = self.simple_place(object)?;
                 let ty = self.checked_place_ty(e).or_else(|| self.checked_ty(e))?;
                 p.project(Proj::Variant(index), ty);
                 Some(p)
             }
-            ExprKind::Member { object, field } => {
+            (Some(CheckedOp::Member { field, .. }), ExprKind::Member { object, .. }) => {
                 // A compile-time member read (`T.K`, `A.K`) is a value.
                 if self.is_slice_descriptor(object)
                     || self.is_dtype_constant(e)
@@ -1837,8 +1893,7 @@ eprintln!("R638PROBE place_unrebound op={:?} binding={:?}", self.op_of(e).map(|o
                 }
                 Some(p)
             }
-            ExprKind::TypeApply { name, .. } => {
-eprintln!("R638PROBE simple_place op={:?} binding={:?}", self.op_of(e).map(|o| std::mem::discriminant(o)), self.checked_node(e).and_then(|n| n.binding));
+            (Some(CheckedOp::TypeApply { name, .. }), _) => {
                 let index = self.variant_projection_index(e)?;
                 let mut p = self.resolved_place(name);
                 let ty = self.checked_place_ty(e).or_else(|| self.checked_ty(e))?;
@@ -1868,8 +1923,13 @@ eprintln!("R638PROBE simple_place op={:?} binding={:?}", self.op_of(e).map(|o| s
             let root = if name == "Self" { "self" } else { &name };
             return Some(self.name_place_root(root, e));
         }
-        match &e.kind {
-            ExprKind::Member { object, field } => {
+        let tables = std::sync::Arc::clone(&self.checked);
+        let op = self
+            .node_of(e)
+            .and_then(|id| tables.expression(id))
+            .map(|node| &node.op);
+        match (op, &e.kind) {
+            (Some(CheckedOp::Member { field, .. }), ExprKind::Member { object, .. }) => {
                 // A compile-time member read (`T.K`, `A.K`) is a value.
                 if self.is_slice_descriptor(object)
                     || self.is_dtype_constant(e)
@@ -1898,9 +1958,16 @@ eprintln!("R638PROBE simple_place op={:?} binding={:?}", self.op_of(e).map(|o| s
         if let Some(name) = self.name_spelled(e) {
             return Some(self.name_place_root(&name, e));
         }
-        match &e.kind {
-            ExprKind::MultiIndex { .. } if pointer_keyword_subscript(e).is_some() => {
-                let (object, offset) = pointer_keyword_subscript(e).expect("guarded");
+        let tables = std::sync::Arc::clone(&self.checked);
+        let op = self
+            .node_of(e)
+            .and_then(|id| tables.expression(id))
+            .map(|node| &node.op);
+        match (op, &e.kind) {
+            (Some(CheckedOp::MultiIndex { .. }), _)
+                if self.pointer_keyword_subscript(e).is_some() =>
+            {
+                let (object, offset) = self.pointer_keyword_subscript(e).expect("guarded");
                 let mut p = self.try_place(object)?;
                 let idx = self.expr(offset);
                 if let Some(ty) = self.checked_place_ty(e).or_else(|| self.checked_ty(e)) {
@@ -1910,7 +1977,7 @@ eprintln!("R638PROBE simple_place op={:?} binding={:?}", self.op_of(e).map(|o| s
                 }
                 Some(p)
             }
-            ExprKind::Member { object, field } => {
+            (Some(CheckedOp::Member { field, .. }), ExprKind::Member { object, .. }) => {
                 // A compile-time member read (`T.K`, `A.K`) is a value.
                 if self.is_slice_descriptor(object)
                     || self.is_dtype_constant(e)
@@ -1931,7 +1998,7 @@ eprintln!("R638PROBE simple_place op={:?} binding={:?}", self.op_of(e).map(|o| s
                 }
                 Some(p)
             }
-            ExprKind::Index { object, index } => {
+            (Some(CheckedOp::Index { .. }), ExprKind::Index { object, index }) => {
                 let mut p = self.try_place(object)?;
                 if let Some(index) = self.variant_projection_index(e) {
                     let ty = self.checked_place_ty(e).or_else(|| self.checked_ty(e))?;
@@ -1955,8 +2022,7 @@ eprintln!("R638PROBE simple_place op={:?} binding={:?}", self.op_of(e).map(|o| s
                 }
                 Some(p)
             }
-            ExprKind::TypeApply { name, .. } => {
-eprintln!("R638PROBE try_place op={:?} binding={:?}", self.op_of(e).map(|o| std::mem::discriminant(o)), self.checked_node(e).and_then(|n| n.binding));
+            (Some(CheckedOp::TypeApply { name, .. }), _) => {
                 let index = self.variant_projection_index(e)?;
                 let mut p = self.resolved_place(name);
                 let ty = self.checked_place_ty(e).or_else(|| self.checked_ty(e))?;
@@ -2056,7 +2122,7 @@ eprintln!("R638PROBE try_place op={:?} binding={:?}", self.op_of(e).map(|o| std:
                                     | CheckedOp::Index { .. }
                                     | CheckedOp::TypeApply { .. }
                             )
-                        ) || pointer_keyword_subscript(value).is_some()))
+                        ) || self.pointer_keyword_subscript(value).is_some()))
                 {
                     let source = self.expr(value);
                     self.runtime_aliases.insert(reference);
@@ -3274,4 +3340,15 @@ impl Flatten<'_> {
                 _ => None,
             })
     }
+}
+
+/// The arguments of a slice or multi-subscript store target: a slice's
+/// bounds, or a multi-subscript's checked arguments with their syntax.
+#[derive(Clone, Copy)]
+enum SetArguments<'a> {
+    Slice([Option<&'a Expr>; 3]),
+    Multi(
+        &'a [mojito_checked::checked::CheckedSubscriptArg],
+        &'a [mojito_ast::ast::SubscriptArg],
+    ),
 }

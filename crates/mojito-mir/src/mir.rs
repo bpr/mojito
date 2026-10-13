@@ -2633,8 +2633,8 @@ impl Flatten<'_> {
     /// a pointer-typed object, or current Mojo's keyword `p[unsafe_offset=i]`
     /// — as its pointer object and offset expression.
     fn pointer_offset_subscript<'a>(&self, e: &'a Expr) -> Option<(&'a Expr, &'a Expr)> {
-        match &e.kind {
-            ExprKind::Index { object, index }
+        match (self.op_of(e), &e.kind) {
+            (Some(CheckedOp::Index { .. }), ExprKind::Index { object, index })
                 if matches!(
                     self.checked_ty(object).as_ref().map(Ty::kind),
                     Some(TyKind::Pointer { .. })
@@ -2642,7 +2642,26 @@ impl Flatten<'_> {
             {
                 Some((object, index))
             }
-            _ => pointer_keyword_subscript(e),
+            _ => self.pointer_keyword_subscript(e),
+        }
+    }
+
+    /// The keyword pointer subscript (`p[unsafe_offset=i]`) `e` was rebuilt
+    /// from, as its object and offset expression; every other keyword
+    /// subscript is a nominal call.
+    fn pointer_keyword_subscript<'a>(&self, e: &'a Expr) -> Option<(&'a Expr, &'a Expr)> {
+        let Some(CheckedOp::MultiIndex { args: checked, .. }) = self.op_of(e) else {
+            return None;
+        };
+        match (checked.as_slice(), &e.kind) {
+            (
+                [mojito_checked::checked::CheckedSubscriptArg::Keyword { name, .. }],
+                ExprKind::MultiIndex { object, args },
+            ) if name == "unsafe_offset" => match args.as_slice() {
+                [mojito_ast::ast::SubscriptArg::Keyword { value, .. }] => Some((object, value)),
+                _ => None,
+            },
+            _ => None,
         }
     }
 
@@ -2812,15 +2831,15 @@ impl Flatten<'_> {
         &self,
         expression: &Expr,
     ) -> Option<mojito_checked::checked::CheckedCallContract> {
-        let ExprKind::Index { index, .. } = &expression.kind else {
+        let Some(CheckedOp::Index { index, .. }) = self.op_of(expression) else {
             return None;
         };
         // The index names a type, never a runtime value (the Int-keyed
         // dependent accessors of a variadic struct index by a checked Int).
-        let type_index = match &index.kind {
-            ExprKind::TypeValue(_) => true,
-            _ => self.is_name(index) && self.checked_ty(index).is_none(),
-        };
+        let type_index = self.checked.expression(*index).is_some_and(|index| {
+            matches!(index.op, CheckedOp::TypeValue(_))
+                || matches!(index.op, CheckedOp::Identifier(_)) && index.ty.is_none()
+        });
         let contract = self.checked_call_contract(expression)?;
         (type_index
             && contract.arguments.is_empty()
@@ -2835,7 +2854,7 @@ impl Flatten<'_> {
         &self,
         expression: &Expr,
     ) -> Option<mojito_checked::checked::CheckedCallContract> {
-        if !matches!(expression.kind, ExprKind::Index { .. }) {
+        if !matches!(self.op_of(expression), Some(CheckedOp::Index { .. })) {
             return None;
         }
         let contract = self.checked_call_contract(expression)?;
@@ -3068,7 +3087,7 @@ impl Flatten<'_> {
                 return dest;
             }
         }
-        if matches!(expression.kind, ExprKind::TypeApply { .. })
+        if matches!(self.op_of(expression), Some(CheckedOp::TypeApply { .. }))
             && self
                 .checked_adjustments(expression)
                 .iter()
@@ -3079,7 +3098,6 @@ impl Flatten<'_> {
                     )
                 })
         {
-eprintln!("R638PROBE reference_handle op={:?} binding={:?}", self.op_of(expression).map(|o| std::mem::discriminant(o)), self.checked_node(expression).and_then(|n| n.binding));
             let place = self.place(expression);
             let handle_ty = mir_place_handle_ty(
                 &place,
@@ -3097,8 +3115,8 @@ eprintln!("R638PROBE reference_handle op={:?} binding={:?}", self.op_of(expressi
             return dest;
         }
         if matches!(
-            expression.kind,
-            ExprKind::Member { .. } | ExprKind::Index { .. }
+            self.op_of(expression),
+            Some(CheckedOp::Member { .. } | CheckedOp::Index { .. })
         ) {
             // A reference-producing projection may begin with a nominal
             // accessor call (`return self.entries[i].value`). Forward through
@@ -5235,18 +5253,33 @@ mod nested;
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use nested::*;
 
-/// The keyword pointer subscript (`p[unsafe_offset=i]`) as its object and
-/// offset expression; every other keyword subscript is a nominal call.
-pub(crate) fn pointer_keyword_subscript(e: &Expr) -> Option<(&Expr, &Expr)> {
-    match &e.kind {
-        ExprKind::MultiIndex { object, args } => match args.as_slice() {
-            [mojito_ast::ast::SubscriptArg::Keyword { name, value }] if name == "unsafe_offset" => {
-                Some((object, value))
-            }
-            _ => None,
-        },
-        _ => None,
-    }
+/// Whether multi-subscript arguments `checked` and their rebuilt syntax
+/// `syntax` pair one to one, argument kind by argument kind.
+fn subscript_args_pair(
+    checked: &[mojito_checked::checked::CheckedSubscriptArg],
+    syntax: &[mojito_ast::ast::SubscriptArg],
+) -> bool {
+    use mojito_ast::ast::SubscriptArg;
+    use mojito_checked::checked::CheckedSubscriptArg;
+    checked.len() == syntax.len()
+        && checked.iter().zip(syntax).all(|pair| {
+            matches!(
+                pair,
+                (CheckedSubscriptArg::Index(_), SubscriptArg::Index(_))
+                    | (
+                        CheckedSubscriptArg::Keyword { .. },
+                        SubscriptArg::Keyword { .. }
+                    )
+                    | (
+                        CheckedSubscriptArg::Slice { .. },
+                        SubscriptArg::Slice { .. }
+                    )
+                    | (
+                        CheckedSubscriptArg::KeywordSlice { .. },
+                        SubscriptArg::KeywordSlice { .. }
+                    )
+            )
+        })
 }
 
 fn sorted_map<K: Ord + serde::Serialize, V: serde::Serialize, S: serde::Serializer>(

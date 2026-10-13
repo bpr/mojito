@@ -54,6 +54,24 @@ impl Flatten<'_> {
         )
     }
 
+    /// The object of the member node `expression` was rebuilt from: `None`
+    /// when its node is not a member read.
+    pub(super) fn member_object<'e>(&self, expression: &'e Expr) -> Option<&'e Expr> {
+        match (self.op_of(expression)?, &expression.kind) {
+            (CheckedOp::Member { .. }, ExprKind::Member { object, .. }) => Some(object),
+            _ => None,
+        }
+    }
+
+    /// The object and index of the subscript node `expression` was rebuilt
+    /// from: `None` when its node is not a subscript.
+    pub(super) fn index_operands<'e>(&self, expression: &'e Expr) -> Option<(&'e Expr, &'e Expr)> {
+        match (self.op_of(expression)?, &expression.kind) {
+            (CheckedOp::Index { .. }, ExprKind::Index { object, index }) => Some((object, index)),
+            _ => None,
+        }
+    }
+
     /// The checked node `expression` was rebuilt from, as its record.
     pub(super) fn checked_node(
         &self,
@@ -292,14 +310,15 @@ impl Flatten<'_> {
         let mut element = None;
         let mut current = receiver;
         loop {
-            match &current.kind {
-                ExprKind::Index { object, .. } => {
-                    element = Some((object.as_ref(), current));
-                    current = object;
-                }
-                ExprKind::Member { object, .. } => current = object,
-                _ if self.is_name(current) => break,
-                _ => return None,
+            if let Some((object, _)) = self.index_operands(current) {
+                element = Some((object, current));
+                current = object;
+            } else if let Some(object) = self.member_object(current) {
+                current = object;
+            } else if self.is_name(current) {
+                break;
+            } else {
+                return None;
             }
         }
         let (container, subscript) = element?;
@@ -436,7 +455,7 @@ impl Flatten<'_> {
         // A compile-time index built from the enclosing binders
         // (`self[Self.Ts.length - 1 - i]`) is recorded as the expression the
         // checker solved it to, which the elaborator evaluates per instance.
-        if let ExprKind::Index { index, .. } = &expression.kind
+        if let Some((_, index)) = self.index_operands(expression)
             && let [argument] = call.param_arg_regs.as_mut_slice()
             && argument.value.is_some()
         {
@@ -594,12 +613,14 @@ impl Flatten<'_> {
         }
         if let Some(mutable) = borrow
             && matches!(
-                expression.kind,
-                ExprKind::Member { .. } | ExprKind::Index { .. } | ExprKind::TypeApply { .. }
+                self.op_of(expression),
+                Some(
+                    CheckedOp::Member { .. }
+                        | CheckedOp::Index { .. }
+                        | CheckedOp::TypeApply { .. }
+                )
             )
         {
- if matches!(expression.kind, ExprKind::TypeApply{..}) {
-eprintln!("R638PROBE facts_loans op={:?} binding={:?}", self.op_of(expression).map(|o| std::mem::discriminant(o)), self.checked_node(expression).and_then(|n| n.binding));}
             let place = self.place(expression);
             let interiors = self.checked_interior_references(expression);
             if interiors.is_empty() {
@@ -778,7 +799,8 @@ eprintln!("R638PROBE facts_loans op={:?} binding={:?}", self.op_of(expression).m
                 .collect(),
             // A view-typed slice result (a Span sub-slice or a StringSpan
             // keyword slice) inherits its receiver's loans.
-            (_, ExprKind::Slice { object, .. } | ExprKind::MultiIndex { object, .. }) => {
+            (Some(CheckedOp::Slice { .. }), ExprKind::Slice { object, .. })
+            | (Some(CheckedOp::MultiIndex { .. }), ExprKind::MultiIndex { object, .. }) => {
                 if self
                     .checked_adjustments(expression)
                     .iter()

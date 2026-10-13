@@ -1765,10 +1765,16 @@ other families match the op too. Calls, callable-value invocations, method
 calls, and callable type applications dispatch the same way
 (`Flatten::call_family`): the op decides, the entry points read the callee,
 the method, and every adjustment from the node, and a call's loans
-transferred to its arguments are the node's own `call_transfers`. A static
+transferred to its arguments are the node's own `call_transfers`. Member
+reads, subscripts, slices, multi-subscripts, and `Variant` projections
+dispatch the same way (`Flatten::access_family`), reading the field name,
+the subscript arguments' kinds and keywords, and every adjustment from the
+node; the place builders, the subscript stores, and the projection
+predicates decide by the op too, the syntax only binding the operands still
+lowered from it. A static
 call's receiver is a type because its node is a name the check bound to
 nothing and typed as no value, never because no local shares its spelling.
-One narrow association remains span-keyed:
+One narrow association remains span-keyed (R641):
 source-ordered compile-time value arguments reuse registers already evaluated
 for the corresponding checked subscript operand. This is a register handoff,
 not semantic reconstruction. Register spans otherwise serve diagnostics only.

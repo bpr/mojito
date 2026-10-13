@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R641**.
+Next free ID: **R642**.
 
 ## Ordered Work
 
@@ -4821,12 +4821,24 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R620 MIR lowers member reads and subscripts from syntax**
+- [ ] **R641 A subscript accessor's compile-time argument finds its
+  register by source span**
 
-  MIR lowering matches `ExprKind` for members and subscripts, where it
-  should match `CheckedOp`.
-  - Plan: `R604-a-package-s-checked-body-is-plan.md`, slice 6.
-  - Depends on R617.
+  MIR pairs a subscript accessor's compile-time value argument with the
+  register already evaluated for it by matching source spans, where
+  upstream's accessor call carries its parameters positionally.
+  - `CheckedCallParameterArgument::value_source`,
+    `CheckedCallArgumentBoundary::value_source`, and
+    `CheckedAugmentedSubscript::value_source` are `SourceSpan`s;
+    `mir_subscript_call_contract` (`mir/facts.rs`) matches them against the
+    `(SourceSpan, Reg)` lists the subscript lowerings build.
+  - An augmented setter's stored value has no operand node, so the position
+    must name "the stored value" as its own slot.
+  - Touches the checker, `mojito-checked`, and the package format.
+  - Done when no `(SourceSpan, Reg)` list is built in
+    `crates/mojito-mir/src`.
+  - Found while landing R620 (2026-10-12).
+  - Depends on nothing.
   - Model: Opus, Not Planned.
 
 - [ ] **R621 MIR lowers displays and comprehensions from syntax**

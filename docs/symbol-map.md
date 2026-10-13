@@ -156,7 +156,8 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   instantiates at each call's type argument, and `type_keyed_projection`
   routes a `v[T]` subscript to the struct's type-keyed
   `__getitem_param__[T]` accessor in value and place positions (the
-  `type_keyed_accessor_call` lowering in MIR). `check_lambda` runs a lambda
+  `type_keyed_accessor_call` lowering in MIR, which reads the subscript's
+  index node). `check_lambda` runs a lambda
   expression's hidden definition through `check_def` during statement-root
   registration and caches the finalized function-value type under the
   expression span (the comprehension pattern); `ast::lambdas_in_expr`/
@@ -683,9 +684,11 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   dispatcher, collections/comprehensions, nested closures, the
   field-invocation indirect-call branch). `expr_unconverted` in `expr.rs`
   first dispatches on the node's `CheckedOp` for literals and names
-  (`literal_or_name`) and for calls, invocations, method calls, and callable
-  type applications (`call_family`, `call_op`), whose entry points take the
-  node and read its adjustments; the rest is a dispatch table over
+  (`literal_or_name`), for calls, invocations, method calls, and callable
+  type applications (`call_family`, `call_op`), and for member reads,
+  subscripts, slices, multi-subscripts, and `Variant` projections
+  (`access_family`), whose entry points take the node and read its
+  attributes and adjustments; the rest is a dispatch table over
   `ExprKind`: each arm calls one `Flatten` method.
   `expr.rs` keeps the variable-read, operator, and literal-aggregate arms
   (a t-string reaching it is an explicit `Unsupported` boundary); `expr_call.rs` owns direct calls (`call_expr`,
@@ -693,7 +696,12 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `variant_operation`, `parameterized_method_call`); `expr_method.rs` owns
   method calls (`method_call_expr`, its value and storage special forms,
   `ordinary_method_call`, `type_receiver_name`); `expr_access.rs` owns
-  member, subscript, slice, and variant-projection reads. The module
+  member, subscript, slice, and variant-projection reads (both projection
+  spellings share `variant_payload_read`). The place builders
+  (`lower_stmt.rs`), `lower_projected_reference_place`, and
+  `Flatten::pointer_keyword_subscript` (`mir.rs`) decide by the op, and
+  `Flatten::{member_object, index_operands}` (`facts.rs`) bind a member or
+  subscript node's operands for the predicates. The module
   installs merged caller-side
   `EstablishLoans` — domain-keyed for interior-precise destinations — for
   checked call-transfer records (`install_call_transfers`, reading the call
