@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R680**.
+Next free ID: **R681**.
 
 ## Ordered Work
 
@@ -69,24 +69,6 @@ change that needs a new `MJRT_ABI_VERSION`.
     `_FormatCurlyEntry._format`, so native `format` of such a struct is
     wrong too.
   - Found while landing R421 (2026-10-06).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **R676 Natively, a function value or nested def returning a
-  reference is rejected**
-
-  Problem: `var f = field; print(f(w))` over `def field(w: W) ->
-  ref[origin_of(w.t)] Int` prints `1` on the VM and at the pin, but the
-  native backend stops with "unsupported reference-returning indirect
-  call".
-  - A nested `def inner(w: W) -> ref[origin_of(w.t)] Int` called directly
-    fails the same way, since it lowers through the closure path.
-  - `ContractAbi` (`contract_abi` in `mojito-pliron`) refuses any contract
-    with a `ref_return`.
-  - When it lands, add the function-value and nested-def cases to
-    `assets/ok/ref_result_through_read_param.mojo`, both over a place and a
-    temporary (`f(W(10))`).
-  - Found while landing R672 (2026-10-13).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -325,6 +307,26 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
   - The pin destroys values whose last use is the same point in creation
     order; drop elaboration emits them reversed.
   - Found while landing R672 (2026-10-13).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R680 A mutable reference result through a function value is not
+  an assignment target**
+
+  Problem: `var f = field; f(w) = 7` over `def field(mut w: W) ->
+  ref[origin_of(w.t)] Int` prints `7` at the pin, but Mojito rejects it:
+  "expression must be mutable in assignment ('immutable reference returned
+  by call 'f()'')".
+  - A nested `def inner(mut w: W) -> ref[origin_of(w.t)] Int` with
+    `inner(w) = 7` is rejected the same way, where the pin accepts it.
+  - The rejection comes from the call-as-place arm in
+    `crates/mojito-checker/src/checker/indexing.rs` (the "immutable
+    reference returned by {callee}" site): an indirect call's reference
+    result resolves as immutable even when its contract's `ref_return`
+    names a `mut` parameter.
+  - When it lands, add both cases to an `assets/ok` fixture and run it
+    natively too.
+  - Found while landing R676 (2026-10-13).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

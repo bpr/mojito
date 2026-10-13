@@ -61,7 +61,7 @@ use mojito_mir::mir::{
 };
 use mojito_types::types::{Ty, TyArg, canonical_simd_ty, scalar_simd_dtype};
 
-use mojito_native::native::layout::{Layout, LayoutCx};
+use mojito_native::native::layout::{Layout, LayoutCx, LayoutError};
 use mojito_native::native::mangle;
 
 use super::{PlironError, PlironErrorKind, RetKind, TrapCategory};
@@ -122,8 +122,9 @@ pub struct OutcomeAbi {
     /// The lowered ok payload (`ZeroSized` for a `None` return).
     pub ok: LowerTy,
     /// Whether the ok payload is a place pointer rather than the value — the
-    /// reference-returning raising `__next__` convention. Only `TryNext`
-    /// consumes this shape; the generic raising-call path rejects it.
+    /// shape of every raising reference-returning callee, called directly,
+    /// through a callable value, or by `TryNext`. A raising call defines its
+    /// destination as that handle; only `TryNext` copies the referent out.
     pub ok_is_reference: bool,
 }
 
@@ -137,6 +138,9 @@ pub struct ContractAbi {
     /// The `invoke` call type, including the `env*` parameter.
     pub func_ty: TypedHandle<FuncType>,
     pub returns_value: bool,
+    /// Whether the contract returns the referent's address (`ref_return`),
+    /// as a compiled reference-returning callee does.
+    pub returns_reference: bool,
     pub params: Vec<LowerTy>,
     pub sret: Option<Layout>,
     pub outcome: Option<OutcomeAbi>,

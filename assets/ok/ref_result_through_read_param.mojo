@@ -1,6 +1,7 @@
 # A reference result through a read parameter borrows the caller's
 # argument: a named local, a field, a list element, or a temporary the
 # result keeps alive, across free calls, methods, statics, and keywords.
+# The borrow holds through function values and nested defs, raising or not.
 
 
 struct W(Copyable):
@@ -55,7 +56,11 @@ def keyword(*, w: W) -> ref[origin_of(w.t)] Int:
     return w.t
 
 
-def main():
+def raising(w: W) raises -> ref[origin_of(w.t)] Int:
+    return w.t
+
+
+def main() raises:
     var w = W(1)
     print(field(w))
     var o = O(2)
@@ -73,4 +78,16 @@ def main():
     print(h.pick(w))
     print(h.pick(W(9)))
     print(H.spick(w))
+    var f = field
+    print(f(w))
+    print(f(W(10)))
+
+    def inner(w: W) -> ref[origin_of(w.t)] Int:
+        return w.t
+
+    print(inner(w))
+    print(inner(W(11)))
+    var g = raising
+    print(g(w))
+    print(g(W(12)))
     print("end")

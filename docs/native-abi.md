@@ -239,6 +239,11 @@ specialized name). Rules:
   places by pointer, zero-sized parameters skipped). A raising contract's
   tagged outcome flows through the thunk untouched: the thunk forwards its
   out-pointer to the target and the **caller** branches on the tag.
+- A reference-returning contract (`ref_return`) returns the referent's
+  address as a compiled reference-returning callee does: a `ptr` result, or,
+  raising, a `Scalar(Ptr)` ok payload in the tagged outcome. The thunk
+  forwards it unchanged, and the caller checks that contract and target
+  agree on the result form before binding a value.
 - One thunk is interned per (compiled target, capture-mode vector). The thunk
   rebuilds the target's leading capture arguments from the environment
   record and calls the target directly; every capture parameter of a lifted

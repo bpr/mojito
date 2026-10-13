@@ -842,10 +842,16 @@ impl FnLowering<'_> {
         if variadic.is_some() {
             return Err(self.unsupported_reg("variadic indirect-call contract".into(), dest));
         }
-        if ref_return.is_some() {
-            return Err(self.unsupported_reg("reference-returning indirect call".into(), dest));
-        }
-        let (result, returns_value, sret, outcome) = if *raises {
+        let returns_reference = ref_return.is_some();
+        let (result, returns_value, sret, outcome) = if returns_reference && *raises {
+            let outcome =
+                super::module_env::reference_outcome(&self.layout, ret).map_err(|error| {
+                    self.unsupported_reg(format!("raising reference return ({error})"), dest)
+                })?;
+            (VoidType::get(ctx).to_handle(), false, None, Some(outcome))
+        } else if returns_reference {
+            (PointerType::get(ctx, 0).into(), true, None, None)
+        } else if *raises {
             let ok = lower_ty(self.name, ret, &self.layout, self.reg_span(dest))?;
             let composed = self.layout.outcome_layout(ret).map_err(|error| {
                 self.unsupported_reg(
@@ -920,6 +926,7 @@ impl FnLowering<'_> {
         Ok(ContractAbi {
             func_ty,
             returns_value,
+            returns_reference,
             params: lowered_params,
             sret,
             outcome,
@@ -935,9 +942,9 @@ impl FnLowering<'_> {
 
     /// Check that the physical shape an indirect caller derives from its
     /// contract agrees with the compiled target the thunk forwards to —
-    /// out-pointer kind, parameter classification, and reference-ness must
-    /// match slot for slot after the capture prefix, or the call would pass
-    /// values where pointers are expected. Checked programs agree here; a
+    /// out-pointer kind, result form, and parameter classification and
+    /// reference-ness must match slot for slot after the capture prefix, or
+    /// the call would pass values where pointers are expected. Checked programs agree here; a
     /// disagreement is surfaced as a contextual rejection, never a silent
     /// miscompile.
     pub(super) fn check_contract_target(
@@ -955,7 +962,9 @@ impl FnLowering<'_> {
             )
         };
         if abi.outcome.is_some() != target.outcome.is_some()
-            || target.outcome.as_ref().is_some_and(|o| o.ok_is_reference)
+            || abi.returns_reference != (target.result_form == ResultForm::Reference)
+            || abi.outcome.as_ref().is_some_and(|o| o.ok_is_reference)
+                != target.outcome.as_ref().is_some_and(|o| o.ok_is_reference)
             || abi.sret.is_some() != target.sret.is_some()
             || abi.params.len() + captures != target.params.len()
         {

@@ -8,6 +8,14 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- Natively, a function value or nested def returning a reference runs
+  (R676): `var f = field; print(f(w))`, a nested
+  `def inner(w: W) -> ref[origin_of(w.t)] Int`, and a raising
+  `var g = raising; print(g(w))` no longer stop with "unsupported
+  reference-returning indirect call". An indirect-call contract with a
+  reference result returns the referent's address as a compiled callee
+  does, and a contract disagreeing with its target in result form is
+  still rejected.
 - A reference result through a read parameter borrows the caller's
   argument (R672): `def field(w: W) -> ref[origin_of(w.t)] Int` no longer
   stops with "stale reference" on the VM. A call whose result borrows its

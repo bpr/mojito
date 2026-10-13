@@ -208,29 +208,13 @@ pub fn declare_function(
     })?;
     let (result, returns_value, ret, sret, outcome) = if func.returns_reference {
         if func.raises {
-            // A raising reference return rides the tagged outcome with a
-            // single place pointer as the ok payload (the reference-yielding
-            // raising `__next__` convention).
-            let pointer = Ty::new(TyKind::Pointer {
-                element: ret_ty.clone(),
-                origin: mojito_types::origin::PointerOrigin::Untracked { mutable: true },
-            });
-            let composed = layout
-                .outcome_layout(&pointer)
-                .map_err(|error| PlironError {
-                    function: Some(name.to_string()),
-                    kind: PlironErrorKind::Unsupported {
-                        construct: format!("raising reference return ({error})"),
-                    },
-                    location: None,
-                })?;
-            let outcome = OutcomeAbi {
-                layout: composed.layout,
-                ok_offset: composed.offsets[1],
-                err_offset: composed.offsets[2],
-                ok: LowerTy::Scalar(ScalarTy::Ptr),
-                ok_is_reference: true,
-            };
+            let outcome = reference_outcome(layout, ret_ty).map_err(|error| PlironError {
+                function: Some(name.to_string()),
+                kind: PlironErrorKind::Unsupported {
+                    construct: format!("raising reference return ({error})"),
+                },
+                location: None,
+            })?;
             (
                 VoidType::get(ctx).to_handle(),
                 false,
@@ -516,4 +500,25 @@ pub fn synthesize_exe_wrapper(
 pub fn intercepted_call(name: &str) -> bool {
     name == "__module$std$memory$alloc$unsafe_alloc"
         || name.starts_with("__module$std$memory$alloc$unsafe_alloc$")
+}
+
+/// The outcome of a raising callee returning a reference to `referent`: the
+/// tagged outcome carries a single place pointer as its ok payload. Compiled
+/// callees and indirect-call contracts classify by this one rule.
+pub(super) fn reference_outcome(
+    layout: &LayoutCx<'_>,
+    referent: &Ty,
+) -> Result<OutcomeAbi, LayoutError> {
+    let pointer = Ty::new(TyKind::Pointer {
+        element: referent.clone(),
+        origin: mojito_types::origin::PointerOrigin::Untracked { mutable: true },
+    });
+    let composed = layout.outcome_layout(&pointer)?;
+    Ok(OutcomeAbi {
+        layout: composed.layout,
+        ok_offset: composed.offsets[1],
+        err_offset: composed.offsets[2],
+        ok: LowerTy::Scalar(ScalarTy::Ptr),
+        ok_is_reference: true,
+    })
 }
