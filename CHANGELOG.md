@@ -8,6 +8,13 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- HIR receives an expression thunk's returned value, for a lifted
+  compile-time application and for an evaluated parameter default, as its
+  checked node (R645), as upstream builds a lifted function from the typed
+  value it was elaborated from, rather than finding the value by source
+  span. Each lowering unit names its checked statement, so a default's node
+  is read off its declaration's op. No program's output or MIR changes.
+
 - MIR finds the compile-time applications the check lifted out of a body,
   and the local bindings a lifted thunk reads, by walking the body's
   checked statement and expression nodes (R642), as upstream walks a typed

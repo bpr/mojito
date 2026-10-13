@@ -11,7 +11,7 @@
 //! blocks and edges, so later passes are pure graph traversal. A local name
 //! resolves to its slot once, here, recorded per node in [`Cfg::slots`].
 
-use mojito_ast::ast::{Stmt, StmtKind};
+use mojito_ast::ast::Stmt;
 use mojito_checked::checked::{
     CheckedExpr, CheckedNodeId, CheckedOp, CheckedProgram, CheckedStmtId, CheckedStmtOp,
     CheckedTables, SemanticAdjustment,
@@ -278,7 +278,13 @@ impl Cfg {
     /// parameters — the call ABI the MIR/VM rely on to bind arguments. The final
     /// fall-through block gets an implicit `return None`.
     pub fn build_checked_fn(checked: &CheckedProgram, params: &[String], body: &[Stmt]) -> Self {
-        Self::build_fn_with_context(params, HashSet::new(), body, Arc::clone(checked.tables()))
+        Self::build_fn_with_context(
+            params,
+            HashSet::new(),
+            body,
+            None,
+            Arc::clone(checked.tables()),
+        )
     }
 
     /// [`Cfg::build_checked_fn`] for a nested `def` whose immutable captures
@@ -289,7 +295,30 @@ impl Cfg {
         shadow_captures: HashSet<String>,
         body: &[Stmt],
     ) -> Self {
-        Self::build_fn_with_context(params, shadow_captures, body, Arc::clone(checked.tables()))
+        Self::build_fn_with_context(
+            params,
+            shadow_captures,
+            body,
+            None,
+            Arc::clone(checked.tables()),
+        )
+    }
+
+    /// [`Cfg::build_checked_fn`] for an expression thunk: the `prologue`
+    /// statements, then `return value`.
+    pub fn build_checked_thunk(
+        checked: &CheckedProgram,
+        params: &[String],
+        prologue: &[Stmt],
+        value: CheckedNodeId,
+    ) -> Self {
+        Self::build_fn_with_context(
+            params,
+            HashSet::new(),
+            prologue,
+            Some(value),
+            Arc::clone(checked.tables()),
+        )
     }
 
     /// Lower a checked `try` region, the statement nodes `body`, into a CFG
@@ -361,6 +390,7 @@ impl Cfg {
         params: &[String],
         shadow_captures: HashSet<String>,
         body: &[Stmt],
+        returned: Option<CheckedNodeId>,
         checked: Arc<CheckedTables>,
     ) -> Self {
         let mut g = StableGraph::new();
@@ -379,14 +409,7 @@ impl Cfg {
             checked,
             slots: HashMap::new(),
         };
-        let roots = lower.roots(body);
-        let statements: Vec<CheckedStmtId> = roots
-            .iter()
-            .filter_map(|root| match root {
-                Root::Stmt(id) => Some(*id),
-                Root::Return(_) => None,
-            })
-            .collect();
+        let statements = lower.statements(body);
         let explicit = explicit_local_names(&lower.checked, &statements);
         let mut implicit = HashSet::new();
         collect_function_implicit_names(&lower.checked, &statements, &explicit, &mut implicit);
@@ -400,8 +423,11 @@ impl Cfg {
         }
         lower.vars = vars;
         lower.scopes = vec![root_scope];
-        for root in roots {
-            lower.root(root);
+        for id in &statements {
+            lower.stmt(*id);
+        }
+        if let Some(value) = returned {
+            lower.ret(Some(value));
         }
         lower.seal(Terminator::Return(None)); // implicit `return None` off the end
         lower.finish(entry, params.len(), statements)
@@ -452,15 +478,6 @@ fn collect_function_implicit_names(
             collect_function_implicit_names(checked, body, explicit, names);
         }
     }
-}
-
-/// One root of a body HIR is handed as syntax: a statement node, or the
-/// value node of the synthetic `return` an expression thunk ends with.
-/// Transitional: R629 hands HIR statement nodes and deletes it.
-#[derive(Clone, Copy)]
-enum Root {
-    Stmt(CheckedStmtId),
-    Return(CheckedNodeId),
 }
 
 /// Lowering cursor: appends to the "current" block, splitting on control flow.
@@ -613,41 +630,21 @@ impl Lower {
         }
     }
 
-    /// The checked node of each body root. A root with no statement node is
-    /// an expression thunk's synthetic `return`, whose value is a node.
-    fn roots(&self, body: &[Stmt]) -> Vec<Root> {
+    /// The checked node of each body statement.
+    fn statements(&self, body: &[Stmt]) -> Vec<CheckedStmtId> {
         body.iter()
             .map(|statement| {
-                if let Some(node) = self.checked.statement_at(&statement.source_span()) {
-                    return Root::Stmt(node.id);
-                }
-                let StmtKind::Return(Some(value)) = &statement.kind else {
-                    panic!(
-                        "checked body statement at {:?} has no checked node",
-                        statement.source_span()
-                    );
-                };
-                let node = self
-                    .checked
-                    .expression_ids_at(&value.source_span())
-                    .first()
-                    .copied()
+                self.checked
+                    .statement_at(&statement.source_span())
                     .unwrap_or_else(|| {
                         panic!(
-                            "checked thunk value at {:?} has no checked node",
-                            value.source_span()
+                            "checked body statement at {:?} has no checked node",
+                            statement.source_span()
                         )
-                    });
-                Root::Return(node)
+                    })
+                    .id
             })
             .collect()
-    }
-
-    fn root(&mut self, root: Root) {
-        match root {
-            Root::Stmt(id) => self.stmt(id),
-            Root::Return(value) => self.ret(Some(value)),
-        }
     }
 
     fn finish(self, entry: BlockId, n_params: usize, body: Vec<CheckedStmtId>) -> Cfg {

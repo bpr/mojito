@@ -1743,9 +1743,10 @@ occurrence, the binding it introduces with that binding's type, and its
 declaration. A function's root statements are its op's body; the tables keep
 the module's and each default wrapper's. A lambda's op names its `def`'s
 statement node. HIR walks the statement and expression nodes; its callers
-still hand it a body's syntax roots, which `Lower::roots` maps to their
-nodes through the transitional `CheckedTables::statement_at` (R629); a
-`try` region hands it the op's statement ids directly. MIR lowers an opaque
+still hand it a body's syntax statements, which `Lower::statements` maps to
+their nodes through the transitional `CheckedTables::statement_at` (R629); a
+`try` region hands it the op's statement ids directly, and an expression
+thunk hands it its returned value's node (`Cfg::build_checked_thunk`). MIR lowers an opaque
 statement and a `try` by matching its `CheckedStmtOp`, reading only the
 expression operands it still lowers from rebuilt syntax; its declaration
 walks still read statement syntax (R643). Source spans index

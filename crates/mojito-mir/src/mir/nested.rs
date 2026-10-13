@@ -44,6 +44,10 @@ pub(super) struct FunctionLowering<'a> {
     pub(super) error_ty: Option<Ty>,
     pub(super) named_result: Option<&'a str>,
     pub(super) body: &'a [Stmt],
+    /// An expression thunk's returned value: `body` then ends with the
+    /// synthetic `return` of it, which only the nested-declaration scan
+    /// reads.
+    pub(super) returned: Option<CheckedNodeId>,
     pub(super) overloads: &'a std::sync::Arc<mojito_checked::package::ProgramOverloads>,
 }
 
@@ -71,12 +75,18 @@ pub(super) fn lower_fn_nested(
         error_ty,
         named_result,
         body,
+        returned,
         overloads,
     } = request;
     let children = analyze_root_children(checked, name, param_names, body);
     let registry = scope_registry(body, &children, &HashMap::new());
 
-    let mut cfg = Cfg::build_checked_fn(checked, param_names, body);
+    let mut cfg = match (returned, body.split_last()) {
+        (Some(value), Some((_, prologue))) => {
+            Cfg::build_checked_thunk(checked, param_names, prologue, value)
+        }
+        _ => Cfg::build_checked_fn(checked, param_names, body),
+    };
     // Parameter slot types come from the checked declaration, not from
     // name-matched body expressions (same-named bindings in other functions
     // must never leak into this function's slots).
@@ -236,6 +246,8 @@ struct NestedNode<'a> {
     mangled: String,
     captures: Vec<NestedCapture>,
     callable_ty: Option<Ty>,
+    /// Each parameter's checked default node.
+    defaults: Vec<Option<CheckedNodeId>>,
     children: Vec<Self>,
 }
 
@@ -246,6 +258,11 @@ impl NestedNode<'_> {
             .iter()
             .map(|index| index.declaration.clone())
             .collect()
+    }
+
+    /// The checked default node of the parameter at `index`.
+    fn default(&self, index: usize) -> Option<CheckedNodeId> {
+        self.defaults.get(index).copied().flatten()
     }
 }
 
@@ -260,7 +277,7 @@ fn analyze_node<'a>(
         unreachable!("nested tree contains only def statements")
     };
 
-    let declaration = checked_nested_declaration(checked, statement);
+    let (declaration, defaults) = checked_nested_declaration(checked, statement);
     let binding = declaration
         .binding
         .expect("checked nested function has no value binding");
@@ -292,6 +309,7 @@ fn analyze_node<'a>(
             })
             .cloned()
             .map(mir_nested_callable_ty),
+        defaults,
         children,
     }
 }
@@ -519,13 +537,14 @@ fn lower_nested_node(
         let capture_count = captures.len();
         let binders = enclosing_binders.with(&param_decls);
         let defaults: Vec<_> = std::iter::repeat_n(None, capture_count)
-            .chain(regular.iter().enumerate().map(|(slot, (_, parameter))| {
+            .chain(regular.iter().enumerate().map(|(slot, (i, parameter))| {
                 lower_default(
                     DefaultLowering {
                         checked,
                         overloads,
                         owner: mangled,
                         parameter,
+                        default: node.default(*i),
                         binders: &binders,
                         ty: declaration_types.get(capture_count + slot),
                     },
@@ -742,24 +761,34 @@ fn analyze_captures(
         .collect()
 }
 
+/// The checked declaration of the nested `def` `statement`, and each of its
+/// parameters' checked default node.
 fn checked_nested_declaration<'a>(
     checked: &'a mojito_checked::checked::CheckedProgram,
     statement: &Stmt,
-) -> &'a mojito_checked::checked::CheckedDeclaration {
+) -> (
+    &'a mojito_checked::checked::CheckedDeclaration,
+    Vec<Option<CheckedNodeId>>,
+) {
     let StmtKind::Def { name, .. } = &statement.kind else {
         unreachable!("nested declaration lookup requires a def")
     };
-    let declaration = checked
-        .tables()
-        .statement_at(&statement.source_span())
+    let node = checked.tables().statement_at(&statement.source_span());
+    let declaration = node
         .and_then(|node| node.declaration)
         .and_then(|id| checked.declaration(id))
         .expect("checked nested function declaration is missing");
+    let defaults = match node.map(|node| &node.op) {
+        Some(mojito_checked::checked::CheckedStmtOp::Def(def)) => {
+            def.params.iter().map(|param| param.default).collect()
+        }
+        _ => Vec::new(),
+    };
     debug_assert!(
         declaration.kind == mojito_checked::checked::CheckedDeclKind::Function
             && declaration.name == *name
     );
-    declaration
+    (declaration, defaults)
 }
 
 fn analyze_root_children<'a>(

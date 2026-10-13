@@ -22,23 +22,32 @@ use std::sync::Arc;
 /// One lowering unit of a checked program, borrowed from it.
 #[derive(Debug, Clone)]
 pub enum LoweringUnit<'a> {
-    /// A module `def`.
-    Function(&'a Stmt),
+    /// A module `def`, and its statement node.
+    Function {
+        statement: &'a Stmt,
+        root: CheckedStmtId,
+    },
     /// The `method` at `index` of the struct `structure`, lowering to the
-    /// symbol `lowered`.
+    /// symbol `lowered`; `root` is the struct's statement node.
     Method {
         structure: &'a Stmt,
         method: &'a Method,
         index: usize,
         lowered: String,
+        root: CheckedStmtId,
     },
     /// The wrapper of a trait default the struct `structure` inherits.
     Wrapper {
         structure: &'a Stmt,
         wrapper: &'a CheckedDefaultWrapper,
     },
-    /// A trait default, as its trait's member.
-    TraitMember(&'a CheckedTraitMember),
+    /// A trait default, as its trait's member. `root` is its trait's
+    /// statement node in the whole program, and its own `def`'s in a
+    /// package unit.
+    TraitMember {
+        member: &'a CheckedTraitMember,
+        root: CheckedStmtId,
+    },
     /// A module `comptime` constant, and its statement node.
     Constant {
         statement: &'a Stmt,
@@ -73,7 +82,10 @@ impl CheckedProgram {
         let mut constants = Vec::new();
         for (statement, root) in self.statements().iter().zip(self.tables().roots()) {
             match &statement.kind {
-                StmtKind::Def { .. } => units.push(LoweringUnit::Function(statement)),
+                StmtKind::Def { .. } => units.push(LoweringUnit::Function {
+                    statement,
+                    root: *root,
+                }),
                 StmtKind::Struct {
                     name,
                     type_params,
@@ -95,6 +107,7 @@ impl CheckedProgram {
                                 &**self.overloads(),
                                 &|name| self.constants().get(name),
                             ),
+                            root: *root,
                         }
                     }));
                     units.extend(
@@ -115,7 +128,10 @@ impl CheckedProgram {
                         .filter(|member| {
                             member.trait_name == *name && member.module == statement.module
                         })
-                        .map(LoweringUnit::TraitMember),
+                        .map(|member| LoweringUnit::TraitMember {
+                            member,
+                            root: *root,
+                        }),
                 ),
                 StmtKind::Comptime { .. } => constants.push(LoweringUnit::Constant {
                     statement,
@@ -266,13 +282,14 @@ impl CheckedUnit {
         let mut wrapper = None;
         let mut trait_member = None;
         let (kind, statements) = match unit {
-            LoweringUnit::Function(statement) => (UnitKind::Function, (*statement).clone()),
+            LoweringUnit::Function { statement, .. } => (UnitKind::Function, (*statement).clone()),
             LoweringUnit::Constant { statement, .. } => (UnitKind::Constant, (*statement).clone()),
             LoweringUnit::Method {
                 structure,
                 method,
                 index,
                 lowered,
+                ..
             } => {
                 origin_parameters = struct_origin_parameters(structure);
                 (
@@ -291,7 +308,7 @@ impl CheckedUnit {
                 wrapper = Some((*inherited).clone());
                 (UnitKind::Wrapper, member_of(structure, None))
             }
-            LoweringUnit::TraitMember(member) => {
+            LoweringUnit::TraitMember { member, .. } => {
                 trait_member = Some((*member).clone());
                 (UnitKind::TraitMember, member.declaration.clone())
             }
@@ -328,15 +345,20 @@ impl UnitProgram {
     /// is not of its kind.
     pub fn unit(&self) -> Option<LoweringUnit<'_>> {
         let statement = self.program.statements().first();
+        let root = self.program.tables().roots().first().copied();
         Some(match &self.kind {
-            UnitKind::Function => LoweringUnit::Function(statement?),
+            UnitKind::Function => LoweringUnit::Function {
+                statement: statement?,
+                root: root?,
+            },
             UnitKind::Constant => LoweringUnit::Constant {
                 statement: statement?,
-                root: *self.program.tables().roots().first()?,
+                root: root?,
             },
-            UnitKind::TraitMember => {
-                LoweringUnit::TraitMember(self.program.trait_members().first()?)
-            }
+            UnitKind::TraitMember => LoweringUnit::TraitMember {
+                member: self.program.trait_members().first()?,
+                root: root?,
+            },
             UnitKind::Method { index, lowered } => {
                 let structure = statement?;
                 let StmtKind::Struct { methods, .. } = &structure.kind else {
@@ -347,6 +369,7 @@ impl UnitProgram {
                     method: methods.first()?,
                     index: *index,
                     lowered: lowered.clone(),
+                    root: root?,
                 }
             }
             UnitKind::Wrapper => LoweringUnit::Wrapper {
@@ -669,8 +692,10 @@ mod tests {
             (4, 8),
         );
         mojito_ast::ast::stamp_source(std::slice::from_mut(&mut statement), "/a/stdlib/std/x.mojo");
-        let (shell, statements, wrappers) =
-            CheckedUnit::syntax(&LoweringUnit::Function(&statement));
+        let (shell, statements, wrappers) = CheckedUnit::syntax(&LoweringUnit::Function {
+            statement: &statement,
+            root: CheckedStmtId(0),
+        });
         let unit = CheckedUnit {
             tables: crate::checked::unit_tables(
                 &statements,

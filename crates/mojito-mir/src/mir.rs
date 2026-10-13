@@ -438,10 +438,11 @@ pub fn lower_unit(
 ) {
     let overloads = checked.overloads();
     match unit {
-        LoweringUnit::Function(statement) => {
+        LoweringUnit::Function { statement, root } => {
             let _def = timing::span("def");
             lower_function(
                 statement,
+                &declared_defaults(checked.tables(), root, 0),
                 checked,
                 overloads,
                 functions,
@@ -454,9 +455,19 @@ pub fn lower_unit(
             method: m,
             index,
             lowered,
+            root,
         } => {
             let _struct = timing::span("struct");
             let Some(structure) = StructLowering::of(checked, s) else {
+                return;
+            };
+            let StmtKind::Struct { methods, .. } = &s.kind else {
+                return;
+            };
+            let Some(spelled) = methods
+                .iter()
+                .position(|candidate| std::ptr::eq(candidate, m))
+            else {
                 return;
             };
             lower_struct_member(
@@ -472,6 +483,7 @@ pub fn lower_unit(
                     keyword_only: m.keyword_only,
                     type_params: &m.type_params,
                     body: &m.body,
+                    defaults: declared_defaults(checked.tables(), root, spelled),
                 },
                 functions,
                 declarations,
@@ -499,6 +511,7 @@ pub fn lower_unit(
                     keyword_only: None,
                     type_params: &[],
                     body: &wrapper.body,
+                    defaults: Vec::new(),
                 },
                 functions,
                 declarations,
@@ -507,10 +520,11 @@ pub fn lower_unit(
         }
         // A trait's requirements have no body (`...`); each default is
         // the trait's member, lowered as the check checked it.
-        LoweringUnit::TraitMember(member) => {
+        LoweringUnit::TraitMember { member, root } => {
             let _other = timing::span("other");
             lower_function(
                 &member.declaration,
+                &declared_defaults(checked.tables(), root, member.method_index),
                 checked,
                 overloads,
                 functions,
@@ -838,6 +852,7 @@ fn mir_default(checked: &CheckedProgram, default: Option<&Expr>) -> Option<Check
 /// defaults, and its body.
 fn lower_function(
     s: &Stmt,
+    declared_defaults: &[Option<CheckedNodeId>],
     checked: &CheckedProgram,
     overloads: &std::sync::Arc<mojito_checked::package::ProgramOverloads>,
     functions: &mut Vec<(String, MirFunction)>,
@@ -955,14 +970,15 @@ fn lower_function(
     let defaults = regular
         .iter()
         .map(|p| {
+            let param = params
+                .iter()
+                .position(|candidate| std::ptr::eq(candidate, *p))
+                .unwrap_or(params.len());
             let ty = checked.checked_type_at(&AnnotationSite::FunctionParam {
                 module: s.module.clone(),
                 declaration: s.span,
                 syntax: s.syntax_id,
-                param: params
-                    .iter()
-                    .position(|candidate| std::ptr::eq(candidate, *p))
-                    .unwrap_or(params.len()),
+                param,
             });
             lower_default(
                 DefaultLowering {
@@ -970,6 +986,7 @@ fn lower_function(
                     overloads,
                     owner: &lowered_name,
                     parameter: p,
+                    default: declared_defaults.get(param).copied().flatten(),
                     binders: &enclosing_binders,
                     ty,
                 },
@@ -1068,6 +1085,7 @@ fn lower_function(
             error_ty: effect.error,
             named_result: named_result.map(|p| p.name.as_str()),
             body,
+            returned: None,
             overloads,
         },
         functions,
@@ -1205,15 +1223,16 @@ fn lower_struct_member<P: DeclaredParam>(
     let defaults = regular
         .iter()
         .map(|param| {
+            let position = m
+                .params
+                .iter()
+                .position(|candidate| std::ptr::eq(candidate, *param))
+                .unwrap_or(m.params.len());
             let ty = checked.checked_type_at(&AnnotationSite::MethodParam {
                 module: module.clone(),
                 declaration: name.to_string(),
                 method: method_index,
-                param: m
-                    .params
-                    .iter()
-                    .position(|candidate| std::ptr::eq(candidate, *param))
-                    .unwrap_or(m.params.len()),
+                param: position,
             });
             lower_default(
                 DefaultLowering {
@@ -1221,6 +1240,7 @@ fn lower_struct_member<P: DeclaredParam>(
                     overloads,
                     owner: &mangled,
                     parameter: param,
+                    default: m.defaults.get(position).copied().flatten(),
                     binders: &enclosing_binders,
                     ty,
                 },
@@ -1381,6 +1401,7 @@ fn lower_struct_member<P: DeclaredParam>(
             error_ty: effect.error,
             named_result: named_result.map(DeclaredParam::name),
             body: m.body,
+            returned: None,
             overloads,
         },
         functions,
@@ -1437,16 +1458,19 @@ struct StructMember<'a, P> {
     /// Its own compile-time parameters.
     type_params: &'a [mojito_ast::ast::TypeParam],
     body: &'a [Stmt],
+    /// Each parameter's checked default node ([`declared_defaults`]).
+    defaults: Vec<Option<CheckedNodeId>>,
 }
 
-/// A declaration parameter whose default [`lower_default`] lowers: `ty` is its
-/// checked type, and `binders` the binders in scope at the declaration, which
-/// the default function lacks.
+/// A declaration parameter whose default [`lower_default`] lowers: `default`
+/// is its default's checked node, `ty` its checked type, and `binders` the
+/// binders in scope at the declaration, which the default function lacks.
 struct DefaultLowering<'a, P> {
     checked: &'a CheckedProgram,
     overloads: &'a std::sync::Arc<mojito_checked::package::ProgramOverloads>,
     owner: &'a str,
     parameter: &'a P,
+    default: Option<CheckedNodeId>,
     binders: &'a EnclosingBinders,
     ty: Option<&'a Ty>,
 }
@@ -1475,6 +1499,7 @@ fn lower_default<P: DeclaredParam>(
         overloads,
         owner,
         parameter,
+        default: node,
         binders,
         ty,
     } = request;
@@ -1483,6 +1508,7 @@ fn lower_default<P: DeclaredParam>(
         return Some(constant);
     }
     let ty = ty?;
+    let node = node.expect("checked default has no node");
     let binders = if binders.named_by(default) {
         binders.clone()
     } else {
@@ -1496,6 +1522,7 @@ fn lower_default<P: DeclaredParam>(
             name: &function,
             prologue: &[],
             expression: default,
+            node,
             binders: &binders,
             ty,
         },
@@ -1508,11 +1535,44 @@ fn lower_default<P: DeclaredParam>(
     })
 }
 
+/// The checked default node of each parameter of the declaration `member`
+/// of the statement node `root`, parallel to its syntax parameters: a `def`'s
+/// own, the struct method's at `member`, or the trait member's at `member`,
+/// after its receiver.
+fn declared_defaults(
+    tables: &mojito_checked::checked::CheckedTables,
+    root: CheckedStmtId,
+    member: usize,
+) -> Vec<Option<CheckedNodeId>> {
+    let defaults = |params: &[mojito_checked::checked::CheckedFnParam]| {
+        params.iter().map(|param| param.default).collect::<Vec<_>>()
+    };
+    match tables.statement(root).map(|statement| &statement.op) {
+        Some(CheckedStmtOp::Def(def)) => defaults(&def.params),
+        Some(CheckedStmtOp::Struct(declaration)) => declaration
+            .methods
+            .get(member)
+            .map(|method| defaults(&method.params))
+            .unwrap_or_default(),
+        Some(CheckedStmtOp::Trait(declaration)) => declaration
+            .methods
+            .get(member)
+            .map(|method| {
+                std::iter::once(None)
+                    .chain(defaults(&method.params))
+                    .collect()
+            })
+            .unwrap_or_default(),
+        _ => Vec::new(),
+    }
+}
+
 /// A zero-parameter function returning one checked expression over the
 /// binders in scope: an evaluated default (`$default$…`), or a `comptime if`
 /// condition or a `comptime for` display the elaborator runs
 /// (`$comptime$…`). `prologue` holds the local `comptime` display bindings
-/// the expression reads, which the function binds before it returns.
+/// the expression reads, which the function binds before it returns, and
+/// `node` is the expression's checked node.
 #[derive(Clone, Copy)]
 struct ExpressionThunk<'a> {
     checked: &'a CheckedProgram,
@@ -1520,13 +1580,14 @@ struct ExpressionThunk<'a> {
     name: &'a str,
     prologue: &'a [Stmt],
     expression: &'a Expr,
+    node: CheckedNodeId,
     binders: &'a EnclosingBinders,
     ty: &'a Ty,
 }
 
 /// Lower `<prologue>; return <expression>` as the function `name`, whose
 /// compile-time parameters are the binders and whose value binders are frame
-/// locals, and declare it.
+/// locals, and declare it. HIR lowers the returned value from its node.
 fn lower_expression_thunk(
     thunk: ExpressionThunk<'_>,
     functions: &mut Vec<(String, MirFunction)>,
@@ -1538,6 +1599,7 @@ fn lower_expression_thunk(
         name,
         prologue,
         expression,
+        node,
         binders,
         ty,
     } = thunk;
@@ -1573,6 +1635,7 @@ fn lower_expression_thunk(
             error_ty: None,
             named_result: None,
             body: &body,
+            returned: Some(node),
             overloads,
         },
         functions,
@@ -2053,6 +2116,7 @@ impl ComptimeThunks {
                     name: &request.name,
                     prologue: &prologue,
                     expression: &request.expression,
+                    node: request.node,
                     binders: &request.binders,
                     ty: &request.ty,
                 },

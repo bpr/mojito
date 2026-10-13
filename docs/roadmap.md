@@ -4821,24 +4821,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R645 HIR finds an expression thunk's returned value by span**
-
-  `Lower::roots` (`crates/mojito-hir/src/hir.rs`) looks the value of a
-  thunk body's synthetic `return` up through the span-keyed
-  `expression_ids_at`, the last caller of it outside `mojito-checked`.
-  - `lower_expression_thunk` (`mir.rs`) hands HIR a `return <expression>`
-    statement, for a lifted thunk and for an evaluated parameter default.
-  - Upstream's lifted function returns the typed value it was built from;
-    a thunk request already carries that node (`ThunkRequest::node`), and
-    a default's is its `CheckedFnParam::default`.
-  - The fix hands HIR's thunk builder the value's node alongside the
-    prologue, so `Root::Return` needs no lookup.
-  - Done when `rg expression_ids_at crates/mojito-hir` is empty, so R623
-    can delete it, and the probe fixtures' MIR is unchanged.
-  - Found while landing R642 (2026-10-12).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R623 HIR and MIR keep transitional syntax rebuilders and
   span-keyed fact lookups**
 
