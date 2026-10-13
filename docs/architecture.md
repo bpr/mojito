@@ -1764,8 +1764,20 @@ syntax it still lowers from the ops through the transitional
 construction the check spelled where a sugar was written and spells each local
 name as the slot `Cfg::slots` resolved it to (`name_spelling`), and pairs
 that syntax tree with the recursive node tree by address for the length of one
-lowering: each piece of syntax's `ExprFacts` names its node, whose attributes
-are its facts, beside the two facts of HIR's place for it. Literals and name
+lowering (`SyntaxFrame`). MIR reads every checked fact off a node handle,
+`Node` (`mir/node.rs`): HIR's tree for the expression with its checked node,
+operand `i` being the `i`th of the op's `CheckedOp::operands`, as upstream
+lowering holds an operation and reads its operands and attributes off it. The
+node's type, owner, call contract, adjustments, and operand shapes are `Node`
+methods, and the loans and capture accesses that also need the function being
+lowered are `Flatten` methods taking one (`mir/facts.rs`). Two transitional
+bridges serve the syntax lowering still walks, until R649 deletes them:
+`Flatten::node` finds a piece of syntax's handle, and `Flatten::{syntax,
+operand}` find the syntax rebuilt for a handle. `Flatten` borrows its CFG's
+tables and HIR for its own lifetime, so a handle outlives the `&mut self`
+calls it is passed to; a local display binding's HIR, which can cross after
+a `try` region's CFG is dropped, is copied into the function's arena
+(`Flatten::held`). Literals and name
 reads lower by matching the node's `CheckedOp`, reading the node's own
 attributes (`Flatten::literal_or_name`); a name's slot is its binding's
 (`binding_var`), the slot only spelling it, and the name predicates of the

@@ -10,8 +10,10 @@ impl Flatten<'_> {
     /// The argument position of a call's pack spread (`f(*a)`), the slot the
     /// elaborator expands into the collector's elements.
     pub(super) fn spread_position(&self, args: &[Expr]) -> Option<usize> {
-        args.iter()
-            .position(|argument| self.spread_operand(argument).is_some())
+        args.iter().position(|argument| {
+            self.node(argument)
+                .is_some_and(|node| node.spread_operand().is_some())
+        })
     }
 
     /// A `@staticmethod` reached through an instance (`value.static_method()`,
@@ -28,7 +30,7 @@ impl Flatten<'_> {
         args: &[Expr],
         kwargs: &[mojito_ast::ast::KwArg],
     ) -> Option<Reg> {
-        let contract = self.checked_call_contract(e)?;
+        let contract = self.node(e).and_then(Node::call_contract)?;
         if !contract.receiver_elided {
             return None;
         }
@@ -39,7 +41,9 @@ impl Flatten<'_> {
         } else {
             (
                 self.param_arg_regs(e, param_args),
-                self.instantiated_args(e),
+                self.node(e)
+                    .map(Node::instantiated_args)
+                    .unwrap_or_default(),
             )
         };
         let saved_anchor_permission = self.allow_argument_anchors;
@@ -52,12 +56,15 @@ impl Flatten<'_> {
         self.emit(MirInstr::Call {
             dest,
             func: FuncRef::named(&contract.target),
-            raises: self.checked_raises(e),
+            raises: self.node(e).and_then(Node::raises),
             args: regs,
             kwargs: kw,
             arg_places,
             kwarg_places,
-            capture_accesses: self.checked_call_capture_accesses(e),
+            capture_accesses: self
+                .node(e)
+                .map(|node| self.call_capture_accesses(node))
+                .unwrap_or_default(),
             param_arg_regs,
             receiver,
             instantiated_args,
@@ -107,9 +114,13 @@ impl Flatten<'_> {
                 self.emit_interior_invalidations(&argument.value, None);
             }
         }
-        let capture_accesses = self.checked_call_capture_accesses(e);
+        let capture_accesses = self
+            .node(e)
+            .map(|node| self.call_capture_accesses(node))
+            .unwrap_or_default();
         let (instantiated_contract, instantiated_args) = self
-            .instantiated_callable_contract(e)
+            .node(e)
+            .and_then(Node::instantiated_callable_contract)
             .map_or((None, Vec::new()), |(contract, arguments)| {
                 (Some(contract), arguments)
             });
@@ -246,11 +257,12 @@ impl Flatten<'_> {
         kwargs: &[mojito_ast::ast::KwArg],
     ) -> Option<Reg> {
         let (dtype, width) = self
-            .checked_adjustments(e)
-            .into_iter()
+            .node(e)
+            .map_or(&[][..], Node::adjustments)
+            .iter()
             .find_map(|adjustment| match adjustment {
                 mojito_checked::checked::SemanticAdjustment::ConstructSimd { dtype, width } => {
-                    Some((dtype, width))
+                    Some((dtype.clone(), width.clone()))
                 }
                 _ => None,
             })?;
@@ -308,14 +320,21 @@ impl Flatten<'_> {
             .owner_vars
             .contains_key(&info.binding)
             .then(|| self.binding_place(info.binding, name));
-        let capture_accesses = self.checked_call_capture_accesses(e);
+        let capture_accesses = self
+            .node(e)
+            .map(|node| self.call_capture_accesses(node))
+            .unwrap_or_default();
         // A generic nested `def` called by name binds its own parameters
         // from the call's solved arguments, as a module `def` does: the call
         // carries them with the contract they instantiate.
         let (instantiated_contract, instantiated_args) = self
-            .instantiated_callable_contract(e)
+            .node(e)
+            .and_then(Node::instantiated_callable_contract)
             .or_else(|| {
-                let arguments = self.instantiated_args(e);
+                let arguments = self
+                    .node(e)
+                    .map(Node::instantiated_args)
+                    .unwrap_or_default();
                 let contract = callable_ty.as_ref()?;
                 (!arguments.is_empty() && matches!(contract.kind(), TyKind::GenericFunc(_)))
                     .then(|| {
@@ -338,7 +357,7 @@ impl Flatten<'_> {
             // attaching that abstract target here can disagree with an erased
             // variadic closure ABI even though execution never consults it.
             resolved: None,
-            raises: self.checked_raises(e),
+            raises: self.node(e).and_then(Node::raises),
             args: arg_regs,
             kwargs: kw_regs,
             callee_place: callee_place.map(Box::new),
@@ -409,14 +428,20 @@ impl Flatten<'_> {
             .iter()
             .chain(kwargs.iter().map(|argument| &argument.value))
         {
-            let expression = self.named_value(expression).unwrap_or(expression);
+            let expression = self
+                .operand(expression, Node::named_value)
+                .unwrap_or(expression);
             // A closure argument is either a binding naming a nested def or a
             // lambda expression materialized in place.
-            let Some(CheckedOp::Identifier(_) | CheckedOp::Lambda { .. }) = self.op_of(expression)
+            let Some(CheckedOp::Identifier(_) | CheckedOp::Lambda { .. }) =
+                self.node(expression).map(Node::op)
             else {
                 continue;
             };
-            let Some(info) = self.nested_info(expression) else {
+            let Some(info) = self
+                .node(expression)
+                .and_then(|node| self.nested_info(node))
+            else {
                 continue;
             };
             let mut seen = HashSet::new();
@@ -592,7 +617,7 @@ impl Flatten<'_> {
 
     /// Emit a `Const` writing a fresh register.
     pub(in crate::mir) fn constant(&mut self, e: &Expr, k: Const) -> Reg {
-        let function_ty = self.checked_ty(e);
+        let function_ty = self.node(e).and_then(Node::ty);
         self.constant_at(span(e), function_ty, k)
     }
 

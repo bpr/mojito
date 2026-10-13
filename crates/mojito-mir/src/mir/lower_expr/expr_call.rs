@@ -34,7 +34,7 @@ impl Flatten<'_> {
         // these value brackets as subscript-then-indirect-call, so the
         // brackets are runtime indices, never compile-time parameters
         // (and never the named-local callable path below).
-        if let Some(plan) = self.element_invocation(e) {
+        if let Some(plan) = self.node(e).and_then(Node::element_invocation) {
             let indices: Vec<&Expr> = param_args
                 .iter()
                 .filter_map(|argument| match argument {
@@ -44,7 +44,8 @@ impl Flatten<'_> {
                 .collect();
             // The receiver is the local the call names, read as its place.
             let receiver = self
-                .local_callee(node, name)
+                .node(e)
+                .and_then(|call| self.local_callee(call, name))
                 .unwrap_or_else(|| self.var(name));
             let place = self.var_place(receiver);
             let value = self.fresh(span(e), Some(place.root));
@@ -73,7 +74,7 @@ impl Flatten<'_> {
             return self.lower_nested_call(e, name, &info, param_args, args, kwargs);
         }
         // The callee is the slot of the local the call's binding names.
-        if let Some(variable) = self.local_callee(node, name) {
+        if let Some(variable) = self.node(e).and_then(|call| self.local_callee(call, name)) {
             let callee = self.read_slot(variable, span(e), None);
             let callable_ty = self
                 .var_types
@@ -94,9 +95,13 @@ impl Flatten<'_> {
             let callee_place = place.is_typed().then_some(place);
             let dest = self.fresh(span(e), None);
             self.emit_call_invalidations(e, args, kwargs);
-            let capture_accesses = self.checked_call_capture_accesses(e);
+            let capture_accesses = self
+                .node(e)
+                .map(|node| self.call_capture_accesses(node))
+                .unwrap_or_default();
             let (instantiated_contract, instantiated_args) = self
-                .instantiated_callable_contract(e)
+                .node(e)
+                .and_then(Node::instantiated_callable_contract)
                 .map_or((None, Vec::new()), |(contract, arguments)| {
                     (Some(contract), arguments)
                 });
@@ -108,7 +113,7 @@ impl Flatten<'_> {
                 dest,
                 callee,
                 resolved: callable_target(&node.adjustments),
-                raises: self.checked_raises(e),
+                raises: self.node(e).and_then(Node::raises),
                 args: regs,
                 kwargs: kw,
                 callee_place: callee_place.map(Box::new),
@@ -132,10 +137,11 @@ impl Flatten<'_> {
             // is one relocation: the collector already holds the elements
             // in storage shape.
             if let [argument] = args
-                && let Some(spread) = self.spread_operand(argument)
+                && let Some(spread) = self.operand(argument, Node::spread_operand)
                 && self
-                    .transfer_operand(spread)
-                    .is_some_and(|inner| self.is_name(inner))
+                    .node(spread)
+                    .and_then(Node::transfer_operand)
+                    .is_some_and(Node::is_name)
             {
                 return self.expr(spread);
             }
@@ -415,7 +421,7 @@ impl Flatten<'_> {
                 adjustment,
                 mojito_checked::checked::SemanticAdjustment::PointerOriginCast { .. }
             )
-        }) && let Some(object) = self.member_object(callee)
+        }) && let Some(object) = self.operand(callee, Node::member_object)
         {
             return self.expr(object);
         }
@@ -432,7 +438,7 @@ impl Flatten<'_> {
                 _ => None,
             });
         if let Some((dtype, width)) = simd_cast
-            && let Some(object) = self.member_object(callee)
+            && let Some(object) = self.operand(callee, Node::member_object)
         {
             let value = self.expr(object);
             let dest = self.fresh(span(e), None);
@@ -456,7 +462,7 @@ impl Flatten<'_> {
                 _ => None,
             });
         if let Some((dtype, width)) = simd_to_bits
-            && let Some(object) = self.member_object(callee)
+            && let Some(object) = self.operand(callee, Node::member_object)
         {
             let value = self.expr(object);
             let dest = self.fresh(span(e), None);
@@ -478,7 +484,7 @@ impl Flatten<'_> {
                 _ => None,
             });
         if let Some((mask, joined)) = simd_shuffle
-            && let Some(object) = self.member_object(callee)
+            && let Some(object) = self.operand(callee, Node::member_object)
         {
             let value = self.expr(object);
             let other = joined.then(|| self.expr(&args[0]));
@@ -513,7 +519,7 @@ impl Flatten<'_> {
         // `a.b[i](x)`: the member-base element call re-dispatched by
         // the checker — the callee expression is the subscripted
         // receiver, and the brackets are runtime indices.
-        if let Some(plan) = self.element_invocation(e) {
+        if let Some(plan) = self.node(e).and_then(Node::element_invocation) {
             let indices: Vec<&Expr> = param_args
                 .iter()
                 .filter_map(|argument| match argument {
@@ -528,8 +534,11 @@ impl Flatten<'_> {
             return self.parameterized_method_call(e, node, callee, param_args, args, kwargs);
         }
         let mut callee_place = self.callable_receiver_place(callee);
-        let callable_ty = self.checked_ty(callee);
-        let lambda_callee = matches!(self.op_of(callee), Some(CheckedOp::Lambda { .. }));
+        let callable_ty = self.node(callee).and_then(Node::ty);
+        let lambda_callee = matches!(
+            self.node(callee).map(Node::op),
+            Some(CheckedOp::Lambda { .. })
+        );
         let callee = self.expr(callee);
         let callable_ty = callable_ty.or_else(|| self.f.reg_types.get(&callee.0).cloned());
         if lambda_callee && callee_place.is_none() {
@@ -551,7 +560,7 @@ impl Flatten<'_> {
         }
         let param_arg_regs = self.indirect_param_arg_regs(e, param_args);
         let resolved = callable_target(&node.adjustments);
-        let raises = self.checked_raises(e);
+        let raises = self.node(e).and_then(Node::raises);
         self.emit_indirect_invocation(
             e,
             callee,
@@ -647,13 +656,19 @@ impl Flatten<'_> {
             self.fresh(span(e), None)
         };
         self.emit_call_invalidations(e, args, kwargs);
-        let capture_accesses = self.checked_call_capture_accesses(e);
+        let capture_accesses = self
+            .node(e)
+            .map(|node| self.call_capture_accesses(node))
+            .unwrap_or_default();
         let transfer_arg_places = arg_places.clone();
-        let instantiated_args = self.instantiated_args(e);
+        let instantiated_args = self
+            .node(e)
+            .map(Node::instantiated_args)
+            .unwrap_or_default();
         self.emit(MirInstr::Call {
             dest: d,
             func: FuncRef::named(&target),
-            raises: self.checked_raises(e),
+            raises: self.node(e).and_then(Node::raises),
             args: regs,
             kwargs: kw,
             arg_places,
@@ -678,7 +693,7 @@ impl Flatten<'_> {
         args: &[Expr],
         kwargs: &[KwArg],
     ) -> Reg {
-        let Some(object) = self.member_object(callee) else {
+        let Some(object) = self.operand(callee, Node::member_object) else {
             unreachable!("checked Variant operation has a member callee")
         };
         match operation.clone() {
@@ -822,9 +837,10 @@ impl Flatten<'_> {
         args: &[Expr],
         kwargs: &[KwArg],
     ) -> Reg {
-        let (Some(CheckedOp::Member { field, .. }), Some(object)) =
-            (self.op_of(callee).cloned(), self.member_object(callee))
-        else {
+        let (Some(CheckedOp::Member { field, .. }), Some(object)) = (
+            self.node(callee).map(Node::op).cloned(),
+            self.operand(callee, Node::member_object),
+        ) else {
             unreachable!("checked parameterized method call has a member callee")
         };
         let param_decls = parameterized_method_decls(node).unwrap_or_default();
@@ -842,7 +858,9 @@ impl Flatten<'_> {
             } else {
                 (
                     self.param_arg_regs(e, param_args),
-                    self.instantiated_args(e),
+                    self.node(e)
+                        .map(Node::instantiated_args)
+                        .unwrap_or_default(),
                 )
             };
             let saved_anchor_permission = self.allow_argument_anchors;
@@ -858,12 +876,15 @@ impl Flatten<'_> {
             self.emit(MirInstr::Call {
                 dest,
                 func: FuncRef::named(&target),
-                raises: self.checked_raises(e),
+                raises: self.node(e).and_then(Node::raises),
                 args: regs,
                 kwargs: kw,
                 arg_places,
                 kwarg_places,
-                capture_accesses: self.checked_call_capture_accesses(e),
+                capture_accesses: self
+                    .node(e)
+                    .map(|node| self.call_capture_accesses(node))
+                    .unwrap_or_default(),
                 param_arg_regs,
                 receiver,
                 instantiated_args,
@@ -894,7 +915,9 @@ impl Flatten<'_> {
         } else {
             (
                 self.param_arg_regs(e, param_args),
-                self.instantiated_args(e),
+                self.node(e)
+                    .map(Node::instantiated_args)
+                    .unwrap_or_default(),
             )
         };
         let saved_anchor_permission = self.allow_argument_anchors;
@@ -910,13 +933,15 @@ impl Flatten<'_> {
             recv,
             method: field,
             resolved: callable_target(&node.adjustments),
-            raises: self.checked_raises(e),
+            raises: self.node(e).and_then(Node::raises),
             reference_result: (self
-                .checked_call_contract(e)
+                .node(e)
+                .and_then(Node::call_contract)
                 .and_then(|contract| contract.reference_result))
             .map(Box::new),
             result_adapter: self
-                .checked_call_contract(e)
+                .node(e)
+                .and_then(Node::call_contract)
                 .and_then(|contract| contract.result_adapter),
             args: argument_regs,
             kwargs: keyword_regs,
@@ -928,7 +953,10 @@ impl Flatten<'_> {
             recv_writes: self.receiver_writes(e),
             arg_places,
             kwarg_places,
-            capture_accesses: self.checked_call_capture_accesses(e),
+            capture_accesses: self
+                .node(e)
+                .map(|node| self.call_capture_accesses(node))
+                .unwrap_or_default(),
             param_arg_regs,
             param_decls: param_decls.to_vec(),
             instantiated_args,

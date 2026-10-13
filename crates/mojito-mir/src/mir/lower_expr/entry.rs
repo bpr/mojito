@@ -5,16 +5,19 @@
 use super::*;
 use mojito_types::types::TyKind;
 
-impl Flatten<'_> {
+impl<'a> Flatten<'a> {
     /// Post-order: each subexpression emits one instruction and yields its result
     /// `Reg`, so `foo(bar(x))` → `t0 = bar(x); t1 = foo(t0)`. Total over `Expr`.
-    pub(in crate::mir) fn expr_hir(&mut self, expression: &mojito_hir::hir::HirExpr) -> Reg {
+    pub(in crate::mir) fn expr_hir(&mut self, expression: &'a mojito_hir::hir::HirExpr) -> Reg {
         self.with_hir(expression, Self::expr)
     }
 
     /// A branch condition: `expr_hir` plus the `Boolable` conversion of a
     /// checker-marked truthiness condition (`if collection:`).
-    pub(in crate::mir) fn condition_hir(&mut self, expression: &mojito_hir::hir::HirExpr) -> Reg {
+    pub(in crate::mir) fn condition_hir(
+        &mut self,
+        expression: &'a mojito_hir::hir::HirExpr,
+    ) -> Reg {
         self.with_hir(expression, |this, syntax| {
             let value = this.expr(syntax);
             this.truthiness(syntax, value)
@@ -27,7 +30,7 @@ impl Flatten<'_> {
     /// this function's lowering lifts for it.
     pub(in crate::mir) fn comptime_condition(
         &mut self,
-        expression: &mojito_hir::hir::HirExpr,
+        expression: &'a mojito_hir::hir::HirExpr,
     ) -> mojito_types::types::GenericConstraint {
         self.with_hir(expression, Self::comptime_condition_of)
     }
@@ -36,18 +39,71 @@ impl Flatten<'_> {
     /// rebuilt from its node, with that syntax's facts active.
     pub(in crate::mir) fn with_hir<R>(
         &mut self,
-        expression: &mojito_hir::hir::HirExpr,
+        expression: &'a mojito_hir::hir::HirExpr,
         lower: impl FnOnce(&mut Self, &Expr) -> R,
     ) -> R {
-        let syntax = self.hir_syntax(expression);
-        let mut index = HashMap::new();
-        index_hir_expression(&self.checked, &syntax, expression, &mut index);
-        self.active_semantics.push(index);
+        let syntax = std::rc::Rc::new(self.hir_syntax(expression));
+        self.active_semantics.push(SyntaxFrame::new(
+            SyntaxRoot::Expr(std::rc::Rc::clone(&syntax)),
+            [expression],
+        ));
         let outer = std::mem::take(&mut self.conversion_view_loans);
         let result = lower(self, &syntax);
         self.conversion_view_loans = outer;
         self.active_semantics.pop();
         result
+    }
+
+    /// The handle of the node `expression` was rebuilt from, read from the
+    /// innermost active frame holding it (R646's transitional bridge).
+    pub(in crate::mir) fn node(&self, expression: &Expr) -> Option<Node<'a>> {
+        let key = std::ptr::from_ref::<Expr>(expression) as usize;
+        let tables: &'a mojito_checked::checked::CheckedTables = self.checked;
+        self.active_semantics
+            .iter()
+            .rev()
+            .find_map(|frame| frame.nodes.get(&key).copied())
+            .map(|hir| Node::new(hir, tables))
+    }
+
+    /// The syntax rebuilt from `node`, read from the innermost active frame
+    /// holding it (R646's transitional bridge).
+    pub(in crate::mir) fn syntax(&self, node: Node<'a>) -> Option<Syntax> {
+        self.active_semantics.iter().rev().find_map(|frame| {
+            frame.syntax.get(&node.address()).map(|&target| Syntax {
+                root: frame.root.clone(),
+                target,
+            })
+        })
+    }
+
+    /// The syntax rebuilt for `operand`, an operand of the node `syntax` was
+    /// rebuilt from (R646's transitional bridge).
+    pub(in crate::mir) fn operand_syntax<'e>(
+        &self,
+        syntax: &'e Expr,
+        operand: Node<'a>,
+    ) -> Option<&'e Expr> {
+        let target = self
+            .active_semantics
+            .iter()
+            .rev()
+            .find_map(|frame| frame.syntax.get(&operand.address()).copied())?;
+        expression_children(syntax)
+            .into_iter()
+            .find(|child| std::ptr::from_ref::<Expr>(child) as usize == target)
+    }
+
+    /// The syntax rebuilt for the operand `read` finds of the node `syntax`
+    /// was rebuilt from (R646's transitional bridge).
+    pub(in crate::mir) fn operand<'e>(
+        &self,
+        syntax: &'e Expr,
+        read: impl FnOnce(Node<'a>) -> Option<Node<'a>>,
+    ) -> Option<&'e Expr> {
+        self.node(syntax)
+            .and_then(read)
+            .and_then(|operand| self.operand_syntax(syntax, operand))
     }
 
     /// The checked node of HIR expression `expression`.
@@ -72,7 +128,7 @@ impl Flatten<'_> {
 
     /// [`hir_syntax`] in this function's frame.
     pub(in crate::mir) fn hir_syntax(&self, expression: &mojito_hir::hir::HirExpr) -> Expr {
-        hir_syntax(&self.checked, &self.slots, &self.vars, expression)
+        hir_syntax(self.checked, &self.slots, &self.vars, expression)
     }
 
     /// [`hir_statement_syntax`] in this function's frame.
@@ -80,7 +136,7 @@ impl Flatten<'_> {
         &self,
         statement: &mojito_hir::hir::HirStmt,
     ) -> Stmt {
-        hir_statement_syntax(&self.checked, &self.slots, &self.vars, statement)
+        hir_statement_syntax(self.checked, &self.slots, &self.vars, statement)
     }
 
     fn comptime_condition_of(
@@ -90,14 +146,16 @@ impl Flatten<'_> {
         use mojito_checked::checked::CheckedOp;
         use mojito_types::types::GenericConstraint;
         let recorded = self
-            .checked_adjustments(expression)
-            .into_iter()
+            .node(expression)
+            .map_or(&[][..], Node::adjustments)
+            .iter()
             .find_map(|adjustment| match adjustment {
                 mojito_checked::checked::SemanticAdjustment::ComptimeCondition(constraint) => {
                     Some(constraint)
                 }
                 _ => None,
-            });
+            })
+            .cloned();
         if let Some(constraint) = recorded {
             // A binder the condition names is the enclosing declaration's
             // of that spelling: a fact carried from an earlier discovery
@@ -115,8 +173,8 @@ impl Flatten<'_> {
                 &Clone::clone,
             );
         }
-        let tables = std::sync::Arc::clone(&self.checked);
-        let Some(node) = self.node_of(expression) else {
+        let tables = self.checked;
+        let Some(node) = self.node(expression).map(Node::id) else {
             self.emit(MirInstr::Unsupported(
                 "a compile-time condition without its checked node".into(),
             ));
@@ -145,31 +203,34 @@ impl Flatten<'_> {
 
     pub(in crate::mir) fn reference_handle_hir(
         &mut self,
-        expression: &mojito_hir::hir::HirExpr,
+        expression: &'a mojito_hir::hir::HirExpr,
     ) -> Reg {
         self.with_hir(expression, Self::reference_handle)
     }
 
     pub(in crate::mir) fn projected_reference_place_hir(
         &mut self,
-        expression: &mojito_hir::hir::HirExpr,
+        expression: &'a mojito_hir::hir::HirExpr,
     ) -> Option<MirPlace> {
         self.with_hir(expression, Self::lower_projected_reference_place)
     }
 
-    pub(in crate::mir) fn place_hir(&mut self, expression: &mojito_hir::hir::HirExpr) -> MirPlace {
+    pub(in crate::mir) fn place_hir(
+        &mut self,
+        expression: &'a mojito_hir::hir::HirExpr,
+    ) -> MirPlace {
         self.with_hir(expression, Self::place)
     }
 
     pub(in crate::mir) fn expr(&mut self, e: &Expr) -> Reg {
         let result = self.expr_with_adjustments(e);
-        let result = match self.rebind_target(e) {
+        let result = match self.node(e).and_then(Node::rebind_target) {
             Some((operand, dest)) => self.rebind_value(e, result, operand, dest),
             None => result,
         };
         // An emit-site type (a conversion result, a closure value) is more
         // precise than the source expression's pre-adjustment checked type.
-        if let Some(ty) = self.checked_ty(e) {
+        if let Some(ty) = self.node(e).and_then(Node::ty) {
             self.f.reg_types.entry(result.0).or_insert(ty);
         }
         result
@@ -196,7 +257,7 @@ impl Flatten<'_> {
     /// the type the rebind names, as upstream's reference overload rebinds
     /// the pointer it returns. A later projection addresses `dest`.
     pub(in crate::mir) fn rebound_place(&self, e: &Expr, mut place: MirPlace) -> MirPlace {
-        if let Some((_, dest)) = self.rebind_target(e)
+        if let Some((_, dest)) = self.node(e).and_then(Node::rebind_target)
             && place.ty.as_ref() != Some(&dest)
         {
             place.project(Proj::Rebind, dest);
@@ -205,13 +266,18 @@ impl Flatten<'_> {
     }
 
     pub(in crate::mir) fn expr_with_adjustments(&mut self, e: &Expr) -> Reg {
-        if self.checked_adjustments(e).iter().any(|adjustment| {
-            matches!(
-                adjustment,
-                mojito_checked::checked::SemanticAdjustment::BorrowShared
-                    | mojito_checked::checked::SemanticAdjustment::BorrowMutable
-            )
-        }) {
+        if self
+            .node(e)
+            .map_or(&[][..], Node::adjustments)
+            .iter()
+            .any(|adjustment| {
+                matches!(
+                    adjustment,
+                    mojito_checked::checked::SemanticAdjustment::BorrowShared
+                        | mojito_checked::checked::SemanticAdjustment::BorrowMutable
+                )
+            })
+        {
             return self.reference_handle(e);
         }
         // A conversion of an index-normalized source applies after the
@@ -228,14 +294,14 @@ impl Flatten<'_> {
             // parameter) has no place: the checker minted an anonymous owner,
             // and the unconverted value is stored in that owner's hidden
             // `$mat_r` slot whose place the constructor borrows.
-            let adjustments = self.checked_adjustments(e);
+            let adjustments = self.node(e).map_or(&[][..], Node::adjustments);
             let (argument, source_place) = if let Some(owner) =
-                mojito_checked::checked::materialized_borrow_owner(&adjustments)
+                mojito_checked::checked::materialized_borrow_owner(adjustments)
             {
                 let value = self.expr_unconverted(e);
                 // The slot holds the source at its own checked type (a
                 // constructor call's register is typed at its emit site).
-                if let Some(ty) = self.checked_ty(e) {
+                if let Some(ty) = self.node(e).and_then(Node::ty) {
                     self.f.reg_types.entry(value.0).or_insert(ty);
                 }
                 let value = self.nominal_string_view_source(e, value, &target);
@@ -255,7 +321,7 @@ impl Flatten<'_> {
                         .unwrap_or_else(|| self.expr_unconverted(e));
                     // The source keeps its own checked type: a generic call's
                     // register is otherwise typed by its declared result.
-                    if let Some(ty) = self.checked_ty(e) {
+                    if let Some(ty) = self.node(e).and_then(Node::ty) {
                         self.f.reg_types.entry(value.0).or_insert(ty);
                     }
                     (value, None)
@@ -267,14 +333,16 @@ impl Flatten<'_> {
             // `Optional[Int]`); the constructor's bare name is the fallback.
             let provenance = source_place.as_ref().map(|place| place.root);
             let recorded = self
-                .checked_adjustments(e)
-                .into_iter()
+                .node(e)
+                .map_or(&[][..], Node::adjustments)
+                .iter()
                 .find_map(|adjustment| match adjustment {
                     mojito_checked::checked::SemanticAdjustment::ConversionResultType(ty) => {
                         Some(ty)
                     }
                     _ => None,
-                });
+                })
+                .cloned();
             let dest = match (recorded, target.split(".__init__").next()) {
                 (Some(ty), _) => self.fresh_typed(span(e), provenance, ty),
                 (_, Some(constructed)) if !constructed.is_empty() => self.fresh_typed(
@@ -285,14 +353,16 @@ impl Flatten<'_> {
                 _ => self.fresh(span(e), provenance),
             };
             let raises = self
-                .checked_adjustments(e)
-                .into_iter()
+                .node(e)
+                .map_or(&[][..], Node::adjustments)
+                .iter()
                 .find_map(|adjustment| match adjustment {
                     mojito_checked::checked::SemanticAdjustment::ConversionRaises(error) => {
                         Some(error)
                     }
                     _ => None,
-                });
+                })
+                .cloned();
             self.emit(MirInstr::Call {
                 dest,
                 func: FuncRef::named(&target),
@@ -332,9 +402,11 @@ impl Flatten<'_> {
                         marker,
                         dest_interior: None,
                     });
-                    if self.simple_place(e).is_none() {
+                    if self.simple_place(e).is_none()
+                        && let Some(node) = self.node(e)
+                    {
                         self.conversion_view_loans
-                            .insert(std::ptr::from_ref::<Expr>(e) as usize, loans.clone());
+                            .insert(node.address(), loans.clone());
                     }
                     self.aggregate_loans.insert(variable, loans);
                     let read = match view_ty {
@@ -360,7 +432,7 @@ impl Flatten<'_> {
             // already retargets the latter from the runtime receiver while
             // preserving the selected signature.
             let recv = self.expr_unconverted(e);
-            if let Some(source) = self.checked_ty(e) {
+            if let Some(source) = self.node(e).and_then(Node::ty) {
                 self.f.reg_types.entry(recv.0).or_insert(source);
             }
             let dest = self.fresh_typed(span(e), None, Ty::int());
@@ -388,14 +460,14 @@ impl Flatten<'_> {
         }
         if let Some(target) = self.literal_materialization(e) {
             let value = self.expr_unconverted(e);
-            if let Some(source) = self.checked_ty(e) {
+            if let Some(source) = self.node(e).and_then(Node::ty) {
                 self.f.reg_types.entry(value.0).or_insert(source);
             }
             return self.materialize_literal(value, &target, span(e));
         }
         if let Some(target) = self.scalar_splat(e) {
             let value = self.expr_unconverted(e);
-            if let Some(source) = self.checked_ty(e) {
+            if let Some(source) = self.node(e).and_then(Node::ty) {
                 self.f.reg_types.entry(value.0).or_insert(source);
             }
             return self.splat_scalar(value, &target, span(e));
@@ -412,11 +484,13 @@ impl Flatten<'_> {
         // expression with another compatibility adjustment, so consulting only
         // the legacy single-operation slot can silently lose `ref[a, b] T` and
         // type a runtime handle local as ordinary `T` storage.
-        self.checked_call_contract(expression)
+        self.node(expression)
+            .and_then(Node::call_contract)
             .and_then(|contract| contract.reference_result)
             .or_else(|| {
-                self.checked_adjustments(expression)
-                    .into_iter()
+                self.node(expression)
+                    .map_or(&[][..], Node::adjustments)
+                    .iter()
                     .find_map(|adjustment| match adjustment {
                         mojito_checked::checked::SemanticAdjustment::ReferenceResult {
                             reference,
@@ -424,16 +498,18 @@ impl Flatten<'_> {
                         mojito_checked::checked::SemanticAdjustment::AugmentedInPlace {
                             place_reference,
                             ..
-                        } => place_reference,
+                        } => place_reference.as_ref(),
                         _ => None,
                     })
+                    .cloned()
             })
     }
 
     /// Whether a method call's reference result has an origin rooted at one
     /// of the call's own arguments rather than at its receiver.
     fn reference_result_borrows_argument(&self, expression: &Expr) -> bool {
-        let Some(CheckedOp::MethodCall { args, kwargs, .. }) = self.op_of(expression) else {
+        let Some(CheckedOp::MethodCall { args, kwargs, .. }) = self.node(expression).map(Node::op)
+        else {
             return false;
         };
         let Some(reference) = self.reference_result(expression) else {
@@ -471,7 +547,7 @@ impl Flatten<'_> {
         // borrows from stay alive until the referent is copied. A method
         // call's result takes the same path when its origin names an argument
         // (`pick[o: Origin](self, ref[o] x: T) -> ref[o] T`).
-        if (matches!(self.op_of(e), Some(CheckedOp::Call { .. }))
+        if (matches!(self.node(e).map(Node::op), Some(CheckedOp::Call { .. }))
             || self.reference_result_borrows_argument(e))
             && self.reference_result(e).is_some()
             && let Some(place) = self.materialize_reference_result_place(e)
@@ -479,7 +555,7 @@ impl Flatten<'_> {
             let value_ty = place
                 .ty
                 .clone()
-                .or_else(|| self.checked_ty(e))
+                .or_else(|| self.node(e).and_then(Node::ty))
                 .unwrap_or_else(Ty::error);
             let read = self.fresh_typed(span(e), Some(place.root), value_ty.clone());
             self.emit(MirInstr::LoadPlace { dest: read, place });
@@ -531,7 +607,7 @@ impl Flatten<'_> {
             place
                 .ty
                 .clone()
-                .or_else(|| self.checked_ty(e))
+                .or_else(|| self.node(e).and_then(Node::ty))
                 .unwrap_or_else(Ty::error),
         );
         self.emit(MirInstr::LoadPlace {
@@ -546,7 +622,10 @@ impl Flatten<'_> {
     /// the hidden handle an accessor's reference result lives in, or the
     /// element place an intrinsic subscript names.
     fn conversion_source_loans(&mut self, e: &Expr, source: MirPlace) -> Vec<MirLoan> {
-        let loans = self.aggregate_borrows(e);
+        let loans = self
+            .node(e)
+            .map(|node| self.aggregate_borrows(node))
+            .unwrap_or_default();
         if !loans.is_empty() {
             return loans;
         }
@@ -557,14 +636,18 @@ impl Flatten<'_> {
                 .cloned()
                 .unwrap_or_default();
         }
-        let mutable = self.checked_adjustments(e).into_iter().any(|adjustment| {
-            matches!(
-                adjustment,
-                mojito_checked::checked::SemanticAdjustment::BorrowConversionSource {
-                    mutable: true
-                }
-            )
-        });
+        let mutable = self
+            .node(e)
+            .map_or(&[][..], Node::adjustments)
+            .iter()
+            .any(|adjustment| {
+                matches!(
+                    adjustment,
+                    mojito_checked::checked::SemanticAdjustment::BorrowConversionSource {
+                        mutable: true
+                    }
+                )
+            });
         vec![MirLoan {
             place: source,
             mutable,

@@ -42,7 +42,8 @@ impl Flatten<'_> {
     /// spells, which both backends dispatch to the struct's `__bool__`.
     pub(in crate::mir) fn truthiness(&mut self, condition: &Expr, value: Reg) -> Reg {
         let boolable = self
-            .checked_adjustments(condition)
+            .node(condition)
+            .map_or(&[][..], Node::adjustments)
             .iter()
             .any(|adjustment| {
                 matches!(
@@ -262,7 +263,11 @@ impl Flatten<'_> {
             }
         }
 
-        let Some(transfers) = self.checked_node(e).map(|node| node.call_transfers.clone()) else {
+        let Some(transfers) = self
+            .node(e)
+            .map(|node| node.checked)
+            .map(|node| node.call_transfers.clone())
+        else {
             return;
         };
         for transfer in transfers {
@@ -518,7 +523,7 @@ impl Flatten<'_> {
             ) => {
                 let iterator_name = format!("$compiter{}", self.vars.len());
                 let iterator = self.var(&iterator_name);
-                let tables = std::sync::Arc::clone(&self.checked);
+                let tables = self.checked;
                 let iter_node = tables.expression(*iter_id);
                 let iterator_ty = iter_node.and_then(|node| node.ty.clone());
                 let protocol = iter_node

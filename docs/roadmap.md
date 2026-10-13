@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R651**.
+Next free ID: **R652**.
 
 ## Ordered Work
 
@@ -4821,28 +4821,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R646 MIR's expression lowerer has no node handle to read operands
-  from**
-
-  MIR lowers rebuilt syntax and finds each piece's facts by its address
-  (`ExprFacts`, `Flatten::active_semantics`), where upstream reads an op's
-  operands and attributes off the op itself.
-  - Add a `Node` handle (the `HirExpr` plus its `CheckedExpr`), operand
-    `i` being `hir.children[i]` in `CheckedOp::operands` order, with named
-    operand accessors (`object`, `index`, `args`, `kwargs`, `callee`).
-  - `Flatten`'s `checked` becomes a borrow of the CFG's tables, so a
-    handle can hold `&CheckedExpr` across `&mut self` calls.
-  - Transitional bridges both ways: `ExprFacts` gains the `HirExpr`
-    pointer (`Flatten::node(&Expr)`), and each `with_hir` frame maps a
-    node back to its rebuilt `&Expr`.
-  - Done when every `mir/facts.rs` accessor takes a `Node` and names no
-    `Expr`, and the probe fixtures' MIR and output are unchanged on the VM
-    and with `--backend pliron`.
-  - Plan: `R623-hir-and-mir-keep-transitional-syntax-plan.md`, slice 4,
-    which lists the probes and the equality recipe.
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R647 MIR's expression families lower rebuilt syntax**
 
   The `lower_expr` families still take `&Expr` and destructure
@@ -4898,6 +4876,24 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     are deleted.
   - Found while landing R623 (2026-10-12).
   - Depends on R629, R643, R649.
+  - Model: Opus, Not Planned.
+
+- [ ] **R651 A local display binding's HIR is copied at each crossing**
+
+  `build_display` and `crossing_display` copy the binding's `HirExpr` into
+  the function's arena (`Flatten::held`) every time the display crosses.
+  - The copy exists because a display bound inside a `try` region can
+    cross after the region's `Cfg` is dropped, so `DisplayBinding` holds
+    an owned `Rc<HirExpr>` that no `Node` can borrow for `Flatten`'s
+    lifetime.
+  - Upstream's value is an SSA result its uses reference; nothing is
+    copied.
+  - Keep each region's `Cfg` alive for the function's lowering (an arena
+    in `lower_cfg_nested`), so `DisplayBinding` borrows its HIR instead.
+  - Done when `Flatten::held` and `DisplayBinding`'s `Rc` are gone and
+    the probe fixtures' MIR and output are unchanged.
+  - Found while landing R646 (2026-10-12).
+  - Depends on nothing.
   - Model: Opus, Not Planned.
 
 - [ ] **R629 HIR and MIR find a statement's checked node by its location**

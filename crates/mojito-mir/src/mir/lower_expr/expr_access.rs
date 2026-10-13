@@ -13,7 +13,8 @@ impl Flatten<'_> {
         &self,
         e: &Expr,
     ) -> Option<mojito_types::param_expr::ParamExpr> {
-        self.checked_node(e)
+        self.node(e)
+            .map(|node| node.checked)
             .and_then(|node| recorded_param_value(&node.adjustments))
     }
 
@@ -21,7 +22,8 @@ impl Flatten<'_> {
     /// materialized borrow source of its own (a module constant), which
     /// lowers as a value wherever it stands.
     pub(in crate::mir) fn constant_param_value(&self, e: &Expr) -> bool {
-        self.checked_node(e)
+        self.node(e)
+            .map(|node| node.checked)
             .is_some_and(|node| constant_param_value(&node.adjustments))
     }
 
@@ -101,7 +103,9 @@ impl Flatten<'_> {
         if let Some(folded) = folded {
             // A value receiver (`f().dtype`) still runs; a type operand
             // or `DType` itself was never typed as a value.
-            if !self.is_name(object) && self.checked_ty(object).is_some() {
+            if !self.node(object).is_some_and(Node::is_name)
+                && self.node(object).and_then(Node::ty).is_some()
+            {
                 self.expr(object);
             }
             return match folded {
@@ -256,11 +260,11 @@ impl Flatten<'_> {
         // path: projecting the nominal struct as raw indexed storage
         // would lose its concrete `__getitem__$N` target.
         if matches!(
-            self.checked_place_ty(e).as_ref().map(Ty::kind),
+            self.node(e).and_then(Node::place_ty).as_ref().map(Ty::kind),
             Some(TyKind::Ref(_))
         ) && self.resolved_callable(e).is_none()
             && !matches!(
-                self.checked_ty(object).as_ref().map(Ty::kind),
+                self.node(object).and_then(Node::ty).as_ref().map(Ty::kind),
                 Some(TyKind::Struct(..))
             )
             && let Some(place) = self.try_place(e)
@@ -308,7 +312,7 @@ impl Flatten<'_> {
                 recv,
                 method: "__getitem_param__".to_string(),
                 resolved: Some(contract.target),
-                raises: self.checked_raises(e),
+                raises: self.node(e).and_then(Node::raises),
                 reference_result: contract.reference_result.map(Box::new),
                 result_adapter: contract.result_adapter,
                 args: Vec::new(),
@@ -317,15 +321,21 @@ impl Flatten<'_> {
                 recv_writes: self.receiver_writes(e),
                 arg_places: Vec::new(),
                 kwarg_places: Vec::new(),
-                capture_accesses: self.checked_call_capture_accesses(e),
+                capture_accesses: self
+                    .node(e)
+                    .map(|node| self.call_capture_accesses(node))
+                    .unwrap_or_default(),
                 param_arg_regs: Vec::new(),
                 param_decls: contract.param_decls,
-                instantiated_args: self.instantiated_args(e),
+                instantiated_args: self
+                    .node(e)
+                    .map(Node::instantiated_args)
+                    .unwrap_or_default(),
                 spread: None,
             });
             return dest;
         }
-        let has_call = self.checked_call_contract(e).is_some();
+        let has_call = self.node(e).and_then(Node::call_contract).is_some();
         if !has_call && let Some(d) = self.storage_element_read(e, node, object) {
             return d;
         }
@@ -335,7 +345,9 @@ impl Flatten<'_> {
             (self.expr(object), self.simple_place(object))
         };
         let (idx, index_place) = self.lower_call_argument(index);
-        let call = self.subscript_call_contract(e, &[MirSubscriptArg::Index(idx)]);
+        let call = self
+            .node(e)
+            .and_then(|node| self.subscript_call_contract(node, &[MirSubscriptArg::Index(idx)]));
         let intrinsic = call
             .is_none()
             .then(|| self.intrinsic_index_dispatch(object))
@@ -366,7 +378,7 @@ impl Flatten<'_> {
         upper: Option<&Expr>,
         step: Option<&Expr>,
     ) -> Reg {
-        let has_call = self.checked_call_contract(e).is_some();
+        let has_call = self.node(e).and_then(Node::call_contract).is_some();
         let (obj, object_place) = if has_call {
             self.lower_call_receiver(object)
         } else {
@@ -375,7 +387,9 @@ impl Flatten<'_> {
         let lower = lower.as_ref().map(|b| self.expr(b));
         let upper = upper.as_ref().map(|b| self.expr(b));
         let step = step.as_ref().map(|b| self.expr(b));
-        let call = self.subscript_call_contract(e, &[]);
+        let call = self
+            .node(e)
+            .and_then(|node| self.subscript_call_contract(node, &[]));
         // No intrinsic slice channel remains: StringLiteral
         // positional slicing was removed at the audited head, so
         // every checked slice routes through a nominal call.
@@ -417,7 +431,7 @@ impl Flatten<'_> {
         // substitution or handle read for origin-bearing pointers,
         // else the pointer-intrinsic `Index` read.
         if matches!(
-            self.checked_ty(object).as_ref().map(Ty::kind),
+            self.node(object).and_then(Node::ty).as_ref().map(Ty::kind),
             Some(TyKind::Pointer { .. })
         ) && let [CheckedSubscriptArg::Keyword { name, .. }] = checked_args
             && name == "unsafe_offset"
@@ -453,7 +467,7 @@ impl Flatten<'_> {
             });
             return d;
         }
-        let has_call = self.checked_call_contract(e).is_some();
+        let has_call = self.node(e).and_then(Node::call_contract).is_some();
         let (object, object_place) = if has_call {
             self.lower_call_receiver(object)
         } else {
@@ -523,7 +537,9 @@ impl Flatten<'_> {
                 },
             )
             .collect();
-        let call = self.subscript_call_contract(e, &lowered_args);
+        let call = self
+            .node(e)
+            .and_then(|node| self.subscript_call_contract(node, &lowered_args));
         let dest = self.fresh(span(e), None);
         for (checked, argument) in checked_args.iter().zip(args) {
             if let (CheckedSubscriptArg::Index(_), SubscriptArg::Index(argument)) =
@@ -612,7 +628,8 @@ impl Flatten<'_> {
             place.root_ty = Some(TyKind::Variant(alternatives.to_vec()).into());
         }
         let ty = self
-            .checked_place_ty(e)
+            .node(e)
+            .and_then(Node::place_ty)
             .or_else(|| node.ty.clone())
             .expect("checked Variant projection has a payload type");
         place.project(Proj::Variant(index), ty);

@@ -85,7 +85,7 @@ impl Flatten<'_> {
     /// argument the checker already resolved into its symbol selection —
     /// never lowered.
     pub(super) fn type_receiver_name(&self, object: &Expr) -> Option<String> {
-        let node = self.checked_node(object)?;
+        let node = self.node(object)?.checked;
         match &node.op {
             CheckedOp::TypeApply { name, .. } => Some(name.clone()),
             CheckedOp::Index { object: base, .. } => {
@@ -101,7 +101,7 @@ impl Flatten<'_> {
     /// spell that struct's binders (`W[Self.k]`), which the VM reads off the
     /// method's receiver-less `self` slot, so the slot is interned.
     pub(super) fn static_receiver(&mut self, object: &Expr) -> Option<Ty> {
-        let receiver = self.checked_ty(object).filter(
+        let receiver = self.node(object).and_then(Node::ty).filter(
             |ty| matches!(ty.kind(), TyKind::Struct(_, arguments) if !arguments.is_empty()),
         )?;
         self.intern_static_self();
@@ -163,19 +163,27 @@ impl Flatten<'_> {
                 mojito_symbol::symbol::specialization_template(method).is_none()
             });
         let (param_arg_regs, instantiated_args) = if served {
-            (Vec::new(), self.instantiated_args(e))
+            (
+                Vec::new(),
+                self.node(e)
+                    .map(Node::instantiated_args)
+                    .unwrap_or_default(),
+            )
         } else {
             (Vec::new(), Vec::new())
         };
         self.emit(MirInstr::Call {
             dest,
             func: FuncRef::named(target),
-            raises: self.checked_raises(e),
+            raises: self.node(e).and_then(Node::raises),
             args: regs,
             kwargs: kw,
             arg_places,
             kwarg_places,
-            capture_accesses: self.checked_call_capture_accesses(e),
+            capture_accesses: self
+                .node(e)
+                .map(|node| self.call_capture_accesses(node))
+                .unwrap_or_default(),
             param_arg_regs,
             receiver,
             instantiated_args,
@@ -253,7 +261,7 @@ impl Flatten<'_> {
         if method == "__mlir_index__"
             && args.is_empty()
             && kwargs.is_empty()
-            && self.checked_ty(object).is_some_and(|ty| {
+            && self.node(object).and_then(Node::ty).is_some_and(|ty| {
                 matches!(
                     ty.kind(),
                     mojito_types::types::TyKind::Int
@@ -270,7 +278,8 @@ impl Flatten<'_> {
             && args.is_empty()
             && kwargs.is_empty()
             && self
-                .checked_ty(object)
+                .node(object)
+                .and_then(Node::ty)
                 .is_some_and(|ty| mojito_types::types::builtin_copy_is_value_read(&ty))
         {
             return Some(self.expr(object));
@@ -505,7 +514,7 @@ impl Flatten<'_> {
                 place
             });
             let resolved = callable_target(&node.adjustments);
-            let raises = self.checked_raises(e);
+            let raises = self.node(e).and_then(Node::raises);
             return Some(self.emit_indirect_invocation(
                 e,
                 callee,
@@ -574,7 +583,7 @@ impl Flatten<'_> {
             });
         if let Some(initialized) = marked {
             let operand = match args {
-                [argument] => match (self.op_of(argument), &argument.kind) {
+                [argument] => match (self.node(argument).map(Node::op), &argument.kind) {
                     (Some(CheckedOp::Call { .. }), ExprKind::Call { args, .. }) => args.first(),
                     _ => None,
                 },
@@ -711,7 +720,7 @@ impl Flatten<'_> {
                 });
             } else {
                 let pointer = self.expr(object);
-                let pointer_ty = self.checked_ty(object);
+                let pointer_ty = self.node(object).and_then(Node::ty);
                 let var = self.fresh_var();
                 if let Some(ty) = pointer_ty.clone() {
                     self.var_types.insert(var, ty);
@@ -758,7 +767,8 @@ impl Flatten<'_> {
         // evaluated once) and keep the place for write-back; otherwise it is
         // a temporary evaluated for its value only.
         let receiver_expr = if explicit_destroy {
-            self.transfer_operand(object).unwrap_or(object)
+            self.operand(object, Node::transfer_operand)
+                .unwrap_or(object)
         } else {
             object
         };
@@ -783,13 +793,17 @@ impl Flatten<'_> {
         let d = self.fresh(span(e), None);
         self.emit_interior_invalidations(receiver_expr, None);
         self.emit_call_invalidations(e, args, kwargs);
-        let capture_accesses = self.checked_call_capture_accesses(e);
+        let capture_accesses = self
+            .node(e)
+            .map(|node| self.call_capture_accesses(node))
+            .unwrap_or_default();
         // An ordinary method call can still select a generic method and
         // infer all of its compile-time arguments from runtime actuals.
         // Preserve that declaration vocabulary even though there are no
         // explicit `method[...]` value arguments to lower.
         let param_decls = self
-            .checked_call_contract(e)
+            .node(e)
+            .and_then(Node::call_contract)
             .map(|contract| contract.param_decls)
             .unwrap_or_default();
         let transfer_recv_place = recv_place.clone();
@@ -800,20 +814,27 @@ impl Flatten<'_> {
         let (param_arg_regs, instantiated_args) = if param_decls.is_empty() {
             (Vec::new(), Vec::new())
         } else {
-            (Vec::new(), self.instantiated_args(e))
+            (
+                Vec::new(),
+                self.node(e)
+                    .map(Node::instantiated_args)
+                    .unwrap_or_default(),
+            )
         };
         self.emit(MirInstr::MethodCall {
             dest: d,
             recv,
             method: method.to_owned(),
             resolved: callable_target(&node.adjustments),
-            raises: self.checked_raises(e),
+            raises: self.node(e).and_then(Node::raises),
             reference_result: (self
-                .checked_call_contract(e)
+                .node(e)
+                .and_then(Node::call_contract)
                 .and_then(|contract| contract.reference_result))
             .map(Box::new),
             result_adapter: self
-                .checked_call_contract(e)
+                .node(e)
+                .and_then(Node::call_contract)
                 .and_then(|contract| contract.result_adapter),
             args: regs,
             kwargs: kw,

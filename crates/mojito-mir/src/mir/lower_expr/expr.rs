@@ -108,8 +108,10 @@ impl Flatten<'_> {
     }
 
     pub(in crate::mir) fn transfer(&mut self, e: &Expr, inner: &Expr) -> Reg {
-        if let Some(name) = self.name_spelled(inner) {
-            let var = self.expression_var(&name, inner);
+        if let Some(node) = self.node(inner)
+            && let Some(name) = self.name_spelled(node)
+        {
+            let var = self.expression_var(&name, node);
             // A `mut` parameter's slot holds the handle to the caller's
             // storage, so the transfer takes the referent out through it. A
             // value that owns no storage transfers as a copy and leaves the
@@ -142,12 +144,12 @@ impl Flatten<'_> {
             let d = self.fresh(span(e), Some(place.root));
             self.emit(MirInstr::MovePlace { dest: d, place });
             d
-        } else if let Some((object, _)) = self.index_operands(inner)
-            && matches!(
-                self.checked_ty(object).as_ref().map(Ty::kind),
-                Some(TyKind::Tuple(_))
-            )
-            && let Some(place) = self.try_place(inner)
+        } else if let Some(object) = self.operand(inner, |node| {
+            node.index_operands().map(|(object, _)| object)
+        }) && matches!(
+            self.node(object).and_then(Node::ty).as_ref().map(Ty::kind),
+            Some(TyKind::Tuple(_))
+        ) && let Some(place) = self.try_place(inner)
         {
             let d = self.fresh(span(e), Some(place.root));
             self.emit(MirInstr::MovePlace { dest: d, place });
@@ -170,13 +172,16 @@ impl Flatten<'_> {
         // A generic `__contains__[T]` binds its own parameters from the
         // call's solved arguments, as a spelled method call's does.
         let param_decls = self
-            .checked_call_contract(e)
+            .node(e)
+            .and_then(Node::call_contract)
             .map(|contract| contract.param_decls)
             .unwrap_or_default();
         let instantiated_args = if param_decls.is_empty() {
             Vec::new()
         } else {
-            self.instantiated_args(e)
+            self.node(e)
+                .map(Node::instantiated_args)
+                .unwrap_or_default()
         };
         self.emit_interior_invalidations(container, None);
         self.emit_call_invalidations(e, std::slice::from_ref(value), &[]);
@@ -185,7 +190,7 @@ impl Flatten<'_> {
             recv,
             method: "__contains__".to_string(),
             resolved: self.resolved_callable(e),
-            raises: self.checked_raises(e),
+            raises: self.node(e).and_then(Node::raises),
             reference_result: None,
             result_adapter: None,
             args: vec![argument],
@@ -194,7 +199,10 @@ impl Flatten<'_> {
             recv_writes: self.receiver_writes(e),
             arg_places: vec![arg_place],
             kwarg_places: Vec::new(),
-            capture_accesses: self.checked_call_capture_accesses(e),
+            capture_accesses: self
+                .node(e)
+                .map(|node| self.call_capture_accesses(node))
+                .unwrap_or_default(),
             param_arg_regs: Vec::new(),
             param_decls,
             instantiated_args,
@@ -221,22 +229,30 @@ impl Flatten<'_> {
         let resolved = self.resolved_callable(e);
         // A reflected operator (checker-marked) runs on the RIGHT
         // operand: `1 + m` calls `m.__radd__(1)`.
-        let reflected = self.checked_adjustments(e).iter().any(|adjustment| {
-            matches!(
-                adjustment,
-                mojito_checked::checked::SemanticAdjustment::ReflectedOperator
-            )
-        });
+        let reflected = self
+            .node(e)
+            .map_or(&[][..], Node::adjustments)
+            .iter()
+            .any(|adjustment| {
+                matches!(
+                    adjustment,
+                    mojito_checked::checked::SemanticAdjustment::ReflectedOperator
+                )
+            });
         let (ra, rb) = if reflected { (rb, ra) } else { (ra, rb) };
         // Equatable's default `__ne__` (checker-marked): dispatch
         // `__eq__` and negate its result.
         if op == InfixOp::Ne
-            && self.checked_adjustments(e).iter().any(|adjustment| {
-                matches!(
-                    adjustment,
-                    mojito_checked::checked::SemanticAdjustment::NegatedEquality
-                )
-            })
+            && self
+                .node(e)
+                .map_or(&[][..], Node::adjustments)
+                .iter()
+                .any(|adjustment| {
+                    matches!(
+                        adjustment,
+                        mojito_checked::checked::SemanticAdjustment::NegatedEquality
+                    )
+                })
         {
             let equal = self.fresh_typed(span(e), None, Ty::bool());
             self.emit(MirInstr::BinOp {
@@ -378,13 +394,14 @@ impl Flatten<'_> {
 
     pub(super) fn nested_type_apply(&mut self, e: &Expr, name: &str) -> Reg {
         let info = self
-            .nested_info(e)
+            .node(e)
+            .and_then(|node| self.nested_info(node))
             .expect("guard established a checked nested declaration");
         let dest = self.load_nested_closure(name, &info, span(e));
         // The closure slot carries the declaration's generic callable
         // type; this expression carries the checker's concrete Origin
         // substitution and must win at the MIR value boundary.
-        if let Some(specialized) = self.checked_ty(e) {
+        if let Some(specialized) = self.node(e).and_then(Node::ty) {
             self.f.reg_types.insert(dest.0, specialized);
         }
         dest
@@ -405,8 +422,7 @@ impl Flatten<'_> {
     /// Lower `e` by its node's op when that op is a literal or a name:
     /// `None` for any other op, which another family lowers.
     fn literal_or_name(&mut self, e: &Expr) -> Option<Reg> {
-        let tables = std::sync::Arc::clone(&self.checked);
-        let node = tables.expression(self.node_of(e)?)?;
+        let node = self.node(e)?.checked;
         Some(match &node.op {
             CheckedOp::Int(n) => self.literal(node, Const::IntLiteral(n.clone())),
             CheckedOp::Float(x) => self.literal(node, Const::FloatLiteral(x.clone())),
@@ -435,8 +451,7 @@ impl Flatten<'_> {
     /// op, which another family lowers. The op decides; the syntax only
     /// binds the operands still lowered from it.
     fn call_family(&mut self, e: &Expr) -> Option<Reg> {
-        let tables = std::sync::Arc::clone(&self.checked);
-        let node = tables.expression(self.node_of(e)?)?;
+        let node = self.node(e)?.checked;
         // A pack or reflection query read as a runtime value is a
         // parameter constant; its operand is a type, never lowered.
         if matches!(
@@ -497,8 +512,7 @@ impl Flatten<'_> {
     /// `None` for any other op, which another family lowers. The op
     /// decides; the syntax only binds the operands still lowered from it.
     fn access_family(&mut self, e: &Expr) -> Option<Reg> {
-        let tables = std::sync::Arc::clone(&self.checked);
-        let node = tables.expression(self.node_of(e)?)?;
+        let node = self.node(e)?.checked;
         Some(match (&node.op, &e.kind) {
             (CheckedOp::Member { field, .. }, ExprKind::Member { object, .. }) => {
                 self.member_expr(e, node, object, field)
@@ -550,8 +564,7 @@ impl Flatten<'_> {
     /// family lowers. The op decides; the syntax only binds the operands
     /// still lowered from it.
     fn display_family(&mut self, e: &Expr) -> Option<Reg> {
-        let tables = std::sync::Arc::clone(&self.checked);
-        let node = tables.expression(self.node_of(e)?)?;
+        let node = self.node(e)?.checked;
         Some(match (&node.op, &e.kind) {
             (CheckedOp::ListLit(_), ExprKind::ListLit(elems)) => self.list_literal(e, node, elems),
             (CheckedOp::BraceLit(_), ExprKind::BraceLit(entries)) => {
@@ -589,8 +602,7 @@ impl Flatten<'_> {
     /// operator; each operand is the rebuilt child at its position among
     /// the op's operands.
     fn operator_family(&mut self, e: &Expr) -> Option<Reg> {
-        let tables = std::sync::Arc::clone(&self.checked);
-        let node = tables.expression(self.node_of(e)?)?;
+        let node = self.node(e)?.checked;
         Some(match (&node.op, expression_children(e).as_slice()) {
             (CheckedOp::Prefix(op, _), [value]) => self.prefix_op(e, *op, value),
             // `and`/`or` short-circuit — lowered to CFG blocks, not an eager BinOp.
@@ -607,7 +619,10 @@ impl Flatten<'_> {
             // method-call place/capture contract.
             (CheckedOp::Infix(op @ (InfixOp::In | InfixOp::NotIn), ..), [value, container])
                 if matches!(
-                    self.checked_ty(container).as_ref().map(Ty::kind),
+                    self.node(container)
+                        .and_then(Node::ty)
+                        .as_ref()
+                        .map(Ty::kind),
                     Some(TyKind::Struct(..))
                 ) =>
             {
@@ -641,7 +656,10 @@ impl Flatten<'_> {
             // A lambda expression materializes its hidden definition's
             // closure at the expression's evaluation point — copy/move
             // captures snapshot here, once per evaluation.
-            (CheckedOp::Lambda { .. }, []) => match self.nested_info(e) {
+            (CheckedOp::Lambda { .. }, []) => match self
+                .node(e)
+                .and_then(|node| self.nested_info(node))
+            {
                 Some(info) => self.emit_nested_closure(&info, span(e), false),
                 None => self
                     .unsupported_value(e, "lambda expression lost its checked nested declaration"),
@@ -670,7 +688,7 @@ impl Flatten<'_> {
         // `not x.__bool__()`: convert through the explicit `Bool(x)`
         // call so the negation is scalar on both backends.
         let ra = if op == PrefixOp::Not
-            && self.checked_ty(value).is_some_and(|ty| {
+            && self.node(value).and_then(Node::ty).is_some_and(|ty| {
                 matches!(ty.kind(), TyKind::Struct(..))
                     || mojito_types::conformance::is_numeric(&ty)
                     || mojito_types::types::is_scalar_simd(&ty)

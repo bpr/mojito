@@ -15,6 +15,7 @@ mojito-symbol = { path = "../mojito-symbol" }
 mojito-types = { path = "../mojito-types" }
 postcard.workspace = true
 serde.workspace = true
+typed-arena = "2"
 
 [lints]
 workspace = true

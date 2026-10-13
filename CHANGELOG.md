@@ -8,6 +8,14 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- MIR reads a checked expression's facts off a node handle (R646), as
+  upstream lowering reads an op's attributes and operands off the op
+  itself: a `Node` pairs HIR's tree for the expression with its checked
+  node, its operands are the op's, and its type, owner, call contract,
+  adjustments, and loans are read from it rather than from the address of
+  the syntax rebuilt for it. Lowering still walks that syntax, bridged to
+  the handle both ways until R649. No program's output or MIR changes.
+
 - MIR no longer finds a checked expression by its source location, and a
   lifted compile-time thunk carries no syntax (R623), as upstream's
   lowering reaches an op through its operands and never by location: the

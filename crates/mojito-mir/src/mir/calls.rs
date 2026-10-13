@@ -37,7 +37,7 @@ pub(super) fn owns_droppable_storage(ty: &Ty) -> bool {
     )
 }
 
-impl Flatten<'_> {
+impl<'a> Flatten<'a> {
     /// Lower one ordinary call argument together with the caller storage that
     /// checking selected for a `mut`/`ref` parameter. Dynamic indexed places
     /// cannot be reconstructed after evaluating their value: doing so either
@@ -55,7 +55,8 @@ impl Flatten<'_> {
     /// ordinary value.
     pub(super) fn lower_operator_operand(&mut self, expression: &Expr) -> Reg {
         let borrowed = self
-            .checked_adjustments(expression)
+            .node(expression)
+            .map_or(&[][..], Node::adjustments)
             .iter()
             .any(|adjustment| {
                 matches!(
@@ -75,7 +76,8 @@ impl Flatten<'_> {
     /// reach the callee as the caller's storage rather than a copy — a view
     /// built over a callee-local copy would dangle once the frame unwinds.
     pub(super) fn borrows_view_result(&self, expression: &Expr) -> bool {
-        self.checked_adjustments(expression)
+        self.node(expression)
+            .map_or(&[][..], Node::adjustments)
             .iter()
             .any(|adjustment| {
                 matches!(
@@ -94,7 +96,8 @@ impl Flatten<'_> {
     /// excludes constructions; a method or callable value is never one.)
     pub(super) fn call_anchors_arguments(&self, expression: &Expr) -> bool {
         !(self
-            .checked_adjustments(expression)
+            .node(expression)
+            .map_or(&[][..], Node::adjustments)
             .iter()
             .any(|adjustment| {
                 matches!(
@@ -103,7 +106,8 @@ impl Flatten<'_> {
                 )
             })
             || self
-                .checked_node(expression)
+                .node(expression)
+                .map(|node| node.checked)
                 .is_some_and(|node| !node.call_transfers.is_empty()))
     }
 
@@ -115,13 +119,13 @@ impl Flatten<'_> {
         expression: &Expr,
         view_result: bool,
     ) -> (Reg, Option<MirPlace>) {
-        if let Some(operand) = self.spread_operand(expression) {
+        if let Some(operand) = self.operand(expression, Node::spread_operand) {
             return self.lower_pack_spread_argument(expression, operand);
         }
-        let adjustments = self.checked_adjustments(expression);
+        let adjustments = self.node(expression).map_or(&[][..], Node::adjustments);
         // A `^` the checker bound to a read parameter lends its place like a
         // plain read argument.
-        if let Some(inner) = self.transfer_operand(expression)
+        if let Some(inner) = self.operand(expression, Node::transfer_operand)
             && adjustments.iter().any(|adjustment| {
                 matches!(
                     adjustment,
@@ -140,7 +144,7 @@ impl Flatten<'_> {
         // parameter) materializes inside the conversion lowering instead: the
         // slot holds the unconverted source and the callee receives the view.
         let converted = self.implicit_conversion(expression).is_some();
-        if let Some(owner) = mojito_checked::checked::materialized_borrow_owner(&adjustments)
+        if let Some(owner) = mojito_checked::checked::materialized_borrow_owner(adjustments)
             && !converted
         {
             return self.materialize_borrow_source(expression, owner);
@@ -177,7 +181,7 @@ impl Flatten<'_> {
                 return (register, None);
             }
             let value = self.expr(expression);
-            self.anchor_temporary_argument(expression, value, &adjustments, converted);
+            self.anchor_temporary_argument(expression, value, adjustments, converted);
             if adjustments.iter().any(|adjustment| {
                 matches!(
                     adjustment,
@@ -185,7 +189,7 @@ impl Flatten<'_> {
                 )
             }) {
                 return (
-                    self.bind_temporary_argument(expression, value, &adjustments, converted),
+                    self.bind_temporary_argument(expression, value, adjustments, converted),
                     None,
                 );
             }
@@ -221,7 +225,7 @@ impl Flatten<'_> {
                 place
                     .ty
                     .clone()
-                    .or_else(|| self.checked_ty(expression))
+                    .or_else(|| self.node(expression).and_then(Node::ty))
                     .unwrap_or_else(Ty::error),
             );
             self.emit(MirInstr::LoadPlace {
@@ -238,7 +242,7 @@ impl Flatten<'_> {
                 place
                     .ty
                     .clone()
-                    .or_else(|| self.checked_ty(expression))
+                    .or_else(|| self.node(expression).and_then(Node::ty))
                     .unwrap_or_else(Ty::error),
             );
             self.emit(MirInstr::LoadPlace {
@@ -255,7 +259,7 @@ impl Flatten<'_> {
         // stays total so the verifier can diagnose corrupt checked input
         // without manufacturing a caller place.
         let value = self.expr(expression);
-        self.anchor_temporary_argument(expression, value, &adjustments, converted);
+        self.anchor_temporary_argument(expression, value, adjustments, converted);
         (value, None)
     }
 
@@ -282,7 +286,7 @@ impl Flatten<'_> {
         }
 
         let value = self.expr_unconverted(expression);
-        if let Some(ty) = self.checked_ty(expression) {
+        if let Some(ty) = self.node(expression).and_then(Node::ty) {
             self.f.reg_types.entry(value.0).or_insert(ty);
         }
         value
@@ -316,7 +320,7 @@ impl Flatten<'_> {
                 place
                     .ty
                     .clone()
-                    .or_else(|| self.checked_ty(expression))
+                    .or_else(|| self.node(expression).and_then(Node::ty))
                     .unwrap_or_else(Ty::error),
             );
             self.emit(MirInstr::LoadPlace {
@@ -332,7 +336,7 @@ impl Flatten<'_> {
                 place
                     .ty
                     .clone()
-                    .or_else(|| self.checked_ty(expression))
+                    .or_else(|| self.node(expression).and_then(Node::ty))
                     .unwrap_or_else(Ty::error),
             );
             self.emit(MirInstr::LoadPlace {
@@ -542,8 +546,8 @@ impl Flatten<'_> {
         expression: &Expr,
         operand: &Expr,
     ) -> (Reg, Option<MirPlace>) {
-        if let Some(moved) = self.transfer_operand(operand)
-            && self.is_name(moved)
+        if let Some(moved) = self.operand(operand, Node::transfer_operand)
+            && self.node(moved).is_some_and(Node::is_name)
         {
             return (self.transfer(operand, moved), None);
         }
@@ -623,7 +627,7 @@ impl Flatten<'_> {
             place
                 .ty
                 .clone()
-                .or_else(|| self.checked_ty(&argument.value))
+                .or_else(|| self.node(&argument.value).and_then(Node::ty))
                 .unwrap_or_else(Ty::error),
         );
         self.emit(MirInstr::LoadPlace {
@@ -696,7 +700,10 @@ impl Flatten<'_> {
         // The materialized reference's own origin names the storage it
         // designates even when the expression's checked type is the call's
         // result rather than the reference.
-        let mut origins = self.checked_reference_places(expression);
+        let mut origins = self
+            .node(expression)
+            .map(Node::reference_places)
+            .unwrap_or_default();
         let own = match &reference.origin {
             mojito_types::origin::Origin::Place(place) => vec![place],
             mojito_types::origin::Origin::Union(members) => members
@@ -791,17 +798,14 @@ impl Flatten<'_> {
                 this.materialized_temporary_base_place(base)
             }
         };
-        let tables = std::sync::Arc::clone(&self.checked);
-        let op = self
-            .node_of(expression)
-            .and_then(|id| tables.expression(id))
-            .map(|node| &node.op);
+        let op = self.node(expression).map(Node::op);
         match (op, &expression.kind) {
             (Some(CheckedOp::Member { field, .. }), ExprKind::Member { object, .. }) => {
                 let mut place = base_place(self, object)?;
                 if let Some(ty) = self
-                    .checked_place_ty(expression)
-                    .or_else(|| self.checked_ty(expression))
+                    .node(expression)
+                    .and_then(Node::place_ty)
+                    .or_else(|| self.node(expression).and_then(Node::ty))
                 {
                     place.project(Proj::Field(field.clone()), ty);
                 } else {
@@ -810,7 +814,10 @@ impl Flatten<'_> {
                 Some(place)
             }
             (Some(CheckedOp::Index { .. }), ExprKind::Index { object, index })
-                if self.checked_call_contract(expression).is_none()
+                if self
+                    .node(expression)
+                    .and_then(Node::call_contract)
+                    .is_none()
                     && matches!(
                         self.intrinsic_index_dispatch(object),
                         Some(
@@ -822,14 +829,17 @@ impl Flatten<'_> {
                     ) =>
             {
                 let mut place = base_place(self, object)?;
-                let projection = match self.checked_ty(object).as_ref().map(Ty::kind) {
-                    Some(TyKind::Tuple(_)) => exact_nonnegative_index(self.checked_node(index))
-                        .map_or_else(|| Proj::Index(self.expr(index)), Proj::ConstIndex),
+                let projection = match self.node(object).and_then(Node::ty).as_ref().map(Ty::kind) {
+                    Some(TyKind::Tuple(_)) => {
+                        exact_nonnegative_index(self.node(index).map(|node| node.checked))
+                            .map_or_else(|| Proj::Index(self.expr(index)), Proj::ConstIndex)
+                    }
                     _ => Proj::Index(self.expr(index)),
                 };
                 if let Some(ty) = self
-                    .checked_place_ty(expression)
-                    .or_else(|| self.checked_ty(expression))
+                    .node(expression)
+                    .and_then(Node::place_ty)
+                    .or_else(|| self.node(expression).and_then(Node::ty))
                 {
                     place.project(projection, ty);
                 } else {
@@ -846,7 +856,8 @@ impl Flatten<'_> {
     /// reached through an immutable reference to `Imm`; a call without a
     /// checked contract keeps the conservative exclusive classification.
     pub(super) fn receiver_writes(&self, expression: &Expr) -> bool {
-        self.checked_call_contract(expression)
+        self.node(expression)
+            .and_then(Node::call_contract)
             .is_none_or(|contract| {
                 matches!(
                     contract.receiver_convention,
@@ -866,9 +877,10 @@ impl Flatten<'_> {
     /// and are never reconstructed as raw index projections.
     pub(super) fn lower_call_receiver(&mut self, expression: &Expr) -> (Reg, Option<MirPlace>) {
         // A `^` receiver of a read method lends its place (checker-marked).
-        if let Some(inner) = self.transfer_operand(expression)
+        if let Some(inner) = self.operand(expression, Node::transfer_operand)
             && self
-                .checked_adjustments(expression)
+                .node(expression)
+                .map_or(&[][..], Node::adjustments)
                 .iter()
                 .any(|adjustment| {
                     matches!(
@@ -882,7 +894,7 @@ impl Flatten<'_> {
         // A temporary receiver the checker materialized (the result borrows
         // it: `ref[self]`) lives in its hidden slot for the statement.
         if let Some(owner) = mojito_checked::checked::materialized_borrow_owner(
-            &self.checked_adjustments(expression),
+            self.node(expression).map_or(&[][..], Node::adjustments),
         ) {
             return self.materialize_borrow_source(expression, owner);
         }
@@ -905,7 +917,7 @@ impl Flatten<'_> {
                 place
                     .ty
                     .clone()
-                    .or_else(|| self.checked_ty(expression))
+                    .or_else(|| self.node(expression).and_then(Node::ty))
                     .unwrap_or_else(Ty::error),
             );
             self.emit(MirInstr::LoadPlace {
@@ -914,7 +926,11 @@ impl Flatten<'_> {
             });
             return (value, Some(place));
         }
-        if self.checked_call_contract(expression).is_some() {
+        if self
+            .node(expression)
+            .and_then(Node::call_contract)
+            .is_some()
+        {
             let value = self.expr(expression);
             // A borrowing view produced by the receiver call (BorrowViewResult
             // carries loans on the ultimate owner) must outlive the chained
@@ -922,7 +938,10 @@ impl Flatten<'_> {
             // source alive and conflict-checked, exactly as the implicit
             // view-conversion binding does. Loan-free call results stay plain
             // temporaries.
-            let loans = self.aggregate_borrows(expression);
+            let loans = self
+                .node(expression)
+                .map(|node| self.aggregate_borrows(node))
+                .unwrap_or_default();
             if loans.is_empty() {
                 return (value, None);
             }
@@ -932,14 +951,21 @@ impl Flatten<'_> {
         // caller storage through its `ref [origin]` argument; the method body
         // reads through the view, so the source must outlive the call even at
         // its last use — the same hidden anchor a chained view result gets.
-        if matches!(self.op_of(expression), Some(CheckedOp::Call { .. }))
-            && matches!(
-                self.checked_ty(expression).as_ref().map(Ty::kind),
-                Some(TyKind::Struct(..))
-            )
-        {
+        if matches!(
+            self.node(expression).map(Node::op),
+            Some(CheckedOp::Call { .. })
+        ) && matches!(
+            self.node(expression)
+                .and_then(Node::ty)
+                .as_ref()
+                .map(Ty::kind),
+            Some(TyKind::Struct(..))
+        ) {
             let value = self.expr(expression);
-            let loans = self.aggregate_borrows(expression);
+            let loans = self
+                .node(expression)
+                .map(|node| self.aggregate_borrows(node))
+                .unwrap_or_default();
             if loans.is_empty() {
                 return (value, None);
             }
@@ -951,20 +977,25 @@ impl Flatten<'_> {
         // local `comptime` binding of a parameter expression (`lane` of
         // `comptime lane = dt`), is a value the elaborator folds, not a
         // place: the receiver is read as such and no place is retained.
-        if let Some(name) = self.name_spelled(expression)
+        if let Some(name) = self
+            .node(expression)
+            .and_then(|node| self.name_spelled(node))
             && (self.constant_param_value(expression)
                 || self
                     .enclosing_binders
                     .values
                     .iter()
                     .any(|(binder, _)| binder.name.as_ref() == name.as_str())
-                || self.checked_owner(expression).is_some_and(|owner| {
-                    self.enclosing_binders
-                        .loop_bindings
-                        .iter()
-                        .any(|(binding, _)| *binding == owner)
-                        || self.enclosing_binders.comptime_value(owner).is_some()
-                }))
+                || self
+                    .node(expression)
+                    .and_then(Node::owner)
+                    .is_some_and(|owner| {
+                        self.enclosing_binders
+                            .loop_bindings
+                            .iter()
+                            .any(|(binding, _)| *binding == owner)
+                            || self.enclosing_binders.comptime_value(owner).is_some()
+                    }))
         {
             return (self.expr(expression), None);
         }
@@ -998,16 +1029,19 @@ impl Flatten<'_> {
     ) -> (Reg, Option<MirPlace>) {
         let (value, place) = self.lower_call_receiver(receiver);
         if place.is_some()
-            || !self.is_call(receiver)
-            || self.checked_call_contract(call).is_some_and(|contract| {
-                matches!(
-                    contract.receiver_convention,
-                    Some(
-                        mojito_ast::ast::ArgConvention::Var
-                            | mojito_ast::ast::ArgConvention::Deinit
+            || !self.node(receiver).is_some_and(Node::is_call)
+            || self
+                .node(call)
+                .and_then(Node::call_contract)
+                .is_some_and(|contract| {
+                    matches!(
+                        contract.receiver_convention,
+                        Some(
+                            mojito_ast::ast::ArgConvention::Var
+                                | mojito_ast::ast::ArgConvention::Deinit
+                        )
                     )
-                )
-            })
+                })
         {
             return (value, place);
         }
@@ -1016,7 +1050,7 @@ impl Flatten<'_> {
             .reg_types
             .get(&value.0)
             .cloned()
-            .or_else(|| self.checked_ty(receiver))
+            .or_else(|| self.node(receiver).and_then(Node::ty))
             .filter(owns_droppable_storage)
         else {
             return (value, None);
@@ -1048,14 +1082,16 @@ impl Flatten<'_> {
         object: &Expr,
         field: &str,
     ) -> Option<Reg> {
-        if !self.is_call(object)
+        if !self.node(object).is_some_and(Node::is_call)
             || self.reference_result(object).is_some()
-            || mojito_checked::checked::materialized_borrow_owner(&self.checked_adjustments(object))
-                .is_some()
+            || mojito_checked::checked::materialized_borrow_owner(
+                self.node(object).map_or(&[][..], Node::adjustments),
+            )
+            .is_some()
         {
             return None;
         }
-        let field_ty = self.checked_ty(expression)?;
+        let field_ty = self.node(expression).and_then(Node::ty)?;
         if matches!(field_ty.kind(), TyKind::Ref(_)) {
             return None;
         }
@@ -1067,8 +1103,16 @@ impl Flatten<'_> {
         if self.is_slice_descriptor(object) {
             return None;
         }
-        let object_ty = self.checked_ty(object).filter(owns_droppable_storage)?;
-        if !self.aggregate_borrows(object).is_empty() {
+        let object_ty = self
+            .node(object)
+            .and_then(Node::ty)
+            .filter(owns_droppable_storage)?;
+        if !self
+            .node(object)
+            .map(|node| self.aggregate_borrows(node))
+            .unwrap_or_default()
+            .is_empty()
+        {
             return None;
         }
         let value = self.expr(object);
@@ -1106,10 +1150,14 @@ impl Flatten<'_> {
         adjustments: &[mojito_checked::checked::SemanticAdjustment],
         converted: bool,
     ) -> Reg {
-        let fresh_temporary = converted || self.is_call(expression);
+        let fresh_temporary = converted || self.node(expression).is_some_and(Node::is_call);
         if !fresh_temporary
             || mojito_checked::checked::materialized_borrow_owner(adjustments).is_some()
-            || !self.aggregate_borrows(expression).is_empty()
+            || !self
+                .node(expression)
+                .map(|node| self.aggregate_borrows(node))
+                .unwrap_or_default()
+                .is_empty()
         {
             return value;
         }
@@ -1146,7 +1194,7 @@ impl Flatten<'_> {
     /// `$mat_r` slot, which the read stores a copy of the binding into.
     pub(super) fn materialized_parameter_place(&mut self, identifier: &Expr) -> Option<MirPlace> {
         let owner = mojito_checked::checked::materialized_borrow_owner(
-            &self.checked_adjustments(identifier),
+            self.node(identifier).map_or(&[][..], Node::adjustments),
         )?;
         self.materialize_borrow_source(identifier, owner).1
     }
@@ -1186,7 +1234,7 @@ impl Flatten<'_> {
                 .reg_types
                 .get(&value.0)
                 .cloned()
-                .or_else(|| self.checked_ty(expression));
+                .or_else(|| self.node(expression).and_then(Node::ty));
             let variable = self.var(&format!("$mat_r{}", value.0));
             if let Some(ty) = ty.clone() {
                 self.var_types.insert(variable, ty);
@@ -1201,7 +1249,10 @@ impl Flatten<'_> {
             // other storage (`StringSpan(s)`, a view-returning call): the
             // slot carries those loans, so the viewed storage outlives every
             // borrower of the slot rather than dying at the temporary's call.
-            let loans = self.aggregate_borrows_unmaterialized(expression);
+            let loans = self
+                .node(expression)
+                .map(|node| self.aggregate_borrows_unmaterialized(node))
+                .unwrap_or_default();
             if let Some(first) = loans.first() {
                 let marker =
                     self.fresh_typed(expression.source_span(), Some(first.place.root), Ty::none());
@@ -1252,7 +1303,7 @@ impl Flatten<'_> {
     /// scalar, or pointer owns no storage, and a place read is never re-owned.
     pub(super) fn bind_discarded_result(
         &mut self,
-        expression: &mojito_hir::hir::HirExpr,
+        expression: &'a mojito_hir::hir::HirExpr,
         value: Reg,
     ) {
         use mojito_checked::checked::{CheckedOp, SemanticAdjustment};
@@ -1328,12 +1379,12 @@ impl Flatten<'_> {
         converted: bool,
     ) {
         let subscript_view = matches!(
-            self.op_of(expression),
+            self.node(expression).map(Node::op),
             Some(CheckedOp::Index { .. } | CheckedOp::MultiIndex { .. } | CheckedOp::Slice { .. })
         );
         let call_temporary = self.allow_argument_anchors
             && matches!(
-                self.op_of(expression),
+                self.node(expression).map(Node::op),
                 Some(CheckedOp::Call { .. } | CheckedOp::MethodCall { .. })
             );
         // A converted temporary's view is already bound to its
@@ -1342,16 +1393,22 @@ impl Flatten<'_> {
         let anchored_by_conversion = converted
             && (mojito_checked::checked::materialized_borrow_owner(adjustments).is_some()
                 || self
-                    .conversion_view_loans
-                    .contains_key(&(std::ptr::from_ref::<Expr>(expression) as usize)));
+                    .node(expression)
+                    .is_some_and(|node| self.conversion_view_loans.contains_key(&node.address())));
         if (call_temporary || subscript_view)
             && !anchored_by_conversion
             && matches!(
-                self.checked_ty(expression).as_ref().map(Ty::kind),
+                self.node(expression)
+                    .and_then(Node::ty)
+                    .as_ref()
+                    .map(Ty::kind),
                 Some(TyKind::Struct(..))
             )
         {
-            let loans = self.aggregate_borrows(expression);
+            let loans = self
+                .node(expression)
+                .map(|node| self.aggregate_borrows(node))
+                .unwrap_or_default();
             if !loans.is_empty() {
                 self.anchor_borrowing_argument(expression, value, loans);
             }
@@ -1364,7 +1421,7 @@ impl Flatten<'_> {
             .reg_types
             .get(&value.0)
             .cloned()
-            .or_else(|| self.checked_ty(expression));
+            .or_else(|| self.node(expression).and_then(Node::ty));
         let variable = self.var(&format!("$arg_loan_r{}", value.0));
         if let Some(ty) = view_ty.clone() {
             self.var_types.insert(variable, ty);
@@ -1407,7 +1464,7 @@ impl Flatten<'_> {
             .reg_types
             .get(&value.0)
             .cloned()
-            .or_else(|| self.checked_ty(expression));
+            .or_else(|| self.node(expression).and_then(Node::ty));
         let variable = self.var(&format!("{prefix}{}", value.0));
         if let Some(ty) = view_ty.clone() {
             self.var_types.insert(variable, ty);
@@ -1447,8 +1504,8 @@ impl Flatten<'_> {
     pub(super) fn rooted_at_materialized_temporary(&self, expression: &Expr) -> bool {
         let mut root = expression;
         while let Some(object) = self
-            .member_object(root)
-            .or_else(|| self.index_operands(root).map(|(object, _)| object))
+            .operand(root, Node::member_object)
+            .or_else(|| self.operand(root, |node| node.index_operands().map(|(object, _)| object)))
             .or_else(|| {
                 self.pointer_keyword_subscript(root)
                     .map(|(object, _)| object)
@@ -1456,9 +1513,11 @@ impl Flatten<'_> {
         {
             root = object;
         }
-        self.is_call(root)
-            && mojito_checked::checked::materialized_borrow_owner(&self.checked_adjustments(root))
-                .is_some()
+        self.node(root).is_some_and(Node::is_call)
+            && mojito_checked::checked::materialized_borrow_owner(
+                self.node(root).map_or(&[][..], Node::adjustments),
+            )
+            .is_some()
     }
 
     /// The place of a call result the checker materialized as the holder of
@@ -1467,11 +1526,12 @@ impl Flatten<'_> {
     /// storage alive while the projection chain reads or writes through it.
     /// Any other call result is a value, not a place.
     pub(super) fn materialized_temporary_base_place(&mut self, base: &Expr) -> Option<MirPlace> {
-        if !self.is_call(base) {
+        if !self.node(base).is_some_and(Node::is_call) {
             return None;
         }
-        let owner =
-            mojito_checked::checked::materialized_borrow_owner(&self.checked_adjustments(base))?;
+        let owner = mojito_checked::checked::materialized_borrow_owner(
+            self.node(base).map_or(&[][..], Node::adjustments),
+        )?;
         self.materialize_borrow_source(base, owner).1
     }
 
@@ -1481,63 +1541,6 @@ impl Flatten<'_> {
     pub(super) fn callable_receiver_place(&mut self, expression: &Expr) -> Option<MirPlace> {
         let place = self.simple_place(expression)?;
         place.is_typed().then_some(place)
-    }
-
-    pub(super) fn checked_reference_places(
-        &self,
-        expression: &Expr,
-    ) -> Vec<mojito_types::origin::OriginPlace> {
-        fn collect(
-            origin: &mojito_types::origin::Origin,
-            places: &mut Vec<mojito_types::origin::OriginPlace>,
-        ) {
-            match origin {
-                mojito_types::origin::Origin::Place(place) => places.push(place.clone()),
-                mojito_types::origin::Origin::Union(members) => {
-                    for member in members {
-                        collect(member, places);
-                    }
-                }
-                _ => {}
-            }
-        }
-
-        let mut places = Vec::new();
-        for adjustment in self.checked_adjustments(expression) {
-            match adjustment {
-                mojito_checked::checked::SemanticAdjustment::InteriorReference { origin } => {
-                    places.push(origin);
-                }
-                mojito_checked::checked::SemanticAdjustment::ReferenceResult { reference } => {
-                    collect(&reference.origin, &mut places);
-                }
-                _ => {}
-            }
-        }
-        if let Some(TyKind::Ref(reference)) = self.checked_ty(expression).as_ref().map(Ty::kind) {
-            collect(&reference.origin, &mut places);
-        }
-        places.sort();
-        places.dedup();
-        places
-    }
-
-    pub(super) fn checked_interior_references(
-        &self,
-        expression: &Expr,
-    ) -> Vec<mojito_types::origin::OriginPlace> {
-        self.checked_reference_places(expression)
-            .into_iter()
-            .filter(|place| {
-                place.path.iter().any(|segment| {
-                    matches!(
-                        segment,
-                        mojito_types::origin::OriginSeg::Interior(_)
-                            | mojito_types::origin::OriginSeg::Subtree
-                    )
-                })
-            })
-            .collect()
     }
 
     pub(super) fn mir_interior_origin(
@@ -1580,14 +1583,16 @@ impl Flatten<'_> {
         &self,
         expression: &Expr,
     ) -> Vec<mojito_checked::checked::InteriorInvalidation> {
-        self.checked_adjustments(expression)
-            .into_iter()
+        self.node(expression)
+            .map_or(&[][..], Node::adjustments)
+            .iter()
             .find_map(|adjustment| match adjustment {
                 mojito_checked::checked::SemanticAdjustment::InvalidateInteriors {
                     invalidations,
                 } => Some(invalidations),
                 _ => None,
             })
+            .cloned()
             .unwrap_or_default()
     }
 
@@ -1663,13 +1668,19 @@ impl Flatten<'_> {
     /// ASAP destruction, which aggregate `LoadPlace` results deliberately
     /// trade for owner retention through the call.
     fn lower_borrowed_read_argument(&mut self, expression: &Expr) -> Option<Reg> {
-        if let Some((object, _)) = self.index_operands(expression) {
+        if let Some(object) = self.operand(expression, |node| {
+            node.index_operands().map(|(object, _)| object)
+        }) {
             return self.lower_borrowed_element_read(expression, object);
         }
-        let name = self.name_spelled(expression)?;
+        let node = self.node(expression)?;
+        let name = self.name_spelled(node)?;
         // A module constant read is a value with no slot of its own.
         if self.resolved_callable(expression).is_some()
-            || self.nested_info(expression).is_some()
+            || self
+                .node(expression)
+                .and_then(|node| self.nested_info(node))
+                .is_some()
             || self.is_origin_bearing_pointer(expression)
             || self.constant_param_value(expression)
             || (!self.vars.contains(&name) && self.overloads.is_function(&name))
@@ -1677,7 +1688,8 @@ impl Flatten<'_> {
             return None;
         }
         if self
-            .checked_adjustments(expression)
+            .node(expression)
+            .map_or(&[][..], Node::adjustments)
             .iter()
             .any(|adjustment| {
                 matches!(
@@ -1688,7 +1700,7 @@ impl Flatten<'_> {
         {
             return None;
         }
-        let ty = self.checked_ty(expression)?;
+        let ty = self.node(expression).and_then(Node::ty)?;
         if !matches!(
             ty.kind(),
             TyKind::Struct(..)
@@ -1701,7 +1713,7 @@ impl Flatten<'_> {
         ) {
             return None;
         }
-        let var = self.expression_var(&name, expression);
+        let var = self.expression_var(&name, node);
         if self.aliases.contains_key(&var) || self.runtime_aliases.contains(&var) {
             return None;
         }
@@ -1723,7 +1735,8 @@ impl Flatten<'_> {
     /// would copy the whole storage to index it.
     fn lower_borrowed_element_read(&mut self, expression: &Expr, object: &Expr) -> Option<Reg> {
         if self
-            .checked_adjustments(expression)
+            .node(expression)
+            .map_or(&[][..], Node::adjustments)
             .iter()
             .any(|adjustment| {
                 matches!(
@@ -1738,14 +1751,17 @@ impl Flatten<'_> {
             // A view (`Span[T, origin]`) lends storage it does not own; its
             // element keeps the ordinary read.
             let view = matches!(
-                self.checked_ty(object).as_ref().map(Ty::kind),
+                self.node(object).and_then(Node::ty).as_ref().map(Ty::kind),
                 Some(TyKind::Struct(_, arguments))
                     if arguments.iter().any(|argument| matches!(argument, TyArg::Origin(_)))
             );
             return (!view && owns_droppable_storage(&reference.referent))
                 .then(|| self.lower_call_receiver(expression).0);
         }
-        if self.checked_call_contract(expression).is_some()
+        if self
+            .node(expression)
+            .and_then(Node::call_contract)
+            .is_some()
             || !matches!(
                 self.intrinsic_index_dispatch(object),
                 Some(MirIntrinsicSubscript::TupleStorage | MirIntrinsicSubscript::VariadicStorage)
@@ -1760,7 +1776,7 @@ impl Flatten<'_> {
             place
                 .ty
                 .clone()
-                .or_else(|| self.checked_ty(expression))
+                .or_else(|| self.node(expression).and_then(Node::ty))
                 .unwrap_or_else(Ty::error),
         );
         self.emit(MirInstr::LoadPlace { dest, place });
