@@ -124,13 +124,25 @@ pub struct TraitDeclaration {
     pub requirements: Vec<TraitRequirement>,
 }
 
-/// One requirement of a trait declaration.
+/// One requirement of a trait declaration, a bodyless method declaration.
+///
+/// Upstream's trait declares each, so a call through a bound passes its
+/// arguments by the requirement's conventions as a concrete call does by
+/// its callee's.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct TraitRequirement {
     pub name: String,
     /// How many parameters it spells, its receiver aside, as the overload
     /// scan counts them.
     pub arity: usize,
+    /// The symbol a call through a bound selects it by
+    /// (`__trait_dispatch.sh$ov$Int`).
+    pub dispatch: String,
+    pub param_names: Vec<String>,
+    /// Its parameter types, `Self` spelled `TyKind::SelfType`.
+    pub param_types: Vec<Ty>,
+    pub param_conventions: Vec<Option<ArgConvention>>,
+    pub variadic_index: Option<usize>,
 }
 
 /// A struct's explicit-destruction obligation, apart from its destructors,

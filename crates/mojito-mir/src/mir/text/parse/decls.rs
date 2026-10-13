@@ -573,7 +573,9 @@ impl Decoder {
 
     /// A trait of the artifact's list: a schema 1.42 `trait` record, or an
     /// older artifact's bare name, which records no parents. A record
-    /// before schema 1.44 records no requirements.
+    /// before schema 1.44 records no requirements, and one before schema
+    /// 1.48 no requirement's signature: its empty dispatch symbol names no
+    /// call, so a call through a bound passes its arguments by address.
     fn trait_declaration(&mut self, value: &Value) -> Option<TraitDeclaration> {
         if !matches!(value.kind, ValueKind::Record(..)) {
             return Some(TraitDeclaration {
@@ -595,10 +597,47 @@ impl Decoder {
                         let row_fields = self.record(row, "requirement").ok()?;
                         let name = self.req(row, row_fields, "name", Self::symbol);
                         let arity = self.req(row, row_fields, "arity", Self::uint);
-                        self.unknown(row_fields, &["name", "arity"]);
+                        let dispatch = self
+                            .field(row_fields, "dispatch")
+                            .ok()
+                            .and_then(|value| self.symbol(value))
+                            .unwrap_or_default();
+                        let param_names = self
+                            .field(row_fields, "param_names")
+                            .map(|value| self.strings(value))
+                            .unwrap_or_default();
+                        let param_types = self
+                            .field(row_fields, "param_types")
+                            .map(|value| self.types(value))
+                            .unwrap_or_default();
+                        let param_conventions = self
+                            .field(row_fields, "param_conventions")
+                            .map(|value| self.conventions(value))
+                            .unwrap_or_default();
+                        let variadic_index = self
+                            .field(row_fields, "variadic_index")
+                            .ok()
+                            .and_then(|value| self.option_uint(value));
+                        self.unknown(
+                            row_fields,
+                            &[
+                                "name",
+                                "arity",
+                                "dispatch",
+                                "param_names",
+                                "param_types",
+                                "param_conventions",
+                                "variadic_index",
+                            ],
+                        );
                         Some(TraitRequirement {
                             name: name?,
                             arity: arity?,
+                            dispatch,
+                            param_names,
+                            param_types,
+                            param_conventions,
+                            variadic_index,
                         })
                     })
                     .collect()

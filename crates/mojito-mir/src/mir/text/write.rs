@@ -117,6 +117,28 @@ fn write_artifact_head(
                                 &[
                                     ("name", symbol(&requirement.name)),
                                     ("arity", requirement.arity.to_string()),
+                                    ("dispatch", symbol(&requirement.dispatch)),
+                                    (
+                                        "param_names",
+                                        list(requirement.param_names.iter().map(|v| symbol(v))),
+                                    ),
+                                    (
+                                        "param_types",
+                                        list(requirement.param_types.iter().map(ty_value)),
+                                    ),
+                                    (
+                                        "param_conventions",
+                                        list(
+                                            requirement
+                                                .param_conventions
+                                                .iter()
+                                                .map(|v| option(v.map(convention))),
+                                        ),
+                                    ),
+                                    (
+                                        "variadic_index",
+                                        option(requirement.variadic_index.map(|v| v.to_string())),
+                                    ),
                                 ],
                             )
                         })),

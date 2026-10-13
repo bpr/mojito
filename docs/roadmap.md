@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R704**.
+Next free ID: **R705**.
 
 ## Ordered Work
 
@@ -364,23 +364,6 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
     on the checked direct call, as a checked fact rather than a MIR
     re-binding.
   - Found while landing R681 (2026-10-13).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **R682 A call through a trait bound keeps a by-value argument's owner
-  alive through the call**
-
-  Problem: in `def run[T: Sh](s: T)`, `var b = W(31)` then
-  `var q = s.sh(b.t)` over the requirement `def sh(self, x: Int) -> Int`
-  prints `sh` before `del 31` in Mojito; the pin prints `del 31` first.
-  - The pin loads `b.t` at call setup, as it does for a concrete callee.
-  - The call's `resolved` target is `__trait_dispatch.sh$ov$Int`, which
-    has no declaration, so `ArgumentPassing` (`register_loans.rs`) sees no
-    parameter contract and treats the argument as addressed.
-  - MIR keeps no signature for a trait requirement, only its name and
-    arity: the fix gives the trait-dispatch call, or the trait
-    declaration's requirement, its parameter types and conventions.
-  - Found while landing R675 (2026-10-13).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -1224,6 +1207,23 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     fail with "'None' is not callable", and in a `comptime for` with a
     `comptime if i == 0` arm they print `1 1`.
   - Found while landing R329 (2026-10-08).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R704 A requirement called under a `where conforms_to(T, Trait)`
+  clause is rejected**
+
+  Problem: `def run[T: Copyable](s: T) where conforms_to(T, Sh)` calling
+  `s.sh(b.t)` prints `del 31`, `sh` at the pin, but Mojito rejects it:
+  "type 'T' has no method 'sh'".
+  - The method lookup over a binder (`method_calls/resolution.rs`) widens
+    the receiver's bounds by an assumed conformance only for `copy` and
+    `__hash__`; it should take every trait the clause assumes.
+  - The call's receiver type then still names only `Copyable`, so
+    `ArgumentPassing` (`register_loans.rs`) finds no requirement through
+    `MirDeclarations::bound_requirement` and keeps `b` through the call.
+    The fix must give the drop analysis the assumed trait too.
+  - Found while landing R682 (2026-10-13).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

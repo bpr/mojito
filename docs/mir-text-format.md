@@ -1,4 +1,4 @@
-# Mojito Textual MIR Format, Version 1.47
+# Mojito Textual MIR Format, Version 1.48
 
 This document is the normative specification of Mojito's textual verified-MIR
 artifact. The Rust data model in `src/mir.rs` and `src/mir/ir.rs` remains the
@@ -6,7 +6,7 @@ in-memory authority; this format is its stable inspection and interchange
 boundary. `docs/vm-instruction-set.md` explains execution semantics, while this
 document defines syntax and serialized data.
 
-Version 1.47 is implemented end to end for inspection and loading: canonical
+Version 1.48 is implemented end to end for inspection and loading: canonical
 in-memory disassembly, full-grammar assembly parsing, and artifact-loading
 verification (`mir::text::load_artifact`, which reports canonical-verifier
 findings at artifact source spans). Lossless print → parse → print round trips
@@ -22,10 +22,10 @@ which may be generic; it is always elaborated before it runs.
 Every artifact begins with exactly:
 
 ```text
-mojito-mir 1.47
+mojito-mir 1.48
 ```
 
-The writer emits 1.47. The reader accepts 1.0 through 1.47; *Schema 1.0*
+The writer emits 1.48. The reader accepts 1.0 through 1.48; *Schema 1.0*
 below says how a 1.0 artifact is read, and *Binder identity* under *Types*
 how a binder without an identity is.
 
@@ -140,6 +140,15 @@ a `ref`-returning call) until its call's setup reads it: it keeps its owner
 live and carries its interior generation, excludes no access and no other
 loan, and every read through its reference reads its owner. An older
 artifact's loans read as not setup loans.
+
+Minor version 48 gives each trait requirement its signature, after
+`arity`: `dispatch`, the `__trait_dispatch.*` symbol a call through a bound
+selects it by, then `param_names`, `param_types` (`Self` spelled `Self`),
+`param_conventions`, and `variadic_index`, as a `decl` record spells them.
+Ownership analysis passes a call through a bound its arguments by these
+conventions, as it does a concrete call by its callee's declaration. An
+older artifact's requirement reads with an empty `dispatch` and no
+parameters, so such a call passes its arguments by address.
 
 Minor version 10 adds the signature origin `sig_carried(type)`: the source of
 a transfer effect whose body stores a value of a type over its binders. It
@@ -484,7 +493,8 @@ verifier's binder scope for its body is its own `param_decls` and
 `region_binders`, then each enclosing declaration's, then the struct of the
 outermost method.
 
-Abstract dispatch requirements (`__trait_dispatch.*`, `__iterator_dispatch.*`) have no concrete declaration record.
+Abstract dispatch requirements (`__trait_dispatch.*`, `__iterator_dispatch.*`) have no concrete declaration record;
+a `__trait_dispatch.*` method's parameter contract is its trait requirement's (minor version 48).
 Their complete `subscript_call`, `iterator_call`, or stored `func`/`generic_func`
 callable contract at the instruction is the declaration of record and must be
 verified before runtime retargeting.
@@ -872,7 +882,7 @@ Unknown terminators and instructions are fatal for schema major version 1.
 ## Complete Artifact Example
 
 ```text
-mojito-mir 1.47
+mojito-mir 1.48
 artifact {
   features: [],
   files: [file { id: file0, path: present("main.mojo"), module: absent }],
@@ -913,10 +923,10 @@ lowering unit, one record per library declaration, and one module table
 holding each module's link record, one file per package. The bundled library's is the
 only producer today (`src/package.rs`). No part of a package is MIR text:
 it is a header followed by bytecode records, as upstream's package is
-MLIR bytecode throughout. The format line is `mojito-package 40`.
+MLIR bytecode throughout. The format line is `mojito-package 41`.
 
 ```text
-mojito-package 40
+mojito-package 41
 <the header's length, 8 bytes little-endian>
 <the header, as bytecode>
 <the payload: every record, as bytecode, then the type section>

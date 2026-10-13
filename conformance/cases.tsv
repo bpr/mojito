@@ -544,3 +544,4 @@ reference-argument-read-at-call-setup	run	assets/ok/reference_argument_read_at_c
 display-element-read-at-construction	run	assets/ok/display_element_read_at_construction.mojo
 display-argument-built-at-call-setup	run	assets/ok/display_argument_built_at_call_setup.mojo
 dict-display-literal-constructor	run	assets/ok/dict_display_literal_constructor.mojo
+trait-bound-argument-drop-order	run	assets/ok/trait_bound_argument_drop_order.mojo

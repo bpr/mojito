@@ -42,7 +42,7 @@ use mojito_types::types::TyKind;
 use mojito_types::types::{
     ConstraintOperand, GenericConstraint, ParamDecl, Ty, TyArg, dict_elements, tuple_elements,
 };
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
 
 mod ir;
 pub use ir::*;
@@ -195,6 +195,35 @@ impl MirDeclarations {
             candidate,
             required,
         )
+    }
+
+    /// The requirement a call through `bounds` selects by its `dispatch`
+    /// symbol: one a bound trait declares, or a parent it refines, nearest
+    /// first.
+    pub fn bound_requirement(
+        &self,
+        bounds: &[String],
+        dispatch: &str,
+    ) -> Option<&TraitRequirement> {
+        let mut visited = BTreeSet::new();
+        let mut pending: VecDeque<&str> = bounds.iter().map(String::as_str).collect();
+        while let Some(name) = pending.pop_front() {
+            if !visited.insert(name) {
+                continue;
+            }
+            let Some(declaration) = self.trait_declaration(name) else {
+                continue;
+            };
+            if let Some(requirement) = declaration
+                .requirements
+                .iter()
+                .find(|requirement| requirement.dispatch == dispatch)
+            {
+                return Some(requirement);
+            }
+            pending.extend(declaration.refines.iter().map(String::as_str));
+        }
+        None
     }
 
     /// Every declaration, the imported package's decoded and joined to the

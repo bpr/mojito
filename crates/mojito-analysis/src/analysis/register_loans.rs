@@ -3,6 +3,9 @@
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
+use mojito_mir::mir::TraitRequirement;
+use mojito_symbol::symbol::is_trait_dispatch_symbol;
+use mojito_types::types::{Ty, TyKind};
 
 #[derive(Clone, Default, PartialEq, Eq)]
 pub(super) struct RegisterLoanState {
@@ -61,11 +64,11 @@ pub(super) fn active_register_loan_roots(
 
 /// Whether a shallowly read value of this type can alias heap storage owned by
 /// its source place — an aggregate whose fields may hold owning pointers (the
-/// self-hosted `String`/`List` shape). Scalars and compile-time values own
-/// their bits; a bare `Pointer` read aliases by design (the `unsafe_*`
+/// self-hosted `String`/`List` shape), or any binder, a requirement's
+/// abstract `Self` among them. Scalars and compile-time values own their
+/// bits; a bare `Pointer` read aliases by design (the `unsafe_*`
 /// vocabulary makes its lifetime the user's obligation).
-pub(super) fn may_alias_owned_storage(ty: &mojito_types::types::Ty) -> bool {
-    use mojito_types::types::TyKind;
+pub(super) fn may_alias_owned_storage(ty: &Ty) -> bool {
     matches!(
         ty.kind(),
         TyKind::Struct(..)
@@ -75,6 +78,7 @@ pub(super) fn may_alias_owned_storage(ty: &mojito_types::types::Ty) -> bool {
             | TyKind::ComptimeList(_)
             | TyKind::Param { .. }
             | TyKind::Assoc { .. }
+            | TyKind::SelfType
     )
 }
 
@@ -146,11 +150,16 @@ impl<'a> ArgumentPassing<'a> {
                 ..
             } => resolved
                 .as_deref()
-                .and_then(|name| self.declarations.function(name))
-                .map(|declaration| {
+                .and_then(|name| {
+                    self.resolve(
+                        name,
+                        receiver_ty(recv_place.as_deref(), *recv, register_types),
+                    )
+                })
+                .map(|callee| {
                     let mut loaded = Vec::new();
                     if recv_place.is_none() {
-                        receiver_by_value(declaration, *recv, register_types, &mut loaded);
+                        callee.receiver_by_value(*recv, register_types, &mut loaded);
                     }
                     let arguments = CallArguments {
                         args,
@@ -159,7 +168,7 @@ impl<'a> ArgumentPassing<'a> {
                         kwarg_places,
                         spread: *spread,
                     };
-                    arguments.by_value(&declaration.into(), 1, &mut loaded);
+                    arguments.by_value(&callee.contract(), 1, &mut loaded);
                     loaded
                 })
                 .unwrap_or_default(),
@@ -169,16 +178,15 @@ impl<'a> ArgumentPassing<'a> {
                 resolved: Some(name),
                 ..
             } => self
-                .declarations
-                .function(name)
-                .map(|declaration| {
+                .resolve(name, receiver_ty(None, *a, register_types))
+                .map(|callee| {
                     let mut loaded = Vec::new();
-                    receiver_by_value(declaration, *a, register_types, &mut loaded);
+                    callee.receiver_by_value(*a, register_types, &mut loaded);
                     let arguments = CallArguments {
                         args: std::slice::from_ref(b),
                         ..CallArguments::default()
                     };
-                    arguments.by_value(&declaration.into(), 1, &mut loaded);
+                    arguments.by_value(&callee.contract(), 1, &mut loaded);
                     loaded
                 })
                 .unwrap_or_default(),
@@ -224,16 +232,16 @@ impl<'a> ArgumentPassing<'a> {
                 call: Some(call),
                 ..
             } => self
-                .declarations
-                .function(&call.target)
-                .map(|declaration| {
+                .resolve(
+                    &call.target,
+                    receiver_ty(base_place.as_deref(), *base, register_types),
+                )
+                .map(|callee| {
                     let mut loaded = Vec::new();
                     if base_place.is_none() {
-                        receiver_by_value(declaration, *base, register_types, &mut loaded);
+                        callee.receiver_by_value(*base, register_types, &mut loaded);
                     }
-                    if index_place.is_none()
-                        && ParameterContract::from(declaration).loads_positional(0)
-                    {
+                    if index_place.is_none() && callee.contract().loads_positional(0) {
                         loaded.push((index.0, 1));
                     }
                     loaded
@@ -248,13 +256,15 @@ impl<'a> ArgumentPassing<'a> {
                 call: Some(call),
                 ..
             } => self
-                .declarations
-                .function(&call.target)
-                .map(|declaration| {
+                .resolve(
+                    &call.target,
+                    receiver_ty(object_place.as_deref(), *object, register_types),
+                )
+                .map(|callee| {
                     let mut loaded = Vec::new();
                     slice_bounds_loaded(*lower, *upper, *step, 0, &mut loaded);
                     if object_place.is_none() {
-                        receiver_by_value(declaration, *object, register_types, &mut loaded);
+                        callee.receiver_by_value(*object, register_types, &mut loaded);
                     }
                     loaded
                 })
@@ -267,15 +277,17 @@ impl<'a> ArgumentPassing<'a> {
                 call: Some(call),
                 ..
             } => self
-                .declarations
-                .function(&call.target)
-                .map(|declaration| {
+                .resolve(
+                    &call.target,
+                    receiver_ty(object_place.as_deref(), *object, register_types),
+                )
+                .map(|callee| {
                     let mut loaded = Vec::new();
                     subscript_slices_loaded(args, &mut loaded);
                     if object_place.is_none() {
-                        receiver_by_value(declaration, *object, register_types, &mut loaded);
+                        callee.receiver_by_value(*object, register_types, &mut loaded);
                     }
-                    subscript_indices_loaded(declaration, args, arg_places, &mut loaded);
+                    subscript_indices_loaded(&callee.contract(), args, arg_places, &mut loaded);
                     loaded
                 })
                 .unwrap_or_default(),
@@ -283,17 +295,21 @@ impl<'a> ArgumentPassing<'a> {
             // is its `mut self` place, and the assigned value is evaluated
             // after every index.
             MirInstr::MultiSet {
+                receiver,
+                receiver_place,
                 args,
                 arg_places,
                 call,
                 ..
             } => self
-                .declarations
-                .function(&call.target)
-                .map(|declaration| {
+                .resolve(
+                    &call.target,
+                    receiver_ty(receiver_place.as_deref(), *receiver, register_types),
+                )
+                .map(|callee| {
                     let mut loaded = Vec::new();
                     subscript_slices_loaded(args, &mut loaded);
-                    subscript_indices_loaded(declaration, args, arg_places, &mut loaded);
+                    subscript_indices_loaded(&callee.contract(), args, arg_places, &mut loaded);
                     loaded
                 })
                 .unwrap_or_default(),
@@ -325,6 +341,24 @@ impl<'a> ArgumentPassing<'a> {
         } else {
             self.declarations.function(callee)
         }
+    }
+
+    /// The callee a method or operator call of `target` binds over a
+    /// receiver of type `receiver`: its declaration, or for a call through
+    /// a bound, the requirement the bound trait or a parent declares.
+    fn resolve(&self, target: &str, receiver: Option<&Ty>) -> Option<Callee<'a>> {
+        self.declarations
+            .function(target)
+            .map(Callee::Declared)
+            .or_else(|| {
+                let Some(TyKind::Param { bounds, .. }) = receiver.map(Ty::kind) else {
+                    return None;
+                };
+                is_trait_dispatch_symbol(target)
+                    .then(|| self.declarations.bound_requirement(bounds, target))
+                    .flatten()
+                    .map(Callee::Required)
+            })
     }
 }
 
@@ -740,8 +774,38 @@ fn split_register_uses(
     }
 }
 
-/// The parameters a call binds its arguments to, as a declaration or a
-/// function type spells them.
+/// What a method, operator, or subscript call binds: a declared function,
+/// or a requirement a call through a trait bound selects.
+#[derive(Clone, Copy)]
+enum Callee<'a> {
+    Declared(&'a MirFunctionDeclaration),
+    Required(&'a TraitRequirement),
+}
+
+impl<'a> Callee<'a> {
+    fn contract(self) -> ParameterContract<'a> {
+        match self {
+            Self::Declared(declaration) => declaration.into(),
+            Self::Required(requirement) => requirement.into(),
+        }
+    }
+
+    /// Push `receiver` at rank zero when the callee takes it by value. A
+    /// requirement's receiver is a bound parameter, which is memory-only.
+    fn receiver_by_value(
+        self,
+        receiver: Reg,
+        register_types: &HashMap<u32, Ty>,
+        loaded: &mut Vec<(u32, usize)>,
+    ) {
+        if let Self::Declared(declaration) = self {
+            receiver_by_value(declaration, receiver, register_types, loaded);
+        }
+    }
+}
+
+/// The parameters a call binds its arguments to, as a declaration, a
+/// requirement, or a function type spells them.
 struct ParameterContract<'c> {
     names: &'c [String],
     types: &'c [mojito_types::types::Ty],
@@ -757,6 +821,17 @@ impl<'c> From<&'c MirFunctionDeclaration> for ParameterContract<'c> {
             types: &declaration.param_types,
             conventions: &declaration.param_conventions,
             collector: declaration.variadic_index,
+        }
+    }
+}
+
+impl<'c> From<&'c TraitRequirement> for ParameterContract<'c> {
+    fn from(requirement: &'c TraitRequirement) -> Self {
+        Self {
+            names: &requirement.param_names,
+            types: &requirement.param_types,
+            conventions: &requirement.param_conventions,
+            collector: requirement.variadic_index,
         }
     }
 }
@@ -856,15 +931,14 @@ fn subscript_slices_loaded(args: &[MirSubscriptArg], loaded: &mut Vec<(u32, usiz
     }
 }
 
-/// The plain subscript indices `declaration` loads by value, each at its
+/// The plain subscript indices `contract` loads by value, each at its
 /// parameter rank after the receiver.
 fn subscript_indices_loaded(
-    declaration: &MirFunctionDeclaration,
+    contract: &ParameterContract,
     args: &[MirSubscriptArg],
     arg_places: &[Option<MirPlace>],
     loaded: &mut Vec<(u32, usize)>,
 ) {
-    let contract = ParameterContract::from(declaration);
     for (index, argument) in args.iter().enumerate() {
         let placed = arg_places.get(index).is_some_and(Option::is_some);
         if let MirSubscriptArg::Index(register) = argument
@@ -891,6 +965,17 @@ fn slice_bounds_loaded(
             .flatten()
             .map(|bound| (bound.0, rank)),
     );
+}
+
+/// A call receiver's type: its retained place's, else its register's.
+fn receiver_ty<'t>(
+    place: Option<&'t MirPlace>,
+    receiver: Reg,
+    register_types: &'t HashMap<u32, Ty>,
+) -> Option<&'t Ty> {
+    place
+        .and_then(|place| place.ty.as_ref())
+        .or_else(|| register_types.get(&receiver.0))
 }
 
 /// Push `receiver` at rank zero when `declaration` takes its receiver by

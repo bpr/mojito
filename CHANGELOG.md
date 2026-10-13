@@ -8,6 +8,12 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A trait requirement carries its signature, so a method or subscript call
+  through a trait bound in a generic body passes its arguments by the
+  requirement's declared conventions, as the pin does (R682):
+  `s.sh(b.t)` over `def sh(self, x: Int)` destroys `b` before `sh` runs,
+  through a refined bound, a trait default's `self.sh(...)`, and `s[c.t]`
+  alike. Textual MIR is 1.48 and the package format 41.
 - A struct operator names the dunder the checker selected even when the
   struct declares only one, so it is that method's call (R687):
   `print(o + 1)` over a lone `__add__` destroys `o` when `__add__` returns,

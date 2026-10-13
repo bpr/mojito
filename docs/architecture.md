@@ -4187,7 +4187,11 @@ current Mojo:
 - A scalar `LoadPlace` borrows its owner for the one instruction consuming
   the loaded register (the register-loan dataflow's single-hop retention), and
   how long depends on how that instruction receives the register, as the
-  callee's declared contract says (`ArgumentPassing`, `register_loans.rs`). A
+  callee's declared contract says (`ArgumentPassing`, `register_loans.rs`):
+  its declaration's, or for a call through a trait bound in a generic body,
+  the requirement the bound trait or a parent declares, found by the call's
+  `__trait_dispatch.*` symbol (`MirDeclarations::bound_requirement`), as
+  upstream binds such a call to the trait's declared requirement. A
   memory-only parameter takes the argument's address: a generic `T`, a
   variadic collector, or a callee with no declaration (`t.n` fed to `print`).
   Its owner then lives through the call, so the owner's `DropVar` follows the

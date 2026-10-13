@@ -138,6 +138,7 @@ impl Checker {
         let result = (|| {
             let mut sigs: HashMap<String, Vec<MethodSig>> = HashMap::new();
             let mut default_overloads = Vec::new();
+            let mut requirements = Vec::new();
             for parent in refines {
                 let inherited = &self.traits[parent].methods;
                 for (method, parent_sigs) in inherited {
@@ -305,9 +306,10 @@ impl Checker {
                 if m.default_body.is_some() {
                     default_overloads.push(overloads.len());
                 }
+                requirements.push((m.name.clone(), m.params.len(), overloads.len()));
                 overloads.push(sig);
             }
-            Ok((sigs, default_overloads))
+            Ok((sigs, default_overloads, requirements))
         })();
         self.trait_self_comptime.pop();
         self.self_ty = saved_self_ty;
@@ -316,11 +318,7 @@ impl Checker {
             super::trait_defaults::default_shapes(name, methods, &*self.overload_sets, &|name| {
                 self.program_constants.get(name)
             });
-        let requirements = methods
-            .iter()
-            .map(|method| (method.name.clone(), method.params.len()))
-            .collect();
-        let (methods, default_overloads) = result?;
+        let (methods, default_overloads, requirements) = result?;
         let defaults = shapes
             .into_iter()
             .zip(default_overloads)
@@ -1896,12 +1894,18 @@ impl Checker {
                     requirements: info
                         .requirements
                         .iter()
-                        .map(
-                            |(name, arity)| mojito_checked::declaration::TraitRequirement {
+                        .map(|(name, arity, overload)| {
+                            let sig = &info.methods[name][*overload];
+                            mojito_checked::declaration::TraitRequirement {
                                 name: name.clone(),
                                 arity: *arity,
-                            },
-                        )
+                                dispatch: method_lowered_name("__trait_dispatch", name, sig, None),
+                                param_names: sig.names.clone(),
+                                param_types: sig.params.clone(),
+                                param_conventions: sig.conventions.clone(),
+                                variadic_index: sig.variadic_index,
+                            }
+                        })
                         .collect(),
                 },
             )

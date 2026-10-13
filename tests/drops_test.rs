@@ -52,6 +52,15 @@ fn struct_operator_operand_owner_dies_before_the_result_consumer() {
 }
 
 #[test]
+fn trait_bound_call_loads_by_value_argument_before_the_call() {
+    // `s.sh(b.t)` through the bound passes `b.t` by the requirement's `read`
+    // `Int` parameter, so `b` dies at call setup, as the pin orders it; the
+    // `mut` requirement `s.bump(c.t)` keeps `c` through the call.
+    let src = "trait Sh:\n    def sh(self, x: Int) -> Int: ...\n    def bump(self, mut x: Int) -> Int: ...\n\nstruct S(Sh, Copyable, Movable):\n    def __init__(out self):\n        pass\n    def sh(self, x: Int) -> Int:\n        print(\"sh\")\n        return x\n    def bump(self, mut x: Int) -> Int:\n        print(\"bump\")\n        return x\n\n@fieldwise_init\nstruct W(Movable):\n    var t: Int\n    def __deinit__(deinit self):\n        print(\"del\", self.t)\n\ndef run[T: Sh](s: T):\n    var b = W(1)\n    print(s.sh(b.t))\n    var c = W(2)\n    print(s.bump(c.t))\n\ndef main():\n    run(S())\n";
+    assert_eq!(vm(src), "del 1\nsh\n1\nbump\ndel 2\n2\n");
+}
+
+#[test]
 fn mut_self_reassignment_destroys_the_replaced_value() {
     // `self = Holder(2)` writes through the receiver's own handle into the
     // caller's storage, so no redefining `DefVar` ends the old value's live
