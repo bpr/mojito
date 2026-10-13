@@ -8,6 +8,12 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A conditional expression's result is an owned temporary its consumer
+  takes, as the pin does (R735): `take(y^ if c else z^)` runs one move
+  initializer and no copy, a binding, `return`, or receiver takes the
+  result the same way, a read parameter borrows it and the caller destroys
+  it after the call, and a `ref` parameter arm is copied once instead of
+  aliased and destroyed twice.
 - A `^` transfer an owning `var *xs` collector gathers hands over the
   source's storage without running its move initializer, and a loop or
   comprehension over a named homogeneous collector, read or owning,

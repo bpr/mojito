@@ -3273,7 +3273,10 @@ receiver, or an operator operand bound to a regular owned parameter
 (`checker/places.rs`, `forwarded_arguments`), and an element an owning
 (`var *xs`) collector gathers (`Gathered`, in `record_argument_borrows`), so
 the pack holds the caller's storage as upstream's owned `VariadicListMem`
-does.
+does. MIR also emits `Forward` for a conditional expression's merge read
+(`Flatten::ternary`): each arm initializes the result temporary (a `^` arm
+by a move, a place arm by a copy the checker marks
+`copy_place_value_use`), and the consumer takes it as any other rvalue.
 
 ### Partial Moves
 

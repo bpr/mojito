@@ -655,10 +655,12 @@ pub enum UseMode {
     Move,
     BorrowShared,
     BorrowMut,
-    /// End the slot and hand its storage to an owned (`var`/`deinit`)
-    /// parameter of the call that consumes the register, as Mojo's owned
-    /// argument convention binds the caller's storage: no move initializer
-    /// runs. Ownership treats it exactly as [`UseMode::Move`].
+    /// End the slot and hand its storage to the register's consumer with no
+    /// move initializer: an owned (`var`/`deinit`) parameter of the call that
+    /// consumes the register, as Mojo's owned argument convention binds the
+    /// caller's storage, or a conditional expression's result temporary,
+    /// which its consumer takes as any other rvalue. Ownership treats it
+    /// exactly as [`UseMode::Move`].
     Forward,
 }
 

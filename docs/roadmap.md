@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R744**.
+Next free ID: **R745**.
 
 ## Ordered Work
 
@@ -295,20 +295,6 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
   - Mojito copies `x` into the discard and destroys both, where the pin
     moves the last use.
   - Found while landing R467 (2026-10-07).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **R735 A conditional expression over transfers copies the chosen
-  value**
-
-  Problem: `take(y^ if z.v > 0 else z^)` over `def take(var s: M)`, where
-  `M`'s move initializer adds 1000 and its copy initializer adds 100,
-  prints `del 5`, `del 1004`, `take 1104`, where the pin prints `del 5`,
-  `take 1004`.
-  - Mojito moves the chosen operand into the conditional's result, then
-    copies that result into the argument and destroys the moved value.
-  - The pin moves the chosen operand once and destroys the other.
-  - Found while landing R730 (2026-10-13).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -4284,6 +4270,25 @@ retained on purpose and re-probed rather than fixed; they are listed in
   - Found while landing R605 (2026-10-10).
   - Depends on nothing.
   - Model: Fable, Not Planned.
+
+- [ ] **R744 A conditional expression copies a place arm that is not
+  `ImplicitlyCopyable`**
+
+  Problem: `take(f if c else M(13))`, with `M` only `Copyable`, compiles
+  and copies `f` silently, where the pin very likely rejects the arm with
+  "value of type 'M' cannot be implicitly copied".
+  - Mojito rejects the same implicit copy at a binding (`var h = f`) and at
+    a list-subscript arm.
+  - The checker types each arm with plain `infer` and marks a place arm
+    `copy_place_value_use` without asking for `ImplicitlyCopyable`.
+  - Fix: run each arm through `Checker::check_consuming_as` in the
+    `ExprKind::IfExpr` arm, after a pin probe confirms the rejection, and
+    add an `assets/type_error` fixture with its
+    `conformance/assets-mojo-errors.tsv` row.
+  - Unverified on the pin: the pin env was missing when R735 landed.
+  - Found while landing R735 (2026-10-13).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
 
 - [ ] **R712 The scalar operation traits `Addable`, `Negatable`, and kin
   are accepted as bounds the pin does not declare**

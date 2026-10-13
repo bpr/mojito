@@ -143,7 +143,9 @@ impl<'a> Flatten<'a> {
     }
 
     /// Lower a ternary `then_e if cond else else_e` to a value: branch on `cond`,
-    /// each arm writing the result variable, then read it at the merge.
+    /// each arm initializing the owned result temporary (a `^` arm by a move,
+    /// a place arm by a copy, a temporary arm as it stands), which the merge
+    /// forwards to the consumer without an initializer.
     pub(in crate::mir) fn ternary(
         &mut self,
         cond: Node<'a>,
@@ -185,7 +187,7 @@ impl<'a> Flatten<'a> {
         self.emit(MirInstr::UseVar {
             dest: d,
             var: result,
-            mode: UseMode::Copy,
+            mode: UseMode::Forward,
         });
         d
     }

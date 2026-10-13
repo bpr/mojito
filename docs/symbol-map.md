@@ -749,7 +749,9 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   in place to a `$fwd_arg_r` slot (`mir::FORWARDED_ARGUMENT_SLOT`) that the
   call takes through `UseVar Forward`; `Flatten::transfer`
   (`lower_expr/expr.rs`) lowers a forwarded whole-slot `x^` to `UseVar
-  Forward` (`UseMode::Forward`, `UseMode::moves`).
+  Forward` (`UseMode::Forward`, `UseMode::moves`), and `Flatten::ternary`
+  (`lower_expr/ctrl.rs`) forwards a conditional expression's result slot
+  to its consumer the same way.
   `setup_reference` decides which reference-result operands defer their
   read: `defer_to_setup` marks the operand in `Flatten::setup_reference`
   (`SetupReference`), `materialize_reference_result_place` gives its handle

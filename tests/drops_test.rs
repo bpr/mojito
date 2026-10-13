@@ -524,6 +524,19 @@ fn transfer_into_owned_argument_runs_no_move_initializer() {
 }
 
 #[test]
+fn conditional_expression_result_is_taken_not_copied() {
+    // Each arm initializes the conditional's owned result once (a `^` arm by
+    // a move, a place arm by a copy), and its consumer takes it as any other
+    // temporary: an owned parameter or binding takes its storage, and a read
+    // parameter borrows it until the call returns.
+    let src = "struct M(Copyable, Movable):\n    var v: Int\n    def __init__(out self, v: Int):\n        self.v = v\n    def __init__(out self, *, copy: Self):\n        self.v = copy.v + 100\n    def __init__(out self, *, deinit move: Self):\n        self.v = move.v + 1000\n    def __deinit__(deinit self):\n        print(\"del\", self.v)\n\ndef take(var s: M):\n    print(\"take\", s.v)\n\ndef look(s: M):\n    print(\"look\", s.v)\n\ndef bind_ref(ref r: M, c: Bool):\n    var t = r if c else M(3)\n    print(\"t\", t.v)\n\ndef main():\n    var y = M(4)\n    var z = M(5)\n    take(y^ if z.v > 0 else z^)\n    var a = M(1)\n    var b = M(2)\n    var r = a^ if b.v > 0 else b^\n    print(\"r\", r.v)\n    var c = M(6)\n    var d = M(7)\n    look(c^ if d.v > 0 else d^)\n    take(M(10) if r.v > 0 else M(11))\n    var g = M(30)\n    bind_ref(g, True)\n    print(\"g\", g.v)\n";
+    assert_eq!(
+        vm(src),
+        "del 5\ntake 1004\ndel 1004\ndel 2\nr 1001\ndel 7\nlook 1006\ndel 1006\ndel 1001\ntake 10\ndel 10\nt 130\ndel 130\ng 30\ndel 30\n"
+    );
+}
+
+#[test]
 fn looped_try_destroys_call_temporaries_when_the_call_returns() {
     // Inside a loop, a `try` body's call temporaries still die when the call
     // returns, before its result is printed: the `try` does not hold its own

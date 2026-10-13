@@ -1307,6 +1307,12 @@ impl Checker {
                 self.expect_bool(cond, "conditional-expression condition")?;
                 let tt = self.infer(then_branch)?;
                 let et = self.infer(else_branch)?;
+                // A place arm is copied into the conditional's owned result.
+                for (arm, ty) in [(then_branch, &tt), (else_branch, &et)] {
+                    if self.designates_place(arm) && self.is_copyable(ty) {
+                        self.record_at(arm.source_span()).copy_place_value_use = true;
+                    }
+                }
                 common_branch_ty(&tt, &et).ok_or_else(|| TypeError::TypeMismatch {
                     expected: tt.to_string(),
                     found: et.to_string(),
