@@ -4223,11 +4223,14 @@ current Mojo:
   checker turns a copy followed by the source's destruction into a move.
   The checker binds a temporary `copy=` source as a read temporary, so it
   gets a slot and dies there too. A copy construction an owned parameter
-  takes (`take(M(copy=y))`) is bound in place to a hidden forwarding slot
-  (`$fwd_arg_r`, `mir::FORWARDED_ARGUMENT_SLOT`) that the call takes next
-  through `UseVar Forward`; when `y` dies there, the load, construction,
-  binding, and `DropVar` go and the call forwards `y` itself, so no move
-  initializer runs, as at Mojo. A copy construction a read parameter or
+  or owned (`var`/`deinit`) receiver takes (`take(M(copy=y))`,
+  `M(copy=y).consume()`) is bound in place to a hidden forwarding slot
+  (`$fwd_arg_r`, `mir::FORWARDED_ARGUMENT_SLOT`) that the call takes
+  through `UseVar Forward`; when `y` dies there and nothing from the
+  forwarding use to the call can raise (`forwarding_use`), the load,
+  construction, binding, and `DropVar` go and the call forwards `y` itself,
+  so no move initializer runs, as at Mojo. A raising argument evaluated
+  after the forwarding use keeps `y`'s move into the slot, as at the pin. A copy construction a read parameter or
   read operator operand takes (`show(M(copy=a))`) is bound to its
   read-temporary slot (`mir::READ_TEMPORARY_SLOT`, below); when `a` dies
   there, nothing from the binding to the call can raise, and only the

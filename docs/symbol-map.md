@@ -747,6 +747,7 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   a struct or prefix operator's read operand) to its `$tmp_arg_r` slot
   (`mir::READ_TEMPORARY_SLOT`).
   `bind_forwarded_copy` binds a copy construction marked `ForwardedArgument`
+  (an owned argument, or an owned receiver through `lower_method_receiver`)
   in place to a `$fwd_arg_r` slot (`mir::FORWARDED_ARGUMENT_SLOT`) that the
   call takes through `UseVar Forward`; `Flatten::transfer`
   (`lower_expr/expr.rs`) lowers a forwarded whole-slot `x^` to `UseVar

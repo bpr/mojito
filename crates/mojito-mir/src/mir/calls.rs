@@ -1301,18 +1301,16 @@ impl<'a> Flatten<'a> {
         receiver: Node<'a>,
     ) -> (Reg, Option<MirPlace>) {
         let (value, place) = self.lower_call_receiver(receiver);
-        if place.is_some()
-            || !receiver.is_fresh_temporary()
-            || call.call_contract().is_some_and(|contract| {
-                matches!(
-                    contract.receiver_convention,
-                    Some(
-                        mojito_ast::ast::ArgConvention::Var
-                            | mojito_ast::ast::ArgConvention::Deinit
-                    )
-                )
-            })
-        {
+        let owned = call.call_contract().is_some_and(|contract| {
+            matches!(
+                contract.receiver_convention,
+                Some(mojito_ast::ast::ArgConvention::Var | mojito_ast::ast::ArgConvention::Deinit)
+            )
+        });
+        if owned && place.is_none() {
+            return (self.bind_forwarded_copy(receiver, value), None);
+        }
+        if place.is_some() || !receiver.is_fresh_temporary() || owned {
             return (value, place);
         }
         let Some(ty) = self
@@ -1497,7 +1495,8 @@ impl<'a> Flatten<'a> {
         read
     }
 
-    /// Bind `value`, the lowered `expression`, to a forwarding slot
+    /// Bind `value`, the lowered `expression` an owned argument or owned
+    /// receiver takes, to a forwarding slot
     /// ([`crate::mir::FORWARDED_ARGUMENT_SLOT`]) when the checker marked it
     /// `ForwardedArgument` and it is a non-raising copy construction
     /// (`Name(copy=v)`): the construction initializes the slot in place, and

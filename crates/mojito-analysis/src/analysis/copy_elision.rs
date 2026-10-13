@@ -11,12 +11,14 @@
 //! `ConstructTypeParam` here and stays a copy, as at Mojo. A source that dies
 //! only on a successor edge keeps its copy.
 //!
-//! A copy an owned parameter takes is bound in place to a forwarding slot
-//! ([`FORWARDED_ARGUMENT_SLOT`]) that the call takes next. When its source
-//! dies there, the construction, the slot, and the source's death all go,
-//! and the call takes the source's storage itself: no move initializer
-//! runs, as Mojo's lifetime checker hands a dying source to an owned
-//! argument.
+//! A copy an owned parameter or owned receiver takes is bound in place to a
+//! forwarding slot ([`FORWARDED_ARGUMENT_SLOT`]) that the call takes. When
+//! its source dies there and nothing evaluated from the forwarding use to
+//! the call can raise, the construction, the slot, and the source's death
+//! all go, and the call takes the source's storage itself: no move
+//! initializer runs, as Mojo's lifetime checker hands a dying source to an
+//! owned argument. A raising operand after the forwarding use keeps the
+//! move, as at the pin.
 //!
 //! A copy a read parameter or read operator operand takes is bound to a
 //! read-temporary slot ([`READ_TEMPORARY_SLOT`]) the call reads once. When
@@ -223,7 +225,8 @@ fn dying_copy(
 /// Where the call takes the forwarding slot the dying copy is bound to: the
 /// slot's forwarding use, when it is the first instruction past the run of
 /// drops that holds the source's death, so nothing between can raise or
-/// name the source.
+/// name the source, and nothing from it to the call that consumes it can
+/// raise.
 fn forwarding_use(instrs: &[MirInstr], source: DyingCopy, var_names: &[String]) -> Option<usize> {
     let MirInstr::DefVar { var: slot, .. } = instrs[source.binding_at?] else {
         return None;
@@ -235,15 +238,27 @@ fn forwarding_use(instrs: &[MirInstr], source: DyingCopy, var_names: &[String]) 
         return None;
     }
     let forward_at = (source.drop_at + 1..instrs.len()).find(|&at| !is_drop(&instrs[at]))?;
-    matches!(
-        instrs[forward_at],
-        MirInstr::UseVar {
-            var,
-            mode: UseMode::Forward,
-            ..
-        } if var == slot
-    )
-    .then_some(forward_at)
+    let MirInstr::UseVar {
+        dest: forwarded,
+        var,
+        mode: UseMode::Forward,
+    } = instrs[forward_at]
+    else {
+        return None;
+    };
+    if var != slot {
+        return None;
+    }
+    let mut operands = Vec::new();
+    let consumer_at = (forward_at + 1..instrs.len()).find(|&at| {
+        operands.clear();
+        instruction_operand_regs(&instrs[at], &mut operands);
+        operands.contains(&forwarded)
+    })?;
+    instrs[forward_at + 1..consumer_at]
+        .iter()
+        .all(cannot_raise)
+        .then_some(forward_at)
 }
 
 /// Hand the dying source to the call that takes the forwarding slot: the

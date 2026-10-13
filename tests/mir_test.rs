@@ -217,6 +217,56 @@ fn dying_copy_at_read_parameter_lends_its_source() {
 }
 
 #[test]
+fn dying_copy_receiver_forwards_its_source() {
+    // `M(copy=d).consume()` at `d`'s last use forwards `d` to the owned
+    // receiver; a raising argument after the receiver keeps a move of `c`
+    // into the forwarding slot, which the call then forwards.
+    let source = "struct M(Copyable, Movable):\n    var v: Int\n    def __init__(out self, v: Int):\n        self.v = v\n    def consume(var self):\n        pass\n    def with_arg(var self, n: Int):\n        pass\n\ndef might(n: Int) raises -> Int:\n    return n\n\ndef forwards():\n    var d = M(1)\n    M(copy=d).consume()\n\ndef moves() raises:\n    var c = M(2)\n    M(copy=c).with_arg(might(3))\n";
+    let compiled = Compiler::default()
+        .compile_source(source, Path::new("mir_test.mojo"))
+        .expect("compile");
+    let modes = |function: &str, name: &str| {
+        let function = mir_function(compiled.elaborated_mir(), function);
+        let instrs = function
+            .blocks
+            .iter()
+            .flat_map(|block| &block.instrs)
+            .collect::<Vec<_>>();
+        assert!(
+            !instrs.iter().any(|instr| matches!(
+                instr,
+                MirInstr::Call { kwargs, .. } if kwargs.iter().any(|(name, _)| name == "copy")
+            )),
+            "{function:#?}"
+        );
+        let mode = |prefix: &str| {
+            let var = function
+                .var_names
+                .iter()
+                .position(|slot| slot.starts_with(prefix))
+                .map(|var| var as u32);
+            instrs.iter().find_map(|instr| match instr {
+                MirInstr::UseVar {
+                    var: used, mode, ..
+                } if Some(*used) == var => Some(*mode),
+                _ => None,
+            })
+        };
+        (
+            mode(name),
+            mode(mojito::mir::FORWARDED_ARGUMENT_SLOT),
+            function.var_names.clone(),
+        )
+    };
+    let (source_mode, slot_mode, names) = modes("forwards", "d");
+    assert_eq!(source_mode, Some(UseMode::Forward), "{names:?}");
+    assert_eq!(slot_mode, None, "{names:?}");
+    let (source_mode, slot_mode, names) = modes("moves", "c");
+    assert_eq!(source_mode, Some(UseMode::Move), "{names:?}");
+    assert_eq!(slot_mode, Some(UseMode::Forward), "{names:?}");
+}
+
+#[test]
 fn split_iterator_slot_is_typed_by_its_iter_result() {
     let source = "def first_or[C: Iterable](items: C, default: C.Element) -> C.Element:\n\
                   \x20   for item in items:\n        return item.copy()\n\

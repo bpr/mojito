@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R747**.
+Next free ID: **R748**.
 
 ## Ordered Work
 
@@ -298,14 +298,21 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R737 A copy-constructed receiver at its source's last use runs the
-  move initializer the pin elides**
+- [ ] **R747 An owned call operand evaluated before a raising argument
+  leaks when that argument raises**
 
-  Problem: `M(copy=d).consume()` over `def consume(var self)` at `d`'s
-  last use prints `consume 1004`, where the pin prints `consume 4`.
-  - MIR binds a forwarding slot for an owned call argument only, so copy
-    elision turns the receiver's copy into a move.
-  - Found while landing R730 (2026-10-13).
+  Problem: `try: two(M(copy=c), boom(8))` prints `move 1003` / `caught`,
+  where the pin prints `move 1003` / `del 1003` / `caught`.
+  - `try: two(x^, boom(1))` prints only `caught2`, where the pin prints
+    `del 5` first.
+  - The receiver form `M(copy=c).with_arg(boom(8))` leaks the same way.
+  - The moved or forwarded register is never destroyed on the raise edge
+    of a later operand.
+  - Not R20 (a raise leaving the function) nor R733 (an outer value used
+    after the raise).
+  - Probes: `conformance/probes/owned_argument_leaks_on_later_argument_raise.mojo`,
+    `conformance/probes/owned_receiver_leaks_on_later_argument_raise.mojo`.
+  - Found while landing R737 (2026-10-13).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

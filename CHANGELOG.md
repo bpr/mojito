@@ -8,6 +8,11 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A copy construction an owned (`var`/`deinit`) receiver takes at its
+  source's last use forwards the source's storage, as the pin does (R737):
+  `M(copy=d).consume()` runs neither the copy nor the move initializer. A
+  raising operand evaluated after the receiver or an owned argument keeps
+  the move, as at the pin, where an owned argument used to forward past it.
 - A read temporary whose call takes a conditional expression argument after
   it is destroyed when the call returns, as the pin does (R745):
   `show_n(M(2), 3 if c else 4)` prints `show_n 2 3` before `del 2`, at top
