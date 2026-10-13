@@ -78,6 +78,15 @@ fn chained_comparison_link_owners_die_at_their_link() {
 }
 
 #[test]
+fn struct_operator_temporary_operands_die_when_the_dunder_returns() {
+    // `S(1) < S(2)` is `__lt__`'s call: the caller destroys both temporary
+    // operands once it returns, the argument before the receiver, as the
+    // pin does; a chain's ends die at their links, its middle at the chain.
+    let src = "struct S(Movable):\n    var v: Int\n    def __init__(out self, v: Int):\n        self.v = v\n    def __lt__(self, o: Self) -> Bool:\n        return self.v < o.v\n    def __deinit__(deinit self):\n        print(\"del\", self.v)\n\ndef main():\n    print(S(1) < S(2))\n    print(S(5) < S(6) < S(7))\n";
+    assert_eq!(vm(src), "del 2\ndel 1\nTrue\ndel 5\ndel 7\ndel 6\nTrue\n");
+}
+
+#[test]
 fn mut_self_reassignment_destroys_the_replaced_value() {
     // `self = Holder(2)` writes through the receiver's own handle into the
     // caller's storage, so no redefining `DefVar` ends the old value's live

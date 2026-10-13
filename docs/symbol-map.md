@@ -694,7 +694,8 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   owner, raises, adjustments, call_contract, instantiated_args,
   reference_places, interior_references, element_receiver, reference_result,
   implicit_conversion, index_normalization, recorded_value,
-  intrinsic_index_dispatch, pointer_offset_subscript, rebound_place, …}`) and
+  intrinsic_index_dispatch, pointer_offset_subscript, rebound_place,
+  is_fresh_temporary, …}`) and
   the `Flatten` readers that also need the function being lowered
   (`name_spelled`, `expression_var`, `nested_info`, `aggregate_borrows`,
   `subscript_call_contract`, `call_capture_accesses`, `local_callee`).
@@ -720,7 +721,9 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   own and, for a bound display that `setup_display` selects (a list or brace
   display), hands its element reads and construction to the enclosing frame,
   `outside_call_setup` keeps non-operand lowering out of it, and
-  `setup_read` decides which places defer.
+  `setup_read` decides which places defer. `bind_read_temporary` binds an
+  operand the checker marked `ReadTemporaryArgument` (a read call argument,
+  a struct or prefix operator's read operand) to its `$tmp_arg_r` slot.
   `setup_reference` decides which reference-result operands defer their
   read: `defer_to_setup` marks the operand in `Flatten::setup_reference`
   (`SetupReference`), `materialize_reference_result_place` gives its handle

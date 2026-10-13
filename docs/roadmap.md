@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R711**.
+Next free ID: **R713**.
 
 ## Ordered Work
 
@@ -295,20 +295,6 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
   - Mojito copies `x` into the discard and destroys both, where the pin
     moves the last use.
   - Found while landing R467 (2026-10-07).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **R709 A struct operator's temporary operand is never destroyed**
-
-  Problem: `print(S(1) < S(2))` over a struct with a printing destructor
-  prints `del 2, del 1, True` at the pin and only `True` in Mojito.
-  - `infer_infix`'s struct dispatch never records
-    `read_temporary_argument` for a non-place operand its dunder reads.
-  - `lower_operator_operand` (`crates/mojito-mir/src/mir/calls.rs`) never
-    binds one through `bind_temporary_argument`.
-  - A chained comparison's two ends leak the same way:
-    `mk(5) < mk(6) < mk(7)` destroys only the middle.
-  - Found while landing R703 (2026-10-13).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -1176,6 +1162,22 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
   - Found while landing R672 (2026-10-13).
   - Depends on nothing.
   - Model: Opus, Not Planned.
+
+- [ ] **R711 An abandoned type-parameter temporary's diagnostic names
+  `AnyType`, not its bound**
+
+  Problem: `return mk(a) < b` in `def g[T: Comparable & Copyable](a: T,
+  b: T)` is rejected by both, but the pin says `unhandled explicitly
+  destroyed type 'Comparable'` and Mojito says `'AnyType'`.
+  - The same holds for `h(mk(a))` at a read parameter.
+  - Cause: `run_explicit_destroy` (`crates/mojito-checker/src/checker.rs`)
+    keys every linear type-parameter temporary as
+    `explicit_destroy::LINEAR_TYPE_PARAMETER`, fixed at `'AnyType'`.
+  - `demand_chain_middle_destroyable` already names the first bound, as
+    the pin does.
+  - Found while landing R709 (2026-10-13).
+  - Depends on nothing.
+  - Model: Fable, Not Planned.
 
 ### Catch Up To Current Mojo: Calls, Overloads, Conversions, And Traits
 
@@ -4087,6 +4089,26 @@ retained on purpose and re-probed rather than fixed; they are listed in
   - Found while landing R605 (2026-10-10).
   - Depends on nothing.
   - Model: Fable, Not Planned.
+
+- [ ] **R712 The scalar operation traits `Addable`, `Negatable`, and kin
+  are accepted as bounds the pin does not declare**
+
+  Problem: `def g[T: Addable](a: T)` compiles in Mojito, where the pin
+  rejects it with `use of unknown declaration 'Addable'`.
+  - The same holds for `Subtractable`, `Multipliable`, `Negatable`, and
+    `Andable`, probed at the pin; `Powable`, `Intable`, `Boolable`,
+    `Comparable`, and `Equatable` are the pin's own.
+  - Cause: the compiler-known operation traits
+    (`mojito_types::conformance`, `infix_operation_trait` and
+    `prefix_operation_trait` in `checker/builtins.rs`) are declared
+    whether or not upstream's library has them.
+  - Each Mojito-only name should leave the compiler-known list, keeping
+    only the traits the pin's stdlib declares.
+  - `docs/features.md`'s scalar-operation-traits row names them as
+    supported bounds.
+  - Found while landing R709 (2026-10-13).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
 
 - [ ] **R577 A struct conforms to a compiler-known trait it never
   declares, such as `Boolable` or `Sized`**

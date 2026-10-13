@@ -8,6 +8,13 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A temporary operand a struct operator's dunder reads is destroyed when
+  the dunder returns, the argument before the receiver, as the pin does
+  (R709): `print(S(1) < S(2))` prints `del 2`, `del 1`, then `True`. This
+  covers prefix operators, reflected dunders, an operator result used as an
+  operand, argument, or field base, a chained comparison's two ends, and a
+  comparison through a bound; a linear temporary operand, and a generic one
+  not proven `Deinitable`, is now rejected as an abandoned temporary.
 - Each link of a chained comparison over structs is its dunder's call, as
   the pin does (R703): `print(a < b < c)` destroys `a` after the first link
   and the middle's temporary and `c` after the second. Only the first

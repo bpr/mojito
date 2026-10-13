@@ -45,6 +45,7 @@ impl Checker {
         // dispatches after erasure (`-x` needs `Negatable`, `not x` needs
         // `Boolable`); the concrete impl runs on the erased type.
         if param_has_bound(&t, prefix_operation_trait(op)) {
+            self.record_read_temporary_argument(operand);
             return Ok(match op {
                 PrefixOp::Neg | PrefixOp::Invert => t,
                 PrefixOp::Not => Ty::bool(),
@@ -54,6 +55,12 @@ impl Checker {
         // `x.__neg__() -> Self`, `not x` → `not x.__bool__() -> Bool`).
         if let Some(result) = self.struct_dunder(&t, op.dunder(), &[]) {
             let ret = result?;
+            if self
+                .struct_dunder_signature_for(&t, op.dunder(), &[])
+                .is_some_and(|(_, sig, _)| reads(sig.self_convention))
+            {
+                self.record_read_temporary_argument(operand);
+            }
             return match op {
                 PrefixOp::Neg | PrefixOp::Invert => Ok(ret),
                 PrefixOp::Not => require_dunder_ret(ret, &Ty::bool(), "__bool__"),
@@ -313,6 +320,7 @@ impl Checker {
             {
                 self.borrow_parameter_place_argument(left, &lt);
                 self.borrow_parameter_place_argument(right, &rt);
+                self.record_operator_temporaries(left, right, (true, true));
                 if let Some(target) = self.bound_comparison_target(op) {
                     self.record_at(span).overload_target = Some(target);
                 }
@@ -349,6 +357,7 @@ impl Checker {
                 && let Some(dispatch) = self.struct_infix_dispatch(op, &nominal_ty, &nominal_ty)?
                 && !dispatch.negated_equality
             {
+                self.record_operator_temporaries(left, right, dispatch.reads);
                 self.record_at(span).overload_target = Some(dispatch.target);
             }
             return r;
@@ -377,6 +386,7 @@ impl Checker {
                 if dispatch.borrows.1 {
                     self.borrow_nominal_place_argument(right, &rt);
                 }
+                self.record_operator_temporaries(left, right, dispatch.reads);
                 if dispatch.negated_equality {
                     self.record_at(span.clone()).adjustment = Some(Box::new(
                         mojito_checked::checked::SemanticAdjustment::NegatedEquality,
@@ -402,9 +412,10 @@ impl Checker {
         // answers when the left operand has no operator method for the
         // pair: MIR swaps the operands and calls the recorded symbol.
         if let Some(span) = span
-            && let Some(target) = self.struct_reflected_dispatch(op, &lt, &rt)
+            && let Some(dispatch) = self.struct_reflected_dispatch(op, &lt, &rt)
         {
-            self.record_at(span.clone()).overload_target = Some(target);
+            self.record_operator_temporaries(left, right, dispatch.reads);
+            self.record_at(span.clone()).overload_target = Some(dispatch.target);
             self.record_at(span).adjustment = Some(Box::new(
                 mojito_checked::checked::SemanticAdjustment::ReflectedOperator,
             ));
@@ -427,11 +438,13 @@ impl Checker {
     /// that link selected ([`CheckedCompareLink`]): `infer_infix` records
     /// it at the chain's own occurrence, as it would at a lone operator,
     /// and the link takes it from there. Every operand a link's dunder
-    /// reads is read in place. Only the first middle operand outlives its
-    /// link: right after the first link it becomes an owned temporary for
-    /// the second, so a place there is copied, which demands
-    /// `ImplicitlyCopyable` of it; a temporary or a `^` is already owned.
-    /// Later middles are read in place by both of their links.
+    /// reads is read in place, and a temporary end is its link's read
+    /// temporary, destroyed once that link's dunder returns. Only the first
+    /// middle operand outlives its link: right after the first link it
+    /// becomes an owned temporary for the second, so a place there is
+    /// copied, which demands `ImplicitlyCopyable` of it; a temporary or a
+    /// `^` is already owned. Later middles are read in place by both of
+    /// their links. Every middle is the chain's, not a link's temporary.
     pub(super) fn infer_compare_chain(
         &self,
         span: SourceSpan,
@@ -462,6 +475,11 @@ impl Checker {
                 negated_equality,
             });
             left = right;
+        }
+        for (_, middle) in rest.split_last().map_or(&[][..], |(_, middles)| middles) {
+            self.clear_flag(&middle.source_span(), |facts| {
+                &mut facts.read_temporary_argument
+            });
         }
         if let [(_, middle), _, ..] = rest {
             if is_place_expr(middle) {
@@ -562,9 +580,10 @@ impl Checker {
             selected.conventions.first().copied().flatten(),
             Some(ArgConvention::Var | ArgConvention::Deinit)
         );
-        let reads = |convention: Option<ArgConvention>| {
-            matches!(convention, None | Some(ArgConvention::Imm))
-        };
+        let operand_reads = (
+            reads(selected.self_convention),
+            reads(selected.conventions.first().copied().flatten()),
+        );
         let target = self.dunder_symbol(sname, dunder, selected, info);
         Ok(Some(StructInfixDispatch {
             target,
@@ -572,20 +591,17 @@ impl Checker {
             operand_ty,
             converted,
             consumes,
-            borrows: (
-                reads(selected.self_convention),
-                !converted && reads(selected.conventions.first().copied().flatten()),
-            ),
+            borrows: (operand_reads.0, !converted && operand_reads.1),
+            reads: operand_reads,
             struct_name: sname.clone(),
             struct_args: targs.to_vec(),
         }))
     }
 
-    /// The symbol `lt OP rt` dispatches through the right operand's
+    /// The dunder `lt OP rt` dispatches through the right operand's
     /// reflected dunder (`rt.__radd__(lt)`), decided from the operand types
     /// alone: what `infer_infix` records at the operator when the left
-    /// operand has no dunder for the pair, and what an instance of a checked
-    /// template realizes at its own types.
+    /// operand has no dunder for the pair.
     ///
     /// `None` when the right operand is not a struct whose reflected dunder
     /// takes the left operand under its availability clause.
@@ -594,7 +610,7 @@ impl Checker {
         op: InfixOp,
         lt: &Ty,
         rt: &Ty,
-    ) -> Option<String> {
+    ) -> Option<StructReflectedDispatch> {
         let reflected = op.reflected_dunder()?;
         let (info, sig, targs) = self.struct_dunder_signature_for(rt, reflected, &[lt])?;
         let TyKind::Struct(rname, _) = rt.kind() else {
@@ -605,7 +621,13 @@ impl Checker {
         }
         self.method_constraint_result(sig, &[], &info.decls, targs)
             .ok()?;
-        Some(self.dunder_symbol(rname, reflected, sig, info))
+        Some(StructReflectedDispatch {
+            target: self.dunder_symbol(rname, reflected, sig, info),
+            reads: (
+                reads(sig.conventions.first().copied().flatten()),
+                reads(sig.self_convention),
+            ),
+        })
     }
 
     /// Type a membership test `x in c` / `x not in c` → `Bool`. The container is
@@ -1063,6 +1085,18 @@ impl Checker {
         .into())
     }
 
+    /// Record each operand an operator's dunder reads (`reads` = receiver,
+    /// operand) as a read temporary argument: a temporary there is the
+    /// caller's, destroyed once the dunder returns, as a method call's is.
+    fn record_operator_temporaries(&self, left: &Expr, right: &Expr, reads: (bool, bool)) {
+        if reads.0 {
+            self.record_read_temporary_argument(left);
+        }
+        if reads.1 {
+            self.record_read_temporary_argument(right);
+        }
+    }
+
     /// The type an inferred chain operand takes at its link, as
     /// [`Self::infer_infix`] sees it.
     fn chain_operand_ty(&self, operand: &Expr) -> Result<Ty, TypeError> {
@@ -1192,7 +1226,6 @@ pub(super) const fn prefix_symbol(op: PrefixOp) -> &'static str {
     }
 }
 
-/// Whether `ty` is the nominal `Optional[Int]` (module-qualified or not).
 /// What [`Checker::struct_infix_dispatch`] decided for one operator.
 pub(super) struct StructInfixDispatch {
     /// The selected dunder's lowered symbol, which `BinOp.resolved` names.
@@ -1209,10 +1242,28 @@ pub(super) struct StructInfixDispatch {
     /// Whether the dunder reads its receiver (`self`) and its operand in
     /// place: a read convention, and an operand taken without conversion.
     pub(super) borrows: (bool, bool),
+    /// Whether the dunder reads its receiver and its operand, so a
+    /// temporary on either side is the caller's to destroy once it returns.
+    pub(super) reads: (bool, bool),
     pub(super) struct_name: String,
     pub(super) struct_args: Vec<TyArg>,
 }
 
+/// What [`Checker::struct_reflected_dispatch`] decided for one operator.
+pub(super) struct StructReflectedDispatch {
+    /// The reflected dunder's lowered symbol, which `BinOp.resolved` names.
+    pub(super) target: String,
+    /// Whether the reflected dunder reads the left operand (its parameter)
+    /// and the right operand (its receiver).
+    pub(super) reads: (bool, bool),
+}
+
+/// Whether a dunder's convention for one operand reads it.
+const fn reads(convention: Option<ArgConvention>) -> bool {
+    matches!(convention, None | Some(ArgConvention::Imm))
+}
+
+/// Whether `ty` is the nominal `Optional[Int]` (module-qualified or not).
 fn is_optional_int(ty: &Ty) -> bool {
     matches!(ty.kind(), TyKind::Struct(name, args)
         if (name == "Optional" || name.ends_with("$Optional"))

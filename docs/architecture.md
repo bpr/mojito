@@ -4190,7 +4190,18 @@ current Mojo:
   `ReadTemporaryArgument`, so a `var`/`deinit` slot — which moves the
   temporary into the callee — carries no marker, and MIR never guesses a
   callee's conventions.
-- A field read off an owning temporary (`print(B(1).x)`, `var n = B(9).name`)
+- A struct operator is its dunder's call, so its operands bind the same way
+  (`bind_read_temporary`): the checker marks each non-place operand the
+  selected dunder reads, the receiver and the argument, a prefix operator's
+  operand, a reflected dunder's pair, and a comparison through a bound's
+  pair, with `ReadTemporaryArgument`, and `lower_operator_operand` and
+  `prefix_op` bind a marked one to a `$tmp_arg_r` slot, so it dies when the
+  dunder returns, the argument before the receiver. A chained comparison's
+  middles carry no marker: the chain owns them (`chain_middle`). An
+  operator's result is a fresh temporary as a call's is
+  (`Node::is_fresh_temporary`), for this binding and for a field read off it.
+- A field read off an owning temporary (`print(B(1).x)`, `var n = B(9).name`,
+  `(a + b).v`)
   binds the temporary to a hidden `$tmp_field_r` slot and loads the projected
   place (`load_temporary_field`), as `p.x` does off a named local: the load
   retains the slot through the instruction consuming the field, and a

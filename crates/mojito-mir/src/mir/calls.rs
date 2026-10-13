@@ -86,8 +86,10 @@ impl<'a> Flatten<'a> {
 
     /// Lower one operand of a struct operator: a named place the checker
     /// marked `BorrowReadArgument` (the dunder reads it) is read where it
-    /// lies, as a read-convention call argument is; anything else is an
-    /// ordinary value. Inside an operator's setup frame
+    /// lies, as a read-convention call argument is; a temporary it marked
+    /// `ReadTemporaryArgument` binds a `$tmp_arg_r` slot, as a read call
+    /// argument's does, so it dies when the dunder returns; anything else is
+    /// an ordinary value. Inside an operator's setup frame
     /// ([`Self::open_call_setup`]) a simple place's read is deferred to the
     /// frame's setup.
     pub(super) fn lower_operator_operand(&mut self, expression: Node<'a>) -> Reg {
@@ -101,8 +103,30 @@ impl<'a> Flatten<'a> {
             borrowed
                 .then(|| this.lower_borrowed_read_argument(expression))
                 .flatten()
-                .unwrap_or_else(|| this.expr(expression))
+                .unwrap_or_else(|| {
+                    let value = this.expr(expression);
+                    this.bind_read_temporary(expression, value)
+                })
         })
+    }
+
+    /// Bind `value`, the lowered `expression`, through
+    /// [`Self::bind_temporary_argument`] when the checker marked it
+    /// `ReadTemporaryArgument`: an owned temporary a read parameter or a
+    /// read dunder operand takes, which the caller destroys once the call
+    /// returns. Anything else is `value` unchanged.
+    pub(super) fn bind_read_temporary(&mut self, expression: Node<'a>, value: Reg) -> Reg {
+        let adjustments = expression.adjustments();
+        if !adjustments.iter().any(|adjustment| {
+            matches!(
+                adjustment,
+                mojito_checked::checked::SemanticAdjustment::ReadTemporaryArgument
+            )
+        }) {
+            return value;
+        }
+        let converted = expression.implicit_conversion().is_some();
+        self.bind_temporary_argument(expression, value, adjustments, converted)
     }
 
     /// Lower `display`'s elements in order. A display is its constructor's
@@ -448,15 +472,7 @@ impl<'a> Flatten<'a> {
             let read = |this: &mut Self| {
                 let value = this.expr(expression);
                 this.anchor_temporary_argument(expression, value, adjustments, converted);
-                if adjustments.iter().any(|adjustment| {
-                    matches!(
-                        adjustment,
-                        mojito_checked::checked::SemanticAdjustment::ReadTemporaryArgument
-                    )
-                }) {
-                    return this.bind_temporary_argument(expression, value, adjustments, converted);
-                }
-                value
+                this.bind_read_temporary(expression, value)
             };
             let value = match setup {
                 Some(source) => self.defer_to_setup(expression, Some(source), true, read),
@@ -1358,7 +1374,7 @@ impl<'a> Flatten<'a> {
     /// does; a consuming context's checked `CopyPlaceValue` copies an owning
     /// field out before the slot dies, as it does for a named local's. `None`
     /// — leaving the register-based `GetField` — when the base is not a
-    /// loan-free call temporary with droppable storage, when the base is a
+    /// loan-free call or operator temporary with droppable storage, when the base is a
     /// slice descriptor, or when the field is a reference.
     pub(super) fn load_temporary_field(
         &mut self,
@@ -1366,7 +1382,7 @@ impl<'a> Flatten<'a> {
         object: Node<'a>,
         field: &str,
     ) -> Option<Reg> {
-        if !object.is_call()
+        if !object.is_fresh_temporary()
             || object.reference_result().is_some()
             || mojito_checked::checked::materialized_borrow_owner(object.adjustments()).is_some()
         {
@@ -1423,7 +1439,7 @@ impl<'a> Flatten<'a> {
         adjustments: &[mojito_checked::checked::SemanticAdjustment],
         converted: bool,
     ) -> Reg {
-        let fresh_temporary = converted || expression.is_call();
+        let fresh_temporary = converted || expression.is_fresh_temporary();
         if !fresh_temporary
             || mojito_checked::checked::materialized_borrow_owner(adjustments).is_some()
             || !self.aggregate_borrows(expression).is_empty()

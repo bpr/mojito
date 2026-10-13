@@ -723,6 +723,7 @@ assets/ok/struct_generator_vector_value.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/struct_method_comptime_template_served.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/struct_method_instance_clone_unreached.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/struct_operator_operand_owner_drop.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/struct_operator_temporary_operand_drop.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/struct_type_param_construction_clone.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/struct_value_member_runtime_read.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/struct_value_pack_method_read.mojo	-	ineligible	no-scalar-entry-shape

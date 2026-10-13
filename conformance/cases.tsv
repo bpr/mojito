@@ -547,3 +547,4 @@ dict-display-literal-constructor	run	assets/ok/dict_display_literal_constructor.
 trait-bound-argument-drop-order	run	assets/ok/trait_bound_argument_drop_order.mojo
 trait-bound-comparison-drop-order	run	assets/ok/trait_bound_comparison_drop_order.mojo
 chained-comparison-link-drop-order	run	assets/ok/chained_comparison_link_drop_order.mojo
+struct-operator-temporary-operand-drop	run	assets/ok/struct_operator_temporary_operand_drop.mojo
