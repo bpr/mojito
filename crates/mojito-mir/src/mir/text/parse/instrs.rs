@@ -294,6 +294,7 @@ impl Decoder {
                 binding_ty: self.req(value, fields, "binding_type", |d, v| {
                     Some(d.option_ty(Some(v)))
                 })?,
+                in_place: self.req(value, fields, "in_place", Self::boolean)?,
             }),
             "unary" => Some(MirInstr::UnOp {
                 op: self.req(value, fields, "op", Self::prefix_op)?,

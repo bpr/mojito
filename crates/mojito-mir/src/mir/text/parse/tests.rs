@@ -813,11 +813,13 @@ fn instruction_families_reprint_byte_identically() {
             var: 2,
             src: Reg(6),
             binding_ty: Some(Ty::int()),
+            in_place: false,
         },
         MirInstr::DefVar {
             var: 2,
             src: Reg(6),
             binding_ty: None,
+            in_place: false,
         },
         MirInstr::UnOp {
             op: PrefixOp::Neg,

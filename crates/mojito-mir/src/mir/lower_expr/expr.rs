@@ -716,6 +716,7 @@ impl<'a> Flatten<'a> {
             var,
             src: value,
             binding_ty: None,
+            in_place: false,
         });
         value
     }

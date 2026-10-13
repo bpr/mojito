@@ -722,6 +722,7 @@ impl<'a> Flatten<'a> {
                     var,
                     src: pointer,
                     binding_ty: pointer_ty.clone(),
+                    in_place: false,
                 });
                 let index = self.constant(call, Const::Int(0));
                 let mut place = MirPlace::root(var, pointer_ty);

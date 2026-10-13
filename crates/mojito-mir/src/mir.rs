@@ -2643,6 +2643,7 @@ impl<'a> Flatten<'a> {
             var: variable,
             src: value,
             binding_ty: Some(pointer_ty.clone()),
+            in_place: false,
         });
         let marker = self.fresh_typed(
             object.location(),
@@ -2791,6 +2792,7 @@ impl<'a> Flatten<'a> {
                     var: variable,
                     src: value,
                     binding_ty: ty,
+                    in_place: false,
                 });
                 self.owner_vars.insert(owner, variable);
                 variable
@@ -4074,6 +4076,7 @@ fn close_register_types(
                         var,
                         src,
                         binding_ty,
+                        ..
                     } => {
                         // A synthetic binding (iterator, short-circuit carrier)
                         // has no checked binding type; its slot type is the

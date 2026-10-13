@@ -986,6 +986,7 @@ impl<'a> Flatten<'a> {
             var: variable,
             src: handle,
             binding_ty: Some(storage_ty.clone()),
+            in_place: false,
         });
 
         // The materialized reference's own origin names the storage it
@@ -1312,6 +1313,7 @@ impl<'a> Flatten<'a> {
             var: variable,
             src: value,
             binding_ty: Some(ty.clone()),
+            in_place: false,
         });
         (value, Some(MirPlace::root(variable, Some(ty))))
     }
@@ -1411,6 +1413,7 @@ impl<'a> Flatten<'a> {
             var: variable,
             src: value,
             binding_ty: Some(object_ty.clone()),
+            in_place: false,
         });
         let mut place = MirPlace::root(variable, Some(object_ty));
         place.project(Proj::Field(field.to_string()), field_ty.clone());
@@ -1465,6 +1468,7 @@ impl<'a> Flatten<'a> {
             var: variable,
             src: value,
             binding_ty: Some(ty.clone()),
+            in_place: false,
         });
         let read = self.fresh_typed(expression.location(), Some(variable), ty.clone());
         self.emit(MirInstr::LoadPlace {
@@ -1529,6 +1533,7 @@ impl<'a> Flatten<'a> {
                 var: variable,
                 src: value,
                 binding_ty: ty,
+                in_place: false,
             });
             self.owner_vars.insert(owner, variable);
             // The slot owns the temporary, and the temporary may itself view
@@ -1582,7 +1587,9 @@ impl<'a> Flatten<'a> {
     /// `__enter__`) to a hidden `$discard_r` slot. Mojo destroys such a
     /// temporary before the next statement: the slot is dead at its
     /// definition, so drop elaboration splices its `DropVar` right after the
-    /// call. Only a fresh owned aggregate is bound — a reference result,
+    /// call. A non-raising call's slot is its result storage (`in_place`), so
+    /// it drops ahead of the call's argument temporaries; a raising call's
+    /// drops after them. Only a fresh owned aggregate is bound — a reference result,
     /// scalar, or pointer owns no storage, and a place read is never re-owned.
     pub(super) fn bind_discarded_result(
         &mut self,
@@ -1616,13 +1623,34 @@ impl<'a> Flatten<'a> {
         if !owns_droppable_storage(&ty) {
             return;
         }
+        let in_place = self.produced_in_place(value, self.handle(expression).raises().is_none());
         let variable = self.var(&format!("$discard_r{}", value.0));
         self.var_types.insert(variable, ty.clone());
         self.emit(MirInstr::DefVar {
             var: variable,
             src: value,
             binding_ty: Some(ty),
+            in_place,
         });
+    }
+
+    /// Whether the current block's last instruction is a non-raising call
+    /// producing `value`, so a binding emitted next is that call's result
+    /// storage (`DefVar::in_place`). A dunder operator carries no raising
+    /// flag of its own; `operator_non_raising` is its checked node's answer.
+    /// A prefix dunder's raising is not recorded, so its result is never
+    /// bound in place.
+    pub(super) fn produced_in_place(&self, value: Reg, operator_non_raising: bool) -> bool {
+        let Some(producer) = self.f.blocks[self.cur].instrs.last() else {
+            return false;
+        };
+        match producer {
+            MirInstr::Call { dest, raises, .. }
+            | MirInstr::CallIndirect { dest, raises, .. }
+            | MirInstr::MethodCall { dest, raises, .. } => *dest == value && raises.is_none(),
+            MirInstr::BinOp { dest, .. } => *dest == value && operator_non_raising,
+            _ => false,
+        }
     }
 
     /// Anchor a loan-carrying temporary *argument* in a hidden retained slot
@@ -1704,6 +1732,7 @@ impl<'a> Flatten<'a> {
             var: variable,
             src: value,
             binding_ty: view_ty,
+            in_place: false,
         });
         let marker = self.fresh_typed(expression.location(), Some(loans[0].place.root), Ty::none());
         self.emit(MirInstr::EstablishLoans {
@@ -1743,6 +1772,7 @@ impl<'a> Flatten<'a> {
             var: variable,
             src: value,
             binding_ty: view_ty.clone(),
+            in_place: false,
         });
         let marker = self.fresh_typed(expression.location(), Some(loans[0].place.root), Ty::none());
         self.emit(MirInstr::EstablishLoans {

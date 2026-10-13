@@ -14,7 +14,7 @@ pub(super) fn verify_blocks(
     errors: &mut Vec<String>,
 ) {
     for (block_index, block) in blocks.iter().enumerate() {
-        for instruction in &block.instrs {
+        for (index, instruction) in block.instrs.iter().enumerate() {
             verify_instruction(
                 name,
                 function,
@@ -22,6 +22,13 @@ pub(super) fn verify_blocks(
                 block_index,
                 instruction,
                 context,
+                errors,
+            );
+            verify_in_place_binding(
+                name,
+                block_index,
+                &block.instrs[..index],
+                instruction,
                 errors,
             );
         }
@@ -921,6 +928,52 @@ fn verify_indirect_call(cx: &InstrCx<'_>, instruction: &MirInstr, errors: &mut V
     } else if let Some(name) = nominal_name {
         errors.push(format!(
             "{prefix}: nominal callable '{name}' has no checker-selected __call__ target"
+        ));
+    }
+}
+
+/// An `in_place` binding is its producer's result storage: its source must be
+/// a result of the nearest preceding call-family instruction, past only the
+/// drops elaboration splices after the binding's producer.
+fn verify_in_place_binding(
+    name: &str,
+    block_index: usize,
+    preceding: &[MirInstr],
+    instruction: &MirInstr,
+    errors: &mut Vec<String>,
+) {
+    let MirInstr::DefVar {
+        src,
+        in_place: true,
+        ..
+    } = instruction
+    else {
+        return;
+    };
+    let producer = preceding.iter().rev().find(|instruction| {
+        !matches!(
+            instruction,
+            MirInstr::Drop { .. } | MirInstr::DropVar { .. } | MirInstr::DropPlace { .. }
+        )
+    });
+    let produced = producer.is_some_and(|producer| {
+        matches!(
+            producer,
+            MirInstr::Call { .. }
+                | MirInstr::CallIndirect { .. }
+                | MirInstr::MethodCall { .. }
+                | MirInstr::UnOp { .. }
+                | MirInstr::BinOp { .. }
+        ) && {
+            let mut results = Vec::new();
+            instruction_result_regs(producer, &mut results);
+            results.contains(src)
+        }
+    });
+    if !produced {
+        errors.push(format!(
+            "MIR function '{name}' block {block_index}: in-place binding of r{} does not follow the call producing it",
+            src.0
         ));
     }
 }

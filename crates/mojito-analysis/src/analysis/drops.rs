@@ -8,7 +8,9 @@ use super::*;
 /// finds where each variable dies (touched, then dead), and a forward rebuild
 /// splices a drop right after — skipping variables moved out with `^` (their new
 /// owner drops them) so nothing is double-dropped. At a shared death point,
-/// variables drop in reverse declaration order (descending `VarId`). Values that
+/// variables drop in reverse declaration order (descending `VarId`), except
+/// that an `in_place` binding joins its producer's death point and its slot
+/// drops first (see [`InPlaceDeaths`]). Values that
 /// die on control-flow edges drop on the edge (splitting critical edges), and
 /// `try` region interiors get the same per-instruction and edge elaboration
 /// through [`elaborate_try_interior`], leaving the region cleanup lists as
@@ -1302,6 +1304,9 @@ impl BlockReplay<'_> {
         let mut live: DenseSet = live_out.into_iter().collect();
         let mut entering = Vec::new();
         let mut reversed = Vec::with_capacity(self.instrs.len());
+        // An in-place binding's deaths, held until its producer is reached so
+        // the producer's deaths join them after the binding.
+        let mut pending: Option<InPlaceDeaths> = None;
         for (i, instr) in self.instrs.into_iter().enumerate().rev() {
             let generation_before = &generations[at[i]];
             let generation_after = &generations[at[i + 1]];
@@ -1404,7 +1409,31 @@ impl BlockReplay<'_> {
                 })
                 .collect();
             dying.retain(|v| !loaded.contains(v));
-            push_drops_reversed(&mut reversed, dying);
+            if let Some(held) = pending.take() {
+                // The slot's previous value dying at the producer must drop
+                // before the binding overwrites it, so that death point stays.
+                if held.produced_by(&instr) && !dying.contains(&held.var) {
+                    held.splice(&mut reversed, std::mem::take(&mut dying));
+                } else {
+                    held.splice(&mut reversed, Vec::new());
+                }
+            }
+            match &instr {
+                MirInstr::DefVar {
+                    var,
+                    src,
+                    in_place: true,
+                    ..
+                } => {
+                    pending = Some(InPlaceDeaths {
+                        mark: reversed.len(),
+                        var: *var,
+                        src: *src,
+                        dying,
+                    });
+                }
+                _ => push_drops_reversed(&mut reversed, dying),
+            }
             reversed.push(cloned.unwrap_or(instr));
             reversed.extend(
                 loaded
@@ -1414,8 +1443,51 @@ impl BlockReplay<'_> {
             );
             push_drops_reversed(&mut reversed, entry_dead);
         }
+        if let Some(held) = pending {
+            held.splice(&mut reversed, Vec::new());
+        }
         reversed.reverse();
         reversed
+    }
+}
+
+/// The variables dying at an in-place `DefVar`, held in the backward walk
+/// until its producer: Mojo initializes the binding as the call's result
+/// storage, so the call's own deaths (argument temporaries, owners last used
+/// by the call) come after the binding, and the binding's slot, dead at its
+/// definition, drops ahead of them.
+struct InPlaceDeaths {
+    /// Where the binding's trailing drops belong in the reversed output.
+    mark: usize,
+    var: VarId,
+    src: Reg,
+    dying: Vec<VarId>,
+}
+
+impl InPlaceDeaths {
+    fn produced_by(&self, instr: &MirInstr) -> bool {
+        let mut results = Vec::new();
+        mojito_mir::mir::verify::instruction_result_regs(instr, &mut results);
+        results.contains(&self.src)
+    }
+
+    /// Splice the binding's deaths and its producer's into `reversed`: the
+    /// binding's slot first, the rest in descending `VarId`.
+    fn splice(self, reversed: &mut Vec<MirInstr>, producer: Vec<VarId>) {
+        let own = self.dying.contains(&self.var);
+        let mut rest: Vec<VarId> = self
+            .dying
+            .into_iter()
+            .filter(|v| *v != self.var)
+            .chain(producer)
+            .collect();
+        rest.sort_unstable();
+        rest.dedup();
+        let drops = rest
+            .into_iter()
+            .chain(own.then_some(self.var))
+            .map(|var| MirInstr::DropVar { var });
+        reversed.splice(self.mark..self.mark, drops);
     }
 }
 

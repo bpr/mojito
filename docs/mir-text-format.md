@@ -1,4 +1,4 @@
-# Mojito Textual MIR Format, Version 1.48
+# Mojito Textual MIR Format, Version 1.49
 
 This document is the normative specification of Mojito's textual verified-MIR
 artifact. The Rust data model in `src/mir.rs` and `src/mir/ir.rs` remains the
@@ -6,7 +6,7 @@ in-memory authority; this format is its stable inspection and interchange
 boundary. `docs/vm-instruction-set.md` explains execution semantics, while this
 document defines syntax and serialized data.
 
-Version 1.48 is implemented end to end for inspection and loading: canonical
+Version 1.49 is implemented end to end for inspection and loading: canonical
 in-memory disassembly, full-grammar assembly parsing, and artifact-loading
 verification (`mir::text::load_artifact`, which reports canonical-verifier
 findings at artifact source spans). Lossless print → parse → print round trips
@@ -22,10 +22,10 @@ which may be generic; it is always elaborated before it runs.
 Every artifact begins with exactly:
 
 ```text
-mojito-mir 1.48
+mojito-mir 1.49
 ```
 
-The writer emits 1.48. The reader accepts 1.0 through 1.48; *Schema 1.0*
+The writer emits 1.49. The reader accepts 1.0 through 1.49; *Schema 1.0*
 below says how a 1.0 artifact is read, and *Binder identity* under *Types*
 how a binder without an identity is.
 
@@ -831,7 +831,7 @@ schema types above. This table is exhaustive and freezes the variant mapping:
 | `Const` / `MaterializeLiteral` / `SizeOf` / `TypeName` | `const` / `literal.materialize` / `layout.size_of` / `type.name` |
 | `ConstructType` | `type.construct_expr` (schema 1.33: `{ dest, type }`) |
 | `ParamListAddress` | `param_list.address` (schema 1.34: `{ dest, values }`, `values` a parameter or closed-tuple constant) |
-| `UseVar` / `DefVar` | `var.use` / `var.store` |
+| `UseVar` / `DefVar` | `var.use` / `var.store` (schema 1.49: `var.store` adds `in_place`, true when the slot is the preceding non-raising call's result storage) |
 | `MovePlace` / `LoadPlace` | `place.move` / `place.load` |
 | `UnOp` / `BinOp` | `unary` / `binary` |
 | `Call` / `CallIndirect` / `MethodCall` | `call` / `call.indirect` / `call.method` |
@@ -882,7 +882,7 @@ Unknown terminators and instructions are fatal for schema major version 1.
 ## Complete Artifact Example
 
 ```text
-mojito-mir 1.48
+mojito-mir 1.49
 artifact {
   features: [],
   files: [file { id: file0, path: present("main.mojo"), module: absent }],
@@ -923,10 +923,10 @@ lowering unit, one record per library declaration, and one module table
 holding each module's link record, one file per package. The bundled library's is the
 only producer today (`src/package.rs`). No part of a package is MIR text:
 it is a header followed by bytecode records, as upstream's package is
-MLIR bytecode throughout. The format line is `mojito-package 41`.
+MLIR bytecode throughout. The format line is `mojito-package 43`.
 
 ```text
-mojito-package 41
+mojito-package 43
 <the header's length, 8 bytes little-endian>
 <the header, as bytecode>
 <the payload: every record, as bytecode, then the type section>

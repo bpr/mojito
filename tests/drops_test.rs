@@ -52,6 +52,26 @@ fn struct_operator_operand_owner_dies_before_the_result_consumer() {
 }
 
 #[test]
+fn discarded_non_raising_call_result_dies_before_its_temporaries() {
+    // A non-raising call writes its result in place, so a discarded result
+    // dies at the call, ahead of the call's argument temporaries and the
+    // owners it last uses; a raising call's result is taken after them.
+    let src = "struct S(Movable):\n    var v: Int\n    def __init__(out self, v: Int):\n        self.v = v\n    def __add__(self, o: S) -> S:\n        return S(self.v + o.v)\n    def __radd__(self, o: Int) -> S:\n        return S(self.v + o)\n    def __del__(deinit self):\n        print(\"del\", self.v)\n\ndef mk(a: S, b: S) -> S:\n    return S(a.v * b.v)\n\ndef mkr(a: S) raises -> S:\n    return S(a.v * 10)\n\ndef main() raises:\n    S(7).__add__(S(8))\n    S(1) + S(2)\n    1 + S(18)\n    var a = S(2)\n    mk(a, S(3))\n    mkr(S(4))\n";
+    assert_eq!(
+        vm(src),
+        "del 15\ndel 8\ndel 7\ndel 3\ndel 2\ndel 1\ndel 19\ndel 18\ndel 6\ndel 3\ndel 2\ndel 4\ndel 40\n"
+    );
+}
+
+#[test]
+fn dead_declaration_of_a_call_result_dies_before_its_temporaries() {
+    // `var k = mk(...)` initializes `k` in place, so an unused `k` dies at
+    // the call, before its arguments; `_ =` is a separate store after them.
+    let src = "struct S(Movable):\n    var v: Int\n    def __init__(out self, v: Int):\n        self.v = v\n    def __del__(deinit self):\n        print(\"del\", self.v)\n\ndef mk(a: S, b: S) -> S:\n    return S(a.v * b.v)\n\ndef main():\n    var g = S(11)\n    var k = mk(g, S(3))\n    var d = S(8)\n    _ = mk(d, S(9))\n";
+    assert_eq!(vm(src), "del 33\ndel 3\ndel 11\ndel 9\ndel 8\ndel 72\n");
+}
+
+#[test]
 fn trait_bound_call_loads_by_value_argument_before_the_call() {
     // `s.sh(b.t)` through the bound passes `b.t` by the requirement's `read`
     // `Int` parameter, so `b` dies at call setup, as the pin orders it; the

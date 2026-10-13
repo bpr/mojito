@@ -550,3 +550,4 @@ chained-comparison-link-drop-order	run	assets/ok/chained_comparison_link_drop_or
 struct-operator-temporary-operand-drop	run	assets/ok/struct_operator_temporary_operand_drop.mojo
 struct-operator-subscript-operand-in-place	run	assets/ok/struct_operator_subscript_operand_in_place.mojo
 by-value-subscript-temporary-drop	run	assets/ok/by_value_subscript_temporary_drop.mojo
+discarded-call-result-drop-order	run	assets/ok/discarded_call_result_drop_order.mojo

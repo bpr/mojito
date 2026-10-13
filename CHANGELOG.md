@@ -8,6 +8,14 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A non-raising call writes its result in place, as the pin does (R714):
+  a discarded result (`mk(S(2), S(3))`, `S(1) + S(2)`, `1 + S(18)`, a
+  method, function-value, or generic call) and an unused
+  `var k = mk(...)` die at the call, before its argument temporaries and
+  the owners it last uses. MIR's `DefVar` gains `in_place` (text schema
+  1.49, package format 43). A raising struct infix dunder is now a raising
+  call, so using it outside `try` or a `raises` function is rejected, as
+  the pin does.
 - A by-value `__getitem__` result is an owned temporary, as the pin does
   (R713): `f(b[1])` and `print(b[2] < b[3])` destroy each element once the
   call or dunder returns instead of leaking it, and passing `b[9]` to a

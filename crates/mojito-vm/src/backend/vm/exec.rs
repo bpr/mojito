@@ -260,6 +260,7 @@ impl VmBackend {
                 var,
                 src,
                 binding_ty,
+                ..
             } => {
                 let v = regs[src.0 as usize].clone();
                 let slot = *var as usize;

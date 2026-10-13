@@ -4171,6 +4171,15 @@ current Mojo:
   result of a non-consuming `__enter__`) is an owned temporary: MIR lowering
   binds it to a hidden `$discard_r` slot that is dead at its definition, so
   its `DropVar` follows the call immediately — before the next statement.
+  A non-raising call writes its result in place, as Mojo's `out` slot does:
+  the binding right after it is `DefVar { in_place: true }`
+  (`produced_in_place`), drop elaboration moves the call's own deaths after
+  that binding (`InPlaceDeaths`), and the dead slot drops first. A discarded
+  result therefore dies before the call's argument temporaries and the
+  owners whose last use is the call; an unused `var x = call(...)`
+  declaration is bound the same way. A raising call's result (taken from its
+  error-or-value return), a prefix dunder's, an assignment, and `_ = e` are
+  separate stores, so the call's temporaries die first.
   A `_ = e` statement is the same discard: HIR binds its value to a fresh
   per-statement `$discard_s` slot, typed by that value alone and dead at its
   definition, so `_` never names a function-wide local.
@@ -4238,7 +4247,8 @@ current Mojo:
   memory-only parameter takes the argument's address: a generic `T`, a
   variadic collector, or a callee with no declaration (`t.n` fed to `print`).
   Its owner then lives through the call, so the owner's `DropVar` follows the
-  call, and owners dying together there drop in descending `VarId`. A
+  call, and owners dying together there drop in descending `VarId`, after
+  the call's in-place result binding and its slot, if any. A
   concrete register-passable `read` or `var` parameter, a built-in operator's
   operand, or a slice bound is loaded at call setup instead, in parameter
   order (slice descriptors first), so an owner whose last use it is drops just

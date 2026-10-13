@@ -106,6 +106,7 @@ impl<'a> Flatten<'a> {
             var: result,
             src: ra,
             binding_ty: None,
+            in_place: false,
         });
 
         let rhs_blk = self.new_block();
@@ -127,6 +128,7 @@ impl<'a> Flatten<'a> {
             var: result,
             src: rb,
             binding_ty: None,
+            in_place: false,
         });
         self.f.blocks[self.cur].term = MirTerm::Jump(merge_blk);
 
@@ -166,6 +168,7 @@ impl<'a> Flatten<'a> {
             var: result,
             src: rt,
             binding_ty: None,
+            in_place: false,
         });
         self.f.blocks[self.cur].term = MirTerm::Jump(merge_blk);
         self.cur = else_blk;
@@ -174,6 +177,7 @@ impl<'a> Flatten<'a> {
             var: result,
             src: re,
             binding_ty: None,
+            in_place: false,
         });
         self.f.blocks[self.cur].term = MirTerm::Jump(merge_blk);
         self.cur = merge_blk;
@@ -239,6 +243,7 @@ impl<'a> Flatten<'a> {
                 var: result,
                 src: cmp,
                 binding_ty: None,
+                in_place: false,
             });
             if i + 1 == rest.len() {
                 self.f.blocks[self.cur].term = MirTerm::Jump(merge_blk);
@@ -425,6 +430,7 @@ impl<'a> Flatten<'a> {
             var: collection,
             src: empty,
             binding_ty: Some(target.clone()),
+            in_place: false,
         });
         collection
     }
@@ -585,6 +591,7 @@ impl<'a> Flatten<'a> {
                         var: iterator,
                         src: iterator_value,
                         binding_ty: iterator_ty,
+                        in_place: false,
                     });
                 }
                 // The same retained-source/iterator-object slot split as the
@@ -676,6 +683,7 @@ impl<'a> Flatten<'a> {
                     var: raw_var,
                     src: element_value,
                     binding_ty: Some(binding.plan.yielded_ty.clone()),
+                    in_place: false,
                 });
                 self.bind_iteration_result(
                     &binding.plan,
@@ -772,6 +780,7 @@ impl<'a> Flatten<'a> {
             var: variable,
             src: owned,
             binding_ty: Some(ty.clone()),
+            in_place: false,
         });
         ChainMiddle::Slot(variable, ty)
     }

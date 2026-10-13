@@ -290,6 +290,7 @@ impl<'a> Flatten<'a> {
                         var: variable,
                         src: dest,
                         binding_ty: view_ty.clone(),
+                        in_place: false,
                     });
                     let marker =
                         self.fresh_typed(e.location(), Some(loans[0].place.root), Ty::none());

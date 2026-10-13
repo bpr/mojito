@@ -2005,3 +2005,32 @@ fn verifier_rejects_a_method_call_spread_of_a_non_pack_register() {
         "unresolved method call spreads argument 0",
     );
 }
+
+#[test]
+fn verifier_rejects_in_place_binding_without_its_producer() {
+    let in_place = |producer: MirInstr| {
+        program(function(
+            vec![block(
+                vec![
+                    producer,
+                    MirInstr::DefVar {
+                        var: 0,
+                        src: Reg(0),
+                        binding_ty: Some(Ty::int()),
+                        in_place: true,
+                    },
+                ],
+                MirTerm::Return(None),
+            )],
+            1,
+            &[(0, Ty::int())],
+        ))
+    };
+    expect_finding(
+        &in_place(MirInstr::Const {
+            dest: Reg(0),
+            k: Const::Int(1),
+        }),
+        "in-place binding of r0 does not follow the call producing it",
+    );
+}

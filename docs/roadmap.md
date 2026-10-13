@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R717**.
+Next free ID: **R721**.
 
 ## Ordered Work
 
@@ -298,18 +298,48 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R714 A discarded call or infix result is destroyed after its
-  temporaries**
+- [ ] **R717 A constructor call's read temporaries are never destroyed**
 
-  Problem: `S(7).__add__(S(8))` as a statement prints `del 8, del 7,
-  del 15`, where the pin destroys the result first (`del 15, del 8,
-  del 7`).
-  - `S(1) + S(2)` and `1 + S(18)` as statements are wrong the same way.
-  - A discarded prefix result (`-b[16]`) already matches.
-  - The result's `$discard_r` slot (`bind_discarded_result`) dies after
-    the operands' `$tmp_arg_r` slots.
-  - Found while landing R713 (2026-10-13).
+  Problem: `P(S(1), S(2))` over `__init__(out self, x: S, y: S)` prints
+  only `delP 3`, where the pin prints `delP 3`, `del 2`, `del 1`.
+  - `var p = P(S(3), S(4))` and `_ = P(S(5), S(6))` leak their `S`
+    temporaries the same way; the pin prints `delP 7, del 4, del 3` and
+    `del 6, del 5, delP 11`.
+  - A constructor's read arguments get no `$tmp_arg_r` slot
+    (`bind_temporary_argument`), as a plain call's do.
+  - The construction should then bind its result in place
+    (`DefVar::in_place`), as a non-raising call does.
+  - Found while landing R714 (2026-10-13).
   - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R720 A raising struct operator destroys its operands in the wrong
+  order when it raises**
+
+  Problem: `var x = S(1) + S(9)` in a `try`, over an `__add__` that
+  raises, prints `del 1`, `del 9`, `caught big`, where the pin prints
+  `del 9`, `del 1`, `caught big`.
+  - A `BinOp` carries no raising contract in MIR (`Call` and `MethodCall`
+    carry `raises`), so its raise edge is not modeled and the operands
+    drop through the region's cleanup backstop instead.
+  - The checker records the dunder's effect at the operator since R714.
+  - Found while landing R714 (2026-10-13).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R718 A struct prefix operator's operand lives as long as its
+  result**
+
+  Problem: `print((-S(16)).get())` prints `del -16`, `del 16`, where the
+  pin prints `del 16`, `del -16`.
+  - A struct `UnOp` is missing from `call_result` in
+    `RegisterLoanStep::new` (`register_loans.rs`), so its result register
+    inherits the operand slot's provenance.
+  - A discarded `-S(16)` statement matches the pin only by this accident:
+    once the operand dies at the dunder's return, the statement's result
+    must be bound in place (`produced_in_place`) to keep dying first.
+  - Found while landing R714 (2026-10-13).
+  - Depends on R719.
   - Model: Opus, Not Planned.
 
 - [ ] **R715 A transferred temporary at a read parameter is never
@@ -1220,6 +1250,20 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     fail with "'None' is not callable", and in a `comptime for` with a
     `comptime if i == 0` arm they print `1 1`.
   - Found while landing R329 (2026-10-08).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R719 A raising prefix dunder is not a raising call**
+
+  Problem: `var x = -S(3)` over `def __neg__(self) raises -> S` in a
+  non-raising `main` runs, where the pin rejects it: "cannot call function
+  that may raise in a context that cannot raise".
+  - `infer_prefix` (`checker/operators.rs`) takes no span, so it records
+    no call effect and requires no raising context, as `infer_infix` now
+    does for a struct infix dunder.
+  - MIR therefore cannot tell a raising prefix dunder from a non-raising
+    one, and `produced_in_place` never binds a prefix result in place.
+  - Found while landing R714 (2026-10-13).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

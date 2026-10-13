@@ -531,6 +531,7 @@ impl<'a> Flatten<'a> {
                 var: slot,
                 src: callee,
                 binding_ty: callable_ty.clone(),
+                in_place: false,
             });
             let place = MirPlace::root(slot, callable_ty.clone());
             callee_place = place.is_typed().then_some(place);

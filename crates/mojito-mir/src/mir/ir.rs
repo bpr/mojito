@@ -1039,10 +1039,16 @@ pub enum MirInstr {
     /// dataflow *def* (transitions the var to `Owned`). `binding_ty` is the
     /// checker-resolved destination type; source annotation syntax never enters
     /// MIR. `None` on reassignment keeps the slot's existing runtime type.
+    /// `in_place` marks the binding as the result storage of the immediately
+    /// preceding non-raising call-family instruction (Mojo's `out`-slot
+    /// initialization): the binding is part of its producer, so the producer's
+    /// deaths happen after it and the slot, dead at its definition, drops
+    /// before the call's argument temporaries.
     DefVar {
         var: VarId,
         src: Reg,
         binding_ty: Option<Ty>,
+        in_place: bool,
     },
     UnOp {
         op: PrefixOp,

@@ -397,6 +397,10 @@ impl Checker {
                     &dispatch.struct_args,
                     span.source.as_deref(),
                 );
+                if let Some(error) = dispatch.error {
+                    self.record_call_effect(span.clone(), error.clone());
+                    self.require_error(format!("raising operator '{}'", infix_symbol(op)), error)?;
+                }
                 self.record_at(span).overload_target = Some(dispatch.target);
             }
             let dunder = if dispatch.negated_equality {
@@ -421,6 +425,10 @@ impl Checker {
                 self.borrow_operator_operand(right, &rt);
             }
             self.record_operator_temporaries(left, right, dispatch.reads);
+            if let Some(error) = dispatch.error {
+                self.record_call_effect(span.clone(), error.clone());
+                self.require_error(format!("raising operator '{}'", infix_symbol(op)), error)?;
+            }
             self.record_at(span.clone()).overload_target = Some(dispatch.target);
             self.record_at(span).adjustment = Some(Box::new(
                 mojito_checked::checked::SemanticAdjustment::ReflectedOperator,
@@ -593,6 +601,7 @@ impl Checker {
         let target = self.dunder_symbol(sname, dunder, selected, info);
         Ok(Some(StructInfixDispatch {
             target,
+            error: dunder_error(selected),
             negated_equality,
             operand_ty,
             converted,
@@ -629,6 +638,7 @@ impl Checker {
             .ok()?;
         Some(StructReflectedDispatch {
             target: self.dunder_symbol(rname, reflected, sig, info),
+            error: dunder_error(sig),
             reads: (
                 reads(sig.conventions.first().copied().flatten()),
                 reads(sig.self_convention),
@@ -1251,6 +1261,8 @@ pub(super) const fn prefix_symbol(op: PrefixOp) -> &'static str {
 pub(super) struct StructInfixDispatch {
     /// The selected dunder's lowered symbol, which `BinOp.resolved` names.
     pub(super) target: String,
+    /// The error the selected dunder raises, if it raises.
+    pub(super) error: Option<Ty>,
     /// `!=` served by `__eq__` and a negation.
     pub(super) negated_equality: bool,
     /// The right operand's type as the selected dunder takes it.
@@ -1274,9 +1286,17 @@ pub(super) struct StructInfixDispatch {
 pub(super) struct StructReflectedDispatch {
     /// The reflected dunder's lowered symbol, which `BinOp.resolved` names.
     pub(super) target: String,
+    /// The error the reflected dunder raises, if it raises.
+    pub(super) error: Option<Ty>,
     /// Whether the reflected dunder reads the left operand (its parameter)
     /// and the right operand (its receiver).
     pub(super) reads: (bool, bool),
+}
+
+/// The error a selected dunder raises, if it raises.
+fn dunder_error(sig: &MethodSig) -> Option<Ty> {
+    sig.raises
+        .then(|| sig.error.clone().unwrap_or_else(Ty::error))
 }
 
 /// Whether a dunder's convention for one operand reads it.

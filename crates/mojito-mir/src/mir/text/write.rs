@@ -738,12 +738,14 @@ fn instruction_value(instruction: &MirInstr) -> String {
             var,
             src,
             binding_ty,
+            in_place,
         } => record(
             tag,
             &[
                 ("var", var_value(*var)),
                 ("src", reg_value(*src)),
                 ("binding_type", option(binding_ty.as_ref().map(ty_value))),
+                ("in_place", in_place.to_string()),
             ],
         ),
         MirInstr::UnOp { op, dest, a } => record(

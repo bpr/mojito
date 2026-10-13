@@ -134,6 +134,7 @@ impl<'a> Flatten<'a> {
                     var: *dest,
                     src: r,
                     binding_ty: None,
+                    in_place: false,
                 });
             }
             HirInstr::Next {
@@ -157,6 +158,7 @@ impl<'a> Flatten<'a> {
                     var: *raw,
                     src: r,
                     binding_ty: Some(element_ty.clone()),
+                    in_place: false,
                 });
             }
             HirInstr::TryNext {
@@ -184,11 +186,13 @@ impl<'a> Flatten<'a> {
                     var: *raw,
                     src: element,
                     binding_ty: Some(element_ty.clone()),
+                    in_place: false,
                 });
                 self.emit(MirInstr::DefVar {
                     var: *yielded,
                     src: has_element,
                     binding_ty: Some(Ty::bool()),
+                    in_place: false,
                 });
             }
             HirInstr::BindIteration {
@@ -237,6 +241,7 @@ impl<'a> Flatten<'a> {
                     var: dest,
                     src: value,
                     binding_ty: Some(plan.binding_ty.clone()),
+                    in_place: false,
                 });
             }
             // `var` target over a reference result: read through the handle and
@@ -264,6 +269,7 @@ impl<'a> Flatten<'a> {
                     var: dest,
                     src: owned,
                     binding_ty: Some(plan.binding_ty.clone()),
+                    in_place: false,
                 });
             }
             // Immutable/`ref` target over a reference result: keep the yielded
@@ -281,6 +287,7 @@ impl<'a> Flatten<'a> {
                     var: dest,
                     src: handle,
                     binding_ty: Some(plan.binding_ty.clone()),
+                    in_place: false,
                 });
                 // The borrowed handle aliases the iterated source: re-establish
                 // the iterator's interior source loans on the binding so a
@@ -345,6 +352,7 @@ impl<'a> Flatten<'a> {
             var: dest,
             src: handle,
             binding_ty: Some(ref_ty),
+            in_place: false,
         });
         let loans = vec![MirLoan {
             place: loan_place,
@@ -600,6 +608,7 @@ impl<'a> Flatten<'a> {
             var: tmp,
             src: current,
             binding_ty: Some(operand_ty.clone()),
+            in_place: false,
         });
         let recv = self.fresh_typed(span.clone(), Some(tmp), operand_ty.clone());
         self.emit(MirInstr::UseVar {
@@ -2007,6 +2016,7 @@ impl<'a> Flatten<'a> {
                             var: hidden,
                             src: source,
                             binding_ty: ty,
+                            in_place: false,
                         });
                         self.owner_vars.insert(owner, hidden);
                     }
@@ -2049,6 +2059,7 @@ impl<'a> Flatten<'a> {
                         var: reference,
                         src: source,
                         binding_ty,
+                        in_place: false,
                     });
                     let candidates: Vec<Node<'a>> = match value.op() {
                         CheckedOp::Call { .. } | CheckedOp::MethodCall { .. } => value
@@ -2329,6 +2340,7 @@ impl<'a> Flatten<'a> {
                             var,
                             src: res,
                             binding_ty: None,
+                            in_place: false,
                         });
                     }
                 } else if let Some((object, _)) = place.pointer_offset_subscript()
@@ -2496,6 +2508,7 @@ impl<'a> Flatten<'a> {
                         var,
                         src,
                         binding_ty: info.callable_ty,
+                        in_place: false,
                     });
                 } else {
                     self.emit(MirInstr::Unsupported(
@@ -2543,6 +2556,7 @@ impl<'a> Flatten<'a> {
                         var: hidden,
                         src: tuple,
                         binding_ty: ty.clone(),
+                        in_place: false,
                     });
                     self.owner_vars.insert(owner, hidden);
                     base_place = Some(MirPlace::root(hidden, ty));
@@ -2640,6 +2654,7 @@ impl<'a> Flatten<'a> {
                             var,
                             src: elem,
                             binding_ty,
+                            in_place: false,
                         });
                         if carries_loans && let Some(first) = loans.first() {
                             let marker = self.fresh_typed(
@@ -2853,6 +2868,7 @@ impl<'a> Flatten<'a> {
             var,
             src,
             binding_ty,
+            in_place: false,
         });
     }
 
@@ -2927,10 +2943,15 @@ impl<'a> Flatten<'a> {
                 value: src,
             });
         } else {
+            // A declaration's slot is a non-raising call's result storage;
+            // a write to an existing binding is a separate store.
+            let in_place =
+                binding_ty.is_some() && self.produced_in_place(src, value.raises().is_none());
             self.emit(MirInstr::DefVar {
                 var: dest,
                 src,
                 binding_ty: binding_ty.cloned(),
+                in_place,
             });
             let aggregate_loans = self.aggregate_borrows(value);
             if let Some(first) = aggregate_loans.first() {

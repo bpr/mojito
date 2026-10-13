@@ -1424,6 +1424,7 @@ fn seed_captured_parameter_slots(
             var,
             src: dest,
             binding_ty: Some(ty),
+            in_place: false,
         });
     }
     if let Some(entry) = function.blocks.first_mut() {

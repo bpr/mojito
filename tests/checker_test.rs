@@ -2398,6 +2398,23 @@ fn enforces_raises_effect_at_call_sites() {
 }
 
 #[test]
+fn enforces_raises_effect_at_struct_operators() {
+    // A raising dunder makes its operator a raising call, plain or reflected.
+    let declarations = "@fieldwise_init\nstruct M(ImplicitlyCopyable):\n    var v: Int\n    def __add__(self, o: M) raises -> M:\n        return self\n    def __radd__(self, o: Int) raises -> M:\n        return self\n";
+    for body in ["return m + m", "return 1 + m"] {
+        assert!(matches!(
+            err(&format!(
+                "{declarations}\ndef caller(m: M) -> M:\n    {body}\n"
+            )),
+            TypeError::UnhandledRaise(_)
+        ));
+        ok(&format!(
+            "{declarations}\ndef caller(m: M) raises -> M:\n    {body}\n"
+        ));
+    }
+}
+
+#[test]
 fn enforces_raises_effect_at_instance_and_static_method_calls() {
     let declarations = "@fieldwise_init\nstruct Bomb:\n    var code: Int\n    def explode(self) raises -> Int:\n        raise \"boom\"\n    @staticmethod\n    def static_explode() raises -> Int:\n        raise \"boom\"\n";
     assert!(matches!(
