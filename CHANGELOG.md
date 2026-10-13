@@ -8,6 +8,14 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- HIR is handed every body as its statement nodes (R629): a unit's from its
+  declaration's op, the top level's and a wrapper's from the tables' roots,
+  a nested `def`'s or lambda's from its checked `def`, and a lifted thunk's
+  from its bindings' nodes, as upstream lowers a region by walking the ops
+  it holds. Nested discovery walks syntax in lockstep with the ids, so no
+  checked statement is found by its source location, and the span-keyed
+  statement index is deleted. No program's output or MIR changes.
+
 - MIR holds no syntax rebuilder or address-keyed fact index (R649): the
   scaffolding R646 listed was deleted as R647, R652, R653, and R648 moved
   each lowering onto node handles. A lifted thunk's prologue still

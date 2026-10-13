@@ -4884,22 +4884,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R629 HIR and MIR find a statement's checked node by its location**
-
-  `CheckedTables::statement_at` looks a statement's node up in the
-  span-keyed `statements_by_span`, because HIR and MIR still walk `Stmt`
-  syntax.
-  - The lever: every CFG MIR builds hands HIR the body's statement ids:
-    units, the top level, nested defs and lambdas, `try` regions, and the
-    expression thunks' prologue statements.
-  - A trait member's ids are its trait op's `methods[i].default_body` in
-    the whole program, and its `def`'s `body` in a unit; its derived
-    root `def` has no node of its own.
-  - Done when `statement_at` and `statements_by_span` are deleted.
-  - Found while landing R615 (2026-10-11).
-  - Depends on R617, R622.
-  - Model: Opus, Not Planned.
-
 - [ ] **R643 MIR reads declarations and finds nested defs from syntax**
 
   MIR still reads a declaration's kind, name, and body from statement

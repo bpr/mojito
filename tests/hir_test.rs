@@ -10,7 +10,7 @@ use mojito::{check_program, parse};
 fn checked_cfg(src: &str) -> Cfg {
     let program = parse(src).expect("parse error");
     let checked = check_program(&program).expect("type error");
-    Cfg::build_checked_fn(&checked, &[], checked.statements())
+    Cfg::build_checked_fn(&checked, &[], checked.tables().roots())
 }
 
 /// Lower one named function body through the checked HIR handoff.
@@ -21,24 +21,36 @@ fn checked_function_cfg(src: &str, function: &str) -> Cfg {
     Cfg::build_checked_fn(&checked, &params, &body)
 }
 
-/// The parameter names and body of the checked function named `function`.
+/// The parameter names and body statement nodes of the checked function
+/// named `function`.
 fn function_body(
     checked: &mojito::checked::CheckedProgram,
     function: &str,
-) -> (Vec<String>, Vec<mojito::ast::Stmt>) {
-    checked
-        .statements()
+) -> (Vec<String>, Vec<mojito::checked::CheckedStmtId>) {
+    let tables = checked.tables();
+    tables
+        .roots()
         .iter()
-        .find_map(|statement| match &statement.kind {
-            mojito::ast::StmtKind::Def {
-                name, params, body, ..
-            } if name == function => Some((
-                params.iter().map(|param| param.name.clone()).collect(),
-                body.clone(),
+        .find_map(|root| match &tables.statement(*root)?.op {
+            mojito::checked::CheckedStmtOp::Def(def) if def.name == function => Some((
+                def.params.iter().map(|param| param.name.clone()).collect(),
+                def.body.clone(),
             )),
             _ => None,
         })
         .expect("function body")
+}
+
+/// The body statement nodes of the checked `def` at root `index`.
+fn root_def_body(
+    checked: &mojito::checked::CheckedProgram,
+    index: usize,
+) -> Vec<mojito::checked::CheckedStmtId> {
+    let tables = checked.tables();
+    match &tables.statement(tables.roots()[index]).expect("root").op {
+        mojito::checked::CheckedStmtOp::Def(def) => def.body.clone(),
+        _ => panic!("expected function"),
+    }
 }
 
 /// The body of the first loop of checked function `main` in `src`, lowered
@@ -335,13 +347,8 @@ fn checked_hir_retains_semantic_identity_type_and_adjustments() {
     )
     .expect("parse");
     let checked = mojito::check_program(&body).expect("check");
-    let mojito::ast::StmtKind::Def {
-        body: main_body, ..
-    } = &checked.statements()[1].kind
-    else {
-        panic!("expected main")
-    };
-    let cfg = Cfg::build_checked_fn(&checked, &[], main_body);
+    let main_body = root_def_body(&checked, 1);
+    let cfg = Cfg::build_checked_fn(&checked, &[], &main_body);
     let expression = cfg
         .g
         .node_weights()
@@ -379,10 +386,8 @@ fn checked_hir_places_use_owner_identity_and_typed_projections() {
         "@fieldwise_init\nstruct Cell:\n    var value: Int\n\ndef read(cell: Cell) -> Int:\n    return cell.value\n",
     ).expect("parse");
     let checked = mojito::check_program(&program).expect("check");
-    let mojito::ast::StmtKind::Def { body, .. } = &checked.statements()[1].kind else {
-        panic!("expected function")
-    };
-    let cfg = Cfg::build_checked_fn(&checked, &["cell".to_string()], body);
+    let body = root_def_body(&checked, 1);
+    let cfg = Cfg::build_checked_fn(&checked, &["cell".to_string()], &body);
     let expression = cfg
         .g
         .node_weights()
@@ -404,10 +409,8 @@ fn checked_hir_retains_distinct_comprehension_binding_owners() {
     )
     .expect("parse");
     let checked = mojito::check_program(&program).expect("check");
-    let mojito::ast::StmtKind::Def { body, .. } = &checked.statements()[0].kind else {
-        panic!("expected function")
-    };
-    let cfg = Cfg::build_checked_fn(&checked, &[], body);
+    let body = root_def_body(&checked, 0);
+    let cfg = Cfg::build_checked_fn(&checked, &[], &body);
     let expression = cfg
         .g
         .node_weights()
@@ -434,10 +437,8 @@ fn checked_hir_carries_nested_declaration_and_call_binding_identity() {
     )
     .expect("parse");
     let checked = mojito::check_program(&program).expect("check");
-    let mojito::ast::StmtKind::Def { body, .. } = &checked.statements()[0].kind else {
-        panic!("expected function")
-    };
-    let cfg = Cfg::build_checked_fn(&checked, &[], body);
+    let body = root_def_body(&checked, 0);
+    let cfg = Cfg::build_checked_fn(&checked, &[], &body);
 
     let declarations: Vec<_> = cfg
         .g
@@ -488,10 +489,8 @@ fn checked_hir_next_retains_a_shadowed_loop_binder_identity() {
     )
     .expect("parse");
     let checked = mojito::check_program(&program).expect("check");
-    let mojito::ast::StmtKind::Def { body, .. } = &checked.statements()[0].kind else {
-        panic!("expected function")
-    };
-    let cfg = Cfg::build_checked_fn(&checked, &[], body);
+    let body = root_def_body(&checked, 0);
+    let cfg = Cfg::build_checked_fn(&checked, &[], &body);
     let outer = cfg
         .g
         .node_weights()

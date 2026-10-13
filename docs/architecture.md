@@ -1742,16 +1742,19 @@ the compile-time forms stay structured as upstream's `hlcf` keeps them), its
 occurrence, the binding it introduces with that binding's type, and its
 declaration. A function's root statements are its op's body; the tables keep
 the module's and each default wrapper's. A lambda's op names its `def`'s
-statement node. HIR walks the statement and expression nodes; its callers
-still hand it a body's syntax statements, which `Lower::statements` maps to
-their nodes through the transitional `CheckedTables::statement_at` (R629); a
-`try` region hands it the op's statement ids directly, and an expression
-thunk hands it its returned value's node (`Cfg::build_checked_thunk`). MIR lowers an opaque
+statement node. HIR walks the statement and expression nodes, and every CFG
+builder is handed its body's statement ids: a unit's from its declaration's
+op (a `def`'s body, a method's, a trait default's `default_body`, a
+wrapper's `CheckedTables::wrapper_roots`), the top level's from
+`CheckedTables::roots`, a nested `def`'s or lambda's from its `CheckedDef`,
+a `try` region's from the op, and an expression thunk's its prologue
+bindings' nodes and its returned value's node (`Cfg::build_checked_thunk`).
+No checked statement is found by its source location. MIR lowers an opaque
 statement and a `try` by matching its `CheckedStmtOp` alone, each expression
 operand the handle of the matching `HirStmt::expressions` entry, in the op's
 operand order; its declaration walks still read statement syntax (R643), and
-a lifted thunk's prologue is the evaluated bindings' statements rebuilt where
-the thunk is lowered (R629). Source spans index
+nested discovery still walks a lifted thunk's prologue as the evaluated
+bindings' statements rebuilt where the thunk is lowered (R655). Source spans index
 diagnostics and associate a checker-approved compile-time value argument with
 the register produced from that same source occurrence; they are not used to
 re-resolve a type, overload, effect, or origin decision.

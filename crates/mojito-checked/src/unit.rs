@@ -36,10 +36,12 @@ pub enum LoweringUnit<'a> {
         lowered: String,
         root: CheckedStmtId,
     },
-    /// The wrapper of a trait default the struct `structure` inherits.
+    /// The wrapper of a trait default the struct `structure` inherits, at
+    /// `index` among the program's default wrappers.
     Wrapper {
         structure: &'a Stmt,
         wrapper: &'a CheckedDefaultWrapper,
+        index: usize,
     },
     /// A trait default, as its trait's member. `root` is its trait's
     /// statement node in the whole program, and its own `def`'s in a
@@ -63,7 +65,9 @@ impl LoweringUnit<'_> {
             Self::Method {
                 structure, index, ..
             } => (structure, *index),
-            Self::Wrapper { structure, wrapper } => (structure, wrapper.method_index),
+            Self::Wrapper {
+                structure, wrapper, ..
+            } => (structure, wrapper.method_index),
             _ => return None,
         };
         let StmtKind::Struct { name, .. } = &structure.kind else {
@@ -113,12 +117,14 @@ impl CheckedProgram {
                     units.extend(
                         self.default_wrappers()
                             .iter()
-                            .filter(|wrapper| {
+                            .enumerate()
+                            .filter(|(_, wrapper)| {
                                 wrapper.declaration == *name && wrapper.module == statement.module
                             })
-                            .map(|wrapper| LoweringUnit::Wrapper {
+                            .map(|(index, wrapper)| LoweringUnit::Wrapper {
                                 structure: statement,
                                 wrapper,
+                                index,
                             }),
                     );
                 }
@@ -303,6 +309,7 @@ impl CheckedUnit {
             LoweringUnit::Wrapper {
                 structure,
                 wrapper: inherited,
+                ..
             } => {
                 origin_parameters = struct_origin_parameters(structure);
                 wrapper = Some((*inherited).clone());
@@ -375,6 +382,7 @@ impl UnitProgram {
             UnitKind::Wrapper => LoweringUnit::Wrapper {
                 structure: statement?,
                 wrapper: self.program.default_wrappers().first()?,
+                index: 0,
             },
         })
     }

@@ -47,18 +47,17 @@ fn checked_main(src: &str) -> (Cfg, MirFunction) {
         .compile_source(src, Path::new("mir_test.mojo"))
         .expect("compile");
     let checked = compiled.checked();
-    let (params, body) = checked
-        .statements()
+    let tables = checked.tables();
+    let (params, body) = tables
+        .roots()
         .iter()
-        .find_map(|statement| match &statement.kind {
-            mojito::ast::StmtKind::Def {
-                name, params, body, ..
-            } if name == "main" => Some((
-                params
+        .find_map(|root| match &tables.statement(*root)?.op {
+            mojito::checked::CheckedStmtOp::Def(def) if def.name == "main" => Some((
+                def.params
                     .iter()
                     .map(|param| param.name.clone())
                     .collect::<Vec<_>>(),
-                body.clone(),
+                def.body.clone(),
             )),
             _ => None,
         })

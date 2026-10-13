@@ -11,7 +11,6 @@
 //! blocks and edges, so later passes are pure graph traversal. A local name
 //! resolves to its slot once, here, recorded per node in [`Cfg::slots`].
 
-use mojito_ast::ast::Stmt;
 use mojito_checked::checked::{
     CheckedExpr, CheckedNodeId, CheckedOp, CheckedProgram, CheckedStmtId, CheckedStmtOp,
     CheckedTables, SemanticAdjustment,
@@ -260,7 +259,7 @@ pub struct Cfg {
     pub n_params: usize,
     /// The program's typed semantic nodes and declarations, shared (not
     /// copied) with every other function's lowering. Kept by stable node id;
-    /// source locations are used only once, to find a body root's node.
+    /// a CFG is handed its body's statement ids and finds no node by location.
     pub checked: Arc<CheckedTables>,
     /// Checked storage types for variable slots known at HIR construction.
     pub var_types: HashMap<VarId, Ty>,
@@ -277,7 +276,11 @@ impl Cfg {
     /// variable interner **first**, so `VarId`s `0..params.len()` are the
     /// parameters — the call ABI the MIR/VM rely on to bind arguments. The final
     /// fall-through block gets an implicit `return None`.
-    pub fn build_checked_fn(checked: &CheckedProgram, params: &[String], body: &[Stmt]) -> Self {
+    pub fn build_checked_fn(
+        checked: &CheckedProgram,
+        params: &[String],
+        body: &[CheckedStmtId],
+    ) -> Self {
         Self::build_fn_with_context(
             params,
             HashSet::new(),
@@ -293,7 +296,7 @@ impl Cfg {
         checked: &CheckedProgram,
         params: &[String],
         shadow_captures: HashSet<String>,
-        body: &[Stmt],
+        body: &[CheckedStmtId],
     ) -> Self {
         Self::build_fn_with_context(
             params,
@@ -309,7 +312,7 @@ impl Cfg {
     pub fn build_checked_thunk(
         checked: &CheckedProgram,
         params: &[String],
-        prologue: &[Stmt],
+        prologue: &[CheckedStmtId],
         value: CheckedNodeId,
     ) -> Self {
         Self::build_fn_with_context(
@@ -389,7 +392,7 @@ impl Cfg {
     fn build_fn_with_context(
         params: &[String],
         shadow_captures: HashSet<String>,
-        body: &[Stmt],
+        body: &[CheckedStmtId],
         returned: Option<CheckedNodeId>,
         checked: Arc<CheckedTables>,
     ) -> Self {
@@ -409,10 +412,9 @@ impl Cfg {
             checked,
             slots: HashMap::new(),
         };
-        let statements = lower.statements(body);
-        let explicit = explicit_local_names(&lower.checked, &statements);
+        let explicit = explicit_local_names(&lower.checked, body);
         let mut implicit = HashSet::new();
-        collect_function_implicit_names(&lower.checked, &statements, &explicit, &mut implicit);
+        collect_function_implicit_names(&lower.checked, body, &explicit, &mut implicit);
         let mut implicit: Vec<_> = implicit.into_iter().collect();
         implicit.sort();
         for name in implicit {
@@ -423,14 +425,14 @@ impl Cfg {
         }
         lower.vars = vars;
         lower.scopes = vec![root_scope];
-        for id in &statements {
+        for id in body {
             lower.stmt(*id);
         }
         if let Some(value) = returned {
             lower.ret(Some(value));
         }
         lower.seal(Terminator::Return(None)); // implicit `return None` off the end
-        lower.finish(entry, params.len(), statements)
+        lower.finish(entry, params.len(), body.to_vec())
     }
 }
 
@@ -628,23 +630,6 @@ impl Lower {
             self.vars.push(name.to_string());
             (self.vars.len() - 1) as VarId
         }
-    }
-
-    /// The checked node of each body statement.
-    fn statements(&self, body: &[Stmt]) -> Vec<CheckedStmtId> {
-        body.iter()
-            .map(|statement| {
-                self.checked
-                    .statement_at(&statement.source_span())
-                    .unwrap_or_else(|| {
-                        panic!(
-                            "checked body statement at {:?} has no checked node",
-                            statement.source_span()
-                        )
-                    })
-                    .id
-            })
-            .collect()
     }
 
     fn finish(self, entry: BlockId, n_params: usize, body: Vec<CheckedStmtId>) -> Cfg {

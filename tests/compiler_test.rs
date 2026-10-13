@@ -1337,17 +1337,12 @@ fn generic_def_declares_no_clone() {
         clone_return_values(&program, "tag").is_empty(),
         "no clone of `tag` is declared"
     );
-    let tag = program
-        .checked()
-        .statements()
-        .iter()
-        .find(|statement| {
-            matches!(&statement.kind, mojito::ast::StmtKind::Def { name, .. } if name == "tag")
-        })
-        .expect("the `tag` template");
     let tables = program.checked().tables();
     let tag = tables
-        .statement_at(&tag.source_span())
+        .roots()
+        .iter()
+        .filter_map(|root| tables.statement(*root))
+        .find(|statement| matches!(&statement.op, CheckedStmtOp::Def(def) if def.name == "tag"))
         .expect("the template's checked node");
     let mut returned = Vec::new();
     tables.walk(&[tag.id], &mut |walked| {

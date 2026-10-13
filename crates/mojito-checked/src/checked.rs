@@ -2084,8 +2084,8 @@ pub enum WalkResult {
 ///
 /// Every function's HIR and MIR lowering shares them through one `Arc`:
 /// lowering a function never copies program-wide tables. A package unit
-/// encodes its own, less the location indexes, which
-/// [`Self::reindexed`] rebuilds from the nodes.
+/// encodes its own, less each node's identity, which [`Self::reindexed`]
+/// gives back from its position.
 #[derive(Debug, Default, serde::Serialize, serde::Deserialize)]
 pub struct CheckedTables {
     /// Indexed by `CheckedNodeId`.
@@ -2100,9 +2100,6 @@ pub struct CheckedTables {
     /// Each default wrapper's root statements, parallel to
     /// [`CheckedProgram::default_wrappers`].
     wrapper_roots: Vec<Vec<CheckedStmtId>>,
-    /// The last statement node at a source location.
-    #[serde(skip)]
-    statements_by_span: HashMap<SourceSpan, CheckedStmtId>,
 }
 
 impl CheckedTables {
@@ -2355,15 +2352,6 @@ impl CheckedTables {
     /// [`CheckedProgram::default_wrappers`].
     pub fn wrapper_roots(&self, index: usize) -> &[CheckedStmtId] {
         self.wrapper_roots.get(index).map_or(&[][..], Vec::as_slice)
-    }
-
-    /// The statement node at a statement's source location. Transitional,
-    /// for HIR's and MIR's syntax walks; R629 deletes it once both walk
-    /// statement nodes.
-    pub fn statement_at(&self, span: &SourceSpan) -> Option<&CheckedStmt> {
-        self.statements_by_span
-            .get(span)
-            .and_then(|id| self.statement(*id))
     }
 
     /// Visit the statement nodes `statements` and every node under them in
@@ -2691,7 +2679,6 @@ impl CheckedTables {
             mut statements,
             roots,
             wrapper_roots,
-            statements_by_span,
         } = arena;
         let declared: HashMap<&SourceSpan, CheckedDeclId> = declarations
             .iter()
@@ -2707,12 +2694,10 @@ impl CheckedTables {
             declarations,
             roots,
             wrapper_roots,
-            statements_by_span,
         }
     }
 
-    /// The tables with each node's identity its position, and their
-    /// statement location index rebuilt from the statement nodes.
+    /// The tables with each node's identity its position.
     fn reindexed(mut self) -> Self {
         for (index, node) in self.expressions.iter_mut().enumerate() {
             node.id = CheckedNodeId(index as u32);
@@ -2723,11 +2708,6 @@ impl CheckedTables {
         for (index, declaration) in self.declarations.iter_mut().enumerate() {
             declaration.id = CheckedDeclId(index as u32);
         }
-        self.statements_by_span = self
-            .statements
-            .iter()
-            .map(|statement| (statement.location(), statement.id))
-            .collect();
         self
     }
 
@@ -3691,8 +3671,7 @@ pub(crate) fn unit_tables(
 }
 
 /// The checked arena of `statements` and of `default_wrappers`' bodies, each
-/// node holding the facts `facts` recorded at its occurrence, and the nodes
-/// at each location; with `scan`, the traversal alone, each expression
+/// node holding the facts `facts` recorded at its occurrence; with `scan`, the traversal alone, each expression
 /// reported instead of built.
 fn build_checked_expressions(
     statements: &[Stmt],
@@ -3704,7 +3683,6 @@ fn build_checked_expressions(
         scan,
         nodes: Vec::new(),
         statements: Vec::new(),
-        statements_by_span: HashMap::new(),
         facts,
     };
     let roots = builder.block(statements);
@@ -3717,7 +3695,6 @@ fn build_checked_expressions(
         statements: builder.statements,
         roots,
         wrapper_roots,
-        statements_by_span: builder.statements_by_span,
     }
 }
 
@@ -3727,7 +3704,6 @@ struct CheckedArena {
     statements: Vec<CheckedStmt>,
     roots: Vec<CheckedStmtId>,
     wrapper_roots: Vec<Vec<CheckedStmtId>>,
-    statements_by_span: HashMap<SourceSpan, CheckedStmtId>,
 }
 
 /// The checked arena under construction.
@@ -3737,7 +3713,6 @@ struct ArenaBuilder<'a, 's> {
     scan: Option<&'s mut dyn FnMut(&Expr)>,
     nodes: Vec<CheckedExpr>,
     statements: Vec<CheckedStmt>,
-    statements_by_span: HashMap<SourceSpan, CheckedStmtId>,
     facts: &'a HashMap<SourceSpan, NodeFacts>,
 }
 
@@ -4126,8 +4101,7 @@ impl<'a> ArenaBuilder<'a, '_> {
         if self.scan.is_some() {
             return CheckedStmtId(0);
         }
-        let span = statement.source_span();
-        let facts = self.facts(&span);
+        let facts = self.facts(&statement.source_span());
         let id = CheckedStmtId(self.statements.len() as u32);
         self.statements.push(CheckedStmt {
             id,
@@ -4139,7 +4113,6 @@ impl<'a> ArenaBuilder<'a, '_> {
             binding_ty: facts.binding_ty.clone(),
             declaration: None,
         });
-        self.statements_by_span.insert(span, id);
         id
     }
 

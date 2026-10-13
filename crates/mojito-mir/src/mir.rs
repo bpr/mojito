@@ -442,9 +442,9 @@ pub fn lower_unit(
             let _def = timing::span("def");
             lower_function(
                 statement,
+                declared_body(checked.tables(), root, 0),
                 &declared_defaults(checked.tables(), root, 0),
                 checked,
-                overloads,
                 functions,
                 declarations,
                 invariant_errors,
@@ -483,6 +483,7 @@ pub fn lower_unit(
                     keyword_only: m.keyword_only,
                     type_params: &m.type_params,
                     body: &m.body,
+                    statements: declared_body(checked.tables(), root, spelled),
                     defaults: declared_defaults(checked.tables(), root, spelled),
                 },
                 functions,
@@ -493,6 +494,7 @@ pub fn lower_unit(
         LoweringUnit::Wrapper {
             structure: s,
             wrapper,
+            index,
         } => {
             let _struct = timing::span("struct");
             let Some(structure) = StructLowering::of(checked, s) else {
@@ -511,6 +513,7 @@ pub fn lower_unit(
                     keyword_only: None,
                     type_params: &[],
                     body: &wrapper.body,
+                    statements: checked.tables().wrapper_roots(index),
                     defaults: Vec::new(),
                 },
                 functions,
@@ -524,9 +527,9 @@ pub fn lower_unit(
             let _other = timing::span("other");
             lower_function(
                 &member.declaration,
+                declared_body(checked.tables(), root, member.method_index),
                 &declared_defaults(checked.tables(), root, member.method_index),
                 checked,
-                overloads,
                 functions,
                 declarations,
                 invariant_errors,
@@ -622,19 +625,22 @@ fn lower_program(
             &mut invariant_errors,
         );
     }
-    let toplevel: Vec<Stmt> = checked
-        .statements()
+    let toplevel: Vec<CheckedStmtId> = checked
+        .tables()
+        .roots()
         .iter()
-        .filter(|s| {
-            !matches!(
-                s.kind,
-                StmtKind::Def { .. }
-                    | StmtKind::Struct { .. }
-                    | StmtKind::Trait { .. }
-                    | StmtKind::Comptime { .. }
-            )
+        .copied()
+        .filter(|root| {
+            checked.tables().statement(*root).is_some_and(|statement| {
+                !matches!(
+                    statement.op,
+                    CheckedStmtOp::Def(_)
+                        | CheckedStmtOp::Struct(_)
+                        | CheckedStmtOp::Trait(_)
+                        | CheckedStmtOp::Comptime { .. }
+                )
+            })
         })
-        .cloned()
         .collect();
     let mut toplevel_fn = {
         let _toplevel = timing::span("toplevel");
@@ -843,12 +849,12 @@ fn mir_default(checked: &CheckedProgram, default: Option<&Expr>) -> Option<Check
 }
 
 /// Lower the function declaration `s`: its declaration, its parameter
-/// defaults, and its body.
+/// defaults, and its body, whose statement nodes are `statements`.
 fn lower_function(
     s: &Stmt,
+    statements: &[CheckedStmtId],
     declared_defaults: &[Option<CheckedNodeId>],
     checked: &CheckedProgram,
-    overloads: &std::sync::Arc<mojito_checked::package::ProgramOverloads>,
     functions: &mut Vec<(String, MirFunction)>,
     declarations: &mut MirDeclarations,
     invariant_errors: &mut Vec<String>,
@@ -865,6 +871,7 @@ fn lower_function(
     else {
         return;
     };
+    let overloads = checked.overloads();
     let named_result = params
         .iter()
         .find(|p| matches!(p.convention, Some(ArgConvention::Out)));
@@ -1079,6 +1086,7 @@ fn lower_function(
             error_ty: effect.error,
             named_result: named_result.map(|p| p.name.as_str()),
             body,
+            statements,
             returned: None,
             overloads,
         },
@@ -1395,6 +1403,7 @@ fn lower_struct_member<P: DeclaredParam>(
             error_ty: effect.error,
             named_result: named_result.map(DeclaredParam::name),
             body: m.body,
+            statements: m.statements,
             returned: None,
             overloads,
         },
@@ -1452,6 +1461,8 @@ struct StructMember<'a, P> {
     /// Its own compile-time parameters.
     type_params: &'a [mojito_ast::ast::TypeParam],
     body: &'a [Stmt],
+    /// Its body's statement nodes.
+    statements: &'a [CheckedStmtId],
     /// Each parameter's checked default node ([`declared_defaults`]).
     defaults: Vec<Option<CheckedNodeId>>,
 }
@@ -1528,6 +1539,29 @@ fn lower_default<P: DeclaredParam>(
     })
 }
 
+/// The body statement nodes of the declaration `member` of the statement
+/// node `root`: a `def`'s own, the struct method's at `member`, or the trait
+/// member's default at `member`.
+fn declared_body(
+    tables: &mojito_checked::checked::CheckedTables,
+    root: CheckedStmtId,
+    member: usize,
+) -> &[CheckedStmtId] {
+    match tables.statement(root).map(|statement| &statement.op) {
+        Some(CheckedStmtOp::Def(def)) => &def.body,
+        Some(CheckedStmtOp::Struct(declaration)) => declaration
+            .methods
+            .get(member)
+            .map_or(&[][..], |method| &method.body),
+        Some(CheckedStmtOp::Trait(declaration)) => declaration
+            .methods
+            .get(member)
+            .and_then(|method| method.default_body.as_deref())
+            .unwrap_or_default(),
+        _ => &[],
+    }
+}
+
 /// The checked default node of each parameter of the declaration `member`
 /// of the statement node `root`, parallel to its syntax parameters: a `def`'s
 /// own, the struct method's at `member`, or the trait member's at `member`,
@@ -1571,7 +1605,7 @@ struct ExpressionThunk<'a> {
     checked: &'a CheckedProgram,
     overloads: &'a std::sync::Arc<mojito_checked::package::ProgramOverloads>,
     name: &'a str,
-    prologue: &'a [Stmt],
+    prologue: &'a [CheckedStmtId],
     node: CheckedNodeId,
     binders: &'a EnclosingBinders,
     ty: &'a Ty,
@@ -1599,6 +1633,7 @@ fn lower_expression_thunk(
         .iter()
         .map(|(name, _)| name.clone())
         .collect();
+    let syntax = prologue_syntax(checked, prologue);
     lower_fn_nested(
         FunctionLowering {
             checked,
@@ -1618,7 +1653,8 @@ fn lower_expression_thunk(
             raises: false,
             error_ty: None,
             named_result: None,
-            body: prologue,
+            body: &syntax,
+            statements: prologue,
             returned: Some(node),
             overloads,
         },
@@ -1733,8 +1769,8 @@ struct ThunkRequest {
 }
 
 /// A local `comptime` binding that denotes no parameter expression: its
-/// owner and its statement node, whose syntax a thunk that reads the binding
-/// rebuilds as its prologue until thunk bodies are statement nodes (R629).
+/// owner and its statement node, which a thunk that reads the binding lowers
+/// in its prologue.
 #[derive(Clone)]
 struct EvaluatedBinding {
     owner: mojito_types::origin::OwnerId,
@@ -2070,14 +2106,14 @@ impl ComptimeThunks {
     }
 }
 
-/// The statements of the `evaluated` bindings a thunk returning the
+/// The statement nodes of the `evaluated` bindings a thunk returning the
 /// expression of node `node` reads, in declaration order: the ones the
 /// expression names, and the ones their values name in turn.
 fn thunk_prologue(
     checked: &CheckedProgram,
     node: CheckedNodeId,
     evaluated: &[EvaluatedBinding],
-) -> Vec<Stmt> {
+) -> Vec<CheckedStmtId> {
     let mut read = bindings_read(checked.tables(), node);
     let mut statements = Vec::new();
     for binding in evaluated.iter().rev() {
@@ -2087,16 +2123,25 @@ fn thunk_prologue(
             {
                 read.extend(bindings_read(checked.tables(), *value));
             }
-            statements.push(
-                checked
-                    .tables()
-                    .statement_syntax_of(binding.id)
-                    .expect("an evaluated binding names a statement node of its tables"),
-            );
+            statements.push(binding.id);
         }
     }
     statements.reverse();
     statements
+}
+
+/// The syntax of a thunk's `prologue`, rebuilt for nested discovery's
+/// syntax walk until it walks statement nodes (R655).
+fn prologue_syntax(checked: &CheckedProgram, prologue: &[CheckedStmtId]) -> Vec<Stmt> {
+    prologue
+        .iter()
+        .map(|id| {
+            checked
+                .tables()
+                .statement_syntax_of(*id)
+                .expect("an evaluated binding names a statement node of its tables")
+        })
+        .collect()
 }
 
 /// The call the check selected for an expression, among the expression's

@@ -43,7 +43,11 @@ pub(super) struct FunctionLowering<'a> {
     pub(super) raises: bool,
     pub(super) error_ty: Option<Ty>,
     pub(super) named_result: Option<&'a str>,
+    /// The body's syntax, which nested discovery walks beside `statements`
+    /// (R643).
     pub(super) body: &'a [Stmt],
+    /// The body's statement nodes, which HIR lowers.
+    pub(super) statements: &'a [CheckedStmtId],
     /// An expression thunk's returned value, which HIR lowers after
     /// `body`.
     pub(super) returned: Option<CheckedNodeId>,
@@ -74,15 +78,16 @@ pub(super) fn lower_fn_nested(
         error_ty,
         named_result,
         body,
+        statements,
         returned,
         overloads,
     } = request;
-    let children = analyze_root_children(checked, name, param_names, body);
-    let registry = scope_registry(body, &children, &HashMap::new());
+    let children = analyze_root_children(checked, name, body, statements);
+    let registry = scope_registry(&children, &HashMap::new());
 
     let mut cfg = returned.map_or_else(
-        || Cfg::build_checked_fn(checked, param_names, body),
-        |value| Cfg::build_checked_thunk(checked, param_names, body, value),
+        || Cfg::build_checked_fn(checked, param_names, statements),
+        |value| Cfg::build_checked_thunk(checked, param_names, statements, value),
     );
     // Parameter slot types come from the checked declaration, not from
     // name-matched body expressions (same-named bindings in other functions
@@ -169,71 +174,130 @@ pub(super) fn lower_fn_nested(
 /// the body, its control-flow blocks, and its kept compile-time regions),
 /// without descending into another declaration's body, each with the
 /// `comptime for` statements of this scope enclosing it, outermost first.
+/// The syntax `body` is walked in lockstep with its statement nodes `ids`.
 /// Recursive lifting calls this once per lexical scope.
 fn find_nested_defs<'a>(
+    tables: &mojito_checked::checked::CheckedTables,
     body: &'a [Stmt],
-    loops: &mut Vec<&'a Stmt>,
-    out: &mut Vec<(&'a Stmt, Vec<&'a Stmt>)>,
+    ids: &[CheckedStmtId],
+    loops: &mut Vec<CheckedStmtId>,
+    out: &mut Vec<NestedSite<'a>>,
 ) {
-    for s in body {
+    debug_assert_eq!(body.len(), ids.len());
+    for (s, id) in body.iter().zip(ids) {
+        let node = tables
+            .statement(*id)
+            .expect("a body statement id names a node of its tables");
+        debug_assert_eq!(s.syntax_id, node.syntax_id);
         // Lambda expressions anywhere in this statement's own expressions
         // (conditions, iterables, values, arguments) declare hidden nested
         // definitions in this scope.
         let mut lambdas = Vec::new();
         mojito_ast::ast::lambdas_in_stmt(s, &mut lambdas);
+        let defs = lambda_defs(tables, node);
         for lambda in lambdas {
             if let mojito_ast::ast::ExprKind::Lambda { def } = &lambda.kind {
-                out.push((def, loops.clone()));
+                let node = defs
+                    .iter()
+                    .copied()
+                    .find(|id| {
+                        tables
+                            .statement(*id)
+                            .is_some_and(|node| node.syntax_id == def.syntax_id)
+                    })
+                    .expect("a lambda's hidden def has a statement node");
+                out.push(NestedSite {
+                    statement: def,
+                    node,
+                    loops: loops.clone(),
+                });
             }
         }
-        match &s.kind {
-            StmtKind::Def { .. } => out.push((s, loops.clone())),
+        let bodies: Vec<&[Stmt]> = match &s.kind {
+            StmtKind::Def { .. } => {
+                out.push(NestedSite {
+                    statement: s,
+                    node: *id,
+                    loops: loops.clone(),
+                });
+                continue;
+            }
             StmtKind::If { branches, orelse } | StmtKind::ComptimeIf { branches, orelse } => {
-                for (_, b) in branches {
-                    find_nested_defs(b, loops, out);
-                }
-                if let Some(e) = orelse {
-                    find_nested_defs(e, loops, out);
-                }
+                branches
+                    .iter()
+                    .map(|(_, body)| body.as_slice())
+                    .chain(orelse.as_deref())
+                    .collect()
             }
             StmtKind::While { body, orelse, .. } | StmtKind::For { body, orelse, .. } => {
-                find_nested_defs(body, loops, out);
-                if let Some(orelse) = orelse {
-                    find_nested_defs(orelse, loops, out);
-                }
+                std::iter::once(body.as_slice())
+                    .chain(orelse.as_deref())
+                    .collect()
             }
-            StmtKind::ComptimeFor { body, .. } => {
-                loops.push(s);
-                find_nested_defs(body, loops, out);
-                loops.pop();
-            }
-            StmtKind::Scope(body) => find_nested_defs(body, loops, out),
+            StmtKind::ComptimeFor { body, .. } | StmtKind::Scope(body) => vec![body.as_slice()],
             StmtKind::Try {
                 body,
                 except,
                 orelse,
                 finalbody,
-            } => {
-                find_nested_defs(body, loops, out);
-                if let Some((_, b)) = except {
-                    find_nested_defs(b, loops, out);
-                }
-                if let Some(e) = orelse {
-                    find_nested_defs(e, loops, out);
-                }
-                if let Some(f) = finalbody {
-                    find_nested_defs(f, loops, out);
-                }
-            }
-            _ => {}
+            } => std::iter::once(body.as_slice())
+                .chain(except.as_ref().map(|(_, body)| body.as_slice()))
+                .chain(orelse.as_deref())
+                .chain(finalbody.as_deref())
+                .collect(),
+            _ => continue,
+        };
+        let node_bodies = node.op.bodies();
+        debug_assert_eq!(bodies.len(), node_bodies.len());
+        let region = matches!(node.op, CheckedStmtOp::ComptimeFor { .. });
+        if region {
+            loops.push(*id);
+        }
+        for (body, ids) in bodies.into_iter().zip(node_bodies) {
+            find_nested_defs(tables, body, ids, loops, out);
+        }
+        if region {
+            loops.pop();
         }
     }
+}
+
+/// The hidden `def` of each lambda among statement `node`'s own
+/// expressions; a lambda inside a lambda is the inner scope's.
+fn lambda_defs(
+    tables: &mojito_checked::checked::CheckedTables,
+    node: &mojito_checked::checked::CheckedStmt,
+) -> Vec<CheckedStmtId> {
+    let mut defs = Vec::new();
+    for expression in node.op.expressions() {
+        tables.walk_expression(expression, &mut |walked| match walked {
+            Walked::Expression(mojito_checked::checked::CheckedExpr {
+                op: CheckedOp::Lambda { def },
+                ..
+            }) => {
+                defs.push(*def);
+                WalkResult::SkipBodies
+            }
+            _ => WalkResult::Advance,
+        });
+    }
+    defs
+}
+
+/// A declaration [`find_nested_defs`] found: its syntax, its statement
+/// node, and the `comptime for` statements of its scope enclosing it,
+/// outermost first.
+struct NestedSite<'a> {
+    statement: &'a Stmt,
+    node: CheckedStmtId,
+    loops: Vec<CheckedStmtId>,
 }
 
 /// One declaration in the lexical closure tree. Checked capture facts already
 /// include any ancestor forwarding required across intermediate functions.
 struct NestedNode<'a> {
     statement: &'a Stmt,
+    node: CheckedStmtId,
     /// The indices of the `comptime for` loops of the parent's body that
     /// enclose the declaration, outermost first: the binders of the regions
     /// it is declared in.
@@ -265,16 +329,20 @@ impl NestedNode<'_> {
 
 fn analyze_node<'a>(
     checked: &mojito_checked::checked::CheckedProgram,
-    statement: &'a Stmt,
-    loops: &[&Stmt],
+    site: NestedSite<'a>,
     parent_mangled: &str,
     duplicate_name: bool,
 ) -> NestedNode<'a> {
+    let NestedSite {
+        statement,
+        node,
+        loops,
+    } = site;
     let StmtKind::Def { name, body, .. } = &statement.kind else {
         unreachable!("nested tree contains only def statements")
     };
 
-    let (declaration, defaults) = checked_nested_declaration(checked, statement);
+    let (declaration, def) = checked_nested_declaration(checked, node, name);
     let binding = declaration
         .binding
         .expect("checked nested function has no value binding");
@@ -286,13 +354,14 @@ fn analyze_node<'a>(
     };
     let captures = analyze_captures(declaration);
 
-    let children = analyze_root_children(checked, &mangled, &[], body);
+    let children = analyze_root_children(checked, &mangled, body, &def.body);
 
     NestedNode {
         statement,
+        node,
         loop_indices: loops
             .iter()
-            .filter_map(|statement| loop_index(checked, statement))
+            .filter_map(|id| loop_index(checked, *id))
             .collect(),
         binding,
         source_name: name.clone(),
@@ -306,7 +375,7 @@ fn analyze_node<'a>(
             })
             .cloned()
             .map(mir_nested_callable_ty),
-        defaults,
+        defaults: def.params.iter().map(|param| param.default).collect(),
         children,
     }
 }
@@ -315,7 +384,6 @@ fn analyze_node<'a>(
 /// declarations and inherited callables are keyed by checked identity, so
 /// same-spelled bindings coexist without shadow-removal heuristics.
 fn scope_registry(
-    _body: &[Stmt],
     children: &[NestedNode<'_>],
     inherited: &HashMap<mojito_types::origin::OwnerId, NestedInfo>,
 ) -> HashMap<mojito_types::origin::OwnerId, NestedInfo> {
@@ -377,15 +445,15 @@ fn lower_nested_node(
     enclosing: Enclosing<'_>,
 ) {
     let ds = node.statement;
+    let def = def_of(checked, node.node);
     if let StmtKind::Def {
         params: dparams,
         positional_only,
         keyword_only,
-        body: dbody,
         ..
     } = &ds.kind
     {
-        let registry = scope_registry(dbody, &node.children, inherited_registry);
+        let registry = scope_registry(&node.children, inherited_registry);
         let captures = &node.captures;
         let mangled = &node.mangled;
         let capture_types: Vec<Ty> = captures
@@ -605,7 +673,7 @@ fn lower_nested_node(
             .map(|capture| capture.name.clone())
             .collect();
         let mut ncfg =
-            Cfg::build_checked_fn_with_captures(checked, &names, immutable_captures, dbody);
+            Cfg::build_checked_fn_with_captures(checked, &names, immutable_captures, &def.body);
         // Every lifted slot takes its checker-owned storage type. In particular,
         // an intermediate closure may only forward a captured sibling closure
         // to a descendant, so body expression inference has no use from which
@@ -758,64 +826,62 @@ fn analyze_captures(
         .collect()
 }
 
-/// The checked declaration of the nested `def` `statement`, and each of its
-/// parameters' checked default node.
+/// The checked declaration of the nested `def` `name` at statement node
+/// `node`, and its node's `def`.
 fn checked_nested_declaration<'a>(
     checked: &'a mojito_checked::checked::CheckedProgram,
-    statement: &Stmt,
+    node: CheckedStmtId,
+    name: &str,
 ) -> (
     &'a mojito_checked::checked::CheckedDeclaration,
-    Vec<Option<CheckedNodeId>>,
+    &'a mojito_checked::checked::CheckedDef,
 ) {
-    let StmtKind::Def { name, .. } = &statement.kind else {
-        unreachable!("nested declaration lookup requires a def")
-    };
-    let node = checked.tables().statement_at(&statement.source_span());
-    let declaration = node
+    let declaration = checked
+        .tables()
+        .statement(node)
         .and_then(|node| node.declaration)
         .and_then(|id| checked.declaration(id))
         .expect("checked nested function declaration is missing");
-    let defaults = match node.map(|node| &node.op) {
-        Some(mojito_checked::checked::CheckedStmtOp::Def(def)) => {
-            def.params.iter().map(|param| param.default).collect()
-        }
-        _ => Vec::new(),
-    };
     debug_assert!(
         declaration.kind == mojito_checked::checked::CheckedDeclKind::Function
-            && declaration.name == *name
+            && declaration.name == name
     );
-    (declaration, defaults)
+    (declaration, def_of(checked, node))
+}
+
+/// The `def` of the nested declaration at statement node `node`.
+fn def_of(
+    checked: &mojito_checked::checked::CheckedProgram,
+    node: CheckedStmtId,
+) -> &mojito_checked::checked::CheckedDef {
+    match checked.tables().statement(node).map(|node| &node.op) {
+        Some(CheckedStmtOp::Def(def)) => def,
+        _ => unreachable!("nested tree contains only def statements"),
+    }
 }
 
 fn analyze_root_children<'a>(
     checked: &mojito_checked::checked::CheckedProgram,
     parent_mangled: &str,
-    _parameter_names: &[String],
     body: &'a [Stmt],
+    ids: &[CheckedStmtId],
 ) -> Vec<NestedNode<'a>> {
     let mut direct = Vec::new();
-    find_nested_defs(body, &mut Vec::new(), &mut direct);
+    find_nested_defs(checked.tables(), body, ids, &mut Vec::new(), &mut direct);
     let mut totals = HashMap::<String, usize>::new();
-    for (declaration, _) in &direct {
-        if let StmtKind::Def { name, .. } = &declaration.kind {
+    for site in &direct {
+        if let StmtKind::Def { name, .. } = &site.statement.kind {
             *totals.entry(name.clone()).or_default() += 1;
         }
     }
     direct
         .into_iter()
-        .filter_map(|(declaration, loops)| {
-            let StmtKind::Def { name, .. } = &declaration.kind else {
+        .filter_map(|site| {
+            let StmtKind::Def { name, .. } = &site.statement.kind else {
                 return None;
             };
-            let child = analyze_node(
-                checked,
-                declaration,
-                &loops,
-                parent_mangled,
-                totals.get(name).copied().unwrap_or_default() > 1,
-            );
-            Some(child)
+            let duplicate = totals.get(name).copied().unwrap_or_default() > 1;
+            Some(analyze_node(checked, site, parent_mangled, duplicate))
         })
         .collect()
 }
@@ -824,9 +890,9 @@ fn analyze_root_children<'a>(
 /// it ([`LoopIndex::of`]).
 fn loop_index(
     checked: &mojito_checked::checked::CheckedProgram,
-    statement: &Stmt,
+    id: CheckedStmtId,
 ) -> Option<LoopIndex> {
-    let node = checked.tables().statement_at(&statement.source_span())?;
+    let node = checked.tables().statement(id)?;
     let mojito_checked::checked::CheckedStmtOp::ComptimeFor { iter, .. } = &node.op else {
         return None;
     };

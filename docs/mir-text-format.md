@@ -1032,8 +1032,8 @@ mojito-package 35
   written at, beside the node of the construction the check spelled for
   it. The nodes are a module `def`, a trait default's declaration, a
   module constant, or a struct shell holding only its name and the one
-  method (none for a wrapper). A node's identity is its position, and
-  the location indexes are rebuilt on decode. No statement is encoded
+  method (none for a wrapper). A node's identity is its position, given
+  back on decode. No statement is encoded
   as syntax; an expression is encoded only inside an annotation's type,
   compile-time parameter, or decorator syntax (R628, R630). The facts of
   declaration sites (checked annotation types, compile-time parameter
