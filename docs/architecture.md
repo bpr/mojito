@@ -2447,6 +2447,15 @@ returns to read that slot, and exposes its declared type as the function result.
 The caller therefore invokes a named-result function exactly like an ordinary
 returning function and never supplies the `out` argument.
 
+A `var x: T` without an initializer declares its slot (`HirInstr::Declare`,
+carrying the checker's declared type as the statement's `binding_ty`) with no
+def, as upstream allocates the storage without a value. MIR records the slot's
+type and binding and emits nothing; ownership analysis starts every
+non-parameter slot uninitialized (see the store-drop flow under drop
+elaboration), so the first assignment initializes the slot and destroys
+nothing. The checker's `Uninitialized` marker has no value: lowering it as an
+expression is an explicit `Unsupported`.
+
 Trailing `where` clauses compile once into the checked `GenericConstraint`
 algebra. The `(condition, "message")` form becomes a `WithMessage` wrapper:
 evaluation, implication, conformance assumptions, and specialization-closure

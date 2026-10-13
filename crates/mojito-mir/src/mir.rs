@@ -2535,7 +2535,7 @@ fn reassigned_names(
     for hb in cfg.g.node_indices() {
         for instr in &cfg.g[hb].instrs {
             match instr {
-                HirInstr::Bind { dest, .. } => {
+                HirInstr::Bind { dest, .. } | HirInstr::Declare { dest, .. } => {
                     if let Some(name) = cfg.vars.get(*dest as usize) {
                         bump(&mut counts, name);
                     }

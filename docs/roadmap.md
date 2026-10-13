@@ -57,24 +57,6 @@ Track: `native`.
 The ABI-bump collector is last whatever else moves, because it batches every
 change that needs a new `MJRT_ABI_VERSION`.
 
-- [ ] **R727 Natively, a late-initialized local fails to lower**
-
-  Problem: `var a: Int` followed by `a = 1` stops natively with
-  "unsupported read of erased analysis register" at the declaration, where
-  the VM and the pin run it.
-  - A struct local (`var a: S` then `a = S(1)`) stops the same way, with
-    "undefined aggregate register", in a `try` body or outside one.
-  - It fails in `main` and in a helper `def`, and after an `if`/`else`
-    that assigns both arms.
-  - No `assets/ok` fixture declares a function local without an
-    initializer, so the parity manifest never ran the shape.
-  - Once fixed, add the declared-before-initialized `try` shape (`var a:
-    S; var b = S(2); a = S(1)` before a raise, destroying `b` then `a`)
-    to `assets/ok/try_raise_edge_drop_order.mojo`.
-  - Found while landing R720 (2026-10-13).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R433 Natively, a struct pack element's `write_to` takes the
   reflective default**
 

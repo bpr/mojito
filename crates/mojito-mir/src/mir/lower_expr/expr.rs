@@ -450,7 +450,11 @@ impl<'a> Flatten<'a> {
             CheckedOp::Float(x) => self.literal(checked, Const::FloatLiteral(x.clone())),
             CheckedOp::Bool(b) => self.literal(checked, Const::Bool(*b)),
             CheckedOp::Str(s) => self.literal(checked, Const::Str(s.clone())),
-            CheckedOp::None | CheckedOp::Uninitialized => self.literal(checked, Const::None),
+            CheckedOp::None => self.literal(checked, Const::None),
+            CheckedOp::Uninitialized => self.unsupported_value(
+                node.location(),
+                "an uninitialized declaration's marker has no value",
+            ),
             // The `p[]` dereference marker: the checker validated the pointer
             // receiver, and offset 0 is the whole lowering.
             CheckedOp::EmptySubscript => self.literal(checked, Const::Int(0)),

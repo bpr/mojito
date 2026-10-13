@@ -91,6 +91,38 @@ fn struct_binder_named_local_keeps_its_own_type() {
 }
 
 #[test]
+fn uninitialized_declaration_defines_nothing_before_its_first_assignment() {
+    let source = "def main():\n    var a: Int\n    a = 1\n    print(a)\n";
+    let mir = checked_program_mir(source);
+    let main = mir_function(&mir, "main");
+    assert!(
+        matches!(binder_slot_ty(main, "a"), Some(TyKind::Int)),
+        "{main:#?}"
+    );
+    let slot = main
+        .var_names
+        .iter()
+        .position(|name| name == "a")
+        .expect("a slot") as u32;
+    let instrs: Vec<_> = main.blocks.iter().flat_map(|block| &block.instrs).collect();
+    assert!(
+        !instrs.iter().any(|instr| matches!(
+            instr,
+            MirInstr::Const {
+                k: mojito::mir::Const::None,
+                ..
+            }
+        )),
+        "{main:#?}"
+    );
+    let defs = instrs
+        .iter()
+        .filter(|instr| matches!(instr, MirInstr::DefVar { var, .. } if *var == slot))
+        .count();
+    assert_eq!(defs, 1, "{main:#?}");
+}
+
+#[test]
 fn split_iterator_slot_is_typed_by_its_iter_result() {
     let source = "def first_or[C: Iterable](items: C, default: C.Element) -> C.Element:\n\
                   \x20   for item in items:\n        return item.copy()\n\

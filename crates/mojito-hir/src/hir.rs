@@ -76,6 +76,13 @@ pub type VarId = u32;
 /// block's [`Terminator`], never here.
 #[derive(Debug, Clone)]
 pub enum HirInstr {
+    /// `var x: T` without an initializer: the slot exists, uninitialized,
+    /// with no def. The first assignment initializes it.
+    Declare {
+        dest: VarId,
+        ty: Ty,
+        binding: Option<mojito_types::origin::OwnerId>,
+    },
     /// A variable definition (`var x = e`, or a reassignment): a dataflow *def*.
     /// `binding_ty` is the resolved checked type for an initializing binding.
     /// Reassignments use `None` and retain the existing slot type.
@@ -1105,6 +1112,22 @@ impl Lower {
             }
             CheckedStmtOp::Return(value) => self.ret(*value),
 
+            CheckedStmtOp::VarDecl { name, value, .. }
+                if checked
+                    .expression(*value)
+                    .is_some_and(|node| matches!(node.op, CheckedOp::Uninitialized)) =>
+            {
+                let Some(ty) = s.binding_ty.clone() else {
+                    self.push(HirInstr::Stmt(self.statement(id)));
+                    return;
+                };
+                let dest = self.declare_var(name);
+                self.push(HirInstr::Declare {
+                    dest,
+                    ty,
+                    binding: s.binding,
+                });
+            }
             CheckedStmtOp::VarDecl { name, value, .. } => {
                 let binding_ty = checked
                     .expression(*value)

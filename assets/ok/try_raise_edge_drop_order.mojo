@@ -1,6 +1,7 @@
 # A raise inside a `try` destroys the body's live values in reverse
 # declaration order: an operator, method, free, or constructor call over
-# temporaries, and a named local beside them.
+# temporaries, a named local beside them, and a local declared before it
+# is initialized.
 
 
 struct S(Movable):
@@ -83,5 +84,21 @@ def main():
         var n = may(1)
         look(c, d)
         print(n)
+    except e:
+        print("caught", e)
+    try:
+        var a: S
+        var b = S(2)
+        a = S(1)
+        var n = may(9)
+        print(a.v, b.v, n)
+    except e:
+        print("caught", e)
+    try:
+        var a: S
+        var b = S(2)
+        a = S(1)
+        var x = a + S(9)
+        print(b.v, x.v)
     except e:
         print("caught", e)

@@ -41,6 +41,12 @@ impl<'a> Flatten<'a> {
             } => self.with_statement_loans(|this| {
                 this.lower_bind(*dest, this.handle(expr), binding_ty.as_ref(), *binding);
             }),
+            HirInstr::Declare { dest, ty, binding } => {
+                self.var_types.insert(*dest, ty.clone());
+                if let Some(binding) = binding {
+                    self.owner_vars.insert(*binding, *dest);
+                }
+            }
             HirInstr::BorrowIter {
                 dest,
                 expr,

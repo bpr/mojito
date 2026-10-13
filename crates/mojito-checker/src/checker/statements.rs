@@ -820,6 +820,7 @@ impl Checker {
                     };
                     let declared = self
                         .resolve_storage_annotation(annotation, super::StorageStrictness::Full)?;
+                    self.record_at(stmt.source_span()).binding_ty = Some(declared.clone());
                     self.declare(name, declared)?;
                     self.record_statement_binding(stmt, name);
                     if let Some(owner) = self.lookup_owner(name) {

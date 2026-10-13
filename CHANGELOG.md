@@ -8,6 +8,12 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A local declared without an initializer (`var a: Int`, `var a: S`) no
+  longer stores a placeholder `None` into its slot; its first assignment
+  initializes it (R727). Natively such a local no longer stops at an
+  "erased analysis register" or "undefined aggregate register", and on the
+  VM a struct local assigned in both arms of an `if` and then read no
+  longer fails MIR verification.
 - A raise in a `try` body destroys the body's live values in reverse
   declaration order, as the pin does (R720): `S(1) + S(9)` over a raising
   `__add__`, a raising method or free call over temporaries, and a raising
