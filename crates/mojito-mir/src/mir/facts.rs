@@ -115,6 +115,14 @@ impl Flatten<'_> {
             .and_then(|binding| self.nested.get(&binding))
             .cloned()
     }
+
+    /// The slot of the local call `expression`, written `name`, calls
+    /// through: its binding's, when that binding is a local or parameter.
+    pub(super) fn local_callee(&mut self, expression: &Expr, name: &str) -> Option<VarId> {
+        self.checked_owner(expression)
+            .and_then(|owner| self.local_binding_var(owner, name))
+    }
+
     /// Every owner loan carried into an aggregate expression.  An aggregate may
     /// contain more than one reference-valued field, so this must remain plural:
     /// keeping only the first borrow makes later fields dangling-capable.

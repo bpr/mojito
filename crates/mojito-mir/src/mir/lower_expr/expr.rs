@@ -768,7 +768,10 @@ impl Flatten<'_> {
         {
             return self.load_nested_closure(&name, &info, node.location());
         }
-        if !self.vars.contains(&name) && self.overloads.is_function(&name) {
+        let local = node
+            .binding
+            .and_then(|owner| self.local_binding_var(owner, &name));
+        if local.is_none() && self.overloads.is_function(&name) {
             return self.literal(node, Const::Function(name));
         }
         // A module constant is the parameter value the check recorded.
@@ -787,9 +790,10 @@ impl Flatten<'_> {
         if let Some(value) = denoted {
             return self.param_value_register(e, value);
         }
-        let var = match node.binding {
-            Some(owner) => self.binding_var(owner, &name),
-            None => self.var(&name),
+        let var = match (local, node.binding) {
+            (Some(var), _) => var,
+            (None, Some(owner)) => self.binding_var(owner, &name),
+            (None, None) => self.var(&name),
         };
         self.read_slot(var, node.location(), Some(node))
     }

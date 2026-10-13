@@ -4774,21 +4774,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R637 A call through a shadowed local callable calls the outer one**
-
-  `f()` in a nested scope that redeclares `var f` calls the enclosing
-  scope's `f`, because MIR finds a local callee's slot by the call's
-  source spelling (`call_expr`, `var(name)`), not the call node's binding.
-  - Probe: `var f = one`, then in a `for` body `var f = two` and
-    `print(f())`, then `print(f())` after the loop; it prints `1` twice,
-    where `2` then `1` is meant (HIR names the inner slot `f$shadowN`).
-  - The lever: the callee is the call node's binding's slot
-    (`binding_var`), as a name read's is since R618; confirm the probe
-    against the pin first.
-  - Found while landing R618 (2026-10-12).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R619 MIR lowers calls and method calls from syntax**
 
   MIR lowering matches `ExprKind` for calls and method calls

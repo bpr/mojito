@@ -633,6 +633,7 @@ assets/ok/self_hosted_dict.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/self_hosted_vec.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/set_methods_growth.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/set_variadic_constructor.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/shadowed_local_callable_call.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/shadowing_constants.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/simd_abi_crossings.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/simd_bool_masks.mojo	-	ineligible	no-scalar-entry-shape

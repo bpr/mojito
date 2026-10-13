@@ -3237,8 +3237,26 @@ impl Flatten<'_> {
         var
     }
 
-    fn binding_place(&mut self, binding: mojito_types::origin::OwnerId, name: &str) -> MirPlace {
-        let var = self.binding_var(binding, name);
+    /// The slot of `binding` when it is a local or parameter of the function
+    /// being lowered; `None` for a module declaration, which has no slot
+    /// here.
+    fn local_binding_var(
+        &mut self,
+        binding: mojito_types::origin::OwnerId,
+        name: &str,
+    ) -> Option<VarId> {
+        if let Some(var) = self.owner_vars.get(&binding).copied() {
+            return Some(var);
+        }
+        self.vars
+            .iter()
+            .take(self.f.n_params)
+            .any(|candidate| candidate == name)
+            .then(|| self.binding_var(binding, name))
+    }
+
+    /// The root place of slot `var`, through the loan it aliases if any.
+    fn var_place(&self, var: VarId) -> MirPlace {
         self.aliases.get(&var).map_or_else(
             || MirPlace::root(var, self.var_types.get(&var).cloned()),
             |loan| {
@@ -3247,6 +3265,11 @@ impl Flatten<'_> {
                 place
             },
         )
+    }
+
+    fn binding_place(&mut self, binding: mojito_types::origin::OwnerId, name: &str) -> MirPlace {
+        let var = self.binding_var(binding, name);
+        self.var_place(var)
     }
 
     /// A captured binding's place. A slot that no body expression typed —
@@ -3264,17 +3287,7 @@ impl Flatten<'_> {
 
     fn resolved_place(&mut self, name: &str) -> MirPlace {
         let var = self.var(name);
-        self.aliases.get(&var).map_or_else(
-            || {
-                let ty = self.var_types.get(&var).cloned();
-                MirPlace::root(var, ty)
-            },
-            |loan| {
-                let mut place = loan.place.clone();
-                place.through = Some(var);
-                place
-            },
-        )
+        self.var_place(var)
     }
 
     /// The place name `expression` roots, spelled `name` at runtime: its
@@ -3301,18 +3314,8 @@ impl Flatten<'_> {
             }
         }
         let checked_var = binding.map(|owner| self.binding_var(owner, name));
-        let mut place = if let Some(var) = checked_var {
-            self.aliases.get(&var).map_or_else(
-                || MirPlace::root(var, self.var_types.get(&var).cloned()),
-                |loan| {
-                    let mut place = loan.place.clone();
-                    place.through = Some(var);
-                    place
-                },
-            )
-        } else {
-            self.resolved_place(name)
-        };
+        let var = checked_var.unwrap_or_else(|| self.var(name));
+        let mut place = self.var_place(var);
         if place.root_ty.is_none() {
             // HIR's place for a name, whose type the place fact is, exists
             // only where the check bound the name.

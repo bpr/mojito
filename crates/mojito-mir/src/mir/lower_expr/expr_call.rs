@@ -236,7 +236,8 @@ impl Flatten<'_> {
                 })
                 .collect();
             // The receiver is the local the call names, read as its place.
-            let place = self.resolved_place(name);
+            let receiver = self.local_callee(e, name).unwrap_or_else(|| self.var(name));
+            let place = self.var_place(receiver);
             let value = self.fresh(span(e), Some(place.root));
             self.emit(MirInstr::LoadPlace {
                 dest: value,
@@ -258,16 +259,12 @@ impl Flatten<'_> {
         if let Some(info) = self.nested_info(e) {
             return self.lower_nested_call(e, &info, param_args, args, kwargs);
         }
-        // A local with a function type (normally a callable parameter)
-        // shadows any global function of the same name.
-        if self.vars.iter().any(|candidate| candidate == name) {
-            let variable = self.var(name);
+        // The callee is the slot of the local the call's binding names.
+        if let Some(variable) = self.local_callee(e, name) {
             let callee = self.read_slot(variable, span(e), None);
             let callable_ty = self
-                .vars
-                .iter()
-                .position(|candidate| candidate == name)
-                .and_then(|variable| self.var_types.get(&(variable as VarId)))
+                .var_types
+                .get(&variable)
                 .cloned()
                 .or_else(|| self.f.reg_types.get(&callee.0).cloned());
             let param_arg_regs = self.indirect_param_arg_regs(e, param_args);
@@ -280,7 +277,7 @@ impl Flatten<'_> {
             let (regs, arg_places) = self.lower_call_arguments(args, false);
             let (kw, kwarg_places) = self.lower_call_keywords(kwargs, false);
             self.allow_argument_anchors = saved_anchor_permission;
-            let place = self.resolved_place(name);
+            let place = self.var_place(variable);
             let callee_place = place.is_typed().then_some(place);
             let dest = self.fresh(span(e), None);
             self.emit_call_invalidations(e, args, kwargs);

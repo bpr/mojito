@@ -436,6 +436,12 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- A call or read through a local callable names the declaration its
+  name resolves to (R637): a `var f` declared in a block shadows an outer
+  `f` only inside that block, and once a block's `var g` is out of scope
+  `g` names the module function again, as at the pin, where both used to
+  reach the outer or dead slot by spelling.
+  `assets/ok/shadowed_local_callable_call.mojo` pins it.
 - A static member on a `Tuple` type over a pack still open
   (`Tuple[*Ts].__len__()`, also over `*Ts.reverse()`, a
   `TypeList._concat`, and a struct's `Self.Ts`) runs, served by `Tuple`'s
