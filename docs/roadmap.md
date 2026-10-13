@@ -4821,23 +4821,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R655 A lifted thunk's prologue is rebuilt as syntax**
-
-  `thunk_prologue` (`mir.rs`) rebuilds the evaluated `comptime` bindings a
-  lifted thunk reads with `CheckedTables::statement_syntax_of`, and
-  `lower_fn_nested` hands them to HIR and nested-def discovery as
-  `&[Stmt]`.
-  - Upstream's thunk region holds the bindings' ops; the fix hands
-    `Cfg::build_checked_thunk` the bindings' statement ids, which R629's
-    id-taking builders and R643's id walk for nested defs make possible.
-  - With R650's `installed`, this is `statement_syntax_of`'s last caller,
-    and `CheckedTables::syntax_of` and `param_arg_syntax` die with it.
-  - Done when `mir.rs` names no `statement_syntax_of`, and the probe
-    fixtures' MIR and output are unchanged.
-  - Found while landing R649 (2026-10-13).
-  - Depends on R629, R643.
-  - Model: Opus, Not Planned.
-
 - [ ] **R656 MIR finds a binder's name in annotation syntax**
 
   `named_by`'s `Names` visitor (`mir.rs`) walks the `ast::Type`s that

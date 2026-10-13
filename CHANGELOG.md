@@ -8,6 +8,12 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A lifted thunk's prologue is the statement nodes of the `comptime`
+  bindings it reads (R655), handed to `Cfg::build_checked_thunk` and
+  nested discovery as ids, as upstream's thunk region holds the bindings'
+  ops. The fix landed with R629 and R643; closing the entry changes no
+  code, MIR, or output.
+
 - A trait default's body is built as checked nodes once (R657): the
   trait's op names its member's `def` node (`CheckedTraitMethod::default`)
   instead of holding a second copy of the body, as upstream's trait names
