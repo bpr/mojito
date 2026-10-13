@@ -59,6 +59,7 @@ impl Checker {
                 .struct_dunder_signature_for(&t, op.dunder(), &[])
                 .is_some_and(|(_, sig, _)| reads(sig.self_convention))
             {
+                self.borrow_operator_operand(operand, &t);
                 self.record_read_temporary_argument(operand);
             }
             return match op {
@@ -378,13 +379,13 @@ impl Checker {
                 )?;
             }
             if let Some(span) = span {
-                // A read dunder borrows a named operand where it lies, as a
+                // A read dunder borrows a place operand where it lies, as a
                 // read parameter of an ordinary method call would.
                 if dispatch.borrows.0 {
-                    self.borrow_nominal_place_argument(left, &lt);
+                    self.borrow_operator_operand(left, &lt);
                 }
                 if dispatch.borrows.1 {
-                    self.borrow_nominal_place_argument(right, &rt);
+                    self.borrow_operator_operand(right, &rt);
                 }
                 self.record_operator_temporaries(left, right, dispatch.reads);
                 if dispatch.negated_equality {
@@ -414,6 +415,12 @@ impl Checker {
         if let Some(span) = span
             && let Some(dispatch) = self.struct_reflected_dispatch(op, &lt, &rt)
         {
+            if dispatch.reads.0 {
+                self.borrow_operator_operand(left, &lt);
+            }
+            if dispatch.reads.1 {
+                self.borrow_operator_operand(right, &rt);
+            }
             self.record_operator_temporaries(left, right, dispatch.reads);
             self.record_at(span.clone()).overload_target = Some(dispatch.target);
             self.record_at(span).adjustment = Some(Box::new(
@@ -1094,6 +1101,21 @@ impl Checker {
         }
         if reads.1 {
             self.record_read_temporary_argument(right);
+        }
+    }
+
+    /// A read dunder binds its operand as a method call binds a read
+    /// argument: a named struct place, or a struct element an accessor
+    /// returns by reference (`xs[0]` through `List.__getitem__`), is read
+    /// where it lies rather than copied out.
+    fn borrow_operator_operand(&self, operand: &Expr, ty: &Ty) {
+        self.borrow_nominal_place_argument(operand, ty);
+        if matches!(operand.kind, ExprKind::Index { .. })
+            && matches!(ty.kind(), TyKind::Struct(name, _) if self.structs.contains_key(name))
+            && self.infer_reference_value(operand).is_some()
+        {
+            self.record_at(operand.source_span())
+                .borrowed_read_call_place = true;
         }
     }
 

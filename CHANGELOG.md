@@ -8,6 +8,12 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A struct operator reads a place operand where it lies, as the pin does
+  (R710): `print(xs[0] < xs[1])` over a `List[S]` reads both elements
+  through `__getitem__`'s reference instead of copying them out and leaking
+  the copies. This covers prefix and reflected dunders, a named operand of
+  a prefix operator (`-s`), and tuple elements; a chained comparison copies
+  only its first middle operand.
 - A temporary operand a struct operator's dunder reads is destroyed when
   the dunder returns, the argument before the receiver, as the pin does
   (R709): `print(S(1) < S(2))` prints `del 2`, `del 1`, then `True`. This

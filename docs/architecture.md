@@ -4197,7 +4197,12 @@ current Mojo:
   pair, with `ReadTemporaryArgument`, and `lower_operator_operand` and
   `prefix_op` bind a marked one to a `$tmp_arg_r` slot, so it dies when the
   dunder returns, the argument before the receiver. A chained comparison's
-  middles carry no marker: the chain owns them (`chain_middle`). An
+  middles carry no marker: the chain owns them (`chain_middle`). A place
+  operand the dunder reads — a named struct, or an element an accessor
+  returns by reference (`xs[0]`, `t[0]`) — is marked `BorrowReadArgument`
+  instead (`borrow_operator_operand`), and `lower_operator_operand`, which
+  `prefix_op` shares, reads it where it lies, as a read call argument is
+  read: no copy, so nothing to destroy. An
   operator's result is a fresh temporary as a call's is
   (`Node::is_fresh_temporary`), for this binding and for a field read off it.
 - A field read off an owning temporary (`print(B(1).x)`, `var n = B(9).name`,

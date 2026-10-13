@@ -659,8 +659,7 @@ impl<'a> Flatten<'a> {
 
     /// Prefix operator `op` applied to `value`, the operand of node `node`.
     fn prefix_op(&mut self, node: Node<'a>, op: PrefixOp, value: Node<'a>) -> Reg {
-        let ra = self.expr(value);
-        let ra = self.bind_read_temporary(value, ra);
+        let ra = self.lower_operator_operand(value);
         // `not x` on a struct or a numeric scalar is
         // `not x.__bool__()`: convert through the explicit `Bool(x)`
         // call so the negation is scalar on both backends.

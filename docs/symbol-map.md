@@ -521,7 +521,9 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
 - `operators.rs:vector_alias` types a vector alias's call (`U256(...)`) as
   the `SIMD` it spells; `operators.rs:struct_infix_dispatch` is the
   type-level half of `infer_infix` and `struct_reflected_dispatch` its
-  reflected half.
+  reflected half; `operators.rs:borrow_operator_operand` marks a place
+  operand a read dunder takes (a named struct or a by-reference element)
+  `BorrowReadArgument`, for infix, reflected, and prefix operators alike.
 - `checked.rs`'s `DiscoveryResult` is what a check returns before its arena
   is built (`checker.rs:check_program_for_discovery`): `CheckedProgram::new`'s
   input, the check's facts as one `NodeFacts` record per occurrence

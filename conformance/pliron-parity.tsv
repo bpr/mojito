@@ -723,6 +723,7 @@ assets/ok/struct_generator_vector_value.mojo	main	exe-differential	sanitized
 assets/ok/struct_method_comptime_template_served.mojo	main	exe-differential	sanitized
 assets/ok/struct_method_instance_clone_unreached.mojo	main	exe-differential	sanitized
 assets/ok/struct_operator_operand_owner_drop.mojo	main	exe-differential	sanitized
+assets/ok/struct_operator_subscript_operand_in_place.mojo	main	exe-differential	sanitized
 assets/ok/struct_operator_temporary_operand_drop.mojo	main	exe-differential	sanitized
 assets/ok/struct_type_param_construction_clone.mojo	main	exe-differential	sanitized
 assets/ok/struct_value_member_runtime_read.mojo	main	exe-differential	sanitized

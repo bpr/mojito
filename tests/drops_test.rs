@@ -87,6 +87,15 @@ fn struct_operator_temporary_operands_die_when_the_dunder_returns() {
 }
 
 #[test]
+fn struct_operator_reads_a_subscript_operand_in_place() {
+    // `xs[0] < xs[1]` reads each element through `__getitem__`'s reference,
+    // as the pin does: no copy, so nothing to leak. Only a chain's first
+    // middle is copied, into the temporary its second link reads.
+    let src = "struct S(ImplicitlyCopyable):\n    var v: Int\n    def __init__(out self, v: Int):\n        self.v = v\n    def __init__(out self, *, copy: Self):\n        self.v = copy.v\n        print(\"copy\", self.v)\n    def __lt__(self, o: Self) -> Bool:\n        return self.v < o.v\n    def __deinit__(deinit self):\n        print(\"del\", self.v)\n\ndef main():\n    var xs = [S(1), S(2), S(3)]\n    print(xs[0] < xs[1])\n    print(xs[0] < xs[1] < xs[2])\n";
+    assert_eq!(vm(src), "True\ncopy 2\ndel 2\ndel 1\ndel 2\ndel 3\nTrue\n");
+}
+
+#[test]
 fn mut_self_reassignment_destroys_the_replaced_value() {
     // `self = Holder(2)` writes through the receiver's own handle into the
     // caller's storage, so no redefining `DefVar` ends the old value's live

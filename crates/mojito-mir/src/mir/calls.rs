@@ -84,7 +84,7 @@ impl<'a> Flatten<'a> {
         self.lower_call_argument_with(expression, false, CheckedCallArgumentSource::Positional(0))
     }
 
-    /// Lower one operand of a struct operator: a named place the checker
+    /// Lower one operand of a struct operator, prefix or infix: a place the checker
     /// marked `BorrowReadArgument` (the dunder reads it) is read where it
     /// lies, as a read-convention call argument is; a temporary it marked
     /// `ReadTemporaryArgument` binds a `$tmp_arg_r` slot, as a read call

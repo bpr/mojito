@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R713**.
+Next free ID: **R714**.
 
 ## Ordered Work
 
@@ -298,16 +298,18 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R710 A struct operator copies a subscript operand and leaks the copy**
+- [ ] **R713 A by-value `__getitem__` result read by a call or operator is
+  never destroyed**
 
-  Problem: `print(xs[0] < xs[1])` over a `List[S]` with a printing copy
-  initializer and destructor prints `lt 1 2, True` at the pin and
-  `copy 1, copy 2, lt 1 2, True` in Mojito, which never destroys the copies.
-  - The pin reads each element in place through the `ref`-returning
-    `__getitem__`; Mojito lowers the operand as a copied value.
-  - A chained comparison's first middle subscript is copied twice:
-    once as the operand, once into the second link's temporary.
-  - Found while landing R703 (2026-10-13).
+  Problem: over `def __getitem__(self, i: Int) -> S`, `f(b[1])` and
+  `print(b[2] < b[3])` print no `del` for the elements, where the pin
+  destroys each once the call or dunder returns (`f 1, del 1`, then
+  `del 3, del 2, True`).
+  - The subscript is an `Index` op, so `Node::is_fresh_temporary` and the
+    checker's `read_temporary_arguments` never treat the owned result as a
+    call temporary.
+  - `b[2].__lt__(b[3])` leaks the same way.
+  - Found while landing R710 (2026-10-13).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
