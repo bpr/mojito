@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R634**.
+Next free ID: **R635**.
 
 ## Ordered Work
 
@@ -4774,20 +4774,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R617 HIR lowers from syntax, where upstream lowers checked ops**
-
-  `hir::lower` walks the AST and reaches each node's facts through it.
-  - The lever: lowering walks `CheckedStmt` and `CheckedExpr`, and
-    `HirExpr` holds a node id instead of syntax.
-  - `rename_expr` and the `$contextual` rewrite become operations on the
-    node (`contextual_base` is already a node fact).
-  - `substitute_spelled_constructions` is deleted: a spelled construction
-    is the node the sugar's occurrence answers.
-  - MIR keeps reading syntax through `syntax_of` until R618–R622 land.
-  - Plan: `R604-a-package-s-checked-body-is-plan.md`, slice 6.
-  - Depends on R615.
-  - Model: Fable, Not Planned.
-
 - [ ] **R618 MIR lowers literals and names from syntax**
 
   MIR lowering matches `ExprKind` for literals and name reads, where it
@@ -4865,6 +4851,23 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Done when `statement_at` and `statements_by_span` are deleted.
   - Found while landing R615 (2026-10-11).
   - Depends on R617, R622.
+  - Model: Opus, Not Planned.
+
+- [ ] **R634 HIR types a slot by its name's spelling anywhere in the
+  program**
+
+  `checked_var_types` (`crates/mojito-hir/src/hir.rs`) types each slot by
+  the first `Identifier` node of the slot's source spelling among all the
+  program's nodes, not the nodes that read the slot.
+  - A same-spelled local of another function can type it; parameter and
+    lifted-capture slots are overwritten after the fact to mask that.
+  - The lever: type a slot from the nodes `Cfg::slots` resolves to it
+    (their `place_ty`, else `ty`), as an upstream value's type is its
+    defining op's.
+  - Done when no HIR or MIR slot type comes from a spelling match and the
+    probe fixtures' MIR is unchanged on the VM and with `--backend pliron`.
+  - Found while landing R617 (2026-10-12).
+  - Depends on nothing.
   - Model: Opus, Not Planned.
 
 - [ ] **R628 A checked op's type operand is annotation syntax, where

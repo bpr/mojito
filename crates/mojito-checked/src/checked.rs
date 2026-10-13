@@ -1954,11 +1954,24 @@ impl CheckedTables {
 
     /// The syntax of node `id` and its operands, rebuilt from their ops: a
     /// spelled sugar's place holds the construction the check spelled for
-    /// it. Transitional, for HIR, which still lowers syntax; R623 lowers
+    /// it. Transitional, for MIR, which still lowers syntax; R623 lowers
     /// from the ops and deletes it.
     pub fn syntax_of(&self, id: CheckedNodeId) -> Option<Expr> {
+        self.syntax_of_spelled(id, &|_| None)
+    }
+
+    /// [`Self::syntax_of`], with each name `spell` answers for spelled as
+    /// it answers: an `Identifier` or walrus `Named` node HIR resolved to a
+    /// slot takes the slot's name. Compile-time parameter arguments,
+    /// t-string parts, and a lambda's `def` are rebuilt unspelled, as they
+    /// name no slot of the enclosing frame. Transitional, as `syntax_of` is.
+    pub fn syntax_of_spelled(
+        &self,
+        id: CheckedNodeId,
+        spell: &dyn Fn(&CheckedExpr) -> Option<String>,
+    ) -> Option<Expr> {
         let node = self.expression(id)?;
-        let child = |id: &CheckedNodeId| self.syntax_of(*id);
+        let child = |id: &CheckedNodeId| self.syntax_of_spelled(*id, spell);
         let boxed = |id: &CheckedNodeId| child(id).map(Box::new);
         let optional =
             |id: &Option<CheckedNodeId>| id.as_ref().map_or(Some(None), |id| boxed(id).map(Some));
@@ -1988,7 +2001,9 @@ impl CheckedTables {
             CheckedOp::None => ExprKind::None,
             CheckedOp::Uninitialized => ExprKind::Uninitialized,
             CheckedOp::EmptySubscript => ExprKind::EmptySubscript,
-            CheckedOp::Identifier(name) => ExprKind::Identifier(name.clone()),
+            CheckedOp::Identifier(name) => {
+                ExprKind::Identifier(spell(node).unwrap_or_else(|| name.clone()))
+            }
             CheckedOp::TypeValue(ty) => ExprKind::TypeValue(ty.clone()),
             CheckedOp::Prefix(op, value) => ExprKind::Prefix(*op, boxed(value)?),
             CheckedOp::Infix(op, left, right) => ExprKind::Infix(*op, boxed(left)?, boxed(right)?),
@@ -2085,7 +2100,7 @@ impl CheckedTables {
                 def: Box::new(self.statement_syntax_of(*def)?),
             },
             CheckedOp::Named { name, value } => ExprKind::Named {
-                name: name.clone(),
+                name: spell(node).unwrap_or_else(|| name.clone()),
                 value: boxed(value)?,
             },
             CheckedOp::IfExpr {
@@ -2162,7 +2177,9 @@ impl CheckedTables {
                     .map(|part| {
                         Some(match part {
                             CheckedTStringPart::Literal(text) => TStringPart::Literal(text.clone()),
-                            CheckedTStringPart::Expr(value) => TStringPart::Expr(boxed(value)?),
+                            CheckedTStringPart::Expr(value) => {
+                                TStringPart::Expr(Box::new(self.syntax_of(*value)?))
+                            }
                         })
                     })
                     .collect::<Option<_>>()?,

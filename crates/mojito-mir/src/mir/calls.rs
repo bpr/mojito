@@ -1257,16 +1257,22 @@ impl Flatten<'_> {
         expression: &mojito_hir::hir::HirExpr,
         value: Reg,
     ) {
+        use mojito_checked::checked::{CheckedOp, SemanticAdjustment};
+        let Some(node) = self.checked.expression(expression.node) else {
+            return;
+        };
         if !matches!(
-            expression.syntax.kind,
-            ExprKind::Call { .. } | ExprKind::MethodCall { .. } | ExprKind::Invoke { .. }
+            node.op,
+            CheckedOp::Call { .. } | CheckedOp::MethodCall { .. } | CheckedOp::Invoke { .. }
         ) {
             return;
         }
-        if self
-            .checked_call_contract(&expression.syntax)
-            .is_some_and(|contract| contract.reference_result.is_some())
-        {
+        if node.adjustments.iter().any(|adjustment| {
+            matches!(
+                adjustment,
+                SemanticAdjustment::SelectedCall(contract) if contract.reference_result.is_some()
+            )
+        }) {
             return;
         }
         let Some(ty) = self
@@ -1274,7 +1280,7 @@ impl Flatten<'_> {
             .reg_types
             .get(&value.0)
             .cloned()
-            .or_else(|| expression.ty.clone())
+            .or_else(|| node.ty.clone())
         else {
             return;
         };

@@ -3,7 +3,9 @@
 //! produces one function per `def` / method.
 
 use mojito::hir::Cfg;
-use mojito::mir::{MirInstr, MirPlace, MirSubscriptArg, MirTerm, Proj, lower_cfg, lower_program};
+use mojito::mir::{
+    MirFunction, MirInstr, MirPlace, MirSubscriptArg, MirTerm, Proj, lower_cfg, lower_program,
+};
 use mojito::types::TyKind;
 use mojito::{Compiler, SemanticAdjustment, Ty, parse};
 use std::path::Path;
@@ -39,15 +41,51 @@ fn free_function_union_reference_result_retains_a_typed_handle_slot() {
     );
 }
 
-/// Lower a single-block snippet and return that block's instructions.
+/// Compile `src` and lower its `main`'s checked CFG to MIR.
+fn checked_main(src: &str) -> (Cfg, MirFunction) {
+    let compiled = Compiler::default()
+        .compile_source(src, Path::new("mir_test.mojo"))
+        .expect("compile");
+    let checked = compiled.checked();
+    let (params, body) = checked
+        .statements()
+        .iter()
+        .find_map(|statement| match &statement.kind {
+            mojito::ast::StmtKind::Def {
+                name, params, body, ..
+            } if name == "main" => Some((
+                params
+                    .iter()
+                    .map(|param| param.name.clone())
+                    .collect::<Vec<_>>(),
+                body.clone(),
+            )),
+            _ => None,
+        })
+        .expect("main");
+    let cfg = Cfg::build_checked_fn(checked, &params, &body);
+    let mir = lower_cfg(&cfg);
+    (cfg, mir)
+}
+
+/// Lower a program whose `main` is one straight-line block and return that
+/// block's instructions.
 fn instrs(src: &str) -> Vec<MirInstr> {
-    let mir = lower_cfg(&Cfg::build(&parse(src).expect("parse error")));
+    let (_, mir) = checked_main(src);
     assert_eq!(
         mir.blocks.len(),
         1,
-        "snippet should be one straight-line block"
+        "main should be one straight-line block"
     );
     mir.blocks.into_iter().next().unwrap().instrs
+}
+
+/// A program declaring pointer storage `xs`, a struct `q` holding pointer
+/// storage of `P` values, and `main` running `body` over them.
+fn pointer_program(body: &str) -> String {
+    format!(
+        "from std.memory.alloc import unsafe_alloc\n\n@fieldwise_init\nstruct P(Copyable):\n    var x: Int\n\n@fieldwise_init\nstruct Q(Copyable):\n    var items: UnsafePointer[P, MutUntrackedOrigin]\n\ndef main():\n    var xs: UnsafePointer[Int, MutUntrackedOrigin] = unsafe_alloc[Int](4)\n    var q = Q(unsafe_alloc[P](1))\n{body}"
+    )
 }
 
 #[test]
@@ -731,8 +769,7 @@ fn bounded_iterator_carries_its_checked_element_type_into_mir() {
 #[test]
 fn lowers_a_simple_function_body() {
     // `var x = 1 + 2; return x` — one block, flattened to ANF, returning a reg.
-    let cfg = Cfg::build(&parse("var x: Int = 1 + 2\nreturn x\n").unwrap());
-    let mir = lower_cfg(&cfg);
+    let (cfg, mir) = checked_main("def main() -> Int:\n    var x: Int = 1 + 2\n    return x\n");
 
     assert_eq!(
         mir.blocks.len(),
@@ -743,9 +780,16 @@ fn lowers_a_simple_function_body() {
         matches!(mir.blocks[0].term, MirTerm::Return(Some(_))),
         "returns a value"
     );
-    // Const(1), Const(2), BinOp(+), DefVar(x), UseVar(x) ⇒ 5 instrs; regs r0..r3.
-    assert_eq!(mir.blocks[0].instrs.len(), 5);
-    assert_eq!(mir.n_regs, 4);
+    // The sum is one `BinOp` over the two constants, bound by one `DefVar`.
+    let ops = |matches: fn(&MirInstr) -> bool| {
+        mir.blocks[0]
+            .instrs
+            .iter()
+            .filter(|instruction| matches(instruction))
+            .count()
+    };
+    assert_eq!(ops(|i| matches!(i, MirInstr::BinOp { .. })), 1);
+    assert_eq!(ops(|i| matches!(i, MirInstr::DefVar { .. })), 1);
 
     // VarId consistency: the `DefVar` and the returned `UseVar` name the same var.
     let def = mir.blocks[0].instrs.iter().find_map(|i| match i {
@@ -766,8 +810,8 @@ fn lowers_a_simple_function_body() {
 fn temps_carry_real_source_spans() {
     // End-to-end span propagation (lexer → parser → MIR): each temp's recorded
     // span must slice the exact source text of the expression it came from.
-    let src = "return y + 100\n";
-    let mir = lower_cfg(&Cfg::build(&parse(src).expect("parse error")));
+    let src = "def main(y: Int) -> Int:\n    return y + 100\n";
+    let (_, mir) = checked_main(src);
     let spans = &mir.spans.0;
 
     // The `y` read and the `100` constant each get a fresh reg; find them and
@@ -807,8 +851,9 @@ fn temps_carry_real_source_spans() {
 
 #[test]
 fn control_flow_block_count_matches_hir() {
-    let cfg = Cfg::build(&parse("if a:\n    var x: Int = 1\nelse:\n    var y: Int = 2\n").unwrap());
-    let mir = lower_cfg(&cfg);
+    let (cfg, mir) = checked_main(
+        "def main(a: Bool):\n    if a:\n        var x: Int = 1\n    else:\n        var y: Int = 2\n",
+    );
     assert_eq!(mir.blocks.len(), cfg.node_count());
     // The entry block ends in a Branch on the flattened condition.
     assert!(matches!(mir.blocks[0].term, MirTerm::Branch { .. }));
@@ -817,10 +862,15 @@ fn control_flow_block_count_matches_hir() {
 #[test]
 fn nested_calls_flatten_to_temps_in_order() {
     // `f(g(x))` ⇒ UseVar(x); Call g([x]); Call f([g_result]).
-    let is = instrs("f(g(x))\n");
-    assert_eq!(is.len(), 3);
-    assert!(matches!(is[0], MirInstr::UseVar { .. }));
-    match (&is[1], &is[2]) {
+    let is = instrs(
+        "def g(x: Int) -> Int:\n    return x\n\ndef f(x: Int):\n    pass\n\ndef main():\n    var x = 1\n    f(g(x))\n",
+    );
+    let read = is
+        .iter()
+        .position(|i| matches!(i, MirInstr::UseVar { .. }))
+        .expect("the read of x");
+    assert_eq!(is.len(), read + 3, "{is:?}");
+    match (&is[read + 1], &is[read + 2]) {
         (
             MirInstr::Call {
                 func: g,
@@ -848,7 +898,9 @@ fn nested_calls_flatten_to_temps_in_order() {
 #[test]
 fn transfer_lowers_to_a_move_use() {
     // `x^` is a move out of the variable.
-    let is = instrs("f(x^)\n");
+    let is = instrs(
+        "def h(var s: String):\n    pass\n\ndef main():\n    var s = String(\"a\")\n    h(s^)\n",
+    );
     assert!(is.iter().any(|i| matches!(
         i,
         MirInstr::UseVar {
@@ -861,7 +913,7 @@ fn transfer_lowers_to_a_move_use() {
 #[test]
 fn member_write_lowers_to_a_store_through_a_place() {
     // `p.x = 1` ⇒ Const(1); Store { place: p.x }.
-    let is = instrs("p.x = 1\n");
+    let is = instrs(&pointer_program("    var p = P(0)\n    p.x = 1\n"));
     let store = is.iter().find_map(|i| match i {
         MirInstr::Store { place, .. } => Some(place),
         _ => None,
@@ -912,7 +964,7 @@ fn checked_mir_places_carry_root_projection_and_storage_types() {
 #[test]
 fn index_write_lowers_to_a_store_with_an_index_projection() {
     // `xs[0] = 1` ⇒ the place is `xs[<reg>]`.
-    let is = instrs("xs[0] = 1\n");
+    let is = instrs(&pointer_program("    xs[0] = 1\n"));
     let store = is.iter().find_map(|i| match i {
         MirInstr::Store { place, .. } => Some(place),
         _ => None,
@@ -981,8 +1033,8 @@ fn checked_indexer_normalization_becomes_explicit_typed_mir_calls() {
 
 #[test]
 fn nested_place_write_stacks_projections() {
-    // `p.items[i].x = 1` ⇒ place proj = [Field(items), Index(i), Field(x)].
-    let is = instrs("p.items[0].x = 1\n");
+    // `q.items[i].x = 1` ⇒ place proj = [Field(items), Index(i), Field(x)].
+    let is = instrs(&pointer_program("    q.items[0].x = 1\n"));
     let place = is
         .iter()
         .find_map(|i| match i {
@@ -1003,25 +1055,37 @@ fn nested_place_write_stacks_projections() {
 #[test]
 fn aug_assign_on_a_name_is_read_modify_write() {
     // `x += 1` ⇒ UseVar(x); Const(1); BinOp(+); DefVar(x) — one read, one write.
-    let is = instrs("x += 1\n");
-    assert_eq!(is.len(), 4);
-    assert!(matches!(is[0], MirInstr::UseVar { .. }));
-    assert!(matches!(is[3], MirInstr::DefVar { .. }));
-    // The read and the write-back name the same variable.
-    let MirInstr::UseVar { var: read, .. } = is[0] else {
-        unreachable!()
-    };
-    let MirInstr::DefVar { var: write, .. } = is[3] else {
-        unreachable!()
-    };
-    assert_eq!(read, write);
+    let is = instrs("def main():\n    var x = 1\n    x += 1\n");
+    let reads: Vec<_> = is
+        .iter()
+        .filter_map(|i| match i {
+            MirInstr::UseVar { var, .. } => Some(*var),
+            _ => None,
+        })
+        .collect();
+    let writes: Vec<_> = is
+        .iter()
+        .filter_map(|i| match i {
+            MirInstr::DefVar { var, .. } => Some(*var),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(reads.len(), 1, "{is:?}");
+    // The declaration and the write-back both name the variable read.
+    assert_eq!(writes, [reads[0], reads[0]], "{is:?}");
+    assert_eq!(
+        is.iter()
+            .filter(|i| matches!(i, MirInstr::BinOp { .. }))
+            .count(),
+        1
+    );
 }
 
 #[test]
 fn aug_assign_through_a_place_loads_and_stores_the_same_place() {
     // `xs[0] += 1` ⇒ one LoadPlace + one Store, both over the SAME place — i.e. the
     // subscript index is flattened once and shared (not re-evaluated for the store).
-    let is = instrs("xs[0] += 1\n");
+    let is = instrs(&pointer_program("    xs[0] += 1\n"));
     let idx_reg = |p: &MirPlace| match p.proj.as_slice() {
         [Proj::Index(r)] => *r,
         other => panic!("expected a single Index projection, got {other:?}"),

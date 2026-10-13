@@ -1,51 +1,39 @@
-//! Stage 4: lower the checked AST into a **control-flow graph** (CFG) of basic
-//! blocks, built on `petgraph`.
+//! Stage 4: lower the checked statement and expression nodes into a
+//! **control-flow graph** (CFG) of basic blocks, built on `petgraph`.
 //!
-//! Expressions stay *nested* here (as embedded AST); Stage 5 flattens them to
+//! Expressions stay *nested* here (as checked nodes); Stage 5 flattens them to
 //! A-Normal Form. Ownership and liveness analysis (Stages 6–7) run over the
 //! flattened form, not this one.
 //!
 //! A [`Cfg`] is built per function body (or the top-level statement list) via
-//! [`Cfg::build`]. Every block ends in exactly one [`Terminator`]; control flow
-//! (`if`/`while`/`for`/`break`/`continue`/`return`) becomes blocks + edges, so
-//! later passes are pure graph traversal.
+//! [`Cfg::build_checked_fn`]. Every block ends in exactly one [`Terminator`];
+//! control flow (`if`/`while`/`for`/`break`/`continue`/`return`) becomes
+//! blocks and edges, so later passes are pure graph traversal. A local name
+//! resolves to its slot once, here, recorded per node in [`Cfg::slots`].
 
-use mojito_ast::ast::{Expr, ExprKind, Stmt, StmtKind};
+use mojito_ast::ast::{Stmt, StmtKind};
 use mojito_checked::checked::{
-    CheckedDeclId, CheckedExpr, CheckedNodeId, CheckedOp, CheckedProgram, CheckedTables,
-    EffectFacts, SemanticAdjustment, ValueCategory,
+    CheckedExpr, CheckedNodeId, CheckedOp, CheckedProgram, CheckedStmtId, CheckedStmtOp,
+    CheckedTables, SemanticAdjustment,
 };
-use mojito_common::token::DUMMY_SPAN;
 use mojito_types::types::Ty;
 use mojito_types::types::TyKind;
 use petgraph::stable_graph::{NodeIndex, StableGraph};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
+/// One checked expression as the CFG holds it: its node, which carries its
+/// op and attributes, with its operands' trees and the storage it denotes.
 #[derive(Debug, Clone)]
 pub struct HirExpr {
-    pub syntax: Expr,
-    pub checked: Option<CheckedNodeId>,
-    pub ty: Option<Ty>,
-    pub category: ValueCategory,
-    /// Stable checked binding selected by lexical lookup. Calls and type
-    /// applications carry this even though they are not places.
-    pub binding: Option<mojito_types::origin::OwnerId>,
-    /// Checker-selected effect contract for this expression. Calls through a
-    /// trait bound retain the requirement's typed error here just like direct
-    /// and indirect calls.
-    pub effects: EffectFacts,
-    pub adjustments: Vec<SemanticAdjustment>,
-    /// Recursively checked children in the same structural order as `syntax`.
+    pub node: CheckedNodeId,
+    /// The checked operands' trees, in [`CheckedOp::operands`] order.
     /// Downstream passes use these identities rather than recovering facts by
     /// comparing source spans.
     pub children: Vec<Self>,
     /// Fully checked place shape when this expression denotes storage. This is
     /// independent of runtime `VarId` assignment and survives name shadowing.
     pub place: Option<HirPlace>,
-    /// Stable generator binders introduced by a comprehension, in source
-    /// `for`-clause order. Ordinary expressions leave this empty.
-    pub comprehension_bindings: Vec<mojito_checked::checked::CheckedComprehensionBinding>,
 }
 
 #[derive(Debug, Clone)]
@@ -70,38 +58,15 @@ pub enum HirPlaceProjectionKind {
     Variant(mojito_types::types::VariantIndex),
 }
 
-impl HirExpr {
-    fn unchecked(syntax: Expr) -> Self {
-        Self {
-            syntax,
-            checked: None,
-            ty: None,
-            category: ValueCategory::Value,
-            binding: None,
-            effects: EffectFacts::default(),
-            adjustments: Vec::new(),
-            children: Vec::new(),
-            place: None,
-            comprehension_bindings: Vec::new(),
-        }
-    }
-}
-
-impl std::ops::Deref for HirExpr {
-    type Target = Expr;
-    fn deref(&self) -> &Self::Target {
-        &self.syntax
-    }
-}
-
+/// One opaque checked statement, lowered whole by Stage 5.
 #[derive(Debug, Clone)]
 pub struct HirStmt {
-    pub syntax: Stmt,
-    pub declaration: Option<CheckedDeclId>,
-    pub binding: Option<mojito_types::origin::OwnerId>,
-    /// Checked roots directly owned by this opaque statement, in source/AST
+    pub node: CheckedStmtId,
+    /// Checked roots directly owned by this opaque statement, in source
     /// order. Nested control-flow regions build their own CFGs.
     pub expressions: Vec<HirExpr>,
+    /// The slot a `ref` declaration binds, under HIR's runtime name for it.
+    pub declared: Option<VarId>,
 }
 
 pub type BlockId = NodeIndex;
@@ -111,10 +76,6 @@ pub type VarId = u32;
 /// One straight-line instruction inside a basic block. Control flow lives in the
 /// block's [`Terminator`], never here.
 #[derive(Debug, Clone)]
-// HIR intentionally retains complete checked expressions/statements until MIR
-// makes their evaluation order explicit; boxing every transitional payload would
-// obscure that handoff without reducing the retained data.
-#[allow(clippy::large_enum_variant)]
 pub enum HirInstr {
     /// A variable definition (`var x = e`, or a reassignment): a dataflow *def*.
     /// `binding_ty` is the resolved checked type for an initializing binding.
@@ -226,6 +187,13 @@ pub enum Terminator {
         then_b: BlockId,
         else_b: BlockId,
     },
+    /// Branch on a `Bool` slot HIR itself wrote (a `for` header's
+    /// has-next flag), which no checked node computes.
+    BranchOnSlot {
+        cond: VarId,
+        then_b: BlockId,
+        else_b: BlockId,
+    },
     /// A `comptime if` arm boundary: the condition is a compile-time
     /// expression MIR lowers as a parameter expression, not a value.
     ComptimeBranch {
@@ -259,7 +227,8 @@ pub enum Terminator {
     /// The normal fall-through end of a **seeded region** (a `try` sub-body). Unlike
     /// `Return(None)` (an explicit bare `return`), this means "the region completed
     /// normally" — the VM continues to the `else`/`finally`, not out of the frame.
-    /// Only appears in region CFGs (`build_seeded`), never a function body.
+    /// Only appears in region CFGs (`build_seeded_checked_region`), never a
+    /// function body.
     FallOff,
     /// A `break`/`continue` inside a seeded region that targets a loop in the
     /// **enclosing function** CFG: `target` is that loop's exit (`break`) or header
@@ -291,39 +260,27 @@ pub struct Cfg {
     pub n_params: usize,
     /// The program's typed semantic nodes and declarations, shared (not
     /// copied) with every other function's lowering. Kept by stable node id;
-    /// source locations are used only once, when AST syntax enters checked HIR.
+    /// source locations are used only once, to find a body root's node.
     pub checked: Arc<CheckedTables>,
     /// Checked storage types for variable slots known at HIR construction.
     pub var_types: HashMap<VarId, Ty>,
+    /// The slot each local-name node (an `Identifier`, a walrus `Named`) of
+    /// this CFG's expressions reads, as resolved in its lexical scope: the
+    /// value an upstream operand names.
+    pub slots: HashMap<CheckedNodeId, VarId>,
 }
 
 impl Cfg {
-    /// Lower a statement sequence (the top-level block, or a parameterless body)
-    /// into a CFG. The final fall-through block is given an implicit `return None`.
-    pub fn build(body: &[Stmt]) -> Self {
-        Self::build_fn(&[], body)
-    }
-
     /// Lower a function body whose `params` (in declaration order) seed the
     /// variable interner **first**, so `VarId`s `0..params.len()` are the
     /// parameters — the call ABI the MIR/VM rely on to bind arguments. The final
     /// fall-through block gets an implicit `return None`.
-    pub fn build_fn(params: &[String], body: &[Stmt]) -> Self {
-        Self::build_fn_with_captures(params, HashSet::new(), body)
-    }
-
     pub fn build_checked_fn(checked: &CheckedProgram, params: &[String], body: &[Stmt]) -> Self {
         Self::build_fn_with_context(params, HashSet::new(), body, Arc::clone(checked.tables()))
     }
 
-    pub fn build_fn_with_captures(
-        params: &[String],
-        shadow_captures: HashSet<String>,
-        body: &[Stmt],
-    ) -> Self {
-        Self::build_fn_with_context(params, shadow_captures, body, Arc::default())
-    }
-
+    /// [`Cfg::build_checked_fn`] for a nested `def` whose immutable captures
+    /// a body assignment shadows rather than writes.
     pub fn build_checked_fn_with_captures(
         checked: &CheckedProgram,
         params: &[String],
@@ -333,82 +290,13 @@ impl Cfg {
         Self::build_fn_with_context(params, shadow_captures, body, Arc::clone(checked.tables()))
     }
 
-    fn build_fn_with_context(
-        params: &[String],
-        shadow_captures: HashSet<String>,
-        body: &[Stmt],
-        checked: Arc<CheckedTables>,
-    ) -> Self {
-        let mut g = StableGraph::new();
-        let entry = g.add_node(BasicBlock::default());
-        let explicit = explicit_local_names(body);
-        let mut implicit = HashSet::new();
-        collect_function_implicit_names(body, &explicit, &mut implicit);
-        let mut vars = params.to_vec();
-        let mut root_scope: HashMap<String, String> =
-            params.iter().map(|n| (n.clone(), n.clone())).collect();
-        let mut implicit: Vec<_> = implicit.into_iter().collect();
-        implicit.sort();
-        for name in implicit {
-            if !root_scope.contains_key(&name) {
-                vars.push(name.clone());
-                root_scope.insert(name.clone(), name);
-            }
-        }
-        let mut lower = Lower {
-            g,
-            cur: entry,
-            loops: Vec::new(),
-            vars,
-            scopes: vec![root_scope],
-            captures: shadow_captures,
-            is_function: true,
-            checked,
-        };
-        for s in body {
-            lower.stmt(s);
-        }
-        lower.seal(Terminator::Return(None)); // implicit `return None` off the end
-        let var_types = checked_var_types(&lower.vars, &lower.checked.expressions);
-        Self {
-            g: lower.g,
-            entry,
-            vars: lower.vars,
-            n_params: params.len(),
-            checked: lower.checked,
-            var_types,
-        }
-    }
-
-    /// Lower a statement sequence into a CFG whose variable interner **starts**
-    /// seeded with `seed_vars` (so a nested region shares the enclosing frame's
-    /// `VarId`s — a name already interned keeps its id, new names append). Used to
-    /// lower a `try` region as a self-contained mini-CFG that still addresses the
-    /// same variable slots. `n_params` is 0 (a region takes no parameters).
-    pub fn build_seeded(seed_vars: Vec<String>, body: &[Stmt]) -> Self {
-        Self::build_seeded_with_loops(seed_vars, body, &[])
-    }
-
-    /// Like [`build_seeded`], but the region's loop stack is initialized with the
-    /// enclosing function's loops (`external_loops`, innermost-last, as `(header,
-    /// exit)` block ids in the *enclosing* CFG). A `break`/`continue` that targets
-    /// one of them — rather than a loop declared inside the region — lowers to an
-    /// [`Terminator::EscapeJump`] carrying the enclosing block id.
-    pub fn build_seeded_with_loops(
-        seed_vars: Vec<String>,
-        body: &[Stmt],
-        external_loops: &[(BlockId, BlockId)],
-    ) -> Self {
-        let external_loops = external_loops
-            .iter()
-            .map(|&(header, exit)| (header, exit, Vec::new()))
-            .collect::<Vec<_>>();
-        Self::build_seeded_checked_region(seed_vars, body, &external_loops, Arc::default())
-    }
-
-    /// Lower a checked `try` region: [`Cfg::build_seeded_with_loops`] with the
-    /// enclosing function's loop cleanups and the program's shared checked
-    /// tables.
+    /// Lower a checked `try` region into a CFG whose variable interner
+    /// **starts** seeded with `seed_vars` (so the region shares the enclosing
+    /// frame's `VarId`s — a name already interned keeps its id, new names
+    /// append). The region's loop stack starts with the enclosing function's
+    /// loops (`external_loops`, innermost-last, as `(header, exit, cleanup)`
+    /// in the *enclosing* CFG): a `break`/`continue` that targets one of them
+    /// lowers to a [`Terminator::EscapeJump`]. `n_params` is 0.
     pub fn build_seeded_checked_region(
         seed_vars: Vec<String>,
         body: &[Stmt],
@@ -435,20 +323,13 @@ impl Cfg {
             vars: seed_vars,
             is_function: false,
             checked,
+            slots: HashMap::new(),
         };
-        for s in body {
-            lower.stmt(s);
+        for root in lower.roots(body) {
+            lower.root(root);
         }
         lower.seal(Terminator::FallOff); // region completed normally (not a return)
-        let var_types = checked_var_types(&lower.vars, &lower.checked.expressions);
-        Self {
-            g: lower.g,
-            entry,
-            vars: lower.vars,
-            n_params: 0,
-            checked: lower.checked,
-            var_types,
-        }
+        lower.finish(entry, 0)
     }
 
     // --- Read-only accessors (so tests/analysis need not import `petgraph`) ---
@@ -473,212 +354,111 @@ impl Cfg {
     pub fn has_edge(&self, from: BlockId, to: BlockId) -> bool {
         self.g.neighbors(from).any(|n| n == to)
     }
-}
 
-fn rename_expr(e: &mut Expr, resolve: &impl Fn(&mojito_common::token::SourceSpan, &str) -> String) {
-    let span = e.source_span();
-    match &mut e.kind {
-        ExprKind::Identifier(n) => *n = resolve(&span, n),
-        ExprKind::Prefix(_, x) | ExprKind::Transfer(x) | ExprKind::Spread(x) => {
-            rename_expr(x, resolve);
-        }
-        ExprKind::Infix(_, l, r) => {
-            rename_expr(l, resolve);
-            rename_expr(r, resolve);
-        }
-        ExprKind::Compare { first, rest } => {
-            rename_expr(first, resolve);
-            for (_, x) in rest {
-                rename_expr(x, resolve);
+    fn build_fn_with_context(
+        params: &[String],
+        shadow_captures: HashSet<String>,
+        body: &[Stmt],
+        checked: Arc<CheckedTables>,
+    ) -> Self {
+        let mut g = StableGraph::new();
+        let entry = g.add_node(BasicBlock::default());
+        let mut vars = params.to_vec();
+        let mut root_scope: HashMap<String, String> =
+            params.iter().map(|n| (n.clone(), n.clone())).collect();
+        let mut lower = Lower {
+            g,
+            cur: entry,
+            loops: Vec::new(),
+            vars: Vec::new(),
+            scopes: Vec::new(),
+            captures: shadow_captures,
+            is_function: true,
+            checked,
+            slots: HashMap::new(),
+        };
+        let roots = lower.roots(body);
+        let statements: Vec<CheckedStmtId> = roots
+            .iter()
+            .filter_map(|root| match root {
+                Root::Stmt(id) => Some(*id),
+                Root::Return(_) => None,
+            })
+            .collect();
+        let explicit = explicit_local_names(&lower.checked, &statements);
+        let mut implicit = HashSet::new();
+        collect_function_implicit_names(&lower.checked, &statements, &explicit, &mut implicit);
+        let mut implicit: Vec<_> = implicit.into_iter().collect();
+        implicit.sort();
+        for name in implicit {
+            if !root_scope.contains_key(&name) {
+                vars.push(name.clone());
+                root_scope.insert(name.clone(), name);
             }
         }
-        ExprKind::Call { args, kwargs, .. } => {
-            for x in args {
-                rename_expr(x, resolve);
-            }
-            for x in kwargs {
-                rename_expr(&mut x.value, resolve);
-            }
+        lower.vars = vars;
+        lower.scopes = vec![root_scope];
+        for root in roots {
+            lower.root(root);
         }
-        ExprKind::Member { object, .. } => rename_expr(object, resolve),
-        ExprKind::MethodCall {
-            object,
-            args,
-            kwargs,
-            ..
-        } => {
-            rename_expr(object, resolve);
-            for x in args {
-                rename_expr(x, resolve);
-            }
-            for x in kwargs {
-                rename_expr(&mut x.value, resolve);
-            }
-        }
-        ExprKind::Index { object, index } => {
-            rename_expr(object, resolve);
-            rename_expr(index, resolve);
-        }
-        ExprKind::Slice {
-            object,
-            lower,
-            upper,
-            step,
-            ..
-        } => {
-            rename_expr(object, resolve);
-            for x in [lower, upper, step].into_iter().flatten() {
-                rename_expr(x, resolve);
-            }
-        }
-        ExprKind::MultiIndex { object, args } => {
-            rename_expr(object, resolve);
-            for argument in args {
-                match argument {
-                    mojito_ast::ast::SubscriptArg::Index(value)
-                    | mojito_ast::ast::SubscriptArg::Keyword { value, .. } => {
-                        rename_expr(value, resolve);
-                    }
-                    mojito_ast::ast::SubscriptArg::Slice {
-                        lower, upper, step, ..
-                    }
-                    | mojito_ast::ast::SubscriptArg::KeywordSlice {
-                        lower, upper, step, ..
-                    } => {
-                        for value in [lower, upper, step].into_iter().flatten() {
-                            rename_expr(value, resolve);
-                        }
-                    }
-                }
-            }
-        }
-        ExprKind::ListLit(xs) | ExprKind::TupleLit(xs) => {
-            for x in xs {
-                rename_expr(x, resolve);
-            }
-        }
-        ExprKind::BraceLit(entries) => {
-            for (key, value) in entries {
-                rename_expr(key, resolve);
-                if let Some(value) = value {
-                    rename_expr(value, resolve);
-                }
-            }
-        }
-        ExprKind::Comprehension {
-            key,
-            value,
-            clauses,
-            ..
-        } => {
-            if let Some(key) = key {
-                rename_expr(key, resolve);
-            }
-            rename_expr(value, resolve);
-            for clause in clauses {
-                match clause {
-                    mojito_ast::ast::ComprehensionClause::For { iter, .. } => {
-                        rename_expr(iter, resolve);
-                    }
-                    mojito_ast::ast::ComprehensionClause::If(condition) => {
-                        rename_expr(condition, resolve);
-                    }
-                }
-            }
-        }
-        ExprKind::Invoke {
-            callee,
-            args,
-            kwargs,
-            ..
-        } => {
-            rename_expr(callee, resolve);
-            for arg in args {
-                rename_expr(arg, resolve);
-            }
-            for arg in kwargs {
-                rename_expr(&mut arg.value, resolve);
-            }
-        }
-        ExprKind::Named { name, value } => {
-            *name = resolve(&span, name);
-            rename_expr(value, resolve);
-        }
-        ExprKind::IfExpr {
-            cond,
-            then_branch,
-            else_branch,
-        } => {
-            rename_expr(cond, resolve);
-            rename_expr(then_branch, resolve);
-            rename_expr(else_branch, resolve);
-        }
-        // A lambda's hidden definition is its own function: its body is never
-        // renamed with the enclosing frame (captures resolve by owner
-        // identity, not spelling).
-        ExprKind::Lambda { .. } => {}
-        ExprKind::Int(_)
-        | ExprKind::Float(_)
-        | ExprKind::Bool(_)
-        | ExprKind::Str(_)
-        | ExprKind::None
-        | ExprKind::Uninitialized
-        | ExprKind::EmptySubscript
-        | ExprKind::TypeValue(_)
-        | ExprKind::TString { .. }
-        | ExprKind::TypeApply { .. } => {}
+        lower.seal(Terminator::Return(None)); // implicit `return None` off the end
+        lower.finish(entry, params.len())
     }
 }
 
 fn collect_function_implicit_names(
-    body: &[Stmt],
+    checked: &CheckedTables,
+    body: &[CheckedStmtId],
     explicit: &HashSet<String>,
     names: &mut HashSet<String>,
 ) {
-    for statement in body {
-        match &statement.kind {
-            StmtKind::Assign { name, .. } => {
+    for statement in body.iter().filter_map(|id| checked.statement(*id)) {
+        let bodies: Vec<&[CheckedStmtId]> = match &statement.op {
+            CheckedStmtOp::Assign { name, .. } => {
                 if !explicit.contains(name) {
                     names.insert(name.clone());
                 }
+                Vec::new()
             }
-            StmtKind::If { branches, orelse } | StmtKind::ComptimeIf { branches, orelse } => {
-                for (_, body) in branches {
-                    collect_function_implicit_names(body, explicit, names);
-                }
-                if let Some(body) = orelse {
-                    collect_function_implicit_names(body, explicit, names);
-                }
+            CheckedStmtOp::If { branches, orelse }
+            | CheckedStmtOp::ComptimeIf { branches, orelse } => branches
+                .iter()
+                .map(|(_, body)| body.as_slice())
+                .chain(orelse.as_deref())
+                .collect(),
+            CheckedStmtOp::While { body, orelse, .. } | CheckedStmtOp::For { body, orelse, .. } => {
+                std::iter::once(body.as_slice())
+                    .chain(orelse.as_deref())
+                    .collect()
             }
-            StmtKind::While { body, orelse, .. } | StmtKind::For { body, orelse, .. } => {
-                collect_function_implicit_names(body, explicit, names);
-                if let Some(body) = orelse {
-                    collect_function_implicit_names(body, explicit, names);
-                }
-            }
-            StmtKind::Try {
+            CheckedStmtOp::Try {
                 body,
                 except,
                 orelse,
                 finalbody,
-            } => {
-                collect_function_implicit_names(body, explicit, names);
-                if let Some((_, body)) = except {
-                    collect_function_implicit_names(body, explicit, names);
-                }
-                if let Some(body) = orelse {
-                    collect_function_implicit_names(body, explicit, names);
-                }
-                if let Some(body) = finalbody {
-                    collect_function_implicit_names(body, explicit, names);
-                }
-            }
-            StmtKind::ComptimeFor { body, .. }
-            | StmtKind::With { body, .. }
-            | StmtKind::Scope(body) => collect_function_implicit_names(body, explicit, names),
-            _ => {}
+            } => std::iter::once(body.as_slice())
+                .chain(except.as_ref().map(|(_, body)| body.as_slice()))
+                .chain(orelse.as_deref())
+                .chain(finalbody.as_deref())
+                .collect(),
+            CheckedStmtOp::ComptimeFor { body, .. }
+            | CheckedStmtOp::With { body, .. }
+            | CheckedStmtOp::Scope(body) => vec![body.as_slice()],
+            _ => Vec::new(),
+        };
+        for body in bodies {
+            collect_function_implicit_names(checked, body, explicit, names);
         }
     }
+}
+
+/// One root of a body HIR is handed as syntax: a statement node, or the
+/// value node of the synthetic `return` an expression thunk ends with.
+/// Transitional: R629 hands HIR statement nodes and deletes it.
+#[derive(Clone, Copy)]
+enum Root {
+    Stmt(CheckedStmtId),
+    Return(CheckedNodeId),
 }
 
 /// Lowering cursor: appends to the "current" block, splitting on control flow.
@@ -699,6 +479,8 @@ struct Lower {
     is_function: bool,
     /// The program's checked tables, shared with every other lowering.
     checked: Arc<CheckedTables>,
+    /// The slot each local-name node resolved to.
+    slots: HashMap<CheckedNodeId, VarId>,
 }
 
 impl Lower {
@@ -800,6 +582,7 @@ impl Lower {
                 self.g.add_edge(self.cur, *to, ());
             }
             Terminator::Branch { then_b, else_b, .. }
+            | Terminator::BranchOnSlot { then_b, else_b, .. }
             | Terminator::ComptimeBranch { then_b, else_b, .. } => {
                 self.g.add_edge(self.cur, *then_b, ());
                 self.g.add_edge(self.cur, *else_b, ());
@@ -825,6 +608,56 @@ impl Lower {
         } else {
             self.vars.push(name.to_string());
             (self.vars.len() - 1) as VarId
+        }
+    }
+
+    /// The checked node of each body root. A root with no statement node is
+    /// an expression thunk's synthetic `return`, whose value is a node.
+    fn roots(&self, body: &[Stmt]) -> Vec<Root> {
+        body.iter()
+            .map(|statement| {
+                if let Some(node) = self.checked.statement_at(&statement.source_span()) {
+                    return Root::Stmt(node.id);
+                }
+                let StmtKind::Return(Some(value)) = &statement.kind else {
+                    panic!(
+                        "checked body statement at {:?} has no checked node",
+                        statement.source_span()
+                    );
+                };
+                let node = self
+                    .checked
+                    .expression_ids_at(&value.source_span())
+                    .first()
+                    .copied()
+                    .unwrap_or_else(|| {
+                        panic!(
+                            "checked thunk value at {:?} has no checked node",
+                            value.source_span()
+                        )
+                    });
+                Root::Return(node)
+            })
+            .collect()
+    }
+
+    fn root(&mut self, root: Root) {
+        match root {
+            Root::Stmt(id) => self.stmt(id),
+            Root::Return(value) => self.ret(Some(value)),
+        }
+    }
+
+    fn finish(self, entry: BlockId, n_params: usize) -> Cfg {
+        let var_types = checked_var_types(&self.vars, &self.checked.expressions);
+        Cfg {
+            g: self.g,
+            entry,
+            vars: self.vars,
+            n_params,
+            checked: self.checked,
+            var_types,
+            slots: self.slots,
         }
     }
 
@@ -864,164 +697,124 @@ impl Lower {
         self.var(&runtime)
     }
 
-    fn expr(&self, e: &Expr) -> HirExpr {
-        let original_span = e.source_span();
-        let mut syntax = e.clone();
-        self.substitute_spelled_constructions(&mut syntax);
-        rename_expr(&mut syntax, &|span, n| {
-            // A `$contextual` leading-dot root substitutes its checker-
-            // resolved base type name; everything downstream sees the
-            // ordinary spelled form.
-            if n == mojito_ast::ast::CONTEXTUAL_SENTINEL
-                && let Some(base) = self
-                    .checked
-                    .expression_ids_at(span)
-                    .first()
-                    .and_then(|id| self.checked.expression(*id))
-                    .and_then(|node| node.contextual_base.clone())
+    /// Expression `id` evaluated in this frame: its names resolved to the
+    /// slots in scope here, and its tree.
+    fn expr(&mut self, id: CheckedNodeId) -> HirExpr {
+        self.resolve_names(id);
+        self.tree(id)
+    }
+
+    /// Record the slot each local name under `id` reads in this frame's
+    /// scopes. Compile-time parameter arguments, t-string parts, and a
+    /// lambda's `def` name no slot of this frame, so the walk skips them,
+    /// as a `$contextual` leading-dot root, which names its base type.
+    fn resolve_names(&mut self, id: CheckedNodeId) {
+        let checked = Arc::clone(&self.checked);
+        let Some(node) = checked.expression(id) else {
+            return;
+        };
+        let name = match &node.op {
+            CheckedOp::Identifier(name) | CheckedOp::Named { name, .. }
+                if name != mojito_ast::ast::CONTEXTUAL_SENTINEL =>
             {
-                return base;
+                Some(name)
             }
-            self.resolved(n)
-        });
-        let checked = self
+            _ => None,
+        };
+        if let Some(name) = name
+            && self.scopes.iter().any(|scope| scope.contains_key(name))
+        {
+            let slot = self.var(&self.resolved(name));
+            let recorded = *self.slots.entry(id).or_insert(slot);
+            debug_assert_eq!(recorded, slot, "a node resolves to one slot per frame");
+        }
+        for operand in named_operands(&node.op) {
+            self.resolve_names(operand);
+        }
+    }
+
+    /// Expression `id`'s tree: the node, its operands' trees, and the place
+    /// it denotes.
+    fn tree(&self, id: CheckedNodeId) -> HirExpr {
+        let node = self
             .checked
-            .expression_ids_at(&original_span)
-            .first()
-            .and_then(|id| self.checked.expression(*id));
-        if let Some(node) = checked {
-            HirExpr {
-                syntax,
-                checked: Some(node.id),
-                ty: node.ty.clone(),
-                category: node.category,
-                binding: node.binding,
-                effects: node.effects.clone(),
-                adjustments: node.adjustments.clone(),
-                children: self.checked_children(node),
-                place: self.checked_place(node),
-                comprehension_bindings: node.comprehension_bindings.clone(),
-            }
-        } else {
-            HirExpr::unchecked(syntax)
-        }
-    }
-
-    /// Replace every spelled sugar in `syntax` (an initializer list, a
-    /// template string, a value pack read as its `ParameterList`, or a
-    /// scalar `range` call) by the construction the checker spelled for it, the
-    /// node the checked arena answers at the sugar's location, so the CFG
-    /// lowers the construction where the sugar was written and the sugar's
-    /// own operands, cloned into it, keep their identities.
-    fn substitute_spelled_constructions(&self, syntax: &mut Expr) {
-        struct Substitute<'a> {
-            checked: &'a CheckedTables,
-        }
-
-        impl mojito_ast::visit::MutVisitor for Substitute<'_> {
-            fn visit_expr_mut(&mut self, expr: &mut Expr) {
-                if !matches!(
-                    expr.kind,
-                    ExprKind::BraceLit(_)
-                        | ExprKind::TString { .. }
-                        | ExprKind::Identifier(_)
-                        | ExprKind::Member { .. }
-                        | ExprKind::Call { .. }
-                ) {
-                    return;
-                }
-                let Some(construction) = self
-                    .checked
-                    .expression_ids_at(&expr.source_span())
-                    .first()
-                    .and_then(|id| self.checked.expression(*id))
-                    .filter(|node| node.syntax_id != expr.syntax_id)
-                    .and_then(|node| self.checked.syntax_of(node.id))
-                else {
-                    return;
-                };
-                *expr = construction;
-                mojito_ast::visit::walk_expr_mut(self, expr);
-            }
-        }
-
-        mojito_ast::visit::walk_expr_mut(
-            &mut Substitute {
-                checked: &self.checked,
-            },
-            syntax,
-        );
-    }
-
-    fn checked_children(&self, node: &CheckedExpr) -> Vec<HirExpr> {
-        node.op
-            .operands()
-            .into_iter()
-            .filter_map(|id| self.checked_expr(self.checked.expression(id)?))
-            .collect()
-    }
-
-    fn checked_expr(&self, node: &CheckedExpr) -> Option<HirExpr> {
-        Some(HirExpr {
-            syntax: self.checked.syntax_of(node.id)?,
-            checked: Some(node.id),
-            ty: node.ty.clone(),
-            category: node.category,
-            binding: node.binding,
-            effects: node.effects.clone(),
-            adjustments: node.adjustments.clone(),
-            children: self.checked_children(node),
+            .expression(id)
+            .expect("a checked operand names a node of its tables");
+        HirExpr {
+            node: id,
+            children: node
+                .op
+                .operands()
+                .into_iter()
+                .map(|operand| self.tree(operand))
+                .collect(),
             place: self.checked_place(node),
-            comprehension_bindings: node.comprehension_bindings.clone(),
-        })
+        }
     }
 
-    fn statement(&self, mut syntax: Stmt) -> HirStmt {
-        // MIR lowers the statement's own syntax against these roots' facts,
-        // so a spelled sugar is replaced in the statement as well.
-        for root in statement_expression_roots_mut(&mut syntax) {
-            self.substitute_spelled_constructions(root);
-        }
-        let node = self.checked.statement_at(&syntax.source_span());
-        let declaration = node.and_then(|node| node.declaration);
-        let binding = node.and_then(|node| node.binding);
-        let expressions = statement_expression_roots(&syntax)
+    /// Opaque statement `id`, with its expression roots' trees. MIR lowers
+    /// the statement whole, resolving its names by binding.
+    fn statement(&self, id: CheckedStmtId) -> HirStmt {
+        let expressions = self
+            .checked
+            .statement(id)
+            .map(|node| checked_statement_roots(&node.op))
+            .unwrap_or_default()
             .into_iter()
-            .map(|expression| self.expr(expression))
+            .map(|expression| self.tree(expression))
             .collect();
         HirStmt {
-            syntax,
-            declaration,
-            binding,
+            node: id,
             expressions,
+            declared: None,
         }
     }
 
-    fn scoped_block(&mut self, body: &[Stmt]) {
+    fn scoped_block(&mut self, body: &[CheckedStmtId]) {
         self.scopes.push(HashMap::new());
         self.block(body);
         self.scopes.pop();
     }
 
-    fn block(&mut self, body: &[Stmt]) {
+    fn block(&mut self, body: &[CheckedStmtId]) {
         for s in body {
-            self.stmt(s);
+            self.stmt(*s);
         }
     }
 
+    fn ret(&mut self, value: Option<CheckedNodeId>) {
+        let value = value.map(|value| self.expr(value));
+        let cleanup = self
+            .loops
+            .iter()
+            .rev()
+            .flat_map(|frame| frame.cleanup.iter().copied())
+            .collect::<Vec<_>>();
+        self.seal(if cleanup.is_empty() {
+            Terminator::Return(value)
+        } else {
+            Terminator::ReturnWithCleanup { value, cleanup }
+        });
+    }
+
     #[allow(clippy::too_many_lines, reason = "TODO: split this pass")]
-    fn stmt(&mut self, s: &Stmt) {
-        match &s.kind {
+    fn stmt(&mut self, id: CheckedStmtId) {
+        let checked = Arc::clone(&self.checked);
+        let s = checked
+            .statement(id)
+            .expect("a checked body names a statement node of its tables");
+        match &s.op {
             // A `comptime if` is the same diamond with a compile-time
             // condition: the elaborator keeps one arm, after ownership has
             // decided both.
-            StmtKind::If { branches, orelse } | StmtKind::ComptimeIf { branches, orelse } => {
-                let comptime = matches!(s.kind, StmtKind::ComptimeIf { .. });
+            CheckedStmtOp::If { branches, orelse }
+            | CheckedStmtOp::ComptimeIf { branches, orelse } => {
+                let comptime = matches!(s.op, CheckedStmtOp::ComptimeIf { .. });
                 let join = self.new_block();
                 for (cond, body) in branches {
                     let then_b = self.new_block();
                     let else_b = self.new_block();
-                    let cond = self.expr(cond);
+                    let cond = self.expr(*cond);
                     self.seal(if comptime {
                         Terminator::ComptimeBranch {
                             cond,
@@ -1047,14 +840,14 @@ impl Lower {
                 self.cur = join;
             }
 
-            StmtKind::Scope(body) => self.scoped_block(body),
+            CheckedStmtOp::Scope(body) => self.scoped_block(body),
 
             // A `comptime for` is a loop whose header advances a compile-time
             // index: the body is analysed once as a loop body with the trip
             // count unknown, `break` and `continue` are the loop's, and the
             // elaborator unrolls it.
-            StmtKind::ComptimeFor { var, iter, body } => {
-                let iter = self.expr(iter);
+            CheckedStmtOp::ComptimeFor { var, iter, body } => {
+                let iter = self.expr(*iter);
                 let header = self.new_block();
                 let body_b = self.new_block();
                 let exit = self.new_block();
@@ -1062,14 +855,10 @@ impl Lower {
                 self.cur = header;
                 self.scopes.push(HashMap::new());
                 let index = self.declare_var(var);
-                let binding = self
-                    .checked
-                    .statement_at(&s.source_span())
-                    .and_then(|node| node.binding);
                 self.seal(Terminator::ComptimeLoop {
                     iter,
                     var: var.clone(),
-                    binding,
+                    binding: s.binding,
                     index,
                     body: body_b,
                     exit,
@@ -1088,15 +877,16 @@ impl Lower {
                 self.cur = exit;
             }
 
-            StmtKind::While { cond, body, orelse } => {
+            CheckedStmtOp::While { cond, body, orelse } => {
                 let header = self.new_block();
                 let body_b = self.new_block();
                 let exit = self.new_block();
                 let normal_exit = orelse.as_ref().map_or(exit, |_| self.new_block());
                 self.seal(Terminator::Jump(header));
                 self.cur = header;
+                let cond = self.expr(*cond);
                 self.seal(Terminator::Branch {
-                    cond: self.expr(cond),
+                    cond,
                     then_b: body_b,
                     else_b: normal_exit,
                 });
@@ -1122,17 +912,18 @@ impl Lower {
             // protocol: a pre-header evaluates the iterable once into an iterator
             // slot; the header computes `has_next` and branches on it; the body
             // binds the loop variable via `next` (which advances the iterator).
-            StmtKind::For {
+            CheckedStmtOp::For {
                 var,
                 binding: binding_mode,
                 iter,
                 body,
                 orelse,
             } => {
-                let checked_iter = self.expr(iter);
-                let protocol = checked_iter
-                    .adjustments
-                    .iter()
+                let checked_iter = self.expr(*iter);
+                let protocol = checked
+                    .expression(*iter)
+                    .into_iter()
+                    .flat_map(|node| &node.adjustments)
                     .find_map(|adjustment| match adjustment {
                         SemanticAdjustment::Iterate(protocol) => Some(protocol.clone()),
                         _ => None,
@@ -1143,7 +934,6 @@ impl Lower {
                     .clone()
                     .expect("checked for-loop protocol has a binding plan");
                 debug_assert_eq!(binding_plan.mode, *binding_mode);
-
                 // Evaluate the iterable once into a fresh iterator variable. `$`
                 // names can't be produced by the parser, so they never collide with
                 // user variables; a monotone `vars.len()` suffix keeps them unique.
@@ -1203,11 +993,9 @@ impl Lower {
                 let normal_exit = orelse.as_ref().map_or(exit, |_| self.new_block());
                 self.scopes.push(HashMap::new());
                 let v = self.declare_var(var);
-                let declaration = self
-                    .checked
-                    .statement_at(&s.source_span())
-                    .and_then(|node| node.declaration)
-                    .and_then(|id| self.checked.declaration(id))
+                let declaration = s
+                    .declaration
+                    .and_then(|id| checked.declaration(id))
                     .expect("checked for-loop binding declaration");
                 let binding = declaration
                     .binding
@@ -1240,8 +1028,8 @@ impl Lower {
                         dest: hn_var,
                     });
                 }
-                self.seal(Terminator::Branch {
-                    cond: HirExpr::unchecked(Expr::new(ExprKind::Identifier(hn_name), DUMMY_SPAN)),
+                self.seal(Terminator::BranchOnSlot {
+                    cond: hn_var,
                     then_b: body_b,
                     else_b: normal_exit,
                 });
@@ -1310,9 +1098,9 @@ impl Lower {
                 }
             }
 
-            StmtKind::Break => {
+            CheckedStmtOp::Break => {
                 let Some(f) = self.loops.last().cloned() else {
-                    self.push(HirInstr::Stmt(self.statement(s.clone())));
+                    self.push(HirInstr::Stmt(self.statement(id)));
                     return;
                 };
                 // A loop in this CFG → a plain `Jump` to its exit; an enclosing
@@ -1323,9 +1111,9 @@ impl Lower {
                     Terminator::Jump(f.exit)
                 });
             }
-            StmtKind::Continue => {
+            CheckedStmtOp::Continue => {
                 let Some(f) = self.loops.last().cloned() else {
-                    self.push(HirInstr::Stmt(self.statement(s.clone())));
+                    self.push(HirInstr::Stmt(self.statement(id)));
                     return;
                 };
                 self.seal(if f.escape {
@@ -1334,56 +1122,32 @@ impl Lower {
                     Terminator::Jump(f.header)
                 });
             }
-            StmtKind::Return(e) => {
-                let value = e.as_ref().map(|e| self.expr(e));
-                let cleanup = self
-                    .loops
-                    .iter()
-                    .rev()
-                    .flat_map(|frame| frame.cleanup.iter().copied())
-                    .collect::<Vec<_>>();
-                self.seal(if cleanup.is_empty() {
-                    Terminator::Return(value)
-                } else {
-                    Terminator::ReturnWithCleanup { value, cleanup }
-                });
-            }
+            CheckedStmtOp::Return(value) => self.ret(*value),
 
-            StmtKind::VarDecl { name, ty: _, value } => {
-                let value = self.expr(value);
+            CheckedStmtOp::VarDecl { name, ty: _, value } => {
+                let binding_ty = checked
+                    .expression(*value)
+                    .and_then(|node| node.binding_ty.clone());
+                let value = self.expr(*value);
                 let v = self.declare_var(name);
-                let binding = self
-                    .checked
-                    .statement_at(&s.source_span())
-                    .and_then(|node| node.binding);
-                let binding_ty = value.checked.and_then(|id| {
-                    self.checked
-                        .expression(id)
-                        .and_then(|node| node.binding_ty.clone())
-                });
                 self.push(HirInstr::Bind {
                     dest: v,
                     expr: value,
                     binding_ty,
-                    binding,
+                    binding: s.binding,
                 });
             }
-            StmtKind::RefDecl { name, value } => {
-                let value = self.expr(value);
+            CheckedStmtOp::RefDecl { name, value } => {
+                let value = self.expr(*value);
                 let runtime = self.declare_var(name);
-                let mut statement = s.clone();
-                statement.kind = StmtKind::RefDecl {
-                    name: self.vars[runtime as usize].clone(),
-                    value: value.syntax,
-                };
-                self.push(HirInstr::Stmt(self.statement(statement)));
+                self.push(HirInstr::Stmt(HirStmt {
+                    node: id,
+                    expressions: vec![value],
+                    declared: Some(runtime),
+                }));
             }
-            StmtKind::Assign { name, value } => {
-                let value = self.expr(value);
-                let binding = self
-                    .checked
-                    .statement_at(&s.source_span())
-                    .and_then(|node| node.binding);
+            CheckedStmtOp::Assign { name, value } => {
+                let value = self.expr(*value);
                 let captured = self.captures.remove(name);
                 if !self.scopes.iter().any(|s| s.contains_key(name))
                     && let Some(scope) = self.scopes.last_mut()
@@ -1403,10 +1167,13 @@ impl Lower {
                     dest: v,
                     expr: value,
                     binding_ty: None,
-                    binding,
+                    binding: s.binding,
                 });
             }
-            StmtKind::Expr(e) => self.push(HirInstr::Eval(self.expr(e))),
+            CheckedStmtOp::Expr(e) => {
+                let e = self.expr(*e);
+                self.push(HirInstr::Eval(e));
+            }
 
             // A `try`: snapshot the enclosing loop stack so a `break`/`continue`
             // inside it can escape to an outer loop. Supported only when every
@@ -1414,7 +1181,7 @@ impl Lower {
             // function's own loops always are; a region's own loops are region-local
             // and can't be an escape target, so such a `try` falls back to the opaque
             // `Stmt` path (Stage 5 then refuses a crossing `break`/`continue`).
-            StmtKind::Try { .. } => {
+            CheckedStmtOp::Try { .. } => {
                 let escapable = self.is_function || self.loops.iter().all(|f| f.escape);
                 if escapable {
                     let loop_targets = self
@@ -1423,17 +1190,17 @@ impl Lower {
                         .map(|f| (f.header, f.exit, f.cleanup.clone()))
                         .collect();
                     self.push(HirInstr::Try {
-                        stmt: self.statement(s.clone()),
+                        stmt: self.statement(id),
                         loop_targets,
                     });
                 } else {
-                    self.push(HirInstr::Stmt(self.statement(s.clone())));
+                    self.push(HirInstr::Stmt(self.statement(id)));
                 }
             }
 
             // Everything else (member-write, aug-assign, declarations, imports, …)
             // is kept whole for Stage 4; Stage 5 refines it.
-            _ => self.push(HirInstr::Stmt(self.statement(s.clone()))),
+            _ => self.push(HirInstr::Stmt(self.statement(id))),
         }
     }
 }
@@ -1468,98 +1235,102 @@ fn checked_var_types(vars: &[String], nodes: &[CheckedExpr]) -> HashMap<VarId, T
         .collect()
 }
 
-fn explicit_local_names(body: &[Stmt]) -> HashSet<String> {
-    fn walk(body: &[Stmt], names: &mut HashSet<String>) {
-        for statement in body {
-            match &statement.kind {
-                StmtKind::VarDecl { name, .. } | StmtKind::RefDecl { name, .. } => {
+fn explicit_local_names(checked: &CheckedTables, body: &[CheckedStmtId]) -> HashSet<String> {
+    fn walk(checked: &CheckedTables, body: &[CheckedStmtId], names: &mut HashSet<String>) {
+        for statement in body.iter().filter_map(|id| checked.statement(*id)) {
+            match &statement.op {
+                CheckedStmtOp::VarDecl { name, .. } | CheckedStmtOp::RefDecl { name, .. } => {
                     names.insert(name.clone());
                 }
-                StmtKind::If { branches, orelse } | StmtKind::ComptimeIf { branches, orelse } => {
+                CheckedStmtOp::If { branches, orelse }
+                | CheckedStmtOp::ComptimeIf { branches, orelse } => {
                     for (_, body) in branches {
-                        walk(body, names);
+                        walk(checked, body, names);
                     }
                     if let Some(body) = orelse {
-                        walk(body, names);
+                        walk(checked, body, names);
                     }
                 }
-                StmtKind::While { body, .. }
-                | StmtKind::For { body, .. }
-                | StmtKind::ComptimeFor { body, .. }
-                | StmtKind::With { body, .. }
-                | StmtKind::Scope(body) => walk(body, names),
-                StmtKind::Try {
+                CheckedStmtOp::While { body, .. }
+                | CheckedStmtOp::For { body, .. }
+                | CheckedStmtOp::ComptimeFor { body, .. }
+                | CheckedStmtOp::With { body, .. }
+                | CheckedStmtOp::Scope(body) => walk(checked, body, names),
+                CheckedStmtOp::Try {
                     body,
                     except,
                     orelse,
                     finalbody,
                 } => {
-                    walk(body, names);
+                    walk(checked, body, names);
                     if let Some((_, body)) = except {
-                        walk(body, names);
+                        walk(checked, body, names);
                     }
                     if let Some(body) = orelse {
-                        walk(body, names);
+                        walk(checked, body, names);
                     }
                     if let Some(body) = finalbody {
-                        walk(body, names);
+                        walk(checked, body, names);
                     }
                 }
-                StmtKind::Def { .. } | StmtKind::Struct { .. } | StmtKind::Trait { .. } => {}
                 _ => {}
             }
         }
     }
 
     let mut names = HashSet::new();
-    walk(body, &mut names);
+    walk(checked, body, &mut names);
     names
 }
 
-/// [`statement_expression_roots`], mutably.
-fn statement_expression_roots_mut(statement: &mut Stmt) -> Vec<&mut Expr> {
-    match &mut statement.kind {
-        StmtKind::VarDecl { value, .. }
-        | StmtKind::RefDecl { value, .. }
-        | StmtKind::Assign { value, .. }
-        | StmtKind::Comptime { value, .. }
-        | StmtKind::Raise(value)
-        | StmtKind::Expr(value) => vec![value],
-        StmtKind::SetPlace { place, value } | StmtKind::AugAssign { place, value, .. } => {
-            vec![place, value]
+/// The expression roots an opaque statement owns, in source order: the
+/// operands MIR lowers it against. A nested body's are its own CFG's.
+fn checked_statement_roots(statement: &CheckedStmtOp) -> Vec<CheckedNodeId> {
+    match statement {
+        CheckedStmtOp::VarDecl { value, .. }
+        | CheckedStmtOp::RefDecl { value, .. }
+        | CheckedStmtOp::Assign { value, .. }
+        | CheckedStmtOp::Comptime { value, .. }
+        | CheckedStmtOp::Raise(value)
+        | CheckedStmtOp::Expr(value) => vec![*value],
+        CheckedStmtOp::SetPlace { place, value }
+        | CheckedStmtOp::AugAssign { place, value, .. } => {
+            vec![*place, *value]
         }
-        StmtKind::Unpack { targets, value, .. } => {
-            let mut roots: Vec<&mut Expr> = targets.iter_mut().collect();
-            roots.push(value);
-            roots
+        CheckedStmtOp::Unpack { targets, value, .. } => {
+            targets.iter().copied().chain([*value]).collect()
         }
-        StmtKind::Return(Some(value)) => vec![value],
-        StmtKind::With { items, .. } => items.iter_mut().map(|item| &mut item.context).collect(),
-        _ => Vec::new(),
-    }
-}
-
-fn statement_expression_roots(statement: &Stmt) -> Vec<&Expr> {
-    match &statement.kind {
-        StmtKind::VarDecl { value, .. }
-        | StmtKind::RefDecl { value, .. }
-        | StmtKind::Assign { value, .. }
-        | StmtKind::Comptime { value, .. }
-        | StmtKind::Raise(value)
-        | StmtKind::Expr(value) => vec![value],
-        StmtKind::SetPlace { place, value } | StmtKind::AugAssign { place, value, .. } => {
-            vec![place, value]
-        }
-        StmtKind::Unpack { targets, value, .. } => {
-            let mut roots: Vec<&Expr> = targets.iter().collect();
-            roots.push(value);
-            roots
-        }
-        StmtKind::Return(Some(value)) => vec![value],
-        StmtKind::With { items, .. } => items.iter().map(|item| &item.context).collect(),
+        CheckedStmtOp::Return(Some(value)) => vec![*value],
+        CheckedStmtOp::With { items, .. } => items.iter().map(|item| item.context).collect(),
         // Structured statements and declarations are either decomposed by HIR or
         // rebuilt as independently checked nested CFGs; their nested expressions
         // are not roots of this opaque instruction.
         _ => Vec::new(),
+    }
+}
+
+/// The operands of `op` whose local names this frame resolves: every operand
+/// but a compile-time parameter argument's, a t-string part, and a lambda's
+/// `def`.
+fn named_operands(op: &CheckedOp) -> Vec<CheckedNodeId> {
+    match op {
+        CheckedOp::Call { args, kwargs, .. } => args
+            .iter()
+            .copied()
+            .chain(kwargs.iter().map(|kwarg| kwarg.value))
+            .collect(),
+        CheckedOp::Invoke {
+            callee,
+            args,
+            kwargs,
+            ..
+        } => std::iter::once(*callee)
+            .chain(args.iter().copied())
+            .chain(kwargs.iter().map(|kwarg| kwarg.value))
+            .collect(),
+        CheckedOp::TypeApply { .. } | CheckedOp::TString { .. } | CheckedOp::Lambda { .. } => {
+            Vec::new()
+        }
+        _ => op.operands(),
     }
 }

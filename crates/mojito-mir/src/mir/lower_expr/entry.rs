@@ -9,24 +9,16 @@ impl Flatten<'_> {
     /// Post-order: each subexpression emits one instruction and yields its result
     /// `Reg`, so `foo(bar(x))` → `t0 = bar(x); t1 = foo(t0)`. Total over `Expr`.
     pub(in crate::mir) fn expr_hir(&mut self, expression: &mojito_hir::hir::HirExpr) -> Reg {
-        let mut index = HashMap::new();
-        index_hir_expression(&expression.syntax, expression, &mut index);
-        self.active_semantics.push(index);
-        let result = self.expr(&expression.syntax);
-        self.active_semantics.pop();
-        result
+        self.with_hir(expression, Self::expr)
     }
 
     /// A branch condition: `expr_hir` plus the `Boolable` conversion of a
     /// checker-marked truthiness condition (`if collection:`).
     pub(in crate::mir) fn condition_hir(&mut self, expression: &mojito_hir::hir::HirExpr) -> Reg {
-        let mut index = HashMap::new();
-        index_hir_expression(&expression.syntax, expression, &mut index);
-        self.active_semantics.push(index);
-        let value = self.expr(&expression.syntax);
-        let result = self.truthiness(&expression.syntax, value);
-        self.active_semantics.pop();
-        result
+        self.with_hir(expression, |this, syntax| {
+            let value = this.expr(syntax);
+            this.truthiness(syntax, value)
+        })
     }
 
     /// A `comptime if` condition as the constraint its branch carries: the
@@ -37,12 +29,48 @@ impl Flatten<'_> {
         &mut self,
         expression: &mojito_hir::hir::HirExpr,
     ) -> mojito_types::types::GenericConstraint {
+        self.with_hir(expression, Self::comptime_condition_of)
+    }
+
+    /// Lower HIR expression `expression` through `lower`, given the syntax
+    /// rebuilt from its node, with that syntax's facts active.
+    pub(in crate::mir) fn with_hir<R>(
+        &mut self,
+        expression: &mojito_hir::hir::HirExpr,
+        lower: impl FnOnce(&mut Self, &Expr) -> R,
+    ) -> R {
+        let syntax = self.hir_syntax(expression);
         let mut index = HashMap::new();
-        index_hir_expression(&expression.syntax, expression, &mut index);
+        index_hir_expression(&self.checked, &syntax, expression, &mut index);
         self.active_semantics.push(index);
-        let constraint = self.comptime_condition_of(&expression.syntax);
+        let outer = std::mem::take(&mut self.conversion_view_loans);
+        let result = lower(self, &syntax);
+        self.conversion_view_loans = outer;
         self.active_semantics.pop();
-        constraint
+        result
+    }
+
+    /// The checked node of HIR expression `expression`.
+    pub(in crate::mir) fn hir_node(
+        &self,
+        expression: &mojito_hir::hir::HirExpr,
+    ) -> &mojito_checked::checked::CheckedExpr {
+        self.checked
+            .expression(expression.node)
+            .expect("a HIR expression names a node of its tables")
+    }
+
+    /// [`hir_syntax`] in this function's frame.
+    pub(in crate::mir) fn hir_syntax(&self, expression: &mojito_hir::hir::HirExpr) -> Expr {
+        hir_syntax(&self.checked, &self.slots, &self.vars, expression)
+    }
+
+    /// [`hir_statement_syntax`] in this function's frame.
+    pub(in crate::mir) fn hir_statement_syntax(
+        &self,
+        statement: &mojito_hir::hir::HirStmt,
+    ) -> Stmt {
+        hir_statement_syntax(&self.checked, &self.slots, &self.vars, statement)
     }
 
     fn comptime_condition_of(
@@ -100,33 +128,18 @@ impl Flatten<'_> {
         &mut self,
         expression: &mojito_hir::hir::HirExpr,
     ) -> Reg {
-        let mut index = HashMap::new();
-        index_hir_expression(&expression.syntax, expression, &mut index);
-        self.active_semantics.push(index);
-        let result = self.reference_handle(&expression.syntax);
-        self.active_semantics.pop();
-        result
+        self.with_hir(expression, Self::reference_handle)
     }
 
     pub(in crate::mir) fn projected_reference_place_hir(
         &mut self,
         expression: &mojito_hir::hir::HirExpr,
     ) -> Option<MirPlace> {
-        let mut index = HashMap::new();
-        index_hir_expression(&expression.syntax, expression, &mut index);
-        self.active_semantics.push(index);
-        let result = self.lower_projected_reference_place(&expression.syntax);
-        self.active_semantics.pop();
-        result
+        self.with_hir(expression, Self::lower_projected_reference_place)
     }
 
     pub(in crate::mir) fn place_hir(&mut self, expression: &mojito_hir::hir::HirExpr) -> MirPlace {
-        let mut index = HashMap::new();
-        index_hir_expression(&expression.syntax, expression, &mut index);
-        self.active_semantics.push(index);
-        let result = self.place(&expression.syntax);
-        self.active_semantics.pop();
-        result
+        self.with_hir(expression, Self::place)
     }
 
     pub(in crate::mir) fn expr(&mut self, e: &Expr) -> Reg {

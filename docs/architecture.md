@@ -165,8 +165,8 @@ import (every compilation that links the bundled library):
   enters the pipeline at HIR: the importer installs the unit's tables as
   its checked program (`CheckedUnit::program`, `CheckedProgram::installed`,
   over the package's own overload sets and constants, rebuilding no
-  arena; the syntax HIR and MIR still walk is rebuilt from the nodes until
-  R623), lowers it (`mir::lower_package_unit`), and then inserts drops, as
+  arena; HIR walks the nodes, and the syntax MIR still lowers is rebuilt
+  from them until R623), lowers it (`mir::lower_package_unit`), and then inserts drops, as
   upstream's importer lowers its semantic control flow and runs its
   lifetime pass on a body it materializes.
 - **A declaration's record** (`checked::package`) holds the declaration
@@ -1468,8 +1468,8 @@ once no `Int` overload matches) is spelled in the same check as the
 construction of the linked range struct at the inferred dtype
 (`_ZeroStartingRange[DType.int32](…)`), a `SemanticAdjustment::SpelledConstruction`
 on the call typed as any generic construction, which the checked arena and
-HIR substitute in the call's place as they do an initializer list or a
-t-string.
+HIR lower in the call's place (the call's node operand is the
+construction) as they do an initializer list or a t-string.
 
 `Compiler::compile_linked` elaborates once and checks once (since
 2026-10-08): no check feeds a second elaboration, and the instances a
@@ -1738,20 +1738,24 @@ the compile-time forms stay structured as upstream's `hlcf` keeps them), its
 occurrence, the binding it introduces with that binding's type, and its
 declaration. A function's root statements are its op's body; the tables keep
 the module's and each default wrapper's. A lambda's op names its `def`'s
-statement node. HIR and MIR still walk statement syntax and reach a
-statement's node through the transitional `CheckedTables::statement_at`
-(R629). Source spans index
+statement node. HIR walks the statement and expression nodes; its callers
+still hand it a body's syntax roots, which `Lower::roots` maps to their
+nodes through the transitional `CheckedTables::statement_at` (R629). MIR
+still walks statement syntax. Source spans index
 diagnostics and associate a checker-approved compile-time value argument with
 the register produced from that same source occurrence; they are not used to
 re-resolve a type, overload, effect, or origin decision.
 
 Call targets, implicit conversions, moves, explicit-destruction decisions, and
 reference-handle preservation are stored canonically as `SemanticAdjustment`
-values on checked nodes. `HirExpr` recursively retains those checked children in
-AST structural order; its syntax is rebuilt from the ops by the transitional
-`CheckedTables::syntax_of`, which yields the construction the check spelled
-where a sugar was written. MIR pairs the active HIR syntax tree with that recursive
-semantic tree by node identity. One narrow association remains span-keyed:
+values on checked nodes. `HirExpr` names its node and recursively retains its
+operands' trees in `CheckedOp::operands` order, with the place HIR computed for
+each; it holds no syntax and no copy of a node attribute. MIR rebuilds the
+syntax it still lowers from the ops through the transitional
+`CheckedTables::syntax_of_spelled` (`hir_syntax`), which yields the
+construction the check spelled where a sugar was written and spells each local
+name as the slot `Cfg::slots` resolved it to, and pairs that syntax tree with
+the recursive node tree by address for the length of one lowering. One narrow association remains span-keyed:
 source-ordered compile-time value arguments reuse registers already evaluated
 for the corresponding checked subscript operand. This is a register handoff,
 not semantic reconstruction. Register spans otherwise serve diagnostics only.
@@ -2279,11 +2283,15 @@ hir::Cfg
 ```
 
 HIR is the first control-flow-aware representation. It is a graph of basic
-blocks backed by `petgraph::StableGraph`. Expression-bearing instructions and
-terminators carry `HirExpr`: diagnostic syntax paired with a stable checked node
-identity, resolved type, value category, and explicit semantic adjustments.
-Opaque compatibility statements carry the checked expression identities within
-their source extent. HIR retains responsibility for statement control flow.
+blocks backed by `petgraph::StableGraph`, built by walking the checked
+statement and expression nodes (`CheckedStmtOp`, `CheckedOp`), as upstream's
+control-flow lowering consumes typed ops. Expression-bearing instructions and
+terminators carry `HirExpr`: a checked node, its operands' trees, and its
+checked place; its type, category, effects, and adjustments are the node's own
+attributes. Opaque statements (`HirStmt`) carry their statement node and their
+expression roots' trees. A use names its definition rather than a spelling:
+`Cfg::slots` records the slot each local-name node resolves to in HIR's lexical
+scopes. HIR retains responsibility for statement control flow.
 The CFG design admits additional edge kinds for suspension/resumption and pattern
 failure without baking them into expression lowering.
 
@@ -2301,13 +2309,19 @@ Each block is sealed with exactly one terminator:
 ```rust
 pub enum Terminator {
     Jump(BlockId),
-    Branch { cond: Expr, then_b: BlockId, else_b: BlockId },
-    Return(Option<Expr>),
-    ReturnWithCleanup { value: Option<Expr>, cleanup: Vec<VarId> },
+    Branch { cond: HirExpr, then_b: BlockId, else_b: BlockId },
+    BranchOnSlot { cond: VarId, then_b: BlockId, else_b: BlockId },
+    ComptimeBranch { cond: HirExpr, then_b: BlockId, else_b: BlockId },
+    ComptimeLoop { iter: HirExpr, var: String, binding, index: VarId, body, exit },
+    Return(Option<HirExpr>),
+    ReturnWithCleanup { value: Option<HirExpr>, cleanup: Vec<VarId> },
     FallOff,
     EscapeJump(BlockId),
 }
 ```
+
+A `for` header branches on the `Bool` slot its iterator protocol wrote
+(`BranchOnSlot`), which no checked node computes.
 
 Iterator-driven loops use `ReturnWithCleanup` when a source `return` bypasses
 their common exit. The return expression is materialized first, then the current

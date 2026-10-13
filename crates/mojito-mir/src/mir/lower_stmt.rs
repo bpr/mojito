@@ -37,84 +37,9 @@ impl Flatten<'_> {
                 expr,
                 binding_ty,
                 binding,
-            } => {
-                let mut index = HashMap::new();
-                index_hir_expression(&expr.syntax, expr, &mut index);
-                self.active_semantics.push(index);
-                let mut src = self.expr(&expr.syntax);
-                if let Some(target) = binding_ty.as_ref() {
-                    src = self.materialize_register(src, target, expr.source_span());
-                }
-                // The consuming call has returned: its temporary arguments'
-                // loans end before the store replaces the destination.
-                self.flush_argument_anchors();
-                let writes_through_reference = self.aliases.contains_key(dest)
-                    || (self.runtime_aliases.contains(dest) && !self.pointer_valued_slot(*dest));
-                if !writes_through_reference
-                    && let Some(ty) = self
-                        .f
-                        .reg_types
-                        .get(&src.0)
-                        .cloned()
-                        .or_else(|| expr.ty.clone())
-                        .or_else(|| binding_ty.clone())
-                {
-                    self.var_types.insert(*dest, ty);
-                }
-                if let Some(binding) = binding {
-                    self.owner_vars.insert(*binding, *dest);
-                }
-                // The initializer is evaluated before replacing the old
-                // binding.  Whole-owner invalidation therefore sits here,
-                // immediately before the write to the destination slot.
-                self.emit_interior_invalidations(&expr.syntax, Some(*dest));
-                if let Some(loan) = self.aliases.get(dest).cloned() {
-                    let mut place = loan.place;
-                    place.through = Some(*dest);
-                    self.emit(MirInstr::Store { place, src });
-                } else if self.runtime_aliases.contains(dest) && !self.pointer_valued_slot(*dest) {
-                    let handle = self.fresh(expr.source_span(), Some(*dest));
-                    self.emit(MirInstr::MakeRef {
-                        dest: handle,
-                        place: {
-                            let mut place =
-                                MirPlace::root(*dest, self.var_types.get(dest).cloned());
-                            place.through = Some(*dest);
-                            place
-                        },
-                    });
-                    self.emit(MirInstr::WriteRef {
-                        reference: handle,
-                        value: src,
-                    });
-                } else {
-                    self.emit(MirInstr::DefVar {
-                        var: *dest,
-                        src,
-                        binding_ty: binding_ty.clone(),
-                    });
-                    let aggregate_loans = self.aggregate_borrows(expr);
-                    if let Some(first) = aggregate_loans.first() {
-                        let marker = self.fresh_typed(
-                            expr.source_span(),
-                            Some(first.place.root),
-                            Ty::none(),
-                        );
-                        self.emit(MirInstr::EstablishLoans {
-                            reference: *dest,
-                            loans: aggregate_loans.clone(),
-                            marker,
-                            dest_interior: None,
-                        });
-                    }
-                    if aggregate_loans.is_empty() {
-                        self.aggregate_loans.remove(dest);
-                    } else {
-                        self.aggregate_loans.insert(*dest, aggregate_loans);
-                    }
-                }
-                self.active_semantics.pop();
-            }
+            } => self.with_hir(expr, |this, syntax| {
+                this.lower_bind(*dest, syntax, binding_ty.as_ref(), *binding);
+            }),
             HirInstr::BorrowIter {
                 dest,
                 expr,
@@ -122,39 +47,23 @@ impl Flatten<'_> {
                 mutable,
             } => {
                 let place = self.place_hir(expr);
-                let value_ty = expr
+                let node = self.hir_node(expr);
+                let location = node.location();
+                let value_ty = node
                     .ty
                     .clone()
                     .or_else(|| place.ty.clone())
                     .expect("checked borrowed iterator place has a type");
-                self.borrow_iteration_source(
-                    *dest,
-                    expr.source_span(),
-                    place,
-                    value_ty,
-                    origin,
-                    *mutable,
-                );
+                self.borrow_iteration_source(*dest, location, place, value_ty, origin, *mutable);
             }
             // The checker's `with` desugar anchors a manager's liveness at the
             // end of its block with `_mojito_keep_alive(name)`: a use of the
             // named slot (resolved by its checked binding, like any read)
             // without a value, so nothing is evaluated.
-            HirInstr::Eval(e)
-                if let ExprKind::Call { name, args, .. } = &e.syntax.kind
-                    && name == "_mojito_keep_alive"
-                    && let [
-                        Expr {
-                            kind: ExprKind::Identifier(local),
-                            ..
-                        },
-                    ] = args.as_slice() =>
-            {
-                // The argument's checked child carries the binding; the HIR
-                // syntax clone has no address-keyed facts of its own.
-                let var = match e.children.first().and_then(|child| child.binding) {
-                    Some(owner) => self.binding_var(owner, local),
-                    None => self.var(local),
+            HirInstr::Eval(e) if let Some((owner, local)) = self.kept_alive(e) => {
+                let var = match owner {
+                    Some(owner) => self.binding_var(owner, &local),
+                    None => self.var(&local),
                 };
                 self.emit(MirInstr::KeepAlive { var });
             }
@@ -168,38 +77,36 @@ impl Flatten<'_> {
             // outward `break`/`continue` becomes an `EscapeJump` resolved via
             // `outer_map`.
             HirInstr::Try { stmt, loop_targets } => {
-                let mut index = HashMap::new();
-                for (syntax, expression) in statement_expression_roots(&stmt.syntax)
-                    .into_iter()
-                    .zip(&stmt.expressions)
-                {
-                    index_hir_expression(syntax, expression, &mut index);
-                }
-                self.active_semantics.push(index);
-                if let StmtKind::Try {
-                    body,
-                    except,
-                    orelse,
-                    finalbody,
-                } = &stmt.syntax.kind
-                {
-                    self.emit_try(
-                        TryRegions {
-                            body,
-                            except,
-                            orelse,
-                            finalbody,
-                            handler_binding: stmt.binding,
-                        },
-                        loop_targets,
-                        outer_map,
-                    );
-                } else {
-                    self.emit(MirInstr::Unsupported(
-                        "malformed HIR try instruction".to_string(),
-                    ));
-                }
-                self.active_semantics.pop();
+                let syntax = self.hir_statement_syntax(stmt);
+                self.with_hir_statement(&syntax, stmt, |this| {
+                    if let StmtKind::Try {
+                        body,
+                        except,
+                        orelse,
+                        finalbody,
+                    } = &syntax.kind
+                    {
+                        let handler_binding = this
+                            .checked
+                            .statement(stmt.node)
+                            .and_then(|node| node.binding);
+                        this.emit_try(
+                            TryRegions {
+                                body,
+                                except,
+                                orelse,
+                                finalbody,
+                                handler_binding,
+                            },
+                            loop_targets,
+                            outer_map,
+                        );
+                    } else {
+                        this.emit(MirInstr::Unsupported(
+                            "malformed HIR try instruction".to_string(),
+                        ));
+                    }
+                });
             }
             HirInstr::Drop(var) => {
                 self.emit(MirInstr::DropVar { var: *var });
@@ -1789,6 +1696,7 @@ impl Flatten<'_> {
                 parameter_reads: self.parameter_reads.clone(),
                 overloads: std::sync::Arc::clone(&self.overloads),
                 checked: std::sync::Arc::clone(&self.checked),
+                slots: region_cfg.slots.clone(),
                 active_semantics: Vec::new(),
                 aliases: self.aliases.clone(),
                 runtime_aliases: self.runtime_aliases.clone(),
@@ -2979,15 +2887,145 @@ impl Flatten<'_> {
         statement: &mojito_hir::hir::HirStmt,
         outer_map: &HashMap<hir::BlockId, MirBlockId>,
     ) {
+        let syntax = self.hir_statement_syntax(statement);
+        let binding = self
+            .checked
+            .statement(statement.node)
+            .and_then(|node| node.binding);
+        self.with_hir_statement(&syntax, statement, |this| {
+            this.lower_stmt(&syntax, binding, outer_map);
+        });
+    }
+
+    /// Bind `syntax`, the syntax rebuilt for a HIR binding's value, to slot
+    /// `dest`: a declaration of checked binding `binding` at `binding_ty`, or
+    /// a write to the slot's existing binding.
+    fn lower_bind(
+        &mut self,
+        dest: VarId,
+        syntax: &Expr,
+        binding_ty: Option<&Ty>,
+        binding: Option<mojito_types::origin::OwnerId>,
+    ) {
+        let mut src = self.expr(syntax);
+        if let Some(target) = binding_ty {
+            src = self.materialize_register(src, target, syntax.source_span());
+        }
+        // The consuming call has returned: its temporary arguments'
+        // loans end before the store replaces the destination.
+        self.flush_argument_anchors();
+        let writes_through_reference = self.aliases.contains_key(&dest)
+            || (self.runtime_aliases.contains(&dest) && !self.pointer_valued_slot(dest));
+        if !writes_through_reference
+            && let Some(ty) = self
+                .f
+                .reg_types
+                .get(&src.0)
+                .cloned()
+                .or_else(|| self.checked_ty(syntax))
+                .or_else(|| binding_ty.cloned())
+        {
+            self.var_types.insert(dest, ty);
+        }
+        if let Some(binding) = binding {
+            self.owner_vars.insert(binding, dest);
+        }
+        // The initializer is evaluated before replacing the old
+        // binding.  Whole-owner invalidation therefore sits here,
+        // immediately before the write to the destination slot.
+        self.emit_interior_invalidations(syntax, Some(dest));
+        if let Some(loan) = self.aliases.get(&dest).cloned() {
+            let mut place = loan.place;
+            place.through = Some(dest);
+            self.emit(MirInstr::Store { place, src });
+        } else if self.runtime_aliases.contains(&dest) && !self.pointer_valued_slot(dest) {
+            let handle = self.fresh(syntax.source_span(), Some(dest));
+            self.emit(MirInstr::MakeRef {
+                dest: handle,
+                place: {
+                    let mut place = MirPlace::root(dest, self.var_types.get(&dest).cloned());
+                    place.through = Some(dest);
+                    place
+                },
+            });
+            self.emit(MirInstr::WriteRef {
+                reference: handle,
+                value: src,
+            });
+        } else {
+            self.emit(MirInstr::DefVar {
+                var: dest,
+                src,
+                binding_ty: binding_ty.cloned(),
+            });
+            let aggregate_loans = self.aggregate_borrows(syntax);
+            if let Some(first) = aggregate_loans.first() {
+                let marker =
+                    self.fresh_typed(syntax.source_span(), Some(first.place.root), Ty::none());
+                self.emit(MirInstr::EstablishLoans {
+                    reference: dest,
+                    loans: aggregate_loans.clone(),
+                    marker,
+                    dest_interior: None,
+                });
+            }
+            if aggregate_loans.is_empty() {
+                self.aggregate_loans.remove(&dest);
+            } else {
+                self.aggregate_loans.insert(dest, aggregate_loans);
+            }
+        }
+    }
+
+    /// The `_mojito_keep_alive(name)` call the checker's `with` desugar
+    /// anchors a manager's liveness with, as its argument's checked binding
+    /// and its spelling in this frame.
+    fn kept_alive(
+        &self,
+        expression: &hir::HirExpr,
+    ) -> Option<(Option<mojito_types::origin::OwnerId>, String)> {
+        use mojito_checked::checked::CheckedOp;
+        let CheckedOp::Call { name, args, .. } = &self.hir_node(expression).op else {
+            return None;
+        };
+        let [argument] = args.as_slice() else {
+            return None;
+        };
+        let argument = self.checked.expression(*argument)?;
+        let CheckedOp::Identifier(local) = &argument.op else {
+            return None;
+        };
+        if name != "_mojito_keep_alive" {
+            return None;
+        }
+        let local = self
+            .slots
+            .get(&argument.id)
+            .and_then(|slot| self.vars.get(*slot as usize))
+            .unwrap_or(local);
+        Some((argument.binding, local.clone()))
+    }
+
+    /// Lower opaque statement `statement` through `lower`, given `syntax`,
+    /// the syntax rebuilt from its node, with its expression roots' facts
+    /// active.
+    fn with_hir_statement(
+        &mut self,
+        syntax: &Stmt,
+        statement: &mojito_hir::hir::HirStmt,
+        lower: impl FnOnce(&mut Self),
+    ) {
         let mut index = HashMap::new();
-        for (syntax, expression) in statement_expression_roots(&statement.syntax)
+        for (root, expression) in statement_expression_roots(syntax)
             .into_iter()
             .zip(&statement.expressions)
         {
-            index_hir_expression(syntax, expression, &mut index);
+            index_hir_expression(&self.checked, root, expression, &mut index);
         }
         self.active_semantics.push(index);
-        self.lower_stmt(&statement.syntax, statement.binding, outer_map);
+        let outer = std::mem::take(&mut self.conversion_view_loans);
+        lower(self);
+        self.conversion_view_loans = outer;
         self.active_semantics.pop();
     }
 
@@ -3001,26 +3039,32 @@ impl Flatten<'_> {
             let forwards_handle = matches!(
                 (expression.place.as_ref().map(|place| &place.ty)).map(Ty::kind),
                 Some(TyKind::Ref(_))
-            ) || expression.adjustments.iter().any(|adjustment| {
-                matches!(
-                    adjustment,
-                    mojito_checked::checked::SemanticAdjustment::ReferenceResult { .. }
-                )
-            });
+            ) || self.hir_node(expression).adjustments.iter().any(
+                |adjustment| {
+                    matches!(
+                        adjustment,
+                        mojito_checked::checked::SemanticAdjustment::ReferenceResult { .. }
+                    )
+                },
+            );
             if forwards_handle {
                 self.reference_handle_hir(expression)
             } else {
                 let place = self
                     .projected_reference_place_hir(expression)
                     .unwrap_or_else(|| self.place_hir(expression));
-                let dest = self.fresh(expression.source_span(), Some(place.root));
+                let location = self.hir_node(expression).location();
+                let dest = self.fresh(location, Some(place.root));
                 self.emit(MirInstr::MakeRef { dest, place });
                 dest
             }
         } else {
             let value = self.expr_hir(expression);
             match self.f.ret_ty.clone() {
-                Some(target) => self.materialize_register(value, &target, expression.source_span()),
+                Some(target) => {
+                    let location = self.hir_node(expression).location();
+                    self.materialize_register(value, &target, location)
+                }
                 None => value,
             }
         }
@@ -3049,6 +3093,24 @@ impl Flatten<'_> {
                     else_b: map[else_b],
                 }
             }
+            Terminator::BranchOnSlot {
+                cond,
+                then_b,
+                else_b,
+            } => {
+                let c = self.fresh(SourceSpan::new(None, DUMMY_SPAN), Some(*cond));
+                self.emit(MirInstr::UseVar {
+                    dest: c,
+                    var: *cond,
+                    mode: UseMode::Copy,
+                });
+                self.flush_argument_anchors();
+                MirTerm::Branch {
+                    cond: c,
+                    then_b: map[then_b],
+                    else_b: map[else_b],
+                }
+            }
             Terminator::ComptimeBranch {
                 cond,
                 then_b,
@@ -3069,26 +3131,18 @@ impl Flatten<'_> {
                 exit,
                 ..
             } => {
-                let sequence = comptime_iteration(iter).and_then(|iteration| {
+                let syntax = self.hir_syntax(iter);
+                let sequence = comptime_iteration(&self.checked, iter).and_then(|iteration| {
                     use mojito_checked::checked::ComptimeSource;
                     let source = match iteration.source {
                         ComptimeSource::Sequence(sequence) => sequence,
                         ComptimeSource::Evaluated { element, .. }
                         | ComptimeSource::Applied { element } => {
-                            let mut index = HashMap::new();
-                            index_hir_expression(&iter.syntax, iter, &mut index);
-                            self.active_semantics.push(index);
-                            let ty = self.checked_ty(&iter.syntax);
-                            self.active_semantics.pop();
-                            let ty = ty?;
+                            let ty = self.hir_node(iter).ty.clone()?;
                             let binders = &self.enclosing_binders;
                             mojito_checked::checked::ComptimeSequence::Elements(
-                                self.comptime_thunks.request_sequence(
-                                    &iter.syntax,
-                                    binders,
-                                    ty,
-                                    element,
-                                ),
+                                self.comptime_thunks
+                                    .request_sequence(&syntax, binders, ty, element),
                             )
                         }
                         ComptimeSource::Bound { display, .. } => {
@@ -3097,7 +3151,7 @@ impl Flatten<'_> {
                             )
                         }
                         ComptimeSource::EvaluatedRange { bounds } => {
-                            let ExprKind::Call { args, .. } = &iter.syntax.kind else {
+                            let ExprKind::Call { args, .. } = &syntax.kind else {
                                 return None;
                             };
                             let bounds: Vec<ParamExpr> = bounds
@@ -3150,7 +3204,7 @@ impl Flatten<'_> {
                 } else {
                     self.emit(MirInstr::Unsupported(format!(
                         "comptime for over `{:?}` is not a compile-time sequence",
-                        iter.syntax.kind
+                        syntax.kind
                     )));
                     MirTerm::Jump(map[exit])
                 }

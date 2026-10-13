@@ -8,6 +8,18 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- HIR lowers checked nodes (R617), as upstream's control-flow lowering
+  consumes typed ops: `hir::Lower` walks each body's `CheckedStmtOp`s
+  and `CheckedOp`s, a `HirExpr` names its node with its operands' trees
+  and checked place, a `HirStmt` names its statement node, and
+  `Cfg::slots` records the slot each local-name node resolves to, so HIR
+  clones no syntax and copies no node attribute. MIR rebuilds the syntax
+  it still lowers from the nodes, spelling each name as its slot. A
+  `for` header branches on its has-next slot (`Terminator::BranchOnSlot`),
+  and the unchecked `Cfg::build` builders are gone. A discarded call
+  result that is a reference is no longer bound to a hidden slot, which
+  the guard meant and never saw. No program's output changes.
+
 - A package unit holds its checked nodes (R616), as upstream's package
   holds each body as typed `lit` ops: its expression and statement nodes,
   each carrying its own op, type, and attributes, and its declarations,

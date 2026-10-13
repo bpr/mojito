@@ -3,16 +3,10 @@
 //! since Phase 1 is about structure, not instruction contents.
 
 use mojito::Ty;
-use mojito::hir::{Cfg, Terminator};
+use mojito::hir::{BlockId, Cfg, Terminator};
 use mojito::{check_program, parse};
 
-/// Parse a source snippet and lower it to a CFG.
-fn cfg(src: &str) -> Cfg {
-    Cfg::build(&parse(src).expect("parse error"))
-}
-
-/// Lower through the checked HIR handoff when an instruction requires semantic
-/// facts such as an iterator element type.
+/// Check a module-scope snippet and lower its statements to a CFG.
 fn checked_cfg(src: &str) -> Cfg {
     let program = parse(src).expect("parse error");
     let checked = check_program(&program).expect("type error");
@@ -23,15 +17,49 @@ fn checked_cfg(src: &str) -> Cfg {
 fn checked_function_cfg(src: &str, function: &str) -> Cfg {
     let program = parse(src).expect("parse error");
     let checked = check_program(&program).expect("type error");
-    let body = checked
+    let (params, body) = function_body(&checked, function);
+    Cfg::build_checked_fn(&checked, &params, &body)
+}
+
+/// The parameter names and body of the checked function named `function`.
+fn function_body(
+    checked: &mojito::checked::CheckedProgram,
+    function: &str,
+) -> (Vec<String>, Vec<mojito::ast::Stmt>) {
+    checked
         .statements()
         .iter()
         .find_map(|statement| match &statement.kind {
-            mojito::ast::StmtKind::Def { name, body, .. } if name == function => Some(body),
+            mojito::ast::StmtKind::Def {
+                name, params, body, ..
+            } if name == function => Some((
+                params.iter().map(|param| param.name.clone()).collect(),
+                body.clone(),
+            )),
             _ => None,
         })
-        .expect("function body");
-    Cfg::build_checked_fn(&checked, &[], body)
+        .expect("function body")
+}
+
+/// The body of the first loop of checked function `main` in `src`, lowered
+/// as a `try` region seeded with the enclosing loop `(header, exit)`.
+fn loop_body_region(src: &str, header: BlockId, exit: BlockId) -> Cfg {
+    let program = parse(src).expect("parse error");
+    let checked = check_program(&program).expect("type error");
+    let (_, body) = function_body(&checked, "main");
+    let loop_body = body
+        .iter()
+        .find_map(|statement| match &statement.kind {
+            mojito::ast::StmtKind::While { body, .. } => Some(body.clone()),
+            _ => None,
+        })
+        .expect("a loop in main");
+    Cfg::build_seeded_checked_region(
+        Vec::new(),
+        &loop_body,
+        &[(header, exit, Vec::new())],
+        std::sync::Arc::clone(checked.tables()),
+    )
 }
 
 /// Every block must be sealed with exactly one terminator (CFG well-formedness).
@@ -44,7 +72,7 @@ fn assert_all_sealed(cfg: &Cfg) {
 #[test]
 fn straight_line_is_one_block_returning() {
     // No control flow ⇒ a single block, implicitly `return None`.
-    let c = cfg("var x: Int = 1\nvar y: Int = 2\n");
+    let c = checked_cfg("var x: Int = 1\nvar y: Int = 2\n");
     assert_eq!(c.node_count(), 1);
     assert_eq!(c.edge_count(), 0);
     assert!(matches!(c.term(c.entry), Some(Terminator::Return(None))));
@@ -55,7 +83,7 @@ fn straight_line_is_one_block_returning() {
 #[test]
 fn if_without_else_has_four_blocks_and_a_diamond() {
     // entry ─Branch→ {then, else}; both ─Jump→ join.  4 blocks, 4 edges.
-    let c = cfg("if a:\n    pass\n");
+    let c = checked_function_cfg("def main(a: Bool):\n    if a:\n        pass\n", "main");
     assert_eq!(c.node_count(), 4);
     assert_eq!(c.edge_count(), 4);
     assert_all_sealed(&c);
@@ -78,7 +106,10 @@ fn if_without_else_has_four_blocks_and_a_diamond() {
 fn if_elif_else_has_six_blocks_seven_edges() {
     // entry ─Branch→{then1, else1}; else1 ─Branch→{then2, else2(=orelse)};
     // then1, then2, else2 all ─Jump→ join.  6 blocks, 7 edges.
-    let c = cfg("if a:\n    pass\nelif b:\n    pass\nelse:\n    pass\n");
+    let c = checked_function_cfg(
+        "def main(a: Bool, b: Bool):\n    if a:\n        pass\n    elif b:\n        pass\n    else:\n        pass\n",
+        "main",
+    );
     assert_eq!(c.node_count(), 6);
     assert_eq!(c.edge_count(), 7);
     assert_all_sealed(&c);
@@ -88,7 +119,7 @@ fn if_elif_else_has_six_blocks_seven_edges() {
 fn while_loop_has_header_body_exit_with_back_edge() {
     // entry→header; header ─Branch→{body, exit}; body ─Jump→ header (back-edge).
     // 4 blocks, 4 edges.
-    let c = cfg("while a:\n    pass\n");
+    let c = checked_function_cfg("def main(a: Bool):\n    while a:\n        pass\n", "main");
     assert_eq!(c.node_count(), 4);
     assert_eq!(c.edge_count(), 4);
     assert_all_sealed(&c);
@@ -113,7 +144,7 @@ fn while_loop_has_header_body_exit_with_back_edge() {
 #[test]
 fn break_jumps_to_the_loop_exit_not_the_header() {
     // `while a: break` — the body jumps to the exit and has NO back-edge.
-    let c = cfg("while a:\n    break\n");
+    let c = checked_function_cfg("def main(a: Bool):\n    while a:\n        break\n", "main");
     let header = c.successors(c.entry)[0];
     let (body, exit) = match c.term(header) {
         Some(Terminator::Branch { then_b, else_b, .. }) => (*then_b, *else_b),
@@ -131,7 +162,10 @@ fn break_jumps_to_the_loop_exit_not_the_header() {
 fn continue_jumps_back_to_the_header() {
     // `while a: continue` — the body jumps to the header (a back-edge), like a
     // normal loop end, and does NOT reach the exit directly from the body.
-    let c = cfg("while a:\n    continue\n");
+    let c = checked_function_cfg(
+        "def main(a: Bool):\n    while a:\n        continue\n",
+        "main",
+    );
     let header = c.successors(c.entry)[0];
     let (body, exit) = match c.term(header) {
         Some(Terminator::Branch { then_b, else_b, .. }) => (*then_b, *else_b),
@@ -151,7 +185,10 @@ fn continue_jumps_back_to_the_header() {
 #[test]
 fn nested_loops_break_targets_the_innermost_exit() {
     // The inner `break` must target the INNER loop's exit, never the outer's.
-    let c = cfg("while a:\n    while b:\n        break\n");
+    let c = checked_function_cfg(
+        "def main(a: Bool, b: Bool):\n    while a:\n        while b:\n            break\n",
+        "main",
+    );
     // Find the outer header (entry's successor) and the inner header (the outer
     // body's successor). The inner body must edge to the inner exit.
     let outer_header = c.successors(c.entry)[0];
@@ -174,7 +211,7 @@ fn nested_loops_break_targets_the_innermost_exit() {
 
 #[test]
 fn return_seals_the_block_with_a_value() {
-    let c = cfg("return 1\n");
+    let c = checked_function_cfg("def main() -> Int:\n    return 1\n", "main");
     assert_eq!(c.node_count(), 1);
     assert!(matches!(c.term(c.entry), Some(Terminator::Return(Some(_)))));
     assert_all_sealed(&c);
@@ -184,7 +221,10 @@ fn return_seals_the_block_with_a_value() {
 fn code_after_a_return_in_a_branch_does_not_flow_to_the_join() {
     // In `if a: return 1  else: pass`, the then-block returns, so it must NOT edge
     // to the join; only the else-block reaches it.
-    let c = cfg("if a:\n    return 1\nelse:\n    pass\n");
+    let c = checked_function_cfg(
+        "def main(a: Bool) -> Int:\n    if a:\n        return 1\n    else:\n        pass\n    return 2\n",
+        "main",
+    );
     let (then_b, else_b) = match c.term(c.entry) {
         Some(Terminator::Branch { then_b, else_b, .. }) => (*then_b, *else_b),
         other => panic!("entry should Branch, got {other:?}"),
@@ -206,8 +246,8 @@ fn for_loop_lowers_to_a_while_shaped_graph() {
     let c = checked_cfg("for i in range(3):\n    pass\n");
     let header = c.successors(c.entry)[0];
     let (body, _exit) = match c.term(header) {
-        Some(Terminator::Branch { then_b, else_b, .. }) => (*then_b, *else_b),
-        other => panic!("for-header should Branch, got {other:?}"),
+        Some(Terminator::BranchOnSlot { then_b, else_b, .. }) => (*then_b, *else_b),
+        other => panic!("for-header should branch on its has-next slot, got {other:?}"),
     };
     assert!(
         c.has_edge(body, header),
@@ -221,10 +261,13 @@ fn seeded_region_break_continue_escape_to_external_loops() {
     // A region seeded with an enclosing function loop lowers an outward `break` to
     // `EscapeJump(exit)` and `continue` to `EscapeJump(header)` — carrying the
     // enclosing block ids (not region-local nodes).
-    let body = mojito::parse("break\n").expect("parse");
-    let header = mojito::hir::BlockId::new(41);
-    let exit = mojito::hir::BlockId::new(42);
-    let region = Cfg::build_seeded_with_loops(Vec::new(), &body, &[(header, exit)]);
+    let header = BlockId::new(41);
+    let exit = BlockId::new(42);
+    let region = loop_body_region(
+        "def main():\n    while True:\n        break\n",
+        header,
+        exit,
+    );
     let esc = region
         .g
         .node_indices()
@@ -235,8 +278,11 @@ fn seeded_region_break_continue_escape_to_external_loops() {
         .expect("break should escape as EscapeJump");
     assert_eq!(esc, exit, "break escapes to the enclosing loop exit");
 
-    let cont_body = mojito::parse("continue\n").expect("parse");
-    let region2 = Cfg::build_seeded_with_loops(Vec::new(), &cont_body, &[(header, exit)]);
+    let region2 = loop_body_region(
+        "def main():\n    while True:\n        continue\n",
+        header,
+        exit,
+    );
     let esc2 = region2
         .g
         .node_indices()
@@ -255,10 +301,13 @@ fn seeded_region_break_continue_escape_to_external_loops() {
 fn nested_loop_in_region_absorbs_its_own_break() {
     // A loop declared *inside* the region absorbs its own `break` (a local `Jump`),
     // so no `EscapeJump` is produced.
-    let body = mojito::parse("while True:\n    break\n").expect("parse");
-    let header = mojito::hir::BlockId::new(7);
-    let exit = mojito::hir::BlockId::new(8);
-    let region = Cfg::build_seeded_with_loops(Vec::new(), &body, &[(header, exit)]);
+    let header = BlockId::new(7);
+    let exit = BlockId::new(8);
+    let region = loop_body_region(
+        "def main():\n    while True:\n        while True:\n            break\n",
+        header,
+        exit,
+    );
     let has_escape = region
         .g
         .node_indices()
@@ -292,8 +341,8 @@ fn checked_hir_retains_semantic_identity_type_and_adjustments() {
             _ => None,
         })
         .expect("checked bind");
-    assert!(expression.checked.is_some());
-    assert!(expression.ty.is_some());
+    let node = |id| cfg.checked.expression(id).expect("checked node");
+    assert!(node(expression.node).ty.is_some());
     assert_eq!(
         expression.children.len(),
         1,
@@ -309,8 +358,8 @@ fn checked_hir_retains_semantic_identity_type_and_adjustments() {
             .children
             .iter()
             .flat_map(|child| std::iter::once(child).chain(&child.children))
-            .all(|child| child.checked.is_some()),
-        "every recursively retained child has checked identity"
+            .all(|child| node(child.node).ty.is_some()),
+        "every recursively retained child is a typed checked node"
     );
 }
 
@@ -354,14 +403,10 @@ fn checked_hir_retains_distinct_comprehension_binding_owners() {
         .node_weights()
         .flat_map(|block| &block.instrs)
         .find_map(|instruction| match instruction {
-            mojito::hir::HirInstr::Bind { expr, .. }
-                if matches!(
-                    expr.syntax.kind,
-                    mojito::ast::ExprKind::Comprehension { .. }
-                ) =>
-            {
-                Some(expr)
-            }
+            mojito::hir::HirInstr::Bind { expr, .. } => cfg
+                .checked
+                .expression(expr.node)
+                .filter(|node| matches!(node.op, mojito::checked::CheckedOp::Comprehension { .. })),
             _ => None,
         })
         .expect("comprehension binding");
@@ -389,14 +434,16 @@ fn checked_hir_carries_nested_declaration_and_call_binding_identity() {
         .node_weights()
         .flat_map(|block| &block.instrs)
         .filter_map(|instruction| match instruction {
-            mojito::hir::HirInstr::Stmt(statement)
-                if matches!(
-                    &statement.syntax.kind,
-                    mojito::ast::StmtKind::Def { name, .. } if name == "choose"
-                ) =>
-            {
-                statement.binding
-            }
+            mojito::hir::HirInstr::Stmt(statement) => cfg
+                .checked
+                .statement(statement.node)
+                .filter(|node| {
+                    matches!(
+                        &node.op,
+                        mojito::checked::CheckedStmtOp::Def(def) if def.name == "choose"
+                    )
+                })
+                .and_then(|node| node.binding),
             _ => None,
         })
         .collect();
@@ -405,14 +452,16 @@ fn checked_hir_carries_nested_declaration_and_call_binding_identity() {
         .node_weights()
         .flat_map(|block| &block.instrs)
         .filter_map(|instruction| match instruction {
-            mojito::hir::HirInstr::Eval(expression)
-                if matches!(
-                    &expression.syntax.kind,
-                    mojito::ast::ExprKind::Call { name, .. } if name == "choose"
-                ) =>
-            {
-                expression.binding
-            }
+            mojito::hir::HirInstr::Eval(expression) => cfg
+                .checked
+                .expression(expression.node)
+                .filter(|node| {
+                    matches!(
+                        &node.op,
+                        mojito::checked::CheckedOp::Call { name, .. } if name == "choose"
+                    )
+                })
+                .and_then(|node| node.binding),
             _ => None,
         })
         .collect();

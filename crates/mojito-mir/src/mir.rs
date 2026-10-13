@@ -2232,6 +2232,9 @@ struct Flatten<'a> {
     overloads: std::sync::Arc<mojito_checked::package::ProgramOverloads>,
     /// The program's checked tables, shared with HIR construction.
     checked: std::sync::Arc<mojito_checked::checked::CheckedTables>,
+    /// The slot each local-name node of the CFG being lowered reads
+    /// ([`Cfg::slots`]), which spells that name in the syntax rebuilt from it.
+    slots: HashMap<mojito_checked::checked::CheckedNodeId, VarId>,
     /// Semantic facts indexed by the in-memory identity of the active HIR syntax
     /// tree. Maps are installed only while lowering that expression/statement;
     /// source spans are never used as semantic keys.
@@ -2246,7 +2249,9 @@ struct Flatten<'a> {
     /// The loans a view-constructor conversion's `$conv_view_r` slot holds
     /// on a source that is not a named place (an accessor's reference result,
     /// an intrinsic subscript element), keyed by the converted expression's
-    /// syntax identity: a binding of the converted value inherits them.
+    /// syntax identity: a binding of the converted value inherits them. An
+    /// entry lives as long as the syntax rebuilt for one HIR expression or
+    /// statement, which owns the address it is keyed by.
     conversion_view_loans: HashMap<usize, Vec<MirLoan>>,
     /// Hidden `$arg_loan_r` slots created for loan-carrying temporary call
     /// arguments while lowering the current statement. Flushed as `KeepAlive`
@@ -2348,6 +2353,7 @@ fn loop_index_scopes(cfg: &Cfg) -> HashMap<hir::BlockId, Vec<LoopIndex>> {
             Some(Terminator::Jump(to)) => vec![*to],
             Some(
                 Terminator::Branch { then_b, else_b, .. }
+                | Terminator::BranchOnSlot { then_b, else_b, .. }
                 | Terminator::ComptimeBranch { then_b, else_b, .. },
             ) => vec![*then_b, *else_b],
             Some(Terminator::ComptimeLoop { body, exit, .. }) => vec![*body, *exit],
@@ -2374,7 +2380,7 @@ fn loop_index_scopes(cfg: &Cfg) -> HashMap<hir::BlockId, Vec<LoopIndex>> {
         else {
             continue;
         };
-        let Some(iteration) = comptime_iteration(iter) else {
+        let Some(iteration) = comptime_iteration(&cfg.checked, iter) else {
             continue;
         };
         let mut members = Vec::new();
@@ -2413,8 +2419,13 @@ fn comptime_binding_value(
 
 /// The sequence a `comptime for` iterable was checked as, when the checker
 /// recorded one (`SemanticAdjustment::ComptimeIteration`).
-fn comptime_iteration(iter: &hir::HirExpr) -> Option<mojito_checked::checked::ComptimeIteration> {
-    iter.adjustments
+fn comptime_iteration(
+    checked: &mojito_checked::checked::CheckedTables,
+    iter: &hir::HirExpr,
+) -> Option<mojito_checked::checked::ComptimeIteration> {
+    checked
+        .expression(iter.node)?
+        .adjustments
         .iter()
         .find_map(|adjustment| match adjustment {
             mojito_checked::checked::SemanticAdjustment::ComptimeIteration(iteration) => {
@@ -2509,7 +2520,10 @@ fn reassigned_names(
                         bump(&mut counts, name);
                     }
                 }
-                HirInstr::Stmt(statement) => scan(&statement.syntax, &mut counts),
+                HirInstr::Stmt(statement) => scan(
+                    &hir_statement_syntax(&cfg.checked, &cfg.slots, &cfg.vars, statement),
+                    &mut counts,
+                ),
                 _ => {}
             }
         }
@@ -3961,6 +3975,7 @@ fn lower_cfg_nested(
             parameter_reads: enclosing_binders.loop_bindings.iter().cloned().collect(),
             overloads: std::sync::Arc::clone(overloads),
             checked: std::sync::Arc::clone(&cfg.checked),
+            slots: cfg.slots.clone(),
             call_transfers: call_transfers.clone(),
             active_semantics: Vec::new(),
             aliases: HashMap::new(),
@@ -4216,30 +4231,94 @@ fn expression_children(expression: &Expr) -> Vec<&Expr> {
     }
 }
 
+/// Index `syntax`, the syntax rebuilt from HIR expression `expression`, by
+/// address: each subexpression's facts are its checked node's attributes and
+/// the place HIR computed for it.
 fn index_hir_expression(
+    checked: &mojito_checked::checked::CheckedTables,
     syntax: &Expr,
     expression: &mojito_hir::hir::HirExpr,
     index: &mut HashMap<usize, ExprFacts>,
 ) {
+    let node = checked.expression(expression.node);
     index.insert(
         std::ptr::from_ref::<Expr>(syntax) as usize,
         ExprFacts {
-            ty: expression.ty.clone(),
+            ty: node.and_then(|node| node.ty.clone()),
             place_ty: expression.place.as_ref().map(|place| place.ty.clone()),
-            owner: expression
-                .binding
+            owner: node
+                .and_then(|node| node.binding)
                 .or_else(|| expression.place.as_ref().map(|place| place.owner)),
-            raises: expression.effects.raises.clone(),
-            adjustments: expression.adjustments.clone(),
-            comprehension_bindings: expression.comprehension_bindings.clone(),
+            raises: node.and_then(|node| node.effects.raises.clone()),
+            adjustments: node
+                .map(|node| node.adjustments.clone())
+                .unwrap_or_default(),
+            comprehension_bindings: node
+                .map(|node| node.comprehension_bindings.clone())
+                .unwrap_or_default(),
         },
     );
     for (child_syntax, child) in expression_children(syntax)
         .into_iter()
         .zip(&expression.children)
     {
-        index_hir_expression(child_syntax, child, index);
+        index_hir_expression(checked, child_syntax, child, index);
     }
+}
+
+/// The syntax MIR lowers HIR expression `expression` through: its node's,
+/// rebuilt with each local name HIR resolved spelled as its slot, and a
+/// `$contextual` leading-dot root as the base type the check resolved.
+/// Transitional, as [`CheckedTables::syntax_of`] is; R623 deletes it.
+///
+/// [`CheckedTables::syntax_of`]: mojito_checked::checked::CheckedTables::syntax_of
+fn hir_syntax(
+    checked: &mojito_checked::checked::CheckedTables,
+    slots: &HashMap<mojito_checked::checked::CheckedNodeId, VarId>,
+    vars: &[String],
+    expression: &mojito_hir::hir::HirExpr,
+) -> Expr {
+    checked
+        .syntax_of_spelled(expression.node, &|node| {
+            if let Some(slot) = slots.get(&node.id) {
+                return vars.get(*slot as usize).cloned();
+            }
+            match &node.op {
+                mojito_checked::checked::CheckedOp::Identifier(name)
+                    if name == mojito_ast::ast::CONTEXTUAL_SENTINEL =>
+                {
+                    node.contextual_base.clone()
+                }
+                _ => None,
+            }
+        })
+        .expect("a HIR expression names a node of its tables")
+}
+
+/// The syntax MIR lowers opaque HIR statement `statement` through: its
+/// node's, with source spellings, which MIR resolves by binding; a `ref`
+/// declaration binds HIR's runtime name for it and reads its value as
+/// [`hir_syntax`] spells it. Transitional, as [`hir_syntax`] is.
+fn hir_statement_syntax(
+    checked: &mojito_checked::checked::CheckedTables,
+    slots: &HashMap<mojito_checked::checked::CheckedNodeId, VarId>,
+    vars: &[String],
+    statement: &mojito_hir::hir::HirStmt,
+) -> Stmt {
+    let mut syntax = checked
+        .statement_syntax_of(statement.node)
+        .expect("a HIR statement names a statement node of its tables");
+    if let (StmtKind::RefDecl { name, value }, Some(declared), [expression]) = (
+        &mut syntax.kind,
+        statement.declared,
+        statement.expressions.as_slice(),
+    ) {
+        if let Some(runtime) = vars.get(declared as usize) {
+            name.clone_from(runtime);
+        }
+        *value = hir_syntax(checked, slots, vars, expression);
+    }
+    syntax
 }
 
 /// The error type that can propagate out of a lowered `try`-body region: the
