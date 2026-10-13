@@ -888,7 +888,11 @@ impl Flatten<'_> {
             &self.nodes_of(args),
             &self.keywords_of(kwargs),
         );
-        self.install_call_transfers(e, transfer_recv_place.as_ref(), &transfer_arg_places);
+        self.install_call_transfers(
+            self.node_of(e),
+            transfer_recv_place.as_ref(),
+            &transfer_arg_places,
+        );
         if explicit_destroy
             && !implicitly_copied_receiver
             && let Some(place) = self.try_place(self.node_of(receiver_expr))

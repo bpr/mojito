@@ -157,7 +157,11 @@ impl<'a> Flatten<'a> {
             &self.nodes_of(args),
             &self.keywords_of(kwargs),
         );
-        self.install_call_transfers(e, transfer_recv_place.as_ref(), &transfer_arg_places);
+        self.install_call_transfers(
+            self.node_of(e),
+            transfer_recv_place.as_ref(),
+            &transfer_arg_places,
+        );
         dest
     }
 
@@ -394,7 +398,7 @@ impl<'a> Flatten<'a> {
             &self.nodes_of(args),
             &self.keywords_of(kwargs),
         );
-        self.install_call_transfers(e, None, &transfer_arg_places);
+        self.install_call_transfers(self.node_of(e), None, &transfer_arg_places);
         let mut owners = Vec::new();
         let mut seen = HashSet::new();
         for capture in &info.captures {

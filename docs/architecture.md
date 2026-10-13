@@ -1777,8 +1777,10 @@ syntax's handle, and `Flatten::{syntax, operand}` find the syntax rebuilt for
 a handle. `Flatten::expr`, its adjustments, `reference_handle`, the place
 lowerers, the compile-time argument slots, and the call-site argument,
 receiver, anchor, and invalidation lowering take a handle and read operands
-off it; `expr_unconverted` is the one crossing that hands the expression
-families the syntax rebuilt for a handle (R652, R653). `Flatten` borrows its CFG's
+off it, and so do `expr_unconverted` and its literal, access, display, and
+operator families; only the call family's three lowerers (`call_expr`,
+`invoke_expr`, `method_call_expr`) still receive the syntax rebuilt for a
+handle, through `Flatten::call_syntax` (R653). `Flatten` borrows its CFG's
 tables and HIR for its own lifetime, so a handle outlives the `&mut self`
 calls it is passed to; a local display binding's HIR, which can cross after
 a `try` region's CFG is dropped, is copied into the function's arena
@@ -1795,8 +1797,8 @@ reads, subscripts, slices, multi-subscripts, and `Variant` projections
 dispatch the same way (`Flatten::access_family`), reading the field name,
 the subscript arguments' kinds and keywords, and every adjustment from the
 node; the place builders, the subscript stores, and the projection
-predicates decide by the op too, the syntax only binding the operands still
-lowered from it. List, brace, and tuple displays and comprehensions dispatch
+predicates decide by the op too, and each operand (a slice bound, a
+subscript argument) is the handle of the id the op names. List, brace, and tuple displays and comprehensions dispatch
 the same way (`Flatten::display_family`): the constructor and insertion
 method come from the node's construction adjustment, each comprehension
 clause's kind, binder, and iterable come from the op, and a display without
@@ -1804,7 +1806,7 @@ a checked construction is an explicit `Unsupported` boundary, never a
 collection guessed from its delimiters. Operators, comparison chains,
 ternaries, transfers, spreads, and lambdas dispatch the same way
 (`Flatten::operator_family`): the operator comes from the op, and each
-operand is the rebuilt child at its `CheckedOp::operands` position, so no
+operand is the handle of the id the op names, so no
 expression family is chosen from syntax and an expression without its
 checked node is one explicit `Unsupported` boundary. A static
 call's receiver is a type because its node is a name the check bound to

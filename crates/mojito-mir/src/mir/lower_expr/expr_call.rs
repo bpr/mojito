@@ -132,7 +132,11 @@ impl Flatten<'_> {
                 instantiated_args,
                 spread: self.spread_position(args),
             });
-            self.install_call_transfers(e, transfer_recv_place.as_ref(), &transfer_arg_places);
+            self.install_call_transfers(
+                self.node_of(e),
+                transfer_recv_place.as_ref(),
+                &transfer_arg_places,
+            );
             return dest;
         }
         // `__RuntimeTuple` is the compiler-private heterogeneous pack
@@ -703,7 +707,7 @@ impl Flatten<'_> {
             &self.nodes_of(args),
             &self.keywords_of(kwargs),
         );
-        self.install_call_transfers(e, None, &transfer_arg_places);
+        self.install_call_transfers(self.node_of(e), None, &transfer_arg_places);
         d
     }
 

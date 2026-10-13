@@ -8,6 +8,14 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- MIR's literal, access, display, and operator families take the
+  expression's node handle (R652) and read each operand off it by the id
+  the op names, a slice bound, subscript argument, or comprehension clause
+  included, as upstream lowering reads an operation's operands off the
+  operation. Only a call, an invocation, or a method call is still handed
+  the syntax rebuilt from its node, through one bridge (R653). No
+  program's output or MIR changes.
+
 - MIR lowers an expression's adjustments, its place, and a call's
   arguments, receiver, compile-time arguments, anchors, and invalidations
   from the expression's node handle (R647), as upstream lowering reads an

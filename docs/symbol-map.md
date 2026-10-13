@@ -694,8 +694,9 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   invalidation lowering take a `Node`. The transitional syntax bridges
   (`Flatten::{node, node_of, nodes_of, keywords_of, syntax, operand,
   operand_syntax}` in `lower_expr/entry.rs`, `SyntaxFrame`/`Syntax` in
-  `mir.rs`) are deleted by R649, and `expr_unconverted`'s crossing from a
-  node back to its rebuilt syntax by R652/R653.
+  `mir.rs`) are deleted by R649, and `Flatten::call_syntax` (`entry.rs`),
+  the one crossing that still hands a node's rebuilt syntax to expression
+  lowering (to `call_expr`, `invoke_expr`, and `method_call_expr`), by R653.
 - `mir/calls.rs` owns call-site lowering (arguments, keywords, receiver,
   reference results, checked-call boundaries, interior-origin invalidations).
 - `mir/lower_expr.rs` (split across
@@ -712,9 +713,12 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `ctrl.rs`'s `collection_plan`/`array_literal_plan`), whose entry points take the node and read its
   attributes and adjustments, and for prefix and infix operators,
   comparison chains, ternaries, transfers, and lambdas (`operator_family`,
-  reading the operator from the op and each operand as the rebuilt child at
-  its `CheckedOp::operands` position; a spread, type value, or t-string
-  reaching it is an explicit `Unsupported` boundary). An expression none of
+  reading the operator from the op; a spread, type value, or t-string
+  reaching it is an explicit `Unsupported` boundary). Every family takes the
+  `Node` and reads each operand off the handle by the id its op names
+  (`Node::{object, index, args, param_value, operand_of}`); only
+  `call_family`'s call, invocation, and method-call tails cross to rebuilt
+  syntax, through `Flatten::call_syntax`. An expression none of
   the five families takes is one explicit `Unsupported` boundary. `expr_call.rs` owns direct calls (`call_expr`,
   `checked_construction`, `direct_call`) and callable-value invocations (`invoke_expr`,
   `variant_operation`, `parameterized_method_call`); `expr_method.rs` owns

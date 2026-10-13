@@ -4821,25 +4821,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R652 MIR's access, display, and operator families lower rebuilt
-  syntax**
-
-  `expr_unconverted` hands every node to the five expression families
-  through the syntax rebuilt for it, and the families pair
-  `(CheckedOp::X, ExprKind::X { .. })` only to reach operand syntax.
-  - `literal_or_name`, `access_family`, `display_family`, and
-    `operator_family` (`lower_expr/{expr,ctrl,expr_access}.rs`) take a
-    `Node`, match its op alone, and read operands off the handle
-    (`operand_of` for a slice bound or a comprehension clause).
-  - `expr_unconverted` crosses to syntax for `call_family` alone.
-  - Done when those three files call no `node_of`, `nodes_of`, or
-    `keywords_of`, and the probe fixtures' MIR and output are unchanged on
-    both backends.
-  - Plan: `R647-mir-s-expression-families-lower-rebuilt-plan.md`, section
-    S2.
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R653 MIR's call family lowers rebuilt syntax**
 
   `call_family` (`lower_expr/{expr_call,expr_method,calls}.rs`) still

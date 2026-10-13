@@ -2,10 +2,11 @@
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
-use mojito_checked::checked::{CheckedExpr, CheckedSubscriptArg, SemanticAdjustment};
+use mojito_checked::checked::{
+    CheckedExpr, CheckedNodeId, CheckedSubscriptArg, SemanticAdjustment,
+};
 use mojito_types::types::TyKind;
 
-use mojito_ast::ast::SubscriptArg;
 impl<'a> Flatten<'a> {
     /// The runtime value of a compile-time `operand` crossing explicitly
     /// (`materialize[X]()`, `comptime(e)`): a local display binding is built
@@ -66,14 +67,9 @@ impl<'a> Flatten<'a> {
         self.constant_at(location, ty, k)
     }
 
-    /// Read member node `node`, `object.field`, which `e` was rebuilt from.
-    pub(super) fn member_expr(
-        &mut self,
-        e: &Expr,
-        node: &CheckedExpr,
-        object: &Expr,
-        field: &str,
-    ) -> Reg {
+    /// Read member node `e`, `object.field`.
+    pub(super) fn member_expr(&mut self, e: Node<'a>, object: Node<'a>, field: &str) -> Reg {
+        let node = e.checked;
         // `v.length` and `v.dtype` on a SIMD value (or `DType.<name>`) are
         // the lane slots: a known one is a constant, and one a generator
         // names is the evaluation of its parameter expression.
@@ -94,18 +90,16 @@ impl<'a> Flatten<'a> {
         if let Some(folded) = folded {
             // A value receiver (`f().dtype`) still runs; a type operand
             // or `DType` itself was never typed as a value.
-            if !self.node(object).is_some_and(Node::is_name)
-                && self.node(object).and_then(Node::ty).is_some()
-            {
-                self.expr(self.node_of(object));
+            if !object.is_name() && object.ty().is_some() {
+                self.expr(object);
             }
             return match folded {
-                Ok(constant) => self.constant(self.node_of(e), constant),
+                Ok(constant) => self.constant(e, constant),
                 Err(expr) => {
-                    if let Some(value) = self.inferred_value_register(&expr, &span(e)) {
+                    if let Some(value) = self.inferred_value_register(&expr, &e.location()) {
                         return value;
                     }
-                    let dest = self.fresh(span(e), None);
+                    let dest = self.fresh(e.location(), None);
                     self.emit(MirInstr::Unsupported(format!(
                         "lane slot `{expr}` has no runtime form"
                     )));
@@ -122,13 +116,13 @@ impl<'a> Flatten<'a> {
         // field is read — enabling field-sensitive partial-move checking
         // (reading `p.b` after `p.a^` stays legal). A member of a temporary
         // or an indexed base keeps the register-based `GetField`.
-        if !self.node_of(object).is_slice_descriptor()
-            && let Some(place) = self.pure_field_place(self.node_of(e))
+        if !object.is_slice_descriptor()
+            && let Some(place) = self.pure_field_place(e)
         {
             let place_root = place.root;
             let place_ty = place.ty.clone();
             let loaded = self.fresh_typed(
-                span(e),
+                e.location(),
                 Some(place_root),
                 place_ty
                     .clone()
@@ -166,7 +160,7 @@ impl<'a> Flatten<'a> {
                     .cloned()
                     .or_else(|| node.ty.clone())
                     .unwrap_or_else(Ty::error);
-                let copied = self.fresh_typed(span(e), Some(place_root), ty);
+                let copied = self.fresh_typed(e.location(), Some(place_root), ty);
                 self.emit(MirInstr::CopyValue {
                     dest: copied,
                     value: loaded,
@@ -176,17 +170,15 @@ impl<'a> Flatten<'a> {
                 loaded
             }
         } else {
-            let d = if let Some(loaded) =
-                self.load_temporary_field(self.node_of(e), self.node_of(object), field)
-            {
+            let d = if let Some(loaded) = self.load_temporary_field(e, object, field) {
                 loaded
             } else {
-                let base = if self.node_of(object).reference_result().is_some() {
-                    self.lower_call_receiver(self.node_of(object)).0
+                let base = if object.reference_result().is_some() {
+                    self.lower_call_receiver(object).0
                 } else {
-                    self.expr(self.node_of(object))
+                    self.expr(object)
                 };
-                let d = self.fresh(span(e), None);
+                let d = self.fresh(e.location(), None);
                 self.emit(MirInstr::GetField {
                     dest: d,
                     base,
@@ -211,8 +203,11 @@ impl<'a> Flatten<'a> {
                 if let Some(ty) = node.ty.clone() {
                     self.f.reg_types.insert(d.0, ty);
                 }
-                let copied =
-                    self.fresh_typed(span(e), None, node.ty.clone().unwrap_or_else(Ty::error));
+                let copied = self.fresh_typed(
+                    e.location(),
+                    None,
+                    node.ty.clone().unwrap_or_else(Ty::error),
+                );
                 self.emit(MirInstr::CopyValue {
                     dest: copied,
                     value: d,
@@ -224,27 +219,14 @@ impl<'a> Flatten<'a> {
         }
     }
 
-    /// Read `Variant` projection node `node`, `object[T]`, which `e` was
-    /// rebuilt from.
-    pub(super) fn variant_project_index(
-        &mut self,
-        e: &Expr,
-        node: &CheckedExpr,
-        object: &Expr,
-    ) -> Reg {
-        let place = self.place(self.node_of(object));
-        self.variant_payload_read(e, node, place)
+    /// Read `Variant` projection node `e`, `object[T]`.
+    pub(super) fn variant_project_index(&mut self, e: Node<'a>, object: Node<'a>) -> Reg {
+        let place = self.place(object);
+        self.variant_payload_read(e, place)
     }
 
-    /// Read subscript node `node`, `object[index]`, which `e` was rebuilt
-    /// from.
-    pub(super) fn index_expr(
-        &mut self,
-        e: &Expr,
-        node: &CheckedExpr,
-        object: &Expr,
-        index: &Expr,
-    ) -> Reg {
+    /// Read subscript node `e`, `object[index]`.
+    pub(super) fn index_expr(&mut self, e: Node<'a>, object: Node<'a>, index: Node<'a>) -> Reg {
         // An indexed reference-bearing aggregate element is a storage
         // place whose checked type is `ref T`; load through the stored
         // handle exactly like a direct reference field.  Ordinary
@@ -252,18 +234,13 @@ impl<'a> Flatten<'a> {
         // checker-selected nominal accessor must stay on that dispatch
         // path: projecting the nominal struct as raw indexed storage
         // would lose its concrete `__getitem__$N` target.
-        if matches!(
-            self.node(e).and_then(Node::place_ty).as_ref().map(Ty::kind),
-            Some(TyKind::Ref(_))
-        ) && self.node_of(e).resolved_callable().is_none()
-            && !matches!(
-                self.node(object).and_then(Node::ty).as_ref().map(Ty::kind),
-                Some(TyKind::Struct(..))
-            )
-            && let Some(place) = self.try_place(self.node_of(e))
+        if matches!(e.place_ty().as_ref().map(Ty::kind), Some(TyKind::Ref(_)))
+            && e.resolved_callable().is_none()
+            && !matches!(object.ty().as_ref().map(Ty::kind), Some(TyKind::Struct(..)))
+            && let Some(place) = self.try_place(e)
         {
-            let d = self.fresh(span(e), Some(place.root));
-            self.emit_interior_invalidations(self.node_of(e), None);
+            let d = self.fresh(e.location(), Some(place.root));
+            self.emit_interior_invalidations(e, None);
             self.emit(MirInstr::LoadPlace { dest: d, place });
             return d;
         }
@@ -272,85 +249,74 @@ impl<'a> Flatten<'a> {
         // pointer substitutes the owner place directly, keeping the
         // owner touched (and so droppable) at each access; otherwise
         // the access reads through the runtime handle.
-        if let Some(place) = self.pointer_deref_place(self.node_of(object)) {
-            let d = self.fresh(span(e), Some(place.root));
+        if let Some(place) = self.pointer_deref_place(object) {
+            let d = self.fresh(e.location(), Some(place.root));
             self.emit(MirInstr::LoadPlace { dest: d, place });
             return d;
         }
-        if let Some(d) = self.temporary_pointer_deref(self.node_of(e), self.node_of(object)) {
+        if let Some(d) = self.temporary_pointer_deref(e, object) {
             return d;
         }
         // A pointer field of a call result the checker materialized
         // (`make(b).src[]`) dereferences through the temporary's
         // hidden slot, so the viewed storage outlives the read.
-        if self.node_of(object).rooted_at_materialized_temporary()
-            && let Some(place) = self.lower_projected_reference_place(self.node_of(e))
+        if object.rooted_at_materialized_temporary()
+            && let Some(place) = self.lower_projected_reference_place(e)
         {
-            let d = self.fresh(span(e), Some(place.root));
+            let d = self.fresh(e.location(), Some(place.root));
             self.emit(MirInstr::LoadPlace { dest: d, place });
             return d;
         }
-        if self.node_of(object).is_origin_bearing_pointer() {
-            let reference = self.expr(self.node_of(object));
-            let d = self.fresh(span(e), None);
+        if object.is_origin_bearing_pointer() {
+            let reference = self.expr(object);
+            let d = self.fresh(e.location(), None);
             self.emit(MirInstr::ReadRef { dest: d, reference });
             return d;
         }
-        if let Some(contract) = self.type_keyed_accessor_call(self.node_of(e)) {
-            let (recv, recv_place) = self.lower_call_receiver(self.node_of(object));
-            let dest = self.fresh(span(e), None);
-            self.emit_interior_invalidations(self.node_of(object), None);
+        if let Some(contract) = self.type_keyed_accessor_call(e) {
+            let (recv, recv_place) = self.lower_call_receiver(object);
+            let dest = self.fresh(e.location(), None);
+            self.emit_interior_invalidations(object, None);
             self.emit(MirInstr::MethodCall {
                 dest,
                 recv,
                 method: "__getitem_param__".to_string(),
                 resolved: Some(contract.target),
-                raises: self.node(e).and_then(Node::raises),
+                raises: e.raises(),
                 reference_result: contract.reference_result.map(Box::new),
                 result_adapter: contract.result_adapter,
                 args: Vec::new(),
                 kwargs: Vec::new(),
                 recv_place: recv_place.map(Box::new),
-                recv_writes: self.node_of(e).receiver_writes(),
+                recv_writes: e.receiver_writes(),
                 arg_places: Vec::new(),
                 kwarg_places: Vec::new(),
-                capture_accesses: self
-                    .node(e)
-                    .map(|node| self.call_capture_accesses(node))
-                    .unwrap_or_default(),
+                capture_accesses: self.call_capture_accesses(e),
                 param_arg_regs: Vec::new(),
                 param_decls: contract.param_decls,
-                instantiated_args: self
-                    .node(e)
-                    .map(Node::instantiated_args)
-                    .unwrap_or_default(),
+                instantiated_args: e.instantiated_args(),
                 spread: None,
             });
             return dest;
         }
-        let has_call = self.node(e).and_then(Node::call_contract).is_some();
-        if !has_call && let Some(d) = self.storage_element_read(e, node, object) {
+        let has_call = e.call_contract().is_some();
+        if !has_call && let Some(d) = self.storage_element_read(e, object) {
             return d;
         }
         let (base, base_place) = if has_call {
-            self.lower_call_receiver(self.node_of(object))
+            self.lower_call_receiver(object)
         } else {
-            (
-                self.expr(self.node_of(object)),
-                self.simple_place(self.node_of(object)),
-            )
+            (self.expr(object), self.simple_place(object))
         };
-        let (idx, index_place) = self.lower_call_argument(self.node_of(index));
-        let call = self
-            .node(e)
-            .and_then(|node| self.subscript_call_contract(node, &[MirSubscriptArg::Index(idx)]));
+        let (idx, index_place) = self.lower_call_argument(index);
+        let call = self.subscript_call_contract(e, &[MirSubscriptArg::Index(idx)]);
         let intrinsic = call
             .is_none()
-            .then(|| self.node_of(object).intrinsic_index_dispatch())
+            .then(|| object.intrinsic_index_dispatch())
             .flatten();
-        let d = self.fresh(span(e), None);
-        self.emit_interior_invalidations(self.node_of(index), None);
-        self.emit_interior_invalidations(self.node_of(e), None);
+        let d = self.fresh(e.location(), None);
+        self.emit_interior_invalidations(index, None);
+        self.emit_interior_invalidations(e, None);
         self.emit(MirInstr::Index {
             dest: d,
             base,
@@ -363,41 +329,34 @@ impl<'a> Flatten<'a> {
         d
     }
 
-    /// Read slice node `node`, `object[lower:upper:step]`, which `e` was
-    /// rebuilt from.
+    /// Read slice node `e`, `object[lower:upper:step]`.
     pub(super) fn slice_expr(
         &mut self,
-        e: &Expr,
-        node: &CheckedExpr,
-        object: &Expr,
-        lower: Option<&Expr>,
-        upper: Option<&Expr>,
-        step: Option<&Expr>,
+        e: Node<'a>,
+        object: Node<'a>,
+        lower: Option<Node<'a>>,
+        upper: Option<Node<'a>>,
+        step: Option<Node<'a>>,
     ) -> Reg {
-        let has_call = self.node(e).and_then(Node::call_contract).is_some();
+        let has_call = e.call_contract().is_some();
         let (obj, object_place) = if has_call {
-            self.lower_call_receiver(self.node_of(object))
+            self.lower_call_receiver(object)
         } else {
-            (
-                self.expr(self.node_of(object)),
-                self.simple_place(self.node_of(object)),
-            )
+            (self.expr(object), self.simple_place(object))
         };
-        let lower = lower.as_ref().map(|b| self.expr(self.node_of(b)));
-        let upper = upper.as_ref().map(|b| self.expr(self.node_of(b)));
-        let step = step.as_ref().map(|b| self.expr(self.node_of(b)));
-        let call = self
-            .node(e)
-            .and_then(|node| self.subscript_call_contract(node, &[]));
+        let lower = lower.map(|bound| self.expr(bound));
+        let upper = upper.map(|bound| self.expr(bound));
+        let step = step.map(|bound| self.expr(bound));
+        let call = self.subscript_call_contract(e, &[]);
         // No intrinsic slice channel remains: StringLiteral
         // positional slicing was removed at the audited head, so
         // every checked slice routes through a nominal call.
         let intrinsic = None;
-        let kind = slice_descriptors(node)
+        let kind = slice_descriptors(e.checked)
             .and_then(|descriptors| descriptors.first().copied().flatten())
             .expect("checked slice has a selected descriptor");
-        let d = self.fresh(span(e), None);
-        self.emit_interior_invalidations(self.node_of(e), None);
+        let d = self.fresh(e.location(), None);
+        self.emit_interior_invalidations(e, None);
         self.emit(MirInstr::Slice {
             dest: d,
             object: obj,
@@ -413,48 +372,48 @@ impl<'a> Flatten<'a> {
         d
     }
 
-    /// Read multi-subscript node `node`, whose arguments are
-    /// `checked_args`, which `e` was rebuilt from; `args` are the same
-    /// arguments' syntax, which binds their operands.
+    /// Read multi-subscript node `e`, whose arguments are `args`.
     pub(super) fn multi_index_expr(
         &mut self,
-        e: &Expr,
-        node: &CheckedExpr,
-        object: &Expr,
-        checked_args: &[CheckedSubscriptArg],
-        args: &[SubscriptArg],
+        e: Node<'a>,
+        object: Node<'a>,
+        args: &[CheckedSubscriptArg],
     ) -> Reg {
-        debug_assert!(subscript_args_pair(checked_args, args));
+        let operand = |id: CheckedNodeId| {
+            e.operand_of(id)
+                .expect("a subscript argument's node is its operand")
+        };
+        let bound =
+            |this: &mut Self, id: Option<CheckedNodeId>| id.map(|id| this.expr(operand(id)));
         // `ptr[unsafe_offset=i]` — the keyword spelling of pointer
         // indexed dereference — lowers exactly like `ptr[i]`: place
         // substitution or handle read for origin-bearing pointers,
         // else the pointer-intrinsic `Index` read.
         if matches!(
-            self.node(object).and_then(Node::ty).as_ref().map(Ty::kind),
+            object.ty().as_ref().map(Ty::kind),
             Some(TyKind::Pointer { .. })
-        ) && let [CheckedSubscriptArg::Keyword { name, .. }] = checked_args
+        ) && let [CheckedSubscriptArg::Keyword { name, value }] = args
             && name == "unsafe_offset"
-            && let [SubscriptArg::Keyword { value, .. }] = args
         {
-            if let Some(place) = self.pointer_deref_place(self.node_of(object)) {
-                let d = self.fresh(span(e), Some(place.root));
+            if let Some(place) = self.pointer_deref_place(object) {
+                let d = self.fresh(e.location(), Some(place.root));
                 self.emit(MirInstr::LoadPlace { dest: d, place });
                 return d;
             }
-            if let Some(d) = self.temporary_pointer_deref(self.node_of(e), self.node_of(object)) {
+            if let Some(d) = self.temporary_pointer_deref(e, object) {
                 return d;
             }
-            if self.node_of(object).is_origin_bearing_pointer() {
-                let reference = self.expr(self.node_of(object));
-                let d = self.fresh(span(e), None);
+            if object.is_origin_bearing_pointer() {
+                let reference = self.expr(object);
+                let d = self.fresh(e.location(), None);
                 self.emit(MirInstr::ReadRef { dest: d, reference });
                 return d;
             }
-            let base = self.expr(self.node_of(object));
-            let base_place = self.simple_place(self.node_of(object));
-            let (idx, index_place) = self.lower_call_argument(self.node_of(value));
-            let intrinsic = self.node_of(object).intrinsic_index_dispatch();
-            let d = self.fresh(span(e), None);
+            let base = self.expr(object);
+            let base_place = self.simple_place(object);
+            let (idx, index_place) = self.lower_call_argument(operand(*value));
+            let intrinsic = object.intrinsic_index_dispatch();
+            let d = self.fresh(e.location(), None);
             self.emit(MirInstr::Index {
                 dest: d,
                 base,
@@ -466,94 +425,77 @@ impl<'a> Flatten<'a> {
             });
             return d;
         }
-        let has_call = self.node(e).and_then(Node::call_contract).is_some();
-        let (object, object_place) = if has_call {
-            self.lower_call_receiver(self.node_of(object))
+        let has_call = e.call_contract().is_some();
+        let (object_reg, object_place) = if has_call {
+            self.lower_call_receiver(object)
         } else {
-            (
-                self.expr(self.node_of(object)),
-                self.simple_place(self.node_of(object)),
-            )
+            (self.expr(object), self.simple_place(object))
         };
         let descriptors =
-            slice_descriptors(node).expect("checked multi-subscript has descriptor metadata");
+            slice_descriptors(e.checked).expect("checked multi-subscript has descriptor metadata");
         let mut arg_places = Vec::with_capacity(args.len());
         let mut kwargs = Vec::new();
         let mut kwarg_places = Vec::new();
-        let lowered_args: Vec<_> = checked_args
+        let lowered_args: Vec<_> = args
             .iter()
-            .zip(args)
             .zip(descriptors.iter().copied())
-            .filter_map(
-                |((checked, argument), descriptor)| match (checked, argument) {
-                    (
-                        CheckedSubscriptArg::Keyword { name, .. },
-                        SubscriptArg::Keyword { value, .. },
-                    ) => {
-                        debug_assert!(descriptor.is_none());
-                        let (register, place) = self.lower_call_argument(self.node_of(value));
-                        kwarg_places.push(place);
-                        kwargs.push((name.clone(), MirSubscriptArg::Index(register)));
-                        None
-                    }
-                    (
-                        CheckedSubscriptArg::KeywordSlice { name, .. },
-                        SubscriptArg::KeywordSlice {
-                            lower, upper, step, ..
+            .filter_map(|(argument, descriptor)| match argument {
+                CheckedSubscriptArg::Keyword { name, value } => {
+                    debug_assert!(descriptor.is_none());
+                    let (register, place) = self.lower_call_argument(operand(*value));
+                    kwarg_places.push(place);
+                    kwargs.push((name.clone(), MirSubscriptArg::Index(register)));
+                    None
+                }
+                CheckedSubscriptArg::KeywordSlice {
+                    name,
+                    lower,
+                    upper,
+                    step,
+                    ..
+                } => {
+                    kwarg_places.push(None);
+                    kwargs.push((
+                        name.clone(),
+                        MirSubscriptArg::Slice {
+                            kind: descriptor.expect("keyword slice argument has descriptor kind"),
+                            lower: bound(self, *lower),
+                            upper: bound(self, *upper),
+                            step: bound(self, *step),
                         },
-                    ) => {
-                        kwarg_places.push(None);
-                        kwargs.push((
-                            name.clone(),
-                            MirSubscriptArg::Slice {
-                                kind: descriptor
-                                    .expect("keyword slice argument has descriptor kind"),
-                                lower: lower.as_ref().map(|value| self.expr(self.node_of(value))),
-                                upper: upper.as_ref().map(|value| self.expr(self.node_of(value))),
-                                step: step.as_ref().map(|value| self.expr(self.node_of(value))),
-                            },
-                        ));
-                        None
-                    }
-                    (CheckedSubscriptArg::Index(_), SubscriptArg::Index(value)) => {
-                        debug_assert!(descriptor.is_none());
-                        let (register, place) = self.lower_call_argument(self.node_of(value));
-                        arg_places.push(place);
-                        Some(MirSubscriptArg::Index(register))
-                    }
-                    (
-                        CheckedSubscriptArg::Slice { .. },
-                        SubscriptArg::Slice {
-                            lower, upper, step, ..
-                        },
-                    ) => {
-                        arg_places.push(None);
-                        Some(MirSubscriptArg::Slice {
-                            kind: descriptor.expect("slice argument has descriptor kind"),
-                            lower: lower.as_ref().map(|value| self.expr(self.node_of(value))),
-                            upper: upper.as_ref().map(|value| self.expr(self.node_of(value))),
-                            step: step.as_ref().map(|value| self.expr(self.node_of(value))),
-                        })
-                    }
-                    _ => None,
-                },
-            )
+                    ));
+                    None
+                }
+                CheckedSubscriptArg::Index(value) => {
+                    debug_assert!(descriptor.is_none());
+                    let (register, place) = self.lower_call_argument(operand(*value));
+                    arg_places.push(place);
+                    Some(MirSubscriptArg::Index(register))
+                }
+                CheckedSubscriptArg::Slice {
+                    lower, upper, step, ..
+                } => {
+                    arg_places.push(None);
+                    Some(MirSubscriptArg::Slice {
+                        kind: descriptor.expect("slice argument has descriptor kind"),
+                        lower: bound(self, *lower),
+                        upper: bound(self, *upper),
+                        step: bound(self, *step),
+                    })
+                }
+            })
             .collect();
-        let call = self
-            .node(e)
-            .and_then(|node| self.subscript_call_contract(node, &lowered_args));
-        let dest = self.fresh(span(e), None);
-        for (checked, argument) in checked_args.iter().zip(args) {
-            if let (CheckedSubscriptArg::Index(_), SubscriptArg::Index(argument)) =
-                (checked, argument)
-            {
-                self.emit_interior_invalidations(self.node_of(argument), None);
+        let call = self.subscript_call_contract(e, &lowered_args);
+        let dest = self.fresh(e.location(), None);
+        for argument in args {
+            if let CheckedSubscriptArg::Index(value) = argument {
+                self.emit_interior_invalidations(operand(*value), None);
             }
         }
-        self.emit_interior_invalidations(self.node_of(e), None);
+        self.emit_interior_invalidations(e, None);
         self.emit(MirInstr::MultiIndex {
             dest,
-            object,
+            object: object_reg,
             args: lowered_args,
             object_place: object_place.map(Box::new),
             arg_places,
@@ -564,33 +506,28 @@ impl<'a> Flatten<'a> {
         dest
     }
 
-    /// Read `Variant` projection node `node`, `name[T]`, which `e` was
-    /// rebuilt from.
-    pub(super) fn variant_project_type_apply(
-        &mut self,
-        e: &Expr,
-        node: &CheckedExpr,
-        name: &str,
-    ) -> Reg {
+    /// Read `Variant` projection node `e`, `name[T]`.
+    pub(super) fn variant_project_type_apply(&mut self, e: Node<'a>, name: &str) -> Reg {
         let place = self.resolved_place(name);
-        self.variant_payload_read(e, node, place)
+        self.variant_payload_read(e, place)
     }
 
     /// A value read of a homogeneous collector's element (`a[i]` over
     /// `*a: T`) loads the element place, as a field read does, and runs the
     /// checked value-copy boundary on that element alone; reading the
     /// collector as a value first would copy its whole storage.
-    fn storage_element_read(&mut self, e: &Expr, node: &CheckedExpr, object: &Expr) -> Option<Reg> {
+    fn storage_element_read(&mut self, e: Node<'a>, object: Node<'a>) -> Option<Reg> {
+        let node = e.checked;
         if !matches!(
-            self.node_of(object).intrinsic_index_dispatch(),
+            object.intrinsic_index_dispatch(),
             Some(MirIntrinsicSubscript::VariadicStorage)
         ) {
             return None;
         }
-        let place = self.try_place(self.node_of(e))?;
+        let place = self.try_place(e)?;
         let root = place.root;
         let loaded = self.fresh_typed(
-            span(e),
+            e.location(),
             Some(root),
             place
                 .ty
@@ -598,7 +535,7 @@ impl<'a> Flatten<'a> {
                 .or_else(|| node.ty.clone())
                 .unwrap_or_else(Ty::error),
         );
-        self.emit_interior_invalidations(self.node_of(e), None);
+        self.emit_interior_invalidations(e, None);
         self.emit(MirInstr::LoadPlace {
             dest: loaded,
             place,
@@ -613,7 +550,7 @@ impl<'a> Flatten<'a> {
             .cloned()
             .or_else(|| node.ty.clone())
             .unwrap_or_else(Ty::error);
-        let copied = self.fresh_typed(span(e), Some(root), ty);
+        let copied = self.fresh_typed(e.location(), Some(root), ty);
         self.emit(MirInstr::CopyValue {
             dest: copied,
             value: loaded,
@@ -623,27 +560,27 @@ impl<'a> Flatten<'a> {
 
     /// Load the payload `Variant` projection node `node` selects out of the
     /// variant at `place`.
-    fn variant_payload_read(&mut self, e: &Expr, node: &CheckedExpr, mut place: MirPlace) -> Reg {
+    fn variant_payload_read(&mut self, e: Node<'a>, mut place: MirPlace) -> Reg {
+        let node = e.checked;
         let (index, alternatives) =
             variant_project(node).expect("checked Variant projection carries a tag");
         if place.root_ty.is_none() {
             place.root_ty = Some(TyKind::Variant(alternatives.to_vec()).into());
         }
-        let ty = self
-            .node(e)
-            .and_then(Node::place_ty)
+        let ty = e
+            .place_ty()
             .or_else(|| node.ty.clone())
             .expect("checked Variant projection has a payload type");
         place.project(Proj::Variant(index), ty);
         let root = place.root;
-        let dest = self.fresh(span(e), Some(root));
+        let dest = self.fresh(e.location(), Some(root));
         self.emit(MirInstr::LoadPlace { dest, place });
         // The checked value-copy boundary: a Copyable payload runs its
         // `__copyinit__` out of the variant's storage instead of
         // aliasing it past the owner's lifetime.
         if copies_place_value(node) {
             let copied = self.fresh_typed(
-                span(e),
+                e.location(),
                 Some(root),
                 node.ty.clone().unwrap_or_else(Ty::error),
             );

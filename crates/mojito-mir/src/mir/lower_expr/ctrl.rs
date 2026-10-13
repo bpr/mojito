@@ -82,11 +82,11 @@ impl<'a> Flatten<'a> {
     pub(in crate::mir) fn short_circuit(
         &mut self,
         op: InfixOp,
-        a: &Expr,
-        b: &Expr,
+        a: Node<'a>,
+        b: Node<'a>,
         span: SourceSpan,
     ) -> Reg {
-        let ra = self.expr(self.node_of(a));
+        let ra = self.expr(a);
         let result = self.fresh_var();
         // Seed the result with the left operand's value: for `and` a false `ra`
         // is the answer; for `or` a true `ra` is. The rhs block overwrites it.
@@ -110,7 +110,7 @@ impl<'a> Flatten<'a> {
         };
 
         self.cur = rhs_blk;
-        let rb = self.expr(self.node_of(b)); // may itself split blocks (nested and/or)
+        let rb = self.expr(b); // may itself split blocks (nested and/or)
         self.emit(MirInstr::DefVar {
             var: result,
             src: rb,
@@ -132,13 +132,13 @@ impl<'a> Flatten<'a> {
     /// each arm writing the result variable, then read it at the merge.
     pub(in crate::mir) fn ternary(
         &mut self,
-        cond: &Expr,
-        then_e: &Expr,
-        else_e: &Expr,
+        cond: Node<'a>,
+        then_e: Node<'a>,
+        else_e: Node<'a>,
         sp: SourceSpan,
     ) -> Reg {
-        let rc = self.expr(self.node_of(cond));
-        let rc = self.truthiness(self.node_of(cond), rc);
+        let rc = self.expr(cond);
+        let rc = self.truthiness(cond, rc);
         let result = self.fresh_var();
         let then_blk = self.new_block();
         let else_blk = self.new_block();
@@ -149,7 +149,7 @@ impl<'a> Flatten<'a> {
             else_b: else_blk,
         };
         self.cur = then_blk;
-        let rt = self.expr(self.node_of(then_e));
+        let rt = self.expr(then_e);
         self.emit(MirInstr::DefVar {
             var: result,
             src: rt,
@@ -157,7 +157,7 @@ impl<'a> Flatten<'a> {
         });
         self.f.blocks[self.cur].term = MirTerm::Jump(merge_blk);
         self.cur = else_blk;
-        let re = self.expr(self.node_of(else_e));
+        let re = self.expr(else_e);
         self.emit(MirInstr::DefVar {
             var: result,
             src: re,
@@ -182,18 +182,18 @@ impl<'a> Flatten<'a> {
     /// middle operand feeds two links and is an ordinary (copied) value.
     pub(in crate::mir) fn compare_chain(
         &mut self,
-        first: &Expr,
-        rest: &[(InfixOp, &Expr)],
+        first: Node<'a>,
+        rest: &[(InfixOp, Node<'a>)],
         sp: SourceSpan,
     ) -> Reg {
         let result = self.fresh_var();
         let merge_blk = self.new_block();
-        let mut prev = self.lower_operator_operand(self.node_of(first));
+        let mut prev = self.lower_operator_operand(first);
         for (i, (op, operand)) in rest.iter().enumerate() {
             let cur = if i + 1 == rest.len() {
-                self.lower_operator_operand(self.node_of(operand))
+                self.lower_operator_operand(*operand)
             } else {
-                self.expr(self.node_of(operand))
+                self.expr(*operand)
             };
             let cmp = self.fresh(sp.clone(), None);
             self.emit(MirInstr::BinOp {
@@ -240,7 +240,7 @@ impl<'a> Flatten<'a> {
     /// the drops pass keeps the loan roots alive while the carrier lives.
     pub(in crate::mir) fn install_call_transfers(
         &mut self,
-        e: &Expr,
+        call: Node<'a>,
         recv_place: Option<&MirPlace>,
         arg_places: &[Option<MirPlace>],
     ) {
@@ -259,14 +259,7 @@ impl<'a> Flatten<'a> {
             }
         }
 
-        let Some(transfers) = self
-            .node(e)
-            .map(|node| node.checked)
-            .map(|node| node.call_transfers.clone())
-        else {
-            return;
-        };
-        for transfer in transfers {
+        for transfer in &call.checked.call_transfers {
             let dest_root = match transfer.dest {
                 mojito_checked::checked::CheckedTransferDest::Receiver => {
                     recv_place.map(|place| place.root)
@@ -348,7 +341,7 @@ impl<'a> Flatten<'a> {
             if loans.is_empty() || loans.len() == before {
                 continue;
             }
-            let marker = self.fresh_typed(e.source_span(), Some(dest_root), Ty::none());
+            let marker = self.fresh_typed(call.location(), Some(dest_root), Ty::none());
             match &dest_interior {
                 Some(domain) => {
                     self.transfer_domain_loans
@@ -371,13 +364,13 @@ impl<'a> Flatten<'a> {
     /// each checked mutating insertion can use the ordinary method-call ABI.
     pub(in crate::mir) fn begin_nominal_collection(
         &mut self,
-        expression: &Expr,
+        expression: Node<'a>,
         target: &Ty,
     ) -> VarId {
         let TyKind::Struct(name, _) = target.kind() else {
             unreachable!("checked collection target is nominal")
         };
-        let empty = self.fresh_typed(expression.source_span(), None, target.clone());
+        let empty = self.fresh_typed(expression.location(), None, target.clone());
         self.emit(MirInstr::Call {
             dest: empty,
             func: FuncRef::named(name),
@@ -451,11 +444,11 @@ impl<'a> Flatten<'a> {
 
     pub(in crate::mir) fn finish_nominal_collection(
         &mut self,
-        expression: &Expr,
+        expression: Node<'a>,
         collection: VarId,
         target: &Ty,
     ) -> Reg {
-        let result = self.fresh_typed(expression.source_span(), Some(collection), target.clone());
+        let result = self.fresh_typed(expression.location(), Some(collection), target.clone());
         self.emit(MirInstr::UseVar {
             dest: result,
             var: collection,
@@ -469,23 +462,21 @@ impl<'a> Flatten<'a> {
     /// the final leaf performs the collection family's insertion protocol.
     pub(in crate::mir) fn comprehension_clauses(
         &mut self,
-        plan: &ComprehensionPlan<'_>,
+        plan: &ComprehensionPlan<'_, 'a>,
         index: usize,
     ) {
         if index == plan.clauses.len() {
             // Dictionary evaluation is key-before-value, matching an ordinary
             // display and indexed assignment. List/set leaves evaluate one item.
-            let key = plan
-                .key
-                .map(|expression| self.expr(self.node_of(expression)));
-            let value_reg = self.expr(self.node_of(plan.value));
+            let key = plan.key.map(|expression| self.expr(expression));
+            let value_reg = self.expr(plan.value);
             let mut arguments = Vec::with_capacity(1 + usize::from(key.is_some()));
             if let Some(key) = key {
                 arguments.push(key);
             }
             arguments.push(value_reg);
             self.insert_nominal_collection(
-                self.node_of(plan.value),
+                plan.value,
                 plan.collection,
                 plan.target,
                 plan.insert,
@@ -494,13 +485,11 @@ impl<'a> Flatten<'a> {
             return;
         }
 
-        match (&plan.clauses[index], &plan.syntax[index]) {
-            (
-                CheckedComprehensionClause::If(_),
-                mojito_ast::ast::ComprehensionClause::If(condition),
-            ) => {
-                let value = self.expr(self.node_of(condition));
-                let condition = self.truthiness(self.node_of(condition), value);
+        match &plan.clauses[index] {
+            CheckedComprehensionClause::If(condition) => {
+                let condition = plan.operand(*condition);
+                let value = self.expr(condition);
+                let condition = self.truthiness(condition, value);
                 let body = self.new_block();
                 let continuation = self.new_block();
                 self.f.blocks[self.cur].term = MirTerm::Branch {
@@ -513,30 +502,20 @@ impl<'a> Flatten<'a> {
                 self.f.blocks[self.cur].term = MirTerm::Jump(continuation);
                 self.cur = continuation;
             }
-            (
-                CheckedComprehensionClause::For {
-                    var, iter: iter_id, ..
-                },
-                mojito_ast::ast::ComprehensionClause::For { iter, .. },
-            ) => {
+            CheckedComprehensionClause::For { var, iter, .. } => {
+                let iter = plan.operand(*iter);
                 let iterator_name = format!("$compiter{}", self.vars.len());
                 let iterator = self.var(&iterator_name);
-                let tables = self.checked;
-                let iter_node = tables.expression(*iter_id);
-                let iterator_ty = iter_node.and_then(|node| node.ty.clone());
-                let protocol = iter_node
-                    .and_then(|node| {
-                        node.adjustments
-                            .iter()
-                            .find_map(|adjustment| match adjustment {
-                                SemanticAdjustment::Iterate(protocol) => Some(protocol.clone()),
-                                _ => None,
-                            })
+                let iterator_ty = iter.ty();
+                let protocol = iter
+                    .adjustments()
+                    .iter()
+                    .find_map(|adjustment| match adjustment {
+                        SemanticAdjustment::Iterate(protocol) => Some(protocol.clone()),
+                        _ => None,
                     })
                     .unwrap_or_else(|| mojito_checked::checked::IterationProtocol {
-                        mode: if iter_node
-                            .is_some_and(|node| matches!(node.op, CheckedOp::Transfer(_)))
-                        {
+                        mode: if matches!(iter.op(), CheckedOp::Transfer(_)) {
                             mojito_checked::checked::IterationMode::Owned
                         } else {
                             mojito_checked::checked::IterationMode::Borrowed
@@ -550,13 +529,13 @@ impl<'a> Flatten<'a> {
                         exhaustion: None,
                     });
                 if let Some(origin) = &protocol.borrowed_origin {
-                    let place = self.place(self.node_of(iter));
+                    let place = self.place(iter);
                     let value_ty = iterator_ty
                         .or_else(|| place.ty.clone())
                         .expect("checked borrowed comprehension iterable has a type");
                     self.borrow_iteration_source(
                         iterator,
-                        iter.source_span(),
+                        iter.location(),
                         place,
                         value_ty,
                         origin,
@@ -566,7 +545,7 @@ impl<'a> Flatten<'a> {
                     if let Some(ty) = iterator_ty.clone() {
                         self.var_types.insert(iterator, ty);
                     }
-                    let iterator_value = self.expr(self.node_of(iter));
+                    let iterator_value = self.expr(iter);
                     self.emit(MirInstr::DefVar {
                         var: iterator,
                         src: iterator_value,
@@ -613,10 +592,10 @@ impl<'a> Flatten<'a> {
                     |call| call.result_ty.clone(),
                 );
                 let element_value =
-                    self.fresh_typed(iter.source_span(), Some(iterator_object), yield_ty);
+                    self.fresh_typed(iter.location(), Some(iterator_object), yield_ty);
                 self.f.blocks[self.cur].term = MirTerm::Jump(header);
                 self.cur = header;
-                let has_next = self.fresh(iter.source_span(), Some(iterator_object));
+                let has_next = self.fresh(iter.location(), Some(iterator_object));
                 if let Some(exhaustion) = protocol.exhaustion.clone() {
                     self.emit(MirInstr::TryNext {
                         dest: element_value,
@@ -684,26 +663,20 @@ impl<'a> Flatten<'a> {
                     self.emit(MirInstr::DropVar { var: iterator });
                 }
             }
-            _ => debug_assert!(
-                false,
-                "a comprehension clause's op and syntax disagree in kind"
-            ),
         }
     }
 
     pub(in crate::mir) fn comprehension(
         &mut self,
-        expression: &Expr,
-        node: &CheckedExpr,
+        node: Node<'a>,
         clauses: &[CheckedComprehensionClause],
-        key: Option<&Expr>,
-        value: &Expr,
-        syntax: &[mojito_ast::ast::ComprehensionClause],
+        key: Option<Node<'a>>,
+        value: Node<'a>,
     ) -> Reg {
-        let (target, insert) = collection_plan(node)
+        let (target, insert) = collection_plan(node.checked)
             .expect("checked collection comprehension has a nominal construction plan");
         let insert = insert.expect("list/set/dict comprehension has an insertion method");
-        let collection = self.begin_nominal_collection(expression, &target);
+        let collection = self.begin_nominal_collection(node, &target);
         let plan = ComprehensionPlan {
             collection,
             target: &target,
@@ -711,11 +684,11 @@ impl<'a> Flatten<'a> {
             key,
             value,
             clauses,
-            syntax,
-            bindings: &node.comprehension_bindings,
+            node,
+            bindings: &node.checked.comprehension_bindings,
         };
         self.comprehension_clauses(&plan, 0);
-        self.finish_nominal_collection(expression, collection, &target)
+        self.finish_nominal_collection(node, collection, &target)
     }
 }
 

@@ -111,6 +111,54 @@ impl<'a> Flatten<'a> {
         })
     }
 
+    /// Lower call, invocation, or method call node `node` through the syntax
+    /// rebuilt from it: the one crossing that still hands rebuilt syntax to
+    /// expression lowering, for the call family's three lowerers (R653
+    /// deletes it).
+    pub(in crate::mir) fn call_syntax(&mut self, node: Node<'a>) -> Reg {
+        use mojito_checked::checked::CheckedOp;
+        let Some(syntax) = self.syntax(node) else {
+            return self.unsupported_value(
+                node.location(),
+                "an expression without its rebuilt syntax reached MIR",
+            );
+        };
+        let e = syntax.expr();
+        match (node.op(), &e.kind) {
+            (
+                CheckedOp::Call { name, .. },
+                ExprKind::Call {
+                    param_args,
+                    args,
+                    kwargs,
+                    ..
+                },
+            ) => self.call_expr(e, node.checked, name, param_args, args, kwargs),
+            (
+                CheckedOp::Invoke { .. },
+                ExprKind::Invoke {
+                    callee,
+                    param_args,
+                    args,
+                    kwargs,
+                },
+            ) => self.invoke_expr(e, node.checked, callee, param_args, args, kwargs),
+            (
+                CheckedOp::MethodCall { method, .. },
+                ExprKind::MethodCall {
+                    object,
+                    args,
+                    kwargs,
+                    ..
+                },
+            ) => self.method_call_expr(e, node.checked, object, method, args, kwargs),
+            _ => self.unsupported_value(
+                node.location(),
+                "an expression without its checked node reached MIR",
+            ),
+        }
+    }
+
     /// The syntax rebuilt for `operand`, an operand of the node `syntax` was
     /// rebuilt from (R646's transitional bridge).
     pub(in crate::mir) fn operand_syntax<'e>(
