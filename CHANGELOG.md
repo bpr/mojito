@@ -8,6 +8,12 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A display reads its elements at its constructor's setup, after every
+  element is evaluated, as the pin reads it (R686): `(u.t, bump(u))` and
+  `[v.t, bump(v)]` see `bump`'s write, as do `List`, `Set`, and `Dict`
+  displays, a dict display evaluates all its keys before its values, and
+  `(il[0], setz(il))` is rejected as a use of an invalidated interior
+  reference.
 - A by-value operand with a reference result is evaluated to its reference
   where written and read at call setup, as the pin reads it (R685):
   `two(tup[0], bt(tup))`, `two(s.get(), bump(s))`, `two(pick(t), bt(t))`,

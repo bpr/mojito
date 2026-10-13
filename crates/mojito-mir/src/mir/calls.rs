@@ -101,6 +101,19 @@ impl<'a> Flatten<'a> {
         })
     }
 
+    /// Lower a display's elements in order. A display is its constructor's
+    /// call, so each element is evaluated where written and read at that
+    /// call's setup, after the last element.
+    pub(super) fn display_elements(&mut self, elements: &[Node<'a>]) -> Vec<Reg> {
+        self.open_call_setup();
+        let regs = elements
+            .iter()
+            .map(|&element| self.lower_setup_operand(element, None, |this| this.expr(element)))
+            .collect();
+        self.close_call_setup(None);
+        regs
+    }
+
     /// Open a setup frame for the call whose operands are lowered next. Every
     /// opened frame is closed by [`Self::close_call_setup`] after the call's
     /// last operand and before anything consumes the operands' registers.

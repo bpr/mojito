@@ -714,7 +714,8 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   place reads, opened by `open_call_setup` (or `lower_setup_receiver` /
   `lower_setup_receiver_with`, which lower the receiver into it) and emitted
   in parameter order by `close_call_setup`; `lower_setup_operand` lowers one
-  operator operand into the frame, `outside_call_setup` keeps non-operand
+  operator operand into the frame, `display_elements` lowers a display's
+  elements through a frame of their own, `outside_call_setup` keeps non-operand
   lowering out of it, and `setup_read` decides which places defer.
   `setup_reference` decides which reference-result operands defer their
   read: `defer_to_setup` marks the operand in `Flatten::setup_reference`

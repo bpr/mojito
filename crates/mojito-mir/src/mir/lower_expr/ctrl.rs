@@ -476,8 +476,8 @@ impl<'a> Flatten<'a> {
         index: usize,
     ) {
         if index == plan.clauses.len() {
-            // Dictionary evaluation is key-before-value, matching an ordinary
-            // display and indexed assignment. List/set leaves evaluate one item.
+            // A dictionary comprehension evaluates each entry's key, then its
+            // value, as Mojo does. List/set leaves evaluate one item.
             let key = plan.key.map(|expression| self.expr(expression));
             let value_reg = self.expr(plan.value);
             let mut arguments = Vec::with_capacity(1 + usize::from(key.is_some()));

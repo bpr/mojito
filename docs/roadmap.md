@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R693**.
+Next free ID: **R697**.
 
 ## Ordered Work
 
@@ -298,17 +298,40 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R686 A display reads its elements where they are written**
+- [ ] **R693 A collection display passed directly as a call argument reads
+  its elements at its own setup, not the call's**
 
-  Problem: `(u.t, bump(u))` gives `108 0` at the pin and `8 0` in Mojito;
-  `[v.t, bump(v)]` gives `109 0` and `9 0`.
-  - Upstream's displays are `var` pack constructor calls, so their
-    elements are read at that call's setup.
-  - Mojito lowers displays in `tuple_literal` / `list_literal`
-    (`crates/mojito-mir/src/mir/lower_expr/expr.rs`), outside the call
-    lowerers that open a setup frame (`open_call_setup`).
-  - Found while landing R681 (2026-10-13).
+  Problem: `head([a.t, 1], bump(a))` prints `105` at the pin and `5` in
+  Mojito.
+  - The pin defers a `List`, `Set`, or `Array` display bound directly to a
+    `var` or `read` parameter (`ha([a.t, 1], bump(a))`,
+    `hs({b.t, 1}, bump(b))`, `hr([c.t, 1], bump(c))` all print `105`).
+  - A tuple display argument does not defer (`fst((c.t, 1), bump(c))`
+    prints `5`), nor does a display nested in another call or subscripted.
+  - An element call still runs where written.
+  - Lever: when `lower_setup_operand`'s operand is such a display,
+    `display_elements` (`crates/mojito-mir/src/mir/calls.rs`) hands its
+    frame's reads and the construction after them up to the parent frame.
+  - Found while landing R686 (2026-10-13).
   - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R694 A dict display is not `Dict`'s `__dict_literal__` constructor
+  over key and value lists**
+
+  Problem: `{String("x"): mk(4), String("y"): a}` copies each key and value
+  through the `keys` / `values` lists at the pin (`copy 14`, `copy 24`,
+  `copy 21`, `del 14`), and Mojito inserts them directly, so its copy and
+  destructor trace differs.
+  - Upstream lowers the display as
+    `Dict(keys=[k…], values=[v…], __dict_literal__=None)`; the bundled
+    `Dict.__init__(var keys, var values, __dict_literal__)` exists.
+  - `brace_literal` (`crates/mojito-mir/src/mir/lower_expr/expr.rs`) is
+    where the display is built.
+  - Needs R693 so the key and value lists' reads land in the `Dict` call's
+    setup; relates to R211.
+  - Found while landing R686 (2026-10-13).
+  - Depends on R693.
   - Model: Opus, Not Planned.
 
 - [ ] **R687 A struct operator's operand owner dies after the result's
@@ -1122,6 +1145,20 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
     read reaches the storage after that.
   - Depends on nothing.
   - Model: Opus, Planned.
+
+- [ ] **R696 A reference argument invalidated by a later argument is
+  rejected where the pin runs the call**
+
+  Problem: `two(d["k"], d.pop("k"))` and `(d["k"], d.pop("k"))` are
+  rejected as a use of an invalidated interior reference `d["value"]`,
+  where the pin compiles them and raises `DictKeyError` at run time.
+  - The rejection comes from the R685 setup read of a reference result
+    (`setup_reference`), which a display joined in R686.
+  - `two(lst[0], bl(lst))` over a `List` is rejected at the pin too, so
+    the difference is specific to how the pin's `Dict` lookup reads.
+  - Found while landing R686 (2026-10-13).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
 
 - [ ] **R679 Returning a field of a call's reference result is rejected**
 
@@ -5831,6 +5868,28 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - A bare `List[ref Int]` still parses and is rejected by the checker, so a `Ty::Ref` element type can still be formed until it is rejected.
   - Depends on nothing.
   - Model: Opus, Planned.
+
+- [ ] **R695 A list or set display is filled by `append`/`add`, not built
+  by its `__list_literal__` / `__set_literal__` constructor**
+
+  Problem: upstream lowers `[a, b]` in a `List` context and `{a, b}` as one
+  variadic literal-constructor call, where Mojito constructs an empty
+  collection and inserts each element; only `Array` displays get the
+  constructor call.
+  - The checker's `record_collection_construction`
+    (`crates/mojito-checker/src/checker/inference.rs`) gives every
+    non-`Array` display a `ConstructCollection` insert plan;
+    `record_array_literal_construction` gives `Array` its constructor.
+  - Lever: record the literal constructor for `List` and `Set` displays
+    too, keep the insert plan for comprehensions, and lower them as the
+    `Array` path does.
+  - Consumers to follow: `origins/actuals.rs`, `declarations.rs`,
+    `checked.rs`, and `mono/substitute.rs::list_literal_constructor`.
+  - Semantics already match since R686: the elements are read before the
+    collection is built.
+  - Found while landing R686 (2026-10-13).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
 
 - [ ] **R583 The VM resolves a callee by name at run time, scanning every
   concrete function**

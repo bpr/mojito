@@ -171,6 +171,7 @@ assets/ok/dict_upstream_key_value_iteration.mojo	-	ineligible	no-scalar-entry-sh
 assets/ok/dict_views_iteration.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/discard_slots_typed_per_statement.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/discarded_result_destruction.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/display_element_read_at_construction.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/docstrings.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/dtype_compile_time_values.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/dtype_default_param.mojo	-	ineligible	no-scalar-entry-shape

@@ -4218,7 +4218,12 @@ current Mojo:
   `two(c.t, bump(c))` reads `c.t` after `bump` writes it,
   `two(tup[0], bt(tup))` reads the element `bt` wrote, `two(a.t, take(a^))`
   is a use of the moved `a`, and `two(lst[0], bl(lst))` uses an invalidated
-  interior reference.
+  interior reference. A display is its constructor's call, so it opens its
+  own frame (`display_elements`) over its elements, a dictionary display
+  lowering every key and then every value into it, before the collection is
+  built: `(u.t, bump(u))` reads `u.t` after `bump` writes it. A display
+  passed directly as a call argument still reads at its own setup rather
+  than the enclosing call's.
 - An element read out of pack storage (an intrinsic `TupleStorage` or
   `VariadicStorage` `Index` with a retained base place) is the same shallow
   read: an aggregate element retains the pack through every consumer of the
