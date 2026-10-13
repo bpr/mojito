@@ -753,7 +753,8 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `outside_call_setup` keeps non-operand lowering out of it, and
   `setup_read` decides which places defer. `bind_read_temporary` binds an
   operand the checker marked `ReadTemporaryArgument` (a read call argument,
-  a struct or prefix operator's read operand) to its `$tmp_arg_r` slot
+  a method's read receiver through `lower_method_receiver`, a struct or
+  prefix operator's read operand) to its `$tmp_arg_r` slot
   (`mir::READ_TEMPORARY_SLOT`).
   `bind_forwarded_temporary` binds a fresh temporary marked
   `ForwardedArgument` (an owned argument, or an owned receiver through

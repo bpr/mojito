@@ -8,6 +8,11 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A copy construction a read receiver takes at its source's last use
+  (`M(copy=d).show()`) lends the source's storage to the method, as the pin
+  does (R746): no copy or move initializer runs, and the source dies when
+  the call returns. It used to run the move initializer. A `ref self`
+  receiver keeps the move, as at the pin.
 - Every potentially raising operation is a raise edge of the
   explicit-destruction check, as at the pin (R749): a value that must be
   explicitly destroyed and is still owned where an error is thrown is

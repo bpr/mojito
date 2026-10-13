@@ -30,7 +30,9 @@ impl Checker {
     /// ([`borrowable_read_arguments`]) and the owned temporaries it borrows,
     /// which the caller destroys once the call returns
     /// ([`read_temporary_arguments`]). The arguments a read `*args`
-    /// collector gathers bind the same way. It also records the arguments
+    /// collector gathers bind the same way, and so does a temporary
+    /// receiver whose declared convention is a read
+    /// ([`read_temporary_receiver`]). It also records the arguments
     /// and the receiver that bind an owned parameter, among them the
     /// elements an owning (`var`) collector gathers
     /// ([`forwarded_arguments`]).
@@ -56,7 +58,7 @@ impl Checker {
         ) {
             self.record_at(span).borrowed_read_call_place = true;
         }
-        let read = read_temporary_arguments(
+        let mut read = read_temporary_arguments(
             slots,
             conventions,
             collected,
@@ -64,6 +66,7 @@ impl Checker {
             kwargs,
             designates_place,
         );
+        read.extend(read_temporary_receiver(receiver, designates_place));
         self.unconsumed_temporaries
             .borrow_mut()
             .extend(read.iter().cloned());
@@ -704,6 +707,25 @@ fn collected_read_arguments<'a>(
         .iter()
         .map(|position| &args[*position])
         .filter(|arg| !matches!(arg.kind, ExprKind::Spread(_)))
+}
+
+/// A method's temporary receiver whose **declared** convention is a read:
+/// the method only borrows it, so the caller destroys it once the call
+/// returns, as a read argument's ([`read_temporary_arguments`]). A
+/// `ref self` receiver is not one even where its effective convention is
+/// a read, and a `^` receiver lends its place
+/// ([`Checker::check_consumed_receiver`]).
+fn read_temporary_receiver(
+    receiver: Option<(&Expr, Option<ArgConvention>)>,
+    designates_place: impl Fn(&Expr) -> bool,
+) -> Option<SourceSpan> {
+    receiver
+        .filter(|(receiver, convention)| {
+            matches!(convention, None | Some(ArgConvention::Imm))
+                && !designates_place(receiver)
+                && !matches!(receiver.kind, ExprKind::Transfer(_))
+        })
+        .map(|(receiver, _)| receiver.source_span())
 }
 
 /// The binding a plain place expression (a name, or a field chain over one)

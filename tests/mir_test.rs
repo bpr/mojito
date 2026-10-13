@@ -217,6 +217,60 @@ fn dying_copy_at_read_parameter_lends_its_source() {
 }
 
 #[test]
+fn dying_copy_at_read_receiver_lends_its_source() {
+    // `M(copy=a).show()` at `a`'s last use binds no receiver temporary and
+    // runs no copy: the method reads `a` where it lies, and `a` dies after it.
+    let source = "struct M(Copyable, Movable):\n    var v: Int\n    def __init__(out self, v: Int):\n        self.v = v\n    def show(self):\n        pass\n\ndef main():\n    var a = M(1)\n    M(copy=a).show()\n";
+    let compiled = Compiler::default()
+        .compile_source(source, Path::new("mir_test.mojo"))
+        .expect("compile");
+    let main = mir_function(compiled.elaborated_mir(), "main");
+    let instrs = main
+        .blocks
+        .iter()
+        .flat_map(|block| &block.instrs)
+        .collect::<Vec<_>>();
+    let a = main
+        .var_names
+        .iter()
+        .position(|slot| slot == "a")
+        .expect("a slot") as u32;
+    assert!(
+        !instrs.iter().any(|instr| match instr {
+            MirInstr::DefVar { var, .. } => {
+                let name = &main.var_names[*var as usize];
+                name.starts_with(mojito::mir::READ_TEMPORARY_SLOT)
+                    || name.starts_with("$tmp_recv_r")
+            }
+            MirInstr::Call { kwargs, .. } => kwargs.iter().any(|(name, _)| name == "copy"),
+            _ => false,
+        }),
+        "{main:#?}"
+    );
+    let (call_at, recv) = instrs
+        .iter()
+        .enumerate()
+        .find_map(|(at, instr)| match instr {
+            MirInstr::MethodCall { recv, method, .. } if method == "show" => Some((at, *recv)),
+            _ => None,
+        })
+        .expect("show call");
+    assert!(
+        instrs.iter().any(|instr| matches!(
+            instr,
+            MirInstr::LoadPlace { dest, place } if *dest == recv && place.root == a
+        )),
+        "{main:#?}"
+    );
+    assert!(
+        instrs[call_at..]
+            .iter()
+            .any(|instr| matches!(instr, MirInstr::DropVar { var } if *var == a)),
+        "{main:#?}"
+    );
+}
+
+#[test]
 fn dying_copy_receiver_forwards_its_source() {
     // `M(copy=d).consume()` at `d`'s last use forwards `d` to the owned
     // receiver; a raising argument after the receiver keeps a move of `c`

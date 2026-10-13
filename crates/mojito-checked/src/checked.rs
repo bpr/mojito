@@ -794,9 +794,9 @@ pub enum SemanticAdjustment {
     /// access in the same call intentionally omit this marker — their implicit
     /// copy is what makes the call's exclusivity check pass.
     BorrowReadArgument,
-    /// This actual argument is an owned temporary (a call result, a
-    /// construction, a converted literal) bound to a read-convention
-    /// parameter: the callee borrows it, so the caller destroys it once the
+    /// This actual argument (or receiver) is an owned temporary (a call
+    /// result, a construction, a converted literal) bound to a
+    /// read-convention parameter: the callee borrows it, so the caller destroys it once the
     /// call returns. A temporary at a `var`/`deinit` slot moves into the
     /// callee and omits this marker.
     ReadTemporaryArgument,

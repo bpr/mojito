@@ -4232,8 +4232,9 @@ current Mojo:
   load, construction, binding, and `DropVar` go and the call forwards `y`
   itself, so no move initializer runs, as at Mojo, and the slot leaves
   every cleanup list. A raising argument evaluated after the construction
-  keeps `y`'s move into the slot, as at the pin. A copy construction a read parameter or
-  read operator operand takes (`show(M(copy=a))`) is bound to its
+  keeps `y`'s move into the slot, as at the pin. A copy construction a read parameter, read
+  receiver, or read operator operand takes (`show(M(copy=a))`,
+  `M(copy=a).show()`) is bound to its
   read-temporary slot (`mir::READ_TEMPORARY_SLOT`, below); when `a` dies
   there, nothing from the binding to the call can raise, and only the
   binding and one whole load name the slot (`lending_use`), the load,
@@ -4250,10 +4251,14 @@ current Mojo:
   per-statement `$discard_s` slot, typed by that value alone and dead at its
   definition, so `_` never names a function-wide local.
 - An owning temporary receiver of a method (`B(3).show()`, `print(B(2).get())`)
-  is bound to a hidden `$tmp_recv_r` slot whose place the call retains, as a
-  named receiver's is (`lower_method_receiver`): the call is the slot's last
-  use, so the temporary's `DropVar` follows the call, before the enclosing
-  expression continues. A `var`/`deinit` receiver convention binds no slot;
+  gets frame storage in `lower_method_receiver`. One whose declared
+  convention is a read carries the checker's `ReadTemporaryArgument` marker
+  and is bound like a read argument (below), to a `$tmp_arg_r` slot whose
+  load the call takes as its receiver. Any other (a `ref self` receiver, a
+  borrowing temporary, a view) is bound to a hidden `$tmp_recv_r` slot whose
+  place the call retains, as a named receiver's is. Either way the call is
+  the slot's last use, so the temporary's `DropVar` follows the call, before
+  the enclosing expression continues. A `var`/`deinit` receiver convention binds no slot;
   the callee owns the temporary. A receiver whose result borrows it takes the
   `$mat_r` path above instead, and lives as long as the borrower.
 - An owning temporary at a read parameter (`take(B(2))`) is bound to a
@@ -4262,7 +4267,9 @@ current Mojo:
   the slot through the call, so the `DropVar` follows it. The checker decides
   which arguments qualify: `read_temporary_arguments` (`checker/places.rs`)
   marks each non-place argument bound to a read convention with
-  `ReadTemporaryArgument`, so a `var`/`deinit` slot — which moves the
+  `ReadTemporaryArgument`, and `record_argument_borrows` marks a method's
+  non-place receiver by its declared convention (`read_temporary_receiver`),
+  so a `ref self` receiver, which the pin moves into, is not marked; so a `var`/`deinit` slot — which moves the
   temporary into the callee — carries no marker, and MIR never guesses a
   callee's conventions.
 - A construction is its `__init__`'s call, so its arguments bind the same

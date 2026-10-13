@@ -298,20 +298,6 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R746 A copy-constructed read receiver at its source's last use
-  runs the move initializer the pin elides**
-
-  Problem: `M(copy=d).show()` over `def show(self)` at `d`'s last use
-  prints `recv 1001`, where the pin prints `recv 1`.
-  - The pin lends `d`'s storage to the receiver.
-  - The receiver binds a `$tmp_recv_r` slot, which copy elision does not
-    lend, so it turns the copy into a move.
-  - Copy elision lends a read-temporary argument slot
-    (`READ_TEMPORARY_SLOT`); the receiver slot needs the same rule.
-  - Found while landing R736 (2026-10-13).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R731 A transferred call temporary skips the move initializer the
   pin runs**
 

@@ -21,9 +21,9 @@
 //! an owned argument. A raising operand after the construction keeps the
 //! move, as at the pin.
 //!
-//! A copy a read parameter or read operator operand takes is bound to a
-//! read-temporary slot ([`READ_TEMPORARY_SLOT`]) the call reads once. When
-//! its source dies there and nothing evaluated between the binding and the
+//! A copy a read parameter, read receiver, or read operator operand takes
+//! is bound to a read-temporary slot ([`READ_TEMPORARY_SLOT`]) the call
+//! reads once. When its source dies there and nothing evaluated between the binding and the
 //! call can raise, the source is lent instead: the construction, the
 //! binding, and the source's death go, the call reads the source where it
 //! lies, and every death of the slot — its `DropVar`, a `try` body's or a

@@ -118,8 +118,8 @@ impl<'a> Flatten<'a> {
 
     /// Bind `value`, the lowered `expression`, through
     /// [`Self::bind_temporary_argument`] when the checker marked it
-    /// `ReadTemporaryArgument`: an owned temporary a read parameter or a
-    /// read dunder operand takes, which the caller destroys once the call
+    /// `ReadTemporaryArgument`: an owned temporary a read parameter, a read
+    /// receiver, or a read dunder operand takes, which the caller destroys once the call
     /// returns. Anything else is `value` unchanged.
     pub(super) fn bind_read_temporary(&mut self, expression: Node<'a>, value: Reg) -> Reg {
         let adjustments = expression.adjustments();
@@ -1314,15 +1314,18 @@ impl<'a> Flatten<'a> {
     }
 
     /// [`Self::lower_call_receiver`] for the receiver of method call `call`,
-    /// giving a fresh owned temporary receiver (`B(3).show()`) frame storage:
-    /// the value is bound to a hidden `$tmp_recv_r` slot and the call receives
-    /// that slot's place, exactly as a named receiver retains its own. The
-    /// call is the slot's last use, so drop elaboration destroys the
-    /// temporary right after it returns — upstream's ASAP destruction. A
-    /// `var`/`deinit` receiver convention binds no slot: the callee owns the
-    /// temporary and tears it down itself. A value that owns no droppable
-    /// storage, or one the receiver paths already gave a place, is returned
-    /// unchanged.
+    /// giving a fresh owned temporary receiver frame storage. A read receiver
+    /// (`B(3).show()`) the checker marked `ReadTemporaryArgument` binds a
+    /// read-temporary slot through [`Self::bind_read_temporary`], as a read
+    /// argument does. Any other temporary receiver (a `ref self`, a
+    /// borrowing temporary, a view) is bound to a hidden `$tmp_recv_r` slot
+    /// and the call receives that slot's place, exactly as a named receiver
+    /// retains its own. Either way the call is the slot's last use, so drop
+    /// elaboration destroys the temporary right after it returns —
+    /// upstream's ASAP destruction. A `var`/`deinit` receiver convention
+    /// binds no slot: the callee owns the temporary and tears it down
+    /// itself. A value that owns no droppable storage, or one the receiver
+    /// paths already gave a place, is returned unchanged.
     pub(super) fn lower_method_receiver(
         &mut self,
         call: Node<'a>,
@@ -1340,6 +1343,10 @@ impl<'a> Flatten<'a> {
         }
         if place.is_some() || !receiver.is_fresh_temporary() || owned {
             return (value, place);
+        }
+        let read = self.bind_read_temporary(receiver, value);
+        if read != value {
+            return (read, None);
         }
         let Some(ty) = self
             .f

@@ -537,6 +537,20 @@ fn copy_construction_read_argument_lends_its_source() {
 }
 
 #[test]
+fn copy_construction_read_receiver_lends_its_source() {
+    // A read receiver that takes a copy construction at its source's last
+    // use borrows the source's storage, which dies when the call returns,
+    // inside a `try` too; a source read afterwards still copies, a raising
+    // argument after the receiver makes it a move, and a `ref self`
+    // receiver keeps the move.
+    let src = "struct M(Copyable, Movable):\n    var v: Int\n    def __init__(out self, v: Int):\n        self.v = v\n    def __init__(out self, *, copy: Self):\n        self.v = copy.v + 100\n    def __init__(out self, *, deinit move: Self):\n        self.v = move.v + 1000\n    def __deinit__(deinit self):\n        print(\"del\", self.v)\n    def show(self):\n        print(\"show\", self.v)\n    def show_n(self, n: Int):\n        print(\"show_n\", self.v, n)\n    def show_r(self) raises:\n        print(\"show_r\", self.v)\n        raise Error(\"r\")\n    def peek(ref self) -> Int:\n        return self.v\n\ndef boom(x: Int) raises -> Int:\n    raise Error(\"boom\")\n\ndef main():\n    var a = M(1)\n    M(copy=a).show()\n    var b = M(2)\n    M(copy=b).show()\n    print(\"b\", b.v)\n    var c = M(3)\n    try:\n        M(copy=c).show_n(boom(1))\n    except e:\n        print(\"caught\", e)\n    var d = M(4)\n    try:\n        M(copy=d).show_r()\n    except e:\n        print(\"caught\", e)\n    var f = M(5)\n    print(M(copy=f).peek())\n";
+    assert_eq!(
+        vm(src),
+        "show 1\ndel 1\nshow 102\ndel 102\nb 2\ndel 2\ndel 1003\ncaught boom\nshow_r 4\ndel 4\ncaught r\ndel 1005\n1005\n"
+    );
+}
+
+#[test]
 fn read_temporary_outlives_conditional_argument() {
     // A read temporary loaded before a later conditional argument's branch is
     // consumed by the call in the join block, so it dies when the call
