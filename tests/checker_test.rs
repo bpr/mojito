@@ -185,11 +185,11 @@ fn checked_boundary_keys_template_source_provenance_by_occurrence() {
     }
     assert_eq!(xs.len(), 1);
 
+    let mut locations = std::collections::HashSet::new();
     for expression in checked.expressions() {
-        assert_eq!(
-            checked.expression_ids_at(&expression.location()),
-            &[expression.id],
-            "one checked syntax occurrence must resolve to exactly one node"
+        assert!(
+            locations.insert(expression.location()),
+            "one checked syntax occurrence must build exactly one node"
         );
     }
 }

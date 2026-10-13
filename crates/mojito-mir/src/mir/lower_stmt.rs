@@ -1955,8 +1955,9 @@ impl Flatten<'_> {
 
     /// Lower the "catch-all" straight-line statements. Statement node `node`
     /// decides the lowering; `s`, the syntax rebuilt from it, binds only the
-    /// expression operands still lowered from syntax. `declared` is the slot
-    /// HIR interned for the binding the statement declares. Every reachable
+    /// expression operands still lowered from syntax. `hir` is the HIR
+    /// statement it lowers: its expression roots, and the slot HIR interned
+    /// for the binding the statement declares. Every reachable
     /// case is handled; the categorization decisions are documented per arm.
     /// `outer_map` threads the enclosing function's block map for a
     /// fallback-path `try`.
@@ -1964,7 +1965,7 @@ impl Flatten<'_> {
         &mut self,
         s: &Stmt,
         node: &CheckedStmt,
-        declared: Option<VarId>,
+        hir: &hir::HirStmt,
         outer_map: &HashMap<hir::BlockId, MirBlockId>,
     ) {
         // Bracket the statement for temporary-argument anchors: hidden
@@ -1976,7 +1977,7 @@ impl Flatten<'_> {
         // Nested statement lowering saves and restores the enclosing list, so
         // each statement flushes exactly its own anchors.
         let saved = std::mem::take(&mut self.pending_argument_anchors);
-        self.lower_stmt_dispatch(s, node, declared, outer_map);
+        self.lower_stmt_dispatch(s, node, hir, outer_map);
         self.flush_argument_anchors();
         self.pending_argument_anchors = saved;
     }
@@ -1996,13 +1997,13 @@ impl Flatten<'_> {
         &mut self,
         s: &Stmt,
         node: &CheckedStmt,
-        declared: Option<VarId>,
+        hir: &hir::HirStmt,
         outer_map: &HashMap<hir::BlockId, MirBlockId>,
     ) {
         let statement_binding = node.binding;
         match (&node.op, &s.kind) {
             (CheckedStmtOp::RefDecl { .. }, StmtKind::RefDecl { value, .. }) => {
-                let Some(reference) = declared else {
+                let Some(reference) = hir.declared else {
                     self.emit(MirInstr::Unsupported(
                         "a ref declaration without its HIR slot reached MIR".into(),
                     ));
@@ -2486,7 +2487,13 @@ impl Flatten<'_> {
                 },
                 StmtKind::Comptime { value, .. },
             ) => {
-                self.lower_comptime_binding(s, node, name, value, *value_node);
+                let Some(value_hir) = hir.expressions.first() else {
+                    self.emit(MirInstr::Unsupported(
+                        "a comptime binding without its HIR value reached MIR".into(),
+                    ));
+                    return;
+                };
+                self.lower_comptime_binding(s, node, name, (value, value_hir), *value_node);
             }
             // `pass` has no runtime effect. Imports were consumed by linking and
             // are no-ops in a lowered module body.
@@ -2767,13 +2774,14 @@ impl Flatten<'_> {
     /// the name and the thunks that read it, and only a thunk binds it.
     /// `statement` is the binding's rebuilt syntax, which a thunk keeps as
     /// its prologue until thunk bodies are statement nodes (R629), and
-    /// `node` its statement node; `value_node` is `value`'s node.
+    /// `node` its statement node; `value` is the value's rebuilt syntax
+    /// beside its HIR expression, and `value_node` its node.
     fn lower_comptime_binding(
         &mut self,
         statement: &Stmt,
         node: &CheckedStmt,
         name: &str,
-        value: &Expr,
+        (value, value_hir): (&Expr, &hir::HirExpr),
         value_node: mojito_checked::checked::CheckedNodeId,
     ) {
         let statement_binding = node.binding;
@@ -2790,16 +2798,13 @@ impl Flatten<'_> {
             && !self.enclosing_binders.lifted
         {
             if let Some((owner, ty)) = statement_binding.zip(self.checked_ty(value)) {
-                let display = std::rc::Rc::new(value.clone());
-                let mut facts = HashMap::new();
-                self.copy_facts(value, &display, &mut facts);
                 let binding = DisplayBinding {
                     owner,
                     node: value_node,
                     name: name.to_string(),
                     aliases: Vec::new(),
-                    display,
-                    facts: std::rc::Rc::new(facts),
+                    hir: std::rc::Rc::new(value_hir.clone()),
+                    sequence: sequence.clone(),
                     ty,
                     binders: self.enclosing_binders.clone(),
                     preceding: self.comptime_thunks.evaluated.len(),
@@ -2932,7 +2937,7 @@ impl Flatten<'_> {
         };
         let syntax = self.hir_statement_syntax(statement);
         self.with_hir_statement(&syntax, statement, |this| {
-            this.lower_stmt(&syntax, node, statement.declared, outer_map);
+            this.lower_stmt(&syntax, node, statement, outer_map);
         });
     }
 
@@ -3175,7 +3180,6 @@ impl Flatten<'_> {
                 exit,
                 ..
             } => {
-                let syntax = self.hir_syntax(iter);
                 let sequence = comptime_iteration(&self.checked, iter).and_then(|iteration| {
                     use mojito_checked::checked::ComptimeSource;
                     let source = match iteration.source {
@@ -3186,37 +3190,29 @@ impl Flatten<'_> {
                             let binders = &self.enclosing_binders;
                             mojito_checked::checked::ComptimeSequence::Elements(
                                 self.comptime_thunks
-                                    .request_sequence(&syntax, iter.node, binders, ty, element),
+                                    .request_sequence(iter.node, binders, ty, element),
                             )
                         }
-                        ComptimeSource::Bound { display, .. } => {
+                        ComptimeSource::Bound { binding, .. } => {
                             mojito_checked::checked::ComptimeSequence::Elements(
-                                self.comptime_thunks.bound_sequence(&display)?,
+                                self.comptime_thunks.display(binding)?.sequence.clone(),
                             )
                         }
                         ComptimeSource::EvaluatedRange { bounds } => {
-                            let (
-                                ExprKind::Call { args, .. },
-                                CheckedOp::Call {
-                                    args: arg_nodes, ..
-                                },
-                            ) = (&syntax.kind, &self.hir_node(iter).op)
+                            let CheckedOp::Call {
+                                args: arg_nodes, ..
+                            } = &self.hir_node(iter).op
                             else {
                                 return None;
                             };
                             let arg_nodes = arg_nodes.clone();
                             let bounds: Vec<ParamExpr> = bounds
                                 .into_iter()
-                                .zip(args.iter().zip(arg_nodes))
-                                .map(|(bound, (written, node))| {
+                                .zip(arg_nodes)
+                                .map(|(bound, node)| {
                                     bound.unwrap_or_else(|| {
                                         let binders = &self.enclosing_binders;
-                                        self.comptime_thunks.request_value(
-                                            written,
-                                            node,
-                                            binders,
-                                            Ty::int(),
-                                        )
+                                        self.comptime_thunks.request_value(node, binders, Ty::int())
                                     })
                                 })
                                 .collect();
@@ -3256,7 +3252,7 @@ impl Flatten<'_> {
                 } else {
                     self.emit(MirInstr::Unsupported(format!(
                         "comptime for over `{:?}` is not a compile-time sequence",
-                        syntax.kind
+                        self.hir_syntax(iter).kind
                     )));
                     MirTerm::Jump(map[exit])
                 }

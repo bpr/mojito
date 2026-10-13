@@ -138,7 +138,7 @@ impl Flatten<'_> {
             ),
             _ => {
                 let binders = &self.enclosing_binders;
-                self.comptime_thunks.request(expression, node, binders)
+                self.comptime_thunks.request(node, binders)
             }
         }
     }

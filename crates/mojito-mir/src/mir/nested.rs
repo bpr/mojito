@@ -44,9 +44,8 @@ pub(super) struct FunctionLowering<'a> {
     pub(super) error_ty: Option<Ty>,
     pub(super) named_result: Option<&'a str>,
     pub(super) body: &'a [Stmt],
-    /// An expression thunk's returned value: `body` then ends with the
-    /// synthetic `return` of it, which only the nested-declaration scan
-    /// reads.
+    /// An expression thunk's returned value, which HIR lowers after
+    /// `body`.
     pub(super) returned: Option<CheckedNodeId>,
     pub(super) overloads: &'a std::sync::Arc<mojito_checked::package::ProgramOverloads>,
 }
@@ -81,12 +80,10 @@ pub(super) fn lower_fn_nested(
     let children = analyze_root_children(checked, name, param_names, body);
     let registry = scope_registry(body, &children, &HashMap::new());
 
-    let mut cfg = match (returned, body.split_last()) {
-        (Some(value), Some((_, prologue))) => {
-            Cfg::build_checked_thunk(checked, param_names, prologue, value)
-        }
-        _ => Cfg::build_checked_fn(checked, param_names, body),
-    };
+    let mut cfg = returned.map_or_else(
+        || Cfg::build_checked_fn(checked, param_names, body),
+        |value| Cfg::build_checked_thunk(checked, param_names, body, value),
+    );
     // Parameter slot types come from the checked declaration, not from
     // name-matched body expressions (same-named bindings in other functions
     // must never leak into this function's slots).

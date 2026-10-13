@@ -1,4 +1,5 @@
 use mojito::Ty;
+use mojito::checked::{CheckedStmtOp, WalkResult, Walked};
 use mojito::{Compiler, CompilerError, SemanticAdjustment, ValueCategory};
 
 #[test]
@@ -1336,25 +1337,33 @@ fn generic_def_declares_no_clone() {
         clone_return_values(&program, "tag").is_empty(),
         "no clone of `tag` is declared"
     );
-    let values: Vec<_> = program
+    let tag = program
         .checked()
         .statements()
         .iter()
-        .filter_map(|statement| match &statement.kind {
-            mojito::ast::StmtKind::Def { name, body, .. } if name == "tag" => Some(body),
-            _ => None,
+        .find(|statement| {
+            matches!(&statement.kind, mojito::ast::StmtKind::Def { name, .. } if name == "tag")
         })
-        .flat_map(|body| body.iter())
-        .filter_map(|statement| match &statement.kind {
-            mojito::ast::StmtKind::Return(Some(value)) => Some(value),
-            _ => None,
-        })
-        .collect();
-    assert_eq!(values.len(), 1, "the template returns once");
-    let ids = program
-        .checked()
-        .expression_ids_at(&values[0].source_span());
-    assert_eq!(ids.len(), 1, "one checked node for the template occurrence");
+        .expect("the `tag` template");
+    let tables = program.checked().tables();
+    let tag = tables
+        .statement_at(&tag.source_span())
+        .expect("the template's checked node");
+    let mut returned = Vec::new();
+    tables.walk(&[tag.id], &mut |walked| {
+        if let Walked::Statement(statement) = walked
+            && let CheckedStmtOp::Return(Some(value)) = statement.op
+        {
+            returned.push(value);
+        }
+        WalkResult::Advance
+    });
+    assert_eq!(
+        returned.len(),
+        1,
+        "one checked node for the template's return"
+    );
+    let ids = returned;
     let node = program.checked().expression(ids[0]).expect("checked node");
     assert_eq!(node.ty, Some(Ty::int_literal()));
     assert!(

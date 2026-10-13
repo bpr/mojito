@@ -103,7 +103,7 @@ link plus initial check, not the rounds. The fix was to share the tables
 instead of copying them.
 
 **After the fix** (same day): `CheckedProgram` now owns one
-`Arc<CheckedTables>` (expressions, declarations, and their span indexes,
+`Arc<CheckedTables>` (expressions, declarations, and their indexes,
 built once at construction) that every `Cfg` and MIR `Flatten` borrows.
 Hello World on the same machine:
 
@@ -263,13 +263,12 @@ concern rather than a measured Hello World bottleneck.
 
 ### 5. Checked facts still contain duplicate compatibility indexes
 
-`CheckedTables` now owns `expressions_by_span`, but `CheckedProgram` separately
-owns an `expression_index` of the same shape, and constructs both. The program
-also retains compatibility overload-target and implicit-conversion maps while
-the newer checked-expression/call representations carry much of the same
-semantic information. MIR still reads some compatibility data, so this is an
-incomplete migration rather than dead state. Finish that migration and keep one
-authoritative occurrence index.
+Neither `CheckedTables` nor `CheckedProgram` keeps an expression location
+index any more; a node is reached by its id alone. The program still retains
+compatibility overload-target and implicit-conversion maps while the newer
+checked-expression/call representations carry much of the same semantic
+information. MIR still reads some compatibility data, so this is an
+incomplete migration rather than dead state. Finish that migration.
 
 ### 6. Ownership facts are discarded and partly recomputed for drops
 

@@ -8,6 +8,16 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- MIR no longer finds a checked expression by its source location, and a
+  lifted compile-time thunk carries no syntax (R623), as upstream's
+  lowering reaches an op through its operands and never by location: the
+  checked tables keep no expression span index, a thunk request holds only
+  its returned node, a local `comptime` display binding holds its HIR
+  value rather than a copy of its syntax and facts, and a `comptime for`
+  over such a binding finds its sequence by the binding's owner, which the
+  check records on the loop. The package format is `mojito-package 35`.
+  No program's output or MIR changes.
+
 - HIR receives an expression thunk's returned value, for a lifted
   compile-time application and for an evaluated parameter default, as its
   checked node (R645), as upstream builds a lifted function from the typed

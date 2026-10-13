@@ -31,9 +31,8 @@ impl Drop for ParameterListBrackets<'_> {
 /// instance (`comptime L = [n, n + 1]`).
 #[derive(Debug, Clone)]
 pub(in crate::checker) struct BoundDisplay {
-    /// The display's span, which holds its
-    /// `SemanticAdjustment::ComptimeDisplay`.
-    span: SourceSpan,
+    /// The binding's owner, which an alias of it shares.
+    owner: mojito_types::origin::OwnerId,
     /// What a `comptime for` over the binding binds.
     element: Ty,
     /// The display's own type, which a runtime read would materialize.
@@ -1225,7 +1224,7 @@ impl Checker {
                 binder: reference.clone(),
                 source: ComptimeSource::Bound {
                     element: binder.meta().clone(),
-                    display: display.span.clone(),
+                    binding: display.owner,
                 },
             })),
         ));
@@ -1680,15 +1679,14 @@ impl Checker {
             TypeError::InvariantViolation(format!("comptime binding '{name}' has no owner"))
         })?;
         let sequence = self.display_sequence(owner, &element);
-        let span = value.source_span();
-        self.record_at(span.clone()).adjustment = Some(Box::new(
+        self.record_at(value.source_span()).adjustment = Some(Box::new(
             mojito_checked::checked::SemanticAdjustment::ComptimeDisplay {
                 construction: Box::new(construction),
                 sequence: sequence.clone(),
             },
         ));
         Ok(BoundDisplay {
-            span,
+            owner,
             element,
             ty,
             sequence,

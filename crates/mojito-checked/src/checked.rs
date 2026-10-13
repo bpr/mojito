@@ -452,11 +452,11 @@ pub enum ComptimeSource {
     /// binding is declared, and every loop over the name iterates that one
     /// application.
     ///
-    /// `display` is the bound display's span, which holds its
-    /// [`SemanticAdjustment::ComptimeDisplay`].
+    /// `binding` is the display binding's owner, which MIR lifted the
+    /// display under.
     Bound {
         element: mojito_types::param_expr::MetaTy,
-        display: SourceSpan,
+        binding: mojito_types::origin::OwnerId,
     },
     /// A sequence a compile-time application builds (`mk(n)`), whose value
     /// binds `element`s: MIR lifts the iterable as a function over the
@@ -2100,12 +2100,6 @@ pub struct CheckedTables {
     /// Each default wrapper's root statements, parallel to
     /// [`CheckedProgram::default_wrappers`].
     wrapper_roots: Vec<Vec<CheckedStmtId>>,
-    /// Each location a spelled sugar was written at, beside the node of
-    /// the construction the check spelled for it, which answers there too.
-    aliases: Vec<(SourceSpan, CheckedNodeId)>,
-    /// Nodes whose syntax sits at a source location (several may share one).
-    #[serde(skip)]
-    expressions_by_span: HashMap<SourceSpan, Vec<CheckedNodeId>>,
     /// The last statement node at a source location.
     #[serde(skip)]
     statements_by_span: HashMap<SourceSpan, CheckedStmtId>,
@@ -2118,17 +2112,12 @@ impl CheckedTables {
 
     /// The syntax of node `id` and its operands, rebuilt from their ops: a
     /// spelled sugar's place holds the construction the check spelled for
-    /// it. Transitional, for MIR, which still lowers syntax; R623 lowers
-    /// from the ops and deletes it.
-    pub fn syntax_of(&self, id: CheckedNodeId) -> Option<Expr> {
-        self.syntax_of_spelled(id, &|_| None)
-    }
-
-    /// [`Self::syntax_of`], with each name `spell` answers for spelled as
-    /// it answers: an `Identifier` or walrus `Named` node HIR resolved to a
-    /// slot takes the slot's name. Compile-time parameter arguments,
-    /// t-string parts, and a lambda's `def` are rebuilt unspelled, as they
-    /// name no slot of the enclosing frame. Transitional, as `syntax_of` is.
+    /// it, and each name `spell` answers for is spelled as it answers (an
+    /// `Identifier` or walrus `Named` node HIR resolved to a slot takes the
+    /// slot's name). Compile-time parameter arguments, t-string parts, and a
+    /// lambda's `def` are rebuilt unspelled, as they name no slot of the
+    /// enclosing frame. Transitional, for MIR, which still lowers syntax;
+    /// R649 lowers from the ops and deletes it.
     pub fn syntax_of_spelled(
         &self,
         id: CheckedNodeId,
@@ -2341,9 +2330,9 @@ impl CheckedTables {
                     .map(|part| {
                         Some(match part {
                             CheckedTStringPart::Literal(text) => TStringPart::Literal(text.clone()),
-                            CheckedTStringPart::Expr(value) => {
-                                TStringPart::Expr(Box::new(self.syntax_of(*value)?))
-                            }
+                            CheckedTStringPart::Expr(value) => TStringPart::Expr(Box::new(
+                                self.syntax_of_spelled(*value, &|_| None)?,
+                            )),
                         })
                     })
                     .collect::<Option<_>>()?,
@@ -2356,14 +2345,6 @@ impl CheckedTables {
             source: node.source.clone(),
             syntax_id: node.syntax_id,
         })
-    }
-
-    /// Nodes whose syntax sits at `span`, in checked order. Several nodes may
-    /// share a location, so the span itself is never semantic identity.
-    pub fn expression_ids_at(&self, span: &SourceSpan) -> &[CheckedNodeId] {
-        self.expressions_by_span
-            .get(span)
-            .map_or(&[][..], Vec::as_slice)
     }
 
     pub fn declaration(&self, id: CheckedDeclId) -> Option<&CheckedDeclaration> {
@@ -2387,7 +2368,7 @@ impl CheckedTables {
     }
 
     /// The statement node at a statement's source location. Transitional,
-    /// for HIR's and MIR's syntax walks; R623 deletes it once both walk
+    /// for HIR's and MIR's syntax walks; R629 deletes it once both walk
     /// statement nodes.
     pub fn statement_at(&self, span: &SourceSpan) -> Option<&CheckedStmt> {
         self.statements_by_span
@@ -2433,14 +2414,15 @@ impl CheckedTables {
     }
 
     /// The syntax of statement `id` and its bodies, rebuilt from their ops,
-    /// each expression through [`Self::syntax_of`]. Transitional, as
-    /// `syntax_of` is; R623 deletes it.
+    /// each expression unspelled through [`Self::syntax_of_spelled`].
+    /// Transitional, for the readers of a package unit's rebuilt statements;
+    /// R650 deletes it.
     pub fn statement_syntax_of(&self, id: CheckedStmtId) -> Option<Stmt> {
         use mojito_ast::ast::{
             FnParam, Method, StmtKind, StructComptime, TraitComptime, TraitMethod, WithItem,
         };
         let node = self.statement(id)?;
-        let expr = |id: &CheckedNodeId| self.syntax_of(*id);
+        let expr = |id: &CheckedNodeId| self.syntax_of_spelled(*id, &|_| None);
         let exprs = |ids: &[CheckedNodeId]| ids.iter().map(expr).collect::<Option<Vec<_>>>();
         let block = |ids: &[CheckedStmtId]| {
             ids.iter()
@@ -2711,19 +2693,14 @@ impl CheckedTables {
         })
     }
 
-    /// `expressions_by_span` is the arena builder's index: every node at its
-    /// own location, and a construction the checker spelled for a source
-    /// expression (an initializer list's) at that expression's location too.
     /// Each statement node takes the last declaration recorded at its
     /// location.
     fn new(arena: CheckedArena, declarations: Vec<CheckedDeclaration>) -> Self {
         let CheckedArena {
             nodes: expressions,
-            index: expressions_by_span,
             mut statements,
             roots,
             wrapper_roots,
-            aliases,
             statements_by_span,
         } = arena;
         let declared: HashMap<&SourceSpan, CheckedDeclId> = declarations
@@ -2740,16 +2717,12 @@ impl CheckedTables {
             declarations,
             roots,
             wrapper_roots,
-            aliases,
-            expressions_by_span,
             statements_by_span,
         }
     }
 
     /// The tables with each node's identity its position, and their
-    /// location indexes rebuilt from the nodes as the arena builder fills
-    /// them: each node at its own location in build order, then each
-    /// alias.
+    /// statement location index rebuilt from the statement nodes.
     fn reindexed(mut self) -> Self {
         for (index, node) in self.expressions.iter_mut().enumerate() {
             node.id = CheckedNodeId(index as u32);
@@ -2759,19 +2732,6 @@ impl CheckedTables {
         }
         for (index, declaration) in self.declarations.iter_mut().enumerate() {
             declaration.id = CheckedDeclId(index as u32);
-        }
-        self.expressions_by_span.clear();
-        for node in &self.expressions {
-            self.expressions_by_span
-                .entry(node.location())
-                .or_default()
-                .push(node.id);
-        }
-        for (location, node) in &self.aliases {
-            self.expressions_by_span
-                .entry(location.clone())
-                .or_default()
-                .push(*node);
         }
         self.statements_by_span = self
             .statements
@@ -2823,7 +2783,9 @@ impl CheckedTables {
     fn param_arg_syntax(&self, argument: &CheckedParamArg) -> Option<ParamArg> {
         Some(match argument {
             CheckedParamArg::Type { ty, .. } => ParamArg::Type(ty.clone()),
-            CheckedParamArg::Value(value) => ParamArg::Value(self.syntax_of(*value)?),
+            CheckedParamArg::Value(value) => {
+                ParamArg::Value(self.syntax_of_spelled(*value, &|_| None)?)
+            }
             CheckedParamArg::Named { name, value } => ParamArg::Named {
                 name: name.clone(),
                 value: Box::new(self.param_arg_syntax(value)?),
@@ -3074,7 +3036,6 @@ pub struct CheckedProgram {
     /// declaration order, which its `generic_parameters` leave out.
     origin_parameters: HashMap<GenericSite, Vec<String>>,
     tables: Arc<CheckedTables>,
-    expression_index: HashMap<SourceSpan, Vec<CheckedNodeId>>,
     explicit_destroy_types: HashMap<String, ExplicitDestroyInfo>,
     struct_destructors: HashMap<String, HashMap<String, bool>>,
     conformances: ConformanceFacts,
@@ -3420,7 +3381,6 @@ impl CheckedProgram {
         } = discovery;
         let expressions_span = mojito_common::timing::span("expressions");
         let arena = build_checked_expressions(&statements, &node_facts, &default_wrappers, None);
-        let expression_index = arena.index.clone();
         drop(expressions_span);
         let _declarations = mojito_common::timing::span("declarations");
         let declarations =
@@ -3462,7 +3422,6 @@ impl CheckedProgram {
             generic_parameters,
             origin_parameters,
             tables: Arc::new(CheckedTables::new(arena, declarations)),
-            expression_index,
             explicit_destroy_types,
             struct_destructors,
             conformances,
@@ -3558,7 +3517,6 @@ impl CheckedProgram {
             checked_types,
             generic_parameters,
             origin_parameters,
-            expression_index: tables.expressions_by_span.clone(),
             tables: Arc::new(tables),
             explicit_destroy_types: HashMap::new(),
             struct_destructors: HashMap::new(),
@@ -3687,15 +3645,6 @@ impl CheckedProgram {
         self.tables.expression(id)
     }
 
-    /// Compatibility lookup while HIR migrates from syntax to checked ids.
-    /// Multiple nodes may share a source location, so callers must never use the
-    /// span itself as semantic identity.
-    pub fn expression_ids_at(&self, span: &SourceSpan) -> &[CheckedNodeId] {
-        self.expression_index
-            .get(span)
-            .map_or(&[][..], Vec::as_slice)
-    }
-
     pub const fn explicit_destroy_types(&self) -> &HashMap<String, ExplicitDestroyInfo> {
         &self.explicit_destroy_types
     }
@@ -3766,9 +3715,7 @@ fn build_checked_expressions(
     let mut builder = ArenaBuilder {
         scan,
         nodes: Vec::new(),
-        index: HashMap::new(),
         statements: Vec::new(),
-        aliases: Vec::new(),
         statements_by_span: HashMap::new(),
         facts,
     };
@@ -3779,11 +3726,9 @@ fn build_checked_expressions(
         .collect();
     CheckedArena {
         nodes: builder.nodes,
-        index: builder.index,
         statements: builder.statements,
         roots,
         wrapper_roots,
-        aliases: builder.aliases,
         statements_by_span: builder.statements_by_span,
     }
 }
@@ -3791,11 +3736,9 @@ fn build_checked_expressions(
 /// What [`build_checked_expressions`] builds.
 struct CheckedArena {
     nodes: Vec<CheckedExpr>,
-    index: HashMap<SourceSpan, Vec<CheckedNodeId>>,
     statements: Vec<CheckedStmt>,
     roots: Vec<CheckedStmtId>,
     wrapper_roots: Vec<Vec<CheckedStmtId>>,
-    aliases: Vec<(SourceSpan, CheckedNodeId)>,
     statements_by_span: HashMap<SourceSpan, CheckedStmtId>,
 }
 
@@ -3805,9 +3748,7 @@ struct ArenaBuilder<'a, 's> {
     /// traversal alone, for [`DiscoveryResult::scan_expressions`].
     scan: Option<&'s mut dyn FnMut(&Expr)>,
     nodes: Vec<CheckedExpr>,
-    index: HashMap<SourceSpan, Vec<CheckedNodeId>>,
     statements: Vec<CheckedStmt>,
-    aliases: Vec<(SourceSpan, CheckedNodeId)>,
     statements_by_span: HashMap<SourceSpan, CheckedStmtId>,
     facts: &'a HashMap<SourceSpan, NodeFacts>,
 }
@@ -3827,8 +3768,7 @@ impl<'a> ArenaBuilder<'a, '_> {
             scan(expression);
             return CheckedNodeId(0);
         }
-        let span = expression.source_span();
-        let facts = self.facts(&span);
+        let facts = self.facts(&expression.source_span());
         let adjustments = node_adjustments(facts, expression);
         let variant_projection = matches!(
             facts.adjustment.as_deref(),
@@ -3872,13 +3812,12 @@ impl<'a> ArenaBuilder<'a, '_> {
             comprehension_bindings: facts.comprehension_bindings.clone().unwrap_or_default(),
             call_transfers: facts.call_transfers.clone().unwrap_or_default(),
         });
-        self.index.entry(span).or_default().push(id);
         id
     }
 
     /// The node of the construction the check spelled for `expression`, if
-    /// it is a spelled sugar: the node answers at the sugar's location too,
-    /// so HIR lowers the construction where the sugar was written (an
+    /// it is a spelled sugar: the sugar's operand position holds it, so HIR
+    /// lowers the construction where the sugar was written (an
     /// initializer list, a t-string, a value pack read as its
     /// `ParameterList`, a scalar `range` call).
     fn spelled_construction(&mut self, expression: &Expr) -> Option<CheckedNodeId> {
@@ -3901,11 +3840,6 @@ impl<'a> ArenaBuilder<'a, '_> {
         };
         let node = self.expr(&construction.0);
         if self.scan.is_none() {
-            self.index
-                .entry(expression.source_span())
-                .or_default()
-                .push(node);
-            self.aliases.push((expression.source_span(), node));
             // A `for` loop iterates the construction it spells.
             if let Some(protocol) = &self.facts(&expression.source_span()).iteration_protocol {
                 self.nodes[node.0 as usize]

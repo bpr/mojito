@@ -1521,7 +1521,6 @@ fn lower_default<P: DeclaredParam>(
             overloads,
             name: &function,
             prologue: &[],
-            expression: default,
             node,
             binders: &binders,
             ty,
@@ -1579,13 +1578,12 @@ struct ExpressionThunk<'a> {
     overloads: &'a std::sync::Arc<mojito_checked::package::ProgramOverloads>,
     name: &'a str,
     prologue: &'a [Stmt],
-    expression: &'a Expr,
     node: CheckedNodeId,
     binders: &'a EnclosingBinders,
     ty: &'a Ty,
 }
 
-/// Lower `<prologue>; return <expression>` as the function `name`, whose
+/// Lower `<prologue>; return <node>` as the function `name`, whose
 /// compile-time parameters are the binders and whose value binders are frame
 /// locals, and declare it. HIR lowers the returned value from its node.
 fn lower_expression_thunk(
@@ -1598,7 +1596,6 @@ fn lower_expression_thunk(
         overloads,
         name,
         prologue,
-        expression,
         node,
         binders,
         ty,
@@ -1608,13 +1605,6 @@ fn lower_expression_thunk(
         .iter()
         .map(|(name, _)| name.clone())
         .collect();
-    let mut body = prologue.to_vec();
-    body.push(Stmt {
-        kind: StmtKind::Return(Some(expression.clone())),
-        span: expression.span,
-        module: expression.source.clone(),
-        syntax_id: mojito_common::token::SyntaxId::derived(expression.syntax_id, DEFAULT_RETURN),
-    });
     lower_fn_nested(
         FunctionLowering {
             checked,
@@ -1634,7 +1624,7 @@ fn lower_expression_thunk(
             raises: false,
             error_ty: None,
             named_result: None,
-            body: &body,
+            body: prologue,
             returned: Some(node),
             overloads,
         },
@@ -1700,9 +1690,6 @@ struct ComptimeThunks {
     /// ([`Self::bind_evaluated`]): a thunk that reads one begins by binding
     /// it.
     evaluated: Vec<EvaluatedBinding>,
-    /// The sequence of each display binding, by the display's span
-    /// ([`Self::bound_sequence`]).
-    bound_sequences: HashMap<SourceSpan, mojito_types::param_expr::ParamExpr>,
     /// The owner's local `comptime` bindings of a parameter expression
     /// lowered so far ([`Self::bind_value`]), which every thunk requested
     /// after them reads ([`EnclosingBinders::comptime_bindings`]).
@@ -1727,10 +1714,12 @@ struct DisplayBinding {
     aliases: Vec<String>,
     /// The display's node.
     node: CheckedNodeId,
-    /// The display and its checked facts, for a `materialize[L]()` that
-    /// builds it in place.
-    display: std::rc::Rc<Expr>,
-    facts: std::rc::Rc<HashMap<usize, ExprFacts>>,
+    /// The display's HIR expression, for a `materialize[L]()` that builds
+    /// it in place.
+    hir: std::rc::Rc<mojito_hir::hir::HirExpr>,
+    /// The application of the display's thunk the loops over the name
+    /// iterate ([`ComptimeThunks::bind_display`]).
+    sequence: mojito_types::param_expr::ParamExpr,
     ty: Ty,
     /// The binders in scope where the binding is declared.
     binders: EnclosingBinders,
@@ -1738,12 +1727,11 @@ struct DisplayBinding {
     preceding: usize,
 }
 
-/// One lifted expression: the thunk's name, the expression it returns at
-/// `ty` and its node, the binders in scope there, and the evaluated bindings
+/// One lifted expression: the thunk's name, the node of the expression it
+/// returns at `ty`, the binders in scope there, and the evaluated bindings
 /// declared before it.
 struct ThunkRequest {
     name: String,
-    expression: Expr,
     node: CheckedNodeId,
     binders: EnclosingBinders,
     ty: Ty,
@@ -1769,41 +1757,34 @@ impl ComptimeThunks {
         }
     }
 
-    /// Register `condition` and give back the constraint its branch carries:
+    /// Register the condition of node `node` and give back the constraint its branch carries:
     /// the thunk applied to every binder in scope, equal to `True`.
-    fn request(
-        &mut self,
-        condition: &Expr,
-        node: CheckedNodeId,
-        binders: &EnclosingBinders,
-    ) -> GenericConstraint {
+    fn request(&mut self, node: CheckedNodeId, binders: &EnclosingBinders) -> GenericConstraint {
         GenericConstraint::Eq(
-            ConstraintOperand::Expr(self.request_value(condition, node, binders, Ty::bool())),
+            ConstraintOperand::Expr(self.request_value(node, binders, Ty::bool())),
             ConstraintOperand::Value(CtValue::Bool(true)),
         )
     }
 
-    /// Register a scalar `expression` of type `ty`, of node `node`, and give
+    /// Register a scalar expression of type `ty`, of node `node`, and give
     /// back the parameter expression that denotes its value: the thunk
     /// applied to every binder in scope.
     fn request_value(
         &mut self,
-        expression: &Expr,
         node: CheckedNodeId,
         binders: &EnclosingBinders,
         ty: Ty,
     ) -> mojito_types::param_expr::ParamExpr {
         let meta = mojito_types::param_expr::MetaTy::value(ty.clone());
         let visible = self.evaluated.len();
-        self.application(expression, node, binders, ty, meta, visible)
+        self.application(node, binders, ty, meta, visible)
     }
 
-    /// Register a `comptime for` `display` of checked type `ty`, of node
+    /// Register a `comptime for` display of checked type `ty`, of node
     /// `node`, and give back the sequence its loop header iterates: the
     /// thunk applied to every binder in scope, a list of `element`s.
     fn request_sequence(
         &mut self,
-        display: &Expr,
         node: CheckedNodeId,
         binders: &EnclosingBinders,
         ty: Ty,
@@ -1811,7 +1792,6 @@ impl ComptimeThunks {
     ) -> mojito_types::param_expr::ParamExpr {
         let visible = self.evaluated.len();
         self.application(
-            display,
             node,
             binders,
             ty,
@@ -1864,7 +1844,6 @@ impl ComptimeThunks {
             .collect::<Result<Vec<_>, _>>()?;
         self.requests.push(ThunkRequest {
             name: function.clone(),
-            expression: (*binding.display).clone(),
             node: binding.node,
             binders: EnclosingBinders {
                 declarations,
@@ -1875,8 +1854,6 @@ impl ComptimeThunks {
             ty: binding.ty.clone(),
             evaluated: self.evaluated[..binding.preceding].to_vec(),
         });
-        self.bound_sequences
-            .insert(binding.display.source_span(), sequence.clone());
         self.bind_evaluated(binding.owner, statement, id);
         self.displays.push(binding);
         Ok(())
@@ -1911,12 +1888,6 @@ impl ComptimeThunks {
             .find(|display| display.owner == owner)
             .map(|display| display.aliases.push(name.to_string()))
             .is_some()
-    }
-
-    /// The sequence of the binding whose display sits at `display`: the
-    /// application of its thunk ([`Self::bind_display`]).
-    fn bound_sequence(&self, display: &SourceSpan) -> Option<mojito_types::param_expr::ParamExpr> {
-        self.bound_sequences.get(display).cloned()
     }
 
     /// Record that the local `comptime` binding `owner` denotes `value`
@@ -2000,13 +1971,7 @@ impl ComptimeThunks {
             }
             // A display constant's function returns the display at its own
             // type, whatever list the application denotes.
-            let Some((ty, expression)) = application
-                .meta()
-                .as_value()
-                .or(node.ty.as_ref())
-                .cloned()
-                .zip(tables.syntax_of(node.id))
-            else {
+            let Some(ty) = application.meta().as_value().or(node.ty.as_ref()).cloned() else {
                 continue;
             };
             let declared = |scope: &EnclosingBinders| {
@@ -2031,7 +1996,6 @@ impl ComptimeThunks {
             };
             self.requests.push(ThunkRequest {
                 name: function.clone(),
-                expression,
                 node: node.id,
                 binders: EnclosingBinders {
                     declarations,
@@ -2045,12 +2009,11 @@ impl ComptimeThunks {
         }
     }
 
-    /// Register `expression` of node `node`, returned at `ty`, and give back
+    /// Register the expression of node `node`, returned at `ty`, and give back
     /// its thunk applied to every binder in scope, a value of `meta`. The
     /// first `visible` evaluated bindings are the ones declared before it.
     fn application(
         &mut self,
-        expression: &Expr,
         node: CheckedNodeId,
         binders: &EnclosingBinders,
         ty: Ty,
@@ -2060,7 +2023,6 @@ impl ComptimeThunks {
         let name = mojito_symbol::symbol::lifted_body_name(&self.owner, self.requests.len());
         self.requests.push(ThunkRequest {
             name: name.clone(),
-            expression: expression.clone(),
             node,
             binders: EnclosingBinders {
                 comptime_bindings: self.bound_values.clone(),
@@ -2115,7 +2077,6 @@ impl ComptimeThunks {
                     overloads,
                     name: &request.name,
                     prologue: &prologue,
-                    expression: &request.expression,
                     node: request.node,
                     binders: &request.binders,
                     ty: &request.ty,
@@ -2246,10 +2207,6 @@ fn bindings_read(
     });
     owners
 }
-
-/// The derivation ordinal of an evaluated default's `return` statement under
-/// its expression.
-const DEFAULT_RETURN: u32 = 0x0def_0000;
 
 fn checked_type_or_record(
     checked: &CheckedProgram,
@@ -3631,9 +3588,7 @@ impl Flatten<'_> {
             }
         };
         let binders = &self.enclosing_binders;
-        let denoted = self
-            .comptime_thunks
-            .request_value(expression, node, binders, ty);
+        let denoted = self.comptime_thunks.request_value(node, binders, ty);
         Some((
             self.param_value_register(expression, denoted.clone()),
             Some(denoted),
@@ -3668,15 +3623,14 @@ impl Flatten<'_> {
         let [ParamArg::Value(index)] = args.as_slice() else {
             return None;
         };
-        let display = self
+        let sequence = self
             .comptime_thunks
             .displays
             .iter()
             .rev()
             .find(|display| display.name == *name || display.aliases.contains(name))?
-            .display
-            .source_span();
-        let sequence = self.comptime_thunks.bound_sequence(&display)?;
+            .sequence
+            .clone();
         let position = self.value_binder_expr(index)?;
         let element = ParamContext::detached()
             .list_get(&sequence, &position)
@@ -3687,23 +3641,20 @@ impl Flatten<'_> {
     /// Build a local display binding into its slot, for the crossing that
     /// reads it next.
     fn build_display(&mut self, binding: &DisplayBinding) {
-        self.active_semantics.push((*binding.facts).clone());
-        let built = self.expr(&binding.display);
-        self.bind_comptime_value(&binding.name, &binding.display, Some(binding.owner), built);
-        self.active_semantics.pop();
+        self.with_hir(&binding.hir, |this, display| {
+            let built = this.expr(display);
+            this.bind_comptime_value(&binding.name, display, Some(binding.owner), built);
+        });
     }
 
     /// The runtime value of a local display binding crossing whole
     /// (`materialize[L]()`): the display built where it crosses, after the
     /// displays it reads.
     fn crossing_display(&mut self, binding: &DisplayBinding) -> Reg {
-        self.active_semantics.push((*binding.facts).clone());
         for read in self.displays_read(binding.node) {
             self.build_display(&read);
         }
-        let built = self.expr(&binding.display);
-        self.active_semantics.pop();
-        built
+        self.expr_hir(&binding.hir)
     }
 
     /// The local display binding `expression` names.
@@ -3713,20 +3664,6 @@ impl Flatten<'_> {
             .flatten()
             .and_then(|owner| self.comptime_thunks.display(owner))
             .cloned()
-    }
-
-    /// Copy the checked facts of `expression`'s tree to its clone `copy`,
-    /// keyed for a later lowering of the clone.
-    fn copy_facts(&self, expression: &Expr, copy: &Expr, facts: &mut HashMap<usize, ExprFacts>) {
-        if let Some(found) = self.facts(expression) {
-            facts.insert(std::ptr::from_ref::<Expr>(copy) as usize, found.clone());
-        }
-        for (child, child_copy) in expression_children(expression)
-            .into_iter()
-            .zip(expression_children(copy))
-        {
-            self.copy_facts(child, child_copy, facts);
-        }
     }
 
     /// `expression` over the enclosing value binders: its node's
@@ -4439,9 +4376,10 @@ fn index_hir_expression(
 /// The syntax MIR lowers HIR expression `expression` through: its node's,
 /// rebuilt with each local name HIR resolved spelled as its slot, and a
 /// `$contextual` leading-dot root as the base type the check resolved.
-/// Transitional, as [`CheckedTables::syntax_of`] is; R623 deletes it.
+/// Transitional, as [`CheckedTables::syntax_of_spelled`] is; R649 deletes
+/// it.
 ///
-/// [`CheckedTables::syntax_of`]: mojito_checked::checked::CheckedTables::syntax_of
+/// [`CheckedTables::syntax_of_spelled`]: mojito_checked::checked::CheckedTables::syntax_of_spelled
 fn hir_syntax(
     checked: &mojito_checked::checked::CheckedTables,
     slots: &HashMap<mojito_checked::checked::CheckedNodeId, VarId>,

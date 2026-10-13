@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R646**.
+Next free ID: **R651**.
 
 ## Ordered Work
 
@@ -4821,20 +4821,83 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R623 HIR and MIR keep transitional syntax rebuilders and
-  span-keyed fact lookups**
+- [ ] **R646 MIR's expression lowerer has no node handle to read operands
+  from**
 
-  Once HIR and MIR lower from checked nodes, the scaffolding that serves
-  their syntax readers is dead weight.
-  - Delete `CheckedTables::{syntax_of, statement_syntax_of}`,
-    `expressions_by_span`, `expression_ids_at`, and `ExprFacts` with its
-    pointer-keyed `active_semantics` index.
-  - Done when an `rg` for `ExprKind::` and `StmtKind::` over
-    `crates/mojito-hir` and `crates/mojito-mir/src` finds only the
-    checked-node builder, and the probe fixtures run on the VM and with
-    `--backend pliron`.
-  - Plan: `R604-a-package-s-checked-body-is-plan.md`, slice 6.
-  - Depends on R616, R618, R619, R620, R621, R622.
+  MIR lowers rebuilt syntax and finds each piece's facts by its address
+  (`ExprFacts`, `Flatten::active_semantics`), where upstream reads an op's
+  operands and attributes off the op itself.
+  - Add a `Node` handle (the `HirExpr` plus its `CheckedExpr`), operand
+    `i` being `hir.children[i]` in `CheckedOp::operands` order, with named
+    operand accessors (`object`, `index`, `args`, `kwargs`, `callee`).
+  - `Flatten`'s `checked` becomes a borrow of the CFG's tables, so a
+    handle can hold `&CheckedExpr` across `&mut self` calls.
+  - Transitional bridges both ways: `ExprFacts` gains the `HirExpr`
+    pointer (`Flatten::node(&Expr)`), and each `with_hir` frame maps a
+    node back to its rebuilt `&Expr`.
+  - Done when every `mir/facts.rs` accessor takes a `Node` and names no
+    `Expr`, and the probe fixtures' MIR and output are unchanged on the VM
+    and with `--backend pliron`.
+  - Plan: `R623-hir-and-mir-keep-transitional-syntax-plan.md`, slice 4,
+    which lists the probes and the equality recipe.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R647 MIR's expression families lower rebuilt syntax**
+
+  The `lower_expr` families still take `&Expr` and destructure
+  `(CheckedOp::X, ExprKind::X { .. })` pairs only to reach operand syntax.
+  - `Flatten::expr` and `place` take a `Node`; each pair becomes an op
+    match reading operands from the handle, and spans come from
+    `node.op.location()`.
+  - Done when `rg '&Expr\b' crates/mojito-mir/src/mir/lower_expr` is
+    empty and the probe fixtures' MIR and output are unchanged on both
+    backends.
+  - Plan: `R623-hir-and-mir-keep-transitional-syntax-plan.md`, slice 5.
+  - Depends on R646.
+  - Model: Opus, Not Planned.
+
+- [ ] **R648 MIR's calls and statements lower rebuilt syntax**
+
+  `mir/calls.rs`, `mir/lower_stmt.rs`, and `mir.rs`'s `Flatten` methods
+  (`bind_comptime_value`, `comptime_condition_of`, `named_by`) still take
+  `&Expr` or `&Stmt`.
+  - `lower_stmt` matches `CheckedStmtOp` alone and reads its operand
+    handles from `HirStmt::expressions` in the op's operand order.
+  - `named_by` walks the node (`CheckedTables::walk_expression`).
+  - Done when no `Flatten` method takes `&Expr` or `&Stmt` outside R638's
+    and R644's sites, and the probe fixtures' MIR and output are unchanged
+    on both backends.
+  - Plan: `R623-hir-and-mir-keep-transitional-syntax-plan.md`, slice 6.
+  - Depends on R647.
+  - Model: Opus, Not Planned.
+
+- [ ] **R649 MIR keeps the syntax rebuilder and the address-keyed fact
+  index**
+
+  Once nothing in MIR lowers syntax, the scaffolding that serves it is
+  dead weight.
+  - Delete `ExprFacts`, `Flatten::{active_semantics, facts}`, R646's
+    bridges, `index_hir_expression`, `expression_children`,
+    `statement_expression_roots`, `hir_syntax`, `hir_statement_syntax`,
+    `CheckedTables::syntax_of_spelled`, and `param_arg_syntax`.
+  - Done when none of those remains, `rg 'ExprKind::'
+    crates/mojito-mir/src` finds only R638's and R644's sites, and the
+    probe fixtures' MIR and output are unchanged on both backends.
+  - Plan: `R623-hir-and-mir-keep-transitional-syntax-plan.md`, slice 7.
+  - Depends on R648.
+  - Model: Opus, Not Planned.
+
+- [ ] **R650 A package unit's statements are rebuilt as syntax**
+
+  `CheckedTables::statement_syntax_of` rebuilds a unit's statements,
+  wrapper body, and trait member for `CheckedProgram::installed`, because
+  MIR's declaration readers and HIR's `Lower::statements` still walk
+  `Stmt` syntax.
+  - Done when `statement_syntax_of` and `installed`'s rebuilt statements
+    are deleted.
+  - Found while landing R623 (2026-10-12).
+  - Depends on R629, R643, R649.
   - Model: Opus, Not Planned.
 
 - [ ] **R629 HIR and MIR find a statement's checked node by its location**
