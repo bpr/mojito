@@ -150,11 +150,22 @@ impl<'a> Flatten<'a> {
                 self.emit(MirInstr::MovePlace { dest: d, place });
                 return d;
             }
+            // An owned parameter takes the slot's storage itself.
+            let forwarded = e.adjustments().iter().any(|adjustment| {
+                matches!(
+                    adjustment,
+                    mojito_checked::checked::SemanticAdjustment::ForwardedArgument
+                )
+            });
             let d = self.fresh(e.location(), Some(var));
             self.emit(MirInstr::UseVar {
                 dest: d,
                 var,
-                mode: UseMode::Move,
+                mode: if forwarded {
+                    UseMode::Forward
+                } else {
+                    UseMode::Move
+                },
             });
             d
         } else if let Some(place) = self.pure_field_place(inner) {

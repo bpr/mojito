@@ -8,6 +8,13 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A `^` transfer that an owned (`var`/`deinit`) parameter takes, whether
+  an argument, a keyword argument, a receiver, or a struct operator's
+  operand, hands over the source's storage without running its move
+  initializer, as the pin does (R730). So does `take(M(copy=y))` at `y`'s
+  last use. A binding, a return, a field store, and a container element
+  still move-initialize. MIR adds `UseMode::Forward` (`forward`, text
+  1.51), and the package format is 45.
 - `S(copy=x)` over a temporary, or over a whole owned local or `var`
   parameter at its last use, moves the source instead of copying it, as
   the pin does (R723): `S(copy=S(1))` no longer runs the copy initializer

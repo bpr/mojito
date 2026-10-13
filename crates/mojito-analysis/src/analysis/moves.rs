@@ -627,11 +627,7 @@ pub(super) fn apply_effects(state: &mut [Node], i: &MirInstr, context: &MoveCont
             }
         }
         MirInstr::DefVar { var, .. } => state[*var as usize].do_def(&[]),
-        MirInstr::UseVar {
-            var,
-            mode: UseMode::Move,
-            ..
-        } => state[*var as usize].do_move(&[]),
+        MirInstr::UseVar { var, mode, .. } if mode.moves() => state[*var as usize].do_move(&[]),
         MirInstr::MakeClosure { captures, .. } => {
             for capture in captures {
                 if capture.mode == MirCaptureMode::Move {

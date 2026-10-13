@@ -907,6 +907,7 @@ assets/ok/trait_requirement_variadic_collector.mojo	-	ineligible	no-scalar-entry
 assets/ok/trait_value_member_through_type_param.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/trait_witness_renames_parameter.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/traits.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/transfer_into_owned_argument.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/transfer_into_read_parameter_borrows.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/transferred_carrier_keeps_source_alive.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/transferred_view_loan_stays_shared.mojo	-	ineligible	no-scalar-entry-shape

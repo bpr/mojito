@@ -215,7 +215,7 @@ fn collector_read(
             }),
             MirInstr::UseVar { dest, var, mode } if *dest == pack => Some(Collector {
                 place: MirPlace::root(*var, var_tys.get(var).cloned()),
-                moved: matches!(mode, mojito_mir::mir::UseMode::Move),
+                moved: mode.moves(),
             }),
             _ => None,
         })

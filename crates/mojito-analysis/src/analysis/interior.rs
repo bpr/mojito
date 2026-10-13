@@ -208,11 +208,7 @@ pub(super) fn transfer_interior_instruction(
         // statically instead of trapping in the VM. (Whole-place loans
         // already make such moves conflict eagerly; interior-domain loans
         // are non-exclusive and need this lazy channel.)
-        MirInstr::UseVar {
-            dest,
-            var,
-            mode: mojito_mir::mir::UseMode::Move,
-        } => {
+        MirInstr::UseVar { dest, var, mode } if mode.moves() => {
             invalidate_generations_rooted_at(state, *var, generations, || span_for_reg(f, *dest));
             remove_active_interior_reference(state, *var);
         }

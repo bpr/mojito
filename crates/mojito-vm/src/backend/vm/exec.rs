@@ -205,7 +205,8 @@ impl VmBackend {
             MirInstr::UseVar { dest, var, mode } => {
                 let slot = *var as usize;
                 // A `^` move **transfers** the value out of the source slot, leaving
-                // a `Moved` tombstone; any other use copies. Either way, touching an
+                // a `Moved` tombstone, and runs the move initializer unless it
+                // forwards the slot to an owned parameter; any other use copies. Either way, touching an
                 // already-moved slot is a use-after-move — a loud runtime error (the
                 // ownership analysis rejects this statically, so this only fires on a
                 // compiler bug).
@@ -215,9 +216,9 @@ impl VmBackend {
                 // handle ABI predates explicit LoadPlace/ReadRef. Checked
                 // reference-valued storage sites use Borrow adjustments and do
                 // not rely on that compatibility path.
-                let value = if matches!(mode, mojito_mir::mir::UseMode::Move) {
+                let value = if mode.moves() {
                     let moved = std::mem::replace(&mut vars[slot], Value::Moved);
-                    if self.has_moveinit {
+                    if self.has_moveinit && *mode == mojito_mir::mir::UseMode::Move {
                         self.move_typed_value(prog, moved)?
                     } else {
                         moved
@@ -235,7 +236,7 @@ impl VmBackend {
                     self.read_reference(&vars[slot], frame_id, vars)?
                 } else {
                     match mode {
-                        mojito_mir::mir::UseMode::Move => {
+                        mojito_mir::mir::UseMode::Move | mojito_mir::mir::UseMode::Forward => {
                             unreachable!("moving uses are handled before reference compatibility")
                         }
                         mojito_mir::mir::UseMode::BorrowShared

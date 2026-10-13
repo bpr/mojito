@@ -10,18 +10,33 @@
 //! so neither is rewritten. A type parameter's `T(copy=x)` is still a
 //! `ConstructTypeParam` here and stays a copy, as at Mojo. A source that dies
 //! only on a successor edge keeps its copy.
+//!
+//! A copy an owned parameter takes is bound in place to a forwarding slot
+//! ([`FORWARDED_ARGUMENT_SLOT`]) that the call takes next. When its source
+//! dies there, the construction, the slot, and the source's death all go,
+//! and the call takes the source's storage itself: no move initializer
+//! runs, as Mojo's lifetime checker hands a dying source to an owned
+//! argument. A copy any other binding takes still becomes a move.
 
 use mojito_hir::hir::VarId;
 use mojito_mir::mir::verify::instruction_operand_regs;
-use mojito_mir::mir::{MirBlock, MirDeclarations, MirInstr, MirPlace, MirTerm, UseMode};
+use mojito_mir::mir::{
+    FORWARDED_ARGUMENT_SLOT, MirBlock, MirDeclarations, MirInstr, MirPlace, MirTerm, UseMode,
+};
 use std::collections::HashMap;
 
 /// Rewrite every dying named-struct copy construction in `blocks`, `Try`
-/// regions included, into a move of its source.
-pub(super) fn elide_dying_copies(blocks: &mut [MirBlock], declarations: &MirDeclarations) {
+/// regions included, into a move of its source, or into its source's
+/// forwarding when an owned parameter takes it. `var_names` names the
+/// function's slots.
+pub(super) fn elide_dying_copies(
+    blocks: &mut [MirBlock],
+    var_names: &[String],
+    declarations: &MirDeclarations,
+) {
     let mut uses = HashMap::new();
     count_operand_uses(blocks, &mut uses);
-    rewrite_blocks(blocks, declarations, &uses);
+    rewrite_blocks(blocks, var_names, declarations, &uses);
 }
 
 fn count_operand_uses(blocks: &[MirBlock], uses: &mut HashMap<u32, usize>) {
@@ -51,19 +66,23 @@ fn count_operand_uses(blocks: &[MirBlock], uses: &mut HashMap<u32, usize>) {
 
 fn rewrite_blocks(
     blocks: &mut [MirBlock],
+    var_names: &[String],
     declarations: &MirDeclarations,
     uses: &HashMap<u32, usize>,
 ) {
     for block in blocks {
         for instruction in &mut block.instrs {
             for region in try_regions_mut(instruction) {
-                rewrite_blocks(region, declarations, uses);
+                rewrite_blocks(region, var_names, declarations, uses);
             }
         }
         let mut at = 1;
         while at < block.instrs.len() {
             if let Some(source) = dying_copy(&block.instrs, at, declarations, uses) {
-                elide(&mut block.instrs, at, source);
+                match forwarding_use(&block.instrs, source, var_names) {
+                    Some(forward_at) => forward(&mut block.instrs, at, source, forward_at),
+                    None => elide(&mut block.instrs, at, source),
+                }
                 at -= 1;
             }
             at += 1;
@@ -142,6 +161,52 @@ fn dying_copy(
         drop_at,
         binding_at,
     })
+}
+
+/// Where the call takes the forwarding slot the dying copy is bound to: the
+/// slot's forwarding use, when it is the first instruction past the run of
+/// drops that holds the source's death, so nothing between can raise or
+/// name the source.
+fn forwarding_use(instrs: &[MirInstr], source: DyingCopy, var_names: &[String]) -> Option<usize> {
+    let MirInstr::DefVar { var: slot, .. } = instrs[source.binding_at?] else {
+        return None;
+    };
+    if !var_names
+        .get(slot as usize)
+        .is_some_and(|name| name.starts_with(FORWARDED_ARGUMENT_SLOT))
+    {
+        return None;
+    }
+    let forward_at = (source.drop_at + 1..instrs.len()).find(|&at| {
+        !matches!(
+            instrs[at],
+            MirInstr::DropVar { .. } | MirInstr::Drop { .. } | MirInstr::DropPlace { .. }
+        )
+    })?;
+    matches!(
+        instrs[forward_at],
+        MirInstr::UseVar {
+            var,
+            mode: UseMode::Forward,
+            ..
+        } if var == slot
+    )
+    .then_some(forward_at)
+}
+
+/// Hand the dying source to the call that takes the forwarding slot: the
+/// load, the construction, the slot's binding, and the source's death go,
+/// and the slot's forwarding use forwards the source instead.
+fn forward(instrs: &mut Vec<MirInstr>, at: usize, source: DyingCopy, forward_at: usize) {
+    if let MirInstr::UseVar { var, .. } = &mut instrs[forward_at] {
+        *var = source.var;
+    }
+    instrs.remove(source.drop_at);
+    if let Some(binding) = source.binding_at {
+        instrs.remove(binding);
+    }
+    instrs.remove(at);
+    instrs.remove(at - 1);
 }
 
 /// Replace the construction at `at` with its source's move: the source's

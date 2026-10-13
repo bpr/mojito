@@ -133,6 +133,35 @@ fn uninitialized_declaration_defines_nothing_before_its_first_assignment() {
 }
 
 #[test]
+fn transfer_into_owned_parameter_forwards_and_binding_moves() {
+    // `take(x^)` hands `x`'s storage to the owned parameter; `var b = a^`
+    // moves `a` into new storage.
+    let source = "struct M(Movable):\n    var v: Int\n    def __init__(out self, v: Int):\n        self.v = v\n\ndef take(var s: M):\n    pass\n\ndef main():\n    var x = M(1)\n    take(x^)\n    var a = M(2)\n    var b = a^\n    take(b^)\n";
+    let mir = checked_program_mir(source);
+    let main = mir_function(&mir, "main");
+    let slot = |name: &str| {
+        main.var_names
+            .iter()
+            .position(|slot| slot == name)
+            .unwrap_or_else(|| panic!("{name} slot")) as u32
+    };
+    let mode = |var: u32| {
+        main.blocks
+            .iter()
+            .flat_map(|block| &block.instrs)
+            .find_map(|instr| match instr {
+                MirInstr::UseVar {
+                    var: used, mode, ..
+                } if *used == var => Some(*mode),
+                _ => None,
+            })
+    };
+    assert_eq!(mode(slot("x")), Some(UseMode::Forward), "{main:#?}");
+    assert_eq!(mode(slot("a")), Some(UseMode::Move), "{main:#?}");
+    assert_eq!(mode(slot("b")), Some(UseMode::Forward), "{main:#?}");
+}
+
+#[test]
 fn split_iterator_slot_is_typed_by_its_iter_result() {
     let source = "def first_or[C: Iterable](items: C, default: C.Element) -> C.Element:\n\
                   \x20   for item in items:\n        return item.copy()\n\

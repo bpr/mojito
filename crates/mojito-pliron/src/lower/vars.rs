@@ -44,7 +44,8 @@ impl FnLowering<'_> {
     /// `UseVar`: scalars load from their slot; aggregate copies run the VM's
     /// `clone_value` semantics and aggregate moves transfer the bytes (the VM
     /// tombstones the source, and ownership analysis rejects later uses
-    /// statically, so no runtime tombstone is needed).
+    /// statically, so no runtime tombstone is needed). A forwarded move hands
+    /// the bytes to an owned parameter without the move initializer.
     pub(super) fn lower_use_var(
         &mut self,
         ctx: &mut Context,
@@ -74,7 +75,10 @@ impl FnLowering<'_> {
                     // field move — the byte copy below is exactly it.
                     let stdlib_string = matches!(&ty.kind(), TyKind::Struct(name, _)
                         if mojito_symbol::symbol::is_stdlib_string_struct(name));
-                    if !stdlib_string && self.has_lifecycle_method(&ty, "__moveinit__") {
+                    if mode == UseMode::Move
+                        && !stdlib_string
+                        && self.has_lifecycle_method(&ty, "__moveinit__")
+                    {
                         // A `^` transfer with a compiled `__moveinit__` always
                         // runs that constructor. Ownership checking has
                         // already established the consuming source contract;

@@ -487,6 +487,7 @@ impl<'a> Flatten<'a> {
             let read = |this: &mut Self| {
                 let value = this.expr(expression);
                 this.anchor_temporary_argument(expression, value, adjustments, converted);
+                let value = this.bind_forwarded_copy(expression, value);
                 this.bind_read_temporary(expression, value)
             };
             let value = match setup {
@@ -1493,6 +1494,56 @@ impl<'a> Flatten<'a> {
             place: MirPlace::root(variable, Some(ty)),
         });
         read
+    }
+
+    /// Bind `value`, the lowered `expression`, to a forwarding slot
+    /// ([`crate::mir::FORWARDED_ARGUMENT_SLOT`]) when the checker marked it
+    /// `ForwardedArgument` and it is a non-raising copy construction
+    /// (`Name(copy=v)`): the construction initializes the slot in place, and
+    /// the call takes the slot's storage. Anything else is `value`
+    /// unchanged.
+    fn bind_forwarded_copy(&mut self, expression: Node<'a>, value: Reg) -> Reg {
+        let forwarded = expression.adjustments().iter().any(|adjustment| {
+            matches!(
+                adjustment,
+                mojito_checked::checked::SemanticAdjustment::ForwardedArgument
+            )
+        });
+        let copies = matches!(
+            self.f.blocks[self.cur].instrs.last(),
+            Some(MirInstr::Call { dest, raises: None, args, kwargs, .. })
+                if *dest == value
+                    && args.is_empty()
+                    && matches!(kwargs.as_slice(), [(keyword, _)] if keyword == "copy")
+        );
+        let Some(ty) = self
+            .f
+            .reg_types
+            .get(&value.0)
+            .cloned()
+            .filter(|_| forwarded && copies)
+        else {
+            return value;
+        };
+        let variable = self.var(&format!(
+            "{}{}",
+            crate::mir::FORWARDED_ARGUMENT_SLOT,
+            value.0
+        ));
+        self.var_types.insert(variable, ty.clone());
+        self.emit(MirInstr::DefVar {
+            var: variable,
+            src: value,
+            binding_ty: Some(ty.clone()),
+            in_place: true,
+        });
+        let forwarded = self.fresh_typed(expression.location(), Some(variable), ty);
+        self.emit(MirInstr::UseVar {
+            dest: forwarded,
+            var: variable,
+            mode: UseMode::Forward,
+        });
+        forwarded
     }
 
     /// The place of a compile-time binding's read the checker materialized

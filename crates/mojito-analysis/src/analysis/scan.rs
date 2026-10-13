@@ -318,11 +318,7 @@ pub(super) const fn loan_liveness_def(i: &MirInstr) -> Option<VarId> {
 /// variable is *not* dropped here (its value has moved to a new owner).
 pub(super) fn vars_moved(i: &MirInstr) -> Vec<VarId> {
     match i {
-        MirInstr::UseVar {
-            var,
-            mode: UseMode::Move,
-            ..
-        } => vec![*var],
+        MirInstr::UseVar { var, mode, .. } if mode.moves() => vec![*var],
         // A lowered explicit-destructor call already consumes the receiver
         // slot (residual fields destroyed, whole-value `__deinit__` skipped);
         // splicing an ordinary drop as well would run the destructor the

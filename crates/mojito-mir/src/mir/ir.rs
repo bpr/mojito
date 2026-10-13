@@ -651,10 +651,31 @@ pub use mojito_common::token::Span;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum UseMode {
     Copy,
+    /// End the slot and move-initialize a new value from it.
     Move,
     BorrowShared,
     BorrowMut,
+    /// End the slot and hand its storage to an owned (`var`/`deinit`)
+    /// parameter of the call that consumes the register, as Mojo's owned
+    /// argument convention binds the caller's storage: no move initializer
+    /// runs. Ownership treats it exactly as [`UseMode::Move`].
+    Forward,
 }
+
+impl UseMode {
+    /// Whether the use ends the slot: [`UseMode::Move`] or
+    /// [`UseMode::Forward`].
+    pub const fn moves(self) -> bool {
+        matches!(self, Self::Move | Self::Forward)
+    }
+}
+
+/// The name prefix of a forwarding slot.
+///
+/// A copy construction an owned parameter takes (`take(M(copy=y))`) is
+/// materialized in it, bound in place and forwarded once. When the copy's
+/// source dies there, copy elision forwards the source's storage instead.
+pub const FORWARDED_ARGUMENT_SLOT: &str = "$fwd_arg_r";
 
 /// One already-evaluated argument to a multi-dimensional subscript.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -1029,7 +1050,7 @@ pub enum MirInstr {
     /// this at place granularity (moving `p.a` leaves `p.b` usable, and moving
     /// Tuple element 0 leaves element 1 usable); at runtime the slot is left a
     /// tombstone so a later aggregate drop skips it. Whole-variable moves stay
-    /// `UseVar { mode: Move }`; user-facing indexed transfers remain restricted
+    /// `UseVar { mode: Move | Forward }`; user-facing indexed transfers remain restricted
     /// by checking to copyable value reads.
     MovePlace {
         dest: Reg,

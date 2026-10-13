@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R734**.
+Next free ID: **R742**.
 
 ## Ordered Work
 
@@ -287,6 +287,21 @@ Track: `ownership`.
 
 Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the track, an entry Mojito runs to a wrong result, or accepts where the pin rejects, comes first; then one it rejects where the pin runs it; then a verdict that is right with the wrong words.
 
+- [ ] **R734 An owning variadic collector over transfers copies its
+  elements and destroys the sources early**
+
+  Problem: `many(a^, b^)` over `def many(var *xs: M)` that prints each
+  element prints `del 1002`, `del 1001`, `x 2101`, `del 2101`, `x 2102`,
+  `del 2102`, where the pin prints `x 1`, `x 2`, `del 2`, `del 1`.
+  - `M`'s move initializer adds 1000 and its copy initializer adds 100.
+  - Mojito moves each source into the pack, destroys the moved values,
+    and iterates copies.
+  - The pin hands each source's storage to the pack and destroys the
+    elements when the pack dies.
+  - Found while landing R730 (2026-10-13).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
 - [ ] **R473 A discard `_ = x` copies its source instead of taking it**
 
   Problem: `var x = Q(1, "y")` then `_ = x` as `x`'s last use prints
@@ -298,14 +313,43 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R730 A `^` transfer into a `var` argument runs the move
-  initializer the pin elides**
+- [ ] **R735 A conditional expression over transfers copies the chosen
+  value**
 
-  Problem: `take(x^)` over `def take(var s: M)`, where `M`'s move
-  initializer adds 1000, prints `take 1006`, where the pin prints `take 6`.
-  - `take(M(copy=x))` at `x`'s last use differs the same way, since it is
-    now `x`'s move.
-  - Found while landing R723 (2026-10-13).
+  Problem: `take(y^ if z.v > 0 else z^)` over `def take(var s: M)`, where
+  `M`'s move initializer adds 1000 and its copy initializer adds 100,
+  prints `del 5`, `del 1004`, `take 1104`, where the pin prints `del 5`,
+  `take 1004`.
+  - Mojito moves the chosen operand into the conditional's result, then
+    copies that result into the argument and destroys the moved value.
+  - The pin moves the chosen operand once and destroys the other.
+  - Found while landing R730 (2026-10-13).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R736 A copy construction a read parameter takes at its source's
+  last use runs the move initializer the pin elides**
+
+  Problem: `show(M(copy=a))` over `def show(s: M)` at `a`'s last use
+  prints `show 1001`, where the pin prints `show 1`.
+  - The pin lends `a`'s storage to the read parameter.
+  - Copy elision (`analysis/copy_elision.rs`) moves `a` into the
+    `$tmp_arg_r` slot, which runs the move initializer.
+  - Copy elision already forwards the source for an owned parameter
+    through a `$fwd_arg_r` slot; a read parameter's temporary slot is the
+    lever.
+  - Found while landing R730 (2026-10-13).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R737 A copy-constructed receiver at its source's last use runs the
+  move initializer the pin elides**
+
+  Problem: `M(copy=d).consume()` over `def consume(var self)` at `d`'s
+  last use prints `consume 1004`, where the pin prints `consume 4`.
+  - MIR binds a forwarding slot for an owned call argument only, so copy
+    elision turns the receiver's copy into a move.
+  - Found while landing R730 (2026-10-13).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -316,6 +360,32 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
   prints `a 5`, where the pin prints `a 1005`.
   - Found while landing R723 (2026-10-13).
   - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R738 A field transfer into a binding skips the move initializer
+  the pin runs**
+
+  Problem: `var t = self.b^` in a `deinit self` method, over an `M` field
+  whose move initializer adds 1000, prints `t 2`, where the pin prints
+  `t 1002`.
+  - The field's `MovePlace` relocates the bytes on both backends.
+  - A field transfer an owned parameter takes (`take(self.a^)`) already
+    matches the pin, which runs no move initializer there.
+  - Found while landing R730 (2026-10-13).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R739 A Tuple display over a dying copy runs one move initializer
+  where the pin runs two**
+
+  Problem: `(M(copy=b), 3)` at `b`'s last use prints `t 1002`, where the
+  pin prints `t 2002`.
+  - `(b^, 3)` matches the pin at `t 1002`.
+  - Tuple's initializer stores its pack whole without element move
+    initializers (R341), and a display element is not a forwarded
+    argument.
+  - Found while landing R730 (2026-10-13).
+  - Depends on R341.
   - Model: Opus, Not Planned.
 
 - [ ] **R732 A `@fieldwise_init` construction stores its `var` arguments
@@ -575,6 +645,20 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
   - The bundled `List`, `Set`, and `Array` literal initializers use this
     spelling; upstream's consume the pack with `consume_elements`.
   - Pinned by `conformance/probes/variadic_pack_owned_iteration.mojo`.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R740 A list display runs the move initializer three times per
+  element**
+
+  Problem: `[a^]`, over an `M` whose move initializer adds 1000, prints
+  `l 3001`, where the pin prints `l 1001`.
+  - `[M(copy=a)]` at `a`'s last use prints `l 3001`, where the pin prints
+    `l 2001`.
+  - The bundled `List` literal initializer moves each element out of its
+    `var *values` pack (R32), where upstream consumes the pack with
+    `consume_elements`.
+  - Found while landing R730 (2026-10-13).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -5115,6 +5199,18 @@ retained on purpose and re-probed rather than fixed; they are listed in
     importing file; no probe is checked in, since a `std/` beside the
     probes would reach every other probe's imports.
   - Found while landing R565 (2026-10-10).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R741 Mojito accepts `c^ + d^` as two transfers, which the pin
+  rejects**
+
+  Problem: `var s = c^ + d^` over a struct `__add__(var self, var other:
+  Self)` runs in Mojito, where the pin lexes `^ +` as XOR followed by
+  unary plus and reports "'M' does not implement the '__pos__' method".
+  - `(c^) + (d^)` is the spelling both accept.
+  - Probe: `conformance/probes/transfer_operand_before_infix_operator.mojo`.
+  - Found while landing R730 (2026-10-13).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

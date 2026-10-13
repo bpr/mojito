@@ -179,7 +179,7 @@ pub fn disassemble(program: &MirProgram) -> Result<String, DisassembleError> {
 
 pub const MAGIC: &str = "mojito-mir";
 pub const VERSION_MAJOR: u16 = 1;
-pub const VERSION_MINOR: u16 = 50;
+pub const VERSION_MINOR: u16 = 51;
 
 pub const INSTRUCTION_MNEMONICS: &[&str] = &[
     "loans.establish",
@@ -417,6 +417,7 @@ pub const fn use_mode_spelling(mode: UseMode) -> &'static str {
         UseMode::Move => "move",
         UseMode::BorrowShared => "borrow_shared",
         UseMode::BorrowMut => "borrow_mut",
+        UseMode::Forward => "forward",
     }
 }
 

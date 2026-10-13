@@ -556,7 +556,7 @@ pub(super) fn loan_accesses(
     match instr {
         MirInstr::UseVar { var, dest, mode } => vec![(
             MirPlace::root(*var, None),
-            if matches!(mode, UseMode::Move) {
+            if mode.moves() {
                 LoanAccess::Write
             } else {
                 LoanAccess::Read

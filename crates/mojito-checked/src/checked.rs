@@ -784,6 +784,12 @@ pub enum SemanticAdjustment {
     /// call returns. A temporary at a `var`/`deinit` slot moves into the
     /// callee and omits this marker.
     ReadTemporaryArgument,
+    /// The owned sibling of `ReadTemporaryArgument`: this actual argument
+    /// (or receiver, or operator operand) binds a regular `var`/`deinit`
+    /// parameter, which takes the caller's storage. A `^` transfer of a
+    /// whole local hands its slot to the callee without the move
+    /// initializer, as Mojo's owned argument convention does.
+    ForwardedArgument,
     /// Concrete owner accesses performed by a callable environment during this
     /// call. The checker derives these from the selected callable and any
     /// non-escaping callable arguments; MIR translates stable owner identities
@@ -4114,6 +4120,9 @@ fn node_adjustments(facts: &NodeFacts, expression: &Expr) -> Vec<SemanticAdjustm
     if facts.read_temporary_argument {
         adjustments.push(SemanticAdjustment::ReadTemporaryArgument);
     }
+    if facts.forwarded_argument {
+        adjustments.push(SemanticAdjustment::ForwardedArgument);
+    }
     if let Some(links) = &facts.compare_links {
         adjustments.push(SemanticAdjustment::CompareLinks(links.clone()));
     }
@@ -4598,6 +4607,7 @@ node_facts! {
         call_place_use => CallPlaceUse,
         borrowed_read_call_place => BorrowedReadCallPlace,
         read_temporary_argument => ReadTemporaryArgument,
+        forwarded_argument => ForwardedArgument,
         implicitly_copied_consuming_receiver => ImplicitlyCopiedConsumingReceiver,
         truthiness_condition => TruthinessCondition,
     }

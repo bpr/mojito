@@ -3249,18 +3249,28 @@ pub enum UseMode {
     Move,
     BorrowShared,
     BorrowMut,
+    Forward,
 }
 ```
 
 This lets later analysis distinguish ordinary reads, ownership transfers, and
-borrows without reparsing expressions.
+borrows without reparsing expressions. `Move` and `Forward` both end the slot
+(`UseMode::moves`), and ownership treats them alike. `Move` initializes new
+storage, so it runs the type's move initializer. `Forward` hands the slot's
+storage to an owned (`var`/`deinit`) parameter of the call that consumes the
+register, so no move initializer runs, as Mojo's owned argument convention
+binds the caller's storage. MIR emits `Forward` for a whole-slot `x^` the
+checker marked `SemanticAdjustment::ForwardedArgument`: an argument, a
+receiver, or an operator operand bound to a regular owned parameter
+(`checker/places.rs`, `forwarded_arguments`; a collector's elements are not
+among them).
 
 ### Partial Moves
 
 Whole-variable moves use:
 
 ```rust
-UseVar { mode: UseMode::Move, ... }
+UseVar { mode: UseMode::Move | UseMode::Forward, ... }
 ```
 
 Field moves and constant-index moves from compiler-private Tuple storage use:
@@ -4199,7 +4209,12 @@ current Mojo:
   `elide_dying_copies`, run after `elaborate_drops`), as Mojo's lifetime
   checker turns a copy followed by the source's destruction into a move.
   The checker binds a temporary `copy=` source as a read temporary, so it
-  gets a slot and dies there too. A type parameter's `T(copy=x)` (still
+  gets a slot and dies there too. A copy construction an owned parameter
+  takes (`take(M(copy=y))`) is bound in place to a hidden forwarding slot
+  (`$fwd_arg_r`, `mir::FORWARDED_ARGUMENT_SLOT`) that the call takes next
+  through `UseVar Forward`; when `y` dies there, the load, construction,
+  binding, and `DropVar` go and the call forwards `y` itself, so no move
+  initializer runs, as at Mojo. A type parameter's `T(copy=x)` (still
   `ConstructTypeParam` at that point), a field source, `.copy()`, and a
   source that dies only on a successor edge stay copies.
   A `_ = e` statement is the same discard: HIR binds its value to a fresh

@@ -11,6 +11,7 @@ impl Decoder {
             "move" => Some(UseMode::Move),
             "borrow_shared" => Some(UseMode::BorrowShared),
             "borrow_mut" => Some(UseMode::BorrowMut),
+            "forward" => Some(UseMode::Forward),
             other => {
                 self.error(value.span, format!("unknown use mode `{other}`"));
                 None

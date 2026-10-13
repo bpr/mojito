@@ -31,7 +31,9 @@ impl Checker {
     /// which the caller destroys once the call returns
     /// ([`read_temporary_arguments`]). `collected` holds the positions of
     /// the arguments a read `*args` collector gathers, which bind the same
-    /// way; an owning (`var`) collector passes none.
+    /// way; an owning (`var`) collector passes none. It also records the
+    /// arguments and the receiver that bind an owned parameter
+    /// ([`forwarded_arguments`]).
     pub(super) fn record_argument_borrows(
         &self,
         slots: &[ArgSlot],
@@ -66,6 +68,15 @@ impl Checker {
             .extend(read.iter().cloned());
         for span in read {
             self.record_at(span).read_temporary_argument = true;
+        }
+        let owned_receiver = receiver
+            .filter(|(_, convention)| owns_argument(*convention))
+            .map(|(receiver, _)| receiver.source_span());
+        for span in forwarded_arguments(slots, conventions, args, kwargs)
+            .into_iter()
+            .chain(owned_receiver)
+        {
+            self.record_at(span).forwarded_argument = true;
         }
     }
 
@@ -112,6 +123,13 @@ impl Checker {
             self.record_at(expr.source_span()).read_temporary_argument = true;
         }
         self.record_unconsumed_temporary(expr);
+    }
+
+    /// Record an operand an operator's dunder binds to an owned (`var`/
+    /// `deinit`) receiver or parameter, as [`forwarded_arguments`] records
+    /// a call's.
+    pub(super) fn record_forwarded_operand(&self, expr: &Expr) {
+        self.record_at(expr.source_span()).forwarded_argument = true;
     }
 
     /// Record a temporary the enclosing body owns but cannot destroy — a
@@ -241,6 +259,11 @@ impl Checker {
                 .is_some_and(|call| call.reference_result.is_none())
         })
     }
+}
+
+/// Whether a parameter convention owns its argument: `var` or `deinit`.
+pub(super) const fn owns_argument(convention: Option<ArgConvention>) -> bool {
+    matches!(convention, Some(ArgConvention::Var | ArgConvention::Deinit))
 }
 
 pub(super) fn is_place_expr(e: &Expr) -> bool {
@@ -415,6 +438,29 @@ pub(super) fn read_temporary_arguments(
         })
         .chain(collected_read_arguments(collected, args))
         .filter(|arg| !designates_place(arg) && !matches!(arg.kind, ExprKind::Transfer(_)))
+        .map(Expr::source_span)
+        .collect()
+}
+
+/// Arguments a call binds to regular owned (`var`/`deinit`) parameters,
+/// which take the caller's storage: a `^` transfer among them hands its
+/// slot over without the move initializer. A collector's elements are not
+/// among them.
+pub(super) fn forwarded_arguments(
+    slots: &[ArgSlot],
+    conventions: &[Option<ArgConvention>],
+    args: &[Expr],
+    kwargs: &[mojito_ast::ast::KwArg],
+) -> Vec<SourceSpan> {
+    slots
+        .iter()
+        .enumerate()
+        .filter(|(index, _)| owns_argument(conventions.get(*index).copied().flatten()))
+        .filter_map(|(_, slot)| match slot {
+            ArgSlot::Positional(position) => Some(&args[*position]),
+            ArgSlot::Keyword(position) => Some(&kwargs[*position].value),
+            ArgSlot::Default => None,
+        })
         .map(Expr::source_span)
         .collect()
 }

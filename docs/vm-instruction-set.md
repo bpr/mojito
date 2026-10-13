@@ -85,6 +85,7 @@ accessed; the compact notation omits this analysis-only field.
 | `value.copy` | `CopyValue` | Run checked `Copyable` value semantics for an SSA value produced by a consuming reference or projected-place read |
 | `value.rebind` | `Rebind` | Read a generator's `rebind[Dest](x)` operand at `Dest`; erased per instance by the elaborator, a verifier finding on concrete MIR |
 | `var.move` | `UseVar(Move)` | Move a variable value into a register |
+| `var.forward` | `UseVar(Forward)` | Hand a variable's value to an owned parameter |
 | `var.borrow` | `UseVar(BorrowShared)` | Read through a shared borrow |
 | `var.borrow_mut` | `UseVar(BorrowMut)` | Read through an exclusive borrow |
 | `var.store` | `DefVar` | Define or redefine a variable slot |
@@ -288,6 +289,16 @@ Transfers the value from `$source` into `%dest`. The source slot becomes a moved
 tombstone. If the value's type defines
 `__init__(out self, *, deinit move: Self)`, the VM performs that custom move
 initialization. A later read or second move from the source is an error.
+
+### `var.forward` — Forward Variable
+
+```text
+var.forward %dest, $source
+```
+
+Transfers the value from `$source` into `%dest` for an owned (`var`/`deinit`)
+parameter of the call that consumes `%dest`, as `var.move` does, but runs no
+custom move initializer: the parameter takes the source's storage.
 
 ### `var.borrow` — Shared-Borrow Read
 

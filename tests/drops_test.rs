@@ -512,6 +512,18 @@ fn copy_construction_at_last_use_moves_its_source() {
 }
 
 #[test]
+fn transfer_into_owned_argument_runs_no_move_initializer() {
+    // An owned parameter takes a `^` argument's or receiver's storage, and a
+    // copy construction it takes at its source's last use forwards that
+    // source; a binding still moves into new storage.
+    let src = "struct M(Copyable, Movable):\n    var v: Int\n    def __init__(out self, v: Int):\n        self.v = v\n    def __init__(out self, *, copy: Self):\n        self.v = copy.v + 100\n    def __init__(out self, *, deinit move: Self):\n        self.v = move.v + 1000\n    def __deinit__(deinit self):\n        print(\"del\", self.v)\n    def consume(var self):\n        print(\"consume\", self.v)\n\ndef take(var s: M):\n    print(\"take\", s.v)\n\ndef main():\n    var x = M(1)\n    take(x^)\n    var a = M(2)\n    a^.consume()\n    var y = M(3)\n    take(M(copy=y))\n    var c = M(4)\n    var b = c^\n    print(\"b\", b.v)\n";
+    assert_eq!(
+        vm(src),
+        "take 1\ndel 1\nconsume 2\ndel 2\ntake 3\ndel 3\nb 1004\ndel 1004\n"
+    );
+}
+
+#[test]
 fn looped_try_destroys_call_temporaries_when_the_call_returns() {
     // Inside a loop, a `try` body's call temporaries still die when the call
     // returns, before its result is printed: the `try` does not hold its own

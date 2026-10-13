@@ -54,12 +54,15 @@ impl Checker {
         // `x.__neg__() -> Self`, `not x` → `not x.__bool__() -> Bool`).
         if let Some(result) = self.struct_dunder(&t, op.dunder(), &[]) {
             let ret = result?;
-            if self
+            let convention = self
                 .struct_dunder_signature_for(&t, op.dunder(), &[])
-                .is_some_and(|(_, sig, _)| reads(sig.self_convention))
-            {
+                .map(|(_, sig, _)| sig.self_convention);
+            if convention.is_some_and(reads) {
                 self.borrow_operator_operand(operand, &t);
                 self.record_read_temporary_argument(operand);
+            }
+            if convention.is_some_and(owns_argument) {
+                self.record_forwarded_operand(operand);
             }
             return match op {
                 PrefixOp::Neg | PrefixOp::Invert => Ok(ret),
@@ -320,7 +323,7 @@ impl Checker {
             {
                 self.borrow_parameter_place_argument(left, &lt);
                 self.borrow_parameter_place_argument(right, &rt);
-                self.record_operator_temporaries(left, right, (true, true));
+                self.record_operator_temporaries(left, right, (true, true), (false, false));
                 if let Some(target) = self.bound_comparison_target(op) {
                     self.record_at(span).overload_target = Some(target);
                 }
@@ -357,7 +360,7 @@ impl Checker {
                 && let Some(dispatch) = self.struct_infix_dispatch(op, &nominal_ty, &nominal_ty)?
                 && !dispatch.negated_equality
             {
-                self.record_operator_temporaries(left, right, dispatch.reads);
+                self.record_operator_temporaries(left, right, dispatch.reads, dispatch.owns);
                 self.record_at(span).overload_target = Some(dispatch.target);
             }
             return r;
@@ -386,7 +389,7 @@ impl Checker {
                 if dispatch.borrows.1 {
                     self.borrow_operator_operand(right, &rt);
                 }
-                self.record_operator_temporaries(left, right, dispatch.reads);
+                self.record_operator_temporaries(left, right, dispatch.reads, dispatch.owns);
                 if dispatch.negated_equality {
                     self.record_at(span.clone()).adjustment = Some(Box::new(
                         mojito_checked::checked::SemanticAdjustment::NegatedEquality,
@@ -424,7 +427,7 @@ impl Checker {
             if dispatch.reads.1 {
                 self.borrow_operator_operand(right, &rt);
             }
-            self.record_operator_temporaries(left, right, dispatch.reads);
+            self.record_operator_temporaries(left, right, dispatch.reads, dispatch.owns);
             if let Some(error) = dispatch.error {
                 self.record_call_effect(span.clone(), error.clone());
                 self.require_error(format!("raising operator '{}'", infix_symbol(op)), error)?;
@@ -608,6 +611,10 @@ impl Checker {
             consumes,
             borrows: (operand_reads.0, !converted && operand_reads.1),
             reads: operand_reads,
+            owns: (
+                owns_argument(selected.self_convention),
+                !converted && consumes,
+            ),
             struct_name: sname.clone(),
             struct_args: targs.to_vec(),
         }))
@@ -642,6 +649,10 @@ impl Checker {
             reads: (
                 reads(sig.conventions.first().copied().flatten()),
                 reads(sig.self_convention),
+            ),
+            owns: (
+                owns_argument(sig.conventions.first().copied().flatten()),
+                owns_argument(sig.self_convention),
             ),
         })
     }
@@ -1104,12 +1115,25 @@ impl Checker {
     /// Record each operand an operator's dunder reads (`reads` = receiver,
     /// operand) as a read temporary argument: a temporary there is the
     /// caller's, destroyed once the dunder returns, as a method call's is.
-    fn record_operator_temporaries(&self, left: &Expr, right: &Expr, reads: (bool, bool)) {
+    /// Each operand it owns (`owns`) is a forwarded argument.
+    fn record_operator_temporaries(
+        &self,
+        left: &Expr,
+        right: &Expr,
+        reads: (bool, bool),
+        owns: (bool, bool),
+    ) {
         if reads.0 {
             self.record_read_temporary_argument(left);
         }
         if reads.1 {
             self.record_read_temporary_argument(right);
+        }
+        if owns.0 {
+            self.record_forwarded_operand(left);
+        }
+        if owns.1 {
+            self.record_forwarded_operand(right);
         }
     }
 
@@ -1278,6 +1302,10 @@ pub(super) struct StructInfixDispatch {
     /// Whether the dunder reads its receiver and its operand, so a
     /// temporary on either side is the caller's to destroy once it returns.
     pub(super) reads: (bool, bool),
+    /// Whether the dunder owns its receiver and its operand (a `var` or
+    /// `deinit` convention, the operand taken without conversion), so a
+    /// `^` on either side forwards its storage.
+    pub(super) owns: (bool, bool),
     pub(super) struct_name: String,
     pub(super) struct_args: Vec<TyArg>,
 }
@@ -1291,6 +1319,9 @@ pub(super) struct StructReflectedDispatch {
     /// Whether the reflected dunder reads the left operand (its parameter)
     /// and the right operand (its receiver).
     pub(super) reads: (bool, bool),
+    /// Whether the reflected dunder owns the left operand and the right
+    /// operand.
+    pub(super) owns: (bool, bool),
 }
 
 /// The error a selected dunder raises, if it raises.

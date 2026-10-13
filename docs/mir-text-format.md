@@ -1,4 +1,4 @@
-# Mojito Textual MIR Format, Version 1.50
+# Mojito Textual MIR Format, Version 1.51
 
 This document is the normative specification of Mojito's textual verified-MIR
 artifact. The Rust data model in `src/mir.rs` and `src/mir/ir.rs` remains the
@@ -6,7 +6,7 @@ in-memory authority; this format is its stable inspection and interchange
 boundary. `docs/vm-instruction-set.md` explains execution semantics, while this
 document defines syntax and serialized data.
 
-Version 1.50 is implemented end to end for inspection and loading: canonical
+Version 1.51 is implemented end to end for inspection and loading: canonical
 in-memory disassembly, full-grammar assembly parsing, and artifact-loading
 verification (`mir::text::load_artifact`, which reports canonical-verifier
 findings at artifact source spans). Lossless print → parse → print round trips
@@ -22,10 +22,10 @@ which may be generic; it is always elaborated before it runs.
 Every artifact begins with exactly:
 
 ```text
-mojito-mir 1.50
+mojito-mir 1.51
 ```
 
-The writer emits 1.50. The reader accepts 1.0 through 1.50; *Schema 1.0*
+The writer emits 1.51. The reader accepts 1.0 through 1.51; *Schema 1.0*
 below says how a 1.0 artifact is read, and *Binder identity* under *Types*
 how a binder without an identity is.
 
@@ -853,7 +853,7 @@ schema types above. This table is exhaustive and freezes the variant mapping:
 | `Unsupported` | `unsupported { message: string }` |
 | `GetIter` / `HasNext` / `Next` / `TryNext` | `iter.init` / `iter.has_next` / `iter.next` / `iter.try_next` |
 
-`UseMode` is `copy`, `move`, `borrow_shared`, or `borrow_mut`. Intrinsic
+`UseMode` is `copy`, `move`, `borrow_shared`, `borrow_mut`, or `forward` (schema 1.51: a whole-slot move an owned parameter takes, which runs no move initializer). Intrinsic
 subscripts are `tuple_storage`, `variadic_storage`, `simd`, `pointer`, and
 `comptime_list`. Slice descriptors are `slice`, `contiguous_slice`, and
 `strided_slice`. Result adapters currently contain only
@@ -883,7 +883,7 @@ Unknown terminators and instructions are fatal for schema major version 1.
 ## Complete Artifact Example
 
 ```text
-mojito-mir 1.50
+mojito-mir 1.51
 artifact {
   features: [],
   files: [file { id: file0, path: present("main.mojo"), module: absent }],
@@ -924,10 +924,10 @@ lowering unit, one record per library declaration, and one module table
 holding each module's link record, one file per package. The bundled library's is the
 only producer today (`src/package.rs`). No part of a package is MIR text:
 it is a header followed by bytecode records, as upstream's package is
-MLIR bytecode throughout. The format line is `mojito-package 44`.
+MLIR bytecode throughout. The format line is `mojito-package 45`.
 
 ```text
-mojito-package 44
+mojito-package 45
 <the header's length, 8 bytes little-endian>
 <the header, as bytecode>
 <the payload: every record, as bytecode, then the type section>
