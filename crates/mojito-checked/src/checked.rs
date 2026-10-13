@@ -1909,6 +1909,30 @@ pub struct CheckedFnParam {
     pub origin: Option<OriginSpec>,
 }
 
+impl mojito_ast::ast::DeclaredParam for CheckedFnParam {
+    fn name(&self) -> &str {
+        &self.name
+    }
+
+    fn kind(&self) -> ParamKind {
+        self.kind
+    }
+
+    fn convention(&self) -> Option<ArgConvention> {
+        self.convention
+    }
+
+    fn has_default(&self) -> bool {
+        self.default.is_some()
+    }
+}
+
+impl mojito_ast::ast::AnnotatedParam for CheckedFnParam {
+    fn annotation(&self) -> &Type {
+        &self.ty
+    }
+}
+
 /// A checked `struct`: its members, with their bodies and constraints as
 /// nodes.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -1954,6 +1978,33 @@ pub struct CheckedMethod {
     pub where_clauses: Vec<CheckedNodeId>,
     pub body: Vec<CheckedStmtId>,
     pub provenance: MethodProvenance,
+}
+
+impl CheckedMethod {
+    /// The signature facts its lowered symbol spells.
+    pub fn shape(&self) -> mojito_symbol::symbol::MethodShape<'_, CheckedFnParam> {
+        mojito_symbol::symbol::MethodShape {
+            type_params: &self.type_params,
+            params: &self.params,
+            keyword_only: self.keyword_only,
+            has_self: self.has_self,
+            self_convention: self.self_convention,
+        }
+    }
+
+    /// The name it is registered and counted under, as
+    /// [`mojito_symbol::symbol::lifecycle_method_name`] names its syntax.
+    pub fn lifecycle_name(&self) -> &str {
+        mojito_symbol::symbol::lifecycle_name(mojito_symbol::symbol::LifecycleShape {
+            name: &self.name,
+            has_self: self.has_self,
+            self_convention: self.self_convention,
+            positional_only: self.positional_only,
+            keyword_only: self.keyword_only,
+            params: &self.params,
+            returns: self.ret.is_some(),
+        })
+    }
 }
 
 /// A checked `trait`: its requirements, a default's body as statement
@@ -2100,6 +2151,11 @@ pub struct CheckedTables {
     /// Each default wrapper's root statements, parallel to
     /// [`CheckedProgram::default_wrappers`].
     wrapper_roots: Vec<Vec<CheckedStmtId>>,
+    /// Each trait member's own `def` node, parallel to
+    /// [`CheckedProgram::trait_members`]. A package unit's member is its
+    /// root, so a unit encodes none.
+    #[serde(skip)]
+    member_roots: Vec<CheckedStmtId>,
 }
 
 impl CheckedTables {
@@ -2352,6 +2408,12 @@ impl CheckedTables {
     /// [`CheckedProgram::default_wrappers`].
     pub fn wrapper_roots(&self, index: usize) -> &[CheckedStmtId] {
         self.wrapper_roots.get(index).map_or(&[][..], Vec::as_slice)
+    }
+
+    /// The `def` node of trait member `index`, parallel to
+    /// [`CheckedProgram::trait_members`].
+    pub fn member_root(&self, index: usize) -> Option<CheckedStmtId> {
+        self.member_roots.get(index).copied()
     }
 
     /// Visit the statement nodes `statements` and every node under them in
@@ -2679,6 +2741,7 @@ impl CheckedTables {
             mut statements,
             roots,
             wrapper_roots,
+            member_roots,
         } = arena;
         let declared: HashMap<&SourceSpan, CheckedDeclId> = declarations
             .iter()
@@ -2694,6 +2757,7 @@ impl CheckedTables {
             declarations,
             roots,
             wrapper_roots,
+            member_roots,
         }
     }
 
@@ -2832,8 +2896,9 @@ pub struct CheckedTraitMember {
     /// Its position among its trait's methods.
     pub method_index: usize,
     /// A `def` named by the member symbol, over `[_Self, ...]` and
-    /// `(self: _Self, ...)`, whose body is the default's. A package unit
-    /// holds it as its checked nodes, and [`CheckedProgram::installed`]
+    /// `(self: _Self, ...)`, whose body is the default's. The whole program
+    /// holds it as its node too, [`CheckedTables::member_root`]; a package
+    /// unit holds it as its checked nodes, and [`CheckedProgram::installed`]
     /// rebuilds it from them.
     #[serde(skip, default = "unrebuilt_declaration")]
     pub declaration: Stmt,
@@ -2863,8 +2928,8 @@ impl mojito_ast::ast::DeclaredParam for SignatureParam {
 
     /// None: a wrapper's defaults are its member's, which the member's
     /// declaration holds.
-    fn default_value(&self) -> Option<&Expr> {
-        None
+    fn has_default(&self) -> bool {
+        false
     }
 }
 
@@ -2923,6 +2988,7 @@ impl DiscoveryResult {
             &self.statements,
             &self.node_facts,
             &self.default_wrappers,
+            &self.trait_members,
             Some(visit),
         );
     }
@@ -2978,7 +3044,7 @@ impl DiscoveryResult {
         wrappers: &[CheckedDefaultWrapper],
         visit: &mut dyn FnMut(&Expr),
     ) {
-        build_checked_expressions(statements, &self.node_facts, wrappers, Some(visit));
+        build_checked_expressions(statements, &self.node_facts, wrappers, &[], Some(visit));
     }
 
     fn facts_of(&self, expression: &Expr) -> Option<&NodeFacts> {
@@ -3319,6 +3385,30 @@ impl CheckedConst {
         }
     }
 
+    /// [`Self::from_expr`] over the node `id` of `tables`.
+    pub fn from_node(tables: &CheckedTables, id: CheckedNodeId) -> Option<Self> {
+        match &tables.expression(id)?.op {
+            CheckedOp::Int(value) => Some(Self::Int(value.clone())),
+            CheckedOp::Float(value) => Some(Self::Float(value.clone())),
+            CheckedOp::Bool(value) => Some(Self::Bool(*value)),
+            CheckedOp::Str(value) => Some(Self::String(value.clone())),
+            CheckedOp::None => Some(Self::None),
+            CheckedOp::Member { object, field }
+                if tables.expression(*object).is_some_and(
+                    |object| matches!(&object.op, CheckedOp::Identifier(name) if name == "DType"),
+                ) =>
+            {
+                mojito_ast::ast::Dtype::from_name(field).map(Self::Dtype)
+            }
+            CheckedOp::Prefix(PrefixOp::Neg, inner) => match Self::from_node(tables, *inner)? {
+                Self::Int(value) => Some(Self::Int(value.neg())),
+                Self::Float(value) => Some(Self::Float(value.neg())),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
     /// The literal a conversion default converts, or the default itself.
     pub fn unconverted(&self) -> &Self {
         match self {
@@ -3348,7 +3438,13 @@ impl CheckedProgram {
             trait_members,
         } = discovery;
         let expressions_span = mojito_common::timing::span("expressions");
-        let arena = build_checked_expressions(&statements, &node_facts, &default_wrappers, None);
+        let arena = build_checked_expressions(
+            &statements,
+            &node_facts,
+            &default_wrappers,
+            &trait_members,
+            None,
+        );
         drop(expressions_span);
         let _declarations = mojito_common::timing::span("declarations");
         let declarations =
@@ -3665,18 +3761,20 @@ pub(crate) fn unit_tables(
     facts: &HashMap<SourceSpan, NodeFacts>,
     checked_types: &HashMap<AnnotationSite, Ty>,
 ) -> CheckedTables {
-    let arena = build_checked_expressions(statements, facts, wrappers, None);
+    let arena = build_checked_expressions(statements, facts, wrappers, &[], None);
     let declarations = build_checked_declarations(statements, &[], checked_types, facts);
     CheckedTables::new(arena, declarations)
 }
 
-/// The checked arena of `statements` and of `default_wrappers`' bodies, each
-/// node holding the facts `facts` recorded at its occurrence; with `scan`, the traversal alone, each expression
-/// reported instead of built.
+/// The checked arena of `statements`, of `default_wrappers`' bodies, and of
+/// each of `trait_members`' declarations, each node holding the facts
+/// `facts` recorded at its occurrence; with `scan`, the traversal alone, each
+/// expression reported instead of built.
 fn build_checked_expressions(
     statements: &[Stmt],
     facts: &HashMap<SourceSpan, NodeFacts>,
     default_wrappers: &[CheckedDefaultWrapper],
+    trait_members: &[CheckedTraitMember],
     scan: Option<&mut dyn FnMut(&Expr)>,
 ) -> CheckedArena {
     let mut builder = ArenaBuilder {
@@ -3690,11 +3788,16 @@ fn build_checked_expressions(
         .iter()
         .map(|wrapper| builder.block(&wrapper.body))
         .collect();
+    let member_roots = trait_members
+        .iter()
+        .map(|member| builder.stmt(&member.declaration))
+        .collect();
     CheckedArena {
         nodes: builder.nodes,
         statements: builder.statements,
         roots,
         wrapper_roots,
+        member_roots,
     }
 }
 
@@ -3704,6 +3807,7 @@ struct CheckedArena {
     statements: Vec<CheckedStmt>,
     roots: Vec<CheckedStmtId>,
     wrapper_roots: Vec<Vec<CheckedStmtId>>,
+    member_roots: Vec<CheckedStmtId>,
 }
 
 /// The checked arena under construction.

@@ -675,7 +675,8 @@ pub trait DeclaredParam {
     fn name(&self) -> &str;
     fn kind(&self) -> ParamKind;
     fn convention(&self) -> Option<ArgConvention>;
-    fn default_value(&self) -> Option<&Expr>;
+    /// Whether the parameter declares a default, which makes it optional.
+    fn has_default(&self) -> bool;
 
     /// Whether this is a named `out` result: a callee-local slot the callable
     /// returns, which no caller passes.
@@ -697,8 +698,8 @@ impl<P: DeclaredParam + ?Sized> DeclaredParam for &P {
         (**self).convention()
     }
 
-    fn default_value(&self) -> Option<&Expr> {
-        (**self).default_value()
+    fn has_default(&self) -> bool {
+        (**self).has_default()
     }
 }
 
@@ -715,8 +716,26 @@ impl DeclaredParam for FnParam {
         self.convention
     }
 
-    fn default_value(&self) -> Option<&Expr> {
-        self.default.as_ref()
+    fn has_default(&self) -> bool {
+        self.default.is_some()
+    }
+}
+
+/// A declared parameter that also holds its annotation as written, which a
+/// symbol spells.
+pub trait AnnotatedParam: DeclaredParam {
+    fn annotation(&self) -> &Type;
+}
+
+impl<P: AnnotatedParam + ?Sized> AnnotatedParam for &P {
+    fn annotation(&self) -> &Type {
+        (**self).annotation()
+    }
+}
+
+impl AnnotatedParam for FnParam {
+    fn annotation(&self) -> &Type {
+        &self.ty
     }
 }
 

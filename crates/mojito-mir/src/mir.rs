@@ -21,7 +21,7 @@
 
 use mojito_ast::ast::DeclaredParam;
 use mojito_ast::ast::{
-    ArgConvention, Dtype, Expr, ExprKind, InfixOp, ParamArg, ParamKind, PrefixOp, Stmt, StmtKind,
+    ArgConvention, Dtype, Expr, ExprKind, InfixOp, ParamArg, ParamKind, PrefixOp, StmtKind,
 };
 use mojito_ast::call::{effective_keyword_only_index, regular_marker_index};
 use mojito_checked::checked::{AnnotationSite, GenericSite};
@@ -438,43 +438,32 @@ pub fn lower_unit(
 ) {
     let overloads = checked.overloads();
     match unit {
-        LoweringUnit::Function { statement, root } => {
+        LoweringUnit::Function { root, .. } => {
             let _def = timing::span("def");
-            lower_function(
-                statement,
-                declared_body(checked.tables(), root, 0),
-                &declared_defaults(checked.tables(), root, 0),
-                checked,
-                functions,
-                declarations,
-                invariant_errors,
-            );
+            lower_function(root, checked, functions, declarations, invariant_errors);
         }
         LoweringUnit::Method {
-            structure: s,
-            method: m,
             index,
             lowered,
             root,
+            member,
+            ..
         } => {
             let _struct = timing::span("struct");
-            let Some(structure) = StructLowering::of(checked, s) else {
+            let Some(node) = checked.tables().statement(root) else {
                 return;
             };
-            let StmtKind::Struct { methods, .. } = &s.kind else {
+            let CheckedStmtOp::Struct(declaration) = &node.op else {
                 return;
             };
-            let Some(spelled) = methods
-                .iter()
-                .position(|candidate| std::ptr::eq(candidate, m))
-            else {
+            let Some(m) = declaration.methods.get(member) else {
                 return;
             };
             lower_struct_member(
-                &structure,
+                &StructLowering::new(checked, node.module.as_ref(), &declaration.name),
                 StructMember {
                     index,
-                    name: mojito_symbol::symbol::lifecycle_method_name(m),
+                    name: m.lifecycle_name(),
                     lowered,
                     params: &m.params,
                     has_self: m.has_self,
@@ -482,26 +471,18 @@ pub fn lower_unit(
                     positional_only: m.positional_only,
                     keyword_only: m.keyword_only,
                     type_params: &m.type_params,
-                    body: &m.body,
-                    statements: declared_body(checked.tables(), root, spelled),
-                    defaults: declared_defaults(checked.tables(), root, spelled),
+                    statements: &m.body,
+                    defaults: m.params.iter().map(|param| param.default).collect(),
                 },
                 functions,
                 declarations,
                 invariant_errors,
             );
         }
-        LoweringUnit::Wrapper {
-            structure: s,
-            wrapper,
-            index,
-        } => {
+        LoweringUnit::Wrapper { wrapper, index, .. } => {
             let _struct = timing::span("struct");
-            let Some(structure) = StructLowering::of(checked, s) else {
-                return;
-            };
             lower_struct_member(
-                &structure,
+                &StructLowering::new(checked, wrapper.module.as_ref(), &wrapper.declaration),
                 StructMember {
                     index: wrapper.method_index,
                     name: &wrapper.method,
@@ -512,7 +493,6 @@ pub fn lower_unit(
                     positional_only: None,
                     keyword_only: None,
                     type_params: &[],
-                    body: &wrapper.body,
                     statements: checked.tables().wrapper_roots(index),
                     defaults: Vec::new(),
                 },
@@ -523,17 +503,9 @@ pub fn lower_unit(
         }
         // A trait's requirements have no body (`...`); each default is
         // the trait's member, lowered as the check checked it.
-        LoweringUnit::TraitMember { member, root } => {
+        LoweringUnit::TraitMember { root, .. } => {
             let _other = timing::span("other");
-            lower_function(
-                &member.declaration,
-                declared_body(checked.tables(), root, member.method_index),
-                &declared_defaults(checked.tables(), root, member.method_index),
-                checked,
-                functions,
-                declarations,
-                invariant_errors,
-            );
+            lower_function(root, checked, functions, declarations, invariant_errors);
         }
         // A module `comptime` declaration has no runtime form, as
         // upstream's `lit.alias.decl` has none: a body's read of it is the
@@ -601,10 +573,10 @@ fn lower_program(
     };
     let mut invariant_errors = Vec::new();
     let overloads = checked.overloads();
-    for s in checked.statements() {
+    for root in checked.tables().roots() {
         declarations
             .structs
-            .extend(struct_declaration(checked, s, &mut invariant_errors));
+            .extend(struct_declaration(checked, *root, &mut invariant_errors));
     }
     let units = checked.lowering_units();
     let mut ranges = Vec::with_capacity(units.len());
@@ -702,23 +674,25 @@ fn lower_program(
     (result, ranges)
 }
 
-/// The MIR declaration of the struct `s` declares, if it declares one.
+/// The MIR declaration of the struct the statement node `root` declares, if
+/// it declares one.
 fn struct_declaration(
     checked: &CheckedProgram,
-    s: &Stmt,
+    root: CheckedStmtId,
     invariant_errors: &mut Vec<String>,
 ) -> Option<MirStructDeclaration> {
-    let StmtKind::Struct {
+    let s = checked.tables().statement(root)?;
+    let CheckedStmtOp::Struct(declaration) = &s.op else {
+        return None;
+    };
+    let mojito_checked::checked::CheckedStruct {
         name,
         type_params,
         fields,
         methods,
         fieldwise_init,
         ..
-    } = &s.kind
-    else {
-        return None;
-    };
+    } = &**declaration;
     let overloads = checked.overloads();
     let mut_self_methods = methods
         .iter()
@@ -729,12 +703,12 @@ fn struct_declaration(
             )
         })
         .map(|m| {
-            let method_name = mojito_symbol::symbol::lifecycle_method_name(m);
+            let method_name = m.lifecycle_name();
             let source = format!("{name}.{method_name}");
             let lowered = mojito_symbol::symbol::lowered_method_name(
                 &source,
                 type_params,
-                mojito_symbol::symbol::MethodShape::of(m),
+                m.shape(),
                 &**overloads,
                 &|name| checked.constants().get(name),
             );
@@ -832,45 +806,60 @@ fn struct_declaration(
 }
 
 /// A parameter's default metadata: a folded literal, or a `Construct` when the
-/// checker recorded an `@implicit` conversion at the default expression's span
-/// (so the omitted-arg slot materializes by running the converting constructor,
-/// e.g. a `None` default for `Optional[T]`). Any other default is `None`
-/// here; [`lower_default`] lowers it as code.
-fn mir_default(checked: &CheckedProgram, default: Option<&Expr>) -> Option<CheckedConst> {
-    let expr = default?;
-    let base = CheckedConst::from_expr(expr)?;
-    match checked.implicit_conversions().get(&expr.source_span()) {
+/// checker recorded an `@implicit` conversion at the default's node (so the
+/// omitted-arg slot materializes by running the converting constructor, e.g.
+/// a `None` default for `Optional[T]`). Any other default is `None` here;
+/// [`lower_default`] lowers it as code.
+fn mir_default(checked: &CheckedProgram, default: CheckedNodeId) -> Option<CheckedConst> {
+    let base = CheckedConst::from_node(checked.tables(), default)?;
+    let conversion = checked
+        .expression(default)?
+        .adjustments
+        .iter()
+        .rev()
+        .find_map(|adjustment| match adjustment {
+            mojito_checked::checked::SemanticAdjustment::ImplicitConversion(target)
+            | mojito_checked::checked::SemanticAdjustment::IndexNormalization { target } => {
+                Some(target.clone())
+            }
+            mojito_checked::checked::SemanticAdjustment::SplatScalar(_) => {
+                Some(mojito_symbol::symbol::SCALAR_SPLAT_CONVERSION.to_string())
+            }
+            _ => None,
+        });
+    match conversion {
         Some(target) => Some(CheckedConst::Construct {
-            target: target.clone(),
+            target,
             arg: Box::new(base),
         }),
         None => Some(base),
     }
 }
 
-/// Lower the function declaration `s`: its declaration, its parameter
-/// defaults, and its body, whose statement nodes are `statements`.
+/// Lower the `def` whose statement node is `root`: its declaration, its
+/// parameter defaults, and its body.
 fn lower_function(
-    s: &Stmt,
-    statements: &[CheckedStmtId],
-    declared_defaults: &[Option<CheckedNodeId>],
+    root: CheckedStmtId,
     checked: &CheckedProgram,
     functions: &mut Vec<(String, MirFunction)>,
     declarations: &mut MirDeclarations,
     invariant_errors: &mut Vec<String>,
 ) {
-    let StmtKind::Def {
+    let Some(s) = checked.tables().statement(root) else {
+        return;
+    };
+    let CheckedStmtOp::Def(def) = &s.op else {
+        return;
+    };
+    let mojito_checked::checked::CheckedDef {
         name,
         type_params,
         params,
         positional_only,
         keyword_only,
-        body,
+        body: statements,
         ..
-    } = &s.kind
-    else {
-        return;
-    };
+    } = &**def;
     let overloads = checked.overloads();
     let named_result = params
         .iter()
@@ -987,7 +976,7 @@ fn lower_function(
                     overloads,
                     owner: &lowered_name,
                     parameter: p,
-                    default: declared_defaults.get(param).copied().flatten(),
+                    default: p.default,
                     binders: &enclosing_binders,
                     ty,
                 },
@@ -1085,7 +1074,6 @@ fn lower_function(
             raises: effect.raises,
             error_ty: effect.error,
             named_result: named_result.map(|p| p.name.as_str()),
-            body,
             statements,
             returned: None,
             overloads,
@@ -1111,6 +1099,7 @@ fn lower_struct_member<P: DeclaredParam>(
         name,
         origin_parameters,
     } = *structure;
+    let module = module.cloned();
     let method_index = m.index;
     let method_name = m.name;
     let source_mangled = format!("{name}.{method_name}");
@@ -1278,10 +1267,7 @@ fn lower_struct_member<P: DeclaredParam>(
             })
             .collect(),
         defaults,
-        required: regular
-            .iter()
-            .map(|param| param.default_value().is_none())
-            .collect(),
+        required: regular.iter().map(|param| !param.has_default()).collect(),
         variadic: variadic_idx.map(|index| {
             checked_type_or_record(
                 checked,
@@ -1402,7 +1388,6 @@ fn lower_struct_member<P: DeclaredParam>(
             raises: effect.raises,
             error_ty: effect.error,
             named_result: named_result.map(DeclaredParam::name),
-            body: m.body,
             statements: m.statements,
             returned: None,
             overloads,
@@ -1417,28 +1402,25 @@ fn lower_struct_member<P: DeclaredParam>(
 struct StructLowering<'a> {
     checked: &'a CheckedProgram,
     overloads: &'a std::sync::Arc<mojito_checked::package::ProgramOverloads>,
-    module: &'a Option<String>,
+    module: Option<&'a String>,
     name: &'a str,
     /// The struct's `Origin` and `OriginSet` parameters.
     origin_parameters: &'a [String],
 }
 
 impl<'a> StructLowering<'a> {
-    /// The struct `statement` declares, as `checked` lowers its members.
-    fn of(checked: &'a CheckedProgram, statement: &'a Stmt) -> Option<Self> {
-        let StmtKind::Struct { name, .. } = &statement.kind else {
-            return None;
-        };
-        Some(Self {
+    /// The struct `name` of `module`, as `checked` lowers its members.
+    fn new(checked: &'a CheckedProgram, module: Option<&'a String>, name: &'a str) -> Self {
+        Self {
             checked,
             overloads: checked.overloads(),
-            module: &statement.module,
+            module,
             name,
             origin_parameters: checked.origin_parameters_at(&GenericSite::Struct {
-                module: statement.module.clone(),
-                declaration: name.clone(),
+                module: module.cloned(),
+                declaration: name.to_string(),
             }),
-        })
+        }
     }
 }
 
@@ -1460,10 +1442,9 @@ struct StructMember<'a, P> {
     keyword_only: Option<usize>,
     /// Its own compile-time parameters.
     type_params: &'a [mojito_ast::ast::TypeParam],
-    body: &'a [Stmt],
     /// Its body's statement nodes.
     statements: &'a [CheckedStmtId],
-    /// Each parameter's checked default node ([`declared_defaults`]).
+    /// Each parameter's checked default node.
     defaults: Vec<Option<CheckedNodeId>>,
 }
 
@@ -1508,12 +1489,11 @@ fn lower_default<P: DeclaredParam>(
         binders,
         ty,
     } = request;
-    let default = parameter.default_value()?;
-    if let Some(constant) = mir_default(checked, Some(default)) {
+    let node = node?;
+    if let Some(constant) = mir_default(checked, node) {
         return Some(constant);
     }
     let ty = ty?;
-    let node = node.expect("checked default has no node");
     let binders = if binders.named_by(checked.tables(), node) {
         binders.clone()
     } else {
@@ -1537,61 +1517,6 @@ fn lower_default<P: DeclaredParam>(
         function,
         arguments: Vec::new(),
     })
-}
-
-/// The body statement nodes of the declaration `member` of the statement
-/// node `root`: a `def`'s own, the struct method's at `member`, or the trait
-/// member's default at `member`.
-fn declared_body(
-    tables: &mojito_checked::checked::CheckedTables,
-    root: CheckedStmtId,
-    member: usize,
-) -> &[CheckedStmtId] {
-    match tables.statement(root).map(|statement| &statement.op) {
-        Some(CheckedStmtOp::Def(def)) => &def.body,
-        Some(CheckedStmtOp::Struct(declaration)) => declaration
-            .methods
-            .get(member)
-            .map_or(&[][..], |method| &method.body),
-        Some(CheckedStmtOp::Trait(declaration)) => declaration
-            .methods
-            .get(member)
-            .and_then(|method| method.default_body.as_deref())
-            .unwrap_or_default(),
-        _ => &[],
-    }
-}
-
-/// The checked default node of each parameter of the declaration `member`
-/// of the statement node `root`, parallel to its syntax parameters: a `def`'s
-/// own, the struct method's at `member`, or the trait member's at `member`,
-/// after its receiver.
-fn declared_defaults(
-    tables: &mojito_checked::checked::CheckedTables,
-    root: CheckedStmtId,
-    member: usize,
-) -> Vec<Option<CheckedNodeId>> {
-    let defaults = |params: &[mojito_checked::checked::CheckedFnParam]| {
-        params.iter().map(|param| param.default).collect::<Vec<_>>()
-    };
-    match tables.statement(root).map(|statement| &statement.op) {
-        Some(CheckedStmtOp::Def(def)) => defaults(&def.params),
-        Some(CheckedStmtOp::Struct(declaration)) => declaration
-            .methods
-            .get(member)
-            .map(|method| defaults(&method.params))
-            .unwrap_or_default(),
-        Some(CheckedStmtOp::Trait(declaration)) => declaration
-            .methods
-            .get(member)
-            .map(|method| {
-                std::iter::once(None)
-                    .chain(defaults(&method.params))
-                    .collect()
-            })
-            .unwrap_or_default(),
-        _ => Vec::new(),
-    }
 }
 
 /// A zero-parameter function returning one checked expression over the
@@ -1633,7 +1558,6 @@ fn lower_expression_thunk(
         .iter()
         .map(|(name, _)| name.clone())
         .collect();
-    let syntax = prologue_syntax(checked, prologue);
     lower_fn_nested(
         FunctionLowering {
             checked,
@@ -1653,7 +1577,6 @@ fn lower_expression_thunk(
             raises: false,
             error_ty: None,
             named_result: None,
-            body: &syntax,
             statements: prologue,
             returned: Some(node),
             overloads,
@@ -2128,20 +2051,6 @@ fn thunk_prologue(
     }
     statements.reverse();
     statements
-}
-
-/// The syntax of a thunk's `prologue`, rebuilt for nested discovery's
-/// syntax walk until it walks statement nodes (R655).
-fn prologue_syntax(checked: &CheckedProgram, prologue: &[CheckedStmtId]) -> Vec<Stmt> {
-    prologue
-        .iter()
-        .map(|id| {
-            checked
-                .tables()
-                .statement_syntax_of(*id)
-                .expect("an evaluated binding names a statement node of its tables")
-        })
-        .collect()
 }
 
 /// The call the check selected for an expression, among the expression's

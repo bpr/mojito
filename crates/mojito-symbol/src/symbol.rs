@@ -26,8 +26,8 @@ use std::collections::{HashMap, HashSet};
 use std::fmt::Write as _;
 
 use mojito_ast::ast::{
-    ArgConvention, Expr, ExprKind, FnParam, Method, ParamArg, ParamKind, Stmt, StmtKind, Type,
-    TypeParam,
+    AnnotatedParam, ArgConvention, DeclaredParam, Expr, ExprKind, FnParam, Method, ParamArg,
+    ParamKind, Stmt, StmtKind, Type, TypeParam,
 };
 use mojito_common::literal::{FloatLiteral, IntLiteral};
 use mojito_types::ct::{CtLane, CtValue};
@@ -893,10 +893,10 @@ impl OverloadLookup for OverloadSets {
 ///
 /// A module integer constant the signature names spells as the value
 /// `constants` answers, its declaration's.
-pub fn lowered_def_name(
+pub fn lowered_def_name<P: AnnotatedParam>(
     name: &str,
     type_params: &[TypeParam],
-    params: &[FnParam],
+    params: &[P],
     sets: &impl OverloadLookup,
     constants: &dyn Fn(&str) -> Option<IntLiteral>,
 ) -> String {
@@ -912,8 +912,8 @@ pub fn lowered_def_name(
                 .with_owned_params(
                     &params
                         .iter()
-                        .filter(|param| param.kind == mojito_ast::ast::ParamKind::Regular)
-                        .map(|param| param.convention)
+                        .filter(|param| param.kind() == ParamKind::Regular)
+                        .map(DeclaredParam::convention)
                         .collect::<Vec<_>>(),
                 ),
         )
@@ -924,15 +924,23 @@ pub fn lowered_def_name(
 
 /// The signature facts of a struct method or trait requirement that its
 /// lowered symbol spells.
-#[derive(Debug, Clone, Copy)]
-pub struct MethodShape<'a> {
+#[derive(Debug)]
+pub struct MethodShape<'a, P = FnParam> {
     /// The method's own compile-time parameters.
     pub type_params: &'a [TypeParam],
-    pub params: &'a [FnParam],
+    pub params: &'a [P],
     pub keyword_only: Option<usize>,
     pub has_self: bool,
     pub self_convention: Option<ArgConvention>,
 }
+
+impl<P> Clone for MethodShape<'_, P> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+
+impl<P> Copy for MethodShape<'_, P> {}
 
 impl<'a> MethodShape<'a> {
     pub fn of(m: &'a Method) -> Self {
@@ -954,10 +962,10 @@ impl<'a> MethodShape<'a> {
 /// spells a call's selected overload, so the symbol a call names is the one
 /// MIR declares. A module integer constant spells as [`lowered_def_name`]
 /// spells one.
-pub fn lowered_method_name(
+pub fn lowered_method_name<P: AnnotatedParam>(
     source_name: &str,
     type_params: &[TypeParam],
-    method: MethodShape<'_>,
+    method: MethodShape<'_, P>,
     sets: &impl OverloadLookup,
     constants: &dyn Fn(&str) -> Option<IntLiteral>,
 ) -> String {
@@ -1004,12 +1012,53 @@ pub fn lowered_method_name(
 /// `out self, copy: Self` shape, which the whole pipeline models as
 /// `__copyinit__`.
 pub fn lifecycle_method_name(m: &Method) -> &str {
-    if is_mojo_copy_constructor(m) {
+    lifecycle_name(LifecycleShape::of(m))
+}
+
+/// The signature facts of a struct method that decide whether it is a
+/// lifecycle constructor.
+#[derive(Debug)]
+pub struct LifecycleShape<'a, P = FnParam> {
+    pub name: &'a str,
+    pub has_self: bool,
+    pub self_convention: Option<ArgConvention>,
+    pub positional_only: Option<usize>,
+    pub keyword_only: Option<usize>,
+    pub params: &'a [P],
+    /// Whether the method declares a result type.
+    pub returns: bool,
+}
+
+impl<P> Clone for LifecycleShape<'_, P> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+
+impl<P> Copy for LifecycleShape<'_, P> {}
+
+impl<'a> LifecycleShape<'a> {
+    pub fn of(m: &'a Method) -> Self {
+        Self {
+            name: &m.name,
+            has_self: m.has_self,
+            self_convention: m.self_convention,
+            positional_only: m.positional_only,
+            keyword_only: m.keyword_only,
+            params: &m.params,
+            returns: m.ret.is_some(),
+        }
+    }
+}
+
+/// [`lifecycle_method_name`] over any method's declared shape.
+pub fn lifecycle_name<P: AnnotatedParam>(shape: LifecycleShape<'_, P>) -> &str {
+    if is_mojo_copy_constructor(&shape) {
         "__copyinit__"
-    } else if is_mojo_move_constructor(m) {
+    } else if is_mojo_move_constructor(&shape) {
         "__moveinit__"
     } else {
-        &m.name
+        shape.name
     }
 }
 
@@ -2050,8 +2099,8 @@ fn keep_overloaded(counts: HashMap<String, Vec<usize>>) -> HashMap<String, HashS
         .collect()
 }
 
-fn signature_from_ast(
-    params: &[FnParam],
+fn signature_from_ast<P: AnnotatedParam>(
+    params: &[P],
     type_params: &[TypeParam],
     comptimes: &dyn Fn(&str) -> Option<IntLiteral>,
     self_spelling: Option<&str>,
@@ -2060,10 +2109,10 @@ fn signature_from_ast(
     SignatureKey {
         types: params
             .iter()
-            .filter(|param| param.kind != mojito_ast::ast::ParamKind::KwVariadic)
+            .filter(|param| param.kind() != ParamKind::KwVariadic)
             .map(|param| {
                 TypeKey(sanitize(&ast_raw(
-                    &param.ty,
+                    param.annotation(),
                     comptimes,
                     &type_bounds,
                     self_spelling,
@@ -2072,10 +2121,10 @@ fn signature_from_ast(
             .collect(),
         kw_variadic: params
             .iter()
-            .find(|param| param.kind == mojito_ast::ast::ParamKind::KwVariadic)
+            .find(|param| param.kind() == ParamKind::KwVariadic)
             .map(|param| {
                 TypeKey(sanitize(&ast_raw(
-                    &param.ty,
+                    param.annotation(),
                     comptimes,
                     &type_bounds,
                     self_spelling,
@@ -2137,10 +2186,10 @@ fn self_struct_spelling(type_name: &str, type_params: &[TypeParam]) -> Option<St
 /// The names of the keyword-only parameters, part of overload identity.
 /// Parameters after a `*` marker or a variadic collector are keyword-only;
 /// the collectors themselves are not named parameters.
-fn keyword_only_names(params: &[FnParam], keyword_only: Option<usize>) -> Vec<String> {
+fn keyword_only_names<P: DeclaredParam>(params: &[P], keyword_only: Option<usize>) -> Vec<String> {
     let variadic = params
         .iter()
-        .position(|param| param.kind == mojito_ast::ast::ParamKind::Variadic);
+        .position(|param| param.kind() == ParamKind::Variadic);
     let boundary = match (keyword_only, variadic) {
         (Some(marker), Some(variadic)) => marker.min(variadic + 1),
         (Some(marker), None) => marker,
@@ -2150,46 +2199,41 @@ fn keyword_only_names(params: &[FnParam], keyword_only: Option<usize>) -> Vec<St
     params
         .iter()
         .skip(boundary)
-        .filter(|param| {
-            !matches!(
-                param.kind,
-                mojito_ast::ast::ParamKind::Variadic | mojito_ast::ast::ParamKind::KwVariadic
-            )
-        })
-        .map(|param| param.name.clone())
+        .filter(|param| !matches!(param.kind(), ParamKind::Variadic | ParamKind::KwVariadic))
+        .map(|param| param.name().to_string())
         .collect()
 }
 
-fn is_mojo_move_constructor(m: &Method) -> bool {
-    matches!(m.name.as_str(), "__init__" | "__moveinit__")
+fn is_mojo_move_constructor<P: AnnotatedParam>(m: &LifecycleShape<'_, P>) -> bool {
+    matches!(m.name, "__init__" | "__moveinit__")
         && m.has_self
         && matches!(m.self_convention, Some(ArgConvention::Out))
         && m.positional_only.is_none()
         && m.keyword_only == Some(0)
         && m.params.len() == 1
-        && m.params[0].name == "move"
-        && m.params[0].default.is_none()
-        && m.params[0].kind == ParamKind::Regular
+        && m.params[0].name() == "move"
+        && !m.params[0].has_default()
+        && m.params[0].kind() == ParamKind::Regular
         // Current Mojo requires the consuming `deinit move: Self` convention;
         // the bare `move: Self` shape is rejected by the checker.
-        && matches!(m.params[0].convention, Some(ArgConvention::Deinit))
-        && matches!(m.params[0].ty, Type::SelfType)
-        && m.ret.is_none()
+        && matches!(m.params[0].convention(), Some(ArgConvention::Deinit))
+        && matches!(m.params[0].annotation(), Type::SelfType)
+        && !m.returns
 }
 
-fn is_mojo_copy_constructor(m: &Method) -> bool {
-    matches!(m.name.as_str(), "__init__" | "__copyinit__")
+fn is_mojo_copy_constructor<P: AnnotatedParam>(m: &LifecycleShape<'_, P>) -> bool {
+    matches!(m.name, "__init__" | "__copyinit__")
         && m.has_self
         && matches!(m.self_convention, Some(ArgConvention::Out))
         && m.positional_only.is_none()
         && m.keyword_only == Some(0)
         && m.params.len() == 1
-        && m.params[0].name == "copy"
-        && m.params[0].default.is_none()
-        && m.params[0].kind == ParamKind::Regular
-        && m.params[0].convention.is_none()
-        && matches!(m.params[0].ty, Type::SelfType)
-        && m.ret.is_none()
+        && m.params[0].name() == "copy"
+        && !m.params[0].has_default()
+        && m.params[0].kind() == ParamKind::Regular
+        && m.params[0].convention().is_none()
+        && matches!(m.params[0].annotation(), Type::SelfType)
+        && !m.returns
 }
 
 /// A signature-qualified abstract `__call__` symbol for an indirect callable

@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R657**.
+Next free ID: **R658**.
 
 ## Ordered Work
 
@@ -4694,6 +4694,22 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on R594.
   - Model: Fable, Not Planned.
 
+- [ ] **R657 A trait default's body is built as checked nodes twice**
+
+  The whole program builds a trait default's body once under the trait
+  op's `CheckedTraitMethod::default_body` and again under the member's own
+  `def` node (`CheckedTables::member_root`), which MIR lowers.
+  - Upstream emits the default once, as a function op its trait names.
+  - Nothing lowers the `default_body` copy; only whole-program walks
+    (`CheckedStmtOp::bodies`, `checked_var_types`) still visit it.
+  - The lever: the trait op names its member's `def` node instead of
+    holding a body, and `bodies()` yields the member's.
+  - Done when the whole program builds each default body's nodes once and
+    the probe fixtures' MIR is unchanged in both std modes.
+  - Found while landing R643 (2026-10-13).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
 - [ ] **R600 An overloaded declaration's symbol is spelled from its
   syntax, and its call's from its checked type**
 
@@ -4882,26 +4898,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     the probe fixtures' MIR and output are unchanged.
   - Found while landing R646 (2026-10-12).
   - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **R643 MIR reads declarations and finds nested defs from syntax**
-
-  MIR still reads a declaration's kind, name, and body from statement
-  syntax, so R623's done-condition cannot hold.
-  - `lower_function`, `struct_declaration`, `StructLowering::of`, and the
-    top-level filter (`mir.rs`) match `StmtKind::{Def, Struct, Trait,
-    Comptime}` over `CheckedProgram::statements()`.
-  - `find_nested_defs`, `lower_nested_def`, `analyze_node`,
-    `checked_nested_declaration`, and `analyze_root_children`
-    (`mir/nested.rs`) walk a `def`'s syntax body.
-  - Upstream reads a declaration from its op; the fix walks
-    `CheckedTables::roots` and each `CheckedDef::body` by id, which R629's
-    id-taking HIR builders need anyway.
-  - Done when `rg 'StmtKind::' crates/mojito-mir/src/mir/nested.rs` is
-    empty, `mir.rs` names `StmtKind::` only at R623's bridges and R629's,
-    R640's, and R642's sites, and the probe fixtures' MIR is unchanged.
-  - Found while landing R622 (2026-10-12).
-  - Depends on R629.
   - Model: Opus, Not Planned.
 
 - [ ] **R634 HIR types a slot by its name's spelling anywhere in the

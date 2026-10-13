@@ -28,13 +28,15 @@ pub enum LoweringUnit<'a> {
         root: CheckedStmtId,
     },
     /// The `method` at `index` of the struct `structure`, lowering to the
-    /// symbol `lowered`; `root` is the struct's statement node.
+    /// symbol `lowered`; `root` is the struct's statement node, and
+    /// `member` the method's position among its node's methods.
     Method {
         structure: &'a Stmt,
         method: &'a Method,
         index: usize,
         lowered: String,
         root: CheckedStmtId,
+        member: usize,
     },
     /// The wrapper of a trait default the struct `structure` inherits, at
     /// `index` among the program's default wrappers.
@@ -43,9 +45,8 @@ pub enum LoweringUnit<'a> {
         wrapper: &'a CheckedDefaultWrapper,
         index: usize,
     },
-    /// A trait default, as its trait's member. `root` is its trait's
-    /// statement node in the whole program, and its own `def`'s in a
-    /// package unit.
+    /// A trait default, as its trait's member, and its own `def`'s
+    /// statement node.
     TraitMember {
         member: &'a CheckedTraitMember,
         root: CheckedStmtId,
@@ -112,6 +113,7 @@ impl CheckedProgram {
                                 &|name| self.constants().get(name),
                             ),
                             root: *root,
+                            member: index,
                         }
                     }));
                     units.extend(
@@ -131,12 +133,15 @@ impl CheckedProgram {
                 StmtKind::Trait { name, .. } => units.extend(
                     self.trait_members()
                         .iter()
-                        .filter(|member| {
+                        .enumerate()
+                        .filter(|(_, member)| {
                             member.trait_name == *name && member.module == statement.module
                         })
-                        .map(|member| LoweringUnit::TraitMember {
-                            member,
-                            root: *root,
+                        .filter_map(|(index, member)| {
+                            Some(LoweringUnit::TraitMember {
+                                member,
+                                root: self.tables().member_root(index)?,
+                            })
                         }),
                 ),
                 StmtKind::Comptime { .. } => constants.push(LoweringUnit::Constant {
@@ -377,6 +382,7 @@ impl UnitProgram {
                     index: *index,
                     lowered: lowered.clone(),
                     root: root?,
+                    member: 0,
                 }
             }
             UnitKind::Wrapper => LoweringUnit::Wrapper {

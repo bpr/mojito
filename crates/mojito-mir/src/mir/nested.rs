@@ -43,10 +43,8 @@ pub(super) struct FunctionLowering<'a> {
     pub(super) raises: bool,
     pub(super) error_ty: Option<Ty>,
     pub(super) named_result: Option<&'a str>,
-    /// The body's syntax, which nested discovery walks beside `statements`
-    /// (R643).
-    pub(super) body: &'a [Stmt],
-    /// The body's statement nodes, which HIR lowers.
+    /// The body's statement nodes, which HIR lowers and nested discovery
+    /// walks.
     pub(super) statements: &'a [CheckedStmtId],
     /// An expression thunk's returned value, which HIR lowers after
     /// `body`.
@@ -77,12 +75,11 @@ pub(super) fn lower_fn_nested(
         raises,
         error_ty,
         named_result,
-        body,
         statements,
         returned,
         overloads,
     } = request;
-    let children = analyze_root_children(checked, name, body, statements);
+    let children = analyze_root_children(checked, name, statements);
     let registry = scope_registry(&children, &HashMap::new());
 
     let mut cfg = returned.map_or_else(
@@ -174,87 +171,52 @@ pub(super) fn lower_fn_nested(
 /// the body, its control-flow blocks, and its kept compile-time regions),
 /// without descending into another declaration's body, each with the
 /// `comptime for` statements of this scope enclosing it, outermost first.
-/// The syntax `body` is walked in lockstep with its statement nodes `ids`.
-/// Recursive lifting calls this once per lexical scope.
-fn find_nested_defs<'a>(
+/// Recursive lifting calls this once per lexical scope of statement nodes
+/// `ids`.
+fn find_nested_defs(
     tables: &mojito_checked::checked::CheckedTables,
-    body: &'a [Stmt],
     ids: &[CheckedStmtId],
     loops: &mut Vec<CheckedStmtId>,
-    out: &mut Vec<NestedSite<'a>>,
+    out: &mut Vec<NestedSite>,
 ) {
-    debug_assert_eq!(body.len(), ids.len());
-    for (s, id) in body.iter().zip(ids) {
+    for id in ids {
         let node = tables
             .statement(*id)
             .expect("a body statement id names a node of its tables");
-        debug_assert_eq!(s.syntax_id, node.syntax_id);
         // Lambda expressions anywhere in this statement's own expressions
         // (conditions, iterables, values, arguments) declare hidden nested
         // definitions in this scope.
-        let mut lambdas = Vec::new();
-        mojito_ast::ast::lambdas_in_stmt(s, &mut lambdas);
-        let defs = lambda_defs(tables, node);
-        for lambda in lambdas {
-            if let mojito_ast::ast::ExprKind::Lambda { def } = &lambda.kind {
-                let node = defs
-                    .iter()
-                    .copied()
-                    .find(|id| {
-                        tables
-                            .statement(*id)
-                            .is_some_and(|node| node.syntax_id == def.syntax_id)
-                    })
-                    .expect("a lambda's hidden def has a statement node");
-                out.push(NestedSite {
-                    statement: def,
+        out.extend(
+            lambda_defs(tables, node)
+                .into_iter()
+                .map(|node| NestedSite {
                     node,
                     loops: loops.clone(),
-                });
-            }
-        }
-        let bodies: Vec<&[Stmt]> = match &s.kind {
-            StmtKind::Def { .. } => {
+                }),
+        );
+        let bodies = match &node.op {
+            CheckedStmtOp::Def(_) => {
                 out.push(NestedSite {
-                    statement: s,
                     node: *id,
                     loops: loops.clone(),
                 });
                 continue;
             }
-            StmtKind::If { branches, orelse } | StmtKind::ComptimeIf { branches, orelse } => {
-                branches
-                    .iter()
-                    .map(|(_, body)| body.as_slice())
-                    .chain(orelse.as_deref())
-                    .collect()
-            }
-            StmtKind::While { body, orelse, .. } | StmtKind::For { body, orelse, .. } => {
-                std::iter::once(body.as_slice())
-                    .chain(orelse.as_deref())
-                    .collect()
-            }
-            StmtKind::ComptimeFor { body, .. } | StmtKind::Scope(body) => vec![body.as_slice()],
-            StmtKind::Try {
-                body,
-                except,
-                orelse,
-                finalbody,
-            } => std::iter::once(body.as_slice())
-                .chain(except.as_ref().map(|(_, body)| body.as_slice()))
-                .chain(orelse.as_deref())
-                .chain(finalbody.as_deref())
-                .collect(),
+            CheckedStmtOp::If { .. }
+            | CheckedStmtOp::ComptimeIf { .. }
+            | CheckedStmtOp::While { .. }
+            | CheckedStmtOp::For { .. }
+            | CheckedStmtOp::ComptimeFor { .. }
+            | CheckedStmtOp::Scope(_)
+            | CheckedStmtOp::Try { .. } => node.op.bodies(),
             _ => continue,
         };
-        let node_bodies = node.op.bodies();
-        debug_assert_eq!(bodies.len(), node_bodies.len());
         let region = matches!(node.op, CheckedStmtOp::ComptimeFor { .. });
         if region {
             loops.push(*id);
         }
-        for (body, ids) in bodies.into_iter().zip(node_bodies) {
-            find_nested_defs(tables, body, ids, loops, out);
+        for ids in bodies {
+            find_nested_defs(tables, ids, loops, out);
         }
         if region {
             loops.pop();
@@ -262,14 +224,15 @@ fn find_nested_defs<'a>(
     }
 }
 
-/// The hidden `def` of each lambda among statement `node`'s own
-/// expressions; a lambda inside a lambda is the inner scope's.
+/// The hidden `def` of each lambda among statement `node`'s own value
+/// expressions ([`statement_lambda_operands`]); a lambda inside a lambda is
+/// the inner scope's.
 fn lambda_defs(
     tables: &mojito_checked::checked::CheckedTables,
     node: &mojito_checked::checked::CheckedStmt,
 ) -> Vec<CheckedStmtId> {
     let mut defs = Vec::new();
-    for expression in node.op.expressions() {
+    for expression in statement_lambda_operands(&node.op) {
         tables.walk_expression(expression, &mut |walked| match walked {
             Walked::Expression(mojito_checked::checked::CheckedExpr {
                 op: CheckedOp::Lambda { def },
@@ -284,19 +247,28 @@ fn lambda_defs(
     defs
 }
 
-/// A declaration [`find_nested_defs`] found: its syntax, its statement
-/// node, and the `comptime for` statements of its scope enclosing it,
-/// outermost first.
-struct NestedSite<'a> {
-    statement: &'a Stmt,
+/// The expressions of statement `op` whose lambdas declare nested
+/// functions in its scope: the statement's own value expressions, which
+/// for a module `comptime` is its value alone. A declaration's parameter
+/// defaults and constraints declare none.
+fn statement_lambda_operands(op: &CheckedStmtOp) -> Vec<CheckedNodeId> {
+    match op {
+        CheckedStmtOp::Def(_) | CheckedStmtOp::Struct(_) | CheckedStmtOp::Trait(_) => Vec::new(),
+        CheckedStmtOp::Comptime { value, .. } => vec![*value],
+        _ => op.expressions(),
+    }
+}
+
+/// A declaration [`find_nested_defs`] found: its statement node, and the
+/// `comptime for` statements of its scope enclosing it, outermost first.
+struct NestedSite {
     node: CheckedStmtId,
     loops: Vec<CheckedStmtId>,
 }
 
 /// One declaration in the lexical closure tree. Checked capture facts already
 /// include any ancestor forwarding required across intermediate functions.
-struct NestedNode<'a> {
-    statement: &'a Stmt,
+struct NestedNode {
     node: CheckedStmtId,
     /// The indices of the `comptime for` loops of the parent's body that
     /// enclose the declaration, outermost first: the binders of the regions
@@ -312,7 +284,7 @@ struct NestedNode<'a> {
     children: Vec<Self>,
 }
 
-impl NestedNode<'_> {
+impl NestedNode {
     /// The binders of the regions the declaration is declared in.
     fn region_binders(&self) -> Vec<ParamDecl> {
         self.loop_indices
@@ -327,22 +299,19 @@ impl NestedNode<'_> {
     }
 }
 
-fn analyze_node<'a>(
+fn analyze_node(
     checked: &mojito_checked::checked::CheckedProgram,
-    site: NestedSite<'a>,
+    site: NestedSite,
     parent_mangled: &str,
     duplicate_name: bool,
-) -> NestedNode<'a> {
-    let NestedSite {
-        statement,
-        node,
-        loops,
-    } = site;
-    let StmtKind::Def { name, body, .. } = &statement.kind else {
-        unreachable!("nested tree contains only def statements")
-    };
-
-    let (declaration, def) = checked_nested_declaration(checked, node, name);
+) -> NestedNode {
+    let NestedSite { node, loops } = site;
+    let statement = checked
+        .tables()
+        .statement(node)
+        .expect("a nested def names a node of its tables");
+    let (declaration, def) = checked_nested_declaration(checked, node);
+    let name = &def.name;
     let binding = declaration
         .binding
         .expect("checked nested function has no value binding");
@@ -354,10 +323,9 @@ fn analyze_node<'a>(
     };
     let captures = analyze_captures(declaration);
 
-    let children = analyze_root_children(checked, &mangled, body, &def.body);
+    let children = analyze_root_children(checked, &mangled, &def.body);
 
     NestedNode {
-        statement,
         node,
         loop_indices: loops
             .iter()
@@ -384,7 +352,7 @@ fn analyze_node<'a>(
 /// declarations and inherited callables are keyed by checked identity, so
 /// same-spelled bindings coexist without shadow-removal heuristics.
 fn scope_registry(
-    children: &[NestedNode<'_>],
+    children: &[NestedNode],
     inherited: &HashMap<mojito_types::origin::OwnerId, NestedInfo>,
 ) -> HashMap<mojito_types::origin::OwnerId, NestedInfo> {
     let mut registry = inherited.clone();
@@ -437,324 +405,321 @@ impl Enclosing<'_> {
 
 fn lower_nested_node(
     checked: &mojito_checked::checked::CheckedProgram,
-    node: NestedNode<'_>,
+    node: NestedNode,
     inherited_registry: &HashMap<mojito_types::origin::OwnerId, NestedInfo>,
     overloads: &std::sync::Arc<mojito_checked::package::ProgramOverloads>,
     out: &mut Vec<(String, MirFunction)>,
     declarations: &mut MirDeclarations,
     enclosing: Enclosing<'_>,
 ) {
-    let ds = node.statement;
+    let ds = checked
+        .tables()
+        .statement(node.node)
+        .expect("a nested def names a node of its tables");
     let def = def_of(checked, node.node);
-    if let StmtKind::Def {
-        params: dparams,
-        positional_only,
-        keyword_only,
-        ..
-    } = &ds.kind
-    {
-        let registry = scope_registry(&node.children, inherited_registry);
-        let captures = &node.captures;
-        let mangled = &node.mangled;
-        let capture_types: Vec<Ty> = captures
+    let dparams = &def.params;
+    let (positional_only, keyword_only) = (&def.positional_only, &def.keyword_only);
+    let registry = scope_registry(&node.children, inherited_registry);
+    let captures = &node.captures;
+    let mangled = &node.mangled;
+    let capture_types: Vec<Ty> = captures
+        .iter()
+        .map(|capture| mir_nested_callable_ty(capture.ty.clone()))
+        .collect();
+    let named_result = dparams
+        .iter()
+        .find(|parameter| matches!(parameter.convention, Some(ArgConvention::Out)));
+    let caller_params: Vec<_> = dparams
+        .iter()
+        .enumerate()
+        .filter(|(_, parameter)| !matches!(parameter.convention, Some(ArgConvention::Out)))
+        .collect();
+    let mut names: Vec<String> = captures
+        .iter()
+        .map(|capture| capture.name.clone())
+        .collect();
+    names.extend(
+        caller_params
             .iter()
-            .map(|capture| mir_nested_callable_ty(capture.ty.clone()))
-            .collect();
-        let named_result = dparams
-            .iter()
-            .find(|parameter| matches!(parameter.convention, Some(ArgConvention::Out)));
-        let caller_params: Vec<_> = dparams
-            .iter()
-            .enumerate()
-            .filter(|(_, parameter)| !matches!(parameter.convention, Some(ArgConvention::Out)))
-            .collect();
-        let mut names: Vec<String> = captures
-            .iter()
-            .map(|capture| capture.name.clone())
-            .collect();
-        names.extend(
-            caller_params
-                .iter()
-                .map(|(_, parameter)| parameter.name.clone()),
-        );
-        if let Some(result) = named_result {
-            names.push(result.name.clone());
-        }
-        let generic_site = GenericSite::Function {
-            module: ds.module.clone(),
-            declaration: ds.span,
-            syntax: ds.syntax_id,
-        };
-        let param_decls = checked
-            .generic_parameters_at(&generic_site)
-            .unwrap_or(&[])
-            .to_vec();
-        let value_parameter_locals = enclosing.frame_locals(&param_decls);
-        let enclosing_binders = &enclosing
-            .binders
-            .with_loops(&node.loop_indices)
-            .with(&param_decls);
-        names.extend(value_parameter_locals.iter().map(|(name, _)| name.clone()));
-        let mut ptys = capture_types.clone();
-        ptys.extend(caller_params.iter().map(|(param, p)| {
-            let ty = checked
-                .checked_type_at(&AnnotationSite::FunctionParam {
-                    module: ds.module.clone(),
-                    declaration: ds.span,
-                    syntax: ds.syntax_id,
-                    param: *param,
-                })
-                .cloned()
-                .unwrap_or_else(|| {
-                    panic!(
-                        "checked type missing for parameter '{}' of nested function",
-                        p.name
-                    )
-                });
-            body_parameter_ty(p, ty)
-        }));
-        // The closure object owns declaration-time copy/move captures. A lifted
-        // invocation only borrows those environment slots, just as it borrows
-        // explicit read/mut/ref captures; it must neither destroy nor duplicate
-        // them on each call.
-        let mut owned2: Vec<bool> = vec![false; captures.len()];
-        owned2.extend(
-            caller_params
-                .iter()
-                .map(|(_, parameter)| is_owned(&parameter.convention)),
-        );
-        // Captures are borrowed, never `deinit` sources.
-        let mut deinit2: Vec<bool> = vec![false; captures.len()];
-        deinit2.extend(
-            caller_params
-                .iter()
-                .map(|(_, parameter)| is_deinit(&parameter.convention)),
-        );
-        // Captures are `mut` (their final value is written back to the enclosing
-        // variable — reference-capture semantics).
-        let mut refp2: Vec<bool> = vec![true; captures.len()];
-        refp2.extend(
-            caller_params
-                .iter()
-                .map(|(_, parameter)| is_ref(&parameter.convention)),
-        );
-        let collector_ty = |index| {
-            checked
-                .checked_type_at(&AnnotationSite::FunctionParam {
-                    module: ds.module.clone(),
-                    declaration: ds.span,
-                    syntax: ds.syntax_id,
-                    param: index,
-                })
-                .cloned()
-        };
-        let variadic_idx = dparams.iter().position(|p| p.kind == ParamKind::Variadic);
-        let kw_variadic_idx = dparams.iter().position(|p| p.kind == ParamKind::KwVariadic);
-        let regular: Vec<_> = dparams
-            .iter()
-            .enumerate()
-            .filter(|(_, parameter)| {
-                parameter.kind == ParamKind::Regular
-                    && !matches!(parameter.convention, Some(ArgConvention::Out))
+            .map(|(_, parameter)| parameter.name.clone()),
+    );
+    if let Some(result) = named_result {
+        names.push(result.name.clone());
+    }
+    let generic_site = GenericSite::Function {
+        module: ds.module.clone(),
+        declaration: ds.span,
+        syntax: ds.syntax_id,
+    };
+    let param_decls = checked
+        .generic_parameters_at(&generic_site)
+        .unwrap_or(&[])
+        .to_vec();
+    let value_parameter_locals = enclosing.frame_locals(&param_decls);
+    let enclosing_binders = &enclosing
+        .binders
+        .with_loops(&node.loop_indices)
+        .with(&param_decls);
+    names.extend(value_parameter_locals.iter().map(|(name, _)| name.clone()));
+    let mut ptys = capture_types.clone();
+    ptys.extend(caller_params.iter().map(|(param, p)| {
+        let ty = checked
+            .checked_type_at(&AnnotationSite::FunctionParam {
+                module: ds.module.clone(),
+                declaration: ds.span,
+                syntax: ds.syntax_id,
+                param: *param,
             })
-            .collect();
-        let mut declaration_names: Vec<String> = captures
-            .iter()
-            .map(|capture| capture.name.clone())
-            .collect();
-        declaration_names.extend(regular.iter().map(|(_, parameter)| parameter.name.clone()));
-        let mut declaration_types = capture_types;
-        declaration_types.extend(regular.iter().map(|(index, parameter)| {
-            checked
-                .checked_type_at(&AnnotationSite::FunctionParam {
-                    module: ds.module.clone(),
-                    declaration: ds.span,
-                    syntax: ds.syntax_id,
-                    param: *index,
-                })
-                .cloned()
-                .unwrap_or_else(|| {
-                    panic!(
-                        "checked type missing for parameter '{}' of nested function",
-                        parameter.name
-                    )
-                })
-        }));
-        let return_site = AnnotationSite::FunctionReturn {
-            module: ds.module.clone(),
-            declaration: ds.span,
-            syntax: ds.syntax_id,
-        };
-        let return_ty = checked
-            .checked_type_at(&return_site)
             .cloned()
-            .unwrap_or_else(Ty::none);
-        let effect = checked
-            .declaration_effect_at(&return_site)
-            .cloned()
-            .unwrap_or(mojito_checked::checked::DeclarationEffect {
-                raises: false,
-                error: None,
-                returns_reference: false,
-                param_writes: Vec::new(),
-                availability: Vec::new(),
+            .unwrap_or_else(|| {
+                panic!(
+                    "checked type missing for parameter '{}' of nested function",
+                    p.name
+                )
             });
-        let capture_count = captures.len();
-        let binders = enclosing_binders.with(&param_decls);
-        let defaults: Vec<_> = std::iter::repeat_n(None, capture_count)
-            .chain(regular.iter().enumerate().map(|(slot, (i, parameter))| {
-                lower_default(
-                    DefaultLowering {
-                        checked,
-                        overloads,
-                        owner: mangled,
-                        parameter,
-                        default: node.default(*i),
-                        binders: &binders,
-                        ty: declaration_types.get(capture_count + slot),
-                    },
-                    out,
-                    declarations,
-                )
-            }))
-            .collect();
-        declarations.functions.push(MirFunctionDeclaration {
-            lowered_name: mangled.clone(),
-            param_names: declaration_names,
-            param_types: declaration_types,
-            defaults,
-            required: std::iter::repeat_n(true, capture_count)
-                .chain(
-                    regular
-                        .iter()
-                        .map(|(_, parameter)| parameter.default.is_none()),
-                )
-                .collect(),
-            variadic: variadic_idx.map(|index| collector_ty(index).unwrap_or_else(Ty::none)),
-            variadic_convention: variadic_idx.and_then(|index| dparams[index].convention),
-            variadic_index: runtime_variadic_index(dparams, variadic_idx)
-                .map(|index| capture_count + index),
-            kw_variadic: kw_variadic_idx.map(|index| collector_ty(index).unwrap_or_else(Ty::none)),
-            kw_variadic_convention: kw_variadic_idx.and_then(|index| dparams[index].convention),
-            kw_variadic_index: runtime_parameter_index(dparams, kw_variadic_idx)
-                .map(|index| capture_count + index),
-            positional_only: regular_marker_index(dparams, *positional_only)
-                .map(|index| capture_count + index),
-            keyword_only: effective_keyword_only_index(dparams, *keyword_only, variadic_idx)
-                .map(|index| capture_count + index),
-            param_decls,
-            has_receiver: false,
-            receiver_convention: None,
-            param_conventions: std::iter::repeat_n(Some(ArgConvention::Ref), capture_count)
-                .chain(regular.iter().map(|(_, parameter)| parameter.convention))
-                .collect(),
-            ret_ty: return_ty,
-            returns_reference: effect.returns_reference,
-            raises: effect.raises,
-            error_ty: effect.error,
-            ref_params: std::iter::repeat_n(true, captures.len())
-                .chain(
-                    regular
-                        .iter()
-                        .map(|(_, parameter)| is_ref(&parameter.convention)),
-                )
-                .collect(),
-            // Captured places stay exclusive at the call.
-            param_writes: std::iter::repeat_n(true, captures.len())
-                .chain(effect.param_writes.iter().copied())
-                .collect(),
-            availability: Vec::new(),
-            enclosing: Some(enclosing.name.to_string()),
-            region_binders: node.region_binders(),
-        });
-        let immutable_captures: HashSet<String> = captures
+        body_parameter_ty(p, ty)
+    }));
+    // The closure object owns declaration-time copy/move captures. A lifted
+    // invocation only borrows those environment slots, just as it borrows
+    // explicit read/mut/ref captures; it must neither destroy nor duplicate
+    // them on each call.
+    let mut owned2: Vec<bool> = vec![false; captures.len()];
+    owned2.extend(
+        caller_params
             .iter()
-            .filter(|capture| capture.kind == mojito_ast::ast::CaptureKind::Imm)
-            .map(|capture| capture.name.clone())
-            .collect();
-        let mut ncfg =
-            Cfg::build_checked_fn_with_captures(checked, &names, immutable_captures, &def.body);
-        // Every lifted slot takes its checker-owned storage type. In particular,
-        // an intermediate closure may only forward a captured sibling closure
-        // to a descendant, so body expression inference has no use from which
-        // it could rediscover that callable type.
-        for (slot, ty) in ptys.iter().enumerate() {
-            ncfg.var_types.insert(slot as VarId, ty.clone());
-        }
-        for (name, ty) in &value_parameter_locals {
-            let slot = ncfg
-                .vars
-                .iter()
-                .position(|candidate| candidate == name)
-                .expect("nested value parameter was seeded into the function CFG");
-            ncfg.var_types.insert(slot as VarId, ty.clone());
-        }
-        let mut thunks = ComptimeThunks::for_owner(mangled);
-        let mut nf = lower_cfg_nested(
-            &ncfg,
-            &registry,
-            overloads,
-            effect.returns_reference,
-            &refp2,
-            &captures
-                .iter()
-                .map(|capture| capture.binding)
-                .collect::<Vec<_>>(),
-            &[],
-            None,
-            &[],
-            enclosing_binders,
-            &mut thunks,
-        );
-        thunks.request_applications(checked, &ncfg.body);
-        thunks.lower(checked, overloads, out, declarations);
-        nf.n_params = ptys.len();
-        for (slot, ty) in ptys.iter().enumerate() {
-            nf.var_tys
-                .entry(slot as VarId)
-                .or_insert_with(|| ty.clone());
-        }
-        for (name, ty) in &value_parameter_locals {
-            let slot = nf
-                .var_names
-                .iter()
-                .position(|candidate| candidate == name)
-                .expect("nested value parameter was retained in the MIR frame");
-            nf.var_tys
-                .entry(slot as VarId)
-                .or_insert_with(|| ty.clone());
-        }
-        nf.param_types = ptys;
-        nf.owned_params = owned2;
-        nf.deinit_params = deinit2;
-        nf.ref_params = refp2;
-        nf.returns_reference = effect.returns_reference;
-        // The nested `def` was checked as an ordinary declaration, so its
-        // return and raising contract are recorded checked facts.
-        nf.ret_ty = checked.checked_type_at(&return_site).cloned();
-        if let Some(effect) = checked.declaration_effect_at(&return_site) {
-            nf.raises = effect.raises;
-            nf.error_ty.clone_from(&effect.error);
-        }
-        if let Some(result) = named_result {
-            materialize_named_result_return(&mut nf, &result.name);
-        }
-        out.push((mangled.clone(), nf));
-        for child in node.children {
-            lower_nested_node(
-                checked,
-                child,
-                &registry,
-                overloads,
+            .map(|(_, parameter)| is_owned(&parameter.convention)),
+    );
+    // Captures are borrowed, never `deinit` sources.
+    let mut deinit2: Vec<bool> = vec![false; captures.len()];
+    deinit2.extend(
+        caller_params
+            .iter()
+            .map(|(_, parameter)| is_deinit(&parameter.convention)),
+    );
+    // Captures are `mut` (their final value is written back to the enclosing
+    // variable — reference-capture semantics).
+    let mut refp2: Vec<bool> = vec![true; captures.len()];
+    refp2.extend(
+        caller_params
+            .iter()
+            .map(|(_, parameter)| is_ref(&parameter.convention)),
+    );
+    let collector_ty = |index| {
+        checked
+            .checked_type_at(&AnnotationSite::FunctionParam {
+                module: ds.module.clone(),
+                declaration: ds.span,
+                syntax: ds.syntax_id,
+                param: index,
+            })
+            .cloned()
+    };
+    let variadic_idx = dparams.iter().position(|p| p.kind == ParamKind::Variadic);
+    let kw_variadic_idx = dparams.iter().position(|p| p.kind == ParamKind::KwVariadic);
+    let regular: Vec<_> = dparams
+        .iter()
+        .enumerate()
+        .filter(|(_, parameter)| {
+            parameter.kind == ParamKind::Regular
+                && !matches!(parameter.convention, Some(ArgConvention::Out))
+        })
+        .collect();
+    let mut declaration_names: Vec<String> = captures
+        .iter()
+        .map(|capture| capture.name.clone())
+        .collect();
+    declaration_names.extend(regular.iter().map(|(_, parameter)| parameter.name.clone()));
+    let mut declaration_types = capture_types;
+    declaration_types.extend(regular.iter().map(|(index, parameter)| {
+        checked
+            .checked_type_at(&AnnotationSite::FunctionParam {
+                module: ds.module.clone(),
+                declaration: ds.span,
+                syntax: ds.syntax_id,
+                param: *index,
+            })
+            .cloned()
+            .unwrap_or_else(|| {
+                panic!(
+                    "checked type missing for parameter '{}' of nested function",
+                    parameter.name
+                )
+            })
+    }));
+    let return_site = AnnotationSite::FunctionReturn {
+        module: ds.module.clone(),
+        declaration: ds.span,
+        syntax: ds.syntax_id,
+    };
+    let return_ty = checked
+        .checked_type_at(&return_site)
+        .cloned()
+        .unwrap_or_else(Ty::none);
+    let effect = checked
+        .declaration_effect_at(&return_site)
+        .cloned()
+        .unwrap_or(mojito_checked::checked::DeclarationEffect {
+            raises: false,
+            error: None,
+            returns_reference: false,
+            param_writes: Vec::new(),
+            availability: Vec::new(),
+        });
+    let capture_count = captures.len();
+    let binders = enclosing_binders.with(&param_decls);
+    let defaults: Vec<_> = std::iter::repeat_n(None, capture_count)
+        .chain(regular.iter().enumerate().map(|(slot, (i, parameter))| {
+            lower_default(
+                DefaultLowering {
+                    checked,
+                    overloads,
+                    owner: mangled,
+                    parameter,
+                    default: node.default(*i),
+                    binders: &binders,
+                    ty: declaration_types.get(capture_count + slot),
+                },
                 out,
                 declarations,
-                Enclosing {
-                    name: mangled,
-                    binders: enclosing_binders,
-                    locals: &value_parameter_locals,
-                },
-            );
-        }
+            )
+        }))
+        .collect();
+    declarations.functions.push(MirFunctionDeclaration {
+        lowered_name: mangled.clone(),
+        param_names: declaration_names,
+        param_types: declaration_types,
+        defaults,
+        required: std::iter::repeat_n(true, capture_count)
+            .chain(
+                regular
+                    .iter()
+                    .map(|(_, parameter)| parameter.default.is_none()),
+            )
+            .collect(),
+        variadic: variadic_idx.map(|index| collector_ty(index).unwrap_or_else(Ty::none)),
+        variadic_convention: variadic_idx.and_then(|index| dparams[index].convention),
+        variadic_index: runtime_variadic_index(dparams, variadic_idx)
+            .map(|index| capture_count + index),
+        kw_variadic: kw_variadic_idx.map(|index| collector_ty(index).unwrap_or_else(Ty::none)),
+        kw_variadic_convention: kw_variadic_idx.and_then(|index| dparams[index].convention),
+        kw_variadic_index: runtime_parameter_index(dparams, kw_variadic_idx)
+            .map(|index| capture_count + index),
+        positional_only: regular_marker_index(dparams, *positional_only)
+            .map(|index| capture_count + index),
+        keyword_only: effective_keyword_only_index(dparams, *keyword_only, variadic_idx)
+            .map(|index| capture_count + index),
+        param_decls,
+        has_receiver: false,
+        receiver_convention: None,
+        param_conventions: std::iter::repeat_n(Some(ArgConvention::Ref), capture_count)
+            .chain(regular.iter().map(|(_, parameter)| parameter.convention))
+            .collect(),
+        ret_ty: return_ty,
+        returns_reference: effect.returns_reference,
+        raises: effect.raises,
+        error_ty: effect.error,
+        ref_params: std::iter::repeat_n(true, captures.len())
+            .chain(
+                regular
+                    .iter()
+                    .map(|(_, parameter)| is_ref(&parameter.convention)),
+            )
+            .collect(),
+        // Captured places stay exclusive at the call.
+        param_writes: std::iter::repeat_n(true, captures.len())
+            .chain(effect.param_writes.iter().copied())
+            .collect(),
+        availability: Vec::new(),
+        enclosing: Some(enclosing.name.to_string()),
+        region_binders: node.region_binders(),
+    });
+    let immutable_captures: HashSet<String> = captures
+        .iter()
+        .filter(|capture| capture.kind == mojito_ast::ast::CaptureKind::Imm)
+        .map(|capture| capture.name.clone())
+        .collect();
+    let mut ncfg =
+        Cfg::build_checked_fn_with_captures(checked, &names, immutable_captures, &def.body);
+    // Every lifted slot takes its checker-owned storage type. In particular,
+    // an intermediate closure may only forward a captured sibling closure
+    // to a descendant, so body expression inference has no use from which
+    // it could rediscover that callable type.
+    for (slot, ty) in ptys.iter().enumerate() {
+        ncfg.var_types.insert(slot as VarId, ty.clone());
+    }
+    for (name, ty) in &value_parameter_locals {
+        let slot = ncfg
+            .vars
+            .iter()
+            .position(|candidate| candidate == name)
+            .expect("nested value parameter was seeded into the function CFG");
+        ncfg.var_types.insert(slot as VarId, ty.clone());
+    }
+    let mut thunks = ComptimeThunks::for_owner(mangled);
+    let mut nf = lower_cfg_nested(
+        &ncfg,
+        &registry,
+        overloads,
+        effect.returns_reference,
+        &refp2,
+        &captures
+            .iter()
+            .map(|capture| capture.binding)
+            .collect::<Vec<_>>(),
+        &[],
+        None,
+        &[],
+        enclosing_binders,
+        &mut thunks,
+    );
+    thunks.request_applications(checked, &ncfg.body);
+    thunks.lower(checked, overloads, out, declarations);
+    nf.n_params = ptys.len();
+    for (slot, ty) in ptys.iter().enumerate() {
+        nf.var_tys
+            .entry(slot as VarId)
+            .or_insert_with(|| ty.clone());
+    }
+    for (name, ty) in &value_parameter_locals {
+        let slot = nf
+            .var_names
+            .iter()
+            .position(|candidate| candidate == name)
+            .expect("nested value parameter was retained in the MIR frame");
+        nf.var_tys
+            .entry(slot as VarId)
+            .or_insert_with(|| ty.clone());
+    }
+    nf.param_types = ptys;
+    nf.owned_params = owned2;
+    nf.deinit_params = deinit2;
+    nf.ref_params = refp2;
+    nf.returns_reference = effect.returns_reference;
+    // The nested `def` was checked as an ordinary declaration, so its
+    // return and raising contract are recorded checked facts.
+    nf.ret_ty = checked.checked_type_at(&return_site).cloned();
+    if let Some(effect) = checked.declaration_effect_at(&return_site) {
+        nf.raises = effect.raises;
+        nf.error_ty.clone_from(&effect.error);
+    }
+    if let Some(result) = named_result {
+        materialize_named_result_return(&mut nf, &result.name);
+    }
+    out.push((mangled.clone(), nf));
+    for child in node.children {
+        lower_nested_node(
+            checked,
+            child,
+            &registry,
+            overloads,
+            out,
+            declarations,
+            Enclosing {
+                name: mangled,
+                binders: enclosing_binders,
+                locals: &value_parameter_locals,
+            },
+        );
     }
 }
 
@@ -826,15 +791,14 @@ fn analyze_captures(
         .collect()
 }
 
-/// The checked declaration of the nested `def` `name` at statement node
-/// `node`, and its node's `def`.
-fn checked_nested_declaration<'a>(
-    checked: &'a mojito_checked::checked::CheckedProgram,
+/// The checked declaration of the nested `def` at statement node `node`,
+/// and its node's `def`.
+fn checked_nested_declaration(
+    checked: &mojito_checked::checked::CheckedProgram,
     node: CheckedStmtId,
-    name: &str,
 ) -> (
-    &'a mojito_checked::checked::CheckedDeclaration,
-    &'a mojito_checked::checked::CheckedDef,
+    &mojito_checked::checked::CheckedDeclaration,
+    &mojito_checked::checked::CheckedDef,
 ) {
     let declaration = checked
         .tables()
@@ -842,11 +806,12 @@ fn checked_nested_declaration<'a>(
         .and_then(|node| node.declaration)
         .and_then(|id| checked.declaration(id))
         .expect("checked nested function declaration is missing");
+    let def = def_of(checked, node);
     debug_assert!(
         declaration.kind == mojito_checked::checked::CheckedDeclKind::Function
-            && declaration.name == name
+            && declaration.name == def.name
     );
-    (declaration, def_of(checked, node))
+    (declaration, def)
 }
 
 /// The `def` of the nested declaration at statement node `node`.
@@ -860,28 +825,28 @@ fn def_of(
     }
 }
 
-fn analyze_root_children<'a>(
+fn analyze_root_children(
     checked: &mojito_checked::checked::CheckedProgram,
     parent_mangled: &str,
-    body: &'a [Stmt],
     ids: &[CheckedStmtId],
-) -> Vec<NestedNode<'a>> {
+) -> Vec<NestedNode> {
     let mut direct = Vec::new();
-    find_nested_defs(checked.tables(), body, ids, &mut Vec::new(), &mut direct);
-    let mut totals = HashMap::<String, usize>::new();
+    find_nested_defs(checked.tables(), ids, &mut Vec::new(), &mut direct);
+    let mut totals = HashMap::<&str, usize>::new();
     for site in &direct {
-        if let StmtKind::Def { name, .. } = &site.statement.kind {
-            *totals.entry(name.clone()).or_default() += 1;
-        }
+        *totals
+            .entry(def_of(checked, site.node).name.as_str())
+            .or_default() += 1;
     }
     direct
         .into_iter()
-        .filter_map(|site| {
-            let StmtKind::Def { name, .. } = &site.statement.kind else {
-                return None;
-            };
-            let duplicate = totals.get(name).copied().unwrap_or_default() > 1;
-            Some(analyze_node(checked, site, parent_mangled, duplicate))
+        .map(|site| {
+            let duplicate = totals
+                .get(def_of(checked, site.node).name.as_str())
+                .copied()
+                .unwrap_or_default()
+                > 1;
+            analyze_node(checked, site, parent_mangled, duplicate)
         })
         .collect()
 }

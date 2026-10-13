@@ -8,6 +8,15 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- MIR reads each declaration it lowers from its checked op (R643): a
+  `def`'s name, parameters, markers, and defaults from its `CheckedDef`, a
+  struct's fields and methods from its `CheckedStruct`, and a trait
+  default from its own `def` node, which the whole program now holds as a
+  package unit does, as upstream lowers a function from its op. Nested
+  `def`s and lambdas are found by walking statement ids alone, so a lifted
+  thunk no longer rebuilds its prologue's syntax (R655). No program's
+  output or MIR changes.
+
 - HIR is handed every body as its statement nodes (R629): a unit's from its
   declaration's op, the top level's and a wrapper's from the tables' roots,
   a nested `def`'s or lambda's from its checked `def`, and a lifted thunk's
