@@ -4057,3 +4057,21 @@ fn closed_aggregate_parameter_argument_has_no_runtime_form() {
         "{errors:?}"
     );
 }
+
+#[test]
+fn lone_struct_dunder_operator_names_its_method() {
+    // A struct operator is its dunder call: the checker names the selected
+    // dunder even when it is the struct's only declaration, while a scalar
+    // operator names none.
+    let instructions = instrs(
+        "struct S(Movable):\n    var v: Int\n    def __init__(out self, v: Int):\n        self.v = v\n    def __add__(self, o: Int) -> Int:\n        return self.v + o\n\ndef main():\n    var s = S(4)\n    var n = 1\n    print(s + 1)\n    print(n + 2)\n",
+    );
+    let resolved = instructions
+        .iter()
+        .filter_map(|instruction| match instruction {
+            MirInstr::BinOp { resolved, .. } => Some(resolved.as_deref()),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(resolved, [Some("S.__add__"), None], "{instructions:#?}");
+}

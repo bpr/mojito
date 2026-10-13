@@ -108,10 +108,10 @@ impl VmBackend {
         } else if let Value::Struct { name, .. } = &l
             && let Some(dunder) = op.dunder()
         {
-            // An overloaded dunder carries the checker-selected symbol (the
-            // overload key of `StringSpan.__eq__(rhs: String)`), retargeted
-            // to the runtime receiver type like a method call; otherwise
-            // arity selects.
+            // A struct operator carries the checker-selected dunder symbol
+            // (`S.__add__`, or the overload key of `StringSpan.__eq__(rhs:
+            // String)`), retargeted to the runtime receiver type like a
+            // method call; arity selects only for an operator naming none.
             let sname = name.clone();
             let fname = prog.runtime_method_name(&sname, dunder, resolved, 1);
             return self.call_resolved_dunder(prog, &sname, dunder, vec![l, r], Some(&fname));

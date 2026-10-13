@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R702**.
+Next free ID: **R704**.
 
 ## Ordered Work
 
@@ -298,18 +298,41 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R687 A struct operator's operand owner dies after the result's
-  consumer**
+- [ ] **R702 An operator through a trait bound keeps its operand's owner
+  through the result's consumer**
 
-  Problem: `print(o + 1)` over `def __add__(self, o: Int) -> Int` on a
-  struct with a printing destructor prints `del 4` then `5` at the pin, and
-  `5` then `del 4` in Mojito.
-  - The operator's MIR `binary` carries `resolved: absent`, so
-    `ArgumentPassing` (`register_loans.rs`) has no contract for it, and the
-    aggregate load of `o` retains its owner through the result's consumer.
-  - The pin destroys `o` right after `__add__` returns, as after a method
-    call `o.__add__(1)`.
-  - Found while landing R681 (2026-10-13).
+  Problem: `def f[T: Comparable & Copyable & Deinitable](a: T)` with
+  `var x = a.copy(); print(x < a)`, called as `f(S(9))` over a struct with
+  a printing destructor, prints `del 9, False, del 9` at the pin and
+  `False, del 9, del 9` in Mojito.
+  - The `binary` over `T` carries `resolved: absent`: the checker selects
+    no requirement for a type-parameter operand, so ownership treats the
+    operator as a value operation and `x`'s owner outlives `print`.
+  - A concrete struct operator already names its dunder (`S.__lt__`) and
+    so dies at the operator, as after `x.__lt__(a)`.
+  - The Mojo-shaped fix records the bound's requirement
+    (`__trait_dispatch.__lt__…`) as the operator's target, which needs
+    the requirement signature R682 gives a trait-dispatch call.
+  - Found while landing R687 (2026-10-13).
+  - Depends on R682.
+  - Model: Opus, Not Planned.
+
+- [ ] **R703 A chained comparison's struct links name no dunder**
+
+  Problem: `print(a < b < c)` over a struct with a printing destructor
+  prints `del 1, del 2, del 2, del 3, True` at the pin and
+  `del 2, del 1, del 3, True` in Mojito.
+  - `Flatten::compare_chain` (`crates/mojito-mir/src/mir/lower_expr/ctrl.rs`)
+    emits every link as `BinOp { resolved: None }`, because
+    `infer_compare_chain` calls `infer_infix(None, ..)` with no span to
+    record a target on, so the links' operand owners die late.
+  - The fix records each link's selected dunder on the chain's checked op,
+    one target per link, as a lone operator records it.
+  - With a printing copy initializer the pin moves the middle operand at
+    its last use (no `copy 2`, one `del 2`), where Mojito prints `copy 2`
+    and then only one `del 2`: the copy is R136's, and the missing second
+    destructor needs checking in the same session.
+  - Found while landing R687 (2026-10-13).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

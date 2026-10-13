@@ -44,6 +44,14 @@ fn del_runs_at_last_use_not_scope_end() {
 }
 
 #[test]
+fn struct_operator_operand_owner_dies_before_the_result_consumer() {
+    // `r + 1` is `r.__add__(1)`: the operands' owners die when the dunder
+    // returns, before `print` consumes its result, as the pin orders them.
+    let src = "struct S(Movable):\n    var v: Int\n    def __init__(out self, v: Int):\n        self.v = v\n    def __add__(self, o: Int) -> Int:\n        return self.v + o\n    def __sub__(self, o: Self) -> Int:\n        return self.v - o.v\n    def __deinit__(deinit self):\n        print(\"del\", self.v)\n\ndef main():\n    var r = S(1)\n    print(r + 1)\n    var b = S(2)\n    var c = S(3)\n    print(b - c)\n";
+    assert_eq!(vm(src), "del 1\n2\ndel 3\ndel 2\n-1\n");
+}
+
+#[test]
 fn mut_self_reassignment_destroys_the_replaced_value() {
     // `self = Holder(2)` writes through the receiver's own handle into the
     // caller's storage, so no redefining `DefVar` ends the old value's live

@@ -332,6 +332,12 @@ impl Checker {
             )?
             && let Some(r) = self.struct_dunder(&nominal_ty, dunder, &[&nominal_ty])
         {
+            if let Some(span) = span
+                && let Some(dispatch) = self.struct_infix_dispatch(op, &nominal_ty, &nominal_ty)?
+                && !dispatch.negated_equality
+            {
+                self.record_at(span).overload_target = Some(dispatch.target);
+            }
             return r;
         }
         // Operator overloading: `a OP b` on a user struct dispatches to the left
@@ -368,9 +374,7 @@ impl Checker {
                     &dispatch.struct_args,
                     span.source.as_deref(),
                 );
-                if let Some(target) = dispatch.target {
-                    self.record_at(span).overload_target = Some(target);
-                }
+                self.record_at(span).overload_target = Some(dispatch.target);
             }
             let dunder = if dispatch.negated_equality {
                 "__eq__"
@@ -446,14 +450,14 @@ impl Checker {
     ///
     /// Among same-arity overloads the operand type selects, first by value
     /// coercion, then through an `@implicit` conversion of the right operand,
-    /// as a call argument would convert; an overloaded dunder records the
-    /// exact lowered symbol so `BinOp.resolved` names it. `a != b` on an
-    /// Equatable struct declaring `__eq__` without `__ne__` is Equatable's
-    /// default `__ne__` (`not (a == b)`): the operator dispatches `__eq__`
-    /// and MIR negates the result. The default is the trait's, so a struct
-    /// that does not conform to `Equatable` has no `__ne__` (Mojo: "does not
-    /// implement the '__ne__' method"). `struct_dunder_signature_for` falls
-    /// back to the first same-arity declaration for diagnostics, so
+    /// as a call argument would convert; `BinOp.resolved` names the selected
+    /// dunder's lowered symbol, so the operator is that method's call.
+    /// `a != b` on an Equatable struct declaring `__eq__` without `__ne__` is
+    /// Equatable's default `__ne__` (`not (a == b)`): the operator dispatches
+    /// `__eq__` and MIR negates the result. The default is the trait's, so a
+    /// struct that does not conform to `Equatable` has no `__ne__` (Mojo:
+    /// "does not implement the '__ne__' method"). `struct_dunder_signature_for`
+    /// falls back to the first same-arity declaration for diagnostics, so
     /// acceptance is re-checked here: a `__ne__` overload set that accepts
     /// no operand of this type still defers to `__eq__`. The dunder's
     /// availability clause (`__eq__ ... where conforms_to(Self.T,
@@ -492,7 +496,6 @@ impl Checker {
         let TyKind::Struct(sname, _) = lt.kind() else {
             unreachable!("dunder signatures resolve on struct receivers")
         };
-        let overloaded = info.methods.get(dunder).is_some_and(|sigs| sigs.len() > 1);
         let mut operand_ty = rt.clone();
         let mut selected = sig;
         let mut converted = false;
@@ -530,14 +533,7 @@ impl Checker {
         let reads = |convention: Option<ArgConvention>| {
             matches!(convention, None | Some(ArgConvention::Imm))
         };
-        let target = overloaded.then(|| {
-            method_lowered_name(
-                sname,
-                dunder,
-                selected,
-                self.self_instance_ty(sname).as_ref(),
-            )
-        });
+        let target = self.dunder_symbol(sname, dunder, selected, info);
         Ok(Some(StructInfixDispatch {
             target,
             negated_equality,
@@ -557,8 +553,7 @@ impl Checker {
     /// reflected dunder (`rt.__radd__(lt)`), decided from the operand types
     /// alone: what `infer_infix` records at the operator when the left
     /// operand has no dunder for the pair, and what an instance of a checked
-    /// template realizes at its own types. The symbol is the overload key
-    /// only when the reflected dunder is overloaded.
+    /// template realizes at its own types.
     ///
     /// `None` when the right operand is not a struct whose reflected dunder
     /// takes the left operand under its availability clause.
@@ -578,17 +573,7 @@ impl Checker {
         }
         self.method_constraint_result(sig, &[], &info.decls, targs)
             .ok()?;
-        Some(
-            if info
-                .methods
-                .get(reflected)
-                .is_some_and(|sigs| sigs.len() > 1)
-            {
-                method_lowered_name(rname, reflected, sig, self.self_instance_ty(rname).as_ref())
-            } else {
-                format!("{rname}.{reflected}")
-            },
-        )
+        Some(self.dunder_symbol(rname, reflected, sig, info))
     }
 
     /// Type a membership test `x in c` / `x not in c` → `Bool`. The container is
@@ -1094,6 +1079,23 @@ impl Checker {
             ty: ty.to_string(),
         })
     }
+
+    /// The lowered symbol of the dunder an operator selected on struct
+    /// `sname`: its overload key when the dunder is overloaded, else
+    /// `{struct}.{dunder}`.
+    fn dunder_symbol(
+        &self,
+        sname: &str,
+        dunder: &str,
+        sig: &MethodSig,
+        info: &StructInfo,
+    ) -> String {
+        if info.methods.get(dunder).is_some_and(|sigs| sigs.len() > 1) {
+            method_lowered_name(sname, dunder, sig, self.self_instance_ty(sname).as_ref())
+        } else {
+            format!("{sname}.{dunder}")
+        }
+    }
 }
 
 /// A readable symbol for an infix operator, for error messages.
@@ -1139,9 +1141,8 @@ pub(super) const fn prefix_symbol(op: PrefixOp) -> &'static str {
 /// Whether `ty` is the nominal `Optional[Int]` (module-qualified or not).
 /// What [`Checker::struct_infix_dispatch`] decided for one operator.
 pub(super) struct StructInfixDispatch {
-    /// The lowered symbol `BinOp.resolved` names: an overloaded dunder's, or
-    /// a per-instantiation clone's. `None` for a lone declaration.
-    pub(super) target: Option<String>,
+    /// The selected dunder's lowered symbol, which `BinOp.resolved` names.
+    pub(super) target: String,
     /// `!=` served by `__eq__` and a negation.
     pub(super) negated_equality: bool,
     /// The right operand's type as the selected dunder takes it.

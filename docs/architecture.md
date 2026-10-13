@@ -2095,9 +2095,12 @@ struct declaring an operation trait must define its dunder. Conversions
 paths opaque parameters already used. Builtin scalars keep primitive execution
 (`apply_infix`/`apply_prefix`) behind the protocol; a struct operand dispatches
 through its dunder (`apply_binop`/`apply_prefix`, and the `abs`/`round`/`Int`
-builtins). Recording the resolved operator dunder as a MIR adjustment for the
-textual schema is deferred to that milestone, where its shape can be validated
-against a real consumer.
+builtins). The checker records every struct operator's selected dunder as the
+operator's `BinOp.resolved` — a lone one as `{struct}.{dunder}`, an overloaded
+one by its overload key — so the operator is that method call: ownership treats
+a resolved `BinOp` as a call, and its operands' owners die at the operator, as
+after `a.__add__(b)`. An operator over a type parameter names no dunder; the
+elaborator retargets it at each instance.
 
 Augmented assignment (`place OP= rhs`) on a user-defined value dispatches to the
 dedicated in-place dunder rather than the binary operator: the checker selects

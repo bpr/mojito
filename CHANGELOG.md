@@ -8,6 +8,12 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A struct operator names the dunder the checker selected even when the
+  struct declares only one, so it is that method's call (R687):
+  `print(o + 1)` over a lone `__add__` destroys `o` when `__add__` returns,
+  before `print` runs, as the pin and `o.__add__(1)` do; likewise `b - c`
+  over two struct operands, `d != e` served by `__eq__`, and a generic
+  struct's operator.
 - A pointer subscript (`p[i]`, `p[]`, `p[unsafe_offset=i]`) reads its
   pointee in place, as upstream's `ref`-returning `__getitem__` does, and
   only a consuming use copies it (R700): `p[0].copy()` copies once instead
