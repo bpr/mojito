@@ -499,6 +499,20 @@ impl<'a> Node<'a> {
         callable_target(self.adjustments())
     }
 
+    /// What each link of this chained comparison dispatched, in link order;
+    /// empty when the check recorded none.
+    pub(super) fn compare_links(self) -> &'a [mojito_checked::checked::CheckedCompareLink] {
+        self.adjustments()
+            .iter()
+            .find_map(|adjustment| match adjustment {
+                mojito_checked::checked::SemanticAdjustment::CompareLinks(links) => {
+                    Some(links.as_slice())
+                }
+                _ => None,
+            })
+            .unwrap_or_default()
+    }
+
     pub(super) fn implicit_conversion(self) -> Option<String> {
         self.adjustments()
             .iter()

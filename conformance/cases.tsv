@@ -546,3 +546,4 @@ display-argument-built-at-call-setup	run	assets/ok/display_argument_built_at_cal
 dict-display-literal-constructor	run	assets/ok/dict_display_literal_constructor.mojo
 trait-bound-argument-drop-order	run	assets/ok/trait_bound_argument_drop_order.mojo
 trait-bound-comparison-drop-order	run	assets/ok/trait_bound_comparison_drop_order.mojo
+chained-comparison-link-drop-order	run	assets/ok/chained_comparison_link_drop_order.mojo

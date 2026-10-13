@@ -1,8 +1,10 @@
 //! Operator, SIMD-construction, and pointer-construction type inference
 //! for the checker. Extracted from `checker.rs`; see `docs/symbol-map.md`.
 
+use super::places::is_place_expr;
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
+use mojito_checked::checked::{CheckedCompareLink, SemanticAdjustment};
 use mojito_checked::declaration::compiler_trait_declaration;
 use mojito_symbol::symbol::TRAIT_DISPATCH;
 use mojito_types::types::TyKind;
@@ -420,37 +422,56 @@ impl Checker {
     }
 
     /// Type a chained comparison `a < b < c`: each adjacent pair must
-    /// compare to a `Bool`, as a single comparison does. A middle operand
-    /// feeds two links, so it is evaluated once and copied, which demands
-    /// `ImplicitlyCopyable` of it whatever its form; the two ends are read
-    /// where they lie when their link's dunder reads them.
+    /// compare to a `Bool`, as a single comparison does, and each link is
+    /// its dunder's call. The chain's record holds, per link, the dunder
+    /// that link selected ([`CheckedCompareLink`]): `infer_infix` records
+    /// it at the chain's own occurrence, as it would at a lone operator,
+    /// and the link takes it from there. Every operand a link's dunder
+    /// reads is read in place. Only the first middle operand outlives its
+    /// link: right after the first link it becomes an owned temporary for
+    /// the second, so a place there is copied, which demands
+    /// `ImplicitlyCopyable` of it; a temporary or a `^` is already owned.
+    /// Later middles are read in place by both of their links.
     pub(super) fn infer_compare_chain(
         &self,
+        span: SourceSpan,
         first: &Expr,
         rest: &[(InfixOp, Expr)],
     ) -> Result<Ty, TypeError> {
         let mut left = first;
-        for (index, (op, right)) in rest.iter().enumerate() {
-            if self.infer_infix(None, *op, left, right)? != TyKind::Bool {
+        let mut links = Vec::with_capacity(rest.len());
+        for (op, right) in rest {
+            let membership = matches!(op, InfixOp::In | InfixOp::NotIn);
+            let site = (!membership).then(|| span.clone());
+            if self.infer_infix(site, *op, left, right)? != TyKind::Bool {
                 return Err(TypeError::BadOperator {
                     op: infix_symbol(*op).to_string(),
                     operands: "a chained comparison must compare to Bool".to_string(),
                 });
             }
-            if index + 1 < rest.len() {
-                self.demand_chain_middle_copy(right)?;
-            }
+            let target = self.clear_fact(&span, |facts| facts.overload_target.take());
+            let negated_equality = self
+                .clear_fact(&span, |facts| {
+                    facts
+                        .adjustment
+                        .take_if(|adjustment| **adjustment == SemanticAdjustment::NegatedEquality)
+                })
+                .is_some();
+            links.push(CheckedCompareLink {
+                target,
+                negated_equality,
+            });
             left = right;
         }
-        if let (Some((op, second)), Some((last_op, last))) = (rest.first(), rest.last()) {
-            if self.chain_link_borrows(*op, first, second)?.0 {
-                self.borrow_chain_end(first)?;
+        if let [(_, middle), _, ..] = rest {
+            if is_place_expr(middle) {
+                self.demand_chain_middle_copy(middle)?;
             }
-            let before_last = rest.len().checked_sub(2).map_or(first, |i| &rest[i].1);
-            if self.chain_link_borrows(*last_op, before_last, last)?.1 {
-                self.borrow_chain_end(last)?;
+            if is_place_expr(middle) || matches!(middle.kind, ExprKind::Transfer(_)) {
+                self.demand_chain_middle_destroyable(middle)?;
             }
         }
+        self.record_at(span).compare_links = Some(links);
         Ok(Ty::bool())
     }
 
@@ -1049,35 +1070,32 @@ impl Checker {
         Ok(self.opaque_element(&ty).unwrap_or(ty))
     }
 
-    /// Read a chain's end operand where it lies, as a two-operand
-    /// comparison reads a struct or type-parameter operand.
-    fn borrow_chain_end(&self, operand: &Expr) -> Result<(), TypeError> {
+    /// A chain's first middle place or `^` becomes the owned temporary its
+    /// second link reads, which the body must be able to destroy: a type
+    /// parameter whose bounds do not prove `Deinitable` is abandoned, as
+    /// upstream rejects it, naming the parameter's first bound.
+    fn demand_chain_middle_destroyable(&self, operand: &Expr) -> Result<(), TypeError> {
+        const TEMPORARY: &str = "(expression temporary)";
         let ty = self.chain_operand_ty(operand)?;
-        self.borrow_nominal_place_argument(operand, &ty);
-        self.borrow_parameter_place_argument(operand, &ty);
-        Ok(())
-    }
-
-    /// Whether one link of a chained comparison reads its left and right
-    /// operands in place: a struct dunder taking them by `read`, or a bound
-    /// requirement over one type parameter.
-    fn chain_link_borrows(
-        &self,
-        op: InfixOp,
-        left: &Expr,
-        right: &Expr,
-    ) -> Result<(bool, bool), TypeError> {
-        let (lt, rt) = (self.chain_operand_ty(left)?, self.chain_operand_ty(right)?);
-        if matches!(lt.kind(), TyKind::Param { .. }) && lt == rt {
-            return Ok((true, true));
+        match ty.kind() {
+            TyKind::Param { binder, bounds, .. }
+                if self.is_own_parameter(binder) && !self.is_deinitable(&ty) =>
+            {
+                Err(TypeError::LinearAbandoned {
+                    var: TEMPORARY.to_string(),
+                    message: format!(
+                        "unhandled explicitly destroyed type '{}'",
+                        bounds.first().map_or("AnyType", String::as_str)
+                    ),
+                })
+            }
+            TyKind::Param { .. } => Ok(()),
+            _ => self.check_overwritten_referent(TEMPORARY, &ty),
         }
-        Ok(self
-            .struct_infix_dispatch(op, &lt, &rt)?
-            .map_or((false, false), |dispatch| dispatch.borrows))
     }
 
-    /// A chain's middle operand is copied for its second link, as upstream
-    /// copies it, even when it is a temporary.
+    /// A chain's first middle place is copied into the temporary its
+    /// second link reads, as upstream copies it.
     fn demand_chain_middle_copy(&self, operand: &Expr) -> Result<(), TypeError> {
         let ty = self.chain_operand_ty(operand)?;
         if self.is_implicitly_copyable(&ty) {

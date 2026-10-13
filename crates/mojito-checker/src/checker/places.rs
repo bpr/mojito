@@ -196,7 +196,7 @@ impl Checker {
     /// Whether `binder` is one of the enclosing declarations' own type
     /// parameters. The same `TyKind::Param` at a concrete call site is the
     /// erased-dispatch spelling of a solved argument instead.
-    fn is_own_parameter(&self, binder: &mojito_types::param_expr::ParamRef) -> bool {
+    pub(super) fn is_own_parameter(&self, binder: &mojito_types::param_expr::ParamRef) -> bool {
         self.tparams.iter().any(|scope| {
             scope
                 .values()

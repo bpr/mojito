@@ -8,6 +8,14 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- Each link of a chained comparison over structs is its dunder's call, as
+  the pin does (R703): `print(a < b < c)` destroys `a` after the first link
+  and the middle's temporary and `c` after the second. Only the first
+  middle is copied, right after the first link (a temporary or `^` middle
+  moves in), so `a < M(2) < c < d` and `a < b^ < c < d` over a
+  non-copyable `M` now compile, and a generic first middle not proven
+  `Deinitable` is rejected as an abandoned temporary. The package format
+  is 42.
 - A comparison (`==`, `!=`, `<`, `>`, `<=`, `>=`) over a type parameter
   bounded by `Equatable` or `Comparable` names the bound's requirement, so
   it is that requirement's call, as the pin does (R702): `print(x < a)`

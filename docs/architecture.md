@@ -2104,7 +2104,15 @@ after `a.__add__(b)`. A comparison over a type parameter bounded by
 (`__trait_dispatch.__lt__$ov$Self`), so it too is a call; the elaborator
 retargets it at a struct instance and clears it at a builtin one. Any other
 operator over a type parameter names no dunder; the elaborator retargets it at
-each instance.
+each instance. A chained comparison has no occurrence per link, so its own
+record holds one `CheckedCompareLink` per link (the selected dunder and
+whether it is Equatable's default `!=`), and MIR emits each link as that
+dunder's `BinOp` through the same emitter as a lone operator
+(`Flatten::emit_comparison`). Right after the first link, the first middle
+operand becomes an owned temporary in a hidden `$chain_middle` slot (a
+place copied, a temporary or `^` moved), which drop elaboration destroys
+after the second link or on the first link's false edge; a later middle
+place is read where it lies by both of its links.
 
 Augmented assignment (`place OP= rhs`) on a user-defined value dispatches to the
 dedicated in-place dunder rather than the binary operator: the checker selects

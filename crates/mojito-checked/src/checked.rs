@@ -571,6 +571,17 @@ impl std::fmt::Display for ComptimeSequence {
     }
 }
 
+/// What one link of a chained comparison dispatched.
+///
+/// It is what a lone operator records: the selected dunder's lowered symbol
+/// (`None` for a built-in comparison), and whether the link is Equatable's
+/// default `!=`.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct CheckedCompareLink {
+    pub target: Option<String>,
+    pub negated_equality: bool,
+}
+
 /// Checker decisions which lowering must apply explicitly.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[non_exhaustive]
@@ -809,6 +820,9 @@ pub enum SemanticAdjustment {
     /// → `m.__radd__(1)`): MIR swaps the operands and `BinOp.resolved`
     /// names the reflected method.
     ReflectedOperator,
+    /// The dunder each link of a chained comparison (`a < b < c`) selected,
+    /// in link order: MIR lowers every link as its lone operator's call.
+    CompareLinks(Vec<CheckedCompareLink>),
     /// `x.write_to(writer)` on a receiver with no `write_to` body of its own
     /// (a `Writable`-bounded type parameter or a built-in Writable value):
     /// receiver and argument swap, so MIR lowers the call as
@@ -4100,6 +4114,9 @@ fn node_adjustments(facts: &NodeFacts, expression: &Expr) -> Vec<SemanticAdjustm
     if facts.read_temporary_argument {
         adjustments.push(SemanticAdjustment::ReadTemporaryArgument);
     }
+    if let Some(links) = &facts.compare_links {
+        adjustments.push(SemanticAdjustment::CompareLinks(links.clone()));
+    }
     if facts.implicitly_copied_consuming_receiver {
         adjustments.push(SemanticAdjustment::ImplicitlyCopyConsumingReceiver);
     }
@@ -4571,6 +4588,9 @@ node_facts! {
         parameter_attributes: Vec<Option<mojito_types::types::TyArg>> => ParameterAttributes,
         /// The type a type in value position resolved to.
         type_operand: Ty => TypeOperand,
+        /// The dunder each link of a chained comparison selected, in link
+        /// order.
+        compare_links: Vec<CheckedCompareLink> => CompareLinks,
     }
     flags {
         explicit_destroy_call => ExplicitDestroyCall,

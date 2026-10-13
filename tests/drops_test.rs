@@ -69,6 +69,15 @@ fn trait_bound_comparison_destroys_operand_before_consumer() {
 }
 
 #[test]
+fn chained_comparison_link_owners_die_at_their_link() {
+    // Each link of `a < b < c` is `__lt__`'s call: `a` dies after the first
+    // link, the middle's copy and `c` after the second, as the pin orders
+    // them.
+    let src = "struct S(ImplicitlyCopyable, Movable):\n    var v: Int\n    def __init__(out self, v: Int):\n        self.v = v\n    def __lt__(self, o: Self) -> Bool:\n        return self.v < o.v\n    def __deinit__(deinit self):\n        print(\"del\", self.v)\n\ndef main():\n    var a = S(1)\n    var b = S(2)\n    var c = S(3)\n    print(a < b < c)\n";
+    assert_eq!(vm(src), "del 1\ndel 2\ndel 2\ndel 3\nTrue\n");
+}
+
+#[test]
 fn mut_self_reassignment_destroys_the_replaced_value() {
     // `self = Holder(2)` writes through the receiver's own handle into the
     // caller's storage, so no redefining `DefVar` ends the old value's live

@@ -4077,6 +4077,26 @@ fn lone_struct_dunder_operator_names_its_method() {
 }
 
 #[test]
+fn chained_comparison_links_name_their_dunders() {
+    // Each link of a struct chain is its dunder's call, as a lone operator
+    // is; a scalar chain's links name none.
+    let mir = checked_program_mir(
+        "struct S(ImplicitlyCopyable, Movable):\n    var v: Int\n    def __init__(out self, v: Int):\n        self.v = v\n    def __lt__(self, o: Self) -> Bool:\n        return self.v < o.v\n\ndef main():\n    var a = S(1)\n    var b = S(2)\n    var c = S(3)\n    print(a < b < c)\n    var n = 1\n    print(0 < n < 2)\n",
+    );
+    let mut resolved = mir_function(&mir, "main")
+        .blocks
+        .iter()
+        .flat_map(|block| &block.instrs)
+        .filter_map(|instruction| match instruction {
+            MirInstr::BinOp { resolved, .. } => Some(resolved.as_deref()),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    resolved.sort_unstable();
+    assert_eq!(resolved, [None, None, Some("S.__lt__"), Some("S.__lt__")]);
+}
+
+#[test]
 fn bound_comparison_names_its_requirement() {
     // A comparison through a `Comparable` bound is its requirement's call,
     // and the bound finds `__eq__` on the `Equatable` it refines.

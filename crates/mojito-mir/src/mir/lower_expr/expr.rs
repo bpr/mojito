@@ -253,25 +253,38 @@ impl<'a> Flatten<'a> {
             )
         });
         let (ra, rb) = if reflected { (rb, ra) } else { (ra, rb) };
-        // Equatable's default `__ne__` (checker-marked): dispatch
-        // `__eq__` and negate its result.
-        if op == InfixOp::Ne
-            && node.adjustments().iter().any(|adjustment| {
-                matches!(
-                    adjustment,
-                    mojito_checked::checked::SemanticAdjustment::NegatedEquality
-                )
-            })
-        {
-            let equal = self.fresh_typed(node.location(), None, Ty::bool());
+        let negated_equality = node.adjustments().iter().any(|adjustment| {
+            matches!(
+                adjustment,
+                mojito_checked::checked::SemanticAdjustment::NegatedEquality
+            )
+        });
+        self.emit_comparison(node.location(), op, ra, rb, resolved, negated_equality)
+    }
+
+    /// Emit one dispatched operator over `a` and `b`: `BinOp.resolved`
+    /// names the dunder the checker selected, so the operator is that
+    /// method's call. Equatable's default `__ne__` (`negated_equality`)
+    /// dispatches `__eq__` and negates its result.
+    pub(in crate::mir) fn emit_comparison(
+        &mut self,
+        location: SourceSpan,
+        op: InfixOp,
+        a: Reg,
+        b: Reg,
+        resolved: Option<String>,
+        negated_equality: bool,
+    ) -> Reg {
+        if op == InfixOp::Ne && negated_equality {
+            let equal = self.fresh_typed(location.clone(), None, Ty::bool());
             self.emit(MirInstr::BinOp {
                 op: InfixOp::Eq,
                 dest: equal,
-                a: ra,
-                b: rb,
+                a,
+                b,
                 resolved,
             });
-            let dest = self.fresh_typed(node.location(), None, Ty::bool());
+            let dest = self.fresh_typed(location, None, Ty::bool());
             self.emit(MirInstr::UnOp {
                 op: PrefixOp::Not,
                 dest,
@@ -279,12 +292,12 @@ impl<'a> Flatten<'a> {
             });
             return dest;
         }
-        let d = self.fresh(node.location(), None);
+        let d = self.fresh(location, None);
         self.emit(MirInstr::BinOp {
             op,
             dest: d,
-            a: ra,
-            b: rb,
+            a,
+            b,
             resolved,
         });
         d
@@ -607,7 +620,7 @@ impl<'a> Flatten<'a> {
                     .iter()
                     .map(|(op, value)| Some((*op, operand(value)?)))
                     .collect::<Option<Vec<_>>>()?;
-                self.compare_chain(operand(first)?, &links, node.location())
+                self.compare_chain(node, operand(first)?, &links)
             }
             // `x^`: a move out of a variable. `p.a^` (a pure field chain) is a
             // partial move of that field. A constant index into compiler-private

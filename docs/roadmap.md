@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R709**.
+Next free ID: **R711**.
 
 ## Ordered Work
 
@@ -298,22 +298,30 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R703 A chained comparison's struct links name no dunder**
+- [ ] **R709 A struct operator's temporary operand is never destroyed**
 
-  Problem: `print(a < b < c)` over a struct with a printing destructor
-  prints `del 1, del 2, del 2, del 3, True` at the pin and
-  `del 2, del 1, del 3, True` in Mojito.
-  - `Flatten::compare_chain` (`crates/mojito-mir/src/mir/lower_expr/ctrl.rs`)
-    emits every link as `BinOp { resolved: None }`, because
-    `infer_compare_chain` calls `infer_infix(None, ..)` with no span to
-    record a target on, so the links' operand owners die late.
-  - The fix records each link's selected dunder on the chain's checked op,
-    one target per link, as a lone operator records it.
-  - With a printing copy initializer the pin moves the middle operand at
-    its last use (no `copy 2`, one `del 2`), where Mojito prints `copy 2`
-    and then only one `del 2`: the copy is R136's, and the missing second
-    destructor needs checking in the same session.
-  - Found while landing R687 (2026-10-13).
+  Problem: `print(S(1) < S(2))` over a struct with a printing destructor
+  prints `del 2, del 1, True` at the pin and only `True` in Mojito.
+  - `infer_infix`'s struct dispatch never records
+    `read_temporary_argument` for a non-place operand its dunder reads.
+  - `lower_operator_operand` (`crates/mojito-mir/src/mir/calls.rs`) never
+    binds one through `bind_temporary_argument`.
+  - A chained comparison's two ends leak the same way:
+    `mk(5) < mk(6) < mk(7)` destroys only the middle.
+  - Found while landing R703 (2026-10-13).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R710 A struct operator copies a subscript operand and leaks the copy**
+
+  Problem: `print(xs[0] < xs[1])` over a `List[S]` with a printing copy
+  initializer and destructor prints `lt 1 2, True` at the pin and
+  `copy 1, copy 2, lt 1 2, True` in Mojito, which never destroys the copies.
+  - The pin reads each element in place through the `ref`-returning
+    `__getitem__`; Mojito lowers the operand as a copied value.
+  - A chained comparison's first middle subscript is copied twice:
+    once as the operand, once into the second link's temporary.
+  - Found while landing R703 (2026-10-13).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

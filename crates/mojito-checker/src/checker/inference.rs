@@ -1310,7 +1310,9 @@ impl Checker {
             }
             // Chained comparison `a < b < c`: each link is a comparison; the
             // result is `Bool`.
-            ExprKind::Compare { first, rest } => self.infer_compare_chain(first, rest),
+            ExprKind::Compare { first, rest } => {
+                self.infer_compare_chain(expr.source_span(), first, rest)
+            }
             // Slice `object[lower:upper:step]` on a `List`/`String`: each present
             // bound must be `Int`; the result is the same sequence type.
             ExprKind::Slice {

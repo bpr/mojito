@@ -186,44 +186,55 @@ impl<'a> Flatten<'a> {
         d
     }
 
-    /// Lower a chained comparison `a op1 b op2 c …` to a `Bool`. Each operand is
-    /// evaluated **once**, left to right; a false link short-circuits the rest (the
-    /// remaining operands are not evaluated). The result variable holds the last
-    /// comparison evaluated (which is `false` on the link that failed). The two
-    /// ends are operator operands, read in place where the checker lent them; a
-    /// middle operand feeds two links and is an ordinary (copied) value, read
-    /// once.
+    /// Lower chained comparison `chain`, `a op1 b op2 c …`, to a `Bool`.
+    /// Each operand is evaluated **once**, left to right, inside its link's
+    /// block; a false link short-circuits the rest (the remaining operands
+    /// are not evaluated). The result variable holds the last comparison
+    /// evaluated (which is `false` on the link that failed). Each link is
+    /// the call of the dunder the checker recorded for it, reading its
+    /// operands in place at its own setup, as a lone operator does. Right
+    /// after the first link, before its branch, the first middle operand
+    /// becomes an owned temporary for the second link (a place is copied, a
+    /// temporary or `^` is moved), which dies after that link or on the
+    /// first link's false edge. A later middle is read in place by both of
+    /// its links; a temporary there is held in a slot likewise.
     pub(in crate::mir) fn compare_chain(
         &mut self,
+        chain: Node<'a>,
         first: Node<'a>,
         rest: &[(InfixOp, Node<'a>)],
-        sp: SourceSpan,
     ) -> Reg {
+        let sp = chain.location();
+        let links = chain.compare_links();
         let result = self.fresh_var();
         let merge_blk = self.new_block();
-        // The first link's left operand is read at that link's setup; a
-        // later link's left operand is the previous link's value.
-        if !rest.is_empty() {
-            self.open_call_setup();
-        }
-        let mut prev = self.lower_operator_operand(first);
+        let mut prev = None;
         for (i, (op, operand)) in rest.iter().enumerate() {
-            let cur = if i + 1 == rest.len() {
-                self.lower_operator_operand(*operand)
-            } else {
-                self.outside_call_setup(|this| this.expr(*operand))
+            self.open_call_setup();
+            let left = match prev.take() {
+                None => self.lower_operator_operand(first),
+                Some(ChainMiddle::Read(value)) => value,
+                Some(ChainMiddle::Place(place)) => self.lower_operator_operand(place),
+                Some(ChainMiddle::Slot(variable, ty)) => {
+                    let read = self.fresh_typed(sp.clone(), Some(variable), ty.clone());
+                    self.emit(MirInstr::LoadPlace {
+                        dest: read,
+                        place: MirPlace::root(variable, Some(ty)),
+                    });
+                    read
+                }
             };
-            if i == 0 {
-                self.close_call_setup(None);
-            }
-            let cmp = self.fresh(sp.clone(), None);
-            self.emit(MirInstr::BinOp {
-                op: *op,
-                dest: cmp,
-                a: prev,
-                b: cur,
-                resolved: None,
-            });
+            let cur = self.lower_operator_operand(*operand);
+            self.close_call_setup(None);
+            let link = links.get(i);
+            let cmp = self.emit_comparison(
+                sp.clone(),
+                *op,
+                left,
+                cur,
+                link.and_then(|link| link.target.clone()),
+                link.is_some_and(|link| link.negated_equality),
+            );
             self.emit(MirInstr::DefVar {
                 var: result,
                 src: cmp,
@@ -232,6 +243,7 @@ impl<'a> Flatten<'a> {
             if i + 1 == rest.len() {
                 self.f.blocks[self.cur].term = MirTerm::Jump(merge_blk);
             } else {
+                let middle = self.chain_middle(*operand, cur, i == 0);
                 // A false link is the answer (result is already it); a true link
                 // continues to the next comparison.
                 let next_blk = self.new_block();
@@ -241,7 +253,7 @@ impl<'a> Flatten<'a> {
                     else_b: merge_blk,
                 };
                 self.cur = next_blk;
-                prev = cur;
+                prev = Some(middle);
             }
         }
         self.cur = merge_blk;
@@ -715,6 +727,65 @@ impl<'a> Flatten<'a> {
         self.comprehension_clauses(&plan, 0);
         self.finish_nominal_collection(node, collection, &target)
     }
+
+    /// What a chain's next link reads for middle operand `operand`, whose
+    /// link just read it as `value`. The first middle becomes an owned
+    /// temporary (a place copied, a temporary or `^` taken as is); a later
+    /// middle place stays where it lies, and a named one is read there again
+    /// at the next link, so its owner lives through that link. An owned
+    /// temporary of a type with a destructor lives in a hidden slot, so it
+    /// is destroyed after its last link or on a false edge.
+    fn chain_middle(&mut self, operand: Node<'a>, value: Reg, first: bool) -> ChainMiddle<'a> {
+        let place = matches!(
+            operand.op(),
+            CheckedOp::Identifier(_) | CheckedOp::Member { .. } | CheckedOp::Index { .. }
+        );
+        if place && !first {
+            return if is_field_chain(operand) {
+                ChainMiddle::Place(operand)
+            } else {
+                ChainMiddle::Read(value)
+            };
+        }
+        let ty = self
+            .f
+            .reg_types
+            .get(&value.0)
+            .cloned()
+            .or_else(|| operand.checked.ty.clone());
+        let Some(ty) = ty.filter(crate::mir::calls::owns_droppable_storage) else {
+            return ChainMiddle::Read(value);
+        };
+        let owned = if place {
+            let copied = self.fresh_typed(operand.location(), None, ty.clone());
+            self.emit(MirInstr::CopyValue {
+                dest: copied,
+                value,
+            });
+            copied
+        } else {
+            value
+        };
+        let variable = self.var(&format!("$chain_middle_r{}", owned.0));
+        self.var_types.insert(variable, ty.clone());
+        self.emit(MirInstr::DefVar {
+            var: variable,
+            src: owned,
+            binding_ty: Some(ty.clone()),
+        });
+        ChainMiddle::Slot(variable, ty)
+    }
+}
+
+/// What a chained comparison's next link reads as its left operand.
+enum ChainMiddle<'a> {
+    /// The register the previous link read.
+    Read(Reg),
+    /// A named place (`x`, `x.f`) the next link reads where it lies.
+    Place(Node<'a>),
+    /// The hidden slot holding the first middle's owned temporary, of its
+    /// type, read at the next link's setup.
+    Slot(VarId, Ty),
 }
 
 /// The checked adjustments of a collection display. A `comptime for` display
@@ -733,4 +804,14 @@ fn display_adjustments(node: &CheckedExpr) -> impl Iterator<Item = &SemanticAdju
         SemanticAdjustment::ComptimeDisplay { construction, .. } => &**construction,
         other => other,
     })
+}
+
+/// Whether `node` is a named place, `x` or a field chain off one (`x.f.g`),
+/// which reading again evaluates nothing.
+fn is_field_chain(node: Node<'_>) -> bool {
+    match node.op() {
+        CheckedOp::Identifier(_) => true,
+        CheckedOp::Member { .. } => node.member_object().is_some_and(is_field_chain),
+        _ => false,
+    }
 }
