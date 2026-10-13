@@ -223,16 +223,16 @@ impl<'a> Flatten<'a> {
     /// Getter and setter contracts may adapt the same source expression to
     /// different parameter types, but Mojo still evaluates that expression
     /// exactly once.
-    pub(super) fn expr_without_call_value_adjustments(&mut self, expression: &Expr) -> Reg {
-        if let Some(reference) = self.node_of(expression).reference_result() {
-            let handle = self.reference_handle(self.node_of(expression));
+    pub(super) fn expr_without_call_value_adjustments(&mut self, expression: Node<'a>) -> Reg {
+        if let Some(reference) = expression.reference_result() {
+            let handle = self.reference_handle(expression);
             let value_ty = reference.referent;
-            let read = self.fresh_typed(expression.source_span(), None, value_ty.clone());
+            let read = self.fresh_typed(expression.location(), None, value_ty.clone());
             self.emit(MirInstr::ReadRef {
                 dest: read,
                 reference: handle,
             });
-            let copied = self.fresh_typed(expression.source_span(), None, value_ty);
+            let copied = self.fresh_typed(expression.location(), None, value_ty);
             self.emit(MirInstr::CopyValue {
                 dest: copied,
                 value: read,
@@ -240,8 +240,8 @@ impl<'a> Flatten<'a> {
             return copied;
         }
 
-        let value = self.expr_unconverted(self.node_of(expression));
-        if let Some(ty) = self.node(expression).and_then(Node::ty) {
+        let value = self.expr_unconverted(expression);
+        if let Some(ty) = expression.ty() {
             self.f.reg_types.entry(value.0).or_insert(ty);
         }
         value
@@ -253,29 +253,29 @@ impl<'a> Flatten<'a> {
     /// updated value before the setter, without re-evaluating the source.
     pub(super) fn lower_augmented_argument_source(
         &mut self,
-        expression: &Expr,
+        expression: Node<'a>,
         retain_place: bool,
     ) -> (Reg, Option<MirPlace>) {
         if !retain_place {
             return (self.expr_without_call_value_adjustments(expression), None);
         }
-        if let Some(place) = self.simple_place(self.node_of(expression)) {
+        if let Some(place) = self.simple_place(expression) {
             return (
                 self.expr_without_call_value_adjustments(expression),
                 Some(place),
             );
         }
-        if self.node_of(expression).reference_result().is_some() {
-            return self.lower_call_receiver(self.node_of(expression));
+        if expression.reference_result().is_some() {
+            return self.lower_call_receiver(expression);
         }
-        if let Some(place) = self.lower_projected_reference_place(self.node_of(expression)) {
+        if let Some(place) = self.lower_projected_reference_place(expression) {
             let value = self.fresh_typed(
-                expression.source_span(),
+                expression.location(),
                 Some(place.root),
                 place
                     .ty
                     .clone()
-                    .or_else(|| self.node(expression).and_then(Node::ty))
+                    .or_else(|| expression.ty())
                     .unwrap_or_else(Ty::error),
             );
             self.emit(MirInstr::LoadPlace {
@@ -284,14 +284,14 @@ impl<'a> Flatten<'a> {
             });
             return (value, Some(place));
         }
-        if let Some(place) = self.try_place(self.node_of(expression)) {
+        if let Some(place) = self.try_place(expression) {
             let value = self.fresh_typed(
-                expression.source_span(),
+                expression.location(),
                 Some(place.root),
                 place
                     .ty
                     .clone()
-                    .or_else(|| self.node(expression).and_then(Node::ty))
+                    .or_else(|| expression.ty())
                     .unwrap_or_else(Ty::error),
             );
             self.emit(MirInstr::LoadPlace {

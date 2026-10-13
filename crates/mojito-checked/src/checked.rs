@@ -2110,21 +2110,13 @@ impl CheckedTables {
         self.expressions.get(id.0 as usize)
     }
 
-    /// The syntax of node `id` and its operands, rebuilt from their ops: a
-    /// spelled sugar's place holds the construction the check spelled for
-    /// it, and each name `spell` answers for is spelled as it answers (an
-    /// `Identifier` or walrus `Named` node HIR resolved to a slot takes the
-    /// slot's name). Compile-time parameter arguments, t-string parts, and a
-    /// lambda's `def` are rebuilt unspelled, as they name no slot of the
-    /// enclosing frame. Transitional, for MIR, which still lowers syntax;
-    /// R649 lowers from the ops and deletes it.
-    pub fn syntax_of_spelled(
-        &self,
-        id: CheckedNodeId,
-        spell: &dyn Fn(&CheckedExpr) -> Option<String>,
-    ) -> Option<Expr> {
+    /// The syntax of node `id` and its operands, rebuilt from their ops, each
+    /// name as written: a spelled sugar's place holds the construction the
+    /// check spelled for it. Transitional, for [`Self::statement_syntax_of`],
+    /// whose deletion (R650) deletes it.
+    pub fn syntax_of(&self, id: CheckedNodeId) -> Option<Expr> {
         let node = self.expression(id)?;
-        let child = |id: &CheckedNodeId| self.syntax_of_spelled(*id, spell);
+        let child = |id: &CheckedNodeId| self.syntax_of(*id);
         let boxed = |id: &CheckedNodeId| child(id).map(Box::new);
         let optional =
             |id: &Option<CheckedNodeId>| id.as_ref().map_or(Some(None), |id| boxed(id).map(Some));
@@ -2154,9 +2146,7 @@ impl CheckedTables {
             CheckedOp::None => ExprKind::None,
             CheckedOp::Uninitialized => ExprKind::Uninitialized,
             CheckedOp::EmptySubscript => ExprKind::EmptySubscript,
-            CheckedOp::Identifier(name) => {
-                ExprKind::Identifier(spell(node).unwrap_or_else(|| name.clone()))
-            }
+            CheckedOp::Identifier(name) => ExprKind::Identifier(name.clone()),
             CheckedOp::TypeValue { ty, .. } => ExprKind::TypeValue(ty.clone()),
             CheckedOp::Prefix(op, value) => ExprKind::Prefix(*op, boxed(value)?),
             CheckedOp::Infix(op, left, right) => ExprKind::Infix(*op, boxed(left)?, boxed(right)?),
@@ -2253,7 +2243,7 @@ impl CheckedTables {
                 def: Box::new(self.statement_syntax_of(*def)?),
             },
             CheckedOp::Named { name, value } => ExprKind::Named {
-                name: spell(node).unwrap_or_else(|| name.clone()),
+                name: name.clone(),
                 value: boxed(value)?,
             },
             CheckedOp::IfExpr {
@@ -2330,9 +2320,9 @@ impl CheckedTables {
                     .map(|part| {
                         Some(match part {
                             CheckedTStringPart::Literal(text) => TStringPart::Literal(text.clone()),
-                            CheckedTStringPart::Expr(value) => TStringPart::Expr(Box::new(
-                                self.syntax_of_spelled(*value, &|_| None)?,
-                            )),
+                            CheckedTStringPart::Expr(value) => {
+                                TStringPart::Expr(Box::new(self.syntax_of(*value)?))
+                            }
                         })
                     })
                     .collect::<Option<_>>()?,
@@ -2414,7 +2404,7 @@ impl CheckedTables {
     }
 
     /// The syntax of statement `id` and its bodies, rebuilt from their ops,
-    /// each expression unspelled through [`Self::syntax_of_spelled`].
+    /// each expression through [`Self::syntax_of`].
     /// Transitional, for the readers of a package unit's rebuilt statements;
     /// R650 deletes it.
     pub fn statement_syntax_of(&self, id: CheckedStmtId) -> Option<Stmt> {
@@ -2422,7 +2412,7 @@ impl CheckedTables {
             FnParam, Method, StmtKind, StructComptime, TraitComptime, TraitMethod, WithItem,
         };
         let node = self.statement(id)?;
-        let expr = |id: &CheckedNodeId| self.syntax_of_spelled(*id, &|_| None);
+        let expr = |id: &CheckedNodeId| self.syntax_of(*id);
         let exprs = |ids: &[CheckedNodeId]| ids.iter().map(expr).collect::<Option<Vec<_>>>();
         let block = |ids: &[CheckedStmtId]| {
             ids.iter()
@@ -2783,9 +2773,7 @@ impl CheckedTables {
     fn param_arg_syntax(&self, argument: &CheckedParamArg) -> Option<ParamArg> {
         Some(match argument {
             CheckedParamArg::Type { ty, .. } => ParamArg::Type(ty.clone()),
-            CheckedParamArg::Value(value) => {
-                ParamArg::Value(self.syntax_of_spelled(*value, &|_| None)?)
-            }
+            CheckedParamArg::Value(value) => ParamArg::Value(self.syntax_of(*value)?),
             CheckedParamArg::Named { name, value } => ParamArg::Named {
                 name: name.clone(),
                 value: Box::new(self.param_arg_syntax(value)?),

@@ -4821,21 +4821,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R648 MIR's calls and statements lower rebuilt syntax**
-
-  `mir/calls.rs`, `mir/lower_stmt.rs`, and `mir.rs`'s `Flatten` methods
-  (`bind_comptime_value`, `comptime_condition_of`, `named_by`) still take
-  `&Expr` or `&Stmt`.
-  - `lower_stmt` matches `CheckedStmtOp` alone and reads its operand
-    handles from `HirStmt::expressions` in the op's operand order.
-  - `named_by` walks the node (`CheckedTables::walk_expression`).
-  - Done when no `Flatten` method takes `&Expr` or `&Stmt` outside R638's
-    and R644's sites, and the probe fixtures' MIR and output are unchanged
-    on both backends.
-  - Plan: `R623-hir-and-mir-keep-transitional-syntax-plan.md`, slice 6.
-  - Depends on R647.
-  - Model: Opus, Not Planned.
-
 - [ ] **R649 MIR keeps the syntax rebuilder and the address-keyed fact
   index**
 

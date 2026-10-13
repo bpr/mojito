@@ -8,6 +8,16 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- MIR lowers a straight-line statement from its checked node (R648): the
+  op alone decides the lowering, and each operand is the handle of the
+  statement's matching HIR expression, a subscript store's slice bounds and
+  multi-subscript arguments the ids the op names, as upstream lowering reads
+  a statement's operands off its operation. A parameter default's binder
+  scan walks the default's checked node, and a lifted thunk rebuilds its
+  prologue where it is lowered. MIR rebuilds no syntax for a body
+  expression or statement, and the syntax bridge and its address-keyed
+  frames are deleted. No program's output or MIR changes.
+
 - MIR's call family takes the call's node handle (R653): a direct call,
   an invocation, and a method call read their callee, receiver,
   arguments, keywords, and compile-time arguments off the handle, as

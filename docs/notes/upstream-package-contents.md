@@ -66,7 +66,8 @@ its declaration-site facts, `mojito_checked::unit::CheckedUnit`);
 it (HIR CFG, MIR), and inserts its drops when the elaborator first reaches
 it. What remains is representation: a node's annotation operands and a
 declaration's signature are still syntax (R628, R630), and the importer
-still rebuilds statement syntax from the nodes for HIR and MIR (R649, R650).
+still rebuilds statement syntax from the nodes for HIR and MIR's
+declaration readers (R650).
 
 ## Finding: the package names no install path
 

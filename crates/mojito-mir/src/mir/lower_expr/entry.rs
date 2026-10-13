@@ -9,7 +9,7 @@ impl<'a> Flatten<'a> {
     /// Post-order: each subexpression emits one instruction and yields its result
     /// `Reg`, so `foo(bar(x))` → `t0 = bar(x); t1 = foo(t0)`. Total over `Expr`.
     pub(in crate::mir) fn expr_hir(&mut self, expression: &'a mojito_hir::hir::HirExpr) -> Reg {
-        self.with_hir(expression, |this, _| this.expr(this.handle(expression)))
+        self.with_statement_loans(|this| this.expr(this.handle(expression)))
     }
 
     /// A branch condition: `expr_hir` plus the `Boolable` conversion of a
@@ -18,7 +18,7 @@ impl<'a> Flatten<'a> {
         &mut self,
         expression: &'a mojito_hir::hir::HirExpr,
     ) -> Reg {
-        self.with_hir(expression, |this, _| {
+        self.with_statement_loans(|this| {
             let node = this.handle(expression);
             let value = this.expr(node);
             this.truthiness(node, value)
@@ -33,80 +33,12 @@ impl<'a> Flatten<'a> {
         &mut self,
         expression: &'a mojito_hir::hir::HirExpr,
     ) -> mojito_types::types::GenericConstraint {
-        self.with_hir(expression, |this, _| {
-            this.comptime_condition_of(this.handle(expression))
-        })
-    }
-
-    /// Lower HIR expression `expression` through `lower`, given the syntax
-    /// rebuilt from its node, with that syntax's facts active.
-    pub(in crate::mir) fn with_hir<R>(
-        &mut self,
-        expression: &'a mojito_hir::hir::HirExpr,
-        lower: impl FnOnce(&mut Self, &Expr) -> R,
-    ) -> R {
-        let syntax = std::rc::Rc::new(self.hir_syntax(expression));
-        self.active_semantics.push(SyntaxFrame::new(
-            SyntaxRoot::Expr(std::rc::Rc::clone(&syntax)),
-            [expression],
-        ));
-        let outer = std::mem::take(&mut self.conversion_view_loans);
-        let result = lower(self, &syntax);
-        self.conversion_view_loans = outer;
-        self.active_semantics.pop();
-        result
-    }
-
-    /// The handle of the node `expression` was rebuilt from, read from the
-    /// innermost active frame holding it (R646's transitional bridge).
-    pub(in crate::mir) fn node(&self, expression: &Expr) -> Option<Node<'a>> {
-        let key = std::ptr::from_ref::<Expr>(expression) as usize;
-        let tables: &'a mojito_checked::checked::CheckedTables = self.checked;
-        self.active_semantics
-            .iter()
-            .rev()
-            .find_map(|frame| frame.nodes.get(&key).copied())
-            .map(|hir| Node::new(hir, tables))
-    }
-
-    /// The handle of rebuilt syntax `expression`: [`Self::node`] for the
-    /// lowering that still holds syntax (R649 deletes it).
-    pub(in crate::mir) fn node_of(&self, expression: &Expr) -> Node<'a> {
-        self.node(expression).expect("rebuilt syntax has its node")
+        self.with_statement_loans(|this| this.comptime_condition_of(this.handle(expression)))
     }
 
     /// The handle of HIR expression `expression`.
     pub(in crate::mir) fn handle(&self, expression: &'a mojito_hir::hir::HirExpr) -> Node<'a> {
         Node::new(expression, self.checked)
-    }
-
-    /// The syntax rebuilt for `operand`, an operand of the node `syntax` was
-    /// rebuilt from (R646's transitional bridge).
-    pub(in crate::mir) fn operand_syntax<'e>(
-        &self,
-        syntax: &'e Expr,
-        operand: Node<'a>,
-    ) -> Option<&'e Expr> {
-        let target = self
-            .active_semantics
-            .iter()
-            .rev()
-            .find_map(|frame| frame.syntax.get(&operand.address()).copied())?;
-        expression_children(syntax)
-            .into_iter()
-            .find(|child| std::ptr::from_ref::<Expr>(child) as usize == target)
-    }
-
-    /// The syntax rebuilt for the operand `read` finds of the node `syntax`
-    /// was rebuilt from (R646's transitional bridge).
-    pub(in crate::mir) fn operand<'e>(
-        &self,
-        syntax: &'e Expr,
-        read: impl FnOnce(Node<'a>) -> Option<Node<'a>>,
-    ) -> Option<&'e Expr> {
-        self.node(syntax)
-            .and_then(read)
-            .and_then(|operand| self.operand_syntax(syntax, operand))
     }
 
     /// The checked node of HIR expression `expression`.
@@ -127,19 +59,6 @@ impl<'a> Flatten<'a> {
         name: &str,
     ) -> String {
         name_spelling(&self.slots, &self.vars, node).unwrap_or_else(|| name.to_owned())
-    }
-
-    /// [`hir_syntax`] in this function's frame.
-    pub(in crate::mir) fn hir_syntax(&self, expression: &mojito_hir::hir::HirExpr) -> Expr {
-        hir_syntax(self.checked, &self.slots, &self.vars, expression)
-    }
-
-    /// [`hir_statement_syntax`] in this function's frame.
-    pub(in crate::mir) fn hir_statement_syntax(
-        &self,
-        statement: &mojito_hir::hir::HirStmt,
-    ) -> Stmt {
-        hir_statement_syntax(self.checked, &self.slots, &self.vars, statement)
     }
 
     fn comptime_condition_of(
@@ -200,16 +119,14 @@ impl<'a> Flatten<'a> {
         &mut self,
         expression: &'a mojito_hir::hir::HirExpr,
     ) -> Reg {
-        self.with_hir(expression, |this, _| {
-            this.reference_handle(this.handle(expression))
-        })
+        self.with_statement_loans(|this| this.reference_handle(this.handle(expression)))
     }
 
     pub(in crate::mir) fn projected_reference_place_hir(
         &mut self,
         expression: &'a mojito_hir::hir::HirExpr,
     ) -> Option<MirPlace> {
-        self.with_hir(expression, |this, _| {
+        self.with_statement_loans(|this| {
             this.lower_projected_reference_place(this.handle(expression))
         })
     }
@@ -218,7 +135,7 @@ impl<'a> Flatten<'a> {
         &mut self,
         expression: &'a mojito_hir::hir::HirExpr,
     ) -> MirPlace {
-        self.with_hir(expression, |this, _| this.place(this.handle(expression)))
+        self.with_statement_loans(|this| this.place(this.handle(expression)))
     }
 
     pub(in crate::mir) fn expr(&mut self, e: Node<'a>) -> Reg {

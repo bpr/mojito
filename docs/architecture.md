@@ -165,8 +165,8 @@ import (every compilation that links the bundled library):
   enters the pipeline at HIR: the importer installs the unit's tables as
   its checked program (`CheckedUnit::program`, `CheckedProgram::installed`,
   over the package's own overload sets and constants, rebuilding no
-  arena; HIR walks the nodes, and the syntax MIR still lowers is rebuilt
-  from them until R649, the statements of a unit until R650), lowers it (`mir::lower_package_unit`), and then inserts drops, as
+  arena; HIR and MIR walk the nodes, and the statements of a unit are rebuilt
+  as syntax until R650), lowers it (`mir::lower_package_unit`), and then inserts drops, as
   upstream's importer lowers its semantic control flow and runs its
   lifetime pass on a body it materializes.
 - **A declaration's record** (`checked::package`) holds the declaration
@@ -1747,9 +1747,11 @@ still hand it a body's syntax statements, which `Lower::statements` maps to
 their nodes through the transitional `CheckedTables::statement_at` (R629); a
 `try` region hands it the op's statement ids directly, and an expression
 thunk hands it its returned value's node (`Cfg::build_checked_thunk`). MIR lowers an opaque
-statement and a `try` by matching its `CheckedStmtOp`, reading only the
-expression operands it still lowers from rebuilt syntax; its declaration
-walks still read statement syntax (R643). Source spans index
+statement and a `try` by matching its `CheckedStmtOp` alone, each expression
+operand the handle of the matching `HirStmt::expressions` entry, in the op's
+operand order; its declaration walks still read statement syntax (R643), and
+a lifted thunk's prologue is the evaluated bindings' statements rebuilt where
+the thunk is lowered (R629). Source spans index
 diagnostics and associate a checker-approved compile-time value argument with
 the register produced from that same source occurrence; they are not used to
 re-resolve a type, overload, effect, or origin decision.
@@ -1758,28 +1760,26 @@ Call targets, implicit conversions, moves, explicit-destruction decisions, and
 reference-handle preservation are stored canonically as `SemanticAdjustment`
 values on checked nodes. `HirExpr` names its node and recursively retains its
 operands' trees in `CheckedOp::operands` order, with the place HIR computed for
-each; it holds no syntax and no copy of a node attribute. MIR rebuilds the
-syntax it still lowers from the ops through the transitional
-`CheckedTables::syntax_of_spelled` (`hir_syntax`), which yields the
-construction the check spelled where a sugar was written and spells each local
-name as the slot `Cfg::slots` resolved it to (`name_spelling`), and pairs
-that syntax tree with the recursive node tree by address for the length of one
-lowering (`SyntaxFrame`). MIR reads every checked fact off a node handle,
+each; it holds no syntax and no copy of a node attribute. MIR rebuilds no syntax
+for a body expression or statement; a local name is spelled as the slot
+`Cfg::slots` resolved it to (`name_spelling`) only where MIR names a slot.
+MIR reads every checked fact off a node handle,
 `Node` (`mir/node.rs`): HIR's tree for the expression with its checked node,
 operand `i` being the `i`th of the op's `CheckedOp::operands`, as upstream
 lowering holds an operation and reads its operands and attributes off it. The
 node's type, owner, call contract, adjustments, and operand shapes are `Node`
 methods, and the loans and capture accesses that also need the function being
-lowered are `Flatten` methods taking one (`mir/facts.rs`). Two transitional
-bridges serve the syntax lowering still walks, until R649 deletes them:
-`Flatten::node` (and `node_of`) finds a piece of syntax's handle, and
-`Flatten::operand` finds the syntax rebuilt for a handle's operand. `Flatten::expr`, its adjustments, `reference_handle`, the place
+lowered are `Flatten` methods taking one (`mir/facts.rs`). `Flatten::expr`, its adjustments, `reference_handle`, the place
 lowerers, the compile-time argument slots, and the call-site argument,
 receiver, anchor, and invalidation lowering take a handle and read operands
 off it, and so does every expression family `expr_unconverted` dispatches
 to, the call family's callee (`Node::callee`), receiver, arguments,
-keywords, and compile-time arguments included; only statement lowering
-still holds syntax (R648). `Flatten` borrows its CFG's
+keywords, and compile-time arguments included, and so does statement
+lowering: a binding's value, a store's place and value, an augmented
+assignment's place and operand, a subscript store's slice bounds and
+multi-subscript arguments (the ids the op names), and a parameter default's
+binder scan (`EnclosingBinders::named_by`, a `CheckedTables::walk_expression`
+over the default's node). `Flatten` borrows its CFG's
 tables and HIR for its own lifetime, so a handle outlives the `&mut self`
 calls it is passed to; a local display binding's HIR, which can cross after
 a `try` region's CFG is dropped, is copied into the function's arena

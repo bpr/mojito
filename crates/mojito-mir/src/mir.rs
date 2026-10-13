@@ -22,7 +22,6 @@
 use mojito_ast::ast::DeclaredParam;
 use mojito_ast::ast::{
     ArgConvention, Dtype, Expr, ExprKind, InfixOp, ParamArg, ParamKind, PrefixOp, Stmt, StmtKind,
-    TStringPart,
 };
 use mojito_ast::call::{effective_keyword_only_index, regular_marker_index};
 use mojito_checked::checked::{AnnotationSite, GenericSite};
@@ -826,12 +825,6 @@ fn struct_declaration(
     })
 }
 
-/// An expression's source span, stamped by the parser (`ast::Expr.span`). Fed
-/// into the [`SpanTable`] so each temporary can be traced back to its origin.
-fn span(e: &Expr) -> SourceSpan {
-    e.source_span()
-}
-
 /// A parameter's default metadata: a folded literal, or a `Construct` when the
 /// checker recorded an `@implicit` conversion at the default expression's span
 /// (so the omitted-arg slot materializes by running the converting constructor,
@@ -1510,7 +1503,7 @@ fn lower_default<P: DeclaredParam>(
     }
     let ty = ty?;
     let node = node.expect("checked default has no node");
-    let binders = if binders.named_by(default) {
+    let binders = if binders.named_by(checked.tables(), node) {
         binders.clone()
     } else {
         EnclosingBinders::default()
@@ -1740,13 +1733,11 @@ struct ThunkRequest {
 }
 
 /// A local `comptime` binding that denotes no parameter expression: its
-/// owner and its statement node, with the statement's syntax, which a thunk
-/// that reads the binding keeps as its prologue until thunk bodies are
-/// statement nodes (R629).
+/// owner and its statement node, whose syntax a thunk that reads the binding
+/// rebuilds as its prologue until thunk bodies are statement nodes (R629).
 #[derive(Clone)]
 struct EvaluatedBinding {
     owner: mojito_types::origin::OwnerId,
-    statement: Stmt,
     id: CheckedStmtId,
 }
 
@@ -1802,7 +1793,7 @@ impl ComptimeThunks {
     }
 
     /// Record a local `comptime` binding of a display, declared by
-    /// `statement` of node `id`, and lift the display as the function the check named in
+    /// statement node `id`, and lift the display as the function the check named in
     /// `sequence`, its application to the binders in scope at the binding:
     /// the loops over the name iterate that sequence, and a type or a
     /// parameter argument that reads an element or the length carries it.
@@ -1810,7 +1801,6 @@ impl ComptimeThunks {
     /// its argument order.
     fn bind_display(
         &mut self,
-        statement: &Stmt,
         id: CheckedStmtId,
         binding: DisplayBinding,
         sequence: &mojito_types::param_expr::ParamExpr,
@@ -1855,25 +1845,16 @@ impl ComptimeThunks {
             ty: binding.ty.clone(),
             evaluated: self.evaluated[..binding.preceding].to_vec(),
         });
-        self.bind_evaluated(binding.owner, statement, id);
+        self.bind_evaluated(binding.owner, id);
         self.displays.push(binding);
         Ok(())
     }
 
     /// Record that the local `comptime` binding `owner`, declared by
-    /// `statement` of node `id`, denotes no parameter expression: a thunk
-    /// that reads it evaluates the statement first.
-    fn bind_evaluated(
-        &mut self,
-        owner: mojito_types::origin::OwnerId,
-        statement: &Stmt,
-        id: CheckedStmtId,
-    ) {
-        self.evaluated.push(EvaluatedBinding {
-            owner,
-            statement: statement.clone(),
-            id,
-        });
+    /// statement node `id`, denotes no parameter expression: a thunk that
+    /// reads it evaluates the statement first.
+    fn bind_evaluated(&mut self, owner: mojito_types::origin::OwnerId, id: CheckedStmtId) {
+        self.evaluated.push(EvaluatedBinding { owner, id });
     }
 
     /// The display binding `owner` is, if it is one.
@@ -2106,7 +2087,12 @@ fn thunk_prologue(
             {
                 read.extend(bindings_read(checked.tables(), *value));
             }
-            statements.push(binding.statement.clone());
+            statements.push(
+                checked
+                    .tables()
+                    .statement_syntax_of(binding.id)
+                    .expect("an evaluated binding names a statement node of its tables"),
+            );
         }
     }
     statements.reverse();
@@ -2320,13 +2306,8 @@ struct Flatten<'a> {
     /// `try` region can cross after the region's CFG is gone.
     held: &'a typed_arena::Arena<mojito_hir::hir::HirExpr>,
     /// The slot each local-name node of the CFG being lowered reads
-    /// ([`Cfg::slots`]), which spells that name in the syntax rebuilt from it.
+    /// ([`Cfg::slots`]), which spells that name in this frame.
     slots: HashMap<mojito_checked::checked::CheckedNodeId, VarId>,
-    /// The syntax rebuilt for each HIR expression or statement being
-    /// lowered, innermost last, indexed against HIR's tree for it. A frame is
-    /// installed only while lowering that expression or statement; source
-    /// spans are never used as semantic keys.
-    active_semantics: Vec<SyntaxFrame<'a>>,
     /// Local reference slot to its frozen owner place and permission.
     aliases: HashMap<VarId, MirLoan>,
     runtime_aliases: std::collections::HashSet<VarId>,
@@ -3479,7 +3460,7 @@ impl<'a> Flatten<'a> {
             .find(|display| display.name == *name || display.aliases.contains(name))?
             .sequence
             .clone();
-        let position = self.value_binder_expr(index)?;
+        let position = self.value_binder_annotation(index)?;
         let element = ParamContext::detached()
             .list_get(&sequence, &position)
             .ok()?;
@@ -3490,8 +3471,9 @@ impl<'a> Flatten<'a> {
     /// reads it next.
     fn build_display(&mut self, binding: &DisplayBinding) {
         let display_hir = self.held.alloc((*binding.hir).clone());
-        self.with_hir(display_hir, |this, display| {
-            let built = this.expr(this.handle(display_hir));
+        self.with_statement_loans(|this| {
+            let display = this.handle(display_hir);
+            let built = this.expr(display);
             this.bind_comptime_value(&binding.name, display, Some(binding.owner), built);
         });
     }
@@ -3515,16 +3497,6 @@ impl<'a> Flatten<'a> {
             .flatten()
             .and_then(|owner| self.comptime_thunks.display(owner))
             .cloned()
-    }
-
-    /// `expression` over the enclosing value binders: its node's
-    /// [`Self::value_binder_node`], else, for bracket syntax inside an
-    /// annotation, which has no node, [`Self::value_binder_annotation`].
-    fn value_binder_expr(&self, expression: &Expr) -> Option<ParamExpr> {
-        match self.node(expression).map(Node::id) {
-            Some(node) => self.value_binder_node(node),
-            None => self.value_binder_annotation(expression),
-        }
     }
 
     /// Node `id` over the enclosing value binders, through the shared typed
@@ -3600,7 +3572,7 @@ impl<'a> Flatten<'a> {
                 self.enclosing_binders.value(field, true)
             }
             ExprKind::Prefix(PrefixOp::Neg, value) => {
-                context.neg(&self.value_binder_expr(value)?).ok()
+                context.neg(&self.value_binder_annotation(value)?).ok()
             }
             ExprKind::Infix(
                 op @ (InfixOp::Add
@@ -3615,8 +3587,8 @@ impl<'a> Flatten<'a> {
             ) => context
                 .infix(
                     *op,
-                    &self.value_binder_expr(left)?,
-                    &self.value_binder_expr(right)?,
+                    &self.value_binder_annotation(left)?,
+                    &self.value_binder_annotation(right)?,
                 )
                 .ok(),
             _ => None,
@@ -3840,71 +3812,6 @@ struct NestedInfo {
     callable_ty: Option<Ty>,
 }
 
-/// The syntax rebuilt for one HIR expression or statement while it is
-/// lowered, indexed both ways against HIR's tree for it. Transitional: R649
-/// deletes it once nothing in MIR lowers syntax.
-struct SyntaxFrame<'a> {
-    root: SyntaxRoot,
-    /// Each piece of the syntax, by address, to the HIR expression it was
-    /// rebuilt from.
-    nodes: HashMap<usize, &'a mojito_hir::hir::HirExpr>,
-    /// Each HIR expression, by address, to the syntax rebuilt from it.
-    syntax: HashMap<usize, usize>,
-}
-
-impl<'a> SyntaxFrame<'a> {
-    /// The frame of `root`, the syntax rebuilt from the HIR expressions
-    /// `expressions` (one per root expression [`SyntaxRoot::expressions`]
-    /// yields).
-    fn new(
-        root: SyntaxRoot,
-        expressions: impl IntoIterator<Item = &'a mojito_hir::hir::HirExpr>,
-    ) -> Self {
-        let mut frame = Self {
-            root,
-            nodes: HashMap::new(),
-            syntax: HashMap::new(),
-        };
-        let root = frame.root.clone();
-        for (syntax, expression) in root.expressions().into_iter().zip(expressions) {
-            frame.index(syntax, expression);
-        }
-        frame
-    }
-
-    fn index(&mut self, syntax: &Expr, expression: &'a mojito_hir::hir::HirExpr) {
-        let address = std::ptr::from_ref::<Expr>(syntax) as usize;
-        self.nodes.insert(address, expression);
-        self.syntax.insert(
-            std::ptr::from_ref::<mojito_hir::hir::HirExpr>(expression) as usize,
-            address,
-        );
-        for (child_syntax, child) in expression_children(syntax)
-            .into_iter()
-            .zip(&expression.children)
-        {
-            self.index(child_syntax, child);
-        }
-    }
-}
-
-/// The owned root of a [`SyntaxFrame`]'s rebuilt syntax.
-#[derive(Clone)]
-enum SyntaxRoot {
-    Expr(std::rc::Rc<Expr>),
-    Stmt(std::rc::Rc<Stmt>),
-}
-
-impl SyntaxRoot {
-    /// The root expressions, in HIR's order for them.
-    fn expressions(&self) -> Vec<&Expr> {
-        match self {
-            Self::Expr(root) => vec![root],
-            Self::Stmt(root) => statement_expression_roots(root),
-        }
-    }
-}
-
 /// [`lower_cfg`] with a nested-`def` registry in scope: a call to a registered
 /// nested `def` is rewritten to its lifted function (captures prepended) and the
 /// nested `def` statement lowers to nothing.
@@ -3978,7 +3885,6 @@ fn lower_cfg_nested(
             checked: &cfg.checked,
             held: &held,
             slots: cfg.slots.clone(),
-            active_semantics: Vec::new(),
             aliases: HashMap::new(),
             runtime_aliases: reference_parameters
                 .iter()
@@ -4103,152 +4009,6 @@ struct NestedCapture {
     kind: mojito_ast::ast::CaptureKind,
 }
 
-fn expression_children(expression: &Expr) -> Vec<&Expr> {
-    fn param_value(argument: &ParamArg) -> Option<&Expr> {
-        match argument {
-            ParamArg::Value(value) => Some(value),
-            ParamArg::Named { value, .. } => match &**value {
-                ParamArg::Value(value) => Some(value),
-                ParamArg::Type(_) | ParamArg::Named { .. } => None,
-            },
-            ParamArg::Type(_) => None,
-        }
-    }
-
-    match &expression.kind {
-        ExprKind::Prefix(_, value)
-        | ExprKind::Transfer(value)
-        | ExprKind::Spread(value)
-        | ExprKind::Named { value, .. } => {
-            vec![value]
-        }
-        ExprKind::Infix(_, left, right)
-        | ExprKind::Index {
-            object: left,
-            index: right,
-        } => {
-            vec![left, right]
-        }
-        ExprKind::Call {
-            param_args,
-            args,
-            kwargs,
-            ..
-        } => param_args
-            .iter()
-            .filter_map(param_value)
-            .chain(args.iter())
-            .chain(kwargs.iter().map(|argument| &argument.value))
-            .collect(),
-        ExprKind::Invoke {
-            callee,
-            param_args,
-            args,
-            kwargs,
-        } => std::iter::once(callee.as_ref())
-            .chain(param_args.iter().filter_map(param_value))
-            .chain(args.iter())
-            .chain(kwargs.iter().map(|argument| &argument.value))
-            .collect(),
-        ExprKind::Member { object, .. } => vec![object],
-        ExprKind::MethodCall {
-            object,
-            args,
-            kwargs,
-            ..
-        } => std::iter::once(object.as_ref())
-            .chain(args.iter())
-            .chain(kwargs.iter().map(|argument| &argument.value))
-            .collect(),
-        ExprKind::ListLit(values) | ExprKind::TupleLit(values) => values.iter().collect(),
-        ExprKind::BraceLit(values) => values
-            .iter()
-            .flat_map(|(key, value)| std::iter::once(key).chain(value.iter()))
-            .collect(),
-        ExprKind::Comprehension {
-            key,
-            value,
-            clauses,
-            ..
-        } => clauses
-            .iter()
-            .map(|clause| match clause {
-                mojito_ast::ast::ComprehensionClause::For { iter, .. } => iter.as_ref(),
-                mojito_ast::ast::ComprehensionClause::If(condition) => condition.as_ref(),
-            })
-            .chain(key.iter().map(Box::as_ref))
-            .chain(std::iter::once(value.as_ref()))
-            .collect(),
-        ExprKind::IfExpr {
-            cond,
-            then_branch,
-            else_branch,
-        } => vec![cond, then_branch, else_branch],
-        ExprKind::Compare { first, rest } => std::iter::once(first.as_ref())
-            .chain(rest.iter().map(|(_, value)| value))
-            .collect(),
-        ExprKind::Slice {
-            object,
-            lower,
-            upper,
-            step,
-            ..
-        } => std::iter::once(object.as_ref())
-            .chain(
-                [lower, upper, step]
-                    .into_iter()
-                    .filter_map(|value| value.as_deref()),
-            )
-            .collect(),
-        ExprKind::MultiIndex { object, args } => {
-            let mut children = vec![object.as_ref()];
-            for argument in args {
-                match argument {
-                    mojito_ast::ast::SubscriptArg::Index(value)
-                    | mojito_ast::ast::SubscriptArg::Keyword { value, .. } => children.push(value),
-                    mojito_ast::ast::SubscriptArg::Slice {
-                        lower, upper, step, ..
-                    }
-                    | mojito_ast::ast::SubscriptArg::KeywordSlice {
-                        lower, upper, step, ..
-                    } => {
-                        children
-                            .extend([lower, upper, step].into_iter().flatten().map(Box::as_ref));
-                    }
-                }
-            }
-            children
-        }
-        ExprKind::TString { parts, .. } => parts
-            .iter()
-            .filter_map(|part| match part {
-                TStringPart::Expr(value) => Some(value.as_ref()),
-                TStringPart::Literal(_) => None,
-            })
-            .collect(),
-        ExprKind::TypeApply { args, .. } => args.iter().filter_map(param_value).collect(),
-        _ => Vec::new(),
-    }
-}
-
-/// The syntax MIR lowers HIR expression `expression` through: its node's,
-/// rebuilt with each local name HIR resolved spelled as its slot, and a
-/// `$contextual` leading-dot root as the base type the check resolved.
-/// Transitional, as [`CheckedTables::syntax_of_spelled`] is; R649 deletes
-/// it.
-///
-/// [`CheckedTables::syntax_of_spelled`]: mojito_checked::checked::CheckedTables::syntax_of_spelled
-fn hir_syntax(
-    checked: &mojito_checked::checked::CheckedTables,
-    slots: &HashMap<mojito_checked::checked::CheckedNodeId, VarId>,
-    vars: &[String],
-    expression: &mojito_hir::hir::HirExpr,
-) -> Expr {
-    checked
-        .syntax_of_spelled(expression.node, &|node| name_spelling(slots, vars, node))
-        .expect("a HIR expression names a node of its tables")
-}
-
 /// The runtime spelling of name node `node`: the slot HIR resolved it to,
 /// a `$contextual` root's resolved base type, else `None`, for a name
 /// spelled as written or a node that is not a name.
@@ -4268,28 +4028,6 @@ fn name_spelling(
         }
         _ => None,
     }
-}
-
-/// The syntax MIR lowers opaque HIR statement `statement`'s operands
-/// through: its node's, with source spellings, which MIR resolves by binding;
-/// a `ref` declaration's value is read as [`hir_syntax`] spells it (the
-/// declaration itself binds [`mojito_hir::hir::HirStmt::declared`]).
-/// Transitional, as [`hir_syntax`] is.
-fn hir_statement_syntax(
-    checked: &mojito_checked::checked::CheckedTables,
-    slots: &HashMap<mojito_checked::checked::CheckedNodeId, VarId>,
-    vars: &[String],
-    statement: &mojito_hir::hir::HirStmt,
-) -> Stmt {
-    let mut syntax = checked
-        .statement_syntax_of(statement.node)
-        .expect("a HIR statement names a statement node of its tables");
-    if let (StmtKind::RefDecl { value, .. }, [expression]) =
-        (&mut syntax.kind, statement.expressions.as_slice())
-    {
-        *value = hir_syntax(checked, slots, vars, expression);
-    }
-    syntax
 }
 
 /// The error type that can propagate out of a lowered `try`-body region: the
@@ -4855,28 +4593,6 @@ fn member_defaults(
     Ok((defaults, member.required[1..].to_vec()))
 }
 
-fn statement_expression_roots(statement: &Stmt) -> Vec<&Expr> {
-    match &statement.kind {
-        StmtKind::VarDecl { value, .. }
-        | StmtKind::RefDecl { value, .. }
-        | StmtKind::Assign { value, .. }
-        | StmtKind::Comptime { value, .. }
-        | StmtKind::Raise(value)
-        | StmtKind::Expr(value) => vec![value],
-        StmtKind::SetPlace { place, value } | StmtKind::AugAssign { place, value, .. } => {
-            vec![place, value]
-        }
-        StmtKind::Unpack { targets, value, .. } => {
-            let mut roots: Vec<&Expr> = targets.iter().collect();
-            roots.push(value);
-            roots
-        }
-        StmtKind::Return(Some(value)) => vec![value],
-        StmtKind::With { items, .. } => items.iter().map(|item| &item.context).collect(),
-        _ => Vec::new(),
-    }
-}
-
 /// The checked bodies and handler binder of one structured `try`, read from
 /// its statement node. Keeping these parts together makes the primary HIR and
 /// fallback lowering paths share one region-lowering contract.
@@ -5017,8 +4733,13 @@ impl EnclosingBinders {
         binders
     }
 
-    /// Whether `expression` spells `Self` or one of these binders.
-    fn named_by(&self, expression: &Expr) -> bool {
+    /// Whether checked node `node` of `tables` spells `Self` or one of these
+    /// binders: a name or a call it reaches, or a name in a type it holds.
+    fn named_by(
+        &self,
+        tables: &mojito_checked::checked::CheckedTables,
+        node: CheckedNodeId,
+    ) -> bool {
         struct Names(Vec<String>);
         impl mojito_ast::visit::Visitor for Names {
             fn visit_expr(&mut self, expr: &Expr) {
@@ -5032,8 +4753,48 @@ impl EnclosingBinders {
                 }
             }
         }
+        fn param_arg_type(argument: &CheckedParamArg) -> Option<&mojito_ast::ast::Type> {
+            match argument {
+                CheckedParamArg::Type { ty, .. } => Some(ty),
+                CheckedParamArg::Named { value, .. } => param_arg_type(value),
+                CheckedParamArg::Value(_) => None,
+            }
+        }
         let mut names = Names(Vec::new());
-        mojito_ast::visit::walk_expr(&mut names, expression);
+        tables.walk_expression(node, &mut |walked| {
+            let types: Vec<&mojito_ast::ast::Type> = match walked {
+                Walked::Expression(expression) => {
+                    if let CheckedOp::Identifier(name) | CheckedOp::Call { name, .. } =
+                        &expression.op
+                    {
+                        names.0.push(name.clone());
+                    }
+                    match &expression.op {
+                        CheckedOp::TypeValue { ty, .. } => vec![ty],
+                        CheckedOp::Call { param_args, .. }
+                        | CheckedOp::Invoke { param_args, .. }
+                        | CheckedOp::TypeApply {
+                            args: param_args, ..
+                        } => param_args.iter().filter_map(param_arg_type).collect(),
+                        _ => Vec::new(),
+                    }
+                }
+                Walked::Statement(statement) => match &statement.op {
+                    CheckedStmtOp::Def(def) => def
+                        .params
+                        .iter()
+                        .map(|parameter| &parameter.ty)
+                        .chain(&def.ret)
+                        .collect(),
+                    CheckedStmtOp::VarDecl { ty, .. } => ty.iter().collect(),
+                    _ => Vec::new(),
+                },
+            };
+            for ty in types {
+                mojito_ast::visit::walk_type(&mut names, ty);
+            }
+            WalkResult::Advance
+        });
         names.0.iter().any(|name| {
             name == "Self"
                 || self
@@ -5119,35 +4880,6 @@ mod nested;
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use nested::*;
 use node::Node;
-
-/// Whether multi-subscript arguments `checked` and their rebuilt syntax
-/// `syntax` pair one to one, argument kind by argument kind.
-fn subscript_args_pair(
-    checked: &[mojito_checked::checked::CheckedSubscriptArg],
-    syntax: &[mojito_ast::ast::SubscriptArg],
-) -> bool {
-    use mojito_ast::ast::SubscriptArg;
-    use mojito_checked::checked::CheckedSubscriptArg;
-    checked.len() == syntax.len()
-        && checked.iter().zip(syntax).all(|pair| {
-            matches!(
-                pair,
-                (CheckedSubscriptArg::Index(_), SubscriptArg::Index(_))
-                    | (
-                        CheckedSubscriptArg::Keyword { .. },
-                        SubscriptArg::Keyword { .. }
-                    )
-                    | (
-                        CheckedSubscriptArg::Slice { .. },
-                        SubscriptArg::Slice { .. }
-                    )
-                    | (
-                        CheckedSubscriptArg::KeywordSlice { .. },
-                        SubscriptArg::KeywordSlice { .. }
-                    )
-            )
-        })
-}
 
 fn sorted_map<K: Ord + serde::Serialize, V: serde::Serialize, S: serde::Serializer>(
     map: &HashMap<K, V>,
