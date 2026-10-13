@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R691**.
+Next free ID: **R693**.
 
 ## Ordered Work
 
@@ -298,24 +298,6 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R685 An indexed place argument is read where it is written, not
-  at call setup**
-
-  Problem: `two(tup[0], bt(tup))`, with `bt(mut t)` adding 100 to `t[0]`,
-  prints `two 103 0` at the pin and `two 3 0` in Mojito.
-  - `two(lst[0], bl(lst))` over a `List` is rejected by the pin ("use of
-    invalidated interior reference 'lst["element"]'"), but Mojito accepts
-    it and prints `two 1 0`.
-  - R681 moves only a simple place's read (`setup_read` in
-    `crates/mojito-mir/src/mir/calls.rs`) to the call's setup frame. An
-    index or accessor is lvalue work that stays in source order; only the
-    final element read belongs at setup.
-  - A raising implicit conversion, which splits the block, also stays
-    where written (`defer_to_setup`).
-  - Found while landing R681 (2026-10-13).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R686 A display reads its elements where they are written**
 
   Problem: `(u.t, bump(u))` gives `108 0` at the pin and `8 0` in Mojito;
@@ -409,6 +391,24 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
   - When it lands, add both cases to an `assets/ok` fixture and run it
     natively too.
   - Found while landing R676 (2026-10-13).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R691 An accessor chain over a temporary is read where it is
+  written, not at call setup**
+
+  Problem: `two(ident(Span(xs))[0], bx(xs))`, with `bx(mut l)` adding 100
+  to `l[0]`, prints `two 101 0` at the pin and is rejected by Mojito with
+  "access to 'xs' conflicts with live reference '$arg_loan_r11'".
+  - R685 reads a reference-result operand at its call's setup only when
+    its accessor chain roots at a named place (`setup_reference` in
+    `crates/mojito-mir/src/mir/calls.rs`): the VM resolves a view's
+    referent through the receiver, and a temporary receiver's slot dies at
+    its last use.
+  - The temporary `Span(xs)` argument's anchor slot (`$arg_loan_r`) holds
+    an exclusive loan on `xs` to the statement's end, so the later `mut`
+    argument conflicts with it even before the read's placement matters.
+  - Found while landing R685 (2026-10-13).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -6662,6 +6662,19 @@ lines. The rest needs semantic extraction, not line moves.
   - Restricting the scan to the function body's own nodes should change no
     current output, which is why the entry is here.
   - Found while landing R405 (2026-10-07).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R692 An interior invalidation's `include_base_generation` has no
+  producer**
+
+  Problem: no checked fact sets `InteriorInvalidation::include_base_generation`
+  since R685 stopped a `Dict` lookup from replacing its `value` generation,
+  yet the flag still rides through `mojito-checked`, MIR's
+  `InvalidateInteriors`, the text format, and the interior analysis.
+  - Delete the flag end to end, with the MIR text minor and package format
+    bumps that removing a required field needs.
+  - Found while landing R685 (2026-10-13).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

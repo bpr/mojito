@@ -1039,7 +1039,9 @@ pub enum OwnershipError {
         span: crate::token::SourceSpan,
     },
     /// A reference into container-owned storage was used after an operation
-    /// that may have replaced or reallocated that storage generation.
+    /// that may have replaced or reallocated that storage generation. An
+    /// unnamed reference (a call operand awaiting its setup read) is named
+    /// by its origin, as `reference`.
     InvalidatedInteriorReference {
         reference: String,
         origin: String,
@@ -1082,10 +1084,13 @@ impl fmt::Display for OwnershipError {
                 ..
             } => {
                 let (start, end) = invalidated_at.span;
+                write!(f, "use of invalidated interior reference '{reference}'")?;
+                if reference != origin {
+                    write!(f, " to '{origin}'")?;
+                }
                 write!(
                     f,
-                    "use of invalidated interior reference '{reference}' to '{origin}'\n\
-                     note: origin was invalidated here (bytes {start}..{end})"
+                    "\nnote: origin was invalidated here (bytes {start}..{end})"
                 )
             }
         }

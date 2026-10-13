@@ -205,8 +205,13 @@ impl<'a> Flatten<'a> {
         }
         let (callee, callee_place) = match reference_result {
             Some(reference) => {
-                let place =
-                    self.materialize_call_reference_place(call, element, &reference, receiver_root);
+                let place = self.materialize_call_reference_place(
+                    call,
+                    element,
+                    &reference,
+                    receiver_root,
+                    false,
+                );
                 let value = self.fresh_typed(
                     call.location(),
                     Some(place.root),

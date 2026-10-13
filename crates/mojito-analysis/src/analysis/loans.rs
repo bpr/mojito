@@ -10,6 +10,7 @@ pub(super) struct Loan {
     mutable: bool,
     interior: Option<MirInteriorOrigin>,
     shared: bool,
+    setup: bool,
 }
 
 /// The loan generation(s) a reference-bearing slot may currently contain.
@@ -249,6 +250,7 @@ pub(super) fn analyze_loans(
                         mutable: loan.mutable,
                         interior: loan.interior.clone(),
                         shared: loan.shared,
+                        setup: loan.setup,
                     })
                     .collect(),
             );
@@ -371,6 +373,7 @@ pub(super) fn analyze_loans(
                     }
                     if reference_loans.iter().any(|loan| {
                         loan.interior.is_none()
+                            && !loan.setup
                             && !(loan.shared && through_shared)
                             && mir_places_overlap(&place, &loan.place)
                             && (access == LoanAccess::Write || excludes_reads(*loan))
@@ -388,12 +391,13 @@ pub(super) fn analyze_loans(
 /// Whether establishing `new` beside the live `existing` loan is a conflict:
 /// overlapping places, at most one interior-generation domain (two interior
 /// loans are generation-tracked, never exclusive), at most one shared
-/// pointer alias (two `Pointer(to=place)` loans coexist), and either side
-/// excluding the other's reads.
+/// pointer alias (two `Pointer(to=place)` loans coexist), neither side a
+/// setup loan (a call operand awaiting its read excludes nothing), and either
+/// side excluding the other's reads.
 fn loans_exclusive(new: &mojito_mir::mir::MirLoan, existing: &Loan) -> bool {
     let generation_tracked = new.interior.is_some() && existing.interior.is_some();
     let shared_aliases = new.shared && existing.shared;
-    !(generation_tracked || shared_aliases)
+    !(generation_tracked || shared_aliases || new.setup || existing.setup)
         && (excludes_reads(new) || excludes_reads(existing))
         && mir_places_overlap(&new.place, &existing.place)
 }

@@ -716,6 +716,14 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   in parameter order by `close_call_setup`; `lower_setup_operand` lowers one
   operator operand into the frame, `outside_call_setup` keeps non-operand
   lowering out of it, and `setup_read` decides which places defer.
+  `setup_reference` decides which reference-result operands defer their
+  read: `defer_to_setup` marks the operand in `Flatten::setup_reference`
+  (`SetupReference`), `materialize_reference_result_place` gives its handle
+  slot setup loans (`MirLoan::setup`) and starts the read there, and
+  `awaits_setup_read` routes `reference_result_value` to that slot.
+  In `mojito-analysis`, `moves.rs`'s `MoveContext::setup_owners` reads a
+  setup slot's owners at each read through it, and `loans.rs` exempts setup
+  loans from access and loan exclusivity.
 - `mir/lower_expr.rs` (split across
   `lower_expr/{entry,ctrl,expr,expr_call,expr_method,expr_access,calls}.rs`)
   owns expression lowering (the `expr_unconverted`

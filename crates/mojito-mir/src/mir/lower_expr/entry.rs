@@ -417,8 +417,12 @@ impl<'a> Flatten<'a> {
         // that loans the storage its origin names, so the arguments it
         // borrows from stay alive until the referent is copied. A method
         // call's result takes the same path when its origin names an argument
-        // (`pick[o: Origin](self, ref[o] x: T) -> ref[o] T`).
-        if (matches!(e.op(), CheckedOp::Call { .. }) || self.reference_result_borrows_argument(e))
+        // (`pick[o: Origin](self, ref[o] x: T) -> ref[o] T`), and so does
+        // every operand read at its call's setup, so the slot's setup loans
+        // keep its owners live until the read.
+        if (matches!(e.op(), CheckedOp::Call { .. })
+            || self.reference_result_borrows_argument(e)
+            || self.awaits_setup_read(e))
             && e.reference_result().is_some()
             && let Some(place) = self.materialize_reference_result_place(e)
         {
@@ -496,12 +500,19 @@ impl<'a> Flatten<'a> {
         if !loans.is_empty() {
             return loans;
         }
+        // A setup handle's loans become the view's ordinary loans: the view
+        // is built at setup and lives as a borrow.
         if let Some(handle) = source.through {
             return self
                 .aggregate_loans
                 .get(&handle)
-                .cloned()
-                .unwrap_or_default();
+                .into_iter()
+                .flatten()
+                .map(|loan| MirLoan {
+                    setup: false,
+                    ..loan.clone()
+                })
+                .collect();
         }
         let mutable = e.adjustments().iter().any(|adjustment| {
             matches!(
@@ -516,6 +527,7 @@ impl<'a> Flatten<'a> {
             mutable,
             interior: None,
             shared: false,
+            setup: false,
         }]
     }
 

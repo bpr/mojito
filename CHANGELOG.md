@@ -8,6 +8,17 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A by-value operand with a reference result is evaluated to its reference
+  where written and read at call setup, as the pin reads it (R685):
+  `two(tup[0], bt(tup))`, `two(s.get(), bump(s))`, `two(pick(t), bt(t))`,
+  and `print(t[0] + bt(t))` now see the later argument's write, a `String`
+  element passed to a read parameter beside an argument that appends to it
+  no longer traps in the VM, `two(lst[0], bl(lst))` is rejected as a use of
+  an invalidated interior reference, and `two(tup[0], take(tup^))` as a use
+  of the moved `tup`. A `Dict` lookup no longer stales a reference to an
+  earlier lookup's value, so `print(d["x"] + d["y"])` and a held view of
+  one value across a second lookup run as upstream. MIR text format 1.47
+  adds a loan's `setup` flag, and the package format is 39.
 - A by-value place argument is read at call setup, after every argument
   is evaluated, as the pin reads it (R681): `two(c.t, bump(c))` with a
   mutating `bump` now prints `bump`'s write, as do `d.t + bump(d)`, a

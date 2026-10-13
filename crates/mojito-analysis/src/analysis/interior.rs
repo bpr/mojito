@@ -478,9 +478,17 @@ pub(super) fn check_interior_instruction_uses(
             .iter()
             .find_map(|generation| state.invalidated.get(generation))
         {
+            let origin = interior_origin_display(f, &invalidation.origin);
+            let name = var_name(f, reference);
+            // A call operand's hidden handle slot is named by its origin, as
+            // the pin names it.
             return Err(OwnershipError::InvalidatedInteriorReference {
-                reference: var_name(f, reference),
-                origin: interior_origin_display(f, &invalidation.origin),
+                reference: if name.starts_with("$call_ref_r") {
+                    origin.clone()
+                } else {
+                    name
+                },
+                origin,
                 span: span_for_reg(f, marker),
                 invalidated_at: Box::new(invalidation.at.clone()),
             });

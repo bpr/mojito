@@ -1479,6 +1479,7 @@ fn loan(value: &MirLoan) -> String {
                 option(value.interior.as_ref().map(interior_origin)),
             ),
             ("shared", value.shared.to_string()),
+            ("setup", value.setup.to_string()),
         ],
     )
 }

@@ -1,4 +1,4 @@
-# Mojito Textual MIR Format, Version 1.46
+# Mojito Textual MIR Format, Version 1.47
 
 This document is the normative specification of Mojito's textual verified-MIR
 artifact. The Rust data model in `src/mir.rs` and `src/mir/ir.rs` remains the
@@ -6,7 +6,7 @@ in-memory authority; this format is its stable inspection and interchange
 boundary. `docs/vm-instruction-set.md` explains execution semantics, while this
 document defines syntax and serialized data.
 
-Version 1.46 is implemented end to end for inspection and loading: canonical
+Version 1.47 is implemented end to end for inspection and loading: canonical
 in-memory disassembly, full-grammar assembly parsing, and artifact-loading
 verification (`mir::text::load_artifact`, which reports canonical-verifier
 findings at artifact source spans). Lossless print → parse → print round trips
@@ -22,10 +22,10 @@ which may be generic; it is always elaborated before it runs.
 Every artifact begins with exactly:
 
 ```text
-mojito-mir 1.46
+mojito-mir 1.47
 ```
 
-The writer emits 1.46. The reader accepts 1.0 through 1.46; *Schema 1.0*
+The writer emits 1.47. The reader accepts 1.0 through 1.47; *Schema 1.0*
 below says how a 1.0 artifact is read, and *Binder identity* under *Types*
 how a binder without an identity is.
 
@@ -133,6 +133,13 @@ the member's explicit parameters in application order, each
 `type` names it. The elaborator answers `C.IteratorType[origin_of(xs)]` from
 them once `C` is bound to an instance, and elaborated MIR carries an empty
 list. An older artifact reads as carrying none.
+
+Minor version 47 adds a loan's `setup` flag, after `shared`. A setup loan
+holds a by-value call operand's reference-producing lvalue (an accessor or
+a `ref`-returning call) until its call's setup reads it: it keeps its owner
+live and carries its interior generation, excludes no access and no other
+loan, and every read through its reference reads its owner. An older
+artifact's loans read as not setup loans.
 
 Minor version 10 adds the signature origin `sig_carried(type)`: the source of
 a transfer effect whose body stores a value of a type over its binders. It
@@ -773,7 +780,8 @@ loan {
     root: $v0,
     path: [interior(element)]
   }),
-  shared: false
+  shared: false,
+  setup: false
 }
 ```
 
@@ -791,7 +799,7 @@ optionality for compatibility MIR, although verified production artifacts
 require them.
 
 `MirPlace::through`, loan mutability, the shared flag of a `Pointer(to=place)`
-alias loan, interior roots/paths, destination domains, invalidation exceptions,
+alias loan, the setup flag of a call operand awaiting its read, interior roots/paths, destination domains, invalidation exceptions,
 and capture accesses are semantic data even when the VM erases them. Verification must prove that a through slot is a compatible
 reference capability, mutable loans do not recover unavailable permission, and
 canonical interior identities agree with their executable place/reference
@@ -864,7 +872,7 @@ Unknown terminators and instructions are fatal for schema major version 1.
 ## Complete Artifact Example
 
 ```text
-mojito-mir 1.46
+mojito-mir 1.47
 artifact {
   features: [],
   files: [file { id: file0, path: present("main.mojo"), module: absent }],
@@ -905,10 +913,10 @@ lowering unit, one record per library declaration, and one module table
 holding each module's link record, one file per package. The bundled library's is the
 only producer today (`src/package.rs`). No part of a package is MIR text:
 it is a header followed by bytecode records, as upstream's package is
-MLIR bytecode throughout. The format line is `mojito-package 38`.
+MLIR bytecode throughout. The format line is `mojito-package 39`.
 
 ```text
-mojito-package 38
+mojito-package 39
 <the header's length, 8 bytes little-endian>
 <the header, as bytecode>
 <the payload: every record, as bytecode, then the type section>

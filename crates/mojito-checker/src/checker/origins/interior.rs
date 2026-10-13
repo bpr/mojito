@@ -94,27 +94,6 @@ impl Checker {
         }
     }
 
-    /// Record Mojo's owned-interior generation refresh for a named region.
-    /// Defining a new `base._get_owned_interior["name"]` origin invalidates an
-    /// older generation of that same region, but not sibling regions below the
-    /// owner. Dict lookup uses this for `"value"`, so a new lookup stales an
-    /// earlier value reference without invalidating the `"element"` generation
-    /// retained by key iteration.
-    pub(in crate::checker) fn record_replacing_interior_reference(
-        &self,
-        site: SourceSpan,
-        base: &Expr,
-        name: &str,
-    ) {
-        if let Ok(mut origin) = self.origin_place(base) {
-            origin
-                .path
-                .push(mojito_types::origin::OriginSeg::Interior(name.to_string()));
-            self.record_origin_invalidation_kind(site.clone(), origin, None, true);
-        }
-        self.record_interior_reference(site, base, name);
-    }
-
     /// Record a mutation of `base`. Existing generations rooted below this
     /// path become stale. If `base` is itself a local reference, mutations
     /// through that handle preserve its own generation while still invalidating
@@ -222,20 +201,10 @@ impl Checker {
         base: mojito_types::origin::OriginPlace,
         except: Option<mojito_types::origin::OwnerId>,
     ) {
-        self.record_origin_invalidation_kind(site, base, except, false);
-    }
-
-    pub(in crate::checker) fn record_origin_invalidation_kind(
-        &self,
-        site: SourceSpan,
-        base: mojito_types::origin::OriginPlace,
-        except: Option<mojito_types::origin::OwnerId>,
-        include_base_generation: bool,
-    ) {
         let fact = mojito_checked::checked::InteriorInvalidation {
             base,
             except,
-            include_base_generation,
+            include_base_generation: false,
         };
         let mut record = self.record_at(site);
         let values = record.interior_invalidations.get_or_insert_default();

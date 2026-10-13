@@ -847,13 +847,18 @@ pub struct MirInteriorOrigin {
 /// generation identity when the target lives behind container-owned storage. A
 /// `shared` loan (a `Pointer(to=place)` alias) never conflicts with another
 /// shared loan of overlapping storage; against owner accesses and exclusive
-/// loans it is an ordinary borrow.
+/// loans it is an ordinary borrow. A `setup` loan holds a by-value call
+/// operand's lvalue until its call's setup reads it: it keeps its owner live
+/// and carries its interior generation, but excludes no access and no other
+/// loan, and each read through it reads its owner, so a move between the
+/// operand and setup is a use of a moved value.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct MirLoan {
     pub place: MirPlace,
     pub mutable: bool,
     pub interior: Option<MirInteriorOrigin>,
     pub shared: bool,
+    pub setup: bool,
 }
 
 /// Complete checker-selected contract for a nominal subscript invocation.

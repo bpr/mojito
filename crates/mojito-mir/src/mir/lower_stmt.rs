@@ -351,6 +351,7 @@ impl<'a> Flatten<'a> {
             mutable,
             interior,
             shared: false,
+            setup: false,
         }];
         let marker = self.fresh_typed(span, Some(loans[0].place.root), Ty::none());
         self.emit(MirInstr::EstablishLoans {
@@ -1659,6 +1660,7 @@ impl<'a> Flatten<'a> {
                 conversion_view_loans: self.conversion_view_loans.clone(),
                 pending_argument_anchors: Vec::new(),
                 call_setups: Vec::new(),
+                setup_reference: None,
                 argument_depth: 0,
                 allow_argument_anchors: false,
                 transfer_domain_loans: self.transfer_domain_loans.clone(),
@@ -2104,6 +2106,7 @@ impl<'a> Flatten<'a> {
                             mutable,
                             interior,
                             shared: false,
+                            setup: false,
                         });
                     }
                     if let Some(first) = loans.first() {
@@ -2154,6 +2157,7 @@ impl<'a> Flatten<'a> {
                         mutable,
                         interior,
                         shared: false,
+                        setup: false,
                     });
                 }
                 if loans.is_empty() {
@@ -2162,6 +2166,7 @@ impl<'a> Flatten<'a> {
                         mutable,
                         interior: None,
                         shared: false,
+                        setup: false,
                     });
                 }
                 // A substituted local alias has no runtime handle value, but

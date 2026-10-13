@@ -2249,6 +2249,9 @@ struct Flatten<'a> {
     /// deferred reads of exactly one call's immediate by-value place
     /// arguments ([`calls::CallSetup`]).
     call_setups: Vec<calls::CallSetup>,
+    /// The by-value operand being lowered whose reference result is read at
+    /// its call's setup ([`calls::SetupReference`]).
+    setup_reference: Option<calls::SetupReference>,
     /// How many call operands enclose the expression being lowered: a frame
     /// belongs to the operands lowered at the depth it was opened at.
     argument_depth: usize,
@@ -3754,6 +3757,7 @@ fn lower_cfg_nested(
             conversion_view_loans: HashMap::new(),
             pending_argument_anchors: Vec::new(),
             call_setups: Vec::new(),
+            setup_reference: None,
             argument_depth: 0,
             allow_argument_anchors: false,
             transfer_domain_loans: HashMap::new(),

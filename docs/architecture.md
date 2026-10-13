@@ -3682,7 +3682,14 @@ values. MIR emits one grouped `EstablishLoans` operation for each fresh binding
 generation; every `MirLoan` retains the executable owner `MirPlace`, permission,
 optional canonical `MirInteriorOrigin`, and whether it is a shared alias (a
 `Pointer(to=place)` loan: two shared loans of overlapping storage coexist,
-while owner accesses and exclusive loans treat each as an ordinary borrow).
+while owner accesses and exclusive loans treat each as an ordinary borrow), and
+whether it is a setup loan. A setup loan holds a by-value call operand's
+reference result in its hidden `$call_ref_r` slot until the call's setup
+reads it: it keeps its owners live for drop elaboration and carries its
+interior generation, but excludes no access and no other loan, since Mojo
+judges argument exclusivity at the call itself; the move analysis reads its
+owners at each read through the slot (`MoveContext::setup_owners`), so a
+later argument's move makes the read a use of the moved value.
 Statically resolvable aliases use the frozen place, while cross-call aliases
 use explicit reference operations.
 `MirPlace::through` records which reference authorized an access. The VM erases
@@ -3941,16 +3948,14 @@ redefine an interior. Lowering preserves those facts as
 immediately before the operation.
 Whole-owner replacement (including writes through references, reference-valued
 aggregate fields, and origin-bearing pointers), replacement of an interior that
-owns deeper interiors, structural List mutation, mutable/ref calls, Dict lookup
-or replacement, and Variant tag replacement invalidate matching old
-generations. `except` preserves the generation used to mutate through an
-interior reference while still invalidating any nested interiors below it.
-Ordinary mutation leaves the exact base generation valid;
-`include_base_generation` instead records Mojo's owned-interior refresh, where a
-new generation replaces that exact named region. Dict `__getitem__` uses this
-mode for `mapping["value"]`, invalidating an earlier value reference without
-invalidating the sibling `mapping["element"]` generation retained by key
-iteration.
+owns deeper interiors, structural List mutation, mutable/ref calls, Dict
+replacement, and Variant tag replacement invalidate matching old
+generations; a Dict lookup, like a List element read, does not, as the pin
+keeps an earlier value reference valid across a second lookup. `except`
+preserves the generation used to mutate through an interior reference while
+still invalidating any nested interiors below it. Ordinary mutation leaves the
+exact base generation valid; `include_base_generation` would instead
+invalidate that exact named region too, and no checked fact sets it today.
 
 A separate forward may-analysis carries generation sets through CFG joins and
 loop back-edges. An invalidation on any incoming path makes a later use of that
@@ -4200,11 +4205,20 @@ current Mojo:
   work, so its whole read sequence — `UseVar`/`LoadPlace`, a `var` copy, an
   implicit conversion — moves into the frame, and `close_call_setup` emits
   it, the receiver first and then the arguments in the contract's parameter
-  order. A frame belongs only to its own call's immediate operands
-  (`argument_depth`); a `mut`/`ref` place, a retained shared read, an indexed
-  place, or a lowering that split the block stays where written. So
-  `two(c.t, bump(c))` reads `c.t` after `bump` writes it, and
-  `two(a.t, take(a^))` is a use of the moved `a`.
+  order. A by-value operand with a reference result (`setup_reference`: an
+  accessor subscript or a `ref`-returning call over a named root) has lvalue
+  work: the receiver, index, and accessor or call run where written and
+  leave the reference in a hidden `$call_ref_r` slot with setup loans
+  (`SetupReference`, `materialize_reference_result_place`), the chain's root
+  receiver among them, and only what follows the slot — the `LoadPlace`,
+  copy, conversion, and temporary binding — moves into the frame. A frame
+  belongs only to its own call's immediate operands (`argument_depth`); a
+  `mut`/`ref` place, a retained shared read, an accessor chain over a
+  temporary, or a read that split the block stays where written. So
+  `two(c.t, bump(c))` reads `c.t` after `bump` writes it,
+  `two(tup[0], bt(tup))` reads the element `bt` wrote, `two(a.t, take(a^))`
+  is a use of the moved `a`, and `two(lst[0], bl(lst))` uses an invalidated
+  interior reference.
 - An element read out of pack storage (an intrinsic `TupleStorage` or
   `VariadicStorage` `Index` with a retained base place) is the same shallow
   read: an aggregate element retains the pack through every consumer of the

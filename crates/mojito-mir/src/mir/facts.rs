@@ -701,6 +701,7 @@ impl<'a> Flatten<'a> {
                 mutable: *mutable,
                 interior: None,
                 shared: false,
+                setup: false,
             }];
         }
         if let Some(loans) = self.conversion_view_loans.get(&node.address()) {
@@ -720,6 +721,7 @@ impl<'a> Flatten<'a> {
                 mutable: mojito_checked::checked::materialized_borrow_mutability(adjustments),
                 interior: None,
                 shared: false,
+                setup: false,
             }];
         }
         self.aggregate_borrows_unmaterialized(node)
@@ -759,6 +761,7 @@ impl<'a> Flatten<'a> {
             mutable,
             interior,
             shared,
+            setup: false,
         }]
     }
 
@@ -786,6 +789,7 @@ impl<'a> Flatten<'a> {
                 mutable: matches!(capture.kind, CaptureKind::Mut | CaptureKind::Ref),
                 interior: None,
                 shared: false,
+                setup: false,
             });
         }
         if let Some(callable) = self.nested.get(&capture.binding).cloned() {
@@ -939,6 +943,7 @@ impl<'a> Flatten<'a> {
                 mutable,
                 interior: None,
                 shared: false,
+                setup: false,
             }];
         }
         if let Some(mutable) = borrow
@@ -955,6 +960,7 @@ impl<'a> Flatten<'a> {
                     mutable,
                     interior: None,
                     shared: false,
+                    setup: false,
                 }];
             }
             return interiors
@@ -967,6 +973,7 @@ impl<'a> Flatten<'a> {
                         mutable,
                         interior: Some(interior),
                         shared: false,
+                        setup: false,
                     }
                 })
                 .collect();
@@ -1052,6 +1059,7 @@ impl<'a> Flatten<'a> {
                         mutable: *mutable,
                         interior: None,
                         shared: true,
+                        setup: false,
                     }];
                 }
                 // A free-function call returning a ref-field struct (a
@@ -1078,6 +1086,7 @@ impl<'a> Flatten<'a> {
                             mutable: false,
                             interior: None,
                             shared: false,
+                            setup: false,
                         })
                         .collect();
                     if !loans.is_empty() {
@@ -1118,6 +1127,7 @@ impl<'a> Flatten<'a> {
                             mutable: false,
                             interior: None,
                             shared: false,
+                            setup: false,
                         }];
                     }
                 }
@@ -1235,6 +1245,7 @@ impl<'a> Flatten<'a> {
                     mutable,
                     interior: None,
                     shared: false,
+                    setup: false,
                 })
             })
             .collect::<Vec<_>>();
@@ -1276,6 +1287,7 @@ impl<'a> Flatten<'a> {
                     mutable: false,
                     interior: Some(interior),
                     shared: false,
+                    setup: false,
                 });
             }
             return loans;
@@ -1309,6 +1321,7 @@ impl<'a> Flatten<'a> {
             mutable,
             interior,
             shared: false,
+            setup: false,
         });
         loans
     }

@@ -201,12 +201,19 @@ impl Decoder {
             )
         })?;
         let shared = self.req(value, fields, "shared", Self::boolean)?;
-        self.unknown(fields, &["place", "mutable", "interior", "shared"]);
+        // `setup` is new in 1.47; an earlier artifact's loans are not setup
+        // loans.
+        let setup = match self.field(fields, "setup") {
+            Ok(found) => self.boolean(found)?,
+            Err(()) => false,
+        };
+        self.unknown(fields, &["place", "mutable", "interior", "shared", "setup"]);
         Some(MirLoan {
             place,
             mutable,
             interior,
             shared,
+            setup,
         })
     }
 

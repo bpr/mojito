@@ -327,6 +327,7 @@ mod interior_origin_tests {
             mutable,
             interior,
             shared: false,
+            setup: false,
         }
     }
 

@@ -450,10 +450,18 @@ impl Worklist {
     }
 }
 
-/// Each `MakeRef` handle naming a reference parameter's whole referent, by
-/// register: a `WriteRef` or `ReadRef` carries only the register, so the
-/// parameter it writes back or reads is recovered here.
-pub(super) type Refills = HashMap<u32, VarId>;
+/// The per-function facts the move walk reads beside the instructions.
+pub(super) struct MoveContext {
+    /// Each `MakeRef` handle naming a reference parameter's whole referent,
+    /// by register: a `WriteRef` or `ReadRef` carries only the register, so
+    /// the parameter it writes back or reads is recovered here.
+    refills: HashMap<u32, VarId>,
+    /// Each reference slot holding a call operand awaiting its setup read,
+    /// with the owner places its setup loans name: the read through the slot
+    /// reads them, so an owner moved between the operand and its call's setup
+    /// is used after its move.
+    setup_owners: HashMap<VarId, Vec<MirPlace>>,
+}
 
 /// How an instruction touches a place: a whole-value *read* (using the subtree),
 /// or a write, whose *structural* check is on the parent (the parent must merely
@@ -466,11 +474,15 @@ pub(super) enum Touch {
 /// The places an instruction *reads* or structurally touches (for reporting),
 /// each with the register whose span points at the offending source. Moves and
 /// definitions are applied separately by [`apply_effects`].
-pub(super) fn place_uses(i: &MirInstr, refills: &Refills) -> Vec<(VarId, Vec<Key>, Touch, Reg)> {
+pub(super) fn place_uses(
+    i: &MirInstr,
+    context: &MoveContext,
+) -> Vec<(VarId, Vec<Key>, Touch, Reg)> {
     match i {
         // A read through a reference parameter's own handle reads the whole
         // referent.
-        MirInstr::ReadRef { dest, reference } => refills
+        MirInstr::ReadRef { dest, reference } => context
+            .refills
             .get(&reference.0)
             .map(|var| (*var, Vec::new(), Touch::Read, *dest))
             .into_iter()
@@ -492,7 +504,15 @@ pub(super) fn place_uses(i: &MirInstr, refills: &Refills) -> Vec<(VarId, Vec<Key
         // A place read (`p.a`, a read-modify-write load) or a partial move
         // (`p.a^`): reads that specific sub-place.
         MirInstr::LoadPlace { dest, place } | MirInstr::MovePlace { dest, place } => {
-            vec![(place.root, place_path(place), Touch::Read, *dest)]
+            let owners = place
+                .through
+                .and_then(|through| context.setup_owners.get(&through))
+                .into_iter()
+                .flatten()
+                .map(|owner| (owner.root, place_path(owner), Touch::Read, *dest));
+            std::iter::once((place.root, place_path(place), Touch::Read, *dest))
+                .chain(owners)
+                .collect()
         }
         MirInstr::ConsumePlace { place, marker } => {
             vec![(place.root, place_path(place), Touch::Read, *marker)]
@@ -597,12 +617,12 @@ pub(super) fn place_uses(i: &MirInstr, refills: &Refills) -> Vec<(VarId, Vec<Key
 /// a `DefVar` (re)initializes a whole variable, a `^` transfer moves one, a
 /// partial move `p.a^` moves that sub-place, and a field store reinitializes the
 /// written field.
-pub(super) fn apply_effects(state: &mut [Node], i: &MirInstr, refills: &Refills) {
+pub(super) fn apply_effects(state: &mut [Node], i: &MirInstr, context: &MoveContext) {
     match i {
         // A whole write through a reference parameter's own handle puts a
         // value back into the caller's storage.
         MirInstr::WriteRef { reference, .. } => {
-            if let Some(var) = refills.get(&reference.0) {
+            if let Some(var) = context.refills.get(&reference.0) {
                 state[*var as usize].do_def(&[]);
             }
         }
@@ -703,15 +723,15 @@ pub(super) fn analyze_moves(f: &MirFunction) -> Result<(), OwnershipError> {
     // assignment before use, so this never causes a false negative for our
     // purpose (tracking transfers) and avoids a spurious "uninitialized" lattice.
     let entry: Vec<Node> = vec![Node::owned(); f.n_vars];
-    let refills = parameter_refills(f);
+    let context = move_context(f);
     let mut check = |state: &[Node], instr: &MirInstr| -> Result<(), OwnershipError> {
-        check_instruction_uses(state, instr, f, &refills)?;
+        check_instruction_uses(state, instr, f, &context)?;
         if let MirInstr::DefVar { var, .. } = instr {
             check_whole_destruction(&state[*var as usize], *var, f)?;
         }
         Ok(())
     };
-    let flow = walk_region(Some(entry), &f.blocks, f, &refills, Some(&mut check))?;
+    let flow = walk_region(Some(entry), &f.blocks, f, &context, Some(&mut check))?;
     // A reference parameter is the caller's storage, so it holds a whole
     // value again on each channel that leaves the function.
     for (state, raising) in [
@@ -753,7 +773,7 @@ pub(super) fn observe_move_states(
         Some(entry),
         &f.blocks,
         f,
-        &parameter_refills(f),
+        &move_context(f),
         Some(&mut observe),
     )
     .map(|_| ())
@@ -770,7 +790,7 @@ fn walk_region<O>(
     entry: Option<Vec<Node>>,
     blocks: &[MirBlock],
     f: &MirFunction,
-    refills: &Refills,
+    context: &MoveContext,
     mut observer: Option<&mut O>,
 ) -> Result<MoveFlow, OwnershipError>
 where
@@ -786,7 +806,7 @@ where
             exits: None,
         });
     }
-    let in_states = region_in_states(&entry, blocks, f, refills);
+    let in_states = region_in_states(&entry, blocks, f, context);
     let mut flow = MoveFlow::unreachable();
     for (b, block) in blocks.iter().enumerate() {
         let Some(mut state) = in_states[b].clone() else {
@@ -799,7 +819,7 @@ where
                     std::mem::take(&mut state),
                     instr,
                     f,
-                    refills,
+                    context,
                     observer.as_deref_mut(),
                 )?;
                 add_state(&mut flow.raises, &nested.raises);
@@ -815,7 +835,7 @@ where
             if let Some(observer) = observer.as_deref_mut() {
                 observer(&state, instr)?;
             }
-            apply_effects(&mut state, instr, refills);
+            apply_effects(&mut state, instr, context);
             if interior_instruction_directly_raises(instr) {
                 add_state(
                     &mut flow.raises,
@@ -863,7 +883,7 @@ fn walk_try<O>(
     entry: Vec<Node>,
     instr: &MirInstr,
     f: &MirFunction,
-    refills: &Refills,
+    context: &MoveContext,
     mut observer: Option<&mut O>,
 ) -> Result<MoveFlow, OwnershipError>
 where
@@ -883,7 +903,7 @@ where
             exits: None,
         });
     };
-    let body_flow = walk_region(Some(entry), body, f, refills, observer.as_deref_mut())?;
+    let body_flow = walk_region(Some(entry), body, f, context, observer.as_deref_mut())?;
     let mut normal = None;
     let mut raises = None;
     let mut exits = body_flow.exits.clone();
@@ -892,7 +912,7 @@ where
             body_flow.normal.clone(),
             orelse,
             f,
-            refills,
+            context,
             observer.as_deref_mut(),
         )?;
         add_state(&mut normal, &else_flow.normal);
@@ -906,7 +926,7 @@ where
             body_flow.raises.clone(),
             handler,
             f,
-            refills,
+            context,
             observer.as_deref_mut(),
         )?;
         add_state(&mut normal, &handler_flow.normal);
@@ -926,11 +946,11 @@ where
         let mut all = normal.clone();
         add_state(&mut all, &raises);
         add_state(&mut all, &exits);
-        walk_region(all, finalbody, f, refills, Some(observer))?;
+        walk_region(all, finalbody, f, context, Some(observer))?;
     }
-    let normal_final = walk_region(normal, finalbody, f, refills, None::<&mut O>)?;
-    let raising_final = walk_region(raises, finalbody, f, refills, None::<&mut O>)?;
-    let exiting_final = walk_region(exits, finalbody, f, refills, None::<&mut O>)?;
+    let normal_final = walk_region(normal, finalbody, f, context, None::<&mut O>)?;
+    let raising_final = walk_region(raises, finalbody, f, context, None::<&mut O>)?;
+    let exiting_final = walk_region(exits, finalbody, f, context, None::<&mut O>)?;
     let mut raises = raising_final.normal;
     add_state(&mut raises, &normal_final.raises);
     add_state(&mut raises, &raising_final.raises);
@@ -955,7 +975,7 @@ fn region_in_states(
     entry: &[Node],
     blocks: &[MirBlock],
     f: &MirFunction,
-    refills: &Refills,
+    context: &MoveContext,
 ) -> Vec<Option<Vec<Node>>> {
     let nb = blocks.len();
     let preds = block_predecessors(blocks);
@@ -981,7 +1001,7 @@ fn region_in_states(
         if in_states[b].as_ref() == Some(&new_in) {
             continue;
         }
-        let new_out = transfer_block(new_in.clone(), &blocks[b].instrs, f, refills);
+        let new_out = transfer_block(new_in.clone(), &blocks[b].instrs, f, context);
         in_states[b] = Some(new_in);
         if out_states[b] != new_out {
             out_states[b] = new_out;
@@ -999,14 +1019,14 @@ fn transfer_block(
     mut state: Vec<Node>,
     instrs: &[MirInstr],
     f: &MirFunction,
-    refills: &Refills,
+    context: &MoveContext,
 ) -> Option<Vec<Node>> {
     for instr in instrs {
         if let MirInstr::Try { .. } = instr {
-            let nested = walk_try(state, instr, f, refills, None::<&mut NoObserver>).ok()?;
+            let nested = walk_try(state, instr, f, context, None::<&mut NoObserver>).ok()?;
             state = nested.normal?;
         } else {
-            apply_effects(&mut state, instr, refills);
+            apply_effects(&mut state, instr, context);
             if matches!(instr, MirInstr::Raise { .. }) {
                 return None;
             }
@@ -1023,7 +1043,7 @@ fn check_instruction_uses(
     state: &[Node],
     instr: &MirInstr,
     f: &MirFunction,
-    refills: &Refills,
+    context: &MoveContext,
 ) -> Result<(), OwnershipError> {
     let widens_hole = matches!(
         instr,
@@ -1032,7 +1052,7 @@ fn check_instruction_uses(
             | MirInstr::DropPlace { .. }
             | MirInstr::MarkDestroyed { .. }
     );
-    for (root, path, touch, reg) in place_uses(instr, refills) {
+    for (root, path, touch, reg) in place_uses(instr, context) {
         let node = &state[root as usize];
         let (sev, blame) = match &touch {
             Touch::Read => node.read(&path),
@@ -1065,19 +1085,38 @@ fn check_instruction_uses(
     Ok(())
 }
 
-/// The whole-referent handles of `f`'s reference parameters.
-fn parameter_refills(f: &MirFunction) -> Refills {
-    let mut refills = Refills::new();
-    for_each_instr_deep(&f.blocks, &mut |instr| {
-        if let MirInstr::MakeRef { dest, place } = instr
-            && place.is_whole_root()
-            && place.through == Some(place.root)
-            && is_reference_parameter(f, place.root)
+/// The whole-referent handles of `f`'s reference parameters and the owners
+/// of its setup reference slots.
+fn move_context(f: &MirFunction) -> MoveContext {
+    let mut context = MoveContext {
+        refills: HashMap::new(),
+        setup_owners: HashMap::new(),
+    };
+    for_each_instr_deep(&f.blocks, &mut |instr| match instr {
+        MirInstr::MakeRef { dest, place }
+            if place.is_whole_root()
+                && place.through == Some(place.root)
+                && is_reference_parameter(f, place.root) =>
         {
-            refills.insert(dest.0, place.root);
+            context.refills.insert(dest.0, place.root);
         }
+        MirInstr::EstablishLoans {
+            reference, loans, ..
+        } => {
+            let owners = loans
+                .iter()
+                .filter(|loan| loan.setup)
+                .map(|loan| loan.place.clone());
+            context
+                .setup_owners
+                .entry(*reference)
+                .or_default()
+                .extend(owners);
+        }
+        _ => {}
     });
-    refills
+    context.setup_owners.retain(|_, owners| !owners.is_empty());
+    context
 }
 
 fn is_reference_parameter(f: &MirFunction, var: VarId) -> bool {

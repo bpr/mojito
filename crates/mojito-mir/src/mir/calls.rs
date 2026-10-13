@@ -21,18 +21,34 @@ pub(super) type FieldwiseCallArguments = (
 /// place each reads.
 pub(super) type LoweredKeywords = (Vec<(String, Reg)>, Vec<Option<MirPlace>>);
 
-/// One open call's setup: the reads of its immediate by-value place operands,
-/// held until its last operand is evaluated. Mojo evaluates every argument to
-/// an lvalue in source order and reads each at call setup, so a later
-/// argument's write to the place is seen by an earlier one; a simple place
+/// One open call's setup: the reads of its immediate by-value operands, held
+/// until its last operand is evaluated. Mojo evaluates every argument to an
+/// lvalue in source order and reads each at call setup, so a later
+/// argument's write to the place is seen by an earlier one. A simple place
 /// has no lvalue work, so its whole read sequence (`UseVar`/`LoadPlace`, a
-/// `var` copy, an implicit conversion) is setup work.
+/// `var` copy, an implicit conversion) is setup work; a reference result (an
+/// accessor or a `ref`-returning call) is lvalue work where written and a
+/// read at setup ([`SetupReference`]).
 pub(super) struct CallSetup {
     /// The [`Flatten::argument_depth`] the call's own operands lower at.
     depth: usize,
     /// Each deferred read sequence with the operand it reads: `None` for a
     /// receiver or an operator operand, which precede every argument.
     reads: Vec<(Option<CheckedCallArgumentSource>, Vec<MirInstr>)>,
+}
+
+/// A by-value operand whose reference result is read at its call's setup.
+/// Its lvalue work (receiver, index, accessor or call) runs where written and
+/// leaves the reference in a hidden handle slot whose setup loans keep its
+/// owners live without excluding the later operands' accesses
+/// (`MirLoan::setup`); everything after the handle, the read and any
+/// conversion of it, moves to the setup frame.
+pub(super) struct SetupReference {
+    /// The operand's [`Node::address`].
+    node: usize,
+    /// Where the read begins once the handle is materialized: its block and
+    /// the index of the first instruction after the handle's loans.
+    read_start: Option<(MirBlockId, usize)>,
 }
 
 /// Whether a value of this type owns storage that destruction must release:
@@ -157,9 +173,12 @@ impl<'a> Flatten<'a> {
         lowered
     }
 
-    /// Run `lower`, and when `expression` is a [`Self::setup_read`] move
-    /// everything it emitted to the innermost setup frame. A lowering that
-    /// split the block stays where written.
+    /// Run `lower`, and move the read it emitted to the innermost setup
+    /// frame: everything when `expression` is a [`Self::setup_read`], and
+    /// everything after the reference handle when it is a
+    /// [`Self::setup_reference`] whose lowering materialized one
+    /// ([`Self::materialize_reference_result_place`]). A read that split the
+    /// block stays where written.
     fn defer_to_setup<R>(
         &mut self,
         expression: Node<'a>,
@@ -168,9 +187,20 @@ impl<'a> Flatten<'a> {
     ) -> R {
         let block = self.cur;
         let start = self.f.blocks[block].instrs.len();
-        let deferred = self.setup_read(expression);
+        let read = self.setup_read(expression);
+        let pending = (!read && self.setup_reference(expression)).then(|| SetupReference {
+            node: expression.address(),
+            read_start: None,
+        });
+        let enclosing = std::mem::replace(&mut self.setup_reference, pending);
         let lowered = lower(self);
-        if deferred
+        let reference = std::mem::replace(&mut self.setup_reference, enclosing);
+        let read_start = if read {
+            Some((block, start))
+        } else {
+            reference.and_then(|reference| reference.read_start)
+        };
+        if let Some((block, start)) = read_start
             && self.cur == block
             && let Some(setup) = self.call_setups.last_mut()
         {
@@ -178,6 +208,43 @@ impl<'a> Flatten<'a> {
             setup.reads.push((source, instrs));
         }
         lowered
+    }
+
+    /// Whether `expression` is the operand [`Self::defer_to_setup`] is
+    /// lowering for a setup read of its reference result, its handle not yet
+    /// materialized.
+    pub(super) fn awaits_setup_read(&self, expression: Node<'a>) -> bool {
+        self.setup_reference.as_ref().is_some_and(|reference| {
+            reference.node == expression.address() && reference.read_start.is_none()
+        })
+    }
+
+    /// Whether `expression` is a by-value operand whose reference result
+    /// belongs to call setup: an accessor subscript or a `ref`-returning call
+    /// read as a value, not a borrow, a materialized temporary, a module
+    /// constant, a pointer handle, a spread, or a transfer. An accessor chain
+    /// over a temporary (`first(Span(ys))[0]`) is read where written: the
+    /// temporary's slot dies at its last use, and a view's referent is
+    /// reached through it.
+    fn setup_reference(&mut self, expression: Node<'a>) -> bool {
+        let rooted = std::iter::successors(expression.object(), |node| node.object())
+            .last()
+            .is_none_or(|root| self.simple_place(root).is_some());
+        rooted
+            && expression.reference_result().is_some()
+            && expression.spread_operand().is_none()
+            && expression.transfer_operand().is_none()
+            && !expression.constant_param_value()
+            && !expression.is_origin_bearing_pointer()
+            && !expression.adjustments().iter().any(|adjustment| {
+                matches!(
+                    adjustment,
+                    mojito_checked::checked::SemanticAdjustment::BorrowShared
+                        | mojito_checked::checked::SemanticAdjustment::BorrowMutable
+                )
+            })
+            && mojito_checked::checked::materialized_borrow_owner(expression.adjustments())
+                .is_none()
     }
 
     /// Whether `expression` is a by-value place whose read belongs to call
@@ -324,19 +391,25 @@ impl<'a> Flatten<'a> {
                     None,
                 );
             }
-            let value = self.expr(expression);
-            self.anchor_temporary_argument(expression, value, adjustments, converted);
-            if adjustments.iter().any(|adjustment| {
-                matches!(
-                    adjustment,
-                    mojito_checked::checked::SemanticAdjustment::ReadTemporaryArgument
-                )
-            }) {
-                return (
-                    self.bind_temporary_argument(expression, value, adjustments, converted),
-                    None,
-                );
-            }
+            // A reference result's read, and the temporary binding of its
+            // copy, are setup work too.
+            let read = |this: &mut Self| {
+                let value = this.expr(expression);
+                this.anchor_temporary_argument(expression, value, adjustments, converted);
+                if adjustments.iter().any(|adjustment| {
+                    matches!(
+                        adjustment,
+                        mojito_checked::checked::SemanticAdjustment::ReadTemporaryArgument
+                    )
+                }) {
+                    return this.bind_temporary_argument(expression, value, adjustments, converted);
+                }
+                value
+            };
+            let value = match setup {
+                Some(source) => self.defer_to_setup(expression, Some(source), read),
+                None => read(self),
+            };
             return (value, None);
         }
 
@@ -835,6 +908,7 @@ impl<'a> Flatten<'a> {
         handle: Reg,
         reference: &mojito_types::origin::RefTy,
         fallback: Option<VarId>,
+        setup: bool,
     ) -> MirPlace {
         let variable = self.var(&format!("$call_ref_r{}", handle.0));
         let storage_ty = Ty::new(TyKind::Ref(reference.clone()));
@@ -881,6 +955,22 @@ impl<'a> Flatten<'a> {
                 mutable: reference.mutability == mojito_types::origin::Mutability::Mutable,
                 interior,
                 shared: false,
+                setup,
+            });
+        }
+        // A setup read also keeps the accessor chain's root receiver live:
+        // a view's referent (`Span.__getitem__`) is reached through it.
+        if setup
+            && let Some(receiver) = std::iter::successors(expression.object(), |node| node.object())
+                .find_map(|node| self.simple_place(node))
+            && !loans.iter().any(|loan| loan.place.root == receiver.root)
+        {
+            loans.push(MirLoan {
+                place: MirPlace::root(receiver.root, self.var_types.get(&receiver.root).cloned()),
+                mutable: false,
+                interior: None,
+                shared: false,
+                setup,
             });
         }
         if !loans.is_empty() {
@@ -917,12 +1007,20 @@ impl<'a> Flatten<'a> {
             Some(TyKind::Ref(reference)) => reference.clone(),
             _ => reference,
         };
-        Some(self.materialize_call_reference_place(
+        // An operand read at its call's setup lends through setup loans, and
+        // its read begins after them.
+        let setup = self.awaits_setup_read(expression);
+        let place = self.materialize_call_reference_place(
             expression,
             handle,
             &materialized_reference,
             None,
-        ))
+            setup,
+        );
+        if setup && let Some(pending) = self.setup_reference.as_mut() {
+            pending.read_start = Some((self.cur, self.f.blocks[self.cur].instrs.len()));
+        }
+        Some(place)
     }
 
     /// Lower ordinary field/intrinsic-index projections whose base is produced

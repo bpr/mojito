@@ -1491,7 +1491,7 @@ impl Checker {
                         context: "dictionary key".to_string(),
                     });
                 }
-                self.record_replacing_interior_reference(span, object, "value");
+                self.record_interior_reference(span, object, "value");
                 return Ok(match value.clone().kind() {
                     TyKind::Ref(reference) => reference.referent.clone(),
                     _ => value.clone(),
@@ -1576,7 +1576,7 @@ impl Checker {
         if list_element(obj_ty).is_some() {
             self.record_interior_reference(span, object, "element");
         } else if dict_elements(obj_ty).is_some() {
-            self.record_replacing_interior_reference(span, object, "value");
+            self.record_interior_reference(span, object, "value");
         }
         Ok(result)
     }

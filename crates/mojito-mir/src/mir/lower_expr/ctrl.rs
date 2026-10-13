@@ -345,6 +345,7 @@ impl<'a> Flatten<'a> {
                     mutable: transfer.mutable,
                     interior,
                     shared: false,
+                    setup: false,
                 });
             }
             if loans.is_empty() || loans.len() == before {
