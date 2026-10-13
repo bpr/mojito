@@ -560,6 +560,7 @@ impl Flatten<'_> {
                 p
             }
             ExprKind::TypeApply { name, .. } => {
+eprintln!("R638PROBE place_unrebound op={:?} binding={:?}", self.op_of(e).map(|o| std::mem::discriminant(o)), self.checked_node(e).and_then(|n| n.binding));
                 let index = self
                     .checked_adjustments(e)
                     .into_iter()
@@ -1837,6 +1838,7 @@ impl Flatten<'_> {
                 Some(p)
             }
             ExprKind::TypeApply { name, .. } => {
+eprintln!("R638PROBE simple_place op={:?} binding={:?}", self.op_of(e).map(|o| std::mem::discriminant(o)), self.checked_node(e).and_then(|n| n.binding));
                 let index = self.variant_projection_index(e)?;
                 let mut p = self.resolved_place(name);
                 let ty = self.checked_place_ty(e).or_else(|| self.checked_ty(e))?;
@@ -1954,6 +1956,7 @@ impl Flatten<'_> {
                 Some(p)
             }
             ExprKind::TypeApply { name, .. } => {
+eprintln!("R638PROBE try_place op={:?} binding={:?}", self.op_of(e).map(|o| std::mem::discriminant(o)), self.checked_node(e).and_then(|n| n.binding));
                 let index = self.variant_projection_index(e)?;
                 let mut p = self.resolved_place(name);
                 let ty = self.checked_place_ty(e).or_else(|| self.checked_ty(e))?;

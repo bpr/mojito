@@ -7,6 +7,7 @@ use mojito_types::types::TyKind;
 
 impl Flatten<'_> {
     pub(in crate::mir) fn expr_unconverted(&mut self, e: &Expr) -> Reg {
+        if self.variant_projection_index(e).is_some() { eprintln!("R638PROBE top kind={:?} op={:?}", std::mem::discriminant(&e.kind), self.op_of(e).map(|o| format!("{o:?}").chars().take(40).collect::<String>())); }
         if let Some(value) = self.literal_or_name(e).or_else(|| self.call_family(e)) {
             return value;
         }
@@ -184,6 +185,7 @@ impl Flatten<'_> {
                     )
                 }) =>
             {
+                eprintln!("R638PROBE expr_unconverted op={:?} binding={:?}", self.op_of(e).map(|o| std::mem::discriminant(o)), self.checked_node(e).and_then(|n| n.binding));
                 self.variant_project_type_apply(e, name)
             }
             // A lambda expression materializes its hidden definition's

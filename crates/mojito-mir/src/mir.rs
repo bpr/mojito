@@ -3079,6 +3079,7 @@ impl Flatten<'_> {
                     )
                 })
         {
+eprintln!("R638PROBE reference_handle op={:?} binding={:?}", self.op_of(expression).map(|o| std::mem::discriminant(o)), self.checked_node(expression).and_then(|n| n.binding));
             let place = self.place(expression);
             let handle_ty = mir_place_handle_ty(
                 &place,

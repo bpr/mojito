@@ -598,6 +598,8 @@ impl Flatten<'_> {
                 ExprKind::Member { .. } | ExprKind::Index { .. } | ExprKind::TypeApply { .. }
             )
         {
+ if matches!(expression.kind, ExprKind::TypeApply{..}) {
+eprintln!("R638PROBE facts_loans op={:?} binding={:?}", self.op_of(expression).map(|o| std::mem::discriminant(o)), self.checked_node(expression).and_then(|n| n.binding));}
             let place = self.place(expression);
             let interiors = self.checked_interior_references(expression);
             if interiors.is_empty() {

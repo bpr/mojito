@@ -131,3 +131,16 @@ struct Variant[*Ts: AnyType](
         comptime if Self.Ts.contains[T]():
             pass
         self._storage.deinit_with(deinit_func)
+
+
+struct _R638Probe:
+    @staticmethod
+    def run():
+        var l = List[__VariantStorage[Int, String]]()
+        l.append(__VariantStorage[Int, String](7))
+        for s in l:
+            print(s[Int])
+        for ref s in l:
+            s[Int] = 8
+            ref r = s[Int]
+            print(r)
