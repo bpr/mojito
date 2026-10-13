@@ -28,7 +28,8 @@ pub(super) type LoweredKeywords = (Vec<(String, Reg)>, Vec<Option<MirPlace>>);
 /// has no lvalue work, so its whole read sequence (`UseVar`/`LoadPlace`, a
 /// `var` copy, an implicit conversion) is setup work; a reference result (an
 /// accessor or a `ref`-returning call) is lvalue work where written and a
-/// read at setup ([`SetupReference`]).
+/// read at setup ([`SetupReference`]), as is a bound collection display,
+/// whose elements are its lvalue work.
 pub(super) struct CallSetup {
     /// The [`Flatten::argument_depth`] the call's own operands lower at.
     depth: usize,
@@ -42,7 +43,10 @@ pub(super) struct CallSetup {
 /// leaves the reference in a hidden handle slot whose setup loans keep its
 /// owners live without excluding the later operands' accesses
 /// (`MirLoan::setup`); everything after the handle, the read and any
-/// conversion of it, moves to the setup frame.
+/// conversion of it, moves to the setup frame. A bound collection display
+/// ([`Flatten::setup_display`]) is the other such operand: its elements'
+/// lvalue work runs where written, and its element reads, its construction,
+/// and the argument's binding of it move to the setup frame.
 pub(super) struct SetupReference {
     /// The operand's [`Node::address`].
     node: usize,
@@ -87,7 +91,7 @@ impl<'a> Flatten<'a> {
     /// ([`Self::open_call_setup`]) a simple place's read is deferred to the
     /// frame's setup.
     pub(super) fn lower_operator_operand(&mut self, expression: Node<'a>) -> Reg {
-        self.lower_setup_operand(expression, None, |this| {
+        self.lower_setup_operand(expression, None, false, |this| {
             let borrowed = expression.adjustments().iter().any(|adjustment| {
                 matches!(
                     adjustment,
@@ -101,15 +105,28 @@ impl<'a> Flatten<'a> {
         })
     }
 
-    /// Lower a display's elements in order. A display is its constructor's
+    /// Lower `display`'s elements in order. A display is its constructor's
     /// call, so each element is evaluated where written and read at that
-    /// call's setup, after the last element.
-    pub(super) fn display_elements(&mut self, elements: &[Node<'a>]) -> Vec<Reg> {
+    /// call's setup, after the last element. When the display is itself a
+    /// bound operand awaiting its enclosing call's setup, its element reads
+    /// and the construction after them are that setup's work.
+    pub(super) fn display_elements(
+        &mut self,
+        display: Node<'a>,
+        elements: &[Node<'a>],
+    ) -> Vec<Reg> {
         self.open_call_setup();
         let regs = elements
             .iter()
-            .map(|&element| self.lower_setup_operand(element, None, |this| this.expr(element)))
+            .map(|&element| {
+                self.lower_setup_operand(element, None, true, |this| this.expr(element))
+            })
             .collect();
+        if self.awaits_setup_read(display)
+            && let Some(pending) = self.setup_reference.as_mut()
+        {
+            pending.read_start = Some((self.cur, self.f.blocks[self.cur].instrs.len()));
+        }
         self.close_call_setup(None);
         regs
     }
@@ -155,11 +172,14 @@ impl<'a> Flatten<'a> {
     /// Lower one operand of the innermost open call with `lower`, one
     /// argument depth deeper so a nested call's operands never reach the
     /// outer frame. When the frame is this operand's own, its read defers
-    /// to setup ([`Self::defer_to_setup`]).
+    /// to setup ([`Self::defer_to_setup`]). `bound`: the operand converts to
+    /// a type its consumer declares (a call argument or a display element),
+    /// rather than keeping its natural type (a receiver or operator operand).
     fn lower_setup_operand<R>(
         &mut self,
         expression: Node<'a>,
         source: Option<CheckedCallArgumentSource>,
+        bound: bool,
         lower: impl FnOnce(&mut Self) -> R,
     ) -> R {
         let owns_setup = self
@@ -168,7 +188,7 @@ impl<'a> Flatten<'a> {
             .is_some_and(|setup| setup.depth == self.argument_depth);
         self.argument_depth += 1;
         let lowered = if owns_setup {
-            self.defer_to_setup(expression, source, lower)
+            self.defer_to_setup(expression, source, bound, lower)
         } else {
             lower(self)
         };
@@ -190,18 +210,23 @@ impl<'a> Flatten<'a> {
     /// frame: everything when `expression` is a [`Self::setup_read`], and
     /// everything after the reference handle when it is a
     /// [`Self::setup_reference`] whose lowering materialized one
-    /// ([`Self::materialize_reference_result_place`]). A read that split the
-    /// block stays where written.
+    /// ([`Self::materialize_reference_result_place`]), or everything after
+    /// the elements of a `bound` [`Self::setup_display`]
+    /// ([`Self::display_elements`]). A read that split the block stays where
+    /// written.
     fn defer_to_setup<R>(
         &mut self,
         expression: Node<'a>,
         source: Option<CheckedCallArgumentSource>,
+        bound: bool,
         lower: impl FnOnce(&mut Self) -> R,
     ) -> R {
         let block = self.cur;
         let start = self.f.blocks[block].instrs.len();
         let read = self.setup_read(expression);
-        let pending = (!read && self.setup_reference(expression)).then(|| SetupReference {
+        let pending = (!read
+            && (bound && Self::setup_display(expression) || self.setup_reference(expression)))
+        .then(|| SetupReference {
             node: expression.address(),
             read_start: None,
         });
@@ -224,8 +249,8 @@ impl<'a> Flatten<'a> {
     }
 
     /// Whether `expression` is the operand [`Self::defer_to_setup`] is
-    /// lowering for a setup read of its reference result, its handle not yet
-    /// materialized.
+    /// lowering for a setup read of its reference result or display
+    /// elements, its handle or elements not yet materialized.
     pub(super) fn awaits_setup_read(&self, expression: Node<'a>) -> bool {
         self.setup_reference.as_ref().is_some_and(|reference| {
             reference.node == expression.address() && reference.read_start.is_none()
@@ -292,6 +317,18 @@ impl<'a> Flatten<'a> {
                 && !self.aliases.contains_key(&place.root)
                 && !self.runtime_aliases.contains(&place.root)
         })
+    }
+
+    /// Whether `expression` is a collection display, which a bound position
+    /// types by its consumer's parameter: a list, set, dictionary, or array
+    /// display is built as its argument's conversion, at setup, while a tuple
+    /// display or a comprehension has a natural type and is built where
+    /// written.
+    const fn setup_display(expression: Node<'a>) -> bool {
+        matches!(
+            expression.op(),
+            CheckedOp::ListLit(_) | CheckedOp::BraceLit(_)
+        )
     }
 
     /// `lends_reads`: the enclosing call's result borrows its read
@@ -377,7 +414,7 @@ impl<'a> Flatten<'a> {
                 )
             }) && expression.implicit_conversion().is_none()
                 && let Some(register) = match setup.filter(|_| !lends_reads) {
-                    Some(source) => self.defer_to_setup(expression, Some(source), |this| {
+                    Some(source) => self.defer_to_setup(expression, Some(source), true, |this| {
                         this.lower_borrowed_read_argument(expression)
                     }),
                     None => self.lower_borrowed_read_argument(expression),
@@ -400,7 +437,9 @@ impl<'a> Flatten<'a> {
                 && self.setup_read(expression)
             {
                 return (
-                    self.defer_to_setup(expression, Some(source), |this| this.expr(expression)),
+                    self.defer_to_setup(expression, Some(source), true, |this| {
+                        this.expr(expression)
+                    }),
                     None,
                 );
             }
@@ -420,7 +459,7 @@ impl<'a> Flatten<'a> {
                 value
             };
             let value = match setup {
-                Some(source) => self.defer_to_setup(expression, Some(source), read),
+                Some(source) => self.defer_to_setup(expression, Some(source), true, read),
                 None => read(self),
             };
             return (value, None);
@@ -1303,7 +1342,7 @@ impl<'a> Flatten<'a> {
         });
         if by_value {
             self.open_call_setup();
-            return self.lower_setup_operand(receiver, None, lower);
+            return self.lower_setup_operand(receiver, None, false, lower);
         }
         let lowered = lower(self);
         self.open_call_setup();

@@ -540,3 +540,4 @@ discard-slots-typed-per-statement	run	assets/ok/discard_slots_typed_per_statemen
 by-value-argument-read-at-call-setup	run	assets/ok/by_value_argument_read_at_call_setup.mojo
 reference-argument-read-at-call-setup	run	assets/ok/reference_argument_read_at_call_setup.mojo
 display-element-read-at-construction	run	assets/ok/display_element_read_at_construction.mojo
+display-argument-built-at-call-setup	run	assets/ok/display_argument_built_at_call_setup.mojo

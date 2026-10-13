@@ -4221,9 +4221,19 @@ current Mojo:
   interior reference. A display is its constructor's call, so it opens its
   own frame (`display_elements`) over its elements, a dictionary display
   lowering every key and then every value into it, before the collection is
-  built: `(u.t, bump(u))` reads `u.t` after `bump` writes it. A display
-  passed directly as a call argument still reads at its own setup rather
-  than the enclosing call's.
+  built: `(u.t, bump(u))` reads `u.t` after `bump` writes it. A list, set,
+  dictionary, or array display at a bound position — a call argument, or an
+  element of a bound display — is typed by its consumer's parameter, so it
+  is built as that argument's conversion: its elements' lvalue work runs
+  where written, and its element reads, its construction, and the
+  argument's temporary binding move into the enclosing frame like a
+  reference result's read (`setup_display`, `display_elements` starting the
+  pending `SetupReference`'s read after the elements). So
+  `ha([a.t, 1], bump(a))` reads `a.t` after `bump` writes it and
+  `ha([lst[0], 1], set0(lst))` uses an invalidated interior reference. A
+  tuple display, a comprehension, a display used as a receiver or operator
+  operand (`lower_setup_operand`'s `bound` is false), and a display inside a
+  nested call keep their natural types and are built where written.
 - An element read out of pack storage (an intrinsic `TupleStorage` or
   `VariadicStorage` `Index` with a retained base place) is the same shallow
   read: an aggregate element retains the pack through every consumer of the

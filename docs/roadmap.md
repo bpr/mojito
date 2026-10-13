@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R697**.
+Next free ID: **R698**.
 
 ## Ordered Work
 
@@ -295,24 +295,6 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
   - Mojito copies `x` into the discard and destroys both, where the pin
     moves the last use.
   - Found while landing R467 (2026-10-07).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **R693 A collection display passed directly as a call argument reads
-  its elements at its own setup, not the call's**
-
-  Problem: `head([a.t, 1], bump(a))` prints `105` at the pin and `5` in
-  Mojito.
-  - The pin defers a `List`, `Set`, or `Array` display bound directly to a
-    `var` or `read` parameter (`ha([a.t, 1], bump(a))`,
-    `hs({b.t, 1}, bump(b))`, `hr([c.t, 1], bump(c))` all print `105`).
-  - A tuple display argument does not defer (`fst((c.t, 1), bump(c))`
-    prints `5`), nor does a display nested in another call or subscripted.
-  - An element call still runs where written.
-  - Lever: when `lower_setup_operand`'s operand is such a display,
-    `display_elements` (`crates/mojito-mir/src/mir/calls.rs`) hands its
-    frame's reads and the construction after them up to the parent frame.
-  - Found while landing R686 (2026-10-13).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -1274,6 +1256,24 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     module alone.
   - Probe: `conformance/probes/user_trait_named_like_prelude.mojo`.
   - Found while planning R488 (2026-10-08).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R697 A display as a struct operator's right operand is not typed
+  by the dunder's parameter**
+
+  Problem: `l + [2]` and `l == [1]` over a `List[Int]` `l` are rejected
+  ("expected List[Int], found Array[Int, 1]"), where the pin runs them.
+  - The checker types the right operand's display by its natural `Array`
+    instead of by the selected dunder's parameter, as a call argument's
+    display is.
+  - The pin builds that display at the operator's setup: `g(a) + [a.t]`,
+    where `g` adds 100 to `a.t`, reads `a.t` after `g` runs.
+  - Once typed, `lower_operator_operand`
+    (`crates/mojito-mir/src/mir/calls.rs`) must pass `bound = true` for the
+    right operand; the left operand is a receiver and keeps its natural
+    type (`[a.t] == g(a)` is rejected at the pin too).
+  - Found while landing R693 (2026-10-13).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

@@ -171,6 +171,7 @@ assets/ok/dict_upstream_key_value_iteration.mojo	main	exe-differential	sanitized
 assets/ok/dict_views_iteration.mojo	main	exe-differential	sanitized
 assets/ok/discard_slots_typed_per_statement.mojo	main	exe-differential	sanitized
 assets/ok/discarded_result_destruction.mojo	main	exe-differential	sanitized
+assets/ok/display_argument_built_at_call_setup.mojo	main	exe-differential	sanitized
 assets/ok/display_element_read_at_construction.mojo	main	exe-differential	sanitized
 assets/ok/docstrings.mojo	main	exe-differential	sanitized
 assets/ok/dtype_compile_time_values.mojo	main	exe-differential	sanitized

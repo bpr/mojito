@@ -296,7 +296,7 @@ impl<'a> Flatten<'a> {
             // the variadic arguments, `__list_literal__` selects the
             // literal overload, and the `length` parameter argument
             // reifies the constructed value's `value_params`.
-            let regs = self.display_elements(&elements);
+            let regs = self.display_elements(node, &elements);
             let none = self.fresh_typed(node.location(), None, Ty::none());
             self.emit(MirInstr::Const {
                 dest: none,
@@ -338,7 +338,7 @@ impl<'a> Flatten<'a> {
             return d;
         }
         if let Some((target, Some(insert))) = collection_plan(node.checked) {
-            let values = self.display_elements(&elements);
+            let values = self.display_elements(node, &elements);
             let collection = self.begin_nominal_collection(node, &target);
             for (element, value) in elements.into_iter().zip(values) {
                 self.insert_nominal_collection(element, collection, &target, &insert, vec![value]);
@@ -370,7 +370,7 @@ impl<'a> Flatten<'a> {
                     .expect("checked dictionary display has paired values")
             }));
         }
-        let regs = self.display_elements(&operands);
+        let regs = self.display_elements(node, &operands);
         let (keys, values) = regs.split_at(entries.len());
         let collection = self.begin_nominal_collection(node, &target);
         for (index, &key) in keys.iter().enumerate() {
@@ -388,7 +388,7 @@ impl<'a> Flatten<'a> {
             && let TyKind::Struct(name, _) = target.kind()
         {
             let elements: Vec<Node<'a>> = node.operands().collect();
-            let regs = self.display_elements(&elements);
+            let regs = self.display_elements(node, &elements);
             let dest = self.fresh_typed(node.location(), None, target.clone());
             self.emit(MirInstr::Call {
                 dest,

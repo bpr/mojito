@@ -8,6 +8,14 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A list, set, dict, or array display passed as a call argument is built at
+  the call's setup, after every argument is evaluated, as the pin builds it
+  (R693): `ha([a.t, 1], bump(a))` and `hd({1: a.t}, bump(a))` see `bump`'s
+  write, as do keyword, constructor, method, generic, and `print`
+  arguments and a display nested in such a display, and
+  `ha([lst[0], 1], set0(lst))` is rejected as a use of an invalidated
+  interior reference. Tuple displays and comprehensions are still built
+  where written.
 - A display reads its elements at its constructor's setup, after every
   element is evaluated, as the pin reads it (R686): `(u.t, bump(u))` and
   `[v.t, bump(v)]` see `bump`'s write, as do `List`, `Set`, and `Dict`
