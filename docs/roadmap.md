@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R660**.
+Next free ID: **R661**.
 
 ## Ordered Work
 
@@ -4821,20 +4821,22 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R634 HIR types a slot by its name's spelling anywhere in the
-  program**
+- [ ] **R660 A value binder's local slot has no type in its function's
+  MIR**
 
-  `checked_var_types` (`crates/mojito-hir/src/hir.rs`) types each slot by
-  the first `Identifier` node of the slot's source spelling among all the
-  program's nodes, not the nodes that read the slot.
-  - A same-spelled local of another function can type it; parameter and
-    lifted-capture slots are overwritten after the fact to mask that.
-  - The lever: type a slot from the nodes `Cfg::slots` resolves to it
-    (their `place_ty`, else `ty`), as an upstream value's type is its
-    defining op's.
-  - Done when no HIR or MIR slot type comes from a spelling match and the
-    probe fixtures' MIR is unchanged on the VM and with `--backend pliron`.
-  - Found while landing R617 (2026-10-12).
+  In `def plain[n: Int]() -> Int: return n`, `var.use $v0` and
+  `drop.var $v0` read a slot that `var_types` does not type.
+  - Upstream, a parameter value has its declared type; here only a
+    callable-typed value parameter's slot is declared
+    (`callable_parameter_locals`), and a scalar binder's slot is one HIR
+    interns from its reads.
+  - The lever: seed `lower_fn_nested`'s `declared` map from the
+    function's `ParamDecl::Value` binders whose names the CFG interns, as
+    `enclosing_value_binder_read` (`mir.rs`) already types the slot on
+    the `ParamExpr` route.
+  - Done when every slot a `UseVar` or `DropVar` names is typed, and the
+    fixtures' VM and `--backend pliron` output is unchanged.
+  - Found while landing R634 (2026-10-13).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

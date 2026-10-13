@@ -1618,12 +1618,6 @@ impl<'a> Flatten<'a> {
                 term: MirTerm::Return(None),
             });
         }
-        // Region-local inference can discover new slots, but it must not
-        // replace exact types already established in the enclosing frame. In
-        // particular, same-spelled exception targets and outer locals occupy
-        // different owner slots even though name-based region seeding sees both.
-        let mut region_var_types = region_cfg.var_types.clone();
-        region_var_types.extend(self.var_types.clone());
         let fallback = Terminator::FallOff;
         {
             let mut fl = Flatten {
@@ -1631,7 +1625,9 @@ impl<'a> Flatten<'a> {
                 cur: 0,
                 next_reg: self.next_reg,
                 vars: region_cfg.vars.clone(),
-                var_types: region_var_types,
+                // The region inherits the frame's slot types; a slot it
+                // declares is typed by its declaring op as the region lowers.
+                var_types: self.var_types.clone(),
                 owner_vars: self.owner_vars.clone(),
                 nested: self.nested.clone(), // a `try` region may call a nested `def`
                 receiver_value_parameters: self.receiver_value_parameters.clone(),

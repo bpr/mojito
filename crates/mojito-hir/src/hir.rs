@@ -261,8 +261,6 @@ pub struct Cfg {
     /// copied) with every other function's lowering. Kept by stable node id;
     /// a CFG is handed its body's statement ids and finds no node by location.
     pub checked: Arc<CheckedTables>,
-    /// Checked storage types for variable slots known at HIR construction.
-    pub var_types: HashMap<VarId, Ty>,
     /// The slot each local-name node (an `Identifier`, a walrus `Named`) of
     /// this CFG's expressions reads, as resolved in its lexical scope: the
     /// value an upstream operand names.
@@ -633,14 +631,12 @@ impl Lower {
     }
 
     fn finish(self, entry: BlockId, n_params: usize, body: Vec<CheckedStmtId>) -> Cfg {
-        let var_types = checked_var_types(&self.vars, &self.checked.expressions);
         Cfg {
             g: self.g,
             entry,
             vars: self.vars,
             n_params,
             checked: self.checked,
-            var_types,
             slots: self.slots,
             body,
         }
@@ -1202,22 +1198,6 @@ struct LoopFrame {
     /// Values to destroy when a return bypasses this loop's common exit. For a
     /// `for`, this is the current element followed by the normalized iterator.
     cleanup: Vec<VarId>,
-}
-
-fn checked_var_types(vars: &[String], nodes: &[CheckedExpr]) -> HashMap<VarId, Ty> {
-    vars.iter()
-        .enumerate()
-        .filter_map(|(slot, runtime_name)| {
-            let source_name = runtime_name.split("$shadow").next().unwrap_or(runtime_name);
-            let ty = nodes.iter().find_map(|node| match &node.op {
-                CheckedOp::Identifier(name) if name == source_name => {
-                    node.place_ty.clone().or_else(|| node.ty.clone())
-                }
-                _ => None,
-            })?;
-            Some((slot as VarId, ty))
-        })
-        .collect()
 }
 
 fn explicit_local_names(checked: &CheckedTables, body: &[CheckedStmtId]) -> HashSet<String> {

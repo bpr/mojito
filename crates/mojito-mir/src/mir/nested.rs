@@ -76,34 +76,35 @@ pub(super) fn lower_fn_nested(
     let children = analyze_root_children(checked, name, statements);
     let registry = scope_registry(&children, &HashMap::new());
 
-    let mut cfg = returned.map_or_else(
+    let cfg = returned.map_or_else(
         || Cfg::build_checked_fn(checked, param_names, statements),
         |value| Cfg::build_checked_thunk(checked, param_names, statements, value),
     );
-    // Parameter slot types come from the checked declaration, not from
-    // name-matched body expressions (same-named bindings in other functions
-    // must never leak into this function's slots).
-    for (slot, ty) in param_types.iter().enumerate() {
-        cfg.var_types.insert(slot as VarId, ty.clone());
-    }
+    // A frame's declaration types its parameter, value-parameter, and named
+    // result slots; a named result holds the declared result type whether or
+    // not the body assigns it whole.
+    let mut declared: HashMap<VarId, Ty> = param_types
+        .iter()
+        .enumerate()
+        .map(|(slot, ty)| (slot as VarId, ty.clone()))
+        .collect();
     for (name, ty) in &value_parameter_locals {
         let slot = cfg
             .vars
             .iter()
             .position(|candidate| candidate == name)
             .expect("value parameter was seeded into the function CFG");
-        cfg.var_types.insert(slot as VarId, ty.clone());
+        declared.insert(slot as VarId, ty.clone());
     }
-    // A named result's slot holds the declared result type, whether or not
-    // the body assigns it whole.
     if let Some(slot) =
         named_result.and_then(|result| cfg.vars.iter().position(|candidate| candidate == result))
     {
-        cfg.var_types.insert(slot as VarId, ret_ty.clone());
+        declared.insert(slot as VarId, ret_ty.clone());
     }
     let mut thunks = ComptimeThunks::for_owner(name);
     let mut f = lower_cfg_nested(
         &cfg,
+        declared,
         &registry,
         overloads,
         returns_reference,
@@ -631,26 +632,27 @@ fn lower_nested_node(
         .filter(|capture| capture.kind == mojito_ast::ast::CaptureKind::Imm)
         .map(|capture| capture.name.clone())
         .collect();
-    let mut ncfg =
-        Cfg::build_checked_fn_with_captures(checked, &names, immutable_captures, &def.body);
+    let ncfg = Cfg::build_checked_fn_with_captures(checked, &names, immutable_captures, &def.body);
     // Every lifted slot takes its checker-owned storage type. In particular,
-    // an intermediate closure may only forward a captured sibling closure
-    // to a descendant, so body expression inference has no use from which
-    // it could rediscover that callable type.
-    for (slot, ty) in ptys.iter().enumerate() {
-        ncfg.var_types.insert(slot as VarId, ty.clone());
-    }
+    // an intermediate closure may only forward a captured sibling closure to
+    // a descendant, so no op in its body declares that callable type.
+    let mut declared: HashMap<VarId, Ty> = ptys
+        .iter()
+        .enumerate()
+        .map(|(slot, ty)| (slot as VarId, ty.clone()))
+        .collect();
     for (name, ty) in &value_parameter_locals {
         let slot = ncfg
             .vars
             .iter()
             .position(|candidate| candidate == name)
             .expect("nested value parameter was seeded into the function CFG");
-        ncfg.var_types.insert(slot as VarId, ty.clone());
+        declared.insert(slot as VarId, ty.clone());
     }
     let mut thunks = ComptimeThunks::for_owner(mangled);
     let mut nf = lower_cfg_nested(
         &ncfg,
+        declared,
         &registry,
         overloads,
         effect.returns_reference,

@@ -65,6 +65,7 @@ mod node;
 pub fn lower_cfg(cfg: &Cfg) -> MirFunction {
     lower_cfg_nested(
         cfg,
+        HashMap::new(),
         &HashMap::new(),
         &std::sync::Arc::default(),
         false,
@@ -615,6 +616,7 @@ fn lower_program(
         let cfg = Cfg::build_checked_fn(checked, &[], &toplevel);
         let function = lower_cfg_nested(
             &cfg,
+            HashMap::new(),
             &HashMap::new(),
             overloads,
             false,
@@ -3641,10 +3643,14 @@ struct NestedInfo {
 
 /// [`lower_cfg`] with a nested-`def` registry in scope: a call to a registered
 /// nested `def` is rewritten to its lifted function (captures prepended) and the
-/// nested `def` statement lowers to nothing.
+/// nested `def` statement lowers to nothing. `declared` types the slots the
+/// frame's declaration binds before its body runs (parameters, value
+/// parameters, a named result); every other slot is typed by the op that
+/// declares it as the body lowers.
 #[allow(clippy::too_many_arguments)]
 fn lower_cfg_nested(
     cfg: &Cfg,
+    declared: HashMap<VarId, Ty>,
     nested: &HashMap<mojito_types::origin::OwnerId, NestedInfo>,
     overloads: &std::sync::Arc<mojito_checked::package::ProgramOverloads>,
     returns_reference: bool,
@@ -3692,7 +3698,7 @@ fn lower_cfg_nested(
             cur: 0,
             next_reg: 0,
             vars: cfg.vars.clone(),
-            var_types: cfg.var_types.clone(),
+            var_types: declared,
             owner_vars: capture_bindings
                 .iter()
                 .copied()

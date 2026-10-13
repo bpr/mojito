@@ -8,6 +8,15 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- HIR's CFG no longer types slots (R634): it typed each slot by the
+  first same-spelled name read anywhere in the program, so another
+  function's local could type it. MIR types each slot from the op that
+  declares it, a frame's parameter, value-parameter, and named-result
+  slots from its declaration, as an upstream value's type is its
+  defining op's. MIR changes in one place: a value binder read inside a
+  `try` no longer takes a stray type (R660 files the binder's slot
+  type); no program's output changes.
+
 - A local display binding references its value's node rather than
   copying its HIR at each crossing (R651), as an upstream use references
   its SSA definition, and is scoped to the region that declares it, as the
