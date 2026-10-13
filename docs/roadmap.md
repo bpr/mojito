@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R726**.
+Next free ID: **R727**.
 
 ## Ordered Work
 
@@ -295,19 +295,6 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
   - Mojito copies `x` into the discard and destroys both, where the pin
     moves the last use.
   - Found while landing R467 (2026-10-07).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **R721 A constructor call is never alias-checked**
-
-  Problem: `P(s, s)` over `__init__(out self, mut a: S, b: S)` runs,
-  where the pin rejects it: "aliasing values passed mutably to 'a'
-  argument and passed immutably to 'b' argument in 'P' initializer call".
-  - `infer_construction` never calls `check_call_aliasing` or
-    `check_argument_origin_exclusivity`, as `finish_static_call` does.
-  - `record_constructor_call` (`checker/declarations.rs`) is where the
-    checks plug in: every constructor path already runs through it.
-  - Found while landing R717 (2026-10-13).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -1430,6 +1417,24 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     right operand; the left operand is a receiver and keeps its natural
     type (`[a.t] == g(a)` is rejected at the pin too).
   - Found while landing R693 (2026-10-13).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R726 A constructor with its own origin parameter matches no
+  overload over a struct argument**
+
+  Problem: `C(xs, RefBox(Pointer(to=ys)))` over `def __init__[o:
+  Origin[mut=True]](out self, mut xs: List[Int], b: RefBox[o])` prints
+  `2` at the pin; Mojito rejects it: "no constructor overload matches
+  the supplied arguments".
+  - On a generic `C[T]` it fails instead with "expected RefBox, found
+    RefBox".
+  - The same signature as a free function binds `o` and runs.
+  - Until it is fixed, the carried-origin constructor shape
+    `C(xs, RefBox(Pointer(to=xs)))`, which the pin rejects as "... 'b'
+    argument in 'C' initializer call", has no `assets/type_error/`
+    fixture: add it with this fix.
+  - Found while planning R721 (2026-10-13).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

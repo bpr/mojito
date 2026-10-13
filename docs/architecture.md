@@ -4206,7 +4206,12 @@ current Mojo:
   reads `s` in place. A raising `__init__` records the construction's call
   effect, so it is a raising call: its result is taken after its argument
   temporaries die, and outside `try` or a `raises` function it is
-  rejected.
+  rejected. Its arguments alias-check as an initializer call too:
+  `record_constructor_call` runs the free-call chain
+  (`check_free_call_aliasing`) with the constructed type as the callee, so
+  `P(s, s)` over `mut a: S, b: S` is rejected, and an argument a `*args`
+  collector gathers (`Tuple(Span(xs), Span(xs))`) is judged by its own type
+  (`signature_collected_arguments`).
 - A struct operator is its dunder's call, so its operands bind the same way
   (`bind_read_temporary`): the checker marks each non-place operand the
   selected dunder reads, the receiver and the argument, a prefix operator's

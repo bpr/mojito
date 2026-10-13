@@ -645,7 +645,8 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `read_temporary_arguments`; the arguments a read `*args` collector gathers
   bind the same way; a construction binds through it from
   `Checker::record_constructor_call` in `checker/declarations.rs`, which
-  also makes a raising `__init__` a raising call).
+  also makes a raising `__init__` a raising call and alias-checks the
+  arguments as an initializer call through `check_free_call_aliasing`).
   `Checker::designates_place` is the semantic place test: a syntactic place
   other than a subscript whose selected getter returns by value.
 - `checker/generics.rs` owns unification, substitution, and callable/method

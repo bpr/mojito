@@ -8,6 +8,10 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A construction is alias-checked as its initializer's call, as the pin
+  has it (R721): `P(s, s)` over `__init__(out self, mut a: S, b: S)`, its
+  keyword and generic forms, a `*rest` collector beside a `mut` argument,
+  and `Tuple(Span(xs), Span(xs))` are now rejected instead of running.
 - A static call read as a call argument or operator operand
   (`print(Box[String].pick(4))`, `show(Plain.same(a))`) no longer interns
   a slot named after its type receiver (R725): natively such a call no

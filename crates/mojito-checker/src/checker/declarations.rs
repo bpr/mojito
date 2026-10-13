@@ -1776,8 +1776,9 @@ impl Checker {
         }
     }
 
-    /// A construction is its `__init__`'s call: its arguments bind as a
-    /// call's do, and a raising initializer makes it a raising call.
+    /// A construction is its `__init__`'s call: its arguments bind and
+    /// alias-check as a call's do, and a raising initializer makes it a
+    /// raising call.
     fn record_constructor_call(
         &self,
         span: &SourceSpan,
@@ -1791,6 +1792,41 @@ impl Checker {
             binding.conventions,
             binding.ref_params,
             None,
+            args,
+            kwargs,
+        )?;
+        let exclusivity = &binding.exclusivity;
+        let copied_reads = binding
+            .slots
+            .iter()
+            .enumerate()
+            .map(|(index, slot)| {
+                let argument = match slot {
+                    ArgSlot::Positional(position) => &args[*position],
+                    ArgSlot::Keyword(position) => &kwargs[*position].value,
+                    ArgSlot::Default => return Ok(false),
+                };
+                let Some(parameter) = exclusivity.bound.get(index) else {
+                    return Ok(false);
+                };
+                let ty = self.infer_with_expected(argument, parameter, true)?;
+                let convention = effective.get(index).copied().flatten();
+                Ok(self.argument_is_independent_copy(convention, argument, &ty))
+            })
+            .collect::<Result<Vec<_>, TypeError>>()?;
+        self.check_free_call_aliasing(
+            &ExclusivityCallee {
+                name: &exclusivity.callee,
+                parameter_names: exclusivity.parameter_names,
+                declared: &exclusivity.declared,
+                bound: &exclusivity.bound,
+                nested_origins: exclusivity.nested_origins,
+                collected: Some(&exclusivity.gathered),
+                initializer: true,
+            },
+            &effective,
+            &copied_reads,
+            binding.slots,
             args,
             kwargs,
         )?;
@@ -2274,6 +2310,14 @@ impl Checker {
                         collected: selected.read_collected_arguments(),
                         raises: selected.raises,
                         error: selected.error.as_ref(),
+                        exclusivity: ConstructorExclusivity {
+                            callee: selected.return_type.to_string(),
+                            parameter_names: &selected.parameter_names,
+                            declared: selected.declared_params.clone(),
+                            bound: selected.param_types.clone(),
+                            nested_origins: selected.nested_origins,
+                            gathered: self.method_collected_arguments(&selected, args),
+                        },
                     },
                     args,
                     kwargs,
@@ -2380,6 +2424,7 @@ impl Checker {
                 );
                 self.record_struct_instantiation(name, &tyargs, span.source.as_deref());
                 let values = solved_value_bindings(&decls, &tyargs);
+                let mut bound = Vec::with_capacity(args.len());
                 for (i, pty) in params.iter().enumerate().take(args.len()) {
                     // The struct's own origin binders are bound before its
                     // type parameters, so an argument type's binder of the
@@ -2432,21 +2477,32 @@ impl Checker {
                             kind,
                         )?;
                     }
+                    bound.push(expected);
                 }
                 let slots = (0..args.len()).map(ArgSlot::Positional).collect::<Vec<_>>();
+                let constructed =
+                    self.constructed_type(name, tyargs, &partitioned.tail, &pointer_origins);
+                let exclusivity = ConstructorExclusivity {
+                    callee: constructed.to_string(),
+                    parameter_names: &sig.names,
+                    declared: params
+                        .iter()
+                        .map(|parameter| pointer_origins.substitute(parameter))
+                        .collect(),
+                    bound,
+                    nested_origins: sig.nested_origins,
+                    gathered: self.signature_collected_arguments(sig, &[], args, |element| {
+                        Ok(element.clone())
+                    }),
+                };
                 self.record_constructor_call(
                     span,
                     name,
-                    &ConstructorBinding::of_signature(sig, &slots, &[]),
+                    &ConstructorBinding::of_signature(sig, &slots, &[], exclusivity),
                     args,
                     kwargs,
                 )?;
-                return Ok(self.constructed_type(
-                    name,
-                    tyargs,
-                    &partitioned.tail,
-                    &pointer_origins,
-                ));
+                return Ok(constructed);
             }
             let decls = info.decls.clone();
             let explicit = self.explicit_type_subst(name, &decls, param_args)?;
@@ -2787,19 +2843,57 @@ impl Checker {
                         .chain(constructor_own_arguments(&sig, &subst))
                         .collect(),
                 );
+                // `expected` addresses the packed layout: the non-default
+                // slots in order, then the gathered arguments.
+                let expected_at = |packed: usize| {
+                    expected
+                        .iter()
+                        .find(|(index, _)| *index == packed)
+                        .map(|(_, ty)| ty.clone())
+                };
+                let mut packed = 0;
+                let bound_params = slots
+                    .iter()
+                    .enumerate()
+                    .map(|(index, slot)| {
+                        if matches!(slot, ArgSlot::Default) {
+                            return sig.params[index].clone();
+                        }
+                        packed += 1;
+                        expected_at(packed - 1).unwrap_or_else(|| sig.params[index].clone())
+                    })
+                    .collect();
+                let gathered = overflow
+                    .iter()
+                    .copied()
+                    .filter(|position| self.forwarded_pack(&args[*position]).is_none())
+                    .collect::<Vec<_>>();
+                // A homogeneous collector binds every gathered argument to
+                // the one solved element.
+                let resolve =
+                    |element: &Ty| Ok(expected_at(packed).unwrap_or_else(|| element.clone()));
+                let constructed =
+                    self.constructed_type(name, tyargs, &partitioned.tail, &pointer_origins);
+                let exclusivity = ConstructorExclusivity {
+                    callee: constructed.to_string(),
+                    parameter_names: &sig.names,
+                    declared: sig
+                        .params
+                        .iter()
+                        .map(|parameter| pointer_origins.substitute(parameter))
+                        .collect(),
+                    bound: bound_params,
+                    nested_origins: sig.nested_origins,
+                    gathered: self.signature_collected_arguments(&sig, &gathered, args, resolve),
+                };
                 self.record_constructor_call(
                     span,
                     name,
-                    &ConstructorBinding::of_signature(&sig, &slots, &overflow),
+                    &ConstructorBinding::of_signature(&sig, &slots, &overflow, exclusivity),
                     args,
                     kwargs,
                 )?;
-                return Ok(self.constructed_type(
-                    name,
-                    tyargs,
-                    &partitioned.tail,
-                    &pointer_origins,
-                ));
+                return Ok(constructed);
             }
             return Err(constructor_miss(
                 name,
@@ -3969,12 +4063,18 @@ struct ConstructorBinding<'a> {
     collected: &'a [usize],
     raises: bool,
     error: Option<&'a Ty>,
+    exclusivity: ConstructorExclusivity<'a>,
 }
 
 impl<'a> ConstructorBinding<'a> {
     /// `overflow` holds the positions the signature's `*args` collector
     /// gathers; only a read collector borrows them.
-    fn of_signature(sig: &'a MethodSig, slots: &'a [ArgSlot], overflow: &'a [usize]) -> Self {
+    fn of_signature(
+        sig: &'a MethodSig,
+        slots: &'a [ArgSlot],
+        overflow: &'a [usize],
+        exclusivity: ConstructorExclusivity<'a>,
+    ) -> Self {
         let collected = match sig.variadic_convention {
             None | Some(ArgConvention::Imm) => overflow,
             _ => &[],
@@ -3986,6 +4086,20 @@ impl<'a> ConstructorBinding<'a> {
             collected,
             raises: sig.raises,
             error: sig.error.as_ref(),
+            exclusivity,
         }
     }
+}
+
+/// What a construction's within-call exclusivity is judged against, as
+/// [`ExclusivityCallee`] spells it for the selected `__init__`.
+struct ConstructorExclusivity<'a> {
+    /// The constructed type, which names the initializer call.
+    callee: String,
+    parameter_names: &'a [String],
+    declared: Vec<Ty>,
+    /// The parameter type each slot binds, aligned with the slots.
+    bound: Vec<Ty>,
+    nested_origins: NestedOrigins,
+    gathered: CollectedArguments<'a>,
 }

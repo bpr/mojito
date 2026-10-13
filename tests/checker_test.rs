@@ -4742,6 +4742,23 @@ fn borrow_check_rejects_mutable_aliasing() {
 }
 
 #[test]
+fn constructor_arguments_alias_check_as_its_initializer_call() {
+    // A construction is its `__init__`'s call: the pin rejects `P(s, s)`
+    // over a `mut` and a read slot, and accepts disjoint fields, a
+    // temporary, register-passable reads, and a consuming copy.
+    let prelude = "@fieldwise_init\nstruct S(Copyable, Movable):\n    var v: Int\n\n@fieldwise_init\nstruct Q(Movable):\n    var x: S\n    var y: S\n\nstruct P:\n    var a: Int\n    def __init__(out self, mut a: S, b: S):\n        self.a = a.v + b.v\n\nstruct I:\n    var a: Int\n    def __init__(out self, mut a: Int, b: Int):\n        self.a = a + b\n\nstruct T:\n    var a: String\n    def __init__(out self, mut a: String, var b: String):\n        self.a = a + b\n\n";
+    ok_std(&format!(
+        "{prelude}def main():\n    var q = Q(S(1), S(2))\n    var i = 3\n    var s = String(\"x\")\n    print(P(q.x, q.y).a, P(q.x, S(i)).a, I(i, i).a, T(s, s).a)\n"
+    ));
+    assert!(matches!(
+        err_std(&format!(
+            "{prelude}def main():\n    var s = S(1)\n    print(P(s, s).a)\n"
+        )),
+        TypeError::AliasingViolation { .. }
+    ));
+}
+
+#[test]
 fn consuming_slot_copies_its_place_before_a_mutable_borrow() {
     // A consuming slot copies its place out before the callee runs, so it
     // overlaps no `mut` access in the same call whatever the type — the pin

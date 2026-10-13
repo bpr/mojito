@@ -253,6 +253,24 @@ impl Checker {
         }
     }
 
+    /// The arguments a signature's positional collector gathers at
+    /// `positions`, under the collector's declared name and convention: a
+    /// pack element binds to its argument's own type, a homogeneous element
+    /// to the type `resolve` gives it.
+    pub(in crate::checker) fn signature_collected_arguments<'a>(
+        &self,
+        sig: &'a MethodSig,
+        positions: &[usize],
+        args: &'a [Expr],
+        resolve: impl Fn(&Ty) -> Result<Ty, TypeError>,
+    ) -> CollectedArguments<'a> {
+        CollectedArguments {
+            name: sig.variadic_name.as_deref().unwrap_or("args"),
+            convention: sig.variadic_convention,
+            elements: self.gathered_elements(sig.variadic.as_ref(), positions, args, resolve),
+        }
+    }
+
     /// Reject a tuple literal two of whose elements reach overlapping caller
     /// storage with at least one mutable path, as its initializer's call.
     pub(in crate::checker) fn check_tuple_literal_exclusivity(
