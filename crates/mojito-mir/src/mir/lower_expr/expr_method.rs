@@ -82,7 +82,7 @@ impl<'a> Flatten<'a> {
     /// such a name (`Box[String]`). The bracket content is a compile-time
     /// argument the checker already resolved into its symbol selection —
     /// never lowered.
-    pub(super) fn type_receiver_name(&self, object: Node<'a>) -> Option<String> {
+    pub(in crate::mir) fn type_receiver_name(&self, object: Node<'a>) -> Option<String> {
         let node = object.checked;
         match &node.op {
             CheckedOp::TypeApply { name, .. } => Some(name.clone()),

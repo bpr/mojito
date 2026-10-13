@@ -87,20 +87,6 @@ change that needs a new `MJRT_ABI_VERSION`.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R725 Natively, a same-arity static overload returning a scalar
-  names an untyped variable**
-
-  Problem: `print(Box[String].pick(4))`, beside `pick(var item: Self.T)
-  -> Self`, stops natively with "unsupported untyped variable `Box`",
-  where the VM and the pin print `40`.
-  - `assets/ok/parametric_static_methods.mojo` hits it, so its
-    `exe-differential` parity row is stale; HEAD before R717 fails the
-    same way.
-  - `Box[String].pick(String("z"))`, the other overload, runs natively.
-  - Found while landing R717 (2026-10-13).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R434 Natively, a struct without its own `write_repr_to` cannot be
   formatted through a pack**
 

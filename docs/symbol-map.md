@@ -735,7 +735,9 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   read: `defer_to_setup` marks the operand in `Flatten::setup_reference`
   (`SetupReference`), `materialize_reference_result_place` gives its handle
   slot setup loans (`MirLoan::setup`) and starts the read there, and
-  `awaits_setup_read` routes `reference_result_value` to that slot.
+  `awaits_setup_read` routes `reference_result_value` to that slot. Both
+  decisions walk the operand's accessor chain with `place_chain`, which
+  stops at a static call's type receiver (`type_receiver_name`).
   In `mojito-analysis`, `moves.rs`'s `MoveContext::setup_owners` reads a
   setup slot's owners at each read through it, and `loans.rs` exempts setup
   loans from access and loan exclusivity.

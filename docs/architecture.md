@@ -4279,7 +4279,9 @@ current Mojo:
   leave the reference in a hidden `$call_ref_r` slot with setup loans
   (`SetupReference`, `materialize_reference_result_place`), the chain's root
   receiver among them, and only what follows the slot — the `LoadPlace`,
-  copy, conversion, and temporary binding — moves into the frame. A frame
+  copy, conversion, and temporary binding — moves into the frame. A static
+  call's receiver is a type, never a root, so a static call ends its chain
+  as a free call does (`place_chain`). A frame
   belongs only to its own call's immediate operands (`argument_depth`); a
   `mut`/`ref` place, a retained shared read, an accessor chain over a
   temporary, or a read that split the block stays where written. So

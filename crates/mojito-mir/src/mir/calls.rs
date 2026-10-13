@@ -289,9 +289,10 @@ impl<'a> Flatten<'a> {
     /// temporary's slot dies at its last use, and a view's referent is
     /// reached through it.
     fn setup_reference(&mut self, expression: Node<'a>) -> bool {
-        let rooted = std::iter::successors(expression.object(), |node| node.object())
+        let rooted = self
+            .place_chain(expression)
             .last()
-            .is_none_or(|root| self.simple_place(root).is_some());
+            .is_none_or(|root| self.simple_place(*root).is_some());
         rooted
             && expression.reference_result().is_some()
             && expression.spread_operand().is_none()
@@ -307,6 +308,20 @@ impl<'a> Flatten<'a> {
             })
             && mojito_checked::checked::materialized_borrow_owner(expression.adjustments())
                 .is_none()
+    }
+
+    /// The objects `expression`'s accessor chain reads through, innermost
+    /// last. A static call's receiver is a type, never a place, so the call
+    /// ends its chain as a free call does.
+    fn place_chain(&self, expression: Node<'a>) -> Vec<Node<'a>> {
+        std::iter::successors(Some(expression), |node| {
+            node.object().filter(|object| {
+                !matches!(node.op(), CheckedOp::MethodCall { .. })
+                    || self.type_receiver_name(*object).is_none()
+            })
+        })
+        .skip(1)
+        .collect()
     }
 
     /// Whether `expression` is a by-value place whose read belongs to call
@@ -1030,7 +1045,9 @@ impl<'a> Flatten<'a> {
         // A setup read also keeps the accessor chain's root receiver live:
         // a view's referent (`Span.__getitem__`) is reached through it.
         if setup
-            && let Some(receiver) = std::iter::successors(expression.object(), |node| node.object())
+            && let Some(receiver) = self
+                .place_chain(expression)
+                .into_iter()
                 .find_map(|node| self.simple_place(node))
             && !loans.iter().any(|loan| loan.place.root == receiver.root)
         {

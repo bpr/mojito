@@ -4134,3 +4134,32 @@ fn bound_comparison_names_its_requirement() {
             .is_none()
     );
 }
+
+#[test]
+fn static_call_operand_interns_no_receiver_slot() {
+    let mir = driver_mir(
+        r"
+struct Plain:
+    @staticmethod
+    def pick(count: Int) -> Int:
+        return count * 10
+
+
+struct Box[T: Copyable & Movable & Deinitable]:
+    @staticmethod
+    def pick(count: Int) -> Int:
+        return count * 10
+
+
+def main():
+    print(Plain.pick(4))
+    print(Box[String].pick(5))
+    print(Plain.pick(1) + 1)
+",
+    );
+    let names = &mir_function(&mir, "main").var_names;
+    assert!(
+        !names.iter().any(|name| name == "Plain" || name == "Box"),
+        "{names:?}"
+    );
+}

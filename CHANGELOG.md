@@ -8,6 +8,11 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A static call read as a call argument or operator operand
+  (`print(Box[String].pick(4))`, `show(Plain.same(a))`) no longer interns
+  a slot named after its type receiver (R725): natively such a call no
+  longer stops at an "untyped variable", and a `ref`-returning static call
+  as an argument no longer fails MIR verification on either backend.
 - A construction is its `__init__`'s call, as the pin has it (R717):
   `P(S(1), S(2))` destroys each `S` temporary when the initializer
   returns instead of leaking it, and `P(s, s)` reads `s` in place instead
