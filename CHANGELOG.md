@@ -8,6 +8,14 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A local declared before a `try` and first assigned inside its body
+  (`var x: S`, then `try: x = S(may(0))`) survives the body's exit and is
+  read after the `try`, as the pin does (R729): MIR marks the declaration
+  with `DeclareVar` (`var.declare`, MIR text 1.50, `mojito-package 44`),
+  which drop elaboration counts as a def site, so the slot is no longer in
+  the body's `Try.cleanup`. The VM no longer fails with `field access on
+  non-struct None`, and natively the value is no longer destroyed before
+  the read.
 - A local declared without an initializer (`var a: Int`, `var a: S`) no
   longer stores a placeholder `None` into its slot; its first assignment
   initializes it (R727). Natively such a local no longer stops at an

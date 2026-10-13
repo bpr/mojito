@@ -348,6 +348,7 @@ pub fn instruction_operand_regs(instruction: &MirInstr, out: &mut Vec<Reg>) {
         | MirInstr::ConstructType { .. }
         | MirInstr::UseVar { .. }
         | MirInstr::KeepAlive { .. }
+        | MirInstr::DeclareVar { .. }
         | MirInstr::DropVar { .. }
         | MirInstr::ConsumeVar { .. }
         | MirInstr::GetIter { .. }

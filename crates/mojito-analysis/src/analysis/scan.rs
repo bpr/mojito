@@ -224,13 +224,13 @@ pub(super) fn place_loan_uses(place: &MirPlace, reg: Reg) -> Vec<(VarId, Reg)> {
 }
 
 /// The variables **local** to a `try` region's blocks — those whose every
-/// `DefVar` in the whole function lies within the region (at any nesting),
-/// excluding those moved out with `^` — the body-local values to destroy when
-/// the body is left (the exceptional-edge / scope-exit cleanup). A reassignment
-/// is also a `DefVar`, so a variable declared outside the region and merely
-/// reassigned inside it has def sites beyond the region and must survive the
-/// exit; `function_defs` supplies the function-wide def counts to compare
-/// against.
+/// def site (`DefVar` or `DeclareVar`) in the whole function lies within the
+/// region (at any nesting), excluding those moved out with `^` — the
+/// body-local values to destroy when the body is left (the exceptional-edge /
+/// scope-exit cleanup). A variable declared outside the region — a
+/// `DeclareVar` or a `DefVar` beyond it — has a def site there and survives
+/// the exit, however many of its stores lie inside; `function_defs` supplies
+/// the function-wide def-site counts to compare against.
 pub(super) fn region_cleanup_vars(
     blocks: &[MirBlock],
     function_defs: &HashMap<VarId, usize>,
@@ -243,10 +243,11 @@ pub(super) fn region_cleanup_vars(
     order
 }
 
-/// Count every `DefVar` write per variable across `blocks`, recursing into
-/// nested `try` sub-regions, recording first-def order and `^`-moved variables.
-/// Over a function's top-level blocks this yields the function-wide def counts
-/// that region-locality is judged against.
+/// Count every def site (a `DefVar` write or a `DeclareVar`) per variable
+/// across `blocks`, recursing into nested `try` sub-regions, recording
+/// first-site order and `^`-moved variables. Over a function's top-level
+/// blocks this yields the function-wide def-site counts that region-locality
+/// is judged against.
 pub(super) fn collect_region_defs(
     blocks: &[MirBlock],
     counts: &mut HashMap<VarId, usize>,
@@ -255,7 +256,7 @@ pub(super) fn collect_region_defs(
 ) {
     for b in blocks {
         for instr in &b.instrs {
-            if let Some(v) = var_def(instr) {
+            if let Some(v) = var_def(instr).or_else(|| var_declared(instr)) {
                 if !counts.contains_key(&v) {
                     order.push(v);
                 }
@@ -291,6 +292,15 @@ pub(super) fn collect_region_defs(
 pub(super) const fn var_def(i: &MirInstr) -> Option<VarId> {
     match i {
         MirInstr::DefVar { var, .. } => Some(*var),
+        _ => None,
+    }
+}
+
+/// The variable a MIR instruction declares (a `DeclareVar`), if any: a def
+/// site for region locality, but no liveness def.
+const fn var_declared(i: &MirInstr) -> Option<VarId> {
+    match i {
+        MirInstr::DeclareVar { var } => Some(*var),
         _ => None,
     }
 }
@@ -342,6 +352,7 @@ pub(super) const fn may_raise(instr: &MirInstr) -> bool {
     !matches!(
         instr,
         MirInstr::DefVar { .. }
+            | MirInstr::DeclareVar { .. }
             | MirInstr::UseVar { .. }
             | MirInstr::DropVar { .. }
             | MirInstr::ConsumeVar { .. }

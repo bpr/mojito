@@ -706,6 +706,9 @@ impl Decoder {
             "drop.reg" => Some(MirInstr::Drop {
                 reg: self.req(value, fields, "reg", Self::reg)?,
             }),
+            "var.declare" => Some(MirInstr::DeclareVar {
+                var: self.req(value, fields, "var", Self::var)?,
+            }),
             "drop.var" => Some(MirInstr::DropVar {
                 var: self.req(value, fields, "var", Self::var)?,
             }),

@@ -120,6 +120,16 @@ fn uninitialized_declaration_defines_nothing_before_its_first_assignment() {
         .filter(|instr| matches!(instr, MirInstr::DefVar { var, .. } if *var == slot))
         .count();
     assert_eq!(defs, 1, "{main:#?}");
+    let declare = instrs
+        .iter()
+        .position(|instr| matches!(instr, MirInstr::DeclareVar { var } if *var == slot));
+    let def = instrs
+        .iter()
+        .position(|instr| matches!(instr, MirInstr::DefVar { var, .. } if *var == slot));
+    assert!(
+        declare.is_some_and(|declare| Some(declare) < def),
+        "{main:#?}"
+    );
 }
 
 #[test]

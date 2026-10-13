@@ -635,6 +635,16 @@ fn break_crossing_try_drops_body_local_and_outer_loop_local() {
 }
 
 #[test]
+fn local_declared_before_try_and_assigned_inside_survives_the_body() {
+    // `x` is declared outside the `try`, so the body's exit does not destroy
+    // it; `y` is declared inside the body, so the body's exit does.
+    let src = format!(
+        "{RES}def may(x: Int) raises -> Int:\n    if x > 5:\n        raise Error(\"big\")\n    return x\n\ndef main():\n    var x: Res\n    try:\n        x = Res(may(0))\n        var y: Res\n        y = Res(may(1))\n        print(\"in\", y.id)\n    except e:\n        return\n    print(\"after\", x.id)\n"
+    );
+    assert_eq!(vm(&src), "in 1\ndel 1\nafter 0\ndel 0\n");
+}
+
+#[test]
 fn deinit_move_source_consumes_residual_field_without_running_its_destructor() {
     // A `deinit` move-source parameter (the `move` in `__moveinit__`) is
     // *consumed*, not destroyed: its whole-value `__deinit__` is skipped (its

@@ -172,6 +172,7 @@ pub fn instruction_regs_mut(instruction: &mut MirInstr) -> Vec<&mut Reg> {
             );
         }
         MirInstr::KeepAlive { .. }
+        | MirInstr::DeclareVar { .. }
         | MirInstr::DropVar { .. }
         | MirInstr::ConsumeVar { .. }
         | MirInstr::GetIter { .. }
@@ -1049,6 +1050,15 @@ pub enum MirInstr {
         src: Reg,
         binding_ty: Option<Ty>,
         in_place: bool,
+    },
+    /// `var x: T` — the slot's declaration point, where its scope begins
+    /// (Mojo gives a `var` its storage at the declaration, and the first
+    /// assignment initializes it). It writes and reads nothing, is no
+    /// liveness def or use, and is a no-op on both backends; region locality
+    /// counts it as a def site, so a slot declared outside a `try` survives
+    /// the body's exit however many of its stores lie inside.
+    DeclareVar {
+        var: VarId,
     },
     UnOp {
         op: PrefixOp,

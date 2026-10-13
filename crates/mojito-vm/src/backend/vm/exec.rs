@@ -1798,6 +1798,7 @@ impl VmBackend {
                     Err(other) => return Err(other),
                 }
             }
+            MirInstr::DeclareVar { .. } => {}
             // ASAP destruction (Stage 7): drop the value at the variable's last
             // use, running its `__deinit__` if it has one.
             MirInstr::DropVar { var } => {

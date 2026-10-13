@@ -1305,7 +1305,7 @@ fn instruction_value(instruction: &MirInstr) -> String {
             ],
         ),
         MirInstr::Drop { reg } => record(tag, &[("reg", reg_value(*reg))]),
-        MirInstr::DropVar { var } | MirInstr::ConsumeVar { var } => {
+        MirInstr::DeclareVar { var } | MirInstr::DropVar { var } | MirInstr::ConsumeVar { var } => {
             record(tag, &[("var", var_value(*var))])
         }
         MirInstr::ConsumePlace { place, marker } => record(

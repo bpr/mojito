@@ -2450,7 +2450,11 @@ returning function and never supplies the `out` argument.
 A `var x: T` without an initializer declares its slot (`HirInstr::Declare`,
 carrying the checker's declared type as the statement's `binding_ty`) with no
 def, as upstream allocates the storage without a value. MIR records the slot's
-type and binding and emits nothing; ownership analysis starts every
+type and binding and emits `DeclareVar`, the slot's declaration point: it is
+no liveness def or use, but drop elaboration's region locality counts it as a
+def site, so a slot declared outside a `try` and first assigned inside it
+survives the body's exit, while one declared inside the body is still in the
+body's `Try.cleanup`. Ownership analysis starts every
 non-parameter slot uninitialized (see the store-drop flow under drop
 elaboration), so the first assignment initializes the slot and destroys
 nothing. The checker's `Uninitialized` marker has no value: lowering it as an
@@ -4528,10 +4532,11 @@ already died before.
 Try regions need cleanup for the values only the body can still observe. The
 drop elaboration pass fills `MirInstr::Try.cleanup` so the VM can destroy them
 when the body exits through normal completion, raise, return, break, or
-continue. The set holds the body's *locals* — variables whose every `DefVar` in
-the function lies within the body region (a reassignment is also a `DefVar`, so
-an outer variable merely rebound inside the body is not a local and survives
-the exit) — plus the liveness-guarded rebound outer variables that cannot be
+continue. The set holds the body's *locals* — variables whose every def site
+(`DefVar` or `DeclareVar`) in the function lies within the body region (a
+reassignment is also a `DefVar`, and a `var x: T` declaration is a
+`DeclareVar`, so an outer variable merely rebound or first assigned inside the
+body is not a local and survives the exit) — plus the liveness-guarded rebound outer variables that cannot be
 observed after the body is left: dead on the normal continuation, unused by the
 handler/`else`/`finally` regions, and dead at every escape target. That second
 set is the raise-edge backstop for rebound values whose per-instruction drop

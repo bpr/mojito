@@ -581,6 +581,7 @@ pub const fn instr_name(instr: &MirInstr) -> &'static str {
         MirInstr::UseVar { .. } => "UseVar",
         MirInstr::MovePlace { .. } => "MovePlace",
         MirInstr::DefVar { .. } => "DefVar",
+        MirInstr::DeclareVar { .. } => "DeclareVar",
         MirInstr::UnOp { .. } => "UnOp",
         MirInstr::BinOp { .. } => "BinOp",
         MirInstr::Call { .. } => "Call",

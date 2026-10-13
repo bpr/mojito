@@ -841,6 +841,7 @@ pub(super) fn interior_reference_uses(instr: &MirInstr) -> Vec<(VarId, Reg)> {
         // a read through that handle. `Try` regions are replayed separately.
         MirInstr::InvalidateInteriors { .. }
         | MirInstr::DefVar { .. }
+        | MirInstr::DeclareVar { .. }
         | MirInstr::DropVar { .. }
         | MirInstr::ConsumeVar { .. }
         | MirInstr::KeepAlive { .. }

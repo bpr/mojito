@@ -422,6 +422,8 @@ impl FnLowering<'_> {
                 }
                 self.lower_call(ctx, *dest, &func.0, args, kwargs, arg_places, kwarg_places)
             }
+            // The slot's alloca already exists from function entry.
+            MirInstr::DeclareVar { .. } => Ok(()),
             MirInstr::DropVar { var } => self.lower_drop_var(ctx, *var),
             MirInstr::ConsumeVar { var } => self.lower_consume_var(ctx, *var, false),
             MirInstr::DropPlace { place } => self.lower_drop_place(ctx, place),

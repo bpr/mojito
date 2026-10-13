@@ -41,9 +41,10 @@ pub(super) fn verify_instruction(
             errors.push(format!("{prefix}: untyped register r{}", register.0));
         }
     }
-    // A slot an instruction reads or drops has the type its declaring op
-    // gave it.
-    if let MirInstr::UseVar { var, .. } | MirInstr::DropVar { var } = instruction
+    // A slot an instruction declares, reads, or drops has the type its
+    // declaring op gave it.
+    if let MirInstr::UseVar { var, .. } | MirInstr::DeclareVar { var } | MirInstr::DropVar { var } =
+        instruction
         && (*var as usize) < function.n_vars
         && !function.var_tys.contains_key(var)
     {

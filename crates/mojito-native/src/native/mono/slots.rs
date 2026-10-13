@@ -117,6 +117,7 @@ fn renumber_instruction(instruction: &mut MirInstr, renumber: &dyn Fn(VarId) -> 
         MirInstr::KeepAlive { var }
         | MirInstr::UseVar { var, .. }
         | MirInstr::DefVar { var, .. }
+        | MirInstr::DeclareVar { var }
         | MirInstr::DropVar { var }
         | MirInstr::ConsumeVar { var } => *var = renumber(*var),
         MirInstr::GetIter { source, dest, .. } => {

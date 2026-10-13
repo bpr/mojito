@@ -1139,6 +1139,7 @@ fn instruction_families_reprint_byte_identically() {
         },
         MirInstr::Raise { src: Reg(1) },
         MirInstr::Drop { reg: Reg(2) },
+        MirInstr::DeclareVar { var: 1 },
         MirInstr::DropVar { var: 1 },
         MirInstr::ConsumeVar { var: 2 },
         MirInstr::ConsumePlace {

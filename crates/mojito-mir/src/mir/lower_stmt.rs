@@ -46,6 +46,7 @@ impl<'a> Flatten<'a> {
                 if let Some(binding) = binding {
                     self.owner_vars.insert(*binding, *dest);
                 }
+                self.emit(MirInstr::DeclareVar { var: *dest });
             }
             HirInstr::BorrowIter {
                 dest,

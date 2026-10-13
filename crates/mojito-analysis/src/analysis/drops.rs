@@ -24,10 +24,10 @@ pub(super) fn elaborate_drops(
     let passing = ArgumentPassing::new(declarations);
     let f = &function;
     let nb = f.blocks.len();
-    // Function-wide `DefVar` counts (deep through `try` regions): the reference
-    // that region-locality — and therefore every `try` cleanup — is judged
-    // against. Inserted `DropVar`s add no defs, so the counts stay valid for
-    // the rebuilt blocks below.
+    // Function-wide def-site counts — `DefVar`s and `DeclareVar`s, deep
+    // through `try` regions: the reference that region-locality — and
+    // therefore every `try` cleanup — is judged against. Inserted `DropVar`s
+    // add no def sites, so the counts stay valid for the rebuilt blocks below.
     let function_defs = {
         let mut counts = HashMap::new();
         let (mut order, mut moved) = (Vec::new(), HashSet::new());
@@ -994,11 +994,12 @@ pub(super) fn region_uses(blocks: &[MirBlock]) -> HashSet<VarId> {
 }
 
 /// Collect the variables *local* to a `try`'s regions (every function-wide
-/// `DefVar` inside them, recursing through nested `try`s) and the `^`-moved
-/// variables. Used to exclude a `try`'s own region-locals (handled by
-/// `Try.cleanup`) and moved-out values from the escape-edge cleanup; an outer
-/// variable merely reassigned inside a region is *not* excluded, so the escape
-/// edge drops it exactly when it is dead at the target.
+/// def site — `DefVar` or `DeclareVar` — inside them, recursing through
+/// nested `try`s) and the `^`-moved variables. Used to exclude a `try`'s own
+/// region-locals (handled by `Try.cleanup`) and moved-out values from the
+/// escape-edge cleanup; an outer variable declared or assigned outside a
+/// region is *not* excluded, so the escape edge drops it exactly when it is
+/// dead at the target.
 pub(super) fn try_region_defs(
     try_instr: &MirInstr,
     function_defs: &HashMap<VarId, usize>,
