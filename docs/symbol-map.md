@@ -549,7 +549,15 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `Env.linear_temporaries` carries the call results the checker recorded as
   owned-but-unconsumed (`places.rs`'s `record_linear_temporary` and
   `record_unconsumed_temporary`, intersected in `run_explicit_destroy`),
-  reported as `'(expression temporary)'`. A write through a reference (a
+  reported as `'(expression temporary)'`. `SpanFacts::owned_temporaries`
+  (the rest of the recorded linear temporaries) and `SpanFacts::raise_points`
+  (raising call effects, `conversion_raises`, and the checker's
+  `raising_iterations`) give the walk its raise edges: `check_expr` consumes
+  an operation's in-flight operands and pending transfers
+  (`consume_operands`) before `raise_edge` checks what is still owned and
+  records the state on the innermost `RaiseFrame`, and `check_try` starts an
+  `except` arm or `finally` body from their join (`join_parametric`), then
+  `join_try` joins the arm with the normal exits. A write through a reference (a
   `ref` binding, a reference-returning call) owns no obligation of its own,
   so the checker rejects one over a non-`Deinitable` referent at the store
   (`places.rs`'s `check_overwritten_referent`)). A `^` whose source is rooted at an

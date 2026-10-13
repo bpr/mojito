@@ -2073,6 +2073,11 @@ impl Checker {
                     source.as_ref(),
                     source_mutable,
                 )?;
+                if !raises.is_empty() {
+                    self.raising_iterations
+                        .borrow_mut()
+                        .insert(iter.source_span());
+                }
                 for (operation, error) in raises {
                     self.require_error(operation, error)?;
                 }
@@ -3454,6 +3459,7 @@ impl Checker {
         self.borrowed_reference_receivers.borrow_mut().remove(span);
         self.unconsumed_temporaries.borrow_mut().remove(span);
         self.linear_temporaries.borrow_mut().remove(span);
+        self.raising_iterations.borrow_mut().remove(span);
         let mut deletability = self.explicit_destroy_deletability.borrow_mut();
         deletability.bindings.remove(span);
         deletability.linear_bindings.remove(span);

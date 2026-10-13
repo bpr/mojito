@@ -8,6 +8,16 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- Every potentially raising operation is a raise edge of the
+  explicit-destruction check, as at the pin (R749): a value that must be
+  explicitly destroyed and is still owned where an error is thrown is
+  rejected as abandoned — a local, a `var` parameter, an owned temporary
+  evaluated before a later raising operand (`take(L(1), boom(1))`), or a
+  transfer its call has not yet consumed (`take(l^, boom(1))`). An `except`
+  arm starts from the state its raise edges reach it with, so a `raise`
+  inside a `try`, an arm closing a value the body closes after the raising
+  call, and an unreachable arm are accepted, where they used to be
+  rejected.
 - A discarded transfer, `_ = x^` or `x^` as a statement, destroys `x`
   where it lies without running the move initializer, as the pin does
   (R748), over a local, a `var` parameter, or a generic one. A bare `x^`

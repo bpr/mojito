@@ -33,7 +33,7 @@
 #
 # Lifting a mask moves a row to another family rather than closing it: the pin
 # reports one complaint at a time.
-# swept-count	582
+# swept-count	587
 assets/type_error/comptime_applied_constant_mismatch.mojo	compile-reject	agree	error: invalid call to 'g': value passed to 'x' cannot be converted from 'SIMD[.float32, 8]' to 'SIMD[.float32, f(Int(7))]'
 fixture	verdict	family	upstream
 assets/origin_error/for_ref_binding_escapes_local_source.mojo	compile-reject	agree	error: cannot return reference with incompatible origin: 'origin_of(local)' vs 'origin_of(values["element"])'
@@ -282,11 +282,15 @@ assets/type_error/entry_redeclares_imported_name.mojo	compile-reject	agree	error
 assets/type_error/equatable_no_ordering.mojo	compile-reject	agree	error: 'T' does not implement the '__lt__' method
 assets/type_error/erased_origin_parameter.mojo	compile-reject	agree	error: 'RefBox[_]' is not concrete, use '[]' to bind missing parameters
 assets/type_error/explicit_destroy_conditional.mojo	compile-reject	agree	error: 'resource' abandoned without being explicitly destroyed: close the resource
+assets/type_error/explicit_destroy_consumed_after_raise_in_try.mojo	compile-reject	agree	error: 'l' abandoned without being explicitly destroyed: L must be closed
 assets/type_error/explicit_destroy_discard.mojo	compile-reject	agree	error: 'tx' abandoned without being explicitly destroyed: call commit or rollback
 assets/type_error/explicit_destroy_double.mojo	compile-reject	agree	error: use of uninitialized value 'resource'
+assets/type_error/explicit_destroy_local_abandoned_on_raise.mojo	compile-reject	agree	error: 'l' abandoned without being explicitly destroyed: L must be closed
 assets/type_error/explicit_destroy_not_yet_executable.mojo	compile-reject	agree	error: 'resource' abandoned without being explicitly destroyed: close the resource
 assets/type_error/explicit_destroy_partial_move.mojo	compile-reject	agree	error: use of uninitialized value 'resource.name'
 assets/type_error/explicit_destroy_raising.mojo	compile-reject	agree	error: use of uninitialized value 'transaction'
+assets/type_error/explicit_destroy_temporary_abandoned_on_raise.mojo	compile-reject	agree	error: '(expression temporary)' abandoned without being explicitly destroyed: L must be closed
+assets/type_error/explicit_destroy_transfer_abandoned_on_raise.mojo	compile-reject	agree	error: 'l' abandoned without being explicitly destroyed: L must be closed
 assets/type_error/external_call_string_argument.mojo	compile-reject	agree	error: function instantiation failed
 assets/type_error/external_call_unknown_callee.mojo	runs	subset	the pin runs it; Mojito rejects: is not in Mojito's libc allowlist
 assets/type_error/fieldwise_anytype_field.mojo	compile-reject	agree	error: field 'a' has non-'Deinitable' type 'T'
@@ -358,6 +362,7 @@ assets/type_error/lambda_partial_parameter_application.mojo	compile-reject	agree
 assets/type_error/lane_gather_template_shuffle_count.mojo	compile-reject	agree	error: function instantiation failed
 assets/type_error/lane_gather_template_slice_bounds.mojo	compile-reject	agree	error: function instantiation failed
 assets/type_error/legacy_implicitly_deletable.mojo	compile-reject	agree	error: use of unknown declaration 'ImplicitlyDestructible'
+assets/type_error/linear_parameter_abandoned_on_raise.mojo	compile-reject	agree	error: 't' abandoned without being explicitly destroyed: unhandled explicitly destroyed type 'AnyType'
 assets/type_error/list_anytype_append_requires_movable.mojo	compile-reject	agree	error: invalid call to 'append': violated constraint
 assets/type_error/list_element_not_hashable.mojo	compile-reject	agree	error: no matching function in call to 'hash'
 assets/type_error/list_explicit_params_with_elements.mojo	compile-reject	agree	error: no matching function in initialization

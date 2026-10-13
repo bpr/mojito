@@ -906,6 +906,9 @@ pub struct Checker {
     /// whose bounds do not prove `Deinitable`: the caller owns each and cannot
     /// destroy it (`explicit_destroy`'s abandoned-temporary rule).
     linear_temporaries: RefCell<FactSet<SourceSpan>>,
+    /// Iterables whose selected `__iter__` raises: the loop header is a
+    /// raise point (`explicit_destroy`'s raise edges).
+    raising_iterations: RefCell<FactSet<SourceSpan>>,
     return_ref_contracts: Vec<Option<ReturnRefContract>>,
     /// The enclosing body's value-return annotation, re-resolved over the
     /// body's own places to judge a returned struct's origin tail, flagged
@@ -1075,6 +1078,7 @@ impl Checker {
             parameter_field_objects: RefCell::new(FactSet::default()),
             unconsumed_temporaries: RefCell::new(FactSet::default()),
             linear_temporaries: RefCell::new(FactSet::default()),
+            raising_iterations: RefCell::new(FactSet::default()),
             return_ref_contracts: Vec::new(),
             return_annotations: Vec::new(),
             named_result_context: Vec::new(),
@@ -2373,27 +2377,25 @@ fn run_explicit_destroy(
     let deletability = checker.explicit_destroy_deletability.borrow();
     // An installed struct's entry is the package build's.
     let mut types = checker.explicit_destroy_table(struct_types.clone());
-    // A non-`Deinitable` temporary in a position that takes no ownership of
-    // it is one the caller owns and cannot implicitly destroy, keyed by its
-    // struct's entry or, typed by a type parameter, the linear one.
+    // A non-`Deinitable` temporary is keyed by its struct's entry or, typed
+    // by a type parameter, the linear one. One in a position that takes no
+    // ownership of it is one the caller owns and cannot implicitly destroy;
+    // any other is owned in flight until the operation that consumes it.
+    let linear_key = |span: &SourceSpan| match node_facts
+        .get(span)
+        .and_then(|facts| facts.ty.as_ref())
+        .map(Ty::kind)
+    {
+        Some(TyKind::Struct(name, _)) if types.contains_key(name) => name.clone(),
+        _ => crate::explicit_destroy::LINEAR_TYPE_PARAMETER.to_string(),
+    };
     let unconsumed = checker.unconsumed_temporaries.borrow();
-    let linear_temporaries: HashMap<SourceSpan, String> = checker
+    let (linear_temporaries, owned_temporaries): (HashMap<_, _>, HashMap<_, _>) = checker
         .linear_temporaries
         .borrow()
         .iter()
-        .filter(|span| unconsumed.contains(span))
-        .map(|span| {
-            let key = match node_facts
-                .get(span)
-                .and_then(|facts| facts.ty.as_ref())
-                .map(Ty::kind)
-            {
-                Some(TyKind::Struct(name, _)) if types.contains_key(name) => name.clone(),
-                _ => crate::explicit_destroy::LINEAR_TYPE_PARAMETER.to_string(),
-            };
-            (span.clone(), key)
-        })
-        .collect();
+        .map(|span| (span.clone(), linear_key(span)))
+        .partition(|(span, _)| unconsumed.contains(span));
     // A value typed by a non-`Deinitable` type parameter is linear with
     // upstream's message; the entry exists only for this pass, and only when
     // some value is one.
@@ -2401,6 +2403,7 @@ fn run_explicit_destroy(
         || !deletability.linear_bindings.is_empty()
         || linear_temporaries
             .values()
+            .chain(owned_temporaries.values())
             .any(|key| key == crate::explicit_destroy::LINEAR_TYPE_PARAMETER)
     {
         types.insert(
@@ -2431,6 +2434,16 @@ fn run_explicit_destroy(
                 .map(|(span, _)| span.clone())
                 .collect(),
             linear_temporaries,
+            owned_temporaries,
+            raise_points: node_facts
+                .iter()
+                .filter(|(_, facts)| {
+                    facts.effects.as_ref().is_some_and(|e| e.raises.is_some())
+                        || facts.conversion_raises.is_some()
+                })
+                .map(|(span, _)| span.clone())
+                .chain(checker.raising_iterations.borrow().iter().cloned())
+                .collect(),
         },
     )
 }

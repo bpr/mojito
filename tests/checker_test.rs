@@ -759,6 +759,22 @@ fn comprehension_binders_are_lexical_and_enforce_linear_cleanup() {
 }
 
 #[test]
+fn explicit_destroy_values_owned_at_a_raise_edge_are_abandoned() {
+    let linear = "@explicit_destroy(\"close L\")\nstruct L(Movable, Deinitable where False):\n    var v: Int\n    def __init__(out self, v: Int):\n        self.v = v\n    def close(deinit self):\n        pass\n\ndef take(var a: L, n: Int):\n    a^.close()\n\ndef boom(n: Int) raises -> Int:\n    return n\n\n";
+    // The call consumes `L(1)` only after `boom` ran, so `boom`'s raise
+    // abandons the in-flight temporary.
+    assert!(matches!(
+        err(&format!("{linear}def main() raises:\n    take(L(1), boom(1))\n")),
+        TypeError::AbandonedOnRaise { var, .. } if var == "(expression temporary)"
+    ));
+    // A `raise` inside a `try` reaches the arm, not the function's exit: the
+    // outer `l` flows through it and is closed after the statement.
+    ok(&format!(
+        "{linear}def main():\n    var l = L(1)\n    try:\n        raise Error(\"x\")\n    except e:\n        print(e)\n    l^.close()\n"
+    ));
+}
+
+#[test]
 fn collection_displays_use_parameter_and_return_context() {
     ok_std(
         "from std.collections.set import Set\n\ndef consume(values: Set[Float64]):\n    pass\n\ndef empty() -> Set[Float64]:\n    return {}\n\ndef numbers() -> Set[Float64]:\n    return {1, 2}\n\ndef main():\n    consume({})\n    consume({1, 2})\n    print(empty(), numbers())\n",

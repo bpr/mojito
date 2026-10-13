@@ -472,6 +472,14 @@ pub enum TypeError {
         var: String,
         message: String,
     },
+    /// A value that must be explicitly destroyed (an `@explicit_destroy`
+    /// value, or `linear`: one typed by a non-`Deinitable` type parameter)
+    /// was still owned where an error is thrown past it.
+    AbandonedOnRaise {
+        var: String,
+        message: String,
+        linear: bool,
+    },
     /// A `ref[<exact origin>]` parameter (`ImmStaticOrigin`,
     /// `ImmUntrackedOrigin`, `MutUntrackedOrigin`) received an actual whose
     /// origin is not that origin. The call site rewrites it into a `BadCall`
@@ -973,6 +981,20 @@ impl fmt::Display for TypeError {
                 f,
                 "'{var}' abandoned without being explicitly destroyed: {message}\nnote: consider adding trait conformance to Deinitable"
             ),
+            Self::AbandonedOnRaise {
+                var,
+                message,
+                linear,
+            } => {
+                write!(
+                    f,
+                    "'{var}' abandoned without being explicitly destroyed: {message}\nnote: value was not consumed when an error is thrown"
+                )?;
+                if *linear {
+                    write!(f, "\nnote: consider adding trait conformance to Deinitable")?;
+                }
+                Ok(())
+            }
             Self::RefOriginMismatch {
                 slot,
                 ty,

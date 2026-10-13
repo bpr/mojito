@@ -211,6 +211,7 @@ assets/ok/evaluated_default_argument.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/exceptions.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/explicit_destroy_consumed_field_droppable.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/explicit_destroy_partial_fields.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/explicit_destroy_raise_edges.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/explicit_transfer_convention.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/external_call_write_stdout.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/field_store_overwrite_drop.mojo	-	ineligible	no-scalar-entry-shape

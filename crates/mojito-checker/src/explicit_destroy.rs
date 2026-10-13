@@ -41,6 +41,13 @@ pub struct SpanFacts {
     /// name: its struct, or [`LINEAR_TYPE_PARAMETER`] when its type is one of
     /// the body's own type parameters whose bounds do not prove `Deinitable`.
     pub linear_temporaries: HashMap<SourceSpan, String>,
+    /// Linear temporaries in a position that takes ownership of them, keyed
+    /// as [`Self::linear_temporaries`]: each is owned in flight from its
+    /// evaluation until the operation that consumes it.
+    pub owned_temporaries: HashMap<SourceSpan, String>,
+    /// Occurrences that may raise: a raising call, operator, conversion, or
+    /// `__iter__`. Each is a raise edge of its body.
+    pub raise_points: HashSet<SourceSpan>,
 }
 
 /// The synthetic explicit-destroy type name of a value typed by a
@@ -122,13 +129,17 @@ pub(crate) fn check(
     Ok(())
 }
 
+/// Check one expression in evaluation order. An operation consumes the owned
+/// operands evaluated under it once they all ran, and only then may raise,
+/// so a raise between an operand and its operation abandons the operand.
 fn check_expr(
     expr: &Expr,
     env: &mut Env,
     node_facts: &HashMap<SourceSpan, NodeFacts>,
     types: &DeclarationTable<ExplicitDestroyInfo>,
 ) -> Result<(), TypeError> {
-    if let Some(key) = env.spans.linear_temporaries.get(&expr.source_span())
+    let span = expr.source_span();
+    if let Some(key) = env.spans.linear_temporaries.get(&span)
         && let Some(info) = types.get(key)
     {
         let var = "(expression temporary)".to_string();
@@ -139,6 +150,52 @@ fn check_expr(
             TypeError::Abandoned { var, message }
         });
     }
+    let baseline = (env.in_flight.len(), env.pending.len());
+    check_operands(expr, env, node_facts, types)?;
+    if consumes_operands(expr) {
+        consume_operands(env, baseline, types)?;
+    }
+    if env.spans.raise_points.contains(&span) {
+        raise_edge(env, types)?;
+    }
+    if let Some(key) = env.spans.owned_temporaries.get(&span) {
+        let key = key.clone();
+        env.in_flight.push(key);
+    }
+    Ok(())
+}
+
+/// Whether `expr` is an operation that takes its operands: one whose owned
+/// operands are consumed by it rather than passed through to an enclosing
+/// operation.
+const fn consumes_operands(expr: &Expr) -> bool {
+    matches!(
+        expr.kind,
+        ExprKind::Call { .. }
+            | ExprKind::MethodCall { .. }
+            | ExprKind::Invoke { .. }
+            | ExprKind::Prefix(..)
+            | ExprKind::Infix(..)
+            | ExprKind::Compare { .. }
+            | ExprKind::Index { .. }
+            | ExprKind::Slice { .. }
+            | ExprKind::MultiIndex { .. }
+            | ExprKind::ListLit(_)
+            | ExprKind::TupleLit(_)
+            | ExprKind::BraceLit(_)
+            | ExprKind::Comprehension { .. }
+            | ExprKind::TString { .. }
+    )
+}
+
+/// Walk `expr`'s operands, upstream's evaluation order: a method call's
+/// receiver before its arguments.
+fn check_operands(
+    expr: &Expr,
+    env: &mut Env,
+    node_facts: &HashMap<SourceSpan, NodeFacts>,
+    types: &DeclarationTable<ExplicitDestroyInfo>,
+) -> Result<(), TypeError> {
     match &expr.kind {
         ExprKind::Transfer(inner) if env.spans.lent.contains(&expr.source_span()) => {
             check_expr(inner, env, node_facts, types)?;
@@ -148,30 +205,43 @@ fn check_expr(
         ExprKind::Transfer(inner) if root_id(inner, env).is_none() => {
             check_expr(inner, env, node_facts, types)?;
         }
-        ExprKind::Transfer(inner) => move_root(inner, env, types)?,
+        ExprKind::Transfer(inner) => {
+            if let Some(place) = transferred_place(inner, env)? {
+                env.pending.push(place);
+            }
+        }
+        // A named destructor (`x^.close()`) consumes its receiver at the
+        // call, after its arguments.
         ExprKind::MethodCall {
             object,
             method,
             args,
             kwargs,
         } => {
+            let destructor = match &object.kind {
+                ExprKind::Transfer(inner) => obligation_place(inner, env)
+                    .filter(|(id, _)| !env.vars[*id].uninitialized)
+                    .filter(|(id, path)| {
+                        env.vars[*id]
+                            .explicit_type
+                            .as_ref()
+                            .is_some_and(|type_name| {
+                                destructor_at_path(type_name, path, method, types)
+                            })
+                    }),
+                _ => None,
+            };
+            if destructor.is_none() {
+                check_expr(object, env, node_facts, types)?;
+            }
             for arg in args {
                 check_expr(arg, env, node_facts, types)?;
             }
             for arg in kwargs {
                 check_expr(&arg.value, env, node_facts, types)?;
             }
-            if let ExprKind::Transfer(inner) = &object.kind
-                && let Some((id, path)) = obligation_place(inner, env)
-                && ensure_initialized(id, env)?
-                && let Some(type_name) = &env.vars[id].explicit_type
-                && types
-                    .get(type_name)
-                    .is_some_and(|_| destructor_at_path(type_name, &path, method, types))
-            {
+            if let Some((id, path)) = destructor {
                 consume_destructor(id, &path, env, types)?;
-            } else {
-                check_expr(object, env, node_facts, types)?;
             }
         }
         ExprKind::Call { args, kwargs, .. } => {
@@ -305,6 +375,26 @@ struct Env {
     /// Names of the compile-time parameters in scope: the enclosing
     /// declarations' own and the owning struct's.
     params: std::rc::Rc<HashSet<String>>,
+    /// Explicit-destroy keys of the owned linear temporaries evaluated but
+    /// not yet consumed by their operation.
+    in_flight: Vec<String>,
+    /// Places transferred (`x^`) but not yet consumed by their operation.
+    pending: Vec<(usize, Vec<String>)>,
+    /// The enclosing `try` regions a raise reaches, innermost last.
+    frames: Vec<RaiseFrame>,
+}
+
+/// A `try` region's raise target: its `except` arm, or, with none, its
+/// `finally` body. Every raise edge inside the region records the state it
+/// reaches the target with, and the target starts from their join.
+#[derive(Clone)]
+struct RaiseFrame {
+    /// `scopes.len()` at the region's entry: the scopes from here on end
+    /// with the raise.
+    depth: usize,
+    /// `vars.len()` at the region's entry.
+    vars: usize,
+    entries: std::rc::Rc<std::cell::RefCell<Vec<Env>>>,
 }
 
 impl Env {
@@ -338,6 +428,15 @@ impl Env {
 
     fn push(&mut self) {
         self.scopes.push(HashMap::new());
+    }
+
+    /// A raise target for a `try` region entered here.
+    fn raise_frame(&self) -> RaiseFrame {
+        RaiseFrame {
+            depth: self.scopes.len(),
+            vars: self.vars.len(),
+            entries: std::rc::Rc::default(),
+        }
     }
 
     fn declare(
@@ -381,6 +480,19 @@ impl Env {
                 && let Some(message) = &var.message
             {
                 return Err(var.abandoned(message));
+            }
+        }
+        Ok(())
+    }
+
+    /// [`Self::check_ids`] on a raise edge.
+    fn check_raised(&self, ids: impl IntoIterator<Item = usize>) -> Result<(), TypeError> {
+        for id in ids {
+            let var = &self.vars[id];
+            if !var.obligations.is_empty()
+                && let Some(message) = &var.message
+            {
+                return Err(var.abandoned_on_raise(message));
             }
         }
         Ok(())
@@ -474,6 +586,16 @@ impl Var {
             }
         }
     }
+
+    /// The error for a raise edge leaving this variable's obligations
+    /// undischarged.
+    fn abandoned_on_raise(&self, message: &str) -> TypeError {
+        TypeError::AbandonedOnRaise {
+            var: self.name.clone(),
+            message: message.to_string(),
+            linear: self.explicit_type.as_deref() == Some(LINEAR_TYPE_PARAMETER),
+        }
+    }
 }
 
 /// Whether `expr` is the compiler's diverging runtime trap call, or a
@@ -550,6 +672,7 @@ fn branch_exits(
     for (condition, body) in branches {
         let mut branch = env.clone();
         check_expr(condition, &mut branch, node_facts, types)?;
+        finish_statement(&mut branch, types)?;
         if let Some(exit) = check_block(body, branch, true, node_facts, deletability, types)? {
             exits.push(exit);
         }
@@ -616,6 +739,122 @@ fn check_comptime_if(
     }
     exits.push(env);
     Ok(Some(join_comptime(exits)))
+}
+
+/// The blocks of a `try` statement.
+struct TryBlocks<'a> {
+    body: &'a [Stmt],
+    except: Option<&'a [Stmt]>,
+    orelse: Option<&'a [Stmt]>,
+    finalbody: Option<&'a [Stmt]>,
+}
+
+/// Check a `try` statement. The body raises into its `except` arm, or with
+/// none into its `finally` body, and the arm and the `else` block raise into
+/// the `finally` body. A raise target starts from the join of the raise
+/// edges that reach it (`join_parametric`), and one no edge reaches is
+/// unreachable and unchecked. A raise continues from the end of the
+/// `finally` body to the enclosing target.
+///
+/// `None` means every route through the statement is terminal.
+fn check_try(
+    blocks: &TryBlocks<'_>,
+    env: Env,
+    node_facts: &HashMap<SourceSpan, NodeFacts>,
+    deletability: &CheckedDeletability,
+    types: &DeclarationTable<ExplicitDestroyInfo>,
+) -> Result<Option<Env>, TypeError> {
+    let with_frames = |mut env: Env, frames: &[RaiseFrame]| {
+        env.frames = frames.to_vec();
+        env
+    };
+    let outer = env.frames.clone();
+    let finally = blocks.finalbody.map(|_| env.raise_frame());
+    let handler = blocks.except.map(|_| env.raise_frame());
+    let mut after_body = outer.clone();
+    after_body.extend(finally.clone());
+    let mut region = env.clone();
+    region
+        .frames
+        .extend(finally.iter().chain(&handler).cloned());
+    let mut normal = Vec::new();
+    if let Some(exit) = check_block(blocks.body, region, true, node_facts, deletability, types)? {
+        let exit = with_frames(exit, &after_body);
+        match blocks.orelse {
+            Some(orelse) => {
+                normal.extend(check_block(
+                    orelse,
+                    exit,
+                    true,
+                    node_facts,
+                    deletability,
+                    types,
+                )?);
+            }
+            None => normal.push(exit),
+        }
+    }
+    let mut raised = Vec::new();
+    if let (Some(frame), Some(arm)) = (&handler, blocks.except)
+        && let Some(entry) = join_parametric(frame.entries.take())
+    {
+        let entry = with_frames(entry, &after_body);
+        raised.extend(check_block(
+            arm,
+            entry,
+            true,
+            node_facts,
+            deletability,
+            types,
+        )?);
+    }
+    if let (Some(frame), Some(finalbody)) = (&finally, blocks.finalbody)
+        && let Some(entry) = join_parametric(frame.entries.take())
+        && let Some(exit) = check_block(
+            finalbody,
+            with_frames(entry, &outer),
+            true,
+            node_facts,
+            deletability,
+            types,
+        )?
+    {
+        raise_edge(&exit, types)?;
+    }
+    let Some(joined) = join_try(normal, raised)? else {
+        // Every route is terminal (return, raise, break, or continue), but
+        // the `finally` body still runs: check it from the entry state, so
+        // the enclosing scope stack stays intact.
+        if let Some(finalbody) = blocks.finalbody {
+            check_block(finalbody, env, true, node_facts, deletability, types)?;
+        }
+        return Ok(None);
+    };
+    let joined = with_frames(joined, &outer);
+    match blocks.finalbody {
+        Some(finalbody) => check_block(finalbody, joined, true, node_facts, deletability, types),
+        None => Ok(Some(joined)),
+    }
+}
+
+/// Join a `try`'s normal exits with its `except` arm's. A value the normal
+/// routes consumed but the arm kept was not consumed where the error was
+/// thrown, which upstream reports on the raise edge. Any other value whose
+/// routes disagree is left conditionally initialized (`join_parametric`).
+fn join_try(normal: Vec<Env>, raised: Vec<Env>) -> Result<Option<Env>, TypeError> {
+    for arm in &raised {
+        for exit in &normal {
+            for (kept, consumed) in arm.vars.iter().zip(&exit.vars) {
+                if !kept.obligations.is_empty()
+                    && consumed.obligations.is_empty()
+                    && let Some(message) = &kept.message
+                {
+                    return Err(kept.abandoned_on_raise(message));
+                }
+            }
+        }
+    }
+    Ok(join_parametric(normal.into_iter().chain(raised).collect()))
 }
 
 /// Join the alternatives of a `comptime if` that folds without the parameters
@@ -854,6 +1093,7 @@ fn check_stmt(
     match &stmt.kind {
         StmtKind::VarDecl { name, value, .. } => {
             check_expr(value, &mut env, node_facts, types)?;
+            finish_statement(&mut env, types)?;
             let explicit = if deletability.bindings.contains(&value.source_span()) {
                 None
             } else {
@@ -885,6 +1125,7 @@ fn check_stmt(
                 env.check_ids([id])?;
             }
             check_expr(value, &mut env, node_facts, types)?;
+            finish_statement(&mut env, types)?;
             if let Some(id) = env.lookup(name) {
                 if !env.vars[id].obligations.is_empty() && env.vars[id].message.is_some() {
                     return Err(TypeError::Abandoned {
@@ -903,6 +1144,7 @@ fn check_stmt(
         }
         StmtKind::Expr(expr) => {
             check_expr(expr, &mut env, node_facts, types)?;
+            finish_statement(&mut env, types)?;
             // The runtime trap (the body of an unspecialized generic template
             // stub) never returns: nothing past it is abandoned.
             if is_runtime_trap(expr) {
@@ -912,13 +1154,15 @@ fn check_stmt(
         StmtKind::Return(expr) => {
             if let Some(expr) = expr {
                 check_expr(expr, &mut env, node_facts, types)?;
+                finish_statement(&mut env, types)?;
             }
             env.check_ids(0..env.vars.len())?;
             return Ok(None);
         }
         StmtKind::Raise(expr) => {
             check_expr(expr, &mut env, node_facts, types)?;
-            env.check_ids(0..env.vars.len())?;
+            finish_statement(&mut env, types)?;
+            raise_edge(&env, types)?;
             return Ok(None);
         }
         // The same branch walk, joined by each form's own rule; no exit at
@@ -947,6 +1191,7 @@ fn check_stmt(
         // found it, as a `while` body must.
         StmtKind::ComptimeFor { iter, body, .. } => {
             check_expr(iter, &mut env, node_facts, types)?;
+            finish_statement(&mut env, types)?;
             if let Some(after) =
                 check_block(body, env.clone(), true, node_facts, deletability, types)?
             {
@@ -955,6 +1200,7 @@ fn check_stmt(
         }
         StmtKind::While { cond, body, orelse } => {
             check_expr(cond, &mut env, node_facts, types)?;
+            finish_statement(&mut env, types)?;
             if let Some(after) =
                 check_block(body, env.clone(), true, node_facts, deletability, types)?
             {
@@ -975,6 +1221,7 @@ fn check_stmt(
             ..
         } => {
             check_expr(iter, &mut env, node_facts, types)?;
+            finish_statement(&mut env, types)?;
             let explicit = if deletability.bindings.contains(&stmt.source_span()) {
                 None
             } else {
@@ -1015,75 +1262,44 @@ fn check_stmt(
             orelse,
             finalbody,
         } => {
-            let before = env.clone();
-            let normal = check_block(body, before.clone(), true, node_facts, deletability, types)?;
-            let mut exits = Vec::new();
-            if let Some(normal) = normal {
-                if let Some(orelse) = orelse {
-                    if let Some(out) =
-                        check_block(orelse, normal, true, node_facts, deletability, types)?
-                    {
-                        exits.push(out);
-                    }
-                } else {
-                    exits.push(normal);
-                }
-            }
-            if let Some((_, handler)) = except
-                && let Some(out) = check_block(
-                    handler,
-                    handler_entry(&before, body),
-                    true,
-                    node_facts,
-                    deletability,
-                    types,
-                )?
-            {
-                exits.push(out);
-            }
-            if exits.is_empty() {
-                // Every route through the try/except is terminal (return,
-                // raise, break, or continue).  There is no normal environment
-                // to join, but the finally body must still be checked.  Use the
-                // pre-try environment so its lexical scope stack remains
-                // intact; constructing Env::default() here used to lose the
-                // enclosing loop/function scopes and panic on their next pop.
-                if let Some(finalbody) = finalbody {
-                    let _ = check_block(finalbody, before, true, node_facts, deletability, types)?;
-                }
+            let blocks = TryBlocks {
+                body,
+                except: except.as_ref().map(|(_, arm)| arm.as_slice()),
+                orelse: orelse.as_deref(),
+                finalbody: finalbody.as_deref(),
+            };
+            let Some(next) = check_try(&blocks, env, node_facts, deletability, types)? else {
                 return Ok(None);
-            }
-            env = join(exits)?;
-            if let Some(finalbody) = finalbody {
-                let Some(out) = check_block(finalbody, env, true, node_facts, deletability, types)?
-                else {
-                    return Ok(None);
-                };
-                env = out;
-            }
+            };
+            env = next;
         }
         StmtKind::SetPlace { place, value } => {
             check_expr(place, &mut env, node_facts, types)?;
             check_expr(value, &mut env, node_facts, types)?;
+            finish_statement(&mut env, types)?;
             reinitialize_place(place, &mut env, types)?;
         }
         StmtKind::AugAssign { place, value, .. } => {
             check_expr(place, &mut env, node_facts, types)?;
             check_expr(value, &mut env, node_facts, types)?;
+            finish_statement(&mut env, types)?;
         }
         StmtKind::Unpack { targets, value, .. } => {
             check_expr(value, &mut env, node_facts, types)?;
             for target in targets {
                 check_expr(target, &mut env, node_facts, types)?;
             }
+            finish_statement(&mut env, types)?;
         }
         StmtKind::RefDecl { value, .. } => {
             check_expr(value, &mut env, node_facts, types)?;
+            finish_statement(&mut env, types)?;
         }
         // A constant computed from a parameter varies with the instantiation
         // as the parameter does (`comptime k = T == Int`).
         StmtKind::Comptime { name, value, .. } => {
             check_expr(value, &mut env, node_facts, types)?;
+            finish_statement(&mut env, types)?;
             if env.is_parametric(value) {
                 std::rc::Rc::make_mut(&mut env.params).insert(name.clone());
             }
@@ -1216,11 +1432,9 @@ fn check_comprehension_expr(
     result.and(cleanup)
 }
 
-fn move_root(
-    expr: &Expr,
-    env: &mut Env,
-    types: &DeclarationTable<ExplicitDestroyInfo>,
-) -> Result<(), TypeError> {
+/// The obligation place a `^` transfers, which its operation consumes: a
+/// field path of a linear local.
+fn transferred_place(expr: &Expr, env: &Env) -> Result<Option<(usize, Vec<String>)>, TypeError> {
     if contains_index(expr)
         && let Some(id) = root_id(expr, env)
         && env.vars[id].explicit_type.is_some()
@@ -1231,17 +1445,75 @@ fn move_root(
         );
     }
     let Some((id, path)) = obligation_place(expr, env) else {
-        return Ok(());
+        return Ok(None);
     };
     ensure_initialized(id, env)?;
-    let Some(root_type) = env.vars[id].explicit_type.clone() else {
-        return Ok(());
+    Ok(env.vars[id].explicit_type.is_some().then_some((id, path)))
+}
+
+/// Consume what the operands evaluated since `baseline` own: the in-flight
+/// temporaries, and the transferred places, whose obligations move to the
+/// operation.
+fn consume_operands(
+    env: &mut Env,
+    (in_flight, pending): (usize, usize),
+    types: &DeclarationTable<ExplicitDestroyInfo>,
+) -> Result<(), TypeError> {
+    env.in_flight.truncate(in_flight);
+    for (id, path) in env.pending.split_off(pending) {
+        let root_type = env.vars[id]
+            .explicit_type
+            .clone()
+            .expect("a transferred place has a linear type");
+        expose_path(id, &root_type, &path, env, types)?;
+        // A whole linear subobject carries its obligation to the
+        // destination. An ordinary field has no entry after decomposition
+        // and needs no discharge.
+        env.vars[id].obligations.remove(&path);
+        env.vars[id].moved.insert(path);
+    }
+    Ok(())
+}
+
+/// A statement's end consumes every operand still owned: the statement is
+/// the operation that takes them.
+fn finish_statement(
+    env: &mut Env,
+    types: &DeclarationTable<ExplicitDestroyInfo>,
+) -> Result<(), TypeError> {
+    consume_operands(env, (0, 0), types)
+}
+
+/// A raise edge: every value it leaves behind must already be consumed. An
+/// in-flight temporary or a transferred place is not yet; a value declared
+/// inside the innermost `try` region ends with the raise; with no region,
+/// the raise leaves the function and every value ends. The state the target
+/// starts from is recorded on the region.
+fn raise_edge(env: &Env, types: &DeclarationTable<ExplicitDestroyInfo>) -> Result<(), TypeError> {
+    if let Some(key) = env.in_flight.first()
+        && let Some(info) = types.get(key)
+    {
+        return Err(TypeError::AbandonedOnRaise {
+            var: "(expression temporary)".to_string(),
+            message: info.message.clone(),
+            linear: key == LINEAR_TYPE_PARAMETER,
+        });
+    }
+    let Some(frame) = env.frames.last() else {
+        return env.check_raised(0..env.vars.len());
     };
-    expose_path(id, &root_type, &path, env, types)?;
-    // A whole linear subobject carries its obligation to the destination. An
-    // ordinary field has no entry after decomposition and needs no discharge.
-    env.vars[id].obligations.remove(&path);
-    env.vars[id].moved.insert(path);
+    env.check_raised(
+        env.scopes[frame.depth..]
+            .iter()
+            .flat_map(|scope| scope.values().copied()),
+    )?;
+    let mut entry = env.clone();
+    entry.scopes.truncate(frame.depth);
+    entry.vars.truncate(frame.vars);
+    entry.in_flight.clear();
+    entry.pending.clear();
+    entry.frames.pop();
+    frame.entries.borrow_mut().push(entry);
     Ok(())
 }
 
@@ -1333,25 +1605,6 @@ fn source_explicit_name(
     }
 }
 
-/// The environment an `except` arm starts from: the pre-`try` state with
-/// every linear value the body consumes marked uninitialized. Consumption
-/// happens at the consuming call, so a raise on that call — or any later
-/// raise — reaches the handler after the value is gone (upstream's rule).
-fn handler_entry(before: &Env, body: &[Stmt]) -> Env {
-    let mut consumed = HashSet::new();
-    consumed_roots_in_stmts(body, before, &mut consumed);
-    let mut entry = before.clone();
-    for id in consumed {
-        let var = &mut entry.vars[id];
-        if var.message.is_some() {
-            var.uninitialized = true;
-            var.obligations.clear();
-            var.moved.insert(Vec::new());
-        }
-    }
-    entry
-}
-
 /// Reject a use of a value consumed on a path that may have raised.
 fn ensure_initialized(id: usize, env: &Env) -> Result<bool, TypeError> {
     if env.vars[id].uninitialized {
@@ -1360,130 +1613,4 @@ fn ensure_initialized(id: usize, env: &Env) -> Result<bool, TypeError> {
         });
     }
     Ok(true)
-}
-
-/// Roots (indices into `env.vars`) transferred anywhere in `statements`.
-fn consumed_roots_in_stmts(statements: &[Stmt], env: &Env, roots: &mut HashSet<usize>) {
-    for statement in statements {
-        match &statement.kind {
-            StmtKind::Expr(value)
-            | StmtKind::Raise(value)
-            | StmtKind::Return(Some(value))
-            | StmtKind::VarDecl { value, .. }
-            | StmtKind::RefDecl { value, .. }
-            | StmtKind::Assign { value, .. }
-            | StmtKind::AugAssign { value, .. }
-            | StmtKind::SetPlace { value, .. }
-            | StmtKind::Comptime { value, .. } => consumed_roots_in_expr(value, env, roots),
-            StmtKind::If { branches, orelse } | StmtKind::ComptimeIf { branches, orelse } => {
-                for (condition, body) in branches {
-                    consumed_roots_in_expr(condition, env, roots);
-                    consumed_roots_in_stmts(body, env, roots);
-                }
-                if let Some(orelse) = orelse {
-                    consumed_roots_in_stmts(orelse, env, roots);
-                }
-            }
-            StmtKind::While { cond, body, orelse } => {
-                consumed_roots_in_expr(cond, env, roots);
-                consumed_roots_in_stmts(body, env, roots);
-                if let Some(orelse) = orelse {
-                    consumed_roots_in_stmts(orelse, env, roots);
-                }
-            }
-            StmtKind::For {
-                iter, body, orelse, ..
-            } => {
-                consumed_roots_in_expr(iter, env, roots);
-                consumed_roots_in_stmts(body, env, roots);
-                if let Some(orelse) = orelse {
-                    consumed_roots_in_stmts(orelse, env, roots);
-                }
-            }
-            StmtKind::ComptimeFor { iter, body, .. } => {
-                consumed_roots_in_expr(iter, env, roots);
-                consumed_roots_in_stmts(body, env, roots);
-            }
-            StmtKind::Scope(body) => consumed_roots_in_stmts(body, env, roots),
-            StmtKind::Try {
-                body,
-                except,
-                orelse,
-                finalbody,
-            } => {
-                consumed_roots_in_stmts(body, env, roots);
-                if let Some((_, handler)) = except {
-                    consumed_roots_in_stmts(handler, env, roots);
-                }
-                for block in [orelse, finalbody].into_iter().flatten() {
-                    consumed_roots_in_stmts(block, env, roots);
-                }
-            }
-            _ => {}
-        }
-    }
-}
-
-fn consumed_roots_in_expr(expr: &Expr, env: &Env, roots: &mut HashSet<usize>) {
-    match &expr.kind {
-        ExprKind::Transfer(inner) if !env.spans.lent.contains(&expr.source_span()) => {
-            if let Some((id, _)) = obligation_place(inner, env) {
-                roots.insert(id);
-            }
-        }
-        ExprKind::MethodCall {
-            object,
-            args,
-            kwargs,
-            ..
-        } => {
-            consumed_roots_in_expr(object, env, roots);
-            for arg in args {
-                consumed_roots_in_expr(arg, env, roots);
-            }
-            for arg in kwargs {
-                consumed_roots_in_expr(&arg.value, env, roots);
-            }
-        }
-        ExprKind::Call { args, kwargs, .. } => {
-            for arg in args {
-                consumed_roots_in_expr(arg, env, roots);
-            }
-            for arg in kwargs {
-                consumed_roots_in_expr(&arg.value, env, roots);
-            }
-        }
-        ExprKind::Invoke {
-            callee,
-            args,
-            kwargs,
-            ..
-        } => {
-            consumed_roots_in_expr(callee, env, roots);
-            for arg in args {
-                consumed_roots_in_expr(arg, env, roots);
-            }
-            for arg in kwargs {
-                consumed_roots_in_expr(&arg.value, env, roots);
-            }
-        }
-        ExprKind::Prefix(_, value) | ExprKind::Named { value, .. } => {
-            consumed_roots_in_expr(value, env, roots);
-        }
-        ExprKind::Infix(_, left, right) => {
-            consumed_roots_in_expr(left, env, roots);
-            consumed_roots_in_expr(right, env, roots);
-        }
-        ExprKind::Member { object, .. } => consumed_roots_in_expr(object, env, roots),
-        ExprKind::Index { object, index } => {
-            consumed_roots_in_expr(object, env, roots);
-            consumed_roots_in_expr(index, env, roots);
-        }
-        ExprKind::ListLit(values) | ExprKind::TupleLit(values) => {
-            for value in values {
-                consumed_roots_in_expr(value, env, roots);
-            }
-        }
-        _ => {}
-    }
 }

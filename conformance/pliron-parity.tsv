@@ -211,6 +211,7 @@ assets/ok/evaluated_default_argument.mojo	main	exe-differential	sanitized
 assets/ok/exceptions.mojo	main	exe-differential	sanitized
 assets/ok/explicit_destroy_consumed_field_droppable.mojo	main	exe-differential	sanitized
 assets/ok/explicit_destroy_partial_fields.mojo	main	exe-differential	sanitized
+assets/ok/explicit_destroy_raise_edges.mojo	main	exe-differential	sanitized
 assets/ok/explicit_transfer_convention.mojo	main	exe-differential	sanitized
 assets/ok/external_call_write_stdout.mojo	main	exe-differential	sanitized
 assets/ok/field_store_overwrite_drop.mojo	main	exe-differential	sanitized

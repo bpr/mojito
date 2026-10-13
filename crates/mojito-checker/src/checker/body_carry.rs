@@ -150,6 +150,7 @@ pub struct InternalStores {
     borrowed_reference_receivers: FactSet<SourceSpan>,
     unconsumed_temporaries: FactSet<SourceSpan>,
     linear_temporaries: FactSet<SourceSpan>,
+    raising_iterations: FactSet<SourceSpan>,
     deletability: CheckedDeletability,
 }
 
@@ -225,6 +226,7 @@ macro_rules! carried_stores {
             internal set borrowed_reference_receivers = borrowed_reference_receivers;
             internal set unconsumed_temporaries = unconsumed_temporaries;
             internal set linear_temporaries = linear_temporaries;
+            internal set raising_iterations = raising_iterations;
         }
     };
 }
@@ -380,6 +382,7 @@ macro_rules! define_carry_ops {
                     borrowed_reference_receivers: self.borrowed_reference_receivers.into_inner(),
                     unconsumed_temporaries: self.unconsumed_temporaries.into_inner(),
                     linear_temporaries: self.linear_temporaries.into_inner(),
+                    raising_iterations: self.raising_iterations.into_inner(),
                     deletability: self.explicit_destroy_deletability.into_inner(),
                 };
                 let records = self.body_records.into_inner();

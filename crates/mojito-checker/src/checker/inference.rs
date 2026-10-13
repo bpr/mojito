@@ -44,6 +44,11 @@ impl Checker {
                             source.as_ref(),
                             source_mutable,
                         )?;
+                        if !raises.is_empty() {
+                            self.raising_iterations
+                                .borrow_mut()
+                                .insert(iter.source_span());
+                        }
                         for (operation, error) in raises {
                             self.require_error(operation, error)?;
                         }

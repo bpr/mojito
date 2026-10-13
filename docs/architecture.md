@@ -4521,6 +4521,20 @@ nothing left to destroy. Consumption is unconditional: a raising named
 destructor leaves the source uninitialized on both edges (upstream's rule),
 and the checker rejects an `except` arm that re-consumes it.
 
+The analysis follows exceptional exits as upstream's lifetime pass follows
+its raise edges. Every potentially raising operation the checker recorded —
+a raising call, operator, conversion, or `__iter__`, and a `raise`
+statement — is a raise point. An operation consumes the owned operands
+evaluated under it (its in-flight linear temporaries and its `^`
+transfers) once they all ran, and only then raises, so a raising callee has
+consumed its operands while a later operand's raise abandons them. At a
+raise point every value still owned must already be consumed: with no
+enclosing `try`, all of them; inside one, those declared in the region,
+while the rest flow to its target. An `except` arm, or with none the
+`finally` body, starts from the join of the states its raise points reach
+it with; an arm no raise point reaches is unreachable and unchecked, and a
+raise through `finally` continues from its end to the enclosing target.
+
 ### Explicit-Destruction Partial Moves
 
 An intact linear binding begins with one whole-value obligation. Moving a field
@@ -4531,8 +4545,8 @@ The aggregate's whole-value destructor is unavailable while any field is moved,
 but a projected linear field can use its own named destructor. Reinitializing all
 moved fields reconstructs the intact state and restores the whole destructor.
 
-Obligation paths are part of structured control-flow state. Branches,
-exceptional exits, and loop backedges must agree on both the remaining
+Obligation paths are part of structured control-flow state. Branches and
+loop backedges must agree on both the remaining
 obligations and moved fields, preventing a partial state from being hidden by a
 join. MIR `ConsumePlace` preserves sibling storage, and the VM drops only
 ordinary residual fields of an incomplete linear aggregate.

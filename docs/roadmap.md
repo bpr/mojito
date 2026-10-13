@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R751**.
+Next free ID: **R752**.
 
 ## Ordered Work
 
@@ -295,25 +295,6 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
   - Mojito copies `x` into the discard and destroys both, where the pin
     moves the last use.
   - Found while landing R467 (2026-10-07).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **R749 A linear temporary abandoned by a later operand's raise is
-  accepted**
-
-  Problem: `take(L(1), boom(1))`, where `L` is `@explicit_destroy` and
-  `take` takes `var a: L`, checks and runs, where the pin rejects it:
-  "'(expression temporary)' abandoned without being explicitly destroyed
-  ... value was not consumed when an error is thrown".
-  - A transfer does the same: `var l = L(1); take(l^, boom(1))` runs, where
-    the pin reports "'l' abandoned".
-  - The call consumes its owned operands only after every operand ran, so
-    the temporary is still owned on `boom`'s raise edge.
-  - The abstract destruction walk (`explicit_destroy.rs`) does not see a
-    raise edge between an operand and its call.
-  - Lowering leaves a linear temporary out of the forwarding slot, so
-    nothing destroys it implicitly meanwhile.
-  - Found while landing R747 (2026-10-13).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -6276,6 +6257,22 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     checker's effect, by giving MIR `BinOp` a `raises` contract or by
     making the struct operator a `MethodCall` before mono.
   - Found while landing R720 (2026-10-13).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R751 Explicit-destruction obligations are checked by an AST walk
+  where upstream checks them in its CFG lifetime pass**
+
+  Problem: `explicit_destroy.rs` walks the checked AST and models raise
+  edges, operand consumption, and `try` joins by hand, where upstream
+  reports abandonment from its lifetime pass over the lowered CFG.
+  - Every edge the CFG has must be re-modelled in the walk: R749 added raise
+    points, in-flight operands, and handler joins this way.
+  - MIR already carries those edges, but moving the check below the
+    `CheckedProgram` handoff is a waist decision (AGENTS invariant 5).
+  - Its plan must split the move into one-session slices, each filed as
+    its own entry before any lands.
+  - Found while landing R749 (2026-10-13).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
