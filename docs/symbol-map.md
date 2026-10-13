@@ -1269,7 +1269,8 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   (`overload_support.rs:binder_conformance_assumed`), and binds an open
   computed index as its parameter expression (`type_resolution.rs:resolve_param_arg`).
   `mir/facts.rs:subscript_call_contract` records that expression on the
-  subscript call, `mono/substitute.rs:substitute_subscript_call` folds it in
+  subscript call (whose compile-time operand register it reads by bracket
+  position, `CheckedCallParameterArgument::operand`), `mono/substitute.rs:substitute_subscript_call` folds it in
   each loop copy, and `mono/infer.rs:rewrite_subscript_call` binds the index
   before the receiver is inferred. `mono/unify.rs:owner_instance_ty` and
   `substitute_ty` name an instance element by element, the empty tuple

@@ -81,13 +81,14 @@ pub enum CheckedCallArgumentSource {
 
 /// One source-ordered compile-time method argument.
 ///
-/// Type arguments occupy a declaration slot with no runtime value; value
-/// arguments name the checked expression occurrence whose already-evaluated
-/// register lowering must reuse.
+/// Type arguments occupy a declaration slot with no runtime value; a value
+/// argument names, by position, the call's explicit compile-time operand
+/// whose already-evaluated register lowering reuses. A subscript accessor's
+/// operands are its bracket's positional operands.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct CheckedCallParameterArgument {
     pub name: Option<String>,
-    pub value_source: Option<SourceSpan>,
+    pub operand: Option<usize>,
 }
 
 /// One checker-selected adaptation of an already-evaluated call argument.
@@ -198,10 +199,6 @@ pub struct CheckedAugmentedSubscript {
     /// Ordinary value type read from the getter (the referent for `ref` results).
     pub operand_ty: Ty,
     pub result_ty: Ty,
-    /// The source the computed result is bound into the selected setter at,
-    /// including inferred compile-time value arguments: the store's own site,
-    /// since the result is no expression of the body. Absent without a setter.
-    pub value_source: Option<SourceSpan>,
 }
 
 /// The two-call plan for a bare element call `value[i](args)` (also member

@@ -5042,7 +5042,6 @@ fn augmented_subscript_mutable_reference_getter_writes_without_a_setter() {
         mojito::origin::Mutability::Mutable
     );
     assert!(pair.setter.is_none());
-    assert!(pair.value_source.is_none());
 }
 
 #[test]

@@ -4821,26 +4821,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R641 A subscript accessor's compile-time argument finds its
-  register by source span**
-
-  MIR pairs a subscript accessor's compile-time value argument with the
-  register already evaluated for it by matching source spans, where
-  upstream's accessor call carries its parameters positionally.
-  - `CheckedCallParameterArgument::value_source`,
-    `CheckedCallArgumentBoundary::value_source`, and
-    `CheckedAugmentedSubscript::value_source` are `SourceSpan`s;
-    `mir_subscript_call_contract` (`mir/facts.rs`) matches them against the
-    `(SourceSpan, Reg)` lists the subscript lowerings build.
-  - An augmented setter's stored value has no operand node, so the position
-    must name "the stored value" as its own slot.
-  - Touches the checker, `mojito-checked`, and the package format.
-  - Done when no `(SourceSpan, Reg)` list is built in
-    `crates/mojito-mir/src`.
-  - Found while landing R620 (2026-10-12).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R621 MIR lowers displays and comprehensions from syntax**
 
   MIR lowering matches `ExprKind` for list, dict, set, and tuple displays

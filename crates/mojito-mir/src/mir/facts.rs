@@ -448,10 +448,10 @@ impl Flatten<'_> {
     pub(super) fn subscript_call_contract(
         &self,
         expression: &Expr,
-        evaluated: &[(SourceSpan, Reg)],
+        operands: &[MirSubscriptArg],
     ) -> Option<MirSubscriptCall> {
         let contract = self.checked_call_contract(expression)?;
-        let mut call = self.mir_subscript_call_contract(contract, evaluated);
+        let mut call = self.mir_subscript_call_contract(contract, operands);
         // A compile-time index built from the enclosing binders
         // (`self[Self.Ts.length - 1 - i]`) is recorded as the expression the
         // checker solved it to, which the elaborator evaluates per instance.
@@ -472,7 +472,7 @@ impl Flatten<'_> {
     pub(super) fn mir_subscript_call_contract(
         &self,
         contract: mojito_checked::checked::CheckedCallContract,
-        evaluated: &[(SourceSpan, Reg)],
+        operands: &[MirSubscriptArg],
     ) -> MirSubscriptCall {
         let capture_accesses = contract
             .captures
@@ -496,11 +496,12 @@ impl Flatten<'_> {
             .iter()
             .map(|argument| MirParamArg {
                 name: argument.name.clone(),
-                value: argument.value_source.as_ref().and_then(|source| {
-                    evaluated.iter().find_map(|(candidate, register)| {
-                        (candidate == source).then_some(*register)
-                    })
-                }),
+                value: argument
+                    .operand
+                    .and_then(|position| match operands.get(position) {
+                        Some(MirSubscriptArg::Index(register)) => Some(*register),
+                        _ => None,
+                    }),
                 expr: None,
             })
             .collect();

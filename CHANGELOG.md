@@ -8,6 +8,14 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A subscript accessor's compile-time value argument names its operand by
+  bracket position rather than by source span (R641), as upstream's
+  accessor call carries its parameters positionally: MIR reads the
+  register at that position from the subscript's operand list and builds
+  no span-to-register list. The augmented-subscript record drops its
+  unused stored-value span, and the package format is
+  `mojito-package 33`. No program's output or MIR changes.
+
 - MIR lowers member reads, subscripts, slices, multi-subscripts, and
   `Variant` projections from their checked ops (R620), as upstream's
   lowering consumes a typed member or subscript op: the op decides, and

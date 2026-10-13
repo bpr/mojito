@@ -130,22 +130,23 @@ impl Checker {
         }
     }
 
-    /// The call's explicit compile-time arguments, each naming its value
-    /// source unless the argument is erased.
+    /// The call's explicit compile-time arguments, each value argument naming
+    /// its operand position unless the argument is erased.
     fn checked_parameter_arguments(
         &self,
         param_args: &[mojito_ast::ast::ParamArg],
     ) -> Vec<mojito_checked::checked::CheckedCallParameterArgument> {
         param_args
             .iter()
-            .filter_map(|argument| {
+            .enumerate()
+            .filter_map(|(position, argument)| {
                 let (name, argument) = match argument {
                     mojito_ast::ast::ParamArg::Named { name, value } => {
                         (Some(name.clone()), value.as_ref())
                     }
                     argument => (None, argument),
                 };
-                let value_source = match argument {
+                let operand = match argument {
                     mojito_ast::ast::ParamArg::Type(_) => None,
                     mojito_ast::ast::ParamArg::Value(expression) => {
                         let erased = self.has_fact(&expression.source_span(), |facts| {
@@ -159,11 +160,11 @@ impl Checker {
                         if erased {
                             return None;
                         }
-                        Some(expression.source_span())
+                        Some(position)
                     }
                     mojito_ast::ast::ParamArg::Named { .. } => unreachable!(),
                 };
-                Some(mojito_checked::checked::CheckedCallParameterArgument { name, value_source })
+                Some(mojito_checked::checked::CheckedCallParameterArgument { name, operand })
             })
             .collect()
     }

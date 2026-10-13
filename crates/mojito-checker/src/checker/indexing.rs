@@ -789,7 +789,6 @@ impl Checker {
                     inplace: None,
                     operand_ty: element.clone(),
                     result_ty: element.clone(),
-                    value_source: None,
                 },
             )),
         ));

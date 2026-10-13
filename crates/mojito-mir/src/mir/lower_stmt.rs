@@ -747,7 +747,7 @@ impl Flatten<'_> {
         );
         let getter_call = self.mir_subscript_call_contract(
             plan.getter.clone(),
-            &[(index.source_span(), getter_index)],
+            &[MirSubscriptArg::Index(getter_index)],
         );
         self.emit_checked_call_boundary(&plan.getter, &target.source_span());
         let handle = self.fresh_typed(target.source_span(), None, plan.getter.result_ty.clone());
@@ -825,7 +825,7 @@ impl Flatten<'_> {
                     );
                     let getter_call = self.mir_subscript_call_contract(
                         plan.getter.clone(),
-                        &[(index.source_span(), getter_index)],
+                        &[MirSubscriptArg::Index(getter_index)],
                     );
                     self.emit_checked_call_boundary(&plan.getter, &target.source_span());
                     let handle =
@@ -896,7 +896,7 @@ impl Flatten<'_> {
                 );
                 let getter_call = self.mir_subscript_call_contract(
                     plan.getter.clone(),
-                    &[(index.source_span(), getter_index)],
+                    &[MirSubscriptArg::Index(getter_index)],
                 );
                 self.emit_checked_call_boundary(&plan.getter, &target.source_span());
                 let current =
@@ -965,29 +965,21 @@ impl Flatten<'_> {
                     setter_raw_index,
                     index.source_span(),
                 );
-                let value_source = if value_keyword {
+                let value_argument = if value_keyword {
                     mojito_checked::checked::CheckedCallArgumentSource::Keyword(0)
                 } else {
                     mojito_checked::checked::CheckedCallArgumentSource::Positional(1)
                 };
                 let value = self.apply_checked_call_value_adjustments(
                     setter,
-                    value_source,
+                    value_argument,
                     result,
-                    plan.value_source
-                        .clone()
-                        .unwrap_or_else(|| target.source_span()),
+                    target.source_span(),
                 );
-                let setter_sources = [
-                    (index.source_span(), setter_index),
-                    (
-                        plan.value_source
-                            .clone()
-                            .unwrap_or_else(|| target.source_span()),
-                        value,
-                    ),
-                ];
-                let setter_call = self.mir_subscript_call_contract(setter.clone(), &setter_sources);
+                let setter_call = self.mir_subscript_call_contract(
+                    setter.clone(),
+                    &[MirSubscriptArg::Index(setter_index)],
+                );
                 self.emit_checked_call_boundary(setter, &target.source_span());
                 self.emit(MirInstr::MultiSet {
                     receiver: setter_receiver,
@@ -1135,28 +1127,18 @@ impl Flatten<'_> {
                     ),
                     object.source_span(),
                 );
-                let value_source = if value_keyword {
+                let value_argument = if value_keyword {
                     mojito_checked::checked::CheckedCallArgumentSource::Keyword(0)
                 } else {
                     mojito_checked::checked::CheckedCallArgumentSource::Positional(1)
                 };
                 let value = self.apply_checked_call_value_adjustments(
                     setter,
-                    value_source,
+                    value_argument,
                     result,
-                    plan.value_source
-                        .clone()
-                        .unwrap_or_else(|| target.source_span()),
+                    target.source_span(),
                 );
-                let setter_call = self.mir_subscript_call_contract(
-                    setter.clone(),
-                    &[(
-                        plan.value_source
-                            .clone()
-                            .unwrap_or_else(|| target.source_span()),
-                        value,
-                    )],
-                );
+                let setter_call = self.mir_subscript_call_contract(setter.clone(), &[]);
                 self.emit_checked_call_boundary(setter, &target.source_span());
                 self.emit(MirInstr::MultiSet {
                     receiver: setter_receiver,
@@ -1266,16 +1248,6 @@ impl Flatten<'_> {
                         slice @ MirSubscriptArg::Slice { .. } => slice.clone(),
                     })
                     .collect::<Vec<_>>();
-                let getter_sources = getter_args
-                    .iter()
-                    .zip(&source_spans)
-                    .filter_map(|(argument, source)| match (argument, source) {
-                        (MirSubscriptArg::Index(register), Some(source)) => {
-                            Some((source.clone(), *register))
-                        }
-                        _ => None,
-                    })
-                    .collect::<Vec<_>>();
                 let getter_places = source_places
                     .iter()
                     .enumerate()
@@ -1290,7 +1262,7 @@ impl Flatten<'_> {
                     })
                     .collect::<Vec<_>>();
                 let getter_call =
-                    self.mir_subscript_call_contract(plan.getter.clone(), &getter_sources);
+                    self.mir_subscript_call_contract(plan.getter.clone(), &getter_args);
 
                 if plan.setter.is_none() {
                     self.emit_checked_call_boundary(&plan.getter, &target.source_span());
@@ -1442,36 +1414,18 @@ impl Flatten<'_> {
                         )
                     })
                     .collect::<Vec<_>>();
-                let value_source = if value_keyword {
+                let value_argument = if value_keyword {
                     mojito_checked::checked::CheckedCallArgumentSource::Keyword(0)
                 } else {
                     mojito_checked::checked::CheckedCallArgumentSource::Positional(source.len())
                 };
                 let value = self.apply_checked_call_value_adjustments(
                     setter,
-                    value_source,
+                    value_argument,
                     result,
-                    plan.value_source
-                        .clone()
-                        .unwrap_or_else(|| target.source_span()),
+                    target.source_span(),
                 );
-                let mut setter_sources = setter_args
-                    .iter()
-                    .zip(&source_spans)
-                    .filter_map(|(argument, source)| match (argument, source) {
-                        (MirSubscriptArg::Index(register), Some(source)) => {
-                            Some((source.clone(), *register))
-                        }
-                        _ => None,
-                    })
-                    .collect::<Vec<_>>();
-                setter_sources.push((
-                    plan.value_source
-                        .clone()
-                        .unwrap_or_else(|| target.source_span()),
-                    value,
-                ));
-                let setter_call = self.mir_subscript_call_contract(setter.clone(), &setter_sources);
+                let setter_call = self.mir_subscript_call_contract(setter.clone(), &setter_args);
                 self.emit_checked_call_boundary(setter, &target.source_span());
                 self.emit(MirInstr::MultiSet {
                     receiver: setter_receiver,
@@ -1514,13 +1468,7 @@ impl Flatten<'_> {
             let argument = MirSubscriptArg::Index(argument_register);
             let (value, value_place) = self.lower_assignment_value(target, value_expression);
             let call = self
-                .subscript_call_contract(
-                    target,
-                    &[
-                        (index.source_span(), argument_register),
-                        (value_expression.source_span(), value),
-                    ],
-                )
+                .subscript_call_contract(target, std::slice::from_ref(&argument))
                 .expect("checked nominal subscript setter has a call contract");
             self.emit_interior_invalidations(index, None);
             self.emit_interior_invalidations(value_expression, None);
@@ -1586,7 +1534,6 @@ impl Flatten<'_> {
         // bounds from left to right, and finally the assignment RHS.
         let (receiver, receiver_place) = self.lower_call_receiver(object);
         let mut arg_places = Vec::with_capacity(descriptors.len());
-        let mut parameter_sources = Vec::new();
         let args = match source_arguments {
             SetArguments::Multi(checked, arguments) => checked
                 .iter()
@@ -1601,7 +1548,6 @@ impl Flatten<'_> {
                             debug_assert!(descriptor.is_none());
                             let (register, place) = self.lower_call_argument(value);
                             arg_places.push(place);
-                            parameter_sources.push((value.source_span(), register));
                             MirSubscriptArg::Index(register)
                         }
                         (
@@ -1638,9 +1584,8 @@ impl Flatten<'_> {
             }
         };
         let (value, value_place) = self.lower_assignment_value(target, value_expression);
-        parameter_sources.push((value_expression.source_span(), value));
         let call = self
-            .subscript_call_contract(target, &parameter_sources)
+            .subscript_call_contract(target, &args)
             .expect("checked nominal subscript setter has a call contract");
         if let SetArguments::Multi(checked, arguments) = source_arguments {
             for pair in checked.iter().zip(arguments) {

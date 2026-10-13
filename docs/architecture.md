@@ -1774,10 +1774,10 @@ predicates decide by the op too, the syntax only binding the operands still
 lowered from it. A static
 call's receiver is a type because its node is a name the check bound to
 nothing and typed as no value, never because no local shares its spelling.
-One narrow association remains span-keyed (R641):
-source-ordered compile-time value arguments reuse registers already evaluated
-for the corresponding checked subscript operand. This is a register handoff,
-not semantic reconstruction. Register spans otherwise serve diagnostics only.
+A subscript accessor's compile-time value argument names its operand by
+bracket position (`CheckedCallParameterArgument::operand`), as upstream's
+accessor call carries its parameters positionally, and reuses the register
+already evaluated at that position. Register spans serve diagnostics only.
 SIMD dtype and width selection is likewise a checked adjustment rather than
 MIR-side syntax evaluation. Span-indexed call/conversion maps remain only as
 public compatibility queries and are not part of lowering.

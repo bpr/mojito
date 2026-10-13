@@ -1350,7 +1350,6 @@ impl Checker {
                                     inplace: inplace_contract,
                                     operand_ty: target,
                                     result_ty: result,
-                                    value_source: None,
                                 }),
                             ),
                         ));
@@ -1405,12 +1404,6 @@ impl Checker {
                             argument.value_source.clone_from(&site);
                         }
                     }
-                    for argument in &mut setter.parameter_arguments {
-                        if argument.value_source.as_ref() == Some(&value_source) {
-                            argument.value_source = Some(site.clone());
-                        }
-                    }
-                    let value_source = site.clone();
                     let before_write = self
                         .fact(&site, |facts| facts.interior_invalidations.as_ref())
                         .unwrap_or_default();
@@ -1442,7 +1435,6 @@ impl Checker {
                                 inplace: inplace_contract,
                                 operand_ty: target,
                                 result_ty: result,
-                                value_source: Some(value_source),
                             },
                         )),
                     ));

@@ -335,7 +335,7 @@ impl Flatten<'_> {
             (self.expr(object), self.simple_place(object))
         };
         let (idx, index_place) = self.lower_call_argument(index);
-        let call = self.subscript_call_contract(e, &[(index.source_span(), idx)]);
+        let call = self.subscript_call_contract(e, &[MirSubscriptArg::Index(idx)]);
         let intrinsic = call
             .is_none()
             .then(|| self.intrinsic_index_dispatch(object))
@@ -464,7 +464,6 @@ impl Flatten<'_> {
         let mut arg_places = Vec::with_capacity(args.len());
         let mut kwargs = Vec::new();
         let mut kwarg_places = Vec::new();
-        let mut parameter_sources = Vec::new();
         let lowered_args: Vec<_> = checked_args
             .iter()
             .zip(args)
@@ -478,7 +477,6 @@ impl Flatten<'_> {
                         debug_assert!(descriptor.is_none());
                         let (register, place) = self.lower_call_argument(value);
                         kwarg_places.push(place);
-                        parameter_sources.push((value.source_span(), register));
                         kwargs.push((name.clone(), MirSubscriptArg::Index(register)));
                         None
                     }
@@ -505,7 +503,6 @@ impl Flatten<'_> {
                         debug_assert!(descriptor.is_none());
                         let (register, place) = self.lower_call_argument(value);
                         arg_places.push(place);
-                        parameter_sources.push((value.source_span(), register));
                         Some(MirSubscriptArg::Index(register))
                     }
                     (
@@ -526,7 +523,7 @@ impl Flatten<'_> {
                 },
             )
             .collect();
-        let call = self.subscript_call_contract(e, &parameter_sources);
+        let call = self.subscript_call_contract(e, &lowered_args);
         let dest = self.fresh(span(e), None);
         for (checked, argument) in checked_args.iter().zip(args) {
             if let (CheckedSubscriptArg::Index(_), SubscriptArg::Index(argument)) =

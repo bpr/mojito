@@ -162,10 +162,8 @@ impl Flatten<'_> {
         let receiver_root = base_place.as_ref().map(|place| place.root);
         let mut index_regs = Vec::with_capacity(indices.len());
         let mut index_places = Vec::with_capacity(indices.len());
-        let mut sources = Vec::with_capacity(indices.len());
         for index in indices {
             let (register, place) = self.lower_call_argument(index);
-            sources.push((index.source_span(), register));
             index_regs.push(register);
             index_places.push(place);
         }
@@ -174,7 +172,11 @@ impl Flatten<'_> {
         }
         self.emit_interior_invalidations(e, None);
         let reference_result = plan.getter.reference_result.clone();
-        let call = Some(self.mir_subscript_call_contract(plan.getter, &sources));
+        let operands = index_regs
+            .iter()
+            .map(|register| MirSubscriptArg::Index(*register))
+            .collect::<Vec<_>>();
+        let call = Some(self.mir_subscript_call_contract(plan.getter, &operands));
         let element_ty = call
             .as_ref()
             .map(|contract| contract.result_ty.clone())
