@@ -676,16 +676,26 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   responsibility across `impl<'a> Flatten<'a>` blocks in the submodules below.
 - `mir/node.rs` owns `Node`, the handle MIR lowering reads a checked
   expression through (HIR's tree with its checked node), and its operand
-  accessors (`operands`, `operand`, `object`, `index`, `args`, `kwargs`).
+  accessors (`operands`, `operand`, `operand_of`, `object`, `index`, `args`,
+  `kwargs`, `param_args`, `param_value`, `location`).
   `mir/facts.rs` owns the node's attribute readers (`Node::{ty, place_ty,
   owner, raises, adjustments, call_contract, instantiated_args,
-  reference_places, interior_references, element_receiver, …}`) and the
-  `Flatten` readers that also need the function being lowered
+  reference_places, interior_references, element_receiver, reference_result,
+  implicit_conversion, index_normalization, recorded_value,
+  intrinsic_index_dispatch, pointer_offset_subscript, rebound_place, …}`) and
+  the `Flatten` readers that also need the function being lowered
   (`name_spelled`, `expression_var`, `nested_info`, `aggregate_borrows`,
-  `subscript_call_contract`, `call_capture_accesses`, `local_callee`). The
-  transitional syntax bridges (`Flatten::{node, syntax, operand,
+  `subscript_call_contract`, `call_capture_accesses`, `local_callee`).
+  `Flatten::expr` and its adjustments (`lower_expr/entry.rs`), the place
+  family (`place`, `try_place`, `simple_place`, `pure_field_place` in
+  `lower_stmt.rs`, `name_place_root` in `mir.rs`), `reference_handle`, the
+  compile-time argument slots (`param_arg_regs` over the op's
+  `CheckedParamArg`s), and `mir/calls.rs`'s argument, receiver, anchor, and
+  invalidation lowering take a `Node`. The transitional syntax bridges
+  (`Flatten::{node, node_of, nodes_of, keywords_of, syntax, operand,
   operand_syntax}` in `lower_expr/entry.rs`, `SyntaxFrame`/`Syntax` in
-  `mir.rs`, `facts.rs`'s private `place_of`) are deleted by R649.
+  `mir.rs`) are deleted by R649, and `expr_unconverted`'s crossing from a
+  node back to its rebuilt syntax by R652/R653.
 - `mir/calls.rs` owns call-site lowering (arguments, keywords, receiver,
   reference results, checked-call boundaries, interior-origin invalidations).
 - `mir/lower_expr.rs` (split across

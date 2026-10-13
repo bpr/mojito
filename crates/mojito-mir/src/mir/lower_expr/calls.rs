@@ -6,7 +6,7 @@ use super::*;
 use mojito_checked::checked::CheckedOp;
 use mojito_types::types::TyKind;
 
-impl Flatten<'_> {
+impl<'a> Flatten<'a> {
     /// The argument position of a call's pack spread (`f(*a)`), the slot the
     /// elaborator expands into the collector's elements.
     pub(super) fn spread_position(&self, args: &[Expr]) -> Option<usize> {
@@ -26,7 +26,6 @@ impl Flatten<'_> {
         &mut self,
         e: &Expr,
         object: &Expr,
-        param_args: &[ParamArg],
         args: &[Expr],
         kwargs: &[mojito_ast::ast::KwArg],
     ) -> Option<Reg> {
@@ -34,25 +33,29 @@ impl Flatten<'_> {
         if !contract.receiver_elided {
             return None;
         }
-        let _ = self.lower_call_receiver(object);
+        let _ = self.lower_call_receiver(self.node_of(object));
         let receiver = self.static_receiver(object);
         let (param_arg_regs, instantiated_args) = if contract.param_decls.is_empty() {
             (Vec::new(), Vec::new())
         } else {
             (
-                self.param_arg_regs(e, param_args),
+                self.param_arg_regs(self.node_of(e)),
                 self.node(e)
                     .map(Node::instantiated_args)
                     .unwrap_or_default(),
             )
         };
         let saved_anchor_permission = self.allow_argument_anchors;
-        self.allow_argument_anchors = self.call_anchors_arguments(e);
-        let (regs, arg_places) = self.lower_call_arguments(args, false);
+        self.allow_argument_anchors = self.node_of(e).call_anchors_arguments();
+        let (regs, arg_places) = self.lower_call_arguments(&self.nodes_of(args), false);
         self.allow_argument_anchors = saved_anchor_permission;
-        let (kw, kwarg_places) = self.lower_call_keywords(kwargs, false);
+        let (kw, kwarg_places) = self.lower_call_keywords(&self.keywords_of(kwargs), false);
         let dest = self.fresh(span(e), None);
-        self.emit_call_invalidations(e, args, kwargs);
+        self.emit_call_invalidations(
+            self.node_of(e),
+            &self.nodes_of(args),
+            &self.keywords_of(kwargs),
+        );
         self.emit(MirInstr::Call {
             dest,
             func: FuncRef::named(&contract.target),
@@ -70,7 +73,10 @@ impl Flatten<'_> {
             instantiated_args,
             spread: self.spread_position(args),
         });
-        self.emit_nested_closure_argument_keepalives(args, kwargs);
+        self.emit_nested_closure_argument_keepalives(
+            &self.nodes_of(args),
+            &self.keywords_of(kwargs),
+        );
         Some(dest)
     }
 
@@ -99,19 +105,23 @@ impl Flatten<'_> {
             .map(generic_callable_param_decls)
             .unwrap_or_default();
         let saved_anchor_permission = self.allow_argument_anchors;
-        self.allow_argument_anchors = self.call_anchors_arguments(e);
-        let (arg_regs, arg_places) = self.lower_call_arguments(args, false);
-        let (kw_regs, kwarg_places) = self.lower_call_keywords(kwargs, false);
+        self.allow_argument_anchors = self.node_of(e).call_anchors_arguments();
+        let (arg_regs, arg_places) = self.lower_call_arguments(&self.nodes_of(args), false);
+        let (kw_regs, kwarg_places) = self.lower_call_keywords(&self.keywords_of(kwargs), false);
         self.allow_argument_anchors = saved_anchor_permission;
         let dest = self.fresh(span(e), None);
         if call_site_invalidations {
-            self.emit_call_invalidations(e, args, kwargs);
+            self.emit_call_invalidations(
+                self.node_of(e),
+                &self.nodes_of(args),
+                &self.keywords_of(kwargs),
+            );
         } else {
             for argument in args {
-                self.emit_interior_invalidations(argument, None);
+                self.emit_interior_invalidations(self.node_of(argument), None);
             }
             for argument in kwargs {
-                self.emit_interior_invalidations(&argument.value, None);
+                self.emit_interior_invalidations(self.node_of(&argument.value), None);
             }
         }
         let capture_accesses = self
@@ -143,7 +153,10 @@ impl Flatten<'_> {
             instantiated_args,
             spread: self.spread_position(args),
         });
-        self.emit_nested_closure_argument_keepalives(args, kwargs);
+        self.emit_nested_closure_argument_keepalives(
+            &self.nodes_of(args),
+            &self.keywords_of(kwargs),
+        );
         self.install_call_transfers(e, transfer_recv_place.as_ref(), &transfer_arg_places);
         dest
     }
@@ -174,14 +187,14 @@ impl Flatten<'_> {
         let mut index_regs = Vec::with_capacity(indices.len());
         let mut index_places = Vec::with_capacity(indices.len());
         for index in indices {
-            let (register, place) = self.lower_call_argument(index);
+            let (register, place) = self.lower_call_argument(self.node_of(index));
             index_regs.push(register);
             index_places.push(place);
         }
         for index in indices {
-            self.emit_interior_invalidations(index, None);
+            self.emit_interior_invalidations(self.node_of(index), None);
         }
-        self.emit_interior_invalidations(e, None);
+        self.emit_interior_invalidations(self.node_of(e), None);
         let reference_result = plan.getter.reference_result.clone();
         let operands = index_regs
             .iter()
@@ -217,8 +230,12 @@ impl Flatten<'_> {
         }
         let (callee, callee_place) = match reference_result {
             Some(reference) => {
-                let place =
-                    self.materialize_call_reference_place(e, element, &reference, receiver_root);
+                let place = self.materialize_call_reference_place(
+                    self.node_of(e),
+                    element,
+                    &reference,
+                    receiver_root,
+                );
                 let value = self.fresh_typed(
                     e.source_span(),
                     Some(place.root),
@@ -269,12 +286,12 @@ impl Flatten<'_> {
         // `SIMD[DType.bool, N](fill=b)` is the one-lane splat, by keyword.
         // A nullary construction splats a zero lane.
         let elems = match (kwargs, args) {
-            ([fill], _) => vec![self.expr(&fill.value)],
+            ([fill], _) => vec![self.expr(self.node_of(&fill.value))],
             ([], []) if dtype.known() == Some(Dtype::Bool) => {
-                vec![self.constant(e, Const::Bool(false))]
+                vec![self.constant(self.node_of(e), Const::Bool(false))]
             }
-            ([], []) => vec![self.constant(e, Const::IntLiteral(0.into()))],
-            _ => self.args(args),
+            ([], []) => vec![self.constant(self.node_of(e), Const::IntLiteral(0.into()))],
+            _ => self.args(&self.nodes_of(args)),
         };
         let d = self.fresh(span(e), None);
         self.emit(MirInstr::MakeSimd {
@@ -294,7 +311,6 @@ impl Flatten<'_> {
         e: &Expr,
         name: &str,
         info: &NestedInfo,
-        param_args: &[ParamArg],
         args: &[Expr],
         kwargs: &[mojito_ast::ast::KwArg],
     ) -> Reg {
@@ -303,18 +319,22 @@ impl Flatten<'_> {
             .callable_ty
             .clone()
             .or_else(|| self.f.reg_types.get(&callee.0).cloned());
-        let param_arg_regs = self.param_arg_regs(e, param_args);
+        let param_arg_regs = self.param_arg_regs(self.node_of(e));
         let param_decls = callable_ty
             .as_ref()
             .map(generic_callable_param_decls)
             .unwrap_or_default();
         let saved_anchor_permission = self.allow_argument_anchors;
-        self.allow_argument_anchors = self.call_anchors_arguments(e);
-        let (arg_regs, arg_places) = self.lower_call_arguments(args, false);
-        let (kw_regs, kwarg_places) = self.lower_call_keywords(kwargs, false);
+        self.allow_argument_anchors = self.node_of(e).call_anchors_arguments();
+        let (arg_regs, arg_places) = self.lower_call_arguments(&self.nodes_of(args), false);
+        let (kw_regs, kwarg_places) = self.lower_call_keywords(&self.keywords_of(kwargs), false);
         self.allow_argument_anchors = saved_anchor_permission;
         let d = self.fresh(span(e), None);
-        self.emit_call_invalidations(e, args, kwargs);
+        self.emit_call_invalidations(
+            self.node_of(e),
+            &self.nodes_of(args),
+            &self.keywords_of(kwargs),
+        );
         let transfer_arg_places = arg_places.clone();
         let callee_place = self
             .owner_vars
@@ -370,7 +390,10 @@ impl Flatten<'_> {
             instantiated_args,
             spread: self.spread_position(args),
         });
-        self.emit_nested_closure_argument_keepalives(args, kwargs);
+        self.emit_nested_closure_argument_keepalives(
+            &self.nodes_of(args),
+            &self.keywords_of(kwargs),
+        );
         self.install_call_transfers(e, None, &transfer_arg_places);
         let mut owners = Vec::new();
         let mut seen = HashSet::new();
@@ -420,28 +443,18 @@ impl Flatten<'_> {
     /// persistent access loan (Mojo permits intervening owner mutation).
     pub(in crate::mir) fn emit_nested_closure_argument_keepalives(
         &mut self,
-        args: &[Expr],
-        kwargs: &[mojito_ast::ast::KwArg],
+        args: &[Node<'a>],
+        kwargs: &[(&str, Node<'a>)],
     ) {
         let mut owners = Vec::new();
-        for expression in args
-            .iter()
-            .chain(kwargs.iter().map(|argument| &argument.value))
-        {
-            let expression = self
-                .operand(expression, Node::named_value)
-                .unwrap_or(expression);
+        for &expression in args.iter().chain(kwargs.iter().map(|(_, value)| value)) {
+            let expression = expression.named_value().unwrap_or(expression);
             // A closure argument is either a binding naming a nested def or a
             // lambda expression materialized in place.
-            let Some(CheckedOp::Identifier(_) | CheckedOp::Lambda { .. }) =
-                self.node(expression).map(Node::op)
-            else {
+            let (CheckedOp::Identifier(_) | CheckedOp::Lambda { .. }) = expression.op() else {
                 continue;
             };
-            let Some(info) = self
-                .node(expression)
-                .and_then(|node| self.nested_info(node))
-            else {
+            let Some(info) = self.nested_info(expression) else {
                 continue;
             };
             let mut seen = HashSet::new();
@@ -616,9 +629,9 @@ impl Flatten<'_> {
     }
 
     /// Emit a `Const` writing a fresh register.
-    pub(in crate::mir) fn constant(&mut self, e: &Expr, k: Const) -> Reg {
-        let function_ty = self.node(e).and_then(Node::ty);
-        self.constant_at(span(e), function_ty, k)
+    pub(in crate::mir) fn constant(&mut self, e: Node<'a>, k: Const) -> Reg {
+        let function_ty = e.ty();
+        self.constant_at(e.location(), function_ty, k)
     }
 
     /// Emit the `Const` literal node `node` denotes.

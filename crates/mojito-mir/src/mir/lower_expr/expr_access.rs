@@ -6,32 +6,12 @@ use mojito_checked::checked::{CheckedExpr, CheckedSubscriptArg, SemanticAdjustme
 use mojito_types::types::TyKind;
 
 use mojito_ast::ast::SubscriptArg;
-impl Flatten<'_> {
-    /// The parameter expression the checker recorded for `e`, a compile-time
-    /// query read as a runtime value.
-    pub(in crate::mir) fn param_value(
-        &self,
-        e: &Expr,
-    ) -> Option<mojito_types::param_expr::ParamExpr> {
-        self.node(e)
-            .map(|node| node.checked)
-            .and_then(|node| recorded_param_value(&node.adjustments))
-    }
-
-    /// Whether `e` reads a parameter value the check recorded with no
-    /// materialized borrow source of its own (a module constant), which
-    /// lowers as a value wherever it stands.
-    pub(in crate::mir) fn constant_param_value(&self, e: &Expr) -> bool {
-        self.node(e)
-            .map(|node| node.checked)
-            .is_some_and(|node| constant_param_value(&node.adjustments))
-    }
-
+impl<'a> Flatten<'a> {
     /// The runtime value of a compile-time `operand` crossing explicitly
     /// (`materialize[X]()`, `comptime(e)`): a local display binding is built
     /// here, where it crosses; an `Int` or a `Bool` read off one is the
     /// application of its thunk; any other operand is lowered in place.
-    pub(in crate::mir) fn crossing_operand(&mut self, operand: &Expr) -> Reg {
+    pub(in crate::mir) fn crossing_operand(&mut self, operand: Node<'a>) -> Reg {
         if let Some(binding) = self.named_display(operand) {
             return self.crossing_display(&binding);
         }
@@ -46,7 +26,18 @@ impl Flatten<'_> {
     /// folds per instance.
     pub(in crate::mir) fn param_value_register(
         &mut self,
-        e: &Expr,
+        e: Node<'a>,
+        value: mojito_types::param_expr::ParamExpr,
+    ) -> Reg {
+        self.param_value_register_at(e.location(), e.ty(), value)
+    }
+
+    /// [`Self::param_value_register`] at `location`, typed `ty` when the
+    /// value has a checked type.
+    pub(in crate::mir) fn param_value_register_at(
+        &mut self,
+        location: SourceSpan,
+        ty: Option<Ty>,
         value: mojito_types::param_expr::ParamExpr,
     ) -> Reg {
         let k = match value.kind() {
@@ -72,7 +63,7 @@ impl Flatten<'_> {
             ) => Const::FloatLiteral(value.clone()),
             _ => Const::Param(value),
         };
-        self.constant(e, k)
+        self.constant_at(location, ty, k)
     }
 
     /// Read member node `node`, `object.field`, which `e` was rebuilt from.
@@ -106,10 +97,10 @@ impl Flatten<'_> {
             if !self.node(object).is_some_and(Node::is_name)
                 && self.node(object).and_then(Node::ty).is_some()
             {
-                self.expr(object);
+                self.expr(self.node_of(object));
             }
             return match folded {
-                Ok(constant) => self.constant(e, constant),
+                Ok(constant) => self.constant(self.node_of(e), constant),
                 Err(expr) => {
                     if let Some(value) = self.inferred_value_register(&expr, &span(e)) {
                         return value;
@@ -131,8 +122,8 @@ impl Flatten<'_> {
         // field is read — enabling field-sensitive partial-move checking
         // (reading `p.b` after `p.a^` stays legal). A member of a temporary
         // or an indexed base keeps the register-based `GetField`.
-        if !self.is_slice_descriptor(object)
-            && let Some(place) = self.pure_field_place(e)
+        if !self.node_of(object).is_slice_descriptor()
+            && let Some(place) = self.pure_field_place(self.node_of(e))
         {
             let place_root = place.root;
             let place_ty = place.ty.clone();
@@ -185,13 +176,15 @@ impl Flatten<'_> {
                 loaded
             }
         } else {
-            let d = if let Some(loaded) = self.load_temporary_field(e, object, field) {
+            let d = if let Some(loaded) =
+                self.load_temporary_field(self.node_of(e), self.node_of(object), field)
+            {
                 loaded
             } else {
-                let base = if self.reference_result(object).is_some() {
-                    self.lower_call_receiver(object).0
+                let base = if self.node_of(object).reference_result().is_some() {
+                    self.lower_call_receiver(self.node_of(object)).0
                 } else {
-                    self.expr(object)
+                    self.expr(self.node_of(object))
                 };
                 let d = self.fresh(span(e), None);
                 self.emit(MirInstr::GetField {
@@ -239,7 +232,7 @@ impl Flatten<'_> {
         node: &CheckedExpr,
         object: &Expr,
     ) -> Reg {
-        let place = self.place(object);
+        let place = self.place(self.node_of(object));
         self.variant_payload_read(e, node, place)
     }
 
@@ -262,15 +255,15 @@ impl Flatten<'_> {
         if matches!(
             self.node(e).and_then(Node::place_ty).as_ref().map(Ty::kind),
             Some(TyKind::Ref(_))
-        ) && self.resolved_callable(e).is_none()
+        ) && self.node_of(e).resolved_callable().is_none()
             && !matches!(
                 self.node(object).and_then(Node::ty).as_ref().map(Ty::kind),
                 Some(TyKind::Struct(..))
             )
-            && let Some(place) = self.try_place(e)
+            && let Some(place) = self.try_place(self.node_of(e))
         {
             let d = self.fresh(span(e), Some(place.root));
-            self.emit_interior_invalidations(e, None);
+            self.emit_interior_invalidations(self.node_of(e), None);
             self.emit(MirInstr::LoadPlace { dest: d, place });
             return d;
         }
@@ -279,34 +272,34 @@ impl Flatten<'_> {
         // pointer substitutes the owner place directly, keeping the
         // owner touched (and so droppable) at each access; otherwise
         // the access reads through the runtime handle.
-        if let Some(place) = self.pointer_deref_place(object) {
+        if let Some(place) = self.pointer_deref_place(self.node_of(object)) {
             let d = self.fresh(span(e), Some(place.root));
             self.emit(MirInstr::LoadPlace { dest: d, place });
             return d;
         }
-        if let Some(d) = self.temporary_pointer_deref(e, object) {
+        if let Some(d) = self.temporary_pointer_deref(self.node_of(e), self.node_of(object)) {
             return d;
         }
         // A pointer field of a call result the checker materialized
         // (`make(b).src[]`) dereferences through the temporary's
         // hidden slot, so the viewed storage outlives the read.
-        if self.rooted_at_materialized_temporary(object)
-            && let Some(place) = self.lower_projected_reference_place(e)
+        if self.node_of(object).rooted_at_materialized_temporary()
+            && let Some(place) = self.lower_projected_reference_place(self.node_of(e))
         {
             let d = self.fresh(span(e), Some(place.root));
             self.emit(MirInstr::LoadPlace { dest: d, place });
             return d;
         }
-        if self.is_origin_bearing_pointer(object) {
-            let reference = self.expr(object);
+        if self.node_of(object).is_origin_bearing_pointer() {
+            let reference = self.expr(self.node_of(object));
             let d = self.fresh(span(e), None);
             self.emit(MirInstr::ReadRef { dest: d, reference });
             return d;
         }
-        if let Some(contract) = self.type_keyed_accessor_call(e) {
-            let (recv, recv_place) = self.lower_call_receiver(object);
+        if let Some(contract) = self.type_keyed_accessor_call(self.node_of(e)) {
+            let (recv, recv_place) = self.lower_call_receiver(self.node_of(object));
             let dest = self.fresh(span(e), None);
-            self.emit_interior_invalidations(object, None);
+            self.emit_interior_invalidations(self.node_of(object), None);
             self.emit(MirInstr::MethodCall {
                 dest,
                 recv,
@@ -318,7 +311,7 @@ impl Flatten<'_> {
                 args: Vec::new(),
                 kwargs: Vec::new(),
                 recv_place: recv_place.map(Box::new),
-                recv_writes: self.receiver_writes(e),
+                recv_writes: self.node_of(e).receiver_writes(),
                 arg_places: Vec::new(),
                 kwarg_places: Vec::new(),
                 capture_accesses: self
@@ -340,21 +333,24 @@ impl Flatten<'_> {
             return d;
         }
         let (base, base_place) = if has_call {
-            self.lower_call_receiver(object)
+            self.lower_call_receiver(self.node_of(object))
         } else {
-            (self.expr(object), self.simple_place(object))
+            (
+                self.expr(self.node_of(object)),
+                self.simple_place(self.node_of(object)),
+            )
         };
-        let (idx, index_place) = self.lower_call_argument(index);
+        let (idx, index_place) = self.lower_call_argument(self.node_of(index));
         let call = self
             .node(e)
             .and_then(|node| self.subscript_call_contract(node, &[MirSubscriptArg::Index(idx)]));
         let intrinsic = call
             .is_none()
-            .then(|| self.intrinsic_index_dispatch(object))
+            .then(|| self.node_of(object).intrinsic_index_dispatch())
             .flatten();
         let d = self.fresh(span(e), None);
-        self.emit_interior_invalidations(index, None);
-        self.emit_interior_invalidations(e, None);
+        self.emit_interior_invalidations(self.node_of(index), None);
+        self.emit_interior_invalidations(self.node_of(e), None);
         self.emit(MirInstr::Index {
             dest: d,
             base,
@@ -380,13 +376,16 @@ impl Flatten<'_> {
     ) -> Reg {
         let has_call = self.node(e).and_then(Node::call_contract).is_some();
         let (obj, object_place) = if has_call {
-            self.lower_call_receiver(object)
+            self.lower_call_receiver(self.node_of(object))
         } else {
-            (self.expr(object), self.simple_place(object))
+            (
+                self.expr(self.node_of(object)),
+                self.simple_place(self.node_of(object)),
+            )
         };
-        let lower = lower.as_ref().map(|b| self.expr(b));
-        let upper = upper.as_ref().map(|b| self.expr(b));
-        let step = step.as_ref().map(|b| self.expr(b));
+        let lower = lower.as_ref().map(|b| self.expr(self.node_of(b)));
+        let upper = upper.as_ref().map(|b| self.expr(self.node_of(b)));
+        let step = step.as_ref().map(|b| self.expr(self.node_of(b)));
         let call = self
             .node(e)
             .and_then(|node| self.subscript_call_contract(node, &[]));
@@ -398,7 +397,7 @@ impl Flatten<'_> {
             .and_then(|descriptors| descriptors.first().copied().flatten())
             .expect("checked slice has a selected descriptor");
         let d = self.fresh(span(e), None);
-        self.emit_interior_invalidations(e, None);
+        self.emit_interior_invalidations(self.node_of(e), None);
         self.emit(MirInstr::Slice {
             dest: d,
             object: obj,
@@ -437,24 +436,24 @@ impl Flatten<'_> {
             && name == "unsafe_offset"
             && let [SubscriptArg::Keyword { value, .. }] = args
         {
-            if let Some(place) = self.pointer_deref_place(object) {
+            if let Some(place) = self.pointer_deref_place(self.node_of(object)) {
                 let d = self.fresh(span(e), Some(place.root));
                 self.emit(MirInstr::LoadPlace { dest: d, place });
                 return d;
             }
-            if let Some(d) = self.temporary_pointer_deref(e, object) {
+            if let Some(d) = self.temporary_pointer_deref(self.node_of(e), self.node_of(object)) {
                 return d;
             }
-            if self.is_origin_bearing_pointer(object) {
-                let reference = self.expr(object);
+            if self.node_of(object).is_origin_bearing_pointer() {
+                let reference = self.expr(self.node_of(object));
                 let d = self.fresh(span(e), None);
                 self.emit(MirInstr::ReadRef { dest: d, reference });
                 return d;
             }
-            let base = self.expr(object);
-            let base_place = self.simple_place(object);
-            let (idx, index_place) = self.lower_call_argument(value);
-            let intrinsic = self.intrinsic_index_dispatch(object);
+            let base = self.expr(self.node_of(object));
+            let base_place = self.simple_place(self.node_of(object));
+            let (idx, index_place) = self.lower_call_argument(self.node_of(value));
+            let intrinsic = self.node_of(object).intrinsic_index_dispatch();
             let d = self.fresh(span(e), None);
             self.emit(MirInstr::Index {
                 dest: d,
@@ -469,9 +468,12 @@ impl Flatten<'_> {
         }
         let has_call = self.node(e).and_then(Node::call_contract).is_some();
         let (object, object_place) = if has_call {
-            self.lower_call_receiver(object)
+            self.lower_call_receiver(self.node_of(object))
         } else {
-            (self.expr(object), self.simple_place(object))
+            (
+                self.expr(self.node_of(object)),
+                self.simple_place(self.node_of(object)),
+            )
         };
         let descriptors =
             slice_descriptors(node).expect("checked multi-subscript has descriptor metadata");
@@ -489,7 +491,7 @@ impl Flatten<'_> {
                         SubscriptArg::Keyword { value, .. },
                     ) => {
                         debug_assert!(descriptor.is_none());
-                        let (register, place) = self.lower_call_argument(value);
+                        let (register, place) = self.lower_call_argument(self.node_of(value));
                         kwarg_places.push(place);
                         kwargs.push((name.clone(), MirSubscriptArg::Index(register)));
                         None
@@ -506,16 +508,16 @@ impl Flatten<'_> {
                             MirSubscriptArg::Slice {
                                 kind: descriptor
                                     .expect("keyword slice argument has descriptor kind"),
-                                lower: lower.as_ref().map(|value| self.expr(value)),
-                                upper: upper.as_ref().map(|value| self.expr(value)),
-                                step: step.as_ref().map(|value| self.expr(value)),
+                                lower: lower.as_ref().map(|value| self.expr(self.node_of(value))),
+                                upper: upper.as_ref().map(|value| self.expr(self.node_of(value))),
+                                step: step.as_ref().map(|value| self.expr(self.node_of(value))),
                             },
                         ));
                         None
                     }
                     (CheckedSubscriptArg::Index(_), SubscriptArg::Index(value)) => {
                         debug_assert!(descriptor.is_none());
-                        let (register, place) = self.lower_call_argument(value);
+                        let (register, place) = self.lower_call_argument(self.node_of(value));
                         arg_places.push(place);
                         Some(MirSubscriptArg::Index(register))
                     }
@@ -528,9 +530,9 @@ impl Flatten<'_> {
                         arg_places.push(None);
                         Some(MirSubscriptArg::Slice {
                             kind: descriptor.expect("slice argument has descriptor kind"),
-                            lower: lower.as_ref().map(|value| self.expr(value)),
-                            upper: upper.as_ref().map(|value| self.expr(value)),
-                            step: step.as_ref().map(|value| self.expr(value)),
+                            lower: lower.as_ref().map(|value| self.expr(self.node_of(value))),
+                            upper: upper.as_ref().map(|value| self.expr(self.node_of(value))),
+                            step: step.as_ref().map(|value| self.expr(self.node_of(value))),
                         })
                     }
                     _ => None,
@@ -545,10 +547,10 @@ impl Flatten<'_> {
             if let (CheckedSubscriptArg::Index(_), SubscriptArg::Index(argument)) =
                 (checked, argument)
             {
-                self.emit_interior_invalidations(argument, None);
+                self.emit_interior_invalidations(self.node_of(argument), None);
             }
         }
-        self.emit_interior_invalidations(e, None);
+        self.emit_interior_invalidations(self.node_of(e), None);
         self.emit(MirInstr::MultiIndex {
             dest,
             object,
@@ -580,12 +582,12 @@ impl Flatten<'_> {
     /// collector as a value first would copy its whole storage.
     fn storage_element_read(&mut self, e: &Expr, node: &CheckedExpr, object: &Expr) -> Option<Reg> {
         if !matches!(
-            self.intrinsic_index_dispatch(object),
+            self.node_of(object).intrinsic_index_dispatch(),
             Some(MirIntrinsicSubscript::VariadicStorage)
         ) {
             return None;
         }
-        let place = self.try_place(e)?;
+        let place = self.try_place(self.node_of(e))?;
         let root = place.root;
         let loaded = self.fresh_typed(
             span(e),
@@ -596,7 +598,7 @@ impl Flatten<'_> {
                 .or_else(|| node.ty.clone())
                 .unwrap_or_else(Ty::error),
         );
-        self.emit_interior_invalidations(e, None);
+        self.emit_interior_invalidations(self.node_of(e), None);
         self.emit(MirInstr::LoadPlace {
             dest: loaded,
             place,

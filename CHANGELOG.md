@@ -8,6 +8,16 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- MIR lowers an expression's adjustments, its place, and a call's
+  arguments, receiver, compile-time arguments, anchors, and invalidations
+  from the expression's node handle (R647), as upstream lowering reads an
+  operation's operands off the operation: a place or an argument is
+  matched by its op and its operands read off the handle, a compile-time
+  argument is the op's checked one, and the facts these read are the
+  node's own methods. Only the expression families are still handed the
+  syntax rebuilt from a node, through one crossing (R652, R653). No
+  program's output or MIR changes.
+
 - MIR reads a checked expression's facts off a node handle (R646), as
   upstream lowering reads an op's attributes and operands off the op
   itself: a `Node` pairs HIR's tree for the expression with its checked

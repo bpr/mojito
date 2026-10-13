@@ -1772,8 +1772,13 @@ node's type, owner, call contract, adjustments, and operand shapes are `Node`
 methods, and the loans and capture accesses that also need the function being
 lowered are `Flatten` methods taking one (`mir/facts.rs`). Two transitional
 bridges serve the syntax lowering still walks, until R649 deletes them:
-`Flatten::node` finds a piece of syntax's handle, and `Flatten::{syntax,
-operand}` find the syntax rebuilt for a handle. `Flatten` borrows its CFG's
+`Flatten::node` (and `node_of`, `nodes_of`, `keywords_of`) finds a piece of
+syntax's handle, and `Flatten::{syntax, operand}` find the syntax rebuilt for
+a handle. `Flatten::expr`, its adjustments, `reference_handle`, the place
+lowerers, the compile-time argument slots, and the call-site argument,
+receiver, anchor, and invalidation lowering take a handle and read operands
+off it; `expr_unconverted` is the one crossing that hands the expression
+families the syntax rebuilt for a handle (R652, R653). `Flatten` borrows its CFG's
 tables and HIR for its own lifetime, so a handle outlives the `&mut self`
 calls it is passed to; a local display binding's HIR, which can cross after
 a `try` region's CFG is dropped, is copied into the function's arena

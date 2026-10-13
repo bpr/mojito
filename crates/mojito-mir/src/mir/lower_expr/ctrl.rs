@@ -36,25 +36,21 @@ pub(super) fn array_literal_plan(node: &CheckedExpr) -> Option<(Ty, String)> {
     })
 }
 
-impl Flatten<'_> {
+impl<'a> Flatten<'a> {
     /// A condition whose value is a `Boolable` struct (checker-marked
     /// `Truthiness`) converts through `Bool(x)` — the same call `Bool(x)`
     /// spells, which both backends dispatch to the struct's `__bool__`.
-    pub(in crate::mir) fn truthiness(&mut self, condition: &Expr, value: Reg) -> Reg {
-        let boolable = self
-            .node(condition)
-            .map_or(&[][..], Node::adjustments)
-            .iter()
-            .any(|adjustment| {
-                matches!(
-                    adjustment,
-                    mojito_checked::checked::SemanticAdjustment::Truthiness
-                )
-            });
+    pub(in crate::mir) fn truthiness(&mut self, condition: Node<'a>, value: Reg) -> Reg {
+        let boolable = condition.adjustments().iter().any(|adjustment| {
+            matches!(
+                adjustment,
+                mojito_checked::checked::SemanticAdjustment::Truthiness
+            )
+        });
         if !boolable {
             return value;
         }
-        self.bool_conversion(condition.source_span(), value)
+        self.bool_conversion(condition.location(), value)
     }
 
     /// The `Bool(x)` call both backends dispatch to a struct's `__bool__`.
@@ -90,7 +86,7 @@ impl Flatten<'_> {
         b: &Expr,
         span: SourceSpan,
     ) -> Reg {
-        let ra = self.expr(a);
+        let ra = self.expr(self.node_of(a));
         let result = self.fresh_var();
         // Seed the result with the left operand's value: for `and` a false `ra`
         // is the answer; for `or` a true `ra` is. The rhs block overwrites it.
@@ -114,7 +110,7 @@ impl Flatten<'_> {
         };
 
         self.cur = rhs_blk;
-        let rb = self.expr(b); // may itself split blocks (nested and/or)
+        let rb = self.expr(self.node_of(b)); // may itself split blocks (nested and/or)
         self.emit(MirInstr::DefVar {
             var: result,
             src: rb,
@@ -141,8 +137,8 @@ impl Flatten<'_> {
         else_e: &Expr,
         sp: SourceSpan,
     ) -> Reg {
-        let rc = self.expr(cond);
-        let rc = self.truthiness(cond, rc);
+        let rc = self.expr(self.node_of(cond));
+        let rc = self.truthiness(self.node_of(cond), rc);
         let result = self.fresh_var();
         let then_blk = self.new_block();
         let else_blk = self.new_block();
@@ -153,7 +149,7 @@ impl Flatten<'_> {
             else_b: else_blk,
         };
         self.cur = then_blk;
-        let rt = self.expr(then_e);
+        let rt = self.expr(self.node_of(then_e));
         self.emit(MirInstr::DefVar {
             var: result,
             src: rt,
@@ -161,7 +157,7 @@ impl Flatten<'_> {
         });
         self.f.blocks[self.cur].term = MirTerm::Jump(merge_blk);
         self.cur = else_blk;
-        let re = self.expr(else_e);
+        let re = self.expr(self.node_of(else_e));
         self.emit(MirInstr::DefVar {
             var: result,
             src: re,
@@ -192,12 +188,12 @@ impl Flatten<'_> {
     ) -> Reg {
         let result = self.fresh_var();
         let merge_blk = self.new_block();
-        let mut prev = self.lower_operator_operand(first);
+        let mut prev = self.lower_operator_operand(self.node_of(first));
         for (i, (op, operand)) in rest.iter().enumerate() {
             let cur = if i + 1 == rest.len() {
-                self.lower_operator_operand(operand)
+                self.lower_operator_operand(self.node_of(operand))
             } else {
-                self.expr(operand)
+                self.expr(self.node_of(operand))
             };
             let cmp = self.fresh(sp.clone(), None);
             self.emit(MirInstr::BinOp {
@@ -415,7 +411,7 @@ impl Flatten<'_> {
     )]
     pub(in crate::mir) fn insert_nominal_collection(
         &mut self,
-        expression: &Expr,
+        expression: Node<'a>,
         collection: VarId,
         target: &Ty,
         resolved: &str,
@@ -424,13 +420,13 @@ impl Flatten<'_> {
         let method = mojito_symbol::symbol::split_method_symbol(resolved)
             .map_or(resolved, |(_, method)| method)
             .to_string();
-        let recv = self.fresh_typed(expression.source_span(), Some(collection), target.clone());
+        let recv = self.fresh_typed(expression.location(), Some(collection), target.clone());
         self.emit(MirInstr::UseVar {
             dest: recv,
             var: collection,
             mode: UseMode::BorrowMut,
         });
-        let dest = self.fresh_typed(expression.source_span(), None, Ty::none());
+        let dest = self.fresh_typed(expression.location(), None, Ty::none());
         self.emit(MirInstr::MethodCall {
             dest,
             recv,
@@ -479,15 +475,17 @@ impl Flatten<'_> {
         if index == plan.clauses.len() {
             // Dictionary evaluation is key-before-value, matching an ordinary
             // display and indexed assignment. List/set leaves evaluate one item.
-            let key = plan.key.map(|expression| self.expr(expression));
-            let value_reg = self.expr(plan.value);
+            let key = plan
+                .key
+                .map(|expression| self.expr(self.node_of(expression)));
+            let value_reg = self.expr(self.node_of(plan.value));
             let mut arguments = Vec::with_capacity(1 + usize::from(key.is_some()));
             if let Some(key) = key {
                 arguments.push(key);
             }
             arguments.push(value_reg);
             self.insert_nominal_collection(
-                plan.value,
+                self.node_of(plan.value),
                 plan.collection,
                 plan.target,
                 plan.insert,
@@ -501,8 +499,8 @@ impl Flatten<'_> {
                 CheckedComprehensionClause::If(_),
                 mojito_ast::ast::ComprehensionClause::If(condition),
             ) => {
-                let value = self.expr(condition);
-                let condition = self.truthiness(condition, value);
+                let value = self.expr(self.node_of(condition));
+                let condition = self.truthiness(self.node_of(condition), value);
                 let body = self.new_block();
                 let continuation = self.new_block();
                 self.f.blocks[self.cur].term = MirTerm::Branch {
@@ -552,7 +550,7 @@ impl Flatten<'_> {
                         exhaustion: None,
                     });
                 if let Some(origin) = &protocol.borrowed_origin {
-                    let place = self.place(iter);
+                    let place = self.place(self.node_of(iter));
                     let value_ty = iterator_ty
                         .or_else(|| place.ty.clone())
                         .expect("checked borrowed comprehension iterable has a type");
@@ -568,7 +566,7 @@ impl Flatten<'_> {
                     if let Some(ty) = iterator_ty.clone() {
                         self.var_types.insert(iterator, ty);
                     }
-                    let iterator_value = self.expr(iter);
+                    let iterator_value = self.expr(self.node_of(iter));
                     self.emit(MirInstr::DefVar {
                         var: iterator,
                         src: iterator_value,

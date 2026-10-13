@@ -2,7 +2,10 @@
 //! tree for it and its checked node, whose op names its operands and whose
 //! attributes are its facts ([`super::facts`]).
 
-use mojito_checked::checked::{CheckedExpr, CheckedNodeId, CheckedOp, CheckedTables};
+use mojito_checked::checked::{
+    CheckedExpr, CheckedNodeId, CheckedOp, CheckedParamArg, CheckedTables,
+};
+use mojito_common::token::SourceSpan;
 use mojito_hir::hir::HirExpr;
 
 /// One checked expression as MIR lowers it: HIR's tree for it (its operands'
@@ -48,6 +51,11 @@ impl<'a> Node<'a> {
 
     pub(super) const fn op(self) -> &'a CheckedOp {
         &self.checked.op
+    }
+
+    /// The occurrence this node was checked at.
+    pub(super) fn location(self) -> SourceSpan {
+        self.checked.location()
     }
 
     /// The operands' handles, in [`CheckedOp::operands`] order.
@@ -115,8 +123,26 @@ impl<'a> Node<'a> {
         }
     }
 
+    /// The compile-time arguments of a call or invocation.
+    pub(super) fn param_args(self) -> &'a [CheckedParamArg] {
+        match self.op() {
+            CheckedOp::Call { param_args, .. } | CheckedOp::Invoke { param_args, .. } => param_args,
+            _ => &[],
+        }
+    }
+
+    /// The value operand compile-time argument `argument` of this call
+    /// passes, through its keyword; `None` for a type argument.
+    pub(super) fn param_value(self, argument: &CheckedParamArg) -> Option<Self> {
+        match argument {
+            CheckedParamArg::Value(value) => self.operand_of(*value),
+            CheckedParamArg::Named { value, .. } => self.param_value(value),
+            CheckedParamArg::Type { .. } => None,
+        }
+    }
+
     /// The handle of operand node `id` of this node.
-    fn operand_of(self, id: CheckedNodeId) -> Option<Self> {
+    pub(super) fn operand_of(self, id: CheckedNodeId) -> Option<Self> {
         self.operands().find(|operand| operand.id() == id)
     }
 }

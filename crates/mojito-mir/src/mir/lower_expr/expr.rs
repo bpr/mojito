@@ -6,8 +6,23 @@ use super::*;
 use mojito_checked::checked::{CheckedExpr, CheckedOp};
 use mojito_types::types::TyKind;
 
-impl Flatten<'_> {
-    pub(in crate::mir) fn expr_unconverted(&mut self, e: &Expr) -> Reg {
+impl<'a> Flatten<'a> {
+    /// Lower `node` without its adjustments, through the syntax rebuilt
+    /// from it: the one crossing back into the families, which still read
+    /// operands off syntax (R649 deletes it).
+    pub(in crate::mir) fn expr_unconverted(&mut self, node: Node<'a>) -> Reg {
+        let Some(syntax) = self.syntax(node) else {
+            let dest = self.fresh(node.location(), None);
+            self.emit(MirInstr::Unsupported(
+                "an expression without its rebuilt syntax reached MIR".to_string(),
+            ));
+            self.emit(MirInstr::Const {
+                dest,
+                k: Const::None,
+            });
+            return dest;
+        };
+        let e = syntax.expr();
         if let Some(value) = self
             .literal_or_name(e)
             .or_else(|| self.call_family(e))
@@ -107,11 +122,9 @@ impl Flatten<'_> {
         d
     }
 
-    pub(in crate::mir) fn transfer(&mut self, e: &Expr, inner: &Expr) -> Reg {
-        if let Some(node) = self.node(inner)
-            && let Some(name) = self.name_spelled(node)
-        {
-            let var = self.expression_var(&name, node);
+    pub(in crate::mir) fn transfer(&mut self, e: Node<'a>, inner: Node<'a>) -> Reg {
+        if let Some(name) = self.name_spelled(inner) {
+            let var = self.expression_var(&name, inner);
             // A `mut` parameter's slot holds the handle to the caller's
             // storage, so the transfer takes the referent out through it. A
             // value that owns no storage transfers as a copy and leaves the
@@ -127,13 +140,13 @@ impl Flatten<'_> {
                 }) {
                     return self.expr(inner);
                 }
-                let d = self.fresh(span(e), Some(var));
+                let d = self.fresh(e.location(), Some(var));
                 let mut place = MirPlace::root(var, ty);
                 place.through = Some(var);
                 self.emit(MirInstr::MovePlace { dest: d, place });
                 return d;
             }
-            let d = self.fresh(span(e), Some(var));
+            let d = self.fresh(e.location(), Some(var));
             self.emit(MirInstr::UseVar {
                 dest: d,
                 var,
@@ -141,17 +154,14 @@ impl Flatten<'_> {
             });
             d
         } else if let Some(place) = self.pure_field_place(inner) {
-            let d = self.fresh(span(e), Some(place.root));
+            let d = self.fresh(e.location(), Some(place.root));
             self.emit(MirInstr::MovePlace { dest: d, place });
             d
-        } else if let Some(object) = self.operand(inner, |node| {
-            node.index_operands().map(|(object, _)| object)
-        }) && matches!(
-            self.node(object).and_then(Node::ty).as_ref().map(Ty::kind),
-            Some(TyKind::Tuple(_))
-        ) && let Some(place) = self.try_place(inner)
+        } else if let Some((object, _)) = inner.index_operands()
+            && matches!(object.ty().as_ref().map(Ty::kind), Some(TyKind::Tuple(_)))
+            && let Some(place) = self.try_place(inner)
         {
-            let d = self.fresh(span(e), Some(place.root));
+            let d = self.fresh(e.location(), Some(place.root));
             self.emit(MirInstr::MovePlace { dest: d, place });
             d
         } else {
@@ -166,8 +176,8 @@ impl Flatten<'_> {
         value: &Expr,
         container: &Expr,
     ) -> Reg {
-        let (argument, arg_place) = self.lower_call_argument(value);
-        let (recv, recv_place) = self.lower_call_receiver(container);
+        let (argument, arg_place) = self.lower_call_argument(self.node_of(value));
+        let (recv, recv_place) = self.lower_call_receiver(self.node_of(container));
         let contains = self.fresh_typed(span(e), None, Ty::bool());
         // A generic `__contains__[T]` binds its own parameters from the
         // call's solved arguments, as a spelled method call's does.
@@ -183,20 +193,20 @@ impl Flatten<'_> {
                 .map(Node::instantiated_args)
                 .unwrap_or_default()
         };
-        self.emit_interior_invalidations(container, None);
-        self.emit_call_invalidations(e, std::slice::from_ref(value), &[]);
+        self.emit_interior_invalidations(self.node_of(container), None);
+        self.emit_call_invalidations(self.node_of(e), &[self.node_of(value)], &[]);
         self.emit(MirInstr::MethodCall {
             dest: contains,
             recv,
             method: "__contains__".to_string(),
-            resolved: self.resolved_callable(e),
+            resolved: self.node_of(e).resolved_callable(),
             raises: self.node(e).and_then(Node::raises),
             reference_result: None,
             result_adapter: None,
             args: vec![argument],
             kwargs: Vec::new(),
             recv_place: recv_place.map(Box::new),
-            recv_writes: self.receiver_writes(e),
+            recv_writes: self.node_of(e).receiver_writes(),
             arg_places: vec![arg_place],
             kwarg_places: Vec::new(),
             capture_accesses: self
@@ -208,7 +218,7 @@ impl Flatten<'_> {
             instantiated_args,
             spread: None,
         });
-        self.emit_nested_closure_argument_keepalives(std::slice::from_ref(value), &[]);
+        self.emit_nested_closure_argument_keepalives(&[self.node_of(value)], &[]);
         if matches!(op, InfixOp::NotIn) {
             let dest = self.fresh_typed(span(e), None, Ty::bool());
             self.emit(MirInstr::UnOp {
@@ -224,9 +234,9 @@ impl Flatten<'_> {
 
     pub(super) fn infix_op(&mut self, e: &Expr, op: InfixOp, a: &Expr, b: &Expr) -> Reg {
         // Operands left-to-right (evaluation order is explicit).
-        let ra = self.lower_operator_operand(a);
-        let rb = self.lower_operator_operand(b);
-        let resolved = self.resolved_callable(e);
+        let ra = self.lower_operator_operand(self.node_of(a));
+        let rb = self.lower_operator_operand(self.node_of(b));
+        let resolved = self.node_of(e).resolved_callable();
         // A reflected operator (checker-marked) runs on the RIGHT
         // operand: `1 + m` calls `m.__radd__(1)`.
         let reflected = self
@@ -287,7 +297,7 @@ impl Flatten<'_> {
             // the variadic arguments, `__list_literal__` selects the
             // literal overload, and the `length` parameter argument
             // reifies the constructed value's `value_params`.
-            let regs = self.args(elems);
+            let regs = self.args(&self.nodes_of(elems));
             let none = self.fresh_typed(span(e), None, Ty::none());
             self.emit(MirInstr::Const {
                 dest: none,
@@ -331,8 +341,14 @@ impl Flatten<'_> {
         if let Some((target, Some(insert))) = collection_plan(node) {
             let collection = self.begin_nominal_collection(e, &target);
             for element in elems {
-                let value = self.expr(element);
-                self.insert_nominal_collection(element, collection, &target, &insert, vec![value]);
+                let value = self.expr(self.node_of(element));
+                self.insert_nominal_collection(
+                    self.node_of(element),
+                    collection,
+                    &target,
+                    &insert,
+                    vec![value],
+                );
             }
             return self.finish_nominal_collection(e, collection, &target);
         }
@@ -349,18 +365,26 @@ impl Flatten<'_> {
             let collection = self.begin_nominal_collection(e, &target);
             let dictionary = dict_elements(&target).is_some();
             for (key, value) in entries {
-                let key = self.expr(key);
+                let key = self.expr(self.node_of(key));
                 let mut arguments = vec![key];
                 if dictionary {
                     arguments.push(
                         self.expr(
-                            value
-                                .as_ref()
-                                .expect("checked dictionary display has paired values"),
+                            self.node_of(
+                                value
+                                    .as_ref()
+                                    .expect("checked dictionary display has paired values"),
+                            ),
                         ),
                     );
                 }
-                self.insert_nominal_collection(e, collection, &target, &insert, arguments);
+                self.insert_nominal_collection(
+                    self.node_of(e),
+                    collection,
+                    &target,
+                    &insert,
+                    arguments,
+                );
             }
             return self.finish_nominal_collection(e, collection, &target);
         }
@@ -371,7 +395,7 @@ impl Flatten<'_> {
         if let Some((target, None)) = collection_plan(node)
             && let TyKind::Struct(name, _) = target.kind()
         {
-            let regs = self.args(elems);
+            let regs = self.args(&self.nodes_of(elems));
             let dest = self.fresh_typed(span(e), None, target.clone());
             self.emit(MirInstr::Call {
                 dest,
@@ -463,7 +487,7 @@ impl Flatten<'_> {
                 | CheckedOp::Index { .. }
         ) && let Some(value) = recorded_param_value(&node.adjustments)
         {
-            return Some(self.param_value_register(e, value));
+            return Some(self.param_value_register(self.node_of(e), value));
         }
         Some(match (&node.op, &e.kind) {
             (
@@ -652,7 +676,9 @@ impl Flatten<'_> {
             // move path used by whole heterogeneous-pack forwarding and public
             // Tuple's private backing field. Other indexed transfers have
             // already been restricted by checking to copyable value reads.
-            (CheckedOp::Transfer(_), [inner]) => self.transfer(e, inner),
+            (CheckedOp::Transfer(_), [inner]) => {
+                self.transfer(self.node_of(e), self.node_of(inner))
+            }
             // A lambda expression materializes its hidden definition's
             // closure at the expression's evaluation point — copy/move
             // captures snapshot here, once per evaluation.
@@ -683,7 +709,7 @@ impl Flatten<'_> {
 
     /// Prefix operator `op` applied to `value`, the operand of node `e`.
     fn prefix_op(&mut self, e: &Expr, op: PrefixOp, value: &Expr) -> Reg {
-        let ra = self.expr(value);
+        let ra = self.expr(self.node_of(value));
         // `not x` on a struct or a numeric scalar is
         // `not x.__bool__()`: convert through the explicit `Bool(x)`
         // call so the negation is scalar on both backends.
@@ -731,7 +757,7 @@ impl Flatten<'_> {
             && let [mojito_checked::checked::CheckedParamArg::Value(_)] = params.as_slice()
             && let [ParamArg::Value(operand)] = param_args
         {
-            return self.crossing_operand(operand);
+            return self.crossing_operand(self.node_of(operand));
         }
         // `comptime(e)` left the same way.
         if name == "comptime"
@@ -744,7 +770,7 @@ impl Flatten<'_> {
                 .is_some_and(|operand| operand.ty.is_some())
             && let [operand] = args
         {
-            return self.crossing_operand(operand);
+            return self.crossing_operand(self.node_of(operand));
         }
         self.call_expr(e, node, name, param_args, args, kwargs)
     }
@@ -752,7 +778,7 @@ impl Flatten<'_> {
     /// Walrus node `node`, `name := value`: bind the value's slot and yield
     /// the value.
     fn walrus(&mut self, value: &Expr, node: &CheckedExpr, name: &str) -> Reg {
-        let value = self.expr(value);
+        let value = self.expr(self.node_of(value));
         let var = self.var(&self.spelling(node, name));
         self.emit(MirInstr::DefVar {
             var,
@@ -783,7 +809,7 @@ impl Flatten<'_> {
         }
         // A module constant is the parameter value the check recorded.
         if let Some(value) = recorded_param_value(&node.adjustments) {
-            return self.param_value_register(e, value);
+            return self.param_value_register(self.node_of(e), value);
         }
         // In a lifted thunk, an enclosing `comptime for` index or local
         // `comptime` binding is the parameter expression it denotes.
@@ -795,7 +821,7 @@ impl Flatten<'_> {
                 .or_else(|| self.comptime_thunks.bound_value(owner))
         });
         if let Some(value) = denoted {
-            return self.param_value_register(e, value);
+            return self.param_value_register(self.node_of(e), value);
         }
         let var = match (local, node.binding) {
             (Some(var), _) => var,

@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R652**.
+Next free ID: **R654**.
 
 ## Ordered Work
 
@@ -4821,18 +4821,45 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R647 MIR's expression families lower rebuilt syntax**
+- [ ] **R652 MIR's access, display, and operator families lower rebuilt
+  syntax**
 
-  The `lower_expr` families still take `&Expr` and destructure
-  `(CheckedOp::X, ExprKind::X { .. })` pairs only to reach operand syntax.
-  - `Flatten::expr` and `place` take a `Node`; each pair becomes an op
-    match reading operands from the handle, and spans come from
-    `node.op.location()`.
-  - Done when `rg '&Expr\b' crates/mojito-mir/src/mir/lower_expr` is
-    empty and the probe fixtures' MIR and output are unchanged on both
+  `expr_unconverted` hands every node to the five expression families
+  through the syntax rebuilt for it, and the families pair
+  `(CheckedOp::X, ExprKind::X { .. })` only to reach operand syntax.
+  - `literal_or_name`, `access_family`, `display_family`, and
+    `operator_family` (`lower_expr/{expr,ctrl,expr_access}.rs`) take a
+    `Node`, match its op alone, and read operands off the handle
+    (`operand_of` for a slice bound or a comprehension clause).
+  - `expr_unconverted` crosses to syntax for `call_family` alone.
+  - Done when those three files call no `node_of`, `nodes_of`, or
+    `keywords_of`, and the probe fixtures' MIR and output are unchanged on
+    both backends.
+  - Plan: `R647-mir-s-expression-families-lower-rebuilt-plan.md`, section
+    S2.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R653 MIR's call family lowers rebuilt syntax**
+
+  `call_family` (`lower_expr/{expr_call,expr_method,calls}.rs`) still
+  takes syntax, and `expr_unconverted` crosses to it through
+  `Flatten::syntax`.
+  - `call_expr`, `invoke_expr`, `method_call_expr`, and
+    `checked_construction` take the call's `Node` and pass the handle's
+    `args()` and `kwargs()` to the argument lowerers, which already take
+    nodes.
+  - An invocation's callee is its node's `Invoke` operand (add
+    `Node::callee`).
+  - `expr_unconverted`'s crossing and the `nodes_of`/`keywords_of`
+    bridges go.
+  - Done when `rg '\bExpr\b|\bKwArg\b|\bParamArg\b|ExprKind'
+    crates/mojito-mir/src/mir/lower_expr` finds only `entry.rs`'s
+    bridges, and the probe fixtures' MIR and output are unchanged on both
     backends.
-  - Plan: `R623-hir-and-mir-keep-transitional-syntax-plan.md`, slice 5.
-  - Depends on R646.
+  - Plan: `R647-mir-s-expression-families-lower-rebuilt-plan.md`, section
+    S2.
+  - Depends on R652.
   - Model: Opus, Not Planned.
 
 - [ ] **R648 MIR's calls and statements lower rebuilt syntax**

@@ -27,8 +27,8 @@ use mojito_ast::ast::{
 use mojito_ast::call::{effective_keyword_only_index, regular_marker_index};
 use mojito_checked::checked::{AnnotationSite, GenericSite};
 use mojito_checked::checked::{
-    CheckedConst, CheckedNodeId, CheckedOp, CheckedProgram, CheckedStmt, CheckedStmtId,
-    CheckedStmtOp, WalkResult, Walked, origin_parameter_names,
+    CheckedConst, CheckedNodeId, CheckedOp, CheckedParamArg, CheckedProgram, CheckedStmt,
+    CheckedStmtId, CheckedStmtOp, WalkResult, Walked, origin_parameter_names,
 };
 pub use mojito_checked::declaration::{
     FunctionDeclaration as MirFunctionDeclaration, StructDeclaration as MirStructDeclaration,
@@ -2626,21 +2626,7 @@ fn reassigned_names(
         .collect()
 }
 
-impl Flatten<'_> {
-    /// Whether an expression's checked type is a pointer whose provenance
-    /// designates a single checked place. Dereferencing such a pointer goes
-    /// through its frame/slot handle instead of allocation arithmetic. A
-    /// multi-element origin-bearing pointer (an interior-generation domain)
-    /// is heap storage: it keeps allocation arithmetic and carries its loan
-    /// on the binding instead.
-    fn is_origin_bearing_pointer(&self, expression: &Expr) -> bool {
-        origin_bearing_pointer(
-            self.node(expression)
-                .map(|node| node.checked)
-                .and_then(|node| node.ty.as_ref()),
-        )
-    }
-
+impl<'a> Flatten<'a> {
     /// Whether a variable's slot stores a pointer *as* its value. Both
     /// backends read such a slot as the pointer it holds (`UseVar` keys on the
     /// declared type), so an assignment to the variable replaces the slot
@@ -2654,64 +2640,27 @@ impl Flatten<'_> {
         )
     }
 
-    /// The pointer subscript a place expression spells — positional `p[i]` on
-    /// a pointer-typed object, or current Mojo's keyword `p[unsafe_offset=i]`
-    /// — as its pointer object and offset expression.
-    fn pointer_offset_subscript<'e>(&self, e: &'e Expr) -> Option<(&'e Expr, &'e Expr)> {
-        match (self.node(e).map(Node::op), &e.kind) {
-            (Some(CheckedOp::Index { .. }), ExprKind::Index { object, index })
-                if matches!(
-                    self.node(object).and_then(Node::ty).as_ref().map(Ty::kind),
-                    Some(TyKind::Pointer { .. })
-                ) =>
-            {
-                Some((object, index))
-            }
-            _ => self.pointer_keyword_subscript(e),
-        }
-    }
-
-    /// The keyword pointer subscript (`p[unsafe_offset=i]`) `e` was rebuilt
-    /// from, as its object and offset expression; every other keyword
-    /// subscript is a nominal call.
-    fn pointer_keyword_subscript<'e>(&self, e: &'e Expr) -> Option<(&'e Expr, &'e Expr)> {
-        let Some(CheckedOp::MultiIndex { args: checked, .. }) = self.node(e).map(Node::op) else {
-            return None;
-        };
-        match (checked.as_slice(), &e.kind) {
-            (
-                [mojito_checked::checked::CheckedSubscriptArg::Keyword { name, .. }],
-                ExprKind::MultiIndex { object, args },
-            ) if name == "unsafe_offset" => match args.as_slice() {
-                [mojito_ast::ast::SubscriptArg::Keyword { value, .. }] => Some((object, value)),
-                _ => None,
-            },
-            _ => None,
-        }
-    }
-
     /// The statically known storage place behind a stably bound origin-bearing
     /// pointer variable. Substituting it at deref sites touches the owner at
     /// each access — the liveness contract `ref` aliases have — so ASAP
     /// destruction and loan conflicts stay exact. A reassigned or captured
     /// pointer, or a handle loaded from a field, reads through its runtime
     /// handle instead.
-    fn pointer_deref_place(&mut self, object: &Expr) -> Option<MirPlace> {
-        let object_node = self.node(object)?;
-        let name = self.name_spelled(object_node)?;
-        if !self.is_origin_bearing_pointer(object) || self.reassigned_names.contains(&name) {
+    fn pointer_deref_place(&mut self, object: Node<'a>) -> Option<MirPlace> {
+        let name = self.name_spelled(object)?;
+        if !object.is_origin_bearing_pointer() || self.reassigned_names.contains(&name) {
             return None;
         }
         // A subtree origin deliberately forgets which exact descendant the
         // pointer designates, so its loan place cannot substitute for the
         // deref target; the runtime handle carries the true projection.
         if matches!(
-            self.node(object).and_then(Node::ty).as_ref().map(Ty::kind),
+            object.ty().as_ref().map(Ty::kind),
             Some(TyKind::Pointer { origin, .. }) if origin.subtree()
         ) {
             return None;
         }
-        let var = self.expression_var(&name, object_node);
+        let var = self.expression_var(&name, object);
         let loans = self.aggregate_loans.get(&var)?;
         let [loan] = loans.as_slice() else {
             return None;
@@ -2727,24 +2676,20 @@ impl Flatten<'_> {
     /// owner outlives the read. A single-place origin substitutes the owner
     /// place; a subtree origin, which forgets the exact descendant, reads
     /// through the slot's runtime handle.
-    fn temporary_pointer_deref(&mut self, e: &Expr, object: &Expr) -> Option<Reg> {
+    fn temporary_pointer_deref(&mut self, e: Node<'a>, object: Node<'a>) -> Option<Reg> {
         if !matches!(
-            self.node(object).map(Node::op),
-            Some(CheckedOp::Call { .. } | CheckedOp::MethodCall { .. })
-        ) || !self.is_origin_bearing_pointer(object)
+            object.op(),
+            CheckedOp::Call { .. } | CheckedOp::MethodCall { .. }
+        ) || !object.is_origin_bearing_pointer()
         {
             return None;
         }
-        let pointer_ty = self
-            .node(object)
-            .and_then(Node::ty)
+        let pointer_ty = object
+            .ty()
             .filter(|ty| matches!(ty.kind(), TyKind::Pointer { .. }))?;
         let subtree =
             matches!(pointer_ty.kind(), TyKind::Pointer { origin, .. } if origin.subtree());
-        let loans = self
-            .node(object)
-            .map(|node| self.aggregate_borrows(node))
-            .unwrap_or_default();
+        let loans = self.aggregate_borrows(object);
         let owner = match loans.as_slice() {
             [] => return None,
             [loan] if !subtree => Some(loan.place.clone()),
@@ -2760,7 +2705,7 @@ impl Flatten<'_> {
             binding_ty: Some(pointer_ty.clone()),
         });
         let marker = self.fresh_typed(
-            object.source_span(),
+            object.location(),
             loans.first().map(|loan| loan.place.root),
             Ty::none(),
         );
@@ -2773,51 +2718,19 @@ impl Flatten<'_> {
         self.aggregate_loans.insert(variable, loans);
         if let Some(mut place) = owner {
             place.through = Some(variable);
-            let dest = self.fresh(span(e), Some(place.root));
+            let dest = self.fresh(e.location(), Some(place.root));
             self.emit(MirInstr::LoadPlace { dest, place });
             return Some(dest);
         }
-        let reference = self.fresh_typed(span(object), Some(variable), pointer_ty);
+        let reference = self.fresh_typed(object.location(), Some(variable), pointer_ty);
         self.emit(MirInstr::UseVar {
             dest: reference,
             var: variable,
             mode: UseMode::Copy,
         });
-        let dest = self.fresh(span(e), None);
+        let dest = self.fresh(e.location(), None);
         self.emit(MirInstr::ReadRef { dest, reference });
         Some(dest)
-    }
-
-    fn resolved_callable(&self, expression: &Expr) -> Option<String> {
-        self.node(expression)
-            .map(|node| node.checked)
-            .and_then(|node| callable_target(&node.adjustments))
-    }
-
-    fn implicit_conversion(&self, expression: &Expr) -> Option<String> {
-        self.node(expression)
-            .map_or(&[][..], Node::adjustments)
-            .iter()
-            .find_map(|adjustment| match adjustment {
-                mojito_checked::checked::SemanticAdjustment::ImplicitConversion(target) => {
-                    Some(target)
-                }
-                _ => None,
-            })
-            .cloned()
-    }
-
-    fn index_normalization(&self, expression: &Expr) -> Option<String> {
-        self.node(expression)
-            .map_or(&[][..], Node::adjustments)
-            .iter()
-            .find_map(|adjustment| match adjustment {
-                mojito_checked::checked::SemanticAdjustment::IndexNormalization { target } => {
-                    Some(target)
-                }
-                _ => None,
-            })
-            .cloned()
     }
 
     /// A `deinit self` call whose receiver the checker satisfied by implicit
@@ -2827,7 +2740,7 @@ impl Flatten<'_> {
     /// and other non-nominal values copy by plain read.
     fn copy_consuming_receiver(
         &mut self,
-        receiver: &Expr,
+        receiver: Node<'a>,
         recv: Reg,
         recv_place: Option<&MirPlace>,
     ) -> Reg {
@@ -2843,10 +2756,10 @@ impl Flatten<'_> {
             .get(&recv.0)
             .cloned()
             .or_else(|| recv_place.and_then(|place| place.ty.clone()))
-            .or_else(|| self.node(receiver).and_then(Node::ty));
+            .or_else(|| receiver.ty());
         match ty {
             Some(ty) if matches!(ty.kind(), TyKind::Struct(..)) => {
-                let copied = self.fresh_typed(span(receiver), None, ty);
+                let copied = self.fresh_typed(receiver.location(), None, ty);
                 self.emit(MirInstr::CopyValue {
                     dest: copied,
                     value: recv,
@@ -2864,9 +2777,9 @@ impl Flatten<'_> {
     /// runtime arguments. `None` for every other subscript.
     fn type_keyed_accessor_call(
         &self,
-        expression: &Expr,
+        expression: Node<'a>,
     ) -> Option<mojito_checked::checked::CheckedCallContract> {
-        let Some(CheckedOp::Index { index, .. }) = self.node(expression).map(Node::op) else {
+        let CheckedOp::Index { index, .. } = expression.op() else {
             return None;
         };
         // The index names a type, never a runtime value (the Int-keyed
@@ -2875,108 +2788,11 @@ impl Flatten<'_> {
             matches!(index.op, CheckedOp::TypeValue { .. })
                 || matches!(index.op, CheckedOp::Identifier(_)) && index.ty.is_none()
         });
-        let contract = self.node(expression).and_then(Node::call_contract)?;
+        let contract = expression.call_contract()?;
         (type_index
             && contract.arguments.is_empty()
             && contract.target.contains(".__getitem_param__"))
         .then_some(contract)
-    }
-
-    /// The compile-time-index accessor call a nominal subscript resolved to
-    /// (`t[0]` on a `Tuple`, `__getitem_param__[0]`), whose `ref` result
-    /// into the element is the subscript's place.
-    fn element_accessor_call(
-        &self,
-        expression: &Expr,
-    ) -> Option<mojito_checked::checked::CheckedCallContract> {
-        if !matches!(
-            self.node(expression).map(Node::op),
-            Some(CheckedOp::Index { .. })
-        ) {
-            return None;
-        }
-        let contract = self.node(expression).and_then(Node::call_contract)?;
-        let accessor = contract.target.ends_with(".__getitem_param__")
-            || contract.target.contains(".__getitem_param__$");
-        let returns_element = contract.arguments.is_empty() && contract.reference_result.is_some();
-        (accessor && returns_element).then_some(contract)
-    }
-
-    fn implicitly_copies_consuming_receiver(&self, expression: &Expr) -> bool {
-        self.node(expression)
-            .map_or(&[][..], Node::adjustments)
-            .iter()
-            .any(|adjustment| {
-                matches!(
-                    adjustment,
-                    mojito_checked::checked::SemanticAdjustment::ImplicitlyCopyConsumingReceiver
-                )
-            })
-    }
-
-    fn literal_materialization(&self, expression: &Expr) -> Option<Ty> {
-        if !matches!(
-            self.node(expression)
-                .and_then(Node::ty)
-                .as_ref()
-                .map(Ty::kind),
-            Some(TyKind::IntLiteral | TyKind::FloatLiteral)
-        ) {
-            // Checker fact tables are still keyed by source span while HIR owns
-            // stable node identities. Comptime expansion can produce several
-            // nodes at one source span; only a node whose checked source type is
-            // actually a literal may consume a materialization adjustment.
-            return None;
-        }
-        self.node(expression)
-            .map_or(&[][..], Node::adjustments)
-            .iter()
-            .find_map(|adjustment| match adjustment {
-                mojito_checked::checked::SemanticAdjustment::MaterializeLiteral(target) => {
-                    Some(target)
-                }
-                _ => None,
-            })
-            .cloned()
-    }
-
-    fn scalar_splat(&self, expression: &Expr) -> Option<Ty> {
-        self.node(expression)
-            .map_or(&[][..], Node::adjustments)
-            .iter()
-            .find_map(|adjustment| match adjustment {
-                mojito_checked::checked::SemanticAdjustment::SplatScalar(target) => Some(target),
-                _ => None,
-            })
-            .cloned()
-    }
-
-    fn is_slice_descriptor(&self, expression: &Expr) -> bool {
-        matches!(
-            self.node(expression).and_then(Node::ty).as_ref().map(Ty::kind),
-            Some(TyKind::Struct(name, args))
-                if matches!(name.as_str(), "Slice" | "ContiguousSlice" | "StridedSlice")
-                    && args.is_empty()
-        )
-    }
-
-    fn intrinsic_index_dispatch(&self, object: &Expr) -> Option<MirIntrinsicSubscript> {
-        let ty = self.node(object).and_then(Node::ty)?;
-        match ty.kind() {
-            TyKind::Tuple(_) | TyKind::RuntimePack(_) => Some(MirIntrinsicSubscript::TupleStorage),
-            TyKind::VariadicPack(_) => Some(MirIntrinsicSubscript::VariadicStorage),
-            TyKind::Simd { .. } => Some(MirIntrinsicSubscript::Simd),
-            TyKind::Pointer { .. } => Some(MirIntrinsicSubscript::Pointer),
-            TyKind::ComptimeList(_) => Some(MirIntrinsicSubscript::ComptimeList),
-            // `Slice.indices` has a public nominal Tuple type but crosses the
-            // VM intrinsic boundary as compiler-private `Value::Tuple`
-            // storage. A checker-selected public Tuple accessor carries a
-            // call contract and therefore never consults this fallback.
-            TyKind::Struct(..) if tuple_elements(&ty).is_some() => {
-                Some(MirIntrinsicSubscript::TupleStorage)
-            }
-            _ => None,
-        }
     }
 
     /// Peel container slots that themselves store reference handles until one
@@ -3004,26 +2820,20 @@ impl Flatten<'_> {
         handle
     }
 
-    fn reference_handle(&mut self, expression: &Expr) -> Reg {
+    fn reference_handle(&mut self, expression: Node<'a>) -> Reg {
         // A materialized borrow-source temporary: store it in its hidden owned
         // slot (registered under the checker-minted owner) and hand back a
         // fresh handle to that slot — the auto-borrow a `ref` binding of the
         // temporary would produce. A module constant read as a receiver is
         // materialized the same way, under the constant's owner.
-        let constant = self.constant_param_value(expression);
-        let owner = mojito_checked::checked::materialized_borrow_owner(
-            self.node(expression).map_or(&[][..], Node::adjustments),
-        )
-        .or_else(|| {
-            constant
-                .then(|| self.node(expression).and_then(Node::owner))
-                .flatten()
-        });
+        let constant = expression.constant_param_value();
+        let owner = mojito_checked::checked::materialized_borrow_owner(expression.adjustments())
+            .or_else(|| constant.then(|| expression.owner()).flatten());
         if let Some(owner) = owner {
             let variable = if let Some(variable) = self.owner_vars.get(&owner).copied() {
                 variable
             } else {
-                let value = match self.param_value(expression).filter(|_| constant) {
+                let value = match expression.recorded_value().filter(|_| constant) {
                     Some(value) => self.param_value_register(expression, value),
                     None => self.expr_unconverted(expression),
                 };
@@ -3032,7 +2842,7 @@ impl Flatten<'_> {
                     .reg_types
                     .get(&value.0)
                     .cloned()
-                    .or_else(|| self.node(expression).and_then(Node::ty));
+                    .or_else(|| expression.ty());
                 let variable = self.var(&format!("$mat_r{}", value.0));
                 if let Some(ty) = ty.clone() {
                     self.var_types.insert(variable, ty);
@@ -3046,7 +2856,7 @@ impl Flatten<'_> {
                 variable
             };
             let place = MirPlace::root(variable, self.var_types.get(&variable).cloned());
-            let dest = self.fresh(expression.source_span(), Some(variable));
+            let dest = self.fresh(expression.location(), Some(variable));
             self.emit(MirInstr::MakeRef {
                 dest,
                 place: place.clone(),
@@ -3056,10 +2866,10 @@ impl Flatten<'_> {
             }
             return dest;
         }
-        if let Some(reference) = self.reference_result(expression) {
+        if let Some(reference) = expression.reference_result() {
             if let Some(place) = self.lower_projected_reference_place(expression) {
                 let dest = self.fresh_typed(
-                    expression.source_span(),
+                    expression.location(),
                     Some(place.root),
                     TyKind::Ref(reference).into(),
                 );
@@ -3075,15 +2885,13 @@ impl Flatten<'_> {
             // in that slot. Peel only the outer layers that expression typing
             // read through. The returned register remains a handle whose single
             // read produces the checker's ordinary expression type.
-            if let Some(checked) = self.node(expression).and_then(Node::ty) {
-                result = self.peel_reference_handle_to(result, &checked, &expression.source_span());
+            if let Some(checked) = expression.ty() {
+                result = self.peel_reference_handle_to(result, &checked, &expression.location());
             }
             return result;
         }
-        if let Some(node) = self.node(expression)
-            && let Some(name) = self.name_spelled(node)
-        {
-            let var = self.expression_var(&name, node);
+        if let Some(name) = self.name_spelled(expression) {
+            let var = self.expression_var(&name, expression);
             if let Some(loan) = self.aliases.get(&var).cloned() {
                 let handle_ty = self
                     .var_types
@@ -3102,7 +2910,7 @@ impl Flatten<'_> {
                     })
                     .unwrap_or_else(Ty::error);
                 let dest =
-                    self.fresh_typed(expression.source_span(), Some(loan.place.root), handle_ty);
+                    self.fresh_typed(expression.location(), Some(loan.place.root), handle_ty);
                 self.emit(MirInstr::MakeRef {
                     dest,
                     place: loan.place,
@@ -3113,7 +2921,7 @@ impl Flatten<'_> {
                 let mut place = MirPlace::root(var, self.var_types.get(&var).cloned());
                 place.through = Some(var);
                 let handle_ty = mir_place_handle_ty(&place, None).unwrap_or_else(Ty::error);
-                let dest = self.fresh_typed(expression.source_span(), Some(var), handle_ty);
+                let dest = self.fresh_typed(expression.location(), Some(var), handle_ty);
                 self.emit(MirInstr::MakeRef { dest, place });
                 return dest;
             }
@@ -3125,30 +2933,22 @@ impl Flatten<'_> {
                 let place = MirPlace::root(var, var_ty);
                 let handle_ty = mir_place_handle_ty(
                     &place,
-                    self.node(expression)
-                        .and_then(Node::borrow_mutability)
-                        .map(|mutable| {
-                            if mutable {
-                                mojito_types::origin::Mutability::Mutable
-                            } else {
-                                mojito_types::origin::Mutability::Immutable
-                            }
-                        }),
+                    expression.borrow_mutability().map(|mutable| {
+                        if mutable {
+                            mojito_types::origin::Mutability::Mutable
+                        } else {
+                            mojito_types::origin::Mutability::Immutable
+                        }
+                    }),
                 )
                 .unwrap_or_else(Ty::error);
-                let dest = self.fresh_typed(expression.source_span(), Some(var), handle_ty);
+                let dest = self.fresh_typed(expression.location(), Some(var), handle_ty);
                 self.emit(MirInstr::MakeRef { dest, place });
                 return dest;
             }
         }
-        if matches!(
-            self.node(expression).map(Node::op),
-            Some(CheckedOp::TypeApply { .. })
-        ) && self
-            .node(expression)
-            .map_or(&[][..], Node::adjustments)
-            .iter()
-            .any(|adjustment| {
+        if matches!(expression.op(), CheckedOp::TypeApply { .. })
+            && expression.adjustments().iter().any(|adjustment| {
                 matches!(
                     adjustment,
                     mojito_checked::checked::SemanticAdjustment::VariantProject { .. }
@@ -3158,24 +2958,22 @@ impl Flatten<'_> {
             let place = self.place(expression);
             let handle_ty = mir_place_handle_ty(
                 &place,
-                self.node(expression)
-                    .and_then(Node::borrow_mutability)
-                    .map(|mutable| {
-                        if mutable {
-                            mojito_types::origin::Mutability::Mutable
-                        } else {
-                            mojito_types::origin::Mutability::Immutable
-                        }
-                    }),
+                expression.borrow_mutability().map(|mutable| {
+                    if mutable {
+                        mojito_types::origin::Mutability::Mutable
+                    } else {
+                        mojito_types::origin::Mutability::Immutable
+                    }
+                }),
             )
             .unwrap_or_else(Ty::error);
-            let dest = self.fresh_typed(expression.source_span(), Some(place.root), handle_ty);
+            let dest = self.fresh_typed(expression.location(), Some(place.root), handle_ty);
             self.emit(MirInstr::MakeRef { dest, place });
             return dest;
         }
         if matches!(
-            self.node(expression).map(Node::op),
-            Some(CheckedOp::Member { .. } | CheckedOp::Index { .. })
+            expression.op(),
+            CheckedOp::Member { .. } | CheckedOp::Index { .. }
         ) {
             // A reference-producing projection may begin with a nominal
             // accessor call (`return self.entries[i].value`). Forward through
@@ -3184,26 +2982,24 @@ impl Flatten<'_> {
             // Dict place would bypass the checked accessor contract.
             if let Some(place) = self.lower_projected_reference_place(expression) {
                 let handle_ty = mir_place_handle_ty(&place, None).unwrap_or_else(Ty::error);
-                let dest = self.fresh_typed(expression.source_span(), Some(place.root), handle_ty);
+                let dest = self.fresh_typed(expression.location(), Some(place.root), handle_ty);
                 self.emit(MirInstr::MakeRef { dest, place });
                 return dest;
             }
             let place = self.place(expression);
             let handle_ty = mir_place_handle_ty(
                 &place,
-                self.node(expression)
-                    .and_then(Node::borrow_mutability)
-                    .map(|mutable| {
-                        if mutable {
-                            mojito_types::origin::Mutability::Mutable
-                        } else {
-                            mojito_types::origin::Mutability::Immutable
-                        }
-                    }),
+                expression.borrow_mutability().map(|mutable| {
+                    if mutable {
+                        mojito_types::origin::Mutability::Mutable
+                    } else {
+                        mojito_types::origin::Mutability::Immutable
+                    }
+                }),
             )
             .unwrap_or_else(Ty::error);
             let stored_ty = place.ty.clone().unwrap_or_else(Ty::error);
-            let storage = self.fresh_typed(expression.source_span(), Some(place.root), handle_ty);
+            let storage = self.fresh_typed(expression.location(), Some(place.root), handle_ty);
             self.emit_interior_invalidations(expression, None);
             self.emit(MirInstr::MakeRef {
                 dest: storage,
@@ -3215,7 +3011,7 @@ impl Flatten<'_> {
             if !matches!(stored_ty.kind(), TyKind::Ref(_)) {
                 return storage;
             }
-            let dest = self.fresh_typed(expression.source_span(), None, stored_ty);
+            let dest = self.fresh_typed(expression.location(), None, stored_ty);
             self.emit(MirInstr::ReadRef {
                 dest,
                 reference: storage,
@@ -3367,16 +3163,15 @@ impl Flatten<'_> {
 
     /// The place name `expression` roots, spelled `name` at runtime: its
     /// node's binding's slot, else the slot of that spelling.
-    fn name_place_root(&mut self, name: &str, expression: &Expr) -> MirPlace {
+    fn name_place_root(&mut self, name: &str, expression: Node<'a>) -> MirPlace {
         if let Some(place) = self.materialized_parameter_place(expression) {
             return place;
         }
-        let node = self.node(expression).map(|node| node.checked);
-        let binding = node.and_then(|node| node.binding);
+        let node = expression.checked;
+        let binding = node.binding;
         // A module constant read where a place is needed (a method's
         // receiver) is materialized into a hidden slot of its own.
-        if let Some(node) = node
-            && constant_param_value(&node.adjustments)
+        if constant_param_value(&node.adjustments)
             && let Some(value) = recorded_param_value(&node.adjustments)
             && let Some(owner) = binding
         {
@@ -3391,11 +3186,10 @@ impl Flatten<'_> {
         if place.root_ty.is_none() {
             // HIR's place for a name, whose type the place fact is, exists
             // only where the check bound the name.
-            let ty = node.and_then(|node| {
-                node.binding
-                    .and_then(|_| node.place_ty.clone())
-                    .or_else(|| node.ty.clone())
-            });
+            let ty = node
+                .binding
+                .and_then(|_| node.place_ty.clone())
+                .or_else(|| node.ty.clone());
             place.root_ty.clone_from(&ty);
             place.ty.clone_from(&ty);
             if let Some(ty) = ty {
@@ -3406,34 +3200,42 @@ impl Flatten<'_> {
     }
 
     /// Flatten one or more argument expressions to their result registers.
-    fn args(&mut self, args: &[Expr]) -> Vec<Reg> {
-        args.iter().map(|a| self.expr(a)).collect()
+    fn args(&mut self, args: &[Node<'a>]) -> Vec<Reg> {
+        args.iter().map(|&a| self.expr(a)).collect()
     }
 
-    fn param_arg_reg(&mut self, argument: &ParamArg, site: &SourceSpan) -> Option<Reg> {
-        let expression = match argument {
-            ParamArg::Value(expression) => expression,
-            ParamArg::Named { value, .. } => match &**value {
-                ParamArg::Value(expression) => expression,
-                ParamArg::Type(_) => return None,
-                ParamArg::Named { .. } => unreachable!(),
+    fn param_arg_reg(
+        &mut self,
+        call: Node<'a>,
+        argument: &CheckedParamArg,
+        site: &SourceSpan,
+    ) -> Option<Reg> {
+        let operand = match argument {
+            CheckedParamArg::Value(_) => call.param_value(argument),
+            CheckedParamArg::Named { value, .. } => match &**value {
+                CheckedParamArg::Value(_) => call.param_value(value),
+                CheckedParamArg::Type { .. } | CheckedParamArg::Named { .. } => return None,
             },
-            ParamArg::Type(mojito_ast::ast::Type::SelfParam(name))
-                if let Some(reg) = self.receiver_value_parameter_read(name, site) =>
-            {
+            CheckedParamArg::Type {
+                ty: mojito_ast::ast::Type::SelfParam(name),
+                ..
+            } if let Some(reg) = self.receiver_value_parameter_read(name, site) => {
                 return Some(reg);
             }
-            ParamArg::Type(t) if let Some(element) = self.display_element_argument(t) => {
+            CheckedParamArg::Type { ty, .. }
+                if let Some(element) = self.display_element_argument(ty) =>
+            {
                 return Some(element);
             }
-            ParamArg::Type(t) if let Some(pack) = self.value_pack_spread(t, site) => {
+            CheckedParamArg::Type { ty, .. }
+                if let Some(pack) = self.value_pack_spread(ty, site) =>
+            {
                 return Some(pack);
             }
             // A type argument is compile-time data on the call.
-            ParamArg::Type(_) => return None,
-        };
-        let adjustments = self.node(expression).map_or(&[][..], Node::adjustments);
-        if adjustments.iter().any(|adjustment| {
+            CheckedParamArg::Type { .. } => return None,
+        }?;
+        if operand.adjustments().iter().any(|adjustment| {
             matches!(
                 adjustment,
                 mojito_checked::checked::SemanticAdjustment::EraseCompileTimeArgument
@@ -3443,9 +3245,9 @@ impl Flatten<'_> {
         } else {
             // An argument read off a local display binding (`g[L[0]]()`) is
             // the application the elaborator runs.
-            Some(match self.display_read(expression) {
+            Some(match self.display_read(operand) {
                 Some((value, _)) => value,
-                None => self.expr(expression),
+                None => self.expr(operand),
             })
         }
     }
@@ -3481,27 +3283,32 @@ impl Flatten<'_> {
     /// `EraseCompileTimeArgument` adjustment, so it is erased by name. A closed
     /// value the call carries in its instantiated arguments (`folded`) is
     /// compile-time data on the call, as at Mojo's.
-    fn param_arg_has_no_runtime_form(&self, argument: &ParamArg, folded: bool) -> bool {
-        let expression = match argument {
-            ParamArg::Value(expression) => expression,
-            ParamArg::Named { value, .. } => match &**value {
-                ParamArg::Value(expression) => expression,
-                ParamArg::Type(ty) => return self.names_enclosing_origin_parameter(ty),
-                ParamArg::Named { .. } => unreachable!(),
+    fn param_arg_has_no_runtime_form(
+        &self,
+        call: Node<'a>,
+        argument: &CheckedParamArg,
+        folded: bool,
+    ) -> bool {
+        let operand = match argument {
+            CheckedParamArg::Value(_) => call.param_value(argument),
+            CheckedParamArg::Named { value, .. } => match &**value {
+                CheckedParamArg::Value(_) => call.param_value(value),
+                CheckedParamArg::Type { ty, .. } => {
+                    return self.names_enclosing_origin_parameter(ty);
+                }
+                CheckedParamArg::Named { .. } => None,
             },
-            ParamArg::Type(ty) => return self.names_enclosing_origin_parameter(ty),
+            CheckedParamArg::Type { ty, .. } => return self.names_enclosing_origin_parameter(ty),
         };
         folded
-            || self
-                .node(expression)
-                .map_or(&[][..], Node::adjustments)
-                .iter()
-                .any(|adjustment| {
+            || operand.is_some_and(|operand| {
+                operand.adjustments().iter().any(|adjustment| {
                     matches!(
                         adjustment,
                         mojito_checked::checked::SemanticAdjustment::EraseCompileTimeArgument
                     )
                 })
+            })
     }
 
     /// Whether a type-shaped bracket argument names one of the enclosing
@@ -3562,17 +3369,19 @@ impl Flatten<'_> {
     /// The expression a bracket argument built from the enclosing value
     /// binders denotes (`1 + n`, `Self.n`); none for an argument naming no
     /// binder, whose register is already its constant.
-    fn forwarded_value(&self, argument: &ParamArg) -> Option<ParamExpr> {
+    fn forwarded_value(&self, argument: &CheckedParamArg) -> Option<ParamExpr> {
         let expr = match argument {
-            ParamArg::Named { value, .. } => return self.forwarded_value(value),
-            ParamArg::Type(mojito_ast::ast::Type::SelfParam(name)) => {
-                self.enclosing_binders.value(name, true)
-            }
-            ParamArg::Type(mojito_ast::ast::Type::Named(name, args)) if args.is_empty() => {
-                self.enclosing_binders.value(name, false)
-            }
-            ParamArg::Type(_) => None,
-            ParamArg::Value(expression) => self.value_binder_expr(expression),
+            CheckedParamArg::Named { value, .. } => return self.forwarded_value(value),
+            CheckedParamArg::Type {
+                ty: mojito_ast::ast::Type::SelfParam(name),
+                ..
+            } => self.enclosing_binders.value(name, true),
+            CheckedParamArg::Type {
+                ty: mojito_ast::ast::Type::Named(name, args),
+                ..
+            } if args.is_empty() => self.enclosing_binders.value(name, false),
+            CheckedParamArg::Type { .. } => None,
+            CheckedParamArg::Value(value) => self.value_binder_node(*value),
         }?;
         expr.as_constant().is_none().then_some(expr)
     }
@@ -3605,8 +3414,8 @@ impl Flatten<'_> {
     /// other value (`(L[0], L[1])`) is computed here, where it crosses to
     /// runtime, from the displays built in place, and denotes no parameter
     /// expression. `None` for an expression that reads no display.
-    fn display_read(&mut self, expression: &Expr) -> Option<(Reg, Option<ParamExpr>)> {
-        let node = self.node(expression).map(Node::id)?;
+    fn display_read(&mut self, expression: Node<'a>) -> Option<(Reg, Option<ParamExpr>)> {
+        let node = expression.id();
         let displays = self.displays_read(node);
         // An expression the check lifted denotes its application, which the
         // elaborator evaluates per instance.
@@ -3617,12 +3426,7 @@ impl Flatten<'_> {
         if displays.is_empty() {
             return None;
         }
-        let ty = match self
-            .node(expression)
-            .and_then(Node::ty)
-            .as_ref()
-            .map(Ty::kind)
-        {
+        let ty = match expression.ty().as_ref().map(Ty::kind) {
             Some(TyKind::Int | TyKind::IntLiteral) => Ty::int(),
             Some(TyKind::Bool) => Ty::bool(),
             _ => {
@@ -3643,10 +3447,8 @@ impl Flatten<'_> {
     /// The application the check lifted `expression` as, by the name of the
     /// function [`ComptimeThunks::request_applications`] lifts for it.
     /// `None` inside that function, which computes the expression.
-    fn comptime_application(&self, expression: &Expr) -> Option<ParamExpr> {
-        self.node(expression)
-            .map(|node| node.checked)
-            .and_then(|node| self.node_application(node))
+    fn comptime_application(&self, expression: Node<'a>) -> Option<ParamExpr> {
+        self.node_application(expression.checked)
     }
 
     /// [`Self::comptime_application`] of node `node`.
@@ -3681,15 +3483,15 @@ impl Flatten<'_> {
         let element = ParamContext::detached()
             .list_get(&sequence, &position)
             .ok()?;
-        Some(self.param_value_register(index, element))
+        Some(self.param_value_register_at(index.source_span(), None, element))
     }
 
     /// Build a local display binding into its slot, for the crossing that
     /// reads it next.
     fn build_display(&mut self, binding: &DisplayBinding) {
-        let held = self.held;
-        self.with_hir(held.alloc((*binding.hir).clone()), |this, display| {
-            let built = this.expr(display);
+        let display_hir = self.held.alloc((*binding.hir).clone());
+        self.with_hir(display_hir, |this, display| {
+            let built = this.expr(this.handle(display_hir));
             this.bind_comptime_value(&binding.name, display, Some(binding.owner), built);
         });
     }
@@ -3706,10 +3508,10 @@ impl Flatten<'_> {
     }
 
     /// The local display binding `expression` names.
-    fn named_display(&self, expression: &Expr) -> Option<DisplayBinding> {
-        self.node(expression)
-            .is_some_and(Node::is_name)
-            .then(|| self.node(expression).and_then(Node::owner))
+    fn named_display(&self, expression: Node<'a>) -> Option<DisplayBinding> {
+        expression
+            .is_name()
+            .then(|| expression.owner())
             .flatten()
             .and_then(|owner| self.comptime_thunks.display(owner))
             .cloned()
@@ -3824,10 +3626,9 @@ impl Flatten<'_> {
     /// An erased argument keeps its (empty) slot: every backend aligns the
     /// slots with the callee's declarations positionally, so a dropped slot
     /// would shift the reified arguments after it (`Dict[String, Int, H]`).
-    fn param_arg_regs(&mut self, call: &Expr, arguments: &[ParamArg]) -> Vec<MirParamArg> {
-        let folded = self
-            .node(call)
-            .map_or(&[][..], Node::adjustments)
+    fn param_arg_regs(&mut self, call: Node<'a>) -> Vec<MirParamArg> {
+        let folded = call
+            .adjustments()
             .iter()
             .find_map(|adjustment| match adjustment {
                 mojito_checked::checked::SemanticAdjustment::FoldedParameterArguments(
@@ -3837,44 +3638,35 @@ impl Flatten<'_> {
             })
             .cloned()
             .unwrap_or_default();
-        self.param_arg_regs_folding(call, arguments, &folded)
+        self.param_arg_regs_folding(call, &folded)
     }
 
     /// The compile-time argument slots of an indirect call. A folded
     /// argument's value travels in the instantiated arguments, which only
     /// an instantiated callable contract carries: without one, the slot
     /// keeps its register.
-    fn indirect_param_arg_regs(&mut self, call: &Expr, arguments: &[ParamArg]) -> Vec<MirParamArg> {
-        if self
-            .node(call)
-            .and_then(Node::instantiated_callable_contract)
-            .is_some()
-        {
-            self.param_arg_regs(call, arguments)
+    fn indirect_param_arg_regs(&mut self, call: Node<'a>) -> Vec<MirParamArg> {
+        if call.instantiated_callable_contract().is_some() {
+            self.param_arg_regs(call)
         } else {
-            self.param_arg_regs_folding(call, arguments, &[])
+            self.param_arg_regs_folding(call, &[])
         }
     }
 
-    fn param_arg_regs_folding(
-        &mut self,
-        call: &Expr,
-        arguments: &[ParamArg],
-        folded: &[usize],
-    ) -> Vec<MirParamArg> {
-        let site = span(call);
+    fn param_arg_regs_folding(&mut self, call: Node<'a>, folded: &[usize]) -> Vec<MirParamArg> {
+        let site = call.location();
         let mut registers = Vec::new();
-        for (position, argument) in arguments.iter().enumerate() {
+        for (position, argument) in call.param_args().iter().enumerate() {
             let name = match argument {
-                ParamArg::Named { name, .. } => Some(name.clone()),
-                ParamArg::Type(_) | ParamArg::Value(_) => None,
+                CheckedParamArg::Named { name, .. } => Some(name.clone()),
+                CheckedParamArg::Type { .. } | CheckedParamArg::Value(_) => None,
             };
-            let value = if self.param_arg_has_no_runtime_form(argument, folded.contains(&position))
-            {
-                None
-            } else {
-                self.param_arg_reg(argument, &site)
-            };
+            let value =
+                if self.param_arg_has_no_runtime_form(call, argument, folded.contains(&position)) {
+                    None
+                } else {
+                    self.param_arg_reg(call, argument, &site)
+                };
             let expr = value.and_then(|_| self.forwarded_value(argument));
             registers.push(MirParamArg { name, value, expr });
         }
@@ -5087,18 +4879,6 @@ fn member_defaults(
         })
         .collect::<Result<_, String>>()?;
     Ok((defaults, member.required[1..].to_vec()))
-}
-
-/// Return a source integer literal as a host index without materializing it as
-/// a runtime scalar. This intentionally recognizes only exact literal syntax:
-/// arbitrary index expressions still lower through a register and retain their
-/// ordinary evaluation semantics.
-/// The value of integer literal node `node`, when it is a nonnegative index.
-fn exact_nonnegative_index(node: Option<&mojito_checked::checked::CheckedExpr>) -> Option<usize> {
-    let mojito_checked::checked::CheckedOp::Int(value) = &node?.op else {
-        return None;
-    };
-    value.to_u64().and_then(|value| usize::try_from(value).ok())
 }
 
 fn statement_expression_roots(statement: &Stmt) -> Vec<&Expr> {

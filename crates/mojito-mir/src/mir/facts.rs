@@ -34,6 +34,56 @@ impl<'a> Node<'a> {
         self.object().zip(self.index())
     }
 
+    /// The pointer subscript this place node spells — positional `p[i]` on
+    /// a pointer-typed object, or current Mojo's keyword `p[unsafe_offset=i]`
+    /// — as its pointer object and offset.
+    pub(super) fn pointer_offset_subscript(self) -> Option<(Self, Self)> {
+        match self.index_operands() {
+            Some((object, index))
+                if matches!(
+                    object.ty().as_ref().map(Ty::kind),
+                    Some(TyKind::Pointer { .. })
+                ) =>
+            {
+                Some((object, index))
+            }
+            Some(_) => None,
+            None => self.pointer_keyword_subscript(),
+        }
+    }
+
+    /// The keyword pointer subscript (`p[unsafe_offset=i]`) this node is, as
+    /// its object and offset; every other keyword subscript is a nominal
+    /// call.
+    pub(super) fn pointer_keyword_subscript(self) -> Option<(Self, Self)> {
+        let CheckedOp::MultiIndex { args, .. } = self.op() else {
+            return None;
+        };
+        match args.as_slice() {
+            [mojito_checked::checked::CheckedSubscriptArg::Keyword { name, value }]
+                if name == "unsafe_offset" =>
+            {
+                self.object().zip(self.operand_of(*value))
+            }
+            _ => None,
+        }
+    }
+
+    /// Whether this field/dereference chain roots at a call result the
+    /// checker materialized as a pointer-field holder.
+    pub(super) fn rooted_at_materialized_temporary(self) -> bool {
+        let mut root = self;
+        while let Some(object) = root
+            .member_object()
+            .or_else(|| root.index_operands().map(|(object, _)| object))
+            .or_else(|| root.pointer_keyword_subscript().map(|(object, _)| object))
+        {
+            root = object;
+        }
+        root.is_call()
+            && mojito_checked::checked::materialized_borrow_owner(root.adjustments()).is_some()
+    }
+
     /// The operand of a transfer: `None` when this is not one.
     pub(super) fn transfer_operand(self) -> Option<Self> {
         self.sole_operand(|op| matches!(op, CheckedOp::Transfer(_)))
@@ -296,6 +346,268 @@ impl<'a> Node<'a> {
         (!interiors.is_empty()).then_some((container, interiors))
     }
 
+    pub(super) fn interior_invalidations(
+        self,
+    ) -> Vec<mojito_checked::checked::InteriorInvalidation> {
+        self.adjustments()
+            .iter()
+            .find_map(|adjustment| match adjustment {
+                mojito_checked::checked::SemanticAdjustment::InvalidateInteriors {
+                    invalidations,
+                } => Some(invalidations),
+                _ => None,
+            })
+            .cloned()
+            .unwrap_or_default()
+    }
+
+    /// Whether this call's checked result is a borrowing view of its
+    /// arguments (`BorrowViewResult`): the caller-side loans lend the place
+    /// arguments to the result, so a read-convention place argument must
+    /// reach the callee as the caller's storage rather than a copy — a view
+    /// built over a callee-local copy would dangle once the frame unwinds.
+    pub(super) fn borrows_view_result(self) -> bool {
+        self.adjustments().iter().any(|adjustment| {
+            matches!(
+                adjustment,
+                mojito_checked::checked::SemanticAdjustment::BorrowViewResult { .. }
+            )
+        })
+    }
+
+    /// Whether a checked method call writes through its receiver place. The
+    /// checker's effective receiver convention already collapses a `ref self`
+    /// reached through an immutable reference to `Imm`; a call without a
+    /// checked contract keeps the conservative exclusive classification.
+    pub(super) fn receiver_writes(self) -> bool {
+        self.call_contract().is_none_or(|contract| {
+            matches!(
+                contract.receiver_convention,
+                Some(
+                    mojito_ast::ast::ArgConvention::Mut
+                        | mojito_ast::ast::ArgConvention::Ref
+                        | mojito_ast::ast::ArgConvention::Var
+                        | mojito_ast::ast::ArgConvention::Deinit
+                )
+            )
+        })
+    }
+
+    /// Whether a callable-value (indirect) or method call's argument list
+    /// may anchor loan-carrying temporaries — the same rule as a plain
+    /// function call (see `allow_argument_anchors`): a callee borrowing
+    /// through checker-selected `ref` arguments or recorded transfer effects
+    /// carries a temporary's loans through that channel already, so anchoring
+    /// there adds a conflicting duplicate borrow. (A plain call additionally
+    /// excludes constructions; a method or callable value is never one.)
+    pub(super) fn call_anchors_arguments(self) -> bool {
+        self.checked.call_transfers.is_empty()
+            && !self.adjustments().iter().any(|adjustment| {
+                matches!(
+                    adjustment,
+                    mojito_checked::checked::SemanticAdjustment::BorrowRefArguments { .. }
+                )
+            })
+    }
+
+    /// `place`, the place of this `rebind[dest](e)` node's operand, followed by a
+    /// [`Proj::Rebind`] step to `dest`: the same storage, read and written at
+    /// the type the rebind names, as upstream's reference overload rebinds
+    /// the pointer it returns. A later projection addresses `dest`.
+    pub(super) fn rebound_place(self, mut place: MirPlace) -> MirPlace {
+        if let Some((_, dest)) = self.rebind_target()
+            && place.ty.as_ref() != Some(&dest)
+        {
+            place.project(Proj::Rebind, dest);
+        }
+        place
+    }
+
+    pub(super) fn reference_result(self) -> Option<mojito_types::origin::RefTy> {
+        // The selected-call contract is the canonical checked handoff.  In
+        // particular, a free-function reference result may share its source
+        // expression with another compatibility adjustment, so consulting only
+        // the legacy single-operation slot can silently lose `ref[a, b] T` and
+        // type a runtime handle local as ordinary `T` storage.
+        self.call_contract()
+            .and_then(|contract| contract.reference_result)
+            .or_else(|| {
+                self.adjustments()
+                    .iter()
+                    .find_map(|adjustment| match adjustment {
+                        mojito_checked::checked::SemanticAdjustment::ReferenceResult {
+                            reference,
+                        } => Some(reference),
+                        mojito_checked::checked::SemanticAdjustment::AugmentedInPlace {
+                            place_reference,
+                            ..
+                        } => place_reference.as_ref(),
+                        _ => None,
+                    })
+                    .cloned()
+            })
+    }
+
+    /// The parameter expression the checker recorded for this node, a
+    /// compile-time query read as a runtime value.
+    pub(super) fn recorded_value(self) -> Option<mojito_types::param_expr::ParamExpr> {
+        recorded_param_value(&self.checked.adjustments)
+    }
+
+    /// Whether this node reads a parameter value the check recorded with no
+    /// materialized borrow source of its own (a module constant), which
+    /// lowers as a value wherever it stands.
+    pub(super) fn constant_param_value(self) -> bool {
+        constant_param_value(&self.checked.adjustments)
+    }
+
+    /// The alternative index of a checked Variant projection recorded on this
+    /// node (`v[T]`, `storage[T]`), if any.
+    pub(super) fn variant_projection_index(self) -> Option<mojito_types::types::VariantIndex> {
+        self.adjustments()
+            .iter()
+            .find_map(|adjustment| match adjustment {
+                mojito_checked::checked::SemanticAdjustment::VariantProject { index, .. } => {
+                    Some(index)
+                }
+                _ => None,
+            })
+            .cloned()
+    }
+
+    /// Whether this node's checked type is a pointer whose provenance
+    /// designates a single checked place. Dereferencing such a pointer goes
+    /// through its frame/slot handle instead of allocation arithmetic. A
+    /// multi-element origin-bearing pointer (an interior-generation domain)
+    /// is heap storage: it keeps allocation arithmetic and carries its loan
+    /// on the binding instead.
+    pub(super) fn is_origin_bearing_pointer(self) -> bool {
+        origin_bearing_pointer(self.checked.ty.as_ref())
+    }
+
+    pub(super) fn resolved_callable(self) -> Option<String> {
+        callable_target(self.adjustments())
+    }
+
+    pub(super) fn implicit_conversion(self) -> Option<String> {
+        self.adjustments()
+            .iter()
+            .find_map(|adjustment| match adjustment {
+                mojito_checked::checked::SemanticAdjustment::ImplicitConversion(target) => {
+                    Some(target)
+                }
+                _ => None,
+            })
+            .cloned()
+    }
+
+    pub(super) fn index_normalization(self) -> Option<String> {
+        self.adjustments()
+            .iter()
+            .find_map(|adjustment| match adjustment {
+                mojito_checked::checked::SemanticAdjustment::IndexNormalization { target } => {
+                    Some(target)
+                }
+                _ => None,
+            })
+            .cloned()
+    }
+
+    /// The compile-time-index accessor call a nominal subscript resolved to
+    /// (`t[0]` on a `Tuple`, `__getitem_param__[0]`), whose `ref` result
+    /// into the element is the subscript's place.
+    pub(super) fn element_accessor_call(
+        self,
+    ) -> Option<mojito_checked::checked::CheckedCallContract> {
+        if !matches!(self.op(), CheckedOp::Index { .. }) {
+            return None;
+        }
+        let contract = self.call_contract()?;
+        let accessor = contract.target.ends_with(".__getitem_param__")
+            || contract.target.contains(".__getitem_param__$");
+        let returns_element = contract.arguments.is_empty() && contract.reference_result.is_some();
+        (accessor && returns_element).then_some(contract)
+    }
+
+    pub(super) fn implicitly_copies_consuming_receiver(self) -> bool {
+        self.adjustments().iter().any(|adjustment| {
+            matches!(
+                adjustment,
+                mojito_checked::checked::SemanticAdjustment::ImplicitlyCopyConsumingReceiver
+            )
+        })
+    }
+
+    pub(super) fn literal_materialization(self) -> Option<Ty> {
+        if !matches!(
+            self.ty().as_ref().map(Ty::kind),
+            Some(TyKind::IntLiteral | TyKind::FloatLiteral)
+        ) {
+            // Checker fact tables are still keyed by source span while HIR owns
+            // stable node identities. Comptime expansion can produce several
+            // nodes at one source span; only a node whose checked source type is
+            // actually a literal may consume a materialization adjustment.
+            return None;
+        }
+        self.adjustments()
+            .iter()
+            .find_map(|adjustment| match adjustment {
+                mojito_checked::checked::SemanticAdjustment::MaterializeLiteral(target) => {
+                    Some(target)
+                }
+                _ => None,
+            })
+            .cloned()
+    }
+
+    pub(super) fn scalar_splat(self) -> Option<Ty> {
+        self.adjustments()
+            .iter()
+            .find_map(|adjustment| match adjustment {
+                mojito_checked::checked::SemanticAdjustment::SplatScalar(target) => Some(target),
+                _ => None,
+            })
+            .cloned()
+    }
+
+    pub(super) fn is_slice_descriptor(self) -> bool {
+        matches!(
+            self.ty().as_ref().map(Ty::kind),
+            Some(TyKind::Struct(name, args))
+                if matches!(name.as_str(), "Slice" | "ContiguousSlice" | "StridedSlice")
+                    && args.is_empty()
+        )
+    }
+
+    pub(super) fn intrinsic_index_dispatch(self) -> Option<MirIntrinsicSubscript> {
+        let ty = self.ty()?;
+        match ty.kind() {
+            TyKind::Tuple(_) | TyKind::RuntimePack(_) => Some(MirIntrinsicSubscript::TupleStorage),
+            TyKind::VariadicPack(_) => Some(MirIntrinsicSubscript::VariadicStorage),
+            TyKind::Simd { .. } => Some(MirIntrinsicSubscript::Simd),
+            TyKind::Pointer { .. } => Some(MirIntrinsicSubscript::Pointer),
+            TyKind::ComptimeList(_) => Some(MirIntrinsicSubscript::ComptimeList),
+            // `Slice.indices` has a public nominal Tuple type but crosses the
+            // VM intrinsic boundary as compiler-private `Value::Tuple`
+            // storage. A checker-selected public Tuple accessor carries a
+            // call contract and therefore never consults this fallback.
+            TyKind::Struct(..) if tuple_elements(&ty).is_some() => {
+                Some(MirIntrinsicSubscript::TupleStorage)
+            }
+            _ => None,
+        }
+    }
+
+    /// The value of this integer literal node as a host index, without
+    /// materializing it as a runtime scalar; any other index expression
+    /// lowers through a register.
+    pub(super) fn exact_nonnegative_index(self) -> Option<usize> {
+        let CheckedOp::Int(value) = self.op() else {
+            return None;
+        };
+        value.to_u64().and_then(|value| usize::try_from(value).ok())
+    }
+
     /// The one operand of this node, when its op satisfies `is_op`.
     fn sole_operand(self, is_op: impl Fn(&CheckedOp) -> bool) -> Option<Self> {
         match self.hir.children.as_slice() {
@@ -373,7 +685,7 @@ impl<'a> Flatten<'a> {
                 CheckedOp::Identifier(_) | CheckedOp::Member { .. }
             )
         {
-            let place = self.place_of(node);
+            let place = self.place(node);
             return vec![MirLoan {
                 place,
                 mutable: *mutable,
@@ -625,7 +937,7 @@ impl<'a> Flatten<'a> {
                 CheckedOp::Member { .. } | CheckedOp::Index { .. } | CheckedOp::TypeApply { .. }
             )
         {
-            let place = self.place_of(node);
+            let place = self.place(node);
             let interiors = node.interior_references();
             if interiors.is_empty() {
                 return vec![MirLoan {
@@ -721,10 +1033,10 @@ impl<'a> Flatten<'a> {
                         // was taken from, so its loan keeps that binding's
                         // place and link instead of competing with the
                         // binding's own loan.
-                        let source = self.place_of(source);
+                        let source = self.place(source);
                         return self.pointer_place_loan(place, *mutable, Some(source), true);
                     }
-                    let place = self.place_of(source);
+                    let place = self.place(source);
                     return vec![MirLoan {
                         place,
                         mutable: *mutable,
@@ -752,7 +1064,7 @@ impl<'a> Flatten<'a> {
                     let loans: Vec<MirLoan> = arguments()
                         .filter(|argument| argument.lends_to_view())
                         .map(|argument| MirLoan {
-                            place: self.place_of(argument),
+                            place: self.place(argument),
                             mutable: false,
                             interior: None,
                             shared: false,
@@ -792,7 +1104,7 @@ impl<'a> Flatten<'a> {
                         CheckedOp::Identifier(_) | CheckedOp::Member { .. }
                     ) {
                         return vec![MirLoan {
-                            place: self.place_of(object),
+                            place: self.place(object),
                             mutable: false,
                             interior: None,
                             shared: false,
@@ -909,7 +1221,7 @@ impl<'a> Flatten<'a> {
             .iter()
             .filter_map(|&(index, mutable)| {
                 args.get(index).map(|&argument| MirLoan {
-                    place: self.place_of(argument),
+                    place: self.place(argument),
                     mutable,
                     interior: None,
                     shared: false,
@@ -931,7 +1243,7 @@ impl<'a> Flatten<'a> {
         // coexist with the view, and a container mutation or a store over
         // the element stales it.
         if let Some((container, interiors)) = source.element_receiver() {
-            let fallback = self.place_of(container).root;
+            let fallback = self.place(container).root;
             for mut origin in interiors {
                 if named.is_empty() {
                     origin.path.push(mojito_types::origin::OriginSeg::Subtree);
@@ -964,7 +1276,7 @@ impl<'a> Flatten<'a> {
         ) {
             return loans;
         }
-        let place = self.place_of(source);
+        let place = self.place(source);
         // A local `ref` binding's slot is not an owner; its carried loan
         // already covers the referent. A reference parameter carries no loan
         // into the body, so its slot is the root the view is lent from.
@@ -989,19 +1301,6 @@ impl<'a> Flatten<'a> {
             shared: false,
         });
         loans
-    }
-
-    /// The place `node` denotes, lowered from the syntax rebuilt for it
-    /// (R646's transitional bridge; R647 lowers the node itself).
-    fn place_of(&mut self, node: Node<'a>) -> MirPlace {
-        if let Some(syntax) = self.syntax(node) {
-            self.place(syntax.expr())
-        } else {
-            self.emit(MirInstr::Unsupported(
-                "a place without the syntax rebuilt for its node reached MIR".into(),
-            ));
-            MirPlace::root(self.var("$invalid_place"), None)
-        }
     }
 }
 

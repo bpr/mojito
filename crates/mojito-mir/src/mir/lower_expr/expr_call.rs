@@ -18,8 +18,10 @@ impl Flatten<'_> {
     ) -> Reg {
         if name == "__mojito_fieldwise_copy" {
             return self.expr(
-                args.first()
-                    .expect("checked synthesized fieldwise copy has one argument"),
+                self.node_of(
+                    args.first()
+                        .expect("checked synthesized fieldwise copy has one argument"),
+                ),
             );
         }
         if let Some(dest) = self.checked_construction(e, node, param_args, args, kwargs) {
@@ -71,7 +73,7 @@ impl Flatten<'_> {
             .and_then(|binding| self.nested.get(&binding))
             .cloned()
         {
-            return self.lower_nested_call(e, name, &info, param_args, args, kwargs);
+            return self.lower_nested_call(e, name, &info, args, kwargs);
         }
         // The callee is the slot of the local the call's binding names.
         if let Some(variable) = self.node(e).and_then(|call| self.local_callee(call, name)) {
@@ -81,20 +83,24 @@ impl Flatten<'_> {
                 .get(&variable)
                 .cloned()
                 .or_else(|| self.f.reg_types.get(&callee.0).cloned());
-            let param_arg_regs = self.indirect_param_arg_regs(e, param_args);
+            let param_arg_regs = self.indirect_param_arg_regs(self.node_of(e));
             let param_decls = callable_ty
                 .as_ref()
                 .map(generic_callable_param_decls)
                 .unwrap_or_default();
             let saved_anchor_permission = self.allow_argument_anchors;
-            self.allow_argument_anchors = self.call_anchors_arguments(e);
-            let (regs, arg_places) = self.lower_call_arguments(args, false);
-            let (kw, kwarg_places) = self.lower_call_keywords(kwargs, false);
+            self.allow_argument_anchors = self.node_of(e).call_anchors_arguments();
+            let (regs, arg_places) = self.lower_call_arguments(&self.nodes_of(args), false);
+            let (kw, kwarg_places) = self.lower_call_keywords(&self.keywords_of(kwargs), false);
             self.allow_argument_anchors = saved_anchor_permission;
             let place = self.var_place(variable);
             let callee_place = place.is_typed().then_some(place);
             let dest = self.fresh(span(e), None);
-            self.emit_call_invalidations(e, args, kwargs);
+            self.emit_call_invalidations(
+                self.node_of(e),
+                &self.nodes_of(args),
+                &self.keywords_of(kwargs),
+            );
             let capture_accesses = self
                 .node(e)
                 .map(|node| self.call_capture_accesses(node))
@@ -143,9 +149,9 @@ impl Flatten<'_> {
                     .and_then(Node::transfer_operand)
                     .is_some_and(Node::is_name)
             {
-                return self.expr(spread);
+                return self.expr(self.node_of(spread));
             }
-            let regs = self.args(args);
+            let regs = self.args(&self.nodes_of(args));
             let element_types = match node.ty.clone().as_ref().map(Ty::kind) {
                 Some(TyKind::Tuple(elements)) => Some(elements.clone()),
                 _ => None,
@@ -158,7 +164,7 @@ impl Flatten<'_> {
             });
             return dest;
         }
-        self.direct_call(e, node, name, param_args, args, kwargs)
+        self.direct_call(e, node, name, args, kwargs)
     }
 
     /// A call the check recorded as a construction or an intrinsic by an
@@ -181,10 +187,12 @@ impl Flatten<'_> {
         }) {
             return Some(
                 self.expr(
-                    &kwargs
-                        .first()
-                        .expect("checked built-in copy construction has a 'copy=' argument")
-                        .value,
+                    self.node_of(
+                        &kwargs
+                            .first()
+                            .expect("checked built-in copy construction has a 'copy=' argument")
+                            .value,
+                    ),
                 ),
             );
         }
@@ -203,8 +211,8 @@ impl Flatten<'_> {
                 .cloned()
         {
             let (kwargs, kwarg_places) = self
-                .copy_construction_keywords(kwargs)
-                .unwrap_or_else(|| self.lower_call_keywords(kwargs, false));
+                .copy_construction_keywords(&self.keywords_of(kwargs))
+                .unwrap_or_else(|| self.lower_call_keywords(&self.keywords_of(kwargs), false));
             let dest = self.fresh(span(e), None);
             self.emit(MirInstr::ConstructTypeParam {
                 dest,
@@ -282,7 +290,7 @@ impl Flatten<'_> {
                 self.emit(MirInstr::TypeName { dest, ty });
                 return Some(dest);
             }
-            return Some(self.constant(e, Const::Str(text)));
+            return Some(self.constant(self.node_of(e), Const::Str(text)));
         }
         // A checked pointer construction materializes the frame/slot
         // handle for its source place; the checked pointer type keeps
@@ -297,7 +305,7 @@ impl Flatten<'_> {
                 .first()
                 .expect("checked pointer construction has a 'to=' argument")
                 .value;
-            let place = self.place(value);
+            let place = self.place(self.node_of(value));
             let dest = self.fresh(span(e), Some(place.root));
             self.emit(MirInstr::MakeRef { dest, place });
             return Some(dest);
@@ -314,8 +322,9 @@ impl Flatten<'_> {
                 _ => None,
             })
         {
-            let init = init
-                .then(|| self.expr(args.first().expect("checked storage construction payload")));
+            let init = init.then(|| {
+                self.expr(self.node_of(args.first().expect("checked storage construction payload")))
+            });
             let dest = self.fresh(span(e), None);
             self.emit(MirInstr::UninitStorage { dest, init });
             return Some(dest);
@@ -335,8 +344,10 @@ impl Flatten<'_> {
             .cloned()
         {
             let value = self.expr(
-                args.first()
-                    .expect("checked Variant construction has one payload"),
+                self.node_of(
+                    args.first()
+                        .expect("checked Variant construction has one payload"),
+                ),
             );
             let dest = self.fresh(span(e), None);
             self.emit(MirInstr::MakeVariant {
@@ -365,10 +376,12 @@ impl Flatten<'_> {
             // Invoke the zero-parameter factory, then wrap its result:
             // the payload temporary is consumed by the construction.
             let factory = self.expr(
-                &kwargs
-                    .first()
-                    .expect("checked Variant(init_with=) has one factory")
-                    .value,
+                self.node_of(
+                    &kwargs
+                        .first()
+                        .expect("checked Variant(init_with=) has one factory")
+                        .value,
+                ),
             );
             let payload = self.fresh_typed(span(e), None, payload);
             self.emit(MirInstr::CallIndirect {
@@ -395,7 +408,10 @@ impl Flatten<'_> {
                 index,
                 value: payload,
             });
-            self.emit_nested_closure_argument_keepalives(args, kwargs);
+            self.emit_nested_closure_argument_keepalives(
+                &self.nodes_of(args),
+                &self.keywords_of(kwargs),
+            );
             return Some(dest);
         }
         None
@@ -423,7 +439,7 @@ impl Flatten<'_> {
             )
         }) && let Some(object) = self.operand(callee, Node::member_object)
         {
-            return self.expr(object);
+            return self.expr(self.node_of(object));
         }
         // Parameterized SIMD methods (`v.cast[DType.<dt>]()`) carry
         // their checker-resolved payload in the adjustment; the
@@ -440,7 +456,7 @@ impl Flatten<'_> {
         if let Some((dtype, width)) = simd_cast
             && let Some(object) = self.operand(callee, Node::member_object)
         {
-            let value = self.expr(object);
+            let value = self.expr(self.node_of(object));
             let dest = self.fresh(span(e), None);
             self.emit(MirInstr::SimdCast {
                 dest,
@@ -464,7 +480,7 @@ impl Flatten<'_> {
         if let Some((dtype, width)) = simd_to_bits
             && let Some(object) = self.operand(callee, Node::member_object)
         {
-            let value = self.expr(object);
+            let value = self.expr(self.node_of(object));
             let dest = self.fresh(span(e), None);
             self.emit(MirInstr::SimdBitcast {
                 dest,
@@ -486,8 +502,8 @@ impl Flatten<'_> {
         if let Some((mask, joined)) = simd_shuffle
             && let Some(object) = self.operand(callee, Node::member_object)
         {
-            let value = self.expr(object);
-            let other = joined.then(|| self.expr(&args[0]));
+            let value = self.expr(self.node_of(object));
+            let other = joined.then(|| self.expr(self.node_of(&args[0])));
             let dest = self.fresh(span(e), None);
             self.emit(MirInstr::SimdShuffle {
                 dest,
@@ -527,19 +543,19 @@ impl Flatten<'_> {
                     _ => None,
                 })
                 .collect();
-            let receiver = self.lower_call_receiver(callee);
+            let receiver = self.lower_call_receiver(self.node_of(callee));
             return self.lower_element_invocation(e, receiver, plan, &indices, args, kwargs);
         }
         if parameterized_method_decls(node).is_some() {
-            return self.parameterized_method_call(e, node, callee, param_args, args, kwargs);
+            return self.parameterized_method_call(e, node, callee, args, kwargs);
         }
-        let mut callee_place = self.callable_receiver_place(callee);
+        let mut callee_place = self.callable_receiver_place(self.node_of(callee));
         let callable_ty = self.node(callee).and_then(Node::ty);
         let lambda_callee = matches!(
             self.node(callee).map(Node::op),
             Some(CheckedOp::Lambda { .. })
         );
-        let callee = self.expr(callee);
+        let callee = self.expr(self.node_of(callee));
         let callable_ty = callable_ty.or_else(|| self.f.reg_types.get(&callee.0).cloned());
         if lambda_callee && callee_place.is_none() {
             // An immediately invoked lambda's closure is a temporary;
@@ -558,7 +574,7 @@ impl Flatten<'_> {
             let place = MirPlace::root(slot, callable_ty.clone());
             callee_place = place.is_typed().then_some(place);
         }
-        let param_arg_regs = self.indirect_param_arg_regs(e, param_args);
+        let param_arg_regs = self.indirect_param_arg_regs(self.node_of(e));
         let resolved = callable_target(&node.adjustments);
         let raises = self.node(e).and_then(Node::raises);
         self.emit_indirect_invocation(
@@ -582,7 +598,6 @@ impl Flatten<'_> {
         e: &Expr,
         node: &CheckedExpr,
         name: &str,
-        param_args: &[ParamArg],
         args: &[Expr],
         kwargs: &[KwArg],
     ) -> Reg {
@@ -590,7 +605,7 @@ impl Flatten<'_> {
         // evaluated before ordinary call arguments: a
         // **value** parameter is a comptime `Int` expression flattened to a
         // register; a **type** parameter is erased (`None`).
-        let param_arg_regs = self.param_arg_regs(e, param_args);
+        let param_arg_regs = self.param_arg_regs(self.node_of(e));
         // Retain only checker-selected `mut`/`ref` caller places. A
         // syntactically simple copied argument remains eligible for
         // ASAP destruction after its value has been evaluated.
@@ -615,15 +630,15 @@ impl Flatten<'_> {
         // level up — installs them). The stringify conversion is the
         // exception: its result is a fresh owned string that carries
         // no loans, so a view argument anchors as in a plain call.
-        let view_result = self.borrows_view_result(e);
+        let view_result = self.node_of(e).borrows_view_result();
         let saved_anchor_permission = self.allow_argument_anchors;
         self.allow_argument_anchors = (stringify
             || !matches!(
                 node.ty.clone().as_ref().map(Ty::kind),
                 Some(TyKind::Struct(constructed, _)) if *constructed == *name
             ))
-            && self.call_anchors_arguments(e);
-        let (regs, arg_places) = self.lower_call_arguments(args, view_result);
+            && self.node_of(e).call_anchors_arguments();
+        let (regs, arg_places) = self.lower_call_arguments(&self.nodes_of(args), view_result);
         self.allow_argument_anchors = saved_anchor_permission;
         let copy_construction = args.is_empty()
             && matches!(
@@ -631,9 +646,9 @@ impl Flatten<'_> {
                 Some(TyKind::Struct(constructed, _)) if *constructed == *name
             );
         let (kw, kwarg_places) = copy_construction
-            .then(|| self.copy_construction_keywords(kwargs))
+            .then(|| self.copy_construction_keywords(&self.keywords_of(kwargs)))
             .flatten()
-            .unwrap_or_else(|| self.lower_call_keywords(kwargs, view_result));
+            .unwrap_or_else(|| self.lower_call_keywords(&self.keywords_of(kwargs), view_result));
         let (regs, arg_places, kw, kwarg_places) = match node.ty.clone().as_ref().map(Ty::kind) {
             Some(TyKind::Struct(constructed, _)) if *constructed == *name => self
                 .fieldwise_keywords_positional(constructed, (regs, arg_places, kw, kwarg_places)),
@@ -643,7 +658,8 @@ impl Flatten<'_> {
         // conversion keep their own callee but type their register
         // as the compile-time string the wrap consumes.
         let literal_result = stringify
-            || (matches!(name, "input" | "repr") && self.implicit_conversion(e).is_some());
+            || (matches!(name, "input" | "repr")
+                && self.node_of(e).implicit_conversion().is_some());
         let target = if stringify {
             "String".to_string()
         } else {
@@ -655,7 +671,11 @@ impl Flatten<'_> {
         } else {
             self.fresh(span(e), None)
         };
-        self.emit_call_invalidations(e, args, kwargs);
+        self.emit_call_invalidations(
+            self.node_of(e),
+            &self.nodes_of(args),
+            &self.keywords_of(kwargs),
+        );
         let capture_accesses = self
             .node(e)
             .map(|node| self.call_capture_accesses(node))
@@ -679,7 +699,10 @@ impl Flatten<'_> {
             instantiated_args,
             spread: self.spread_position(args),
         });
-        self.emit_nested_closure_argument_keepalives(args, kwargs);
+        self.emit_nested_closure_argument_keepalives(
+            &self.nodes_of(args),
+            &self.keywords_of(kwargs),
+        );
         self.install_call_transfers(e, None, &transfer_arg_places);
         d
     }
@@ -698,7 +721,7 @@ impl Flatten<'_> {
         };
         match operation.clone() {
             mojito_checked::checked::SemanticAdjustment::VariantIs { index, .. } => {
-                let variant = self.expr(object);
+                let variant = self.expr(self.node_of(object));
                 let dest = self.fresh(span(e), None);
                 self.emit(MirInstr::VariantIs {
                     dest,
@@ -710,7 +733,7 @@ impl Flatten<'_> {
             // `unsafe_get[T]()`: the method spelling of the checked
             // projection read (`v[T]`).
             mojito_checked::checked::SemanticAdjustment::VariantProject { index, .. } => {
-                let variant = self.expr(object);
+                let variant = self.expr(self.node_of(object));
                 let dest = self.fresh(span(e), None);
                 self.emit(MirInstr::VariantGet {
                     dest,
@@ -721,11 +744,12 @@ impl Flatten<'_> {
             }
             mojito_checked::checked::SemanticAdjustment::VariantSet { index, .. } => {
                 let place = self
-                    .try_place(object)
+                    .try_place(self.node_of(object))
                     .expect("checked Variant.set receiver is a writable place");
-                let value = self.expr(args.first().expect("checked Variant.set has one payload"));
+                let value = self
+                    .expr(self.node_of(args.first().expect("checked Variant.set has one payload")));
                 let dest = self.fresh(span(e), None);
-                self.emit_interior_invalidations(e, None);
+                self.emit_interior_invalidations(self.node_of(e), None);
                 self.emit(MirInstr::VariantSet {
                     dest,
                     place,
@@ -736,28 +760,33 @@ impl Flatten<'_> {
             }
             mojito_checked::checked::SemanticAdjustment::VariantSetInitWith { index, .. } => {
                 let place = self
-                    .try_place(object)
+                    .try_place(self.node_of(object))
                     .expect("checked Variant.set receiver is a writable place");
                 let factory = self.expr(
-                    &kwargs
-                        .first()
-                        .expect("checked Variant.set(init_with=) has one factory")
-                        .value,
+                    self.node_of(
+                        &kwargs
+                            .first()
+                            .expect("checked Variant.set(init_with=) has one factory")
+                            .value,
+                    ),
                 );
                 let dest = self.fresh(span(e), None);
-                self.emit_interior_invalidations(e, None);
+                self.emit_interior_invalidations(self.node_of(e), None);
                 self.emit(MirInstr::VariantSetInitWith {
                     dest,
                     place,
                     index,
                     factory,
                 });
-                self.emit_nested_closure_argument_keepalives(args, kwargs);
+                self.emit_nested_closure_argument_keepalives(
+                    &self.nodes_of(args),
+                    &self.keywords_of(kwargs),
+                );
                 dest
             }
             mojito_checked::checked::SemanticAdjustment::VariantDeinitWith { index, .. } => {
                 let place = self
-                    .try_place(object)
+                    .try_place(self.node_of(object))
                     .expect("checked Variant.deinit_with receiver is an owned place");
                 let variant = self.fresh(span(object), None);
                 self.emit(MirInstr::MovePlace {
@@ -765,23 +794,28 @@ impl Flatten<'_> {
                     place,
                 });
                 let handler = self.expr(
-                    args.first()
-                        .expect("checked Variant.deinit_with has one handler"),
+                    self.node_of(
+                        args.first()
+                            .expect("checked Variant.deinit_with has one handler"),
+                    ),
                 );
                 let dest = self.fresh(span(e), None);
-                self.emit_interior_invalidations(e, None);
+                self.emit_interior_invalidations(self.node_of(e), None);
                 self.emit(MirInstr::VariantDeinitWith {
                     dest,
                     variant,
                     handler,
                     index,
                 });
-                self.emit_nested_closure_argument_keepalives(args, kwargs);
+                self.emit_nested_closure_argument_keepalives(
+                    &self.nodes_of(args),
+                    &self.keywords_of(kwargs),
+                );
                 dest
             }
             mojito_checked::checked::SemanticAdjustment::VariantTake { index, checked, .. } => {
                 let place = self
-                    .try_place(object)
+                    .try_place(self.node_of(object))
                     .expect("checked Variant.take receiver is an owned place");
                 let variant = self.fresh(span(object), None);
                 self.emit(MirInstr::MovePlace {
@@ -789,7 +823,7 @@ impl Flatten<'_> {
                     place,
                 });
                 let dest = self.fresh(span(e), None);
-                self.emit_interior_invalidations(e, None);
+                self.emit_interior_invalidations(self.node_of(e), None);
                 self.emit(MirInstr::VariantTake {
                     dest,
                     variant,
@@ -805,14 +839,16 @@ impl Flatten<'_> {
                 ..
             } => {
                 let place = self
-                    .try_place(object)
+                    .try_place(self.node_of(object))
                     .expect("checked Variant.replace receiver is writable");
                 let value = self.expr(
-                    args.first()
-                        .expect("checked Variant.replace has one payload"),
+                    self.node_of(
+                        args.first()
+                            .expect("checked Variant.replace has one payload"),
+                    ),
                 );
                 let dest = self.fresh(span(e), None);
-                self.emit_interior_invalidations(e, None);
+                self.emit_interior_invalidations(self.node_of(e), None);
                 self.emit(MirInstr::VariantReplace {
                     dest,
                     place,
@@ -833,7 +869,6 @@ impl Flatten<'_> {
         e: &Expr,
         node: &CheckedExpr,
         callee: &Expr,
-        param_args: &[ParamArg],
         args: &[Expr],
         kwargs: &[KwArg],
     ) -> Reg {
@@ -857,21 +892,25 @@ impl Flatten<'_> {
                 (Vec::new(), Vec::new())
             } else {
                 (
-                    self.param_arg_regs(e, param_args),
+                    self.param_arg_regs(self.node_of(e)),
                     self.node(e)
                         .map(Node::instantiated_args)
                         .unwrap_or_default(),
                 )
             };
             let saved_anchor_permission = self.allow_argument_anchors;
-            self.allow_argument_anchors = self.call_anchors_arguments(e);
-            let (regs, arg_places) = self.lower_call_arguments(args, false);
+            self.allow_argument_anchors = self.node_of(e).call_anchors_arguments();
+            let (regs, arg_places) = self.lower_call_arguments(&self.nodes_of(args), false);
             self.allow_argument_anchors = saved_anchor_permission;
-            let (kw, kwarg_places) = self.lower_call_keywords(kwargs, false);
+            let (kw, kwarg_places) = self.lower_call_keywords(&self.keywords_of(kwargs), false);
             let dest = self.fresh(span(e), None);
             let target =
                 callable_target(&node.adjustments).unwrap_or_else(|| format!("{name}.{field}"));
-            self.emit_call_invalidations(e, args, kwargs);
+            self.emit_call_invalidations(
+                self.node_of(e),
+                &self.nodes_of(args),
+                &self.keywords_of(kwargs),
+            );
             let receiver = self.static_receiver(object);
             self.emit(MirInstr::Call {
                 dest,
@@ -890,19 +929,22 @@ impl Flatten<'_> {
                 instantiated_args,
                 spread: self.spread_position(args),
             });
-            self.emit_nested_closure_argument_keepalives(args, kwargs);
+            self.emit_nested_closure_argument_keepalives(
+                &self.nodes_of(args),
+                &self.keywords_of(kwargs),
+            );
             return dest;
         }
         // Keep this as a direct method invocation. In particular,
         // do not synthesize a bound-method value (which would make
         // its receiver/environment escapable).
-        if let Some(dest) = self.lower_elided_receiver_call(e, object, param_args, args, kwargs) {
+        if let Some(dest) = self.lower_elided_receiver_call(e, object, args, kwargs) {
             return dest;
         }
-        let (recv, recv_place) = self.lower_method_receiver(e, object);
-        let implicitly_copied_receiver = self.implicitly_copies_consuming_receiver(e);
+        let (recv, recv_place) = self.lower_method_receiver(self.node_of(e), self.node_of(object));
+        let implicitly_copied_receiver = self.node_of(e).implicitly_copies_consuming_receiver();
         let recv = if implicitly_copied_receiver {
-            self.copy_consuming_receiver(object, recv, recv_place.as_ref())
+            self.copy_consuming_receiver(self.node_of(object), recv, recv_place.as_ref())
         } else {
             recv
         };
@@ -914,20 +956,25 @@ impl Flatten<'_> {
             (Vec::new(), Vec::new())
         } else {
             (
-                self.param_arg_regs(e, param_args),
+                self.param_arg_regs(self.node_of(e)),
                 self.node(e)
                     .map(Node::instantiated_args)
                     .unwrap_or_default(),
             )
         };
         let saved_anchor_permission = self.allow_argument_anchors;
-        self.allow_argument_anchors = self.call_anchors_arguments(e);
-        let (argument_regs, arg_places) = self.lower_call_arguments(args, false);
+        self.allow_argument_anchors = self.node_of(e).call_anchors_arguments();
+        let (argument_regs, arg_places) = self.lower_call_arguments(&self.nodes_of(args), false);
         self.allow_argument_anchors = saved_anchor_permission;
-        let (keyword_regs, kwarg_places) = self.lower_call_keywords(kwargs, false);
+        let (keyword_regs, kwarg_places) =
+            self.lower_call_keywords(&self.keywords_of(kwargs), false);
         let dest = self.fresh(span(e), None);
-        self.emit_interior_invalidations(object, None);
-        self.emit_call_invalidations(e, args, kwargs);
+        self.emit_interior_invalidations(self.node_of(object), None);
+        self.emit_call_invalidations(
+            self.node_of(e),
+            &self.nodes_of(args),
+            &self.keywords_of(kwargs),
+        );
         self.emit(MirInstr::MethodCall {
             dest,
             recv,
@@ -950,7 +997,7 @@ impl Flatten<'_> {
             } else {
                 recv_place.map(Box::new)
             },
-            recv_writes: self.receiver_writes(e),
+            recv_writes: self.node_of(e).receiver_writes(),
             arg_places,
             kwarg_places,
             capture_accesses: self
@@ -962,7 +1009,10 @@ impl Flatten<'_> {
             instantiated_args,
             spread: self.spread_position(args),
         });
-        self.emit_nested_closure_argument_keepalives(args, kwargs);
+        self.emit_nested_closure_argument_keepalives(
+            &self.nodes_of(args),
+            &self.keywords_of(kwargs),
+        );
         dest
     }
 }
@@ -989,7 +1039,7 @@ impl Flatten<'_> {
         // The elaborator selects the element by the index's expression,
         // a literal one included, which a forwarded argument leaves out.
         let element = self
-            .param_arg_regs(e, param_args)
+            .param_arg_regs(self.node_of(e))
             .into_iter()
             .next()
             .map(|mut element| {
