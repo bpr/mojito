@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R730**.
+Next free ID: **R734**.
 
 ## Ordered Work
 
@@ -298,16 +298,46 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R723 `T(copy=x)` over a temporary or a last use runs the copy the
-  pin elides**
+- [ ] **R730 A `^` transfer into a `var` argument runs the move
+  initializer the pin elides**
 
-  Problem: `S(copy=S(1))`, over a copy constructor that adds 100, prints
-  `del 101` and leaks `S(1)`, where the pin prints `del 1`: the temporary
-  is taken, not copied.
-  - `var s = S(2); var d = S(copy=s)` with `s` unused after prints
-    `del 102`, `del 2`, where the pin prints `del 2`.
-  - The path is `Checker::infer_copy_construction`.
-  - Found while landing R717 (2026-10-13).
+  Problem: `take(x^)` over `def take(var s: M)`, where `M`'s move
+  initializer adds 1000, prints `take 1006`, where the pin prints `take 6`.
+  - `take(M(copy=x))` at `x`'s last use differs the same way, since it is
+    now `x`'s move.
+  - Found while landing R723 (2026-10-13).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R731 A transferred call temporary skips the move initializer the
+  pin runs**
+
+  Problem: `var a = mk()^`, over an `M` whose move initializer adds 1000,
+  prints `a 5`, where the pin prints `a 1005`.
+  - Found while landing R723 (2026-10-13).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R732 A `@fieldwise_init` construction stores its `var` arguments
+  without the fields' move initializers**
+
+  Problem: `P(M(3), M(4))` over `@fieldwise_init struct P` with two `M`
+  fields leaves them `3` and `4`, where the pin runs `M`'s move
+  initializer into each and leaves `1003` and `1004`.
+  - Found while landing R723 (2026-10-13).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R733 An outer value last used after a raise in a `try` body is
+  destroyed after the handler on the raise path**
+
+  Problem: `var m = M(2)` then `try: _ = may(-1); var d = M(copy=m)`
+  prints `caught2`, then `mdel 2`, where the pin destroys `m` on the raise
+  edge and prints `mdel 2` first.
+  - The raise happens before `m`'s last use, so the pin treats `m` as
+    dead from the raise edge on.
+  - Values declared inside the body already die on the raise edge.
+  - Found while landing R723 (2026-10-13).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

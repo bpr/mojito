@@ -4193,6 +4193,15 @@ current Mojo:
   declaration is bound the same way. A raising call's result (taken from its
   error-or-value return), a prefix dunder's, an assignment, and `_ = e` are
   separate stores, so the call's temporaries die first.
+  A named-struct copy construction (`Name(copy=v)`, `Name[Args](copy=v)`)
+  whose whole owned source `v` gets its `DropVar` right after it (or after
+  its in-place binding) becomes `v`'s move (`analysis/copy_elision.rs`,
+  `elide_dying_copies`, run after `elaborate_drops`), as Mojo's lifetime
+  checker turns a copy followed by the source's destruction into a move.
+  The checker binds a temporary `copy=` source as a read temporary, so it
+  gets a slot and dies there too. A type parameter's `T(copy=x)` (still
+  `ConstructTypeParam` at that point), a field source, `.copy()`, and a
+  source that dies only on a successor edge stay copies.
   A `_ = e` statement is the same discard: HIR binds its value to a fresh
   per-statement `$discard_s` slot, typed by that value alone and dead at its
   definition, so `_` never names a function-wide local.

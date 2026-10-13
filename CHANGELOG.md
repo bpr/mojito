@@ -8,6 +8,12 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- `S(copy=x)` over a temporary, or over a whole owned local or `var`
+  parameter at its last use, moves the source instead of copying it, as
+  the pin does (R723): `S(copy=S(1))` no longer runs the copy initializer
+  or leaks the temporary, and `var d = S(copy=s)` with `s` dead after runs
+  `S`'s move initializer once. A source read afterwards, a field, a type
+  parameter's `T(copy=x)`, and `.copy()` still copy.
 - A local declared before a `try` and first assigned inside its body
   (`var x: S`, then `try: x = S(may(0))`) survives the body's exit and is
   read after the `try`, as the pin does (R729): MIR marks the declaration

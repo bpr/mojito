@@ -136,6 +136,7 @@ assets/ok/conforms_to_user_and_unasked_traits.mojo	main	exe-differential	sanitiz
 assets/ok/constructor_read_temporary_drop_order.mojo	main	exe-differential	sanitized
 assets/ok/container_hashable.mojo	main	exe-differential	sanitized
 assets/ok/contextual_member_static.mojo	main	exe-differential	sanitized
+assets/ok/copy_construction_last_use_moves.mojo	main	exe-differential	sanitized
 assets/ok/copy_return.mojo	main	exe-differential	sanitized
 assets/ok/copyable.mojo	main	exe-differential	sanitized
 assets/ok/copyable_iterator_reference_aggregate.mojo	main	exe-differential	sanitized

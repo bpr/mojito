@@ -14,6 +14,7 @@
 //! and VM execution. Backward liveness then builds on this move/init foundation
 //! to insert ASAP drops and control-flow-edge cleanup.
 
+use copy_elision::elide_dying_copies;
 #[allow(clippy::wildcard_imports, reason = "pages of this split module")]
 use drops::*;
 #[allow(clippy::wildcard_imports, reason = "pages of this split module")]
@@ -206,10 +207,12 @@ pub fn elaborate_drops_function(
     let scope = binder_scope(name, |name| declarations.function(name));
     let slots = materialized_parameter_slots(&function, &scope);
     let mut elaborated = elaborate_drops(function, &slots, declarations);
+    elide_dying_copies(&mut elaborated.blocks, declarations);
     refine_deinit_fields(&mut elaborated, declarations);
     elaborated
 }
 
+mod copy_elision;
 mod drops;
 mod field_drops;
 mod interior;

@@ -500,6 +500,18 @@ fn try_raise_edge_destroys_live_values_in_reverse_declaration_order() {
 }
 
 #[test]
+fn copy_construction_at_last_use_moves_its_source() {
+    // A named struct's `copy=` construction moves a temporary, a dying
+    // local, a `var` parameter, or a source about to be reassigned; a source
+    // read afterwards and a type parameter's `T(copy=x)` still copy.
+    let src = "struct S(Copyable):\n    var v: Int\n    def __init__(out self, v: Int):\n        self.v = v\n    def __init__(out self, *, copy: Self):\n        self.v = copy.v + 100\n    def __deinit__(deinit self):\n        print(\"del\", self.v)\n\ndef own(var s: S) -> S:\n    return S(copy=s)\n\ndef gen[T: Copyable & Deinitable](var x: T) -> T:\n    return T(copy=x)\n\ndef main():\n    var a = S(copy=S(1))\n    print(\"a\", a.v)\n    var s = S(2)\n    var d = S(copy=s)\n    print(\"d\", d.v)\n    var o = own(S(3))\n    print(\"o\", o.v)\n    var r = S(4)\n    var t = S(copy=r)\n    r = S(5)\n    print(\"t\", t.v, r.v)\n    var k = S(6)\n    var kk = S(copy=k)\n    print(\"k\", kk.v, k.v)\n    var g = gen(S(7))\n    print(\"g\", g.v)\n";
+    assert_eq!(
+        vm(src),
+        "a 1\ndel 1\nd 2\ndel 2\no 3\ndel 3\nt 4 5\ndel 4\ndel 5\nk 106 6\ndel 106\ndel 6\ndel 7\ng 107\ndel 107\n"
+    );
+}
+
+#[test]
 fn looped_try_destroys_call_temporaries_when_the_call_returns() {
     // Inside a loop, a `try` body's call temporaries still die when the call
     // returns, before its result is printed: the `try` does not hold its own

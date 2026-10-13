@@ -3613,6 +3613,7 @@ impl Checker {
                 });
             }
             let arg_ty = self.infer(&kwargs[0].value)?;
+            self.record_read_temporary_argument(&kwargs[0].value);
             return match arg_ty.kind() {
                 TyKind::Struct(actual, _) if actual == name => Ok(arg_ty),
                 _ => Err(TypeError::TypeMismatch {
@@ -3628,6 +3629,7 @@ impl Checker {
             .clone();
         let decls = info.decls.clone();
         let arg_ty = self.infer(&kwargs[0].value)?;
+        self.record_read_temporary_argument(&kwargs[0].value);
         let (subst, tyargs) = self.resolve_use_params(
             name,
             &decls,
