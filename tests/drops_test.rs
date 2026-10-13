@@ -500,6 +500,17 @@ fn try_raise_edge_destroys_live_values_in_reverse_declaration_order() {
 }
 
 #[test]
+fn looped_try_destroys_call_temporaries_when_the_call_returns() {
+    // Inside a loop, a `try` body's call temporaries still die when the call
+    // returns, before its result is printed: the `try` does not hold its own
+    // body's locals live round the back edge.
+    let src = format!(
+        "{TRY_NOISY}def g(a: Noisy, b: Noisy) raises -> Int:\n    return may(a.tag + b.tag)\n\ndef main():\n    for i in range(2):\n        try:\n            print(g(Noisy(i), Noisy(2)))\n        except e:\n            print(\"caught\")\n"
+    );
+    assert_eq!(vm(&src), "deinit 2\ndeinit 0\n2\ndeinit 2\ndeinit 1\n3\n");
+}
+
+#[test]
 fn silent_try_rebind_drops_the_old_value_before_the_region() {
     // When nothing before the rebind can raise (a `^` move is provably
     // silent), the overwritten value is unobservable on every region path and

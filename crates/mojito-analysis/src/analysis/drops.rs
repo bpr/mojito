@@ -75,7 +75,8 @@ pub(super) fn elaborate_drops(
     let mut worklist = Worklist::backward(&f.blocks);
     while let Some(b) = worklist.pop() {
         let live_out = block_live_out(f, b, &live_in);
-        let new_in = transfer_drop_liveness(&f.blocks[b].instrs, live_out, &live_in);
+        let new_in =
+            transfer_drop_liveness(&f.blocks[b].instrs, live_out, &live_in, &function_defs);
         if new_in != live_in[b] {
             live_in[b] = new_in;
             for predecessor in &predecessors[b] {
@@ -107,6 +108,7 @@ pub(super) fn elaborate_drops(
         generation_dests: &generation_dests,
         effective_live_in: &effective_live_in,
         passing: &passing,
+        function_defs: &function_defs,
     };
 
     // (1) Block-internal drops: replay each block, tracking the live set after each
@@ -121,6 +123,7 @@ pub(super) fn elaborate_drops(
             generation_entry: &generation_entries[b],
             loan_roots: &loan_roots,
             generation_dests: &generation_dests,
+            function_defs: &function_defs,
         };
         let mut new_instrs = replay.elaborate(
             block_live_out(f, b, &live_in),
@@ -362,6 +365,8 @@ pub(super) struct RegionDropCtx<'a> {
     effective_live_in: &'a [HashSet<VarId>],
     /// Which operands each instruction receives by value.
     passing: &'a ArgumentPassing<'a>,
+    /// Function-wide `DefVar` counts, judging each `try` body's locals.
+    function_defs: &'a HashMap<VarId, usize>,
 }
 
 impl RegionDropCtx<'_> {
@@ -541,7 +546,8 @@ pub(super) fn elaborate_region_drops(
     let mut worklist = Worklist::backward(blocks);
     while let Some(b) = worklist.pop() {
         let live_out = region_block_live_out(blocks, b, &live_in, seeds);
-        let new_in = transfer_region_drop_liveness(&blocks[b].instrs, live_out, seeds);
+        let new_in =
+            transfer_region_drop_liveness(&blocks[b].instrs, live_out, seeds, ctx.function_defs);
         if new_in != live_in[b] {
             live_in[b] = new_in;
             for predecessor in &predecessors[b] {
@@ -590,6 +596,7 @@ pub(super) fn elaborate_region_drops(
             generation_entry: &generation_entries[b],
             loan_roots: ctx.loan_roots,
             generation_dests: ctx.generation_dests,
+            function_defs: ctx.function_defs,
         };
         blocks[b].instrs = replay.elaborate(
             live_out,
@@ -736,14 +743,13 @@ pub(super) fn transfer_region_drop_liveness(
     instrs: &[MirInstr],
     mut live: HashSet<VarId>,
     seeds: &RegionSeeds,
+    function_defs: &HashMap<VarId, usize>,
 ) -> HashSet<VarId> {
     for instr in instrs.iter().rev() {
         if let Some(d) = var_def(instr) {
             live.remove(&d);
         }
-        for (u, _) in var_uses(instr) {
-            live.insert(u);
-        }
+        live.extend(drop_liveness_uses(instr, function_defs));
         if let MirInstr::ConsumeVar { var } = instr {
             live.insert(*var);
         }
@@ -942,14 +948,13 @@ pub(super) fn transfer_drop_liveness(
     instrs: &[MirInstr],
     mut live: HashSet<VarId>,
     live_in: &[HashSet<VarId>],
+    function_defs: &HashMap<VarId, usize>,
 ) -> HashSet<VarId> {
     for instr in instrs.iter().rev() {
         if let Some(d) = var_def(instr) {
             live.remove(&d);
         }
-        for (u, _) in var_uses(instr) {
-            live.insert(u);
-        }
+        live.extend(drop_liveness_uses(instr, function_defs));
         live.extend(escape_live_in(instr, live_in));
         // A pending `ConsumeVar` is the variable's teardown: keep it live up
         // to that point so no earlier death splices a competing `DropVar`.
@@ -1254,6 +1259,7 @@ struct BlockReplay<'a> {
     generation_entry: &'a LoanGenerationState,
     loan_roots: &'a BTreeMap<u32, DropLoanGeneration>,
     generation_dests: &'a BTreeMap<u32, Option<MirInteriorOrigin>>,
+    function_defs: &'a HashMap<VarId, usize>,
 }
 
 /// What a `try`'s own elaboration reads at its position in a replayed block.
@@ -1321,7 +1327,7 @@ impl BlockReplay<'_> {
 
             // The backward step, remembering which variables it made live.
             let def = var_def(&instr);
-            let uses: Vec<VarId> = var_uses(&instr).into_iter().map(|(v, _)| v).collect();
+            let uses = drop_liveness_uses(&instr, self.function_defs);
             let removed_def = def.is_some_and(|d| live.remove(d));
             entering.clear();
             entering.extend(&uses);
@@ -1496,6 +1502,24 @@ impl InPlaceDeaths {
 /// beyond itself: the owner roots of every generation a live reference (or a
 /// root kept alive this way) holds, as [`effective_drop_liveness`] closes
 /// them.
+/// The variables an instruction reads, for drop liveness: [`var_uses`], less
+/// a `try` body's locals. `Try.cleanup` destroys those on every exit from
+/// the body, so their slots are empty whenever the `try` is entered and
+/// nothing outside it observes them; counting them as read would hold them
+/// live round a loop's back edge and defer their deaths to the cleanup.
+fn drop_liveness_uses(instr: &MirInstr, function_defs: &HashMap<VarId, usize>) -> Vec<VarId> {
+    let uses = var_uses(instr).into_iter().map(|(v, _)| v);
+    match instr {
+        MirInstr::Try { body, .. } => {
+            let locals: HashSet<VarId> = region_cleanup_vars(body, function_defs)
+                .into_iter()
+                .collect();
+            uses.filter(|v| !locals.contains(v)).collect()
+        }
+        _ => uses.collect(),
+    }
+}
+
 fn loan_extras(
     live: &DenseSet,
     state: &LoanGenerationState,

@@ -14,6 +14,11 @@ to evolve under the `0.x` compatibility rules.
   "erased analysis register" or "undefined aggregate register", and on the
   VM a struct local assigned in both arms of an `if` and then read no
   longer fails MIR verification.
+- A call's argument temporaries in a `try` body inside a loop die when
+  the call returns, as the pin does (R722): `print(mk(S(5), S(6), j))` in
+  a looped `try` destroys `6` and `5` before printing, where they used to
+  wait for the `try`'s cleanup. A `try` no longer counts its own body's
+  locals as read, so they are not held live round the loop.
 - A raise in a `try` body destroys the body's live values in reverse
   declaration order, as the pin does (R720): `S(1) + S(9)` over a raising
   `__add__`, a raising method or free call over temporaries, and a raising

@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R729**.
+Next free ID: **R730**.
 
 ## Ordered Work
 
@@ -287,6 +287,24 @@ Track: `ownership`.
 
 Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the track, an entry Mojito runs to a wrong result, or accepts where the pin rejects, comes first; then one it rejects where the pin runs it; then a verdict that is right with the wrong words.
 
+- [ ] **R729 A local declared outside a `try` and first assigned inside
+  it is destroyed when the body is left**
+
+  Problem: `var x: S`, then `try: x = S(may(0))` with an `except` that
+  returns, then `print("after", x.v)` fails on the VM with `field access on
+  non-struct None`, where the pin prints `after 0`, `del 0`.
+  - Natively it prints `del 0` and then `after 0`, reading a destroyed
+    value.
+  - Cause: since R727, `var x: T` emits no MIR `DefVar`, so every def of
+    `x` lies in the body and `region_cleanup_vars` counts it as a body
+    local; `Try.cleanup` destroys it on the way out.
+  - The fix judges body-locality by the declaration's scope, which MIR must
+    record (a declare marker or a declaring-region fact), likely a MIR
+    schema bump.
+  - Found while planning R722 (2026-10-13).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
 - [ ] **R473 A discard `_ = x` copies its source instead of taking it**
 
   Problem: `var x = Q(1, "y")` then `_ = x` as `x`'s last use prints
@@ -295,20 +313,6 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
   - Mojito copies `x` into the discard and destroys both, where the pin
     moves the last use.
   - Found while landing R467 (2026-10-07).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **R722 A raising call destroys its read temporaries in creation
-  order when it raises**
-
-  Problem: `P(S(3), S(4), 1)` in a `try`, over a raising `__init__` that
-  raises, prints `del 3`, `del 4`, `caught boom`, where the pin prints
-  `del 4`, `del 3`, `caught boom`.
-  - A raising free call (`mk(S(3), S(4), 1)`) does the same.
-  - On the raise edge the `$tmp_arg_r` slots drop through the region's
-    cleanup backstop, which may share R720's cause; fix them together if
-    so.
-  - Found while landing R717 (2026-10-13).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

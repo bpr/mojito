@@ -4539,7 +4539,12 @@ sits on the normal path: a raise landing between the rebind and that drop
 would otherwise leak the value. The list is stored in descending `VarId`
 order — reverse declaration order, the order of every shared death point and of
 `EscapeJump` cleanups — and both backends run it front to back, so a raise
-destroys the body's live values newest declaration first, as Mojo does.
+destroys the body's live values newest declaration first, as Mojo does. Since
+the cleanup empties every body local on each exit, the outer drop liveness
+does not count a `try` as reading its body's locals: their slots are empty
+whenever the `try` is entered, so a loop's back edge does not hold them live,
+and they die at their last use inside the body, the list being only a
+backstop.
 
 `EscapeJump` also carries cleanup for cross-region loop escapes. This makes
 hidden try-region exits explicit enough for the VM to run destructors before
