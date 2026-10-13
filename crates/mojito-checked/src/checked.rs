@@ -804,7 +804,9 @@ pub enum SemanticAdjustment {
     /// (or receiver, or operator operand) binds a regular `var`/`deinit`
     /// parameter, which takes the caller's storage. A `^` transfer of a
     /// whole local hands its slot to the callee without the move
-    /// initializer, as Mojo's owned argument convention does.
+    /// initializer, as Mojo's owned argument convention does. A discarded
+    /// `^` transfer (`_ = x^`, or `x^` as a statement) carries it too: the
+    /// discard destroys the caller's storage without the move initializer.
     ForwardedArgument,
     /// Concrete owner accesses performed by a callable environment during this
     /// call. The checker derives these from the selected callable and any

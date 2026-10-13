@@ -659,7 +659,8 @@ pub enum UseMode {
     /// move initializer: an owned (`var`/`deinit`) parameter of the call that
     /// consumes the register, as Mojo's owned argument convention binds the
     /// caller's storage, or a conditional expression's result temporary,
-    /// which its consumer takes as any other rvalue. Ownership treats it
+    /// which its consumer takes as any other rvalue, or a discard (`_ = x^`),
+    /// whose slot destroys the storage in place. Ownership treats it
     /// exactly as [`UseMode::Move`].
     Forward,
 }

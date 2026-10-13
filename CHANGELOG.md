@@ -8,6 +8,10 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A discarded transfer, `_ = x^` or `x^` as a statement, destroys `x`
+  where it lies without running the move initializer, as the pin does
+  (R748), over a local, a `var` parameter, or a generic one. A bare `x^`
+  statement used to move the value and then leak it.
 - A call consumes its owned operands itself, after every operand is
   evaluated, as the pin does (R747): a raise in a later operand destroys a
   `^` transfer, a temporary, a copy construction, a keyword or `*xs`

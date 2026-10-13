@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R750**.
+Next free ID: **R751**.
 
 ## Ordered Work
 
@@ -295,16 +295,6 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
   - Mojito copies `x` into the discard and destroys both, where the pin
     moves the last use.
   - Found while landing R467 (2026-10-07).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **R748 A discard of a transfer `_ = a^` runs the move initializer**
-
-  Problem: `var a = M(50)` then `_ = a^` prints `move 1050` / `del 1050`,
-  where the pin prints only `del 50`.
-  - The pin destroys `a` in place; Mojito moves it into new storage first.
-  - Not R473 (`_ = x` without `^`, which copies).
-  - Found while landing R747 (2026-10-13).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -1242,6 +1232,21 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
     read reaches the storage after that.
   - Depends on nothing.
   - Model: Opus, Planned.
+
+- [ ] **R750 A discard of a field transfer `_ = w.m^` is rejected**
+
+  Problem: `var w = W(M(1), M(2)); _ = w.m^` over a destructor-less
+  `@fieldwise_init struct W(Movable)` reports "field 'w.m' destroyed out of
+  the middle of a value", where the pin runs it.
+  - The pin destroys the field in place, then the rest of `w`:
+    `del 1001`, `del 1002`.
+  - The pin rejects `var t = w.m^` with the same message, so only the
+    discard is accepted.
+  - MIR `transfer` lowers a field transfer to `MovePlace` before it reads
+    the discard's forwarding fact.
+  - Found while landing R748 (2026-10-13).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
 
 - [ ] **R696 A reference argument invalidated by a later argument is
   rejected where the pin runs the call**

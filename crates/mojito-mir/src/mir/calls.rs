@@ -1698,8 +1698,11 @@ impl<'a> Flatten<'a> {
     /// definition, so drop elaboration splices its `DropVar` right after the
     /// call. A non-raising call's slot is its result storage (`in_place`), so
     /// it drops ahead of the call's argument temporaries; a raising call's
-    /// drops after them. Only a fresh owned aggregate is bound — a reference result,
-    /// scalar, or pointer owns no storage, and a place read is never re-owned.
+    /// drops after them. Only a fresh owned aggregate or a `^` transfer is
+    /// bound — a reference result, scalar, or pointer owns no storage, and a
+    /// place read is never re-owned. A transfer's storage is forwarded to the
+    /// slot (the check records the discard as its consumer), so the slot
+    /// destroys the source where it lies, before the next statement.
     pub(super) fn bind_discarded_result(
         &mut self,
         expression: &'a mojito_hir::hir::HirExpr,
@@ -1709,7 +1712,8 @@ impl<'a> Flatten<'a> {
         let Some(node) = self.checked.expression(expression.node) else {
             return;
         };
-        if !self.handle(expression).is_fresh_temporary() {
+        let handle = self.handle(expression);
+        if !handle.is_fresh_temporary() && !matches!(handle.op(), CheckedOp::Transfer(_)) {
             return;
         }
         if node.adjustments.iter().any(|adjustment| {

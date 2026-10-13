@@ -999,6 +999,7 @@ impl Checker {
                         .borrow_mut()
                         .insert(value.source_span());
                     self.check_consuming(value, &found, "discard assignment")?;
+                    self.record_discarded_transfer(value);
                     return Ok(());
                 }
                 self.check_capture_access(name, true)?;
@@ -2317,6 +2318,7 @@ impl Checker {
                     .borrow_mut()
                     .insert(expr.source_span());
                 self.record_unconsumed_temporary(expr);
+                self.record_discarded_transfer(expr);
                 Ok(())
             }
         }

@@ -136,6 +136,15 @@ impl Checker {
         self.record_at(expr.source_span()).forwarded_argument = true;
     }
 
+    /// Record a discarded `^` transfer (`_ = x^`, or `x^` as a statement):
+    /// the discard takes the transferred storage and destroys it in place,
+    /// as an owned parameter takes it, with no move initializer.
+    pub(super) fn record_discarded_transfer(&self, expr: &Expr) {
+        if matches!(expr.kind, ExprKind::Transfer(_)) {
+            self.record_forwarded_operand(expr);
+        }
+    }
+
     /// Record a temporary the enclosing body owns but cannot destroy — a
     /// reference result is none: a call result or display whose struct type is not `Deinitable` under the
     /// body's bounds, or a call result typed by one of the body's own type
