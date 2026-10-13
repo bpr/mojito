@@ -246,7 +246,9 @@ struct Dict[
             b += 1
         var i = 0
         while i < len(keys):
-            self[keys._get_copy(i)] = values._get_copy(i)
+            # The pair stands in for upstream's `zip(keys, values)` element.
+            var entry = (keys[i].copy(), values[i].copy())
+            self[entry[0].copy()] = entry[1].copy()
             i += 1
 
     def __init__(out self, *, copy: Self) where conforms_to(

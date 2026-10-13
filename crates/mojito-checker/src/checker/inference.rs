@@ -1046,6 +1046,7 @@ impl Checker {
                 }
                 let result = self.nominal_dict(key_ty, value_ty);
                 self.record_collection_construction(expr.source_span(), &result);
+                self.record_dict_literal_construction(expr.source_span(), &result, true)?;
                 Ok(result)
             }
             ExprKind::Comprehension { .. } => self
@@ -2233,6 +2234,12 @@ impl Checker {
             self.record_collection_construction(expression.source_span(), expected);
             self.record_at(expression.source_span()).ty = Some(expected.clone());
         }
+        if let ExprKind::BraceLit(entries) = &expression.kind
+            && !entries.is_empty()
+            && dict_elements(expected).is_some()
+        {
+            self.record_dict_literal_construction(expression.source_span(), expected, record)?;
+        }
         Ok(expected.clone())
     }
 
@@ -2384,8 +2391,82 @@ impl Checker {
                 target: target.clone(),
                 insert,
                 materialized,
+                literal: None,
             },
         ));
+    }
+
+    /// Check a non-empty dictionary display as upstream's
+    /// `Dict(keys=[k…], values=[v…], __dict_literal__=None)`: the literal
+    /// constructor's `where` clause must hold under `target`'s arguments, as
+    /// at that call. When `record`, also attach the exact lowered `Dict` and
+    /// `List` literal constructor symbols to the display's
+    /// `ConstructCollection`, which MIR lowers as those calls.
+    pub(super) fn record_dict_literal_construction(
+        &self,
+        span: SourceSpan,
+        target: &Ty,
+        record: bool,
+    ) -> Result<(), TypeError> {
+        let TyKind::Struct(name, arguments) = target.kind() else {
+            return Ok(());
+        };
+        let Some((info, sig)) = self.structs.get(name).and_then(|info| {
+            info.methods
+                .get("__init__")?
+                .iter()
+                .find(|sig| {
+                    mojito_symbol::symbol::is_dict_literal_constructor(
+                        &sig.names,
+                        sig.variadic.is_some(),
+                    )
+                })
+                .map(|sig| (info, sig))
+        }) else {
+            return Ok(());
+        };
+        let struct_arguments =
+            super::comptime_validation::positional_pack_arguments(&info.decls, arguments);
+        let mut environment = ConstraintEnvironment::declared(&sig.decls, &[]);
+        environment.bind_declared(&info.decls, &struct_arguments);
+        for constraint in &sig.availability {
+            self.validate_constraint_in_environment(name, constraint, &environment)?;
+        }
+        if !record {
+            return Ok(());
+        }
+        let list = mojito_types::types::LIST_TYPE_NAME;
+        let Some(list_constructor) = self
+            .structs
+            .get(list)
+            .and_then(|info| info.methods.get("__init__"))
+            .and_then(|sigs| {
+                sigs.iter().find(|sig| {
+                    mojito_symbol::symbol::is_list_literal_constructor(
+                        &sig.names,
+                        sig.variadic.is_some(),
+                    )
+                })
+            })
+            .map(|sig| {
+                method_lowered_name(list, "__init__", sig, self.self_instance_ty(list).as_ref())
+            })
+        else {
+            return Ok(());
+        };
+        let constructor =
+            method_lowered_name(name, "__init__", sig, self.self_instance_ty(name).as_ref());
+        if let Some(mojito_checked::checked::SemanticAdjustment::ConstructCollection {
+            literal,
+            ..
+        }) = self.record_at(span).adjustment.as_deref_mut()
+        {
+            *literal = Some(Box::new(mojito_checked::checked::DictLiteral {
+                constructor,
+                list_constructor,
+            }));
+        }
+        Ok(())
     }
 
     /// Record a fixed-size list display's resolution to `Array`'s variadic

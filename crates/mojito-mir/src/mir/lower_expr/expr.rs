@@ -3,7 +3,9 @@
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
-use mojito_checked::checked::{CheckedExpr, CheckedNodeId, CheckedOp, CheckedParamArg};
+use mojito_checked::checked::{
+    CheckedExpr, CheckedNodeId, CheckedOp, CheckedParamArg, DictLiteral,
+};
 use mojito_types::types::TyKind;
 
 impl<'a> Flatten<'a> {
@@ -372,6 +374,9 @@ impl<'a> Flatten<'a> {
         }
         let regs = self.display_elements(node, &operands);
         let (keys, values) = regs.split_at(entries.len());
+        if let Some(literal) = dict_literal_plan(node.checked) {
+            return Some(self.dict_literal(node, &target, literal, keys, values));
+        }
         let collection = self.begin_nominal_collection(node, &target);
         for (index, &key) in keys.iter().enumerate() {
             let arguments = std::iter::once(key)
@@ -744,6 +749,89 @@ impl<'a> Flatten<'a> {
             (None, None) => self.var(&name),
         };
         self.read_slot(var, checked.location(), Some(checked))
+    }
+
+    /// Dictionary display `node` as upstream's
+    /// `Dict(keys=[k…], values=[v…], __dict_literal__=None)`: the key and
+    /// value registers become `List` literal constructions, which the `Dict`
+    /// literal constructor consumes.
+    fn dict_literal(
+        &mut self,
+        node: Node<'a>,
+        target: &Ty,
+        literal: &DictLiteral,
+        keys: &[Reg],
+        values: &[Reg],
+    ) -> Reg {
+        let (key_ty, value_ty) = dict_elements(target).expect("checked dictionary display target");
+        let (keys_ty, values_ty) = (
+            mojito_types::types::list_type(key_ty.clone()),
+            mojito_types::types::list_type(value_ty.clone()),
+        );
+        let keys = self.literal_constructor_call(
+            node,
+            &literal.list_constructor,
+            keys_ty,
+            keys.to_vec(),
+            Vec::new(),
+            "__list_literal__",
+        );
+        let values = self.literal_constructor_call(
+            node,
+            &literal.list_constructor,
+            values_ty,
+            values.to_vec(),
+            Vec::new(),
+            "__list_literal__",
+        );
+        self.literal_constructor_call(
+            node,
+            &literal.constructor,
+            target.clone(),
+            Vec::new(),
+            vec![("keys".to_string(), keys), ("values".to_string(), values)],
+            "__dict_literal__",
+        )
+    }
+
+    /// One call of a literal constructor `func` to a fresh register typed
+    /// `ty`, instantiated at `ty`'s arguments: `args` positionally, then
+    /// `kwargs`, then the `marker` keyword bound to `None`.
+    fn literal_constructor_call(
+        &mut self,
+        node: Node<'a>,
+        func: &str,
+        ty: Ty,
+        args: Vec<Reg>,
+        mut kwargs: Vec<(String, Reg)>,
+        marker: &str,
+    ) -> Reg {
+        let TyKind::Struct(_, instantiated_args) = ty.kind() else {
+            unreachable!("a literal constructor builds a nominal collection")
+        };
+        let instantiated_args = instantiated_args.clone();
+        let none = self.fresh_typed(node.location(), None, Ty::none());
+        self.emit(MirInstr::Const {
+            dest: none,
+            k: Const::None,
+        });
+        kwargs.push((marker.to_string(), none));
+        let dest = self.fresh_typed(node.location(), None, ty);
+        self.emit(MirInstr::Call {
+            dest,
+            func: FuncRef::named(func),
+            raises: None,
+            arg_places: vec![None; args.len()],
+            args,
+            kwarg_places: vec![None; kwargs.len()],
+            kwargs,
+            capture_accesses: Vec::new(),
+            param_arg_regs: Vec::new(),
+            receiver: None,
+            instantiated_args,
+            spread: None,
+        });
+        dest
     }
 }
 

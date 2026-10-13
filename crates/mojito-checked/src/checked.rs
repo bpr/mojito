@@ -987,6 +987,10 @@ pub enum SemanticAdjustment {
         /// (`(1, 2)[0]`): it is also a materialized borrow source (see
         /// `MaterializeBorrowSource`), and one span carries one adjustment.
         materialized: Option<mojito_types::origin::OwnerId>,
+        /// A non-empty dictionary display's literal constructor: the display
+        /// is `Dict(keys=[k…], values=[v…], __dict_literal__=None)`, built
+        /// from the key and value lists rather than by insertion.
+        literal: Option<Box<DictLiteral>>,
     },
     /// A fixed-size list display resolved to `Array`'s variadic literal
     /// constructor. MIR lowers this as one nominal constructor call carrying
@@ -1146,6 +1150,17 @@ pub enum SemanticAdjustment {
     InvalidateInteriors {
         invalidations: Vec<InteriorInvalidation>,
     },
+}
+
+/// The constructors a dictionary display lowers through.
+///
+/// See [`SemanticAdjustment::ConstructCollection`]: the exact lowered symbols
+/// of `Dict`'s `__dict_literal__` overload and of `List`'s `__list_literal__`
+/// overload, which builds the key and value lists.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct DictLiteral {
+    pub constructor: String,
+    pub list_constructor: String,
 }
 
 /// The construction a sugar checked as.

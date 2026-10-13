@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R698**.
+Next free ID: **R701**.
 
 ## Ordered Work
 
@@ -298,22 +298,21 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R694 A dict display is not `Dict`'s `__dict_literal__` constructor
-  over key and value lists**
+- [ ] **R700 `p[i].copy()` through a generic `UnsafePointer` copies twice
+  and never destroys the first copy**
 
-  Problem: `{String("x"): mk(4), String("y"): a}` copies each key and value
-  through the `keys` / `values` lists at the pin (`copy 14`, `copy 24`,
-  `copy 21`, `del 14`), and Mojito inserts them directly, so its copy and
-  destructor trace differs.
-  - Upstream lowers the display as
-    `Dict(keys=[k…], values=[v…], __dict_literal__=None)`; the bundled
-    `Dict.__init__(var keys, var values, __dict_literal__)` exists.
-  - `brace_literal` (`crates/mojito-mir/src/mir/lower_expr/expr.rs`) is
-    where the display is built.
-  - Needs R693 so the key and value lists' reads land in the `Dict` call's
-    setup; relates to R211.
-  - Found while landing R686 (2026-10-13).
-  - Depends on R693.
+  Problem: `return p[0].copy()` in `def g[T: Copyable & Movable &
+  Deinitable](p: UnsafePointer[T, _]) -> T` prints `copy 4` at the pin,
+  and `copy 4 copy 14` in Mojito, whose `14` is never destroyed.
+  - The returned value is the second copy (`24`), so the caller also sees
+    the wrong value.
+  - `List._get_copy` (`stdlib/std/collections/list.mojo`,
+    `self.data[index].copy()`) has this shape, and about 20 bundled
+    callers reach it.
+  - Probe: the `g` above over `[mk(4)].unsafe_ptr()`, with a struct whose
+    copy constructor prints and adds 10.
+  - Found while landing R694 (2026-10-13).
+  - Depends on nothing.
   - Model: Opus, Not Planned.
 
 - [ ] **R687 A struct operator's operand owner dies after the result's
@@ -2159,6 +2158,22 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     (`assets/type_error/trait_member_direct_access.mojo`); the bracketed
     application takes another path.
   - Found while landing R551 (2026-10-10).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R698 A constraint on a type parameter that lacks the trait is
+  "violated" where the pin says "lacking evidence"**
+
+  Problem: `var d = {1: x.copy()}` in `def f[T: Copyable & Hashable &
+  Equatable](x: T)` is rejected by both, but Mojito says "violated
+  constraint" and the pin says "lacking evidence to prove correctness".
+  - `constraint_verdict`'s `Conforms` arm
+    (`crates/mojito-checker/src/checker/constraints.rs`) folds a symbolic
+    parameter's missing conformance to false; the pin leaves it unproven.
+  - The same holds for the spelled
+    `Dict[Int, T](keys=[1], values=[x.copy()], __dict_literal__=None)`.
+  - Keep a `comptime if conforms_to(T, ...)` arm's folding as it is.
+  - Found while landing R694 (2026-10-13).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -6511,6 +6526,19 @@ residue found inside a task moves to the task that owns its fix.
   Mojito reports "unknown type 'StaticString'".
   - Upstream's `StaticString` is `StringSlice[StaticConstantOrigin]`.
   - Found while landing R421 (2026-10-06).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R699 A `Dict` destroys its entries in insertion order, where the
+  pin's table destroys them in slot order**
+
+  Problem: `{mk(5): mk(6), mk(8): mk(9)}` ends with `del 25 del 26 del 28
+  del 29` in Mojito and `del 28 del 29 del 25 del 26` at the pin.
+  - Mojito's bundled `Dict` keeps its entries in one `List`
+    (`stdlib/std/collections/dict.mojo`), so teardown follows insertion.
+  - Upstream's table destroys entries in slot order.
+  - `Int` keys happened to match insertion order in every probe.
+  - Found while landing R694 (2026-10-13).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

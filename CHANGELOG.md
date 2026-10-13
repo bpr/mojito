@@ -8,6 +8,13 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A non-empty dict display is `Dict`'s `__dict_literal__` constructor over
+  a key list and a value list, as the pin lowers it (R694): each entry is
+  copied as upstream's constructor copies it, so `{1: mk(4)}` traces
+  `copy 4 copy 14 del 14` as at the pin, and a display over a value that is
+  not `Copyable & Deinitable` (`{1: M(1)}` over a `Movable`-only `M`) is
+  rejected at the display. The bundled constructor no longer leaks the
+  intermediate copy `List._get_copy` made.
 - A list, set, dict, or array display passed as a call argument is built at
   the call's setup, after every argument is evaluated, as the pin builds it
   (R693): `ha([a.t, 1], bump(a))` and `hd({1: a.t}, bump(a))` see `bump`'s

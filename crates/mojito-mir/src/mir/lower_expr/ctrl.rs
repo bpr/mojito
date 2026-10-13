@@ -5,7 +5,7 @@
 use super::*;
 use mojito_checked::checked::{
     CheckedComprehensionClause, CheckedExpr, CheckedOp, ComptimeIteration, ComptimeSource,
-    SemanticAdjustment,
+    DictLiteral, SemanticAdjustment,
 };
 use mojito_types::types::TyKind;
 
@@ -18,6 +18,18 @@ pub(super) fn collection_plan(node: &CheckedExpr) -> Option<(Ty, Option<String>)
         SemanticAdjustment::ConstructCollection { target, insert, .. } => {
             Some((target.clone(), insert.clone()))
         }
+        _ => None,
+    })
+}
+
+/// Return the literal constructors the checker selected for dictionary
+/// display `node`, when it is upstream's `__dict_literal__` construction.
+pub(super) fn dict_literal_plan(node: &CheckedExpr) -> Option<&DictLiteral> {
+    display_adjustments(node).find_map(|adjustment| match adjustment {
+        SemanticAdjustment::ConstructCollection {
+            literal: Some(literal),
+            ..
+        } => Some(literal.as_ref()),
         _ => None,
     })
 }

@@ -14,7 +14,7 @@ mod expr_access;
 mod expr_call;
 mod expr_method;
 
-use ctrl::{array_literal_plan, collection_plan};
+use ctrl::{array_literal_plan, collection_plan, dict_literal_plan};
 
 /// The checked inline uninit-storage method being lowered.
 enum UninitStorageOp {

@@ -769,6 +769,27 @@ fn collection_displays_use_parameter_and_return_context() {
 }
 
 #[test]
+fn dict_display_requires_literal_constructor_availability() {
+    let movable = "struct M(Movable):\n    var v: Int\n\n    def __init__(out self, v: Int):\n        self.v = v\n\n";
+    // An empty display is `Dict()`, which asks nothing of the value.
+    ok_std(&format!(
+        "{movable}def main():\n    var d: Dict[Int, M] = {{}}\n    print(len(d))\n"
+    ));
+    ok_std(
+        "def main():\n    var d = {1: String(\"a\")}\n    var e: Dict[Int, Int] = {2: 3}\n    print(len(d), len(e))\n",
+    );
+    for source in [
+        format!("{movable}def main():\n    var d = {{1: M(1)}}\n    print(len(d))\n"),
+        format!("{movable}def main():\n    var d: Dict[Int, M] = {{1: M(1)}}\n    print(len(d))\n"),
+    ] {
+        assert!(matches!(
+            err_std(&source),
+            TypeError::BadCall { func, reason } if func == "Dict" && reason.contains("violated constraint")
+        ));
+    }
+}
+
+#[test]
 fn rejects_non_bool_if_condition() {
     let e = err("if (1, 2):\n    pass\n");
     match e {

@@ -260,6 +260,7 @@ string-capacity	run	assets/ok/string_capacity.mojo
 maybe-uninit-write	run	assets/ok/maybe_uninit_write.mojo
 maybe-uninit-write-nontrivial	reject	assets/type_error/maybe_uninit_write_nontrivial.mojo
 dict-requires-hashable-key	reject	assets/type_error/dict_requires_hashable_key.mojo
+dict-display-requires-copyable-value	reject	assets/type_error/dict_display_requires_copyable_value.mojo
 set-requires-hashable-element	reject	assets/type_error/set_requires_hashable_element.mojo
 dict-views-iteration	run	assets/ok/dict_views_iteration.mojo
 dict-view-len-rejected	reject	assets/type_error/dict_view_len_rejected.mojo
@@ -541,3 +542,4 @@ by-value-argument-read-at-call-setup	run	assets/ok/by_value_argument_read_at_cal
 reference-argument-read-at-call-setup	run	assets/ok/reference_argument_read_at_call_setup.mojo
 display-element-read-at-construction	run	assets/ok/display_element_read_at_construction.mojo
 display-argument-built-at-call-setup	run	assets/ok/display_argument_built_at_call_setup.mojo
+dict-display-literal-constructor	run	assets/ok/dict_display_literal_constructor.mojo

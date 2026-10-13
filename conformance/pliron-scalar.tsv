@@ -162,6 +162,7 @@ assets/ok/defines_main.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/deinit_body_field_last_use.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/deinit_param_destruction_timing.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/delegated_ref_return_projection.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/dict_display_literal_constructor.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/dict_hasher_forwarding.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/dict_insert_linear_capable.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/dict_methods_growth.mojo	-	ineligible	no-scalar-entry-shape

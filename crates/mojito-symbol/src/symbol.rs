@@ -522,6 +522,13 @@ pub fn is_list_literal_constructor(param_names: &[String], variadic: bool) -> bo
     variadic && param_names.iter().any(|name| name == "__list_literal__")
 }
 
+/// Whether a constructor declaration is its struct's dict-literal
+/// initializer, the one a dictionary display (`{k: v}`) selects:
+/// non-variadic, with a `__dict_literal__` keyword.
+pub fn is_dict_literal_constructor(param_names: &[String], variadic: bool) -> bool {
+    !variadic && param_names.iter().any(|name| name == "__dict_literal__")
+}
+
 /// Whether `symbol` is a single-parameter constructor whose parameter is the
 /// nominal `String` (`StringSpan.__init__$ov$String`): the shape of an
 /// `@implicit` view constructor borrowing a String.

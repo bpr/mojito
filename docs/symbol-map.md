@@ -740,7 +740,7 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   subscripts, slices, multi-subscripts, and `Variant` projections
   (`access_family`), and for list, brace, and tuple displays and
   comprehensions (`display_family`, reading the construction through
-  `ctrl.rs`'s `collection_plan`/`array_literal_plan`), whose entry points take the node and read its
+  `ctrl.rs`'s `collection_plan`/`array_literal_plan`/`dict_literal_plan`; a non-empty dict display is `Dict`'s `__dict_literal__` call over two `List` literal calls), whose entry points take the node and read its
   attributes and adjustments, and for prefix and infix operators,
   comparison chains, ternaries, transfers, and lambdas (`operator_family`,
   reading the operator from the op; a spread, type value, or t-string
@@ -1010,7 +1010,10 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `mojito-types`; `nominal_string_literal_ctor_symbol`, the literal→`String`
   wrap MIR emits), the list-literal initializer predicate
   `is_list_literal_constructor` (the checker's display construction and
-  mono's `Array` parameter-value construction), and
+  mono's `Array` parameter-value construction), its dict counterpart
+  `is_dict_literal_constructor` (the checker's
+  `record_dict_literal_construction`, which records a `DictLiteral` on the
+  display's `ConstructCollection`), and
   `materialized_instantiation_argument`, the spelling an instance's
   argument takes (the native monomorphizer's `enqueue_display_instance` in
   `native/mono/instances.rs` instantiates a printed instance's `write_to`,
