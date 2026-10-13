@@ -643,7 +643,9 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   parameters bind their arguments (`record_argument_borrows`: the borrowable
   place reads and the owned temporaries the caller destroys after the call,
   `read_temporary_arguments`; the arguments a read `*args` collector gathers
-  bind the same way).
+  bind the same way). `Checker::designates_place` is the semantic place test:
+  a syntactic place other than a subscript whose selected getter returns by
+  value.
 - `checker/generics.rs` owns unification, substitution, and callable/method
   specialization; `solve_value_args` solves value binders from argument
   types, a vector's width slot solving only a binder declared `SIMDLength`
@@ -697,7 +699,8 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   reference_places, interior_references, element_receiver, reference_result,
   implicit_conversion, index_normalization, recorded_value,
   intrinsic_index_dispatch, pointer_offset_subscript, rebound_place,
-  is_fresh_temporary, …}`) and
+  is_fresh_temporary, …}`; a fresh temporary is a call's, a dispatched
+  operator's, or a by-value subscript's result) and
   the `Flatten` readers that also need the function being lowered
   (`name_spelled`, `expression_var`, `nested_info`, `aggregate_borrows`,
   `subscript_call_contract`, `call_capture_accesses`, `local_callee`).

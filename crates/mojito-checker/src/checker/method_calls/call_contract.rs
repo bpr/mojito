@@ -233,7 +233,7 @@ impl Checker {
         // already anchors on its own loans. A rejection leaves the
         // receiver alone: another adjustment owns its lowering
         // contract.
-        if !crate::checker::places::is_place_expr(object) && !self.type_carries_loans(obj_ty) {
+        if !self.designates_place(object) && !self.type_carries_loans(obj_ty) {
             let _ = self.materialize_borrow_owner(object, resolved.mutates_receiver);
         }
         self.record_call_result_origins(

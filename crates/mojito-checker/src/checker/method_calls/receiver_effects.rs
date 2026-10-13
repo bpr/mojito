@@ -259,7 +259,7 @@ impl Checker {
         // that consumption by implicitly copying an `ImplicitlyCopyable` place;
         // a merely movable (or explicitly-copy-only) place still requires `^`.
         if resolved.consumes_receiver
-            && (is_place_expr(object) || self.infer_reference_value(object).is_some())
+            && (self.designates_place(object) || self.infer_reference_value(object).is_some())
         {
             if !self.is_implicitly_copyable(obj_ty) {
                 let context = format!("consuming receiver of method '{method}'");

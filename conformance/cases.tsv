@@ -549,3 +549,4 @@ trait-bound-comparison-drop-order	run	assets/ok/trait_bound_comparison_drop_orde
 chained-comparison-link-drop-order	run	assets/ok/chained_comparison_link_drop_order.mojo
 struct-operator-temporary-operand-drop	run	assets/ok/struct_operator_temporary_operand_drop.mojo
 struct-operator-subscript-operand-in-place	run	assets/ok/struct_operator_subscript_operand_in_place.mojo
+by-value-subscript-temporary-drop	run	assets/ok/by_value_subscript_temporary_drop.mojo

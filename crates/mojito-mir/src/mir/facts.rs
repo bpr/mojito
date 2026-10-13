@@ -23,11 +23,19 @@ impl<'a> Node<'a> {
     }
 
     /// Whether this node's value is a fresh owned temporary: a call's
-    /// result, or a dispatched operator's, which is its dunder's owned
-    /// return. A scalar result owns no droppable storage, so binders that
-    /// test this filter it out by type.
-    pub(super) const fn is_fresh_temporary(self) -> bool {
-        self.is_call() || matches!(self.op(), CheckedOp::Infix(..) | CheckedOp::Prefix(..))
+    /// result, a dispatched operator's, which is its dunder's owned return,
+    /// or a subscript's whose selected getter returns by value. A scalar
+    /// result owns no droppable storage, so binders that test this filter
+    /// it out by type.
+    pub(super) fn is_fresh_temporary(self) -> bool {
+        self.is_call()
+            || matches!(self.op(), CheckedOp::Infix(..) | CheckedOp::Prefix(..))
+            || (matches!(
+                self.op(),
+                CheckedOp::Index { .. } | CheckedOp::MultiIndex { .. }
+            ) && self
+                .call_contract()
+                .is_some_and(|contract| contract.reference_result.is_none()))
     }
 
     /// The object of a member read: `None` when this is not one.

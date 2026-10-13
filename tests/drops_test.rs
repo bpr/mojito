@@ -96,6 +96,15 @@ fn struct_operator_reads_a_subscript_operand_in_place() {
 }
 
 #[test]
+fn by_value_subscript_result_dies_after_its_call() {
+    // A by-value `__getitem__` result is its call's owned temporary, so a
+    // read argument and an operator operand destroy it once the call
+    // returns, as the pin does.
+    let src = "struct S(Copyable):\n    var v: Int\n    def __init__(out self, v: Int):\n        self.v = v\n    def __lt__(self, o: Self) -> Bool:\n        return self.v < o.v\n    def __deinit__(deinit self):\n        print(\"del\", self.v)\n\nstruct B:\n    def __init__(out self):\n        pass\n    def __getitem__(self, i: Int) -> S:\n        return S(i)\n\ndef f(s: S):\n    print(\"f\", s.v)\n\ndef main():\n    var b = B()\n    f(b[1])\n    print(b[2] < b[3])\n";
+    assert_eq!(vm(src), "f 1\ndel 1\ndel 3\ndel 2\nTrue\n");
+}
+
+#[test]
 fn mut_self_reassignment_destroys_the_replaced_value() {
     // `self = Holder(2)` writes through the receiver's own handle into the
     // caller's storage, so no redefining `DefVar` ends the old value's live

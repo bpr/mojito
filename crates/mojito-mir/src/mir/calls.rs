@@ -1283,7 +1283,7 @@ impl<'a> Flatten<'a> {
     ) -> (Reg, Option<MirPlace>) {
         let (value, place) = self.lower_call_receiver(receiver);
         if place.is_some()
-            || !receiver.is_call()
+            || !receiver.is_fresh_temporary()
             || call.call_contract().is_some_and(|contract| {
                 matches!(
                     contract.receiver_convention,
@@ -1589,14 +1589,11 @@ impl<'a> Flatten<'a> {
         expression: &'a mojito_hir::hir::HirExpr,
         value: Reg,
     ) {
-        use mojito_checked::checked::{CheckedOp, SemanticAdjustment};
+        use mojito_checked::checked::SemanticAdjustment;
         let Some(node) = self.checked.expression(expression.node) else {
             return;
         };
-        if !matches!(
-            node.op,
-            CheckedOp::Call { .. } | CheckedOp::MethodCall { .. } | CheckedOp::Invoke { .. }
-        ) {
+        if !self.handle(expression).is_fresh_temporary() {
             return;
         }
         if node.adjustments.iter().any(|adjustment| {

@@ -561,7 +561,7 @@ impl Checker {
         {
             // A place receiver copies out of its storage exactly like an
             // implicit place copy of an `ImplicitlyCopyable` value.
-            if is_place_expr(object) {
+            if self.designates_place(object) {
                 self.record_at(object.source_span()).copy_place_value_use = true;
             }
             return Ok(Ok(Some(intrinsic_resolution(

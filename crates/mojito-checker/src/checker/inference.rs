@@ -1213,6 +1213,11 @@ impl Checker {
             // elements exactly once.
             ExprKind::Transfer(inner) => {
                 let ty = self.infer(inner)?;
+                // A by-value subscript is already an owned temporary: the
+                // `^` has nothing to move, as upstream.
+                if is_place_expr(inner) && !self.designates_place(inner) {
+                    return Ok(ty);
+                }
                 let private_tuple_element = match &inner.kind {
                     ExprKind::Index { object, .. } => {
                         matches!(

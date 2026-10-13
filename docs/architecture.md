@@ -4205,6 +4205,19 @@ current Mojo:
   read: no copy, so nothing to destroy. An
   operator's result is a fresh temporary as a call's is
   (`Node::is_fresh_temporary`), for this binding and for a field read off it.
+- A subscript is its getter's call, so its value category comes from the
+  selected getter, not the bracket syntax: over a by-value `__getitem__`
+  (`-> T`, a `SelectedCall` whose `reference_result` is `None`) `b[i]` is
+  an owned temporary, as upstream. The checker's `Checker::designates_place`
+  (`checker/places.rs`) answers place-ness from that fact for every
+  consumer that asks whether a value is a place — the read-temporary and
+  borrowable-argument filters, the copy demands, the chain middle, the
+  `.copy()` receiver, and `^`, which is a no-op on it — and
+  `Node::is_fresh_temporary` reads the same contract, so a read argument,
+  an operator operand, a method receiver (`lower_method_receiver`), a field
+  read, a chain middle (`chain_middle`), and a discarded statement
+  (`bind_discarded_result`) bind it as a call result. A `ref` getter, a
+  pointer subscript, and a storage read stay places.
 - A field read off an owning temporary (`print(B(1).x)`, `var n = B(9).name`,
   `(a + b).v`)
   binds the temporary to a hidden `$tmp_field_r` slot and loads the projected

@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R714**.
+Next free ID: **R717**.
 
 ## Ordered Work
 
@@ -298,18 +298,38 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R713 A by-value `__getitem__` result read by a call or operator is
-  never destroyed**
+- [ ] **R714 A discarded call or infix result is destroyed after its
+  temporaries**
 
-  Problem: over `def __getitem__(self, i: Int) -> S`, `f(b[1])` and
-  `print(b[2] < b[3])` print no `del` for the elements, where the pin
-  destroys each once the call or dunder returns (`f 1, del 1`, then
-  `del 3, del 2, True`).
-  - The subscript is an `Index` op, so `Node::is_fresh_temporary` and the
-    checker's `read_temporary_arguments` never treat the owned result as a
-    call temporary.
-  - `b[2].__lt__(b[3])` leaks the same way.
-  - Found while landing R710 (2026-10-13).
+  Problem: `S(7).__add__(S(8))` as a statement prints `del 8, del 7,
+  del 15`, where the pin destroys the result first (`del 15, del 8,
+  del 7`).
+  - `S(1) + S(2)` and `1 + S(18)` as statements are wrong the same way.
+  - A discarded prefix result (`-b[16]`) already matches.
+  - The result's `$discard_r` slot (`bind_discarded_result`) dies after
+    the operands' `$tmp_arg_r` slots.
+  - Found while landing R713 (2026-10-13).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R715 A transferred temporary at a read parameter is never
+  destroyed**
+
+  Problem: `f(S(20)^)` over `def f(s: S)` prints `f 20` and no `del`,
+  where the pin prints `f 20, del 20`.
+  - A `^` argument is excluded from `read_temporary_arguments`, so its
+    owned operand gets no `$tmp_arg_r` slot.
+  - Found while landing R713 (2026-10-13).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R716 A call temporary read inside a t-string dies before the
+  print**
+
+  Problem: `print(t"{S(3).v}")` prints `del 3` before `3`, where the pin
+  prints `3` and then `del 3`.
+  - The temporary should live until the enclosing `print` returns.
+  - Found while landing R713 (2026-10-13).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

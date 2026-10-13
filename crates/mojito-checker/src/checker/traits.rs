@@ -2866,7 +2866,7 @@ impl Checker {
             .iter()
             .map(|&position| &args[position])
             .filter(|argument| {
-                owned && is_place_expr(argument) && self.forwarded_pack(argument).is_none()
+                owned && self.designates_place(argument) && self.forwarded_pack(argument).is_none()
             })
             .try_for_each(|argument| {
                 let ty = self.infer(argument)?;
@@ -2909,7 +2909,7 @@ impl Checker {
         }
         // A transfer of a Movable value and a fresh temporary (a call result,
         // a literal, an operator) move freely; a *place* must be Copyable.
-        if is_place_expr(expr) {
+        if self.designates_place(expr) {
             if !self.is_copyable(ty) {
                 return Err(TypeError::NonCopyable {
                     ty: ty.to_string(),
@@ -2961,7 +2961,7 @@ impl Checker {
             self.copyable_reference_result_reads
                 .borrow_mut()
                 .insert(span);
-        } else if is_place_expr(value) {
+        } else if self.designates_place(value) {
             self.record_at(span).copy_place_value_use = true;
         }
     }

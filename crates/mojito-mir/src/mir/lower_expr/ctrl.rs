@@ -739,7 +739,7 @@ impl<'a> Flatten<'a> {
         let place = matches!(
             operand.op(),
             CheckedOp::Identifier(_) | CheckedOp::Member { .. } | CheckedOp::Index { .. }
-        );
+        ) && !operand.is_fresh_temporary();
         if place && !first {
             return if is_field_chain(operand) {
                 ChainMiddle::Place(operand)

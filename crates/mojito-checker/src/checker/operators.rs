@@ -1,7 +1,6 @@
 //! Operator, SIMD-construction, and pointer-construction type inference
 //! for the checker. Extracted from `checker.rs`; see `docs/symbol-map.md`.
 
-use super::places::is_place_expr;
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 use mojito_checked::checked::{CheckedCompareLink, SemanticAdjustment};
@@ -489,10 +488,10 @@ impl Checker {
             });
         }
         if let [(_, middle), _, ..] = rest {
-            if is_place_expr(middle) {
+            if self.designates_place(middle) {
                 self.demand_chain_middle_copy(middle)?;
             }
-            if is_place_expr(middle) || matches!(middle.kind, ExprKind::Transfer(_)) {
+            if self.designates_place(middle) || matches!(middle.kind, ExprKind::Transfer(_)) {
                 self.demand_chain_middle_destroyable(middle)?;
             }
         }

@@ -8,6 +8,12 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A by-value `__getitem__` result is an owned temporary, as the pin does
+  (R713): `f(b[1])` and `print(b[2] < b[3])` destroy each element once the
+  call or dunder returns instead of leaking it, and passing `b[9]` to a
+  `var` parameter, binding `var t = b[10]`, `_ = b[11]`, and `b[12]^` no
+  longer demand an implicit copy. A discarded operator result
+  (`S(1) + S(2)` as a statement) is now destroyed instead of leaked.
 - A struct operator reads a place operand where it lies, as the pin does
   (R710): `print(xs[0] < xs[1])` over a `List[S]` reads both elements
   through `__getitem__`'s reference instead of copying them out and leaking

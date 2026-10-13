@@ -41,17 +41,42 @@ impl Checker {
         kwargs: &[mojito_ast::ast::KwArg],
         receiver: Option<(&Expr, Option<ArgConvention>)>,
     ) {
-        for span in borrowable_read_arguments(slots, conventions, collected, args, kwargs, receiver)
-        {
+        let designates_place = |arg: &Expr| self.designates_place(arg);
+        for span in borrowable_read_arguments(
+            slots,
+            conventions,
+            collected,
+            args,
+            kwargs,
+            receiver,
+            designates_place,
+        ) {
             self.record_at(span).borrowed_read_call_place = true;
         }
-        let read = read_temporary_arguments(slots, conventions, collected, args, kwargs);
+        let read = read_temporary_arguments(
+            slots,
+            conventions,
+            collected,
+            args,
+            kwargs,
+            designates_place,
+        );
         self.unconsumed_temporaries
             .borrow_mut()
             .extend(read.iter().cloned());
         for span in read {
             self.record_at(span).read_temporary_argument = true;
         }
+    }
+
+    /// Whether `expr` designates a place rather than a fresh value: a
+    /// syntactic place ([`is_place_expr`]) other than a subscript whose
+    /// selected getter returns by value. A subscript is its getter's call,
+    /// so `b[i]` over `def __getitem__(self, i: Int) -> T` is an owned
+    /// temporary, as upstream; a `ref` getter, a pointer subscript, and a
+    /// storage read stay places.
+    pub(super) fn designates_place(&self, expr: &Expr) -> bool {
+        is_place_expr(expr) && !self.is_owned_subscript(expr)
     }
 
     /// The positions `name`'s positional collector gathers, when it reads
@@ -72,7 +97,7 @@ impl Checker {
     /// temporary a callee only borrows, or a discarded statement expression.
     /// A linear one is abandoned there ([`Self::record_linear_temporary`]).
     pub(super) fn record_unconsumed_temporary(&self, expr: &Expr) {
-        if !is_place_expr(expr) && !matches!(expr.kind, ExprKind::Transfer(_)) {
+        if !self.designates_place(expr) && !matches!(expr.kind, ExprKind::Transfer(_)) {
             self.unconsumed_temporaries
                 .borrow_mut()
                 .insert(expr.source_span());
@@ -83,7 +108,7 @@ impl Checker {
     /// binds one ([`read_temporary_arguments`]): the caller destroys it once
     /// the call returns.
     pub(super) fn record_read_temporary_argument(&self, expr: &Expr) {
-        if !is_place_expr(expr) && !matches!(expr.kind, ExprKind::Transfer(_)) {
+        if !self.designates_place(expr) && !matches!(expr.kind, ExprKind::Transfer(_)) {
             self.record_at(expr.source_span()).read_temporary_argument = true;
         }
         self.record_unconsumed_temporary(expr);
@@ -201,6 +226,19 @@ impl Checker {
             scope
                 .values()
                 .any(|declared| matches!(declared.kind(), TyKind::Param { binder: own, .. } if own == binder))
+        })
+    }
+
+    /// Whether `expr` is a subscript whose selected getter returns by value.
+    fn is_owned_subscript(&self, expr: &Expr) -> bool {
+        matches!(
+            expr.kind,
+            ExprKind::Index { .. } | ExprKind::MultiIndex { .. }
+        ) && self.has_fact(&expr.source_span(), |facts| {
+            facts
+                .selected_call
+                .as_ref()
+                .is_some_and(|call| call.reference_result.is_none())
         })
     }
 }
@@ -347,8 +385,9 @@ pub(super) fn check_receiver_aliasing(
 }
 
 /// Owned temporaries a call binds to read parameters: a non-place argument
-/// (a call result, a construction, a literal an implicit conversion turns
-/// into a nominal value) whose effective convention is a shared read. The
+/// (a call result, a by-value subscript, a construction, a literal an
+/// implicit conversion turns into a nominal value, per `designates_place`)
+/// whose effective convention is a shared read. The
 /// callee only borrows such a temporary, so the caller destroys it once the
 /// call returns; a `var`/`deinit` slot moves the temporary into the callee,
 /// which destroys it, and records nothing here.
@@ -358,6 +397,7 @@ pub(super) fn read_temporary_arguments(
     collected: &[usize],
     args: &[Expr],
     kwargs: &[mojito_ast::ast::KwArg],
+    designates_place: impl Fn(&Expr) -> bool,
 ) -> Vec<SourceSpan> {
     slots
         .iter()
@@ -374,7 +414,7 @@ pub(super) fn read_temporary_arguments(
             ArgSlot::Default => None,
         })
         .chain(collected_read_arguments(collected, args))
-        .filter(|arg| !is_place_expr(arg) && !matches!(arg.kind, ExprKind::Transfer(_)))
+        .filter(|arg| !designates_place(arg) && !matches!(arg.kind, ExprKind::Transfer(_)))
         .map(Expr::source_span)
         .collect()
 }
@@ -393,6 +433,7 @@ pub(super) fn borrowable_read_arguments(
     args: &[Expr],
     kwargs: &[mojito_ast::ast::KwArg],
     receiver: Option<(&Expr, Option<ArgConvention>)>,
+    designates_place: impl Fn(&Expr) -> bool,
 ) -> Vec<SourceSpan> {
     let argument = |slot: &ArgSlot| match slot {
         ArgSlot::Positional(position) => Some(&args[*position]),
@@ -449,7 +490,7 @@ pub(super) fn borrowable_read_arguments(
             }
             _ => arg,
         };
-        if !is_place_expr(arg) {
+        if !designates_place(arg) {
             continue;
         }
         let Some((root, path)) = place_path(arg) else {
