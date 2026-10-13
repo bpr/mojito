@@ -1084,11 +1084,12 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   left uncompiled (`names_evaluated_binding`), and a runtime read is
   rejected (`reject_display_crossing`, from `inference.rs`).
   `Flatten::lower_comptime_binding` (`mir/lower_stmt.rs`) records the
-  binding with its HIR value and sequence (`DisplayBinding`,
-  `ComptimeThunks::bind_display`) and gives it no runtime form, lifting the
+  binding with its value's node handle and sequence (`DisplayBinding`, in
+  the scoped `Flatten::displays`; `ComptimeThunks::bind_display`) and gives
+  it no runtime form, lifting the
   display under the name and over the binders the check's sequence spells;
   `lower_term` reads a header's sequence back off the binding
-  `ComptimeSource::Bound` names (`ComptimeThunks::display`), and lifts an evaluated bound
+  `ComptimeSource::Bound` names (`Flatten::display`), and lifts an evaluated bound
   (`ComptimeThunks::request_value`). A bracket argument that reads a
   display is lowered by `Flatten::param_arg_reg` through `display_read`, or
   for the capitalized spelling as the element its attribute holds

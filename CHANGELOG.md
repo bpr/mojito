@@ -8,6 +8,13 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A local display binding references its value's node rather than
+  copying its HIR at each crossing (R651), as an upstream use references
+  its SSA definition, and is scoped to the region that declares it, as the
+  check already scopes it: a `try` region's bindings go out of scope with
+  it. `Flatten::held` and `mojito-mir`'s `typed-arena` dependency are
+  gone. No program's output or MIR changes.
+
 - A package unit installs as its checked nodes alone (R650): a lowering
   unit names its declaration's statement node, never its syntax, and
   `CheckedProgram::installed` rebuilds no statements, wrapper body, or

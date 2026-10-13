@@ -850,8 +850,9 @@ name as `ComptimeSource::Bound`, and rejects a read outside every
 compile-time position as the pin does. The binding denotes one value in the
 parameter domain, its sequence: the application of the function MIR lifts
 for the display, which the check names by the binding and applies to every
-binder in scope (`Checker::record_display_binding`). MIR keeps the binding
-beside the function's thunks (`DisplayBinding`) and lifts the display under
+binder in scope (`Checker::record_display_binding`). MIR keeps the binding,
+a reference to its value's node, for the scope that declares it, as an SSA
+use names its definition (`DisplayBinding`, `Flatten::displays`), and lifts the display under
 that name where it is declared (`ComptimeThunks::bind_display`), and every
 header over the name carries that one application. A type or a parameter
 argument reads the sequence: an element by position is `param_list.get`
@@ -1793,9 +1794,10 @@ over the default's node that reads only resolved attributes: a bracket
 argument's `TyArg`, a type operand's `Ty`, and a lambda's checked function
 type, never a nested signature's annotation syntax). `Flatten` borrows its CFG's
 tables and HIR for its own lifetime, so a handle outlives the `&mut self`
-calls it is passed to; a local display binding's HIR, which can cross after
-a `try` region's CFG is dropped, is copied into the function's arena
-(`Flatten::held`). Literals and name
+calls it is passed to; a local display binding holds its value's handle,
+which every crossing lowers in place, and a `try` region's bindings go out
+of scope with its CFG, as the check scopes them (`Flatten::displays`).
+Literals and name
 reads lower by matching the node's `CheckedOp`, reading the node's own
 attributes (`Flatten::literal_or_name`); a name's slot is its binding's
 (`binding_var`), the slot only spelling it, and the name predicates of the

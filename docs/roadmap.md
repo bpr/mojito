@@ -4821,24 +4821,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R651 A local display binding's HIR is copied at each crossing**
-
-  `build_display` and `crossing_display` copy the binding's `HirExpr` into
-  the function's arena (`Flatten::held`) every time the display crosses.
-  - The copy exists because a display bound inside a `try` region can
-    cross after the region's `Cfg` is dropped, so `DisplayBinding` holds
-    an owned `Rc<HirExpr>` that no `Node` can borrow for `Flatten`'s
-    lifetime.
-  - Upstream's value is an SSA result its uses reference; nothing is
-    copied.
-  - Keep each region's `Cfg` alive for the function's lowering (an arena
-    in `lower_cfg_nested`), so `DisplayBinding` borrows its HIR instead.
-  - Done when `Flatten::held` and `DisplayBinding`'s `Rc` are gone and
-    the probe fixtures' MIR and output are unchanged.
-  - Found while landing R646 (2026-10-12).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R634 HIR types a slot by its name's spelling anywhere in the
   program**
 

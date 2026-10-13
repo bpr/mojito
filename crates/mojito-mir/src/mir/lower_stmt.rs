@@ -1641,7 +1641,7 @@ impl<'a> Flatten<'a> {
                 parameter_reads: self.parameter_reads.clone(),
                 overloads: std::sync::Arc::clone(&self.overloads),
                 checked: &region_cfg.checked,
-                held: self.held,
+                displays: self.displays.clone(),
                 slots: region_cfg.slots.clone(),
                 aliases: self.aliases.clone(),
                 runtime_aliases: self.runtime_aliases.clone(),
@@ -2722,30 +2722,26 @@ impl<'a> Flatten<'a> {
             if let Some((owner, ty)) = statement_binding.zip(value.ty()) {
                 let binding = DisplayBinding {
                     owner,
-                    node: value.id(),
                     name: name.to_string(),
-                    aliases: Vec::new(),
-                    hir: std::rc::Rc::new(value.hir.clone()),
+                    value,
                     sequence: sequence.clone(),
                     ty,
                     binders: self.enclosing_binders.clone(),
                     preceding: self.comptime_thunks.evaluated.len(),
                 };
-                if let Err(finding) = self
+                match self
                     .comptime_thunks
-                    .bind_display(node.id, binding, &sequence)
+                    .bind_display(node.id, &binding, &sequence)
                 {
-                    self.emit(MirInstr::Unsupported(finding));
+                    Ok(()) => self.displays.push(binding),
+                    Err(finding) => self.emit(MirInstr::Unsupported(finding)),
                 }
             }
             return;
         }
         // An alias of a display binding (`comptime A = L`) is another name
         // of it, which the check binds to the display's own owner.
-        if value.is_name()
-            && statement_binding
-                .is_some_and(|owner| self.comptime_thunks.alias_display(owner, name))
-        {
+        if value.is_name() && statement_binding.is_some_and(|owner| self.display(owner).is_some()) {
             return;
         }
         if statement_binding.is_none() && value.ty().is_none() {
@@ -3094,7 +3090,7 @@ impl<'a> Flatten<'a> {
                         }
                         ComptimeSource::Bound { binding, .. } => {
                             mojito_checked::checked::ComptimeSequence::Elements(
-                                self.comptime_thunks.display(binding)?.sequence.clone(),
+                                self.display(binding)?.sequence.clone(),
                             )
                         }
                         ComptimeSource::EvaluatedRange { bounds } => {

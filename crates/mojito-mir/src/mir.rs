@@ -1613,9 +1613,6 @@ fn lower_expression_thunk(
 struct ComptimeThunks {
     owner: String,
     requests: Vec<ThunkRequest>,
-    /// The owner's local `comptime` display bindings lowered so far, in
-    /// declaration order ([`Self::bind_display`]).
-    displays: Vec<DisplayBinding>,
     /// The owner's local `comptime` bindings lowered so far that denote no
     /// parameter expression, the displays among them, in declaration order
     /// ([`Self::bind_evaluated`]): a thunk that reads one begins by binding
@@ -1635,19 +1632,15 @@ struct ComptimeThunks {
 }
 
 /// A local `comptime` binding of a display the elaborator evaluates
-/// (`comptime L = [n, n + 1]`).
+/// (`comptime L = [n, n + 1]`), which references its value's node as an SSA
+/// use names its definition.
 #[derive(Clone)]
-struct DisplayBinding {
+struct DisplayBinding<'a> {
     owner: mojito_types::origin::OwnerId,
     name: String,
-    /// The local `comptime` aliases of the binding (`comptime A = L`), which
-    /// the check binds as other names of it.
-    aliases: Vec<String>,
-    /// The display's node.
-    node: CheckedNodeId,
-    /// The display's HIR expression, for a `materialize[L]()` that builds
-    /// it in place.
-    hir: std::rc::Rc<mojito_hir::hir::HirExpr>,
+    /// The display's value, built in place where it crosses
+    /// (`materialize[L]()`).
+    value: Node<'a>,
     /// The application of the display's thunk the loops over the name
     /// iterate ([`ComptimeThunks::bind_display`]).
     sequence: mojito_types::param_expr::ParamExpr,
@@ -1739,7 +1732,7 @@ impl ComptimeThunks {
     fn bind_display(
         &mut self,
         id: CheckedStmtId,
-        binding: DisplayBinding,
+        binding: &DisplayBinding<'_>,
         sequence: &mojito_types::param_expr::ParamExpr,
     ) -> Result<(), String> {
         let mojito_types::param_expr::ParamKind::Apply { function, args, .. } = sequence.kind()
@@ -1772,7 +1765,7 @@ impl ComptimeThunks {
             .collect::<Result<Vec<_>, _>>()?;
         self.requests.push(ThunkRequest {
             name: function.clone(),
-            node: binding.node,
+            node: binding.value.id(),
             binders: EnclosingBinders {
                 declarations,
                 comptime_bindings: self.bound_values.clone(),
@@ -1783,7 +1776,6 @@ impl ComptimeThunks {
             evaluated: self.evaluated[..binding.preceding].to_vec(),
         });
         self.bind_evaluated(binding.owner, id);
-        self.displays.push(binding);
         Ok(())
     }
 
@@ -1792,21 +1784,6 @@ impl ComptimeThunks {
     /// reads it evaluates the statement first.
     fn bind_evaluated(&mut self, owner: mojito_types::origin::OwnerId, id: CheckedStmtId) {
         self.evaluated.push(EvaluatedBinding { owner, id });
-    }
-
-    /// The display binding `owner` is, if it is one.
-    fn display(&self, owner: mojito_types::origin::OwnerId) -> Option<&DisplayBinding> {
-        self.displays.iter().find(|display| display.owner == owner)
-    }
-
-    /// Record `name` as an alias of the display binding `owner`, when it is
-    /// one; whether it is.
-    fn alias_display(&mut self, owner: mojito_types::origin::OwnerId, name: &str) -> bool {
-        self.displays
-            .iter_mut()
-            .find(|display| display.owner == owner)
-            .map(|display| display.aliases.push(name.to_string()))
-            .is_some()
     }
 
     /// Record that the local `comptime` binding `owner` denotes `value`
@@ -2233,10 +2210,11 @@ struct Flatten<'a> {
     overloads: std::sync::Arc<mojito_checked::package::ProgramOverloads>,
     /// The program's checked tables, shared with HIR construction.
     checked: &'a std::sync::Arc<mojito_checked::checked::CheckedTables>,
-    /// Copies of the display bindings' HIR lowered where they cross, which
-    /// live as long as the function's CFG does: a display bound inside a
-    /// `try` region can cross after the region's CFG is gone.
-    held: &'a typed_arena::Arena<mojito_hir::hir::HirExpr>,
+    /// The local `comptime` display bindings in the scopes enclosing the
+    /// block being lowered, in declaration order: a `try` region sees its
+    /// enclosing scopes' and its own, and its own go out of scope with it,
+    /// as the check scopes them.
+    displays: Vec<DisplayBinding<'a>>,
     /// The slot each local-name node of the CFG being lowered reads
     /// ([`Cfg::slots`]), which spells that name in this frame.
     slots: HashMap<mojito_checked::checked::CheckedNodeId, VarId>,
@@ -3277,15 +3255,15 @@ impl<'a> Flatten<'a> {
     /// The local display bindings of this function the expression of node
     /// `node` reads by name, in declaration order, with the ones those
     /// displays read in turn. Such a binding has no runtime form here.
-    fn displays_read(&self, node: CheckedNodeId) -> Vec<DisplayBinding> {
-        if self.comptime_thunks.displays.is_empty() {
+    fn displays_read(&self, node: CheckedNodeId) -> Vec<DisplayBinding<'a>> {
+        if self.displays.is_empty() {
             return Vec::new();
         }
         let mut read = bindings_read(self.checked, node);
         let mut found = Vec::new();
-        for display in self.comptime_thunks.displays.iter().rev() {
+        for display in self.displays.iter().rev() {
             if read.contains(&display.owner) {
-                read.extend(bindings_read(self.checked, display.node));
+                read.extend(bindings_read(self.checked, display.value.id()));
                 found.push(display.clone());
             }
         }
@@ -3350,34 +3328,36 @@ impl<'a> Flatten<'a> {
 
     /// Build a local display binding into its slot, for the crossing that
     /// reads it next.
-    fn build_display(&mut self, binding: &DisplayBinding) {
-        let display_hir = self.held.alloc((*binding.hir).clone());
+    fn build_display(&mut self, binding: &DisplayBinding<'a>) {
         self.with_statement_loans(|this| {
-            let display = this.handle(display_hir);
-            let built = this.expr(display);
-            this.bind_comptime_value(&binding.name, display, Some(binding.owner), built);
+            let built = this.expr(binding.value);
+            this.bind_comptime_value(&binding.name, binding.value, Some(binding.owner), built);
         });
     }
 
     /// The runtime value of a local display binding crossing whole
     /// (`materialize[L]()`): the display built where it crosses, after the
     /// displays it reads.
-    fn crossing_display(&mut self, binding: &DisplayBinding) -> Reg {
-        for read in self.displays_read(binding.node) {
+    fn crossing_display(&mut self, binding: &DisplayBinding<'a>) -> Reg {
+        for read in self.displays_read(binding.value.id()) {
             self.build_display(&read);
         }
-        let held = self.held;
-        self.expr_hir(held.alloc((*binding.hir).clone()))
+        self.with_statement_loans(|this| this.expr(binding.value))
     }
 
     /// The local display binding `expression` names.
-    fn named_display(&self, expression: Node<'a>) -> Option<DisplayBinding> {
+    fn named_display(&self, expression: Node<'a>) -> Option<DisplayBinding<'a>> {
         expression
             .is_name()
             .then(|| expression.owner())
             .flatten()
-            .and_then(|owner| self.comptime_thunks.display(owner))
+            .and_then(|owner| self.display(owner))
             .cloned()
+    }
+
+    /// The display binding in scope `owner` is, if it is one.
+    fn display(&self, owner: mojito_types::origin::OwnerId) -> Option<&DisplayBinding<'a>> {
+        self.displays.iter().find(|display| display.owner == owner)
     }
 
     /// Node `id` over the enclosing value binders, through the shared typed
@@ -3706,7 +3686,6 @@ fn lower_cfg_nested(
     }
 
     {
-        let held = typed_arena::Arena::new();
         let fallback = Terminator::FallOff;
         let mut fl = Flatten {
             f: &mut mir,
@@ -3728,7 +3707,7 @@ fn lower_cfg_nested(
             parameter_reads: enclosing_binders.loop_bindings.iter().cloned().collect(),
             overloads: std::sync::Arc::clone(overloads),
             checked: &cfg.checked,
-            held: &held,
+            displays: Vec::new(),
             slots: cfg.slots.clone(),
             aliases: HashMap::new(),
             runtime_aliases: reference_parameters
