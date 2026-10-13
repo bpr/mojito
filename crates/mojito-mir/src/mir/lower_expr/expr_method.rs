@@ -142,6 +142,7 @@ impl<'a> Flatten<'a> {
         self.allow_argument_anchors = call.call_anchors_arguments();
         let lends_reads = call.lends_read_arguments();
         let (mut regs, mut arg_places) = (Vec::new(), Vec::new());
+        self.open_call_setup();
         for slice in [leading.as_slice(), args] {
             let (slice_regs, slice_places) = self.lower_call_arguments(slice, lends_reads);
             regs.extend(slice_regs);
@@ -149,6 +150,8 @@ impl<'a> Flatten<'a> {
         }
         self.allow_argument_anchors = saved_anchor_permission;
         let (kw, kwarg_places) = self.lower_call_keywords(kwargs, lends_reads);
+        // A leading operand shifts the positional sources off the contract's.
+        self.close_call_setup(leading.is_none().then_some(call));
         let dest = self.fresh(call.location(), None);
         if let Some(leading) = leading {
             self.emit_interior_invalidations(leading, None);
@@ -761,12 +764,8 @@ impl<'a> Flatten<'a> {
         } else {
             object
         };
-        let (recv, recv_place) = self.lower_method_receiver(call, receiver_expr);
-        let recv = if implicitly_copied_receiver {
-            self.copy_consuming_receiver(receiver_expr, recv, recv_place.as_ref())
-        } else {
-            recv
-        };
+        let (recv, recv_place) =
+            self.lower_setup_receiver(call, receiver_expr, implicitly_copied_receiver);
         // Retain checker-selected `mut`/`ref` ordinary-argument places,
         // mirroring a free-function `Call` — and the shared-read places
         // a borrowing-view or reference result lends to. Loan-carrying temporary
@@ -779,6 +778,7 @@ impl<'a> Flatten<'a> {
         let (regs, arg_places) = self.lower_call_arguments(args, lends_reads);
         self.allow_argument_anchors = saved_anchor_permission;
         let (kw, kwarg_places) = self.lower_call_keywords(kwargs, lends_reads);
+        self.close_call_setup(Some(call));
         let d = self.fresh(call.location(), None);
         self.emit_interior_invalidations(receiver_expr, None);
         self.emit_call_invalidations(call, args, kwargs);

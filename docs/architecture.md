@@ -4189,9 +4189,22 @@ current Mojo:
   order (slice descriptors first), so an owner whose last use it is drops just
   before the consumer, in that load order (`RegisterUses::loaded`).
   `refine_deinit_fields` applies the same split to a `deinit self` receiver's
-  fields. The load itself still sits where the argument is written, not at
-  call setup. An aggregate load retains its owner through every consumer as
-  before.
+  fields; a subscript setter's plain indices load like a getter's. An
+  aggregate load retains its owner through every consumer as before.
+- MIR lowering places the load itself at call setup, as Mojo evaluates
+  every argument to an lvalue in source order and reads each once the last
+  is evaluated. Each call lowerer opens a setup frame (`CallSetup`,
+  `open_call_setup`) before its operands and closes it after its last one;
+  a by-value operand that is a simple place (`setup_read`: a root or field
+  chain with no reference alias, callable, or folded constant) has no lvalue
+  work, so its whole read sequence — `UseVar`/`LoadPlace`, a `var` copy, an
+  implicit conversion — moves into the frame, and `close_call_setup` emits
+  it, the receiver first and then the arguments in the contract's parameter
+  order. A frame belongs only to its own call's immediate operands
+  (`argument_depth`); a `mut`/`ref` place, a retained shared read, an indexed
+  place, or a lowering that split the block stays where written. So
+  `two(c.t, bump(c))` reads `c.t` after `bump` writes it, and
+  `two(a.t, take(a^))` is a use of the moved `a`.
 - An element read out of pack storage (an intrinsic `TupleStorage` or
   `VariadicStorage` `Index` with a retained base place) is the same shallow
   read: an aggregate element retains the pack through every consumer of the

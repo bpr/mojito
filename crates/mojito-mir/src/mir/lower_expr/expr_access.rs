@@ -304,11 +304,14 @@ impl<'a> Flatten<'a> {
             return d;
         }
         let (base, base_place) = if has_call {
-            self.lower_call_receiver(object)
+            self.lower_setup_receiver_with(e, object, |this| this.lower_call_receiver(object))
         } else {
             (self.expr(object), self.simple_place(object))
         };
         let (idx, index_place) = self.lower_call_argument(index);
+        if has_call {
+            self.close_call_setup(None);
+        }
         let call = self.subscript_call_contract(e, &[MirSubscriptArg::Index(idx)]);
         let intrinsic = call
             .is_none()
@@ -383,8 +386,9 @@ impl<'a> Flatten<'a> {
             e.operand_of(id)
                 .expect("a subscript argument's node is its operand")
         };
-        let bound =
-            |this: &mut Self, id: Option<CheckedNodeId>| id.map(|id| this.expr(operand(id)));
+        let bound = |this: &mut Self, id: Option<CheckedNodeId>| {
+            id.map(|id| this.outside_call_setup(|this| this.expr(operand(id))))
+        };
         // `ptr[unsafe_offset=i]` — the keyword spelling of pointer
         // indexed dereference — lowers exactly like `ptr[i]`: place
         // substitution or handle read for origin-bearing pointers,
@@ -427,7 +431,7 @@ impl<'a> Flatten<'a> {
         }
         let has_call = e.call_contract().is_some();
         let (object_reg, object_place) = if has_call {
-            self.lower_call_receiver(object)
+            self.lower_setup_receiver_with(e, object, |this| this.lower_call_receiver(object))
         } else {
             (self.expr(object), self.simple_place(object))
         };
@@ -485,6 +489,9 @@ impl<'a> Flatten<'a> {
                 }
             })
             .collect();
+        if has_call {
+            self.close_call_setup(None);
+        }
         let call = self.subscript_call_contract(e, &lowered_args);
         let dest = self.fresh(e.location(), None);
         for argument in args {

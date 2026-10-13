@@ -179,7 +179,8 @@ impl<'a> Flatten<'a> {
     /// remaining operands are not evaluated). The result variable holds the last
     /// comparison evaluated (which is `false` on the link that failed). The two
     /// ends are operator operands, read in place where the checker lent them; a
-    /// middle operand feeds two links and is an ordinary (copied) value.
+    /// middle operand feeds two links and is an ordinary (copied) value, read
+    /// once.
     pub(in crate::mir) fn compare_chain(
         &mut self,
         first: Node<'a>,
@@ -188,13 +189,21 @@ impl<'a> Flatten<'a> {
     ) -> Reg {
         let result = self.fresh_var();
         let merge_blk = self.new_block();
+        // The first link's left operand is read at that link's setup; a
+        // later link's left operand is the previous link's value.
+        if !rest.is_empty() {
+            self.open_call_setup();
+        }
         let mut prev = self.lower_operator_operand(first);
         for (i, (op, operand)) in rest.iter().enumerate() {
             let cur = if i + 1 == rest.len() {
                 self.lower_operator_operand(*operand)
             } else {
-                self.expr(*operand)
+                self.outside_call_setup(|this| this.expr(*operand))
             };
+            if i == 0 {
+                self.close_call_setup(None);
+            }
             let cmp = self.fresh(sp.clone(), None);
             self.emit(MirInstr::BinOp {
                 op: *op,

@@ -709,7 +709,13 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   augmented-subscript sources; `Flatten::with_statement_loans` brackets each
   statement and expression root. No syntax bridge remains.
 - `mir/calls.rs` owns call-site lowering (arguments, keywords, receiver,
-  reference results, checked-call boundaries, interior-origin invalidations).
+  reference results, checked-call boundaries, interior-origin invalidations)
+  and call setup: `CallSetup` is one open call's frame of deferred by-value
+  place reads, opened by `open_call_setup` (or `lower_setup_receiver` /
+  `lower_setup_receiver_with`, which lower the receiver into it) and emitted
+  in parameter order by `close_call_setup`; `lower_setup_operand` lowers one
+  operator operand into the frame, `outside_call_setup` keeps non-operand
+  lowering out of it, and `setup_read` decides which places defer.
 - `mir/lower_expr.rs` (split across
   `lower_expr/{entry,ctrl,expr,expr_call,expr_method,expr_access,calls}.rs`)
   owns expression lowering (the `expr_unconverted`

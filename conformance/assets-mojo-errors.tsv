@@ -33,7 +33,7 @@
 #
 # Lifting a mask moves a row to another family rather than closing it: the pin
 # reports one complaint at a time.
-# swept-count	566
+# swept-count	567
 assets/type_error/comptime_applied_constant_mismatch.mojo	compile-reject	agree	error: invalid call to 'g': value passed to 'x' cannot be converted from 'SIMD[.float32, 8]' to 'SIMD[.float32, f(Int(7))]'
 fixture	verdict	family	upstream
 assets/origin_error/for_ref_binding_escapes_local_source.mojo	compile-reject	agree	error: cannot return reference with incompatible origin: 'origin_of(local)' vs 'origin_of(values["element"])'
@@ -44,6 +44,7 @@ assets/origin_error/projected_origin_mismatch.mojo	compile-reject	agree	error: c
 assets/origin_error/returned_loan_conflict.mojo	runs	subset	the pin runs it; Mojito rejects a returned loan that conflicts with a live reference
 assets/origin_error/returned_local.mojo	compile-reject	agree	error: cannot return reference with incompatible origin: 'origin_of(local)' vs 'origin_of(source)'
 assets/origin_error/returned_pointer_deref_immutable_write.mojo	compile-reject	agree	error: expression must be mutable in assignment
+assets/ownership_error/by_value_argument_read_after_move.mojo	compile-reject	agree	error: use of uninitialized value 'a'
 assets/ownership_error/capturing_lambda_display_moved_capture.mojo	compile-reject	agree	error: use of uninitialized value 'label'
 assets/ownership_error/comprehension_interior_invalidation.mojo	runs	subset	the pin runs it; Mojito rejects: invalidated interior reference
 assets/ownership_error/comptime_for_body_move_then_use.mojo	compile-reject	agree	error: use of uninitialized value 'a'

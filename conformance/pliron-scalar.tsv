@@ -36,6 +36,7 @@ assets/ok/builtins_numeric.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/bundled_def_loan_carrying_argument.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/bundled_instance_loan_carrying_argument.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/by_value_argument_drop_order.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/by_value_argument_read_at_call_setup.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/call_result_pointer_deref_keeps_owner.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/call_result_pointer_deref_store.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/call_result_pointer_field_chain_write.mojo	-	ineligible	no-scalar-entry-shape

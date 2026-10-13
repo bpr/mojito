@@ -8,6 +8,14 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A by-value place argument is read at call setup, after every argument
+  is evaluated, as the pin reads it (R681): `two(c.t, bump(c))` with a
+  mutating `bump` now prints `bump`'s write, as do `d.t + bump(d)`, a
+  method receiver or argument, a comparison chain's first operand, a
+  subscript getter's or setter's index, and a function value's argument;
+  a method's `var` copies run in parameter order; and
+  `two(a.t, take(a^))` is rejected as a use of the moved `a`. A loan
+  conflict now names the same live reference on every run.
 - Each `_ = e` statement owns its own discard slot (R683): two discards in
   one function no longer share one slot typed by the last of them, so
   natively `_ = two(p.n, q.n)` beside `_ = pair^` no longer fails LLVM

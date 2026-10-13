@@ -2245,6 +2245,13 @@ struct Flatten<'a> {
     /// consuming call — the temporary's upstream lifetime is the full
     /// statement.
     pending_argument_anchors: Vec<VarId>,
+    /// The open calls' setup frames, innermost last. A frame holds the
+    /// deferred reads of exactly one call's immediate by-value place
+    /// arguments ([`calls::CallSetup`]).
+    call_setups: Vec<calls::CallSetup>,
+    /// How many call operands enclose the expression being lowered: a frame
+    /// belongs to the operands lowered at the depth it was opened at.
+    argument_depth: usize,
     /// True only while lowering the argument list of a call that carries no
     /// other channel for a temporary argument's loans — a plain, method, or
     /// callable-value call without checker-selected `ref`-argument borrows or
@@ -3746,6 +3753,8 @@ fn lower_cfg_nested(
             aggregate_loans: HashMap::new(),
             conversion_view_loans: HashMap::new(),
             pending_argument_anchors: Vec::new(),
+            call_setups: Vec::new(),
+            argument_depth: 0,
             allow_argument_anchors: false,
             transfer_domain_loans: HashMap::new(),
             reassigned_names: reassigned_names(cfg, nested),

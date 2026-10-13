@@ -291,7 +291,10 @@ pub(super) fn analyze_loans(
         }
 
         for (index, instr) in instrs.iter().enumerate() {
-            let active = &live_before[index];
+            // Live references in declaration order, so a conflict names the
+            // same one on every run.
+            let mut active: Vec<VarId> = live_before[index].iter().copied().collect();
+            active.sort_unstable();
             if let MirInstr::EstablishLoans {
                 reference,
                 loans: established,
@@ -352,7 +355,7 @@ pub(super) fn analyze_loans(
                     let loans = reaching_loans(&generation_state, &generations, through);
                     !loans.is_empty() && loans.iter().all(|loan| loan.shared)
                 });
-                for reference in active {
+                for reference in &active {
                     let reference_loans =
                         reaching_loans(&generation_state, &generations, *reference);
                     if reference_loans.is_empty() {

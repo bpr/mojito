@@ -270,37 +270,36 @@ impl<'a> ArgumentPassing<'a> {
                 .declarations
                 .function(&call.target)
                 .map(|declaration| {
-                    // Every slice descriptor is built before the call loads
-                    // its receiver and plain indices.
                     let mut loaded = Vec::new();
-                    for argument in args {
-                        if let MirSubscriptArg::Slice {
-                            lower, upper, step, ..
-                        } = argument
-                        {
-                            slice_bounds_loaded(*lower, *upper, *step, 0, &mut loaded);
-                        }
-                    }
+                    subscript_slices_loaded(args, &mut loaded);
                     if object_place.is_none() {
                         receiver_by_value(declaration, *object, register_types, &mut loaded);
                     }
-                    let contract = ParameterContract::from(declaration);
-                    for (index, argument) in args.iter().enumerate() {
-                        let placed = arg_places.get(index).is_some_and(Option::is_some);
-                        if let MirSubscriptArg::Index(register) = argument
-                            && !placed
-                            && contract.loads_positional(index)
-                        {
-                            loaded.push((register.0, index + 1));
-                        }
-                    }
+                    subscript_indices_loaded(declaration, args, arg_places, &mut loaded);
+                    loaded
+                })
+                .unwrap_or_default(),
+            // A setter loads its plain indices like a getter; the receiver
+            // is its `mut self` place, and the assigned value is evaluated
+            // after every index.
+            MirInstr::MultiSet {
+                args,
+                arg_places,
+                call,
+                ..
+            } => self
+                .declarations
+                .function(&call.target)
+                .map(|declaration| {
+                    let mut loaded = Vec::new();
+                    subscript_slices_loaded(args, &mut loaded);
+                    subscript_indices_loaded(declaration, args, arg_places, &mut loaded);
                     loaded
                 })
                 .unwrap_or_default(),
             // The rest run callee code or consume a whole value: none loads a
             // scalar operand.
-            MirInstr::MultiSet { .. }
-            | MirInstr::Try { .. }
+            MirInstr::Try { .. }
             | MirInstr::Raise { .. }
             | MirInstr::GetIter { .. }
             | MirInstr::HasNext { .. }
@@ -840,6 +839,39 @@ impl CallArguments<'_> {
             {
                 loaded.push((argument.0, offset + slot));
             }
+        }
+    }
+}
+
+/// The slice descriptors' bounds of subscript `args`: every descriptor is
+/// built before the call loads its receiver and plain indices.
+fn subscript_slices_loaded(args: &[MirSubscriptArg], loaded: &mut Vec<(u32, usize)>) {
+    for argument in args {
+        if let MirSubscriptArg::Slice {
+            lower, upper, step, ..
+        } = argument
+        {
+            slice_bounds_loaded(*lower, *upper, *step, 0, loaded);
+        }
+    }
+}
+
+/// The plain subscript indices `declaration` loads by value, each at its
+/// parameter rank after the receiver.
+fn subscript_indices_loaded(
+    declaration: &MirFunctionDeclaration,
+    args: &[MirSubscriptArg],
+    arg_places: &[Option<MirPlace>],
+    loaded: &mut Vec<(u32, usize)>,
+) {
+    let contract = ParameterContract::from(declaration);
+    for (index, argument) in args.iter().enumerate() {
+        let placed = arg_places.get(index).is_some_and(Option::is_some);
+        if let MirSubscriptArg::Index(register) = argument
+            && !placed
+            && contract.loads_positional(index)
+        {
+            loaded.push((register.0, index + 1));
         }
     }
 }

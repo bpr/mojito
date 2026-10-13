@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R685**.
+Next free ID: **R691**.
 
 ## Ordered Work
 
@@ -298,23 +298,80 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R681 A by-value place argument is read where it is written, not at
-  the call**
+- [ ] **R685 An indexed place argument is read where it is written, not
+  at call setup**
 
-  Problem: `two(c.t, bump(c))`, with `bump(mut w)` adding 100 to `w.t`,
+  Problem: `two(tup[0], bt(tup))`, with `bt(mut t)` adding 100 to `t[0]`,
   prints `two 103 0` at the pin and `two 3 0` in Mojito.
-  - `d.t + bump(d)` gives 104 at the pin and 4 in Mojito.
-  - `own(c.t, g(d))` over `own(var x: Int, var y: Int)` destroys `c` before
-    `g` runs in Mojito; the pin destroys it after `g`, at the call's setup.
-  - The pin loads a register-passable `read` or `var` argument at call
-    setup, in parameter order. Mojito's lowering emits the `LoadPlace` (and
-    an owned argument's `CopyValue`) where the argument is written.
-  - The fix is in MIR lowering: defer a by-value place operand's load to
-    call setup in `Flatten::lower_call_argument_with`,
-    `lower_call_keywords`, `lower_operator_operand`, and the method,
-    indirect, and subscript call lowerers. Drop elaboration already drops
-    a loaded owner just before its consumer (`RegisterUses::loaded`).
-  - Found while landing R675 (2026-10-13).
+  - `two(lst[0], bl(lst))` over a `List` is rejected by the pin ("use of
+    invalidated interior reference 'lst["element"]'"), but Mojito accepts
+    it and prints `two 1 0`.
+  - R681 moves only a simple place's read (`setup_read` in
+    `crates/mojito-mir/src/mir/calls.rs`) to the call's setup frame. An
+    index or accessor is lvalue work that stays in source order; only the
+    final element read belongs at setup.
+  - A raising implicit conversion, which splits the block, also stays
+    where written (`defer_to_setup`).
+  - Found while landing R681 (2026-10-13).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R686 A display reads its elements where they are written**
+
+  Problem: `(u.t, bump(u))` gives `108 0` at the pin and `8 0` in Mojito;
+  `[v.t, bump(v)]` gives `109 0` and `9 0`.
+  - Upstream's displays are `var` pack constructor calls, so their
+    elements are read at that call's setup.
+  - Mojito lowers displays in `tuple_literal` / `list_literal`
+    (`crates/mojito-mir/src/mir/lower_expr/expr.rs`), outside the call
+    lowerers that open a setup frame (`open_call_setup`).
+  - Found while landing R681 (2026-10-13).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R687 A struct operator's operand owner dies after the result's
+  consumer**
+
+  Problem: `print(o + 1)` over `def __add__(self, o: Int) -> Int` on a
+  struct with a printing destructor prints `del 4` then `5` at the pin, and
+  `5` then `del 4` in Mojito.
+  - The operator's MIR `binary` carries `resolved: absent`, so
+    `ArgumentPassing` (`register_loans.rs`) has no contract for it, and the
+    aggregate load of `o` retains its owner through the result's consumer.
+  - The pin destroys `o` right after `__add__` returns, as after a method
+    call `o.__add__(1)`.
+  - Found while landing R681 (2026-10-13).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R688 An owner whose last use is a `var` aggregate argument's copy
+  lives through the call**
+
+  Problem: `obj.own2(y=h1.c, x=h2.c)` over `def own2(self, var x: C,
+  var y: C)`, with a printing copy initializer and destructor, prints
+  `copy 3, del 3, copy 2, del 2, own2 3 2` at the pin.
+  - Mojito copies in the same order but destroys both owners after the
+    call: `copy 3, copy 2, own2 3 2, …, del 3, del 2`.
+  - The copied register keeps its owner's provenance, so drop elaboration
+    retains the owner through the call. The fix is the `CopyValue` result
+    provenance in `crates/mojito-analysis/src/analysis/register_loans.rs`.
+  - Found while landing R681 (2026-10-13).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R689 A direct call's keyword arguments are set up in source order,
+  not parameter order**
+
+  Problem: `own2f(y=d2, x=d3)` over `def own2f(var x: D, var y: D)`, with a
+  printing copy initializer, prints `copy 3` then `copy 2` at the pin and
+  `copy 2` then `copy 3` in Mojito.
+  - A method call orders its setup reads by its `CheckedCallContract`
+    (`close_call_setup`); a direct call carries no contract, so its reads
+    keep source order.
+  - The Mojo-shaped fix records the `mojito_ast::call` binding's slot order
+    on the checked direct call, as a checked fact rather than a MIR
+    re-binding.
+  - Found while landing R681 (2026-10-13).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -1130,6 +1187,21 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     `comptime if i == 0` arm they print `1 1`.
   - Found while landing R329 (2026-10-08).
   - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R690 A subscript assignment is accepted without a `__getitem__`
+  matching its indices**
+
+  Problem: `s[k] = v` on a struct whose `__setitem__(mut self, a: Int,
+  b: Int)` sits beside `__getitem__(self, a: Int, b: Int)` runs in Mojito,
+  while the pin rejects it: "invalid call to '__getitem__': missing
+  required argument: 'b'".
+  - The pin type-checks a subscript assignment's target through
+    `__getitem__` over the same indices before it selects the setter; the
+    checker's subscript-store selection checks the setter alone.
+  - R35 is the getter-absent half of the same check.
+  - Found while landing R681 (2026-10-13).
+  - Depends on R35.
   - Model: Opus, Not Planned.
 
 - [ ] **R667 An associated projection is treated as `Deinitable` and

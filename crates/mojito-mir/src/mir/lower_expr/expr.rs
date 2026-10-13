@@ -235,9 +235,12 @@ impl<'a> Flatten<'a> {
         a: Node<'a>,
         b: Node<'a>,
     ) -> Reg {
-        // Operands left-to-right (evaluation order is explicit).
+        // Operands left-to-right (evaluation order is explicit), each place
+        // operand read at the operator call's setup.
+        self.open_call_setup();
         let ra = self.lower_operator_operand(a);
         let rb = self.lower_operator_operand(b);
+        self.close_call_setup(None);
         let resolved = node.resolved_callable();
         // A reflected operator (checker-marked) runs on the RIGHT
         // operand: `1 + m` calls `m.__radd__(1)`.

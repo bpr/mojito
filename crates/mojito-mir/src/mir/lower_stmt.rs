@@ -1416,10 +1416,15 @@ impl<'a> Flatten<'a> {
             else {
                 return false;
             };
-            let (receiver, receiver_place) = self.lower_call_receiver(object);
+            let (receiver, receiver_place) =
+                self.lower_setup_receiver_with(target, object, |this| {
+                    this.lower_call_receiver(object)
+                });
             let (argument_register, argument_place) = self.lower_call_argument(index);
             let argument = MirSubscriptArg::Index(argument_register);
-            let (value, value_place) = self.lower_assignment_value(target, value_expression);
+            let (value, value_place) = self
+                .outside_call_setup(|this| this.lower_assignment_value(target, value_expression));
+            self.close_call_setup(None);
             let call = self
                 .subscript_call_contract(target, std::slice::from_ref(&argument))
                 .expect("checked nominal subscript setter has a call contract");
@@ -1469,8 +1474,10 @@ impl<'a> Flatten<'a> {
         };
 
         // Current Mojo evaluates the nominal receiver first, then indices and
-        // bounds from left to right, and finally the assignment RHS.
-        let (receiver, receiver_place) = self.lower_call_receiver(object);
+        // bounds from left to right, and finally the assignment RHS; a place
+        // index is read at the setter's setup, after its sibling operands.
+        let (receiver, receiver_place) =
+            self.lower_setup_receiver_with(target, object, |this| this.lower_call_receiver(object));
         let mut arg_places = Vec::with_capacity(descriptors.len());
         let args = match source_arguments {
             SetArguments::Multi(arguments) => arguments
@@ -1516,7 +1523,9 @@ impl<'a> Flatten<'a> {
                 }]
             }
         };
-        let (value, value_place) = self.lower_assignment_value(target, value_expression);
+        let (value, value_place) =
+            self.outside_call_setup(|this| this.lower_assignment_value(target, value_expression));
+        self.close_call_setup(None);
         let call = self
             .subscript_call_contract(target, &args)
             .expect("checked nominal subscript setter has a call contract");
@@ -1573,7 +1582,7 @@ impl<'a> Flatten<'a> {
         subscript: Node<'a>,
         id: mojito_checked::checked::CheckedNodeId,
     ) -> Reg {
-        self.expr(Self::subscript_operand(subscript, id))
+        self.outside_call_setup(|this| this.expr(Self::subscript_operand(subscript, id)))
     }
 
     /// Like [`place`](Self::place), but returns `None` for a non-place expression
@@ -1649,6 +1658,8 @@ impl<'a> Flatten<'a> {
                 aggregate_loans: self.aggregate_loans.clone(),
                 conversion_view_loans: self.conversion_view_loans.clone(),
                 pending_argument_anchors: Vec::new(),
+                call_setups: Vec::new(),
+                argument_depth: 0,
                 allow_argument_anchors: false,
                 transfer_domain_loans: self.transfer_domain_loans.clone(),
                 reassigned_names: self.reassigned_names.clone(),

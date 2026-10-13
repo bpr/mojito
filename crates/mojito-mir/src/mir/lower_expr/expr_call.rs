@@ -79,8 +79,10 @@ impl<'a> Flatten<'a> {
             let saved_anchor_permission = self.allow_argument_anchors;
             self.allow_argument_anchors = call.call_anchors_arguments();
             let lends_reads = call.lends_read_arguments();
+            self.open_call_setup();
             let (regs, arg_places) = self.lower_call_arguments(args, lends_reads);
             let (kw, kwarg_places) = self.lower_call_keywords(kwargs, lends_reads);
+            self.close_call_setup(Some(call));
             self.allow_argument_anchors = saved_anchor_permission;
             let place = self.var_place(variable);
             let callee_place = place.is_typed().then_some(place);
@@ -597,6 +599,7 @@ impl<'a> Flatten<'a> {
                 Some(TyKind::Struct(constructed, _)) if *constructed == *name
             ))
             && call.call_anchors_arguments();
+        self.open_call_setup();
         let (regs, arg_places) = self.lower_call_arguments(args, lends_reads);
         self.allow_argument_anchors = saved_anchor_permission;
         let copy_construction = args.is_empty()
@@ -608,6 +611,7 @@ impl<'a> Flatten<'a> {
             .then(|| self.copy_construction_keywords(kwargs))
             .flatten()
             .unwrap_or_else(|| self.lower_call_keywords(kwargs, lends_reads));
+        self.close_call_setup(Some(call));
         let (regs, arg_places, kw, kwarg_places) = match node.ty.clone().as_ref().map(Ty::kind) {
             Some(TyKind::Struct(constructed, _)) if *constructed == *name => self
                 .fieldwise_keywords_positional(constructed, (regs, arg_places, kw, kwarg_places)),
@@ -829,9 +833,11 @@ impl<'a> Flatten<'a> {
             let saved_anchor_permission = self.allow_argument_anchors;
             self.allow_argument_anchors = call.call_anchors_arguments();
             let lends_reads = call.lends_read_arguments();
+            self.open_call_setup();
             let (regs, arg_places) = self.lower_call_arguments(args, lends_reads);
             self.allow_argument_anchors = saved_anchor_permission;
             let (kw, kwarg_places) = self.lower_call_keywords(kwargs, lends_reads);
+            self.close_call_setup(Some(call));
             let dest = self.fresh(call.location(), None);
             let target =
                 callable_target(&node.adjustments).unwrap_or_else(|| format!("{name}.{field}"));
@@ -860,13 +866,9 @@ impl<'a> Flatten<'a> {
         if let Some(dest) = self.lower_elided_receiver_call(call, object, args, kwargs) {
             return dest;
         }
-        let (recv, recv_place) = self.lower_method_receiver(call, object);
         let implicitly_copied_receiver = call.implicitly_copies_consuming_receiver();
-        let recv = if implicitly_copied_receiver {
-            self.copy_consuming_receiver(object, recv, recv_place.as_ref())
-        } else {
-            recv
-        };
+        let (recv, recv_place) =
+            self.lower_setup_receiver(call, object, implicitly_copied_receiver);
         // A per-call clone has baked its method parameters into
         // the selected symbol. Source brackets remain in the AST,
         // but an empty declaration list means they occupy no MIR
@@ -874,7 +876,10 @@ impl<'a> Flatten<'a> {
         let (param_arg_regs, instantiated_args) = if param_decls.is_empty() {
             (Vec::new(), Vec::new())
         } else {
-            (self.param_arg_regs(call), call.instantiated_args())
+            (
+                self.outside_call_setup(|this| this.param_arg_regs(call)),
+                call.instantiated_args(),
+            )
         };
         let saved_anchor_permission = self.allow_argument_anchors;
         self.allow_argument_anchors = call.call_anchors_arguments();
@@ -882,6 +887,7 @@ impl<'a> Flatten<'a> {
         let (argument_regs, arg_places) = self.lower_call_arguments(args, lends_reads);
         self.allow_argument_anchors = saved_anchor_permission;
         let (keyword_regs, kwarg_places) = self.lower_call_keywords(kwargs, lends_reads);
+        self.close_call_setup(Some(call));
         let dest = self.fresh(call.location(), None);
         self.emit_interior_invalidations(object, None);
         self.emit_call_invalidations(call, args, kwargs);

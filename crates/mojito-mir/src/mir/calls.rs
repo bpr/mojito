@@ -5,6 +5,7 @@
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
+use mojito_checked::checked::CheckedCallArgumentSource;
 use mojito_types::types::TyKind;
 
 /// A call's positional registers and places, then its keyword registers and
@@ -19,6 +20,20 @@ pub(super) type FieldwiseCallArguments = (
 /// A call's keyword registers and, aligned with them, the retained caller
 /// place each reads.
 pub(super) type LoweredKeywords = (Vec<(String, Reg)>, Vec<Option<MirPlace>>);
+
+/// One open call's setup: the reads of its immediate by-value place operands,
+/// held until its last operand is evaluated. Mojo evaluates every argument to
+/// an lvalue in source order and reads each at call setup, so a later
+/// argument's write to the place is seen by an earlier one; a simple place
+/// has no lvalue work, so its whole read sequence (`UseVar`/`LoadPlace`, a
+/// `var` copy, an implicit conversion) is setup work.
+pub(super) struct CallSetup {
+    /// The [`Flatten::argument_depth`] the call's own operands lower at.
+    depth: usize,
+    /// Each deferred read sequence with the operand it reads: `None` for a
+    /// receiver or an operator operand, which precede every argument.
+    reads: Vec<(Option<CheckedCallArgumentSource>, Vec<MirInstr>)>,
+}
 
 /// Whether a value of this type owns storage that destruction must release:
 /// an aggregate (a struct with a destructor or owning fields, tuple/pack
@@ -46,33 +61,188 @@ impl<'a> Flatten<'a> {
     /// nominal accessor-produced reference uses the same hidden handle slot as
     /// a chained method receiver.
     pub(super) fn lower_call_argument(&mut self, expression: Node<'a>) -> (Reg, Option<MirPlace>) {
-        self.lower_call_argument_with(expression, false)
+        self.lower_call_argument_with(expression, false, CheckedCallArgumentSource::Positional(0))
     }
 
     /// Lower one operand of a struct operator: a named place the checker
     /// marked `BorrowReadArgument` (the dunder reads it) is read where it
     /// lies, as a read-convention call argument is; anything else is an
-    /// ordinary value.
+    /// ordinary value. Inside an operator's setup frame
+    /// ([`Self::open_call_setup`]) a simple place's read is deferred to the
+    /// frame's setup.
     pub(super) fn lower_operator_operand(&mut self, expression: Node<'a>) -> Reg {
-        let borrowed = expression.adjustments().iter().any(|adjustment| {
-            matches!(
-                adjustment,
-                mojito_checked::checked::SemanticAdjustment::BorrowReadArgument
-            )
+        self.lower_setup_operand(expression, None, |this| {
+            let borrowed = expression.adjustments().iter().any(|adjustment| {
+                matches!(
+                    adjustment,
+                    mojito_checked::checked::SemanticAdjustment::BorrowReadArgument
+                )
+            });
+            borrowed
+                .then(|| this.lower_borrowed_read_argument(expression))
+                .flatten()
+                .unwrap_or_else(|| this.expr(expression))
+        })
+    }
+
+    /// Open a setup frame for the call whose operands are lowered next. Every
+    /// opened frame is closed by [`Self::close_call_setup`] after the call's
+    /// last operand and before anything consumes the operands' registers.
+    pub(super) fn open_call_setup(&mut self) {
+        self.call_setups.push(CallSetup {
+            depth: self.argument_depth,
+            reads: Vec::new(),
         });
-        borrowed
-            .then(|| self.lower_borrowed_read_argument(expression))
-            .flatten()
-            .unwrap_or_else(|| self.expr(expression))
+    }
+
+    /// Close the innermost setup frame, emitting its deferred reads: the
+    /// receiver and operator operands first, then the arguments in the
+    /// parameter order `call`'s checked contract binds them in, as Mojo's
+    /// call setup reads them; a call without a contract keeps source order.
+    pub(super) fn close_call_setup(&mut self, call: Option<Node<'a>>) {
+        let Some(setup) = self.call_setups.pop() else {
+            return;
+        };
+        let mut reads = setup.reads;
+        if reads.len() > 1
+            && let Some(contract) = call.and_then(Node::call_contract)
+        {
+            let rank = |source: &Option<CheckedCallArgumentSource>| {
+                source.map_or(0, |source| {
+                    contract
+                        .arguments
+                        .iter()
+                        .position(|argument| argument.source == source)
+                        .map_or(usize::MAX, |slot| slot + 1)
+                })
+            };
+            reads.sort_by_key(|(source, _)| rank(source));
+        }
+        for instr in reads.into_iter().flat_map(|(_, instrs)| instrs) {
+            self.emit(instr);
+        }
+    }
+
+    /// Lower one operand of the innermost open call with `lower`, one
+    /// argument depth deeper so a nested call's operands never reach the
+    /// outer frame. When the frame is this operand's own, its read defers
+    /// to setup ([`Self::defer_to_setup`]).
+    fn lower_setup_operand<R>(
+        &mut self,
+        expression: Node<'a>,
+        source: Option<CheckedCallArgumentSource>,
+        lower: impl FnOnce(&mut Self) -> R,
+    ) -> R {
+        let owns_setup = self
+            .call_setups
+            .last()
+            .is_some_and(|setup| setup.depth == self.argument_depth);
+        self.argument_depth += 1;
+        let lowered = if owns_setup {
+            self.defer_to_setup(expression, source, lower)
+        } else {
+            lower(self)
+        };
+        self.argument_depth -= 1;
+        lowered
+    }
+
+    /// Run `lower` one argument depth deeper: lowering that is not one of
+    /// the open call's operands (its compile-time arguments) never reaches
+    /// its setup frame.
+    pub(super) fn outside_call_setup<R>(&mut self, lower: impl FnOnce(&mut Self) -> R) -> R {
+        self.argument_depth += 1;
+        let lowered = lower(self);
+        self.argument_depth -= 1;
+        lowered
+    }
+
+    /// Run `lower`, and when `expression` is a [`Self::setup_read`] move
+    /// everything it emitted to the innermost setup frame. A lowering that
+    /// split the block stays where written.
+    fn defer_to_setup<R>(
+        &mut self,
+        expression: Node<'a>,
+        source: Option<CheckedCallArgumentSource>,
+        lower: impl FnOnce(&mut Self) -> R,
+    ) -> R {
+        let block = self.cur;
+        let start = self.f.blocks[block].instrs.len();
+        let deferred = self.setup_read(expression);
+        let lowered = lower(self);
+        if deferred
+            && self.cur == block
+            && let Some(setup) = self.call_setups.last_mut()
+        {
+            let instrs = self.f.blocks[block].instrs.drain(start..).collect();
+            setup.reads.push((source, instrs));
+        }
+        lowered
+    }
+
+    /// Whether `expression` is a by-value place whose read belongs to call
+    /// setup: a direct root or field chain with no lvalue work, no reference
+    /// alias between it and its owner, and none of the identifier lowerings
+    /// that are values rather than reads (callables, closures, pointer
+    /// handles, folded constants, materialized borrow slots).
+    fn setup_read(&mut self, expression: Node<'a>) -> bool {
+        if expression.resolved_callable().is_some()
+            || self.nested_info(expression).is_some()
+            || expression.is_origin_bearing_pointer()
+            || expression.constant_param_value()
+            || mojito_checked::checked::materialized_borrow_owner(expression.adjustments())
+                .is_some()
+            || matches!(
+                expression.ty().as_ref().map(Ty::kind),
+                Some(
+                    TyKind::Func(_)
+                        | TyKind::GenericFunc(_)
+                        | TyKind::Overload(_)
+                        | TyKind::Param {
+                            callable_bound: Some(_),
+                            ..
+                        }
+                )
+            )
+        {
+            return false;
+        }
+        self.simple_place(expression).is_some_and(|place| {
+            place.through.is_none()
+                && !self.aliases.contains_key(&place.root)
+                && !self.runtime_aliases.contains(&place.root)
+        })
     }
 
     /// `lends_reads`: the enclosing call's result borrows its read
     /// arguments, so a shared read of a place argument retains that place
-    /// (see [`Self::lends_read_arguments`]).
+    /// (see [`Self::lends_read_arguments`]). `source` names the argument
+    /// for its setup read's parameter order.
     fn lower_call_argument_with(
         &mut self,
         expression: Node<'a>,
         lends_reads: bool,
+        source: CheckedCallArgumentSource,
+    ) -> (Reg, Option<MirPlace>) {
+        let owns_setup = self
+            .call_setups
+            .last()
+            .is_some_and(|setup| setup.depth == self.argument_depth);
+        self.argument_depth += 1;
+        let lowered =
+            self.lower_call_operand(expression, lends_reads, owns_setup.then_some(source));
+        self.argument_depth -= 1;
+        lowered
+    }
+
+    /// [`Self::lower_call_argument_with`] one argument depth down. `setup` is
+    /// the argument's source when the innermost setup frame is its call's,
+    /// so a copied-value read of a simple place defers to setup.
+    fn lower_call_operand(
+        &mut self,
+        expression: Node<'a>,
+        lends_reads: bool,
+        setup: Option<CheckedCallArgumentSource>,
     ) -> (Reg, Option<MirPlace>) {
         if let Some(operand) = expression.spread_operand() {
             return self.lower_pack_spread_argument(expression, operand);
@@ -88,7 +258,7 @@ impl<'a> Flatten<'a> {
                 )
             })
         {
-            return self.lower_call_argument_with(inner, lends_reads);
+            return self.lower_call_operand(inner, lends_reads, setup);
         }
         // A temporary bound to a `ref [origin]` parameter: store the value in
         // a hidden slot registered under the checker-minted owner identity and
@@ -126,7 +296,12 @@ impl<'a> Flatten<'a> {
                     mojito_checked::checked::SemanticAdjustment::BorrowReadArgument
                 )
             }) && expression.implicit_conversion().is_none()
-                && let Some(register) = self.lower_borrowed_read_argument(expression)
+                && let Some(register) = match setup.filter(|_| !lends_reads) {
+                    Some(source) => self.defer_to_setup(expression, Some(source), |this| {
+                        this.lower_borrowed_read_argument(expression)
+                    }),
+                    None => self.lower_borrowed_read_argument(expression),
+                }
             {
                 // A call whose result borrows its reads retains the place as
                 // a SHARED read:
@@ -140,6 +315,14 @@ impl<'a> Flatten<'a> {
                     return (register, self.simple_place(expression));
                 }
                 return (register, None);
+            }
+            if let Some(source) = setup
+                && self.setup_read(expression)
+            {
+                return (
+                    self.defer_to_setup(expression, Some(source), |this| this.expr(expression)),
+                    None,
+                );
             }
             let value = self.expr(expression);
             self.anchor_temporary_argument(expression, value, adjustments, converted);
@@ -540,8 +723,12 @@ impl<'a> Flatten<'a> {
     ) -> (Vec<Reg>, Vec<Option<MirPlace>>) {
         let mut registers = Vec::with_capacity(arguments.len());
         let mut places = Vec::with_capacity(arguments.len());
-        for &argument in arguments {
-            let (register, place) = self.lower_call_argument_with(argument, lends_reads);
+        for (index, &argument) in arguments.iter().enumerate() {
+            let (register, place) = self.lower_call_argument_with(
+                argument,
+                lends_reads,
+                CheckedCallArgumentSource::Positional(index),
+            );
             registers.push(register);
             places.push(place);
         }
@@ -556,8 +743,12 @@ impl<'a> Flatten<'a> {
     ) -> LoweredKeywords {
         let mut registers = Vec::with_capacity(arguments.len());
         let mut places = Vec::with_capacity(arguments.len());
-        for &(name, value) in arguments {
-            let (register, place) = self.lower_call_argument_with(value, lends_reads);
+        for (index, &(name, value)) in arguments.iter().enumerate() {
+            let (register, place) = self.lower_call_argument_with(
+                value,
+                lends_reads,
+                CheckedCallArgumentSource::Keyword(index),
+            );
             registers.push((name.to_string(), register));
             places.push(place);
         }
@@ -957,6 +1148,55 @@ impl<'a> Flatten<'a> {
             binding_ty: Some(ty.clone()),
         });
         (value, Some(MirPlace::root(variable, Some(ty))))
+    }
+
+    /// Lower method call `call`'s receiver as [`Self::lower_method_receiver`]
+    /// does, copying a consuming receiver when `copied`, and open the call's
+    /// setup frame ([`Self::open_call_setup`]). A receiver the method reads
+    /// or owns by value is read at setup, after the arguments, as Mojo's
+    /// call setup reads it; a `mut`/`ref`/`deinit` receiver binds its place
+    /// and stays where written.
+    pub(super) fn lower_setup_receiver(
+        &mut self,
+        call: Node<'a>,
+        receiver: Node<'a>,
+        copied: bool,
+    ) -> (Reg, Option<MirPlace>) {
+        self.lower_setup_receiver_with(call, receiver, |this| {
+            let (value, place) = this.lower_method_receiver(call, receiver);
+            let value = if copied {
+                this.copy_consuming_receiver(receiver, value, place.as_ref())
+            } else {
+                value
+            };
+            (value, place)
+        })
+    }
+
+    /// [`Self::lower_setup_receiver`] with the receiver lowered by `lower`:
+    /// a subscript's accessor receiver goes through
+    /// [`Self::lower_call_receiver`] alone.
+    pub(super) fn lower_setup_receiver_with(
+        &mut self,
+        call: Node<'a>,
+        receiver: Node<'a>,
+        lower: impl FnOnce(&mut Self) -> (Reg, Option<MirPlace>),
+    ) -> (Reg, Option<MirPlace>) {
+        let by_value = call.call_contract().is_none_or(|contract| {
+            matches!(
+                contract.receiver_convention,
+                None | Some(
+                    mojito_ast::ast::ArgConvention::Imm | mojito_ast::ast::ArgConvention::Var
+                )
+            )
+        });
+        if by_value {
+            self.open_call_setup();
+            return self.lower_setup_operand(receiver, None, lower);
+        }
+        let lowered = lower(self);
+        self.open_call_setup();
+        lowered
     }
 
     /// Read a field (`B(1).x`) off a fresh owned temporary through frame
