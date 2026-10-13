@@ -179,7 +179,9 @@ impl Flatten<'_> {
             param_arg_regs,
             receiver,
             instantiated_args,
-            spread: spread_position(args).map(|position| position + usize::from(leading.is_some())),
+            spread: self
+                .spread_position(args)
+                .map(|position| position + usize::from(leading.is_some())),
         });
         self.emit_nested_closure_argument_keepalives(args, kwargs);
         dest
@@ -756,10 +758,7 @@ impl Flatten<'_> {
         // evaluated once) and keep the place for write-back; otherwise it is
         // a temporary evaluated for its value only.
         let receiver_expr = if explicit_destroy {
-            match &object.kind {
-                ExprKind::Transfer(inner) => inner.as_ref(),
-                _ => object,
-            }
+            self.transfer_operand(object).unwrap_or(object)
         } else {
             object
         };
@@ -835,7 +834,7 @@ impl Flatten<'_> {
             param_arg_regs,
             param_decls,
             instantiated_args,
-            spread: spread_position(args),
+            spread: self.spread_position(args),
         });
         self.emit_nested_closure_argument_keepalives(args, kwargs);
         self.install_call_transfers(e, transfer_recv_place.as_ref(), &transfer_arg_places);

@@ -186,7 +186,7 @@ impl Flatten<'_> {
     pub(in crate::mir) fn compare_chain(
         &mut self,
         first: &Expr,
-        rest: &[(InfixOp, Expr)],
+        rest: &[(InfixOp, &Expr)],
         sp: SourceSpan,
     ) -> Reg {
         let result = self.fresh_var();

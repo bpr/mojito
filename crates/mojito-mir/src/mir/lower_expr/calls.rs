@@ -6,14 +6,14 @@ use super::*;
 use mojito_checked::checked::CheckedOp;
 use mojito_types::types::TyKind;
 
-/// The argument position of a call's pack spread (`f(*a)`), the slot the
-/// elaborator expands into the collector's elements.
-pub(super) fn spread_position(args: &[Expr]) -> Option<usize> {
-    args.iter()
-        .position(|argument| matches!(argument.kind, ExprKind::Spread(_)))
-}
-
 impl Flatten<'_> {
+    /// The argument position of a call's pack spread (`f(*a)`), the slot the
+    /// elaborator expands into the collector's elements.
+    pub(super) fn spread_position(&self, args: &[Expr]) -> Option<usize> {
+        args.iter()
+            .position(|argument| self.spread_operand(argument).is_some())
+    }
+
     /// A `@staticmethod` reached through an instance (`value.static_method()`,
     /// `v.is_type_supported[Int]()`): the checker selected a target without a
     /// receiver, so evaluate the receiver for its effect only and call the
@@ -61,7 +61,7 @@ impl Flatten<'_> {
             param_arg_regs,
             receiver,
             instantiated_args,
-            spread: spread_position(args),
+            spread: self.spread_position(args),
         });
         self.emit_nested_closure_argument_keepalives(args, kwargs);
         Some(dest)
@@ -130,7 +130,7 @@ impl Flatten<'_> {
             param_decls,
             instantiated_contract,
             instantiated_args,
-            spread: spread_position(args),
+            spread: self.spread_position(args),
         });
         self.emit_nested_closure_argument_keepalives(args, kwargs);
         self.install_call_transfers(e, transfer_recv_place.as_ref(), &transfer_arg_places);
@@ -349,7 +349,7 @@ impl Flatten<'_> {
             param_decls,
             instantiated_contract,
             instantiated_args,
-            spread: spread_position(args),
+            spread: self.spread_position(args),
         });
         self.emit_nested_closure_argument_keepalives(args, kwargs);
         self.install_call_transfers(e, None, &transfer_arg_places);
@@ -409,10 +409,7 @@ impl Flatten<'_> {
             .iter()
             .chain(kwargs.iter().map(|argument| &argument.value))
         {
-            let expression = match (&expression.kind, self.op_of(expression)) {
-                (ExprKind::Named { value, .. }, Some(CheckedOp::Named { .. })) => value.as_ref(),
-                _ => expression,
-            };
+            let expression = self.named_value(expression).unwrap_or(expression);
             // A closure argument is either a binding naming a nested def or a
             // lambda expression materialized in place.
             let Some(CheckedOp::Identifier(_) | CheckedOp::Lambda { .. }) = self.op_of(expression)

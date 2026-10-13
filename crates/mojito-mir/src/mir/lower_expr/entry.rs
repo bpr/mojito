@@ -87,6 +87,7 @@ impl Flatten<'_> {
         &mut self,
         expression: &Expr,
     ) -> mojito_types::types::GenericConstraint {
+        use mojito_checked::checked::CheckedOp;
         use mojito_types::types::GenericConstraint;
         let recorded = self
             .checked_adjustments(expression)
@@ -114,20 +115,21 @@ impl Flatten<'_> {
                 &Clone::clone,
             );
         }
-        if let Some(mojito_checked::checked::CheckedOp::Bool(value)) =
-            self.checked_node(expression).map(|node| &node.op)
-        {
-            return GenericConstraint::Bool(*value);
-        }
-        match &expression.kind {
-            ExprKind::Prefix(PrefixOp::Not, inner) => {
+        let tables = std::sync::Arc::clone(&self.checked);
+        let op = self
+            .node_of(expression)
+            .and_then(|id| tables.expression(id))
+            .map(|node| &node.op);
+        match (op, expression_children(expression).as_slice()) {
+            (Some(CheckedOp::Bool(value)), _) => GenericConstraint::Bool(*value),
+            (Some(CheckedOp::Prefix(PrefixOp::Not, _)), [inner]) => {
                 GenericConstraint::Not(Box::new(self.comptime_condition_of(inner)))
             }
-            ExprKind::Infix(InfixOp::And, left, right) => GenericConstraint::And(
+            (Some(CheckedOp::Infix(InfixOp::And, ..)), [left, right]) => GenericConstraint::And(
                 Box::new(self.comptime_condition_of(left)),
                 Box::new(self.comptime_condition_of(right)),
             ),
-            ExprKind::Infix(InfixOp::Or, left, right) => GenericConstraint::Or(
+            (Some(CheckedOp::Infix(InfixOp::Or, ..)), [left, right]) => GenericConstraint::Or(
                 Box::new(self.comptime_condition_of(left)),
                 Box::new(self.comptime_condition_of(right)),
             ),

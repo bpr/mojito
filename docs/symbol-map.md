@@ -690,10 +690,12 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   (`access_family`), and for list, brace, and tuple displays and
   comprehensions (`display_family`, reading the construction through
   `ctrl.rs`'s `collection_plan`/`array_literal_plan`), whose entry points take the node and read its
-  attributes and adjustments; the rest is a dispatch table over
-  `ExprKind`: each arm calls one `Flatten` method.
-  `expr.rs` keeps the variable-read and operator arms
-  (a t-string reaching it is an explicit `Unsupported` boundary); `expr_call.rs` owns direct calls (`call_expr`,
+  attributes and adjustments, and for prefix and infix operators,
+  comparison chains, ternaries, transfers, and lambdas (`operator_family`,
+  reading the operator from the op and each operand as the rebuilt child at
+  its `CheckedOp::operands` position; a spread, type value, or t-string
+  reaching it is an explicit `Unsupported` boundary). An expression none of
+  the five families takes is one explicit `Unsupported` boundary. `expr_call.rs` owns direct calls (`call_expr`,
   `checked_construction`, `direct_call`) and callable-value invocations (`invoke_expr`,
   `variant_operation`, `parameterized_method_call`); `expr_method.rs` owns
   method calls (`method_call_expr`, its value and storage special forms,
@@ -702,8 +704,9 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   spellings share `variant_payload_read`). The place builders
   (`lower_stmt.rs`), `lower_projected_reference_place`, and
   `Flatten::pointer_keyword_subscript` (`mir.rs`) decide by the op, and
-  `Flatten::{member_object, index_operands}` (`facts.rs`) bind a member or
-  subscript node's operands for the predicates. The module
+  `Flatten::{member_object, index_operands, transfer_operand,
+  spread_operand, named_value}` (`facts.rs`) bind a member, subscript,
+  transfer, spread, or walrus node's operands for the predicates. The module
   installs merged caller-side
   `EstablishLoans` — domain-keyed for interior-precise destinations — for
   checked call-transfer records (`install_call_transfers`, reading the call

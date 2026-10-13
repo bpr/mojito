@@ -8,6 +8,16 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- MIR lowers prefix and infix operators, comparison chains, ternaries,
+  transfers, spreads, and lambdas from their checked ops (R635), as
+  upstream's typed op carries its operator as an attribute and its
+  operands as an ordered list: the operator comes from the op and each
+  operand is the child at its position among the op's operands, and the
+  transfer, spread, and walrus predicates and a `comptime if` condition's
+  `not`/`and`/`or` decide by the op too. Every expression family now
+  dispatches on its node, so an expression without one is a single
+  explicit `Unsupported` boundary. No program's output or MIR changes.
+
 - MIR lowers straight-line statements and `try` from their checked
   statement ops (R622), as upstream lowers a statement from its typed op:
   the op decides each statement's lowering, a `ref` declaration binds the

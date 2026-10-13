@@ -1779,7 +1779,12 @@ the same way (`Flatten::display_family`): the constructor and insertion
 method come from the node's construction adjustment, each comprehension
 clause's kind, binder, and iterable come from the op, and a display without
 a checked construction is an explicit `Unsupported` boundary, never a
-collection guessed from its delimiters. A static
+collection guessed from its delimiters. Operators, comparison chains,
+ternaries, transfers, spreads, and lambdas dispatch the same way
+(`Flatten::operator_family`): the operator comes from the op, and each
+operand is the rebuilt child at its `CheckedOp::operands` position, so no
+expression family is chosen from syntax and an expression without its
+checked node is one explicit `Unsupported` boundary. A static
 call's receiver is a type because its node is a name the check bound to
 nothing and typed as no value, never because no local shares its spelling.
 A subscript accessor's compile-time value argument names its operand by

@@ -115,13 +115,13 @@ impl Flatten<'_> {
         expression: &Expr,
         view_result: bool,
     ) -> (Reg, Option<MirPlace>) {
-        if let ExprKind::Spread(operand) = &expression.kind {
+        if let Some(operand) = self.spread_operand(expression) {
             return self.lower_pack_spread_argument(expression, operand);
         }
         let adjustments = self.checked_adjustments(expression);
         // A `^` the checker bound to a read parameter lends its place like a
         // plain read argument.
-        if let ExprKind::Transfer(inner) = &expression.kind
+        if let Some(inner) = self.transfer_operand(expression)
             && adjustments.iter().any(|adjustment| {
                 matches!(
                     adjustment,
@@ -542,7 +542,7 @@ impl Flatten<'_> {
         expression: &Expr,
         operand: &Expr,
     ) -> (Reg, Option<MirPlace>) {
-        if let ExprKind::Transfer(moved) = &operand.kind
+        if let Some(moved) = self.transfer_operand(operand)
             && self.is_name(moved)
         {
             return (self.transfer(operand, moved), None);
@@ -866,7 +866,7 @@ impl Flatten<'_> {
     /// and are never reconstructed as raw index projections.
     pub(super) fn lower_call_receiver(&mut self, expression: &Expr) -> (Reg, Option<MirPlace>) {
         // A `^` receiver of a read method lends its place (checker-marked).
-        if let ExprKind::Transfer(inner) = &expression.kind
+        if let Some(inner) = self.transfer_operand(expression)
             && self
                 .checked_adjustments(expression)
                 .iter()

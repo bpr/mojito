@@ -1,4 +1,5 @@
-//! The `expr_unconverted` expression dispatcher.
+//! The `expr_unconverted` expression dispatcher: five families, each
+//! chosen by the expression's checked op.
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
@@ -12,198 +13,11 @@ impl Flatten<'_> {
             .or_else(|| self.call_family(e))
             .or_else(|| self.access_family(e))
             .or_else(|| self.display_family(e))
+            .or_else(|| self.operator_family(e))
         {
             return value;
         }
-        match &e.kind {
-            // Every literal and name MIR lowers was rebuilt from its node.
-            ExprKind::Int(_)
-            | ExprKind::Float(_)
-            | ExprKind::Bool(_)
-            | ExprKind::Str(_)
-            | ExprKind::None
-            | ExprKind::Uninitialized
-            | ExprKind::EmptySubscript
-            | ExprKind::Identifier(_)
-            | ExprKind::Named { .. } => {
-                let dest = self.fresh(span(e), None);
-                self.emit(MirInstr::Unsupported(
-                    "a literal or name without a checked node reached MIR".to_string(),
-                ));
-                self.emit(MirInstr::Const {
-                    dest,
-                    k: Const::None,
-                });
-                dest
-            }
-            ExprKind::Spread(_) => {
-                let dest = self.fresh(span(e), None);
-                self.emit(MirInstr::Unsupported(
-                    "unexpanded call spread reached MIR lowering".to_string(),
-                ));
-                self.emit(MirInstr::Const {
-                    dest,
-                    k: Const::None,
-                });
-                dest
-            }
-
-            // `x^`: a move out of a variable. `p.a^` (a pure field chain) is a
-            // partial move of that field. A constant index into compiler-private
-            // Tuple storage is also an independently tracked slot; this is the
-            // move path used by whole heterogeneous-pack forwarding and public
-            // Tuple's private backing field. Other indexed transfers have
-            // already been restricted by checking to copyable value reads.
-            ExprKind::Transfer(inner) => self.transfer(e, inner),
-
-            // --- Operators -----------------------------------------------------
-            ExprKind::Prefix(op, a) => {
-                let ra = self.expr(a);
-                // `not x` on a struct or a numeric scalar is
-                // `not x.__bool__()`: convert through the explicit `Bool(x)`
-                // call so the negation is scalar on both backends.
-                let ra = if *op == PrefixOp::Not
-                    && self.checked_ty(a).is_some_and(|ty| {
-                        matches!(ty.kind(), TyKind::Struct(..))
-                            || mojito_types::conformance::is_numeric(&ty)
-                            || mojito_types::types::is_scalar_simd(&ty)
-                    }) {
-                    self.bool_conversion(a.source_span(), ra)
-                } else {
-                    ra
-                };
-                let d = self.fresh(span(e), None);
-                self.emit(MirInstr::UnOp {
-                    op: *op,
-                    dest: d,
-                    a: ra,
-                });
-                d
-            }
-            // `and`/`or` short-circuit — lowered to CFG blocks, not an eager BinOp.
-            ExprKind::Infix(op @ (InfixOp::And | InfixOp::Or), a, b) => {
-                self.short_circuit(*op, a, b, span(e))
-            }
-            // A checked nominal membership operation is an ordinary borrowed
-            // `container.__contains__(value)` call.  Keeping it as a value-only
-            // `BinOp` loses the receiver place; the VM would then install a
-            // shallow struct value in the callee's `self` slot and destroy its
-            // owned fields on return.  For pointer-backed collections that can
-            // free the caller's storage.  Preserve source evaluation order
-            // (value before container), the selected overload, and the normal
-            // method-call place/capture contract.
-            ExprKind::Infix(op @ (InfixOp::In | InfixOp::NotIn), value, container)
-                if matches!(
-                    self.checked_ty(container).as_ref().map(Ty::kind),
-                    Some(TyKind::Struct(..))
-                ) =>
-            {
-                self.contains_call(e, *op, value, container)
-            }
-            ExprKind::Infix(op, a, b) => self.infix_op(e, *op, a, b),
-
-            // --- Calls / access ------------------------------------------------
-            // Every call MIR lowers was rebuilt from its node.
-            ExprKind::Call { .. } | ExprKind::Invoke { .. } | ExprKind::MethodCall { .. } => {
-                let dest = self.fresh(span(e), None);
-                self.emit(MirInstr::Unsupported(
-                    "a call without a checked node reached MIR".to_string(),
-                ));
-                self.emit(MirInstr::Const {
-                    dest,
-                    k: Const::None,
-                });
-                dest
-            }
-            // Every member read and subscript MIR lowers was rebuilt from
-            // its node.
-            ExprKind::Member { .. }
-            | ExprKind::Index { .. }
-            | ExprKind::Slice { .. }
-            | ExprKind::MultiIndex { .. } => {
-                let dest = self.fresh(span(e), None);
-                self.emit(MirInstr::Unsupported(
-                    "a member or subscript without a checked node reached MIR".to_string(),
-                ));
-                self.emit(MirInstr::Const {
-                    dest,
-                    k: Const::None,
-                });
-                dest
-            }
-
-            // Every collection display and comprehension MIR lowers was
-            // rebuilt from its node.
-            ExprKind::ListLit(_)
-            | ExprKind::BraceLit(_)
-            | ExprKind::Comprehension { .. }
-            | ExprKind::TupleLit(_) => {
-                let dest = self.fresh(span(e), None);
-                self.emit(MirInstr::Unsupported(
-                    "a collection display without a checked node reached MIR".to_string(),
-                ));
-                self.emit(MirInstr::Const {
-                    dest,
-                    k: Const::None,
-                });
-                dest
-            }
-
-            // Ternary `a if cond else b` — a value-producing branch (like the
-            // short-circuit lowering, but both arms assign the result).
-            ExprKind::IfExpr {
-                cond,
-                then_branch,
-                else_branch,
-            } => self.ternary(cond, then_branch, else_branch, span(e)),
-            // Chained comparison `a < b < c` — each operand evaluated once, folded
-            // into short-circuiting `and`s.
-            ExprKind::Compare { first, rest } => self.compare_chain(first, rest, span(e)),
-            // HIR lowers the construction the checker spelled for a
-            // t-string in its place, so a checked program never reaches one.
-            ExprKind::TString { .. } => {
-                let dest = self.fresh(span(e), None);
-                self.emit(MirInstr::Unsupported(
-                    "a t-string reached MIR without the construction the checker built for it"
-                        .to_string(),
-                ));
-                self.emit(MirInstr::Const {
-                    dest,
-                    k: Const::None,
-                });
-                dest
-            }
-            // A lambda expression materializes its hidden definition's
-            // closure at the expression's evaluation point — copy/move
-            // captures snapshot here, once per evaluation.
-            ExprKind::Lambda { .. } => {
-                if let Some(info) = self.nested_info(e) {
-                    self.emit_nested_closure(&info, span(e), false)
-                } else {
-                    let dest = self.fresh(span(e), None);
-                    self.emit(MirInstr::Unsupported(
-                        "lambda expression lost its checked nested declaration".to_string(),
-                    ));
-                    self.emit(MirInstr::Const {
-                        dest,
-                        k: Const::None,
-                    });
-                    dest
-                }
-            }
-            ExprKind::TypeValue(_) | ExprKind::TypeApply { .. } => {
-                let dest = self.fresh(span(e), None);
-                self.emit(MirInstr::Unsupported(format!(
-                    "unchecked expression reached MIR lowering: {:?}",
-                    e.kind
-                )));
-                self.emit(MirInstr::Const {
-                    dest,
-                    k: Const::None,
-                });
-                dest
-            }
-        }
+        self.unsupported_value(e, "an expression without its checked node reached MIR")
     }
 
     /// Read slot `var` at `location`; `node` is the name node read, whose
@@ -576,8 +390,20 @@ impl Flatten<'_> {
         dest
     }
 
+    /// The explicit boundary for `e`: `Unsupported(message)`, then `None`
+    /// into a fresh register.
+    fn unsupported_value(&mut self, e: &Expr, message: &str) -> Reg {
+        let dest = self.fresh(span(e), None);
+        self.emit(MirInstr::Unsupported(message.to_string()));
+        self.emit(MirInstr::Const {
+            dest,
+            k: Const::None,
+        });
+        dest
+    }
+
     /// Lower `e` by its node's op when that op is a literal or a name:
-    /// `None` for any other op, which the syntax dispatch lowers.
+    /// `None` for any other op, which another family lowers.
     fn literal_or_name(&mut self, e: &Expr) -> Option<Reg> {
         let tables = std::sync::Arc::clone(&self.checked);
         let node = tables.expression(self.node_of(e)?)?;
@@ -596,8 +422,8 @@ impl Flatten<'_> {
             // checker marked `BorrowReadArgument` (`lower_call_argument`), and
             // `x^` lowers as `Move`.
             CheckedOp::Identifier(name) => self.identifier_read(e, node, name),
-            CheckedOp::Named { name, .. } => match &e.kind {
-                ExprKind::Named { value, .. } => self.walrus(value, node, name),
+            CheckedOp::Named { name, .. } => match expression_children(e).as_slice() {
+                [value] => self.walrus(value, node, name),
                 _ => return None,
             },
             _ => return None,
@@ -606,7 +432,7 @@ impl Flatten<'_> {
 
     /// Lower `e` by its node's op when that op is a call, an invocation, a
     /// method call, or a callable type application: `None` for any other
-    /// op, which the syntax dispatch lowers. The op decides; the syntax only
+    /// op, which another family lowers. The op decides; the syntax only
     /// binds the operands still lowered from it.
     fn call_family(&mut self, e: &Expr) -> Option<Reg> {
         let tables = std::sync::Arc::clone(&self.checked);
@@ -668,7 +494,7 @@ impl Flatten<'_> {
 
     /// Lower `e` by its node's op when that op is a member read, a
     /// subscript, a slice, a multi-subscript, or a `Variant` projection:
-    /// `None` for any other op, which the syntax dispatch lowers. The op
+    /// `None` for any other op, which another family lowers. The op
     /// decides; the syntax only binds the operands still lowered from it.
     fn access_family(&mut self, e: &Expr) -> Option<Reg> {
         let tables = std::sync::Arc::clone(&self.checked);
@@ -720,8 +546,8 @@ impl Flatten<'_> {
     }
 
     /// Lower `e` by its node's op when that op is a list, brace, or tuple
-    /// display or a comprehension: `None` for any other op, which the syntax
-    /// dispatch lowers. The op decides; the syntax only binds the operands
+    /// display or a comprehension: `None` for any other op, which another
+    /// family lowers. The op decides; the syntax only binds the operands
     /// still lowered from it.
     fn display_family(&mut self, e: &Expr) -> Option<Reg> {
         let tables = std::sync::Arc::clone(&self.checked);
@@ -751,15 +577,111 @@ impl Flatten<'_> {
     /// no construction the checker selected: lowering never guesses the
     /// collection from its delimiters.
     fn display_without_plan(&mut self, e: &Expr, what: &str) -> Reg {
-        let dest = self.fresh(span(e), None);
-        self.emit(MirInstr::Unsupported(format!(
-            "{what} without its checked construction reached MIR"
-        )));
-        self.emit(MirInstr::Const {
-            dest,
-            k: Const::None,
-        });
-        dest
+        self.unsupported_value(
+            e,
+            &format!("{what} without its checked construction reached MIR"),
+        )
+    }
+
+    /// Lower `e` by its node's op when that op is an operator, a comparison
+    /// chain, a ternary, a transfer, a spread, a lambda, a type value, or a
+    /// t-string: `None` for any other op. The op decides and supplies the
+    /// operator; each operand is the rebuilt child at its position among
+    /// the op's operands.
+    fn operator_family(&mut self, e: &Expr) -> Option<Reg> {
+        let tables = std::sync::Arc::clone(&self.checked);
+        let node = tables.expression(self.node_of(e)?)?;
+        Some(match (&node.op, expression_children(e).as_slice()) {
+            (CheckedOp::Prefix(op, _), [value]) => self.prefix_op(e, *op, value),
+            // `and`/`or` short-circuit — lowered to CFG blocks, not an eager BinOp.
+            (CheckedOp::Infix(op @ (InfixOp::And | InfixOp::Or), ..), [a, b]) => {
+                self.short_circuit(*op, a, b, span(e))
+            }
+            // A checked nominal membership operation is an ordinary borrowed
+            // `container.__contains__(value)` call.  Keeping it as a value-only
+            // `BinOp` loses the receiver place; the VM would then install a
+            // shallow struct value in the callee's `self` slot and destroy its
+            // owned fields on return.  For pointer-backed collections that can
+            // free the caller's storage.  Preserve source evaluation order
+            // (value before container), the selected overload, and the normal
+            // method-call place/capture contract.
+            (CheckedOp::Infix(op @ (InfixOp::In | InfixOp::NotIn), ..), [value, container])
+                if matches!(
+                    self.checked_ty(container).as_ref().map(Ty::kind),
+                    Some(TyKind::Struct(..))
+                ) =>
+            {
+                self.contains_call(e, *op, value, container)
+            }
+            (CheckedOp::Infix(op, ..), [a, b]) => self.infix_op(e, *op, a, b),
+            // Ternary `a if cond else b` — a value-producing branch (like the
+            // short-circuit lowering, but both arms assign the result).
+            (CheckedOp::IfExpr { .. }, [cond, then_branch, else_branch]) => {
+                self.ternary(cond, then_branch, else_branch, span(e))
+            }
+            // Chained comparison `a < b < c` — each operand evaluated once, folded
+            // into short-circuiting `and`s.
+            (CheckedOp::Compare { rest, .. }, [first, others @ ..])
+                if rest.len() == others.len() =>
+            {
+                let links: Vec<(InfixOp, &Expr)> = rest
+                    .iter()
+                    .zip(others)
+                    .map(|((op, _), value)| (*op, *value))
+                    .collect();
+                self.compare_chain(first, &links, span(e))
+            }
+            // `x^`: a move out of a variable. `p.a^` (a pure field chain) is a
+            // partial move of that field. A constant index into compiler-private
+            // Tuple storage is also an independently tracked slot; this is the
+            // move path used by whole heterogeneous-pack forwarding and public
+            // Tuple's private backing field. Other indexed transfers have
+            // already been restricted by checking to copyable value reads.
+            (CheckedOp::Transfer(_), [inner]) => self.transfer(e, inner),
+            // A lambda expression materializes its hidden definition's
+            // closure at the expression's evaluation point — copy/move
+            // captures snapshot here, once per evaluation.
+            (CheckedOp::Lambda { .. }, []) => match self.nested_info(e) {
+                Some(info) => self.emit_nested_closure(&info, span(e), false),
+                None => self
+                    .unsupported_value(e, "lambda expression lost its checked nested declaration"),
+            },
+            // A call argument's spread is expanded by the call that takes it.
+            (CheckedOp::Spread(_), _) => {
+                self.unsupported_value(e, "unexpanded call spread reached MIR lowering")
+            }
+            // HIR lowers the construction the checker spelled for a
+            // t-string in its place, so a checked program never reaches one.
+            (CheckedOp::TString { .. }, _) => self.unsupported_value(
+                e,
+                "a t-string reached MIR without the construction the checker built for it",
+            ),
+            (CheckedOp::TypeValue(_), _) => {
+                self.unsupported_value(e, "a type value reached MIR lowering")
+            }
+            _ => return None,
+        })
+    }
+
+    /// Prefix operator `op` applied to `value`, the operand of node `e`.
+    fn prefix_op(&mut self, e: &Expr, op: PrefixOp, value: &Expr) -> Reg {
+        let ra = self.expr(value);
+        // `not x` on a struct or a numeric scalar is
+        // `not x.__bool__()`: convert through the explicit `Bool(x)`
+        // call so the negation is scalar on both backends.
+        let ra = if op == PrefixOp::Not
+            && self.checked_ty(value).is_some_and(|ty| {
+                matches!(ty.kind(), TyKind::Struct(..))
+                    || mojito_types::conformance::is_numeric(&ty)
+                    || mojito_types::types::is_scalar_simd(&ty)
+            }) {
+            self.bool_conversion(value.source_span(), ra)
+        } else {
+            ra
+        };
+        let d = self.fresh(span(e), None);
+        self.emit(MirInstr::UnOp { op, dest: d, a: ra });
+        d
     }
 
     /// Call node `node`, written `name`: a crossing the elaborator left

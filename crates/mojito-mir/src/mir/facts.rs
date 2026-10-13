@@ -72,6 +72,24 @@ impl Flatten<'_> {
         }
     }
 
+    /// The operand of the transfer node `expression` was rebuilt from:
+    /// `None` when its node is not a transfer.
+    pub(super) fn transfer_operand<'e>(&self, expression: &'e Expr) -> Option<&'e Expr> {
+        self.sole_operand(expression, |op| matches!(op, CheckedOp::Transfer(_)))
+    }
+
+    /// The operand of the spread node `expression` was rebuilt from: `None`
+    /// when its node is not a spread.
+    pub(super) fn spread_operand<'e>(&self, expression: &'e Expr) -> Option<&'e Expr> {
+        self.sole_operand(expression, |op| matches!(op, CheckedOp::Spread(_)))
+    }
+
+    /// The value of the walrus node `expression` was rebuilt from: `None`
+    /// when its node is not a walrus.
+    pub(super) fn named_value<'e>(&self, expression: &'e Expr) -> Option<&'e Expr> {
+        self.sole_operand(expression, |op| matches!(op, CheckedOp::Named { .. }))
+    }
+
     /// The checked node `expression` was rebuilt from, as its record.
     pub(super) fn checked_node(
         &self,
@@ -662,6 +680,9 @@ impl Flatten<'_> {
             }
             return loans;
         }
+        if let Some(inner) = self.transfer_operand(expression) {
+            return self.aggregate_borrows(inner);
+        }
         match (self.op_of(expression), &expression.kind) {
             (Some(CheckedOp::Call { .. }), ExprKind::Call { args, kwargs, .. }) => {
                 // A view construction borrows the places its `ref [origin]`
@@ -784,7 +805,6 @@ impl Flatten<'_> {
                     .flat_map(|argument| self.aggregate_borrows(argument))
                     .collect()
             }
-            (_, ExprKind::Transfer(inner)) => self.aggregate_borrows(inner),
             (
                 Some(CheckedOp::ListLit(_) | CheckedOp::TupleLit(_)),
                 ExprKind::ListLit(values) | ExprKind::TupleLit(values),
@@ -1021,6 +1041,19 @@ impl Flatten<'_> {
                 Vec::new()
             }
             _ => Vec::new(),
+        }
+    }
+
+    /// The one operand of the node `expression` was rebuilt from, when that
+    /// node's op satisfies `is_op`.
+    fn sole_operand<'e>(
+        &self,
+        expression: &'e Expr,
+        is_op: impl Fn(&CheckedOp) -> bool,
+    ) -> Option<&'e Expr> {
+        match expression_children(expression).as_slice() {
+            [operand] if self.op_of(expression).is_some_and(is_op) => Some(operand),
+            _ => None,
         }
     }
 }

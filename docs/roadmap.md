@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R644**.
+Next free ID: **R645**.
 
 ## Ordered Work
 
@@ -4821,25 +4821,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R635 MIR lowers operators, transfers, spreads, lambdas, type
-  values, and t-strings from syntax**
-
-  No entry of R619–R622 owns these op families, so R623's done-condition
-  cannot hold until MIR matches their `CheckedOp` instead of `ExprKind`.
-  - `Prefix`, `Infix`, `Compare`, and `IfExpr` (with `short_circuit`,
-    `compare_chain`, `ternary`), plus `comptime_condition_of`'s
-    `Not`/`And`/`Or` arms.
-  - `Transfer`, `Spread`, `Lambda`, `TypeValue`, and `TString`.
-  - The walrus (`walrus`) and `emit_nested_closure_argument_keepalives`
-    still reach a walrus's value through its syntax child, which the
-    operand carrier change in R623 removes.
-  - Done when `rg 'ExprKind::(Prefix|Infix|Compare|IfExpr|Transfer|Spread|Lambda|TypeValue|TString)'
-    crates/mojito-mir/src` finds only `expression_children`, and the probe
-    fixtures' MIR is unchanged on the VM and with `--backend pliron`.
-  - Found while landing R618 (2026-10-12).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R642 MIR finds lifted applications and thunk-read bindings by
   span**
 
@@ -4959,6 +4940,27 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     nodes MIR finds by span.
   - Done when no `CheckedOp` variant holds an `ast::Type`.
   - Depends on R623.
+  - Model: Opus, Not Planned.
+
+- [ ] **R644 MIR still matches operator and lambda syntax at two sites
+  outside `expression_children`**
+
+  `value_binder_annotation` (`mir.rs`) folds `ExprKind::{Prefix, Infix}`
+  for an annotation-bracket index that has no node, and `find_nested_defs`
+  (`mir/nested.rs`) takes `ExprKind::Lambda` from a statement's original
+  syntax.
+  - Every other operator, transfer, spread, and lambda site in MIR
+    already decides by its `CheckedOp` (`Flatten::operator_family` and
+    the `facts.rs` operand accessors).
+  - Once R628 gives the index a node, `value_binder_node` covers it and
+    `value_binder_annotation` goes.
+  - Once R643 walks nested bodies by id, the lambda's `def` is
+    `CheckedOp::Lambda { def }`.
+  - Done when `rg 'ExprKind::(Prefix|Infix|Compare|IfExpr|Transfer|Spread|Lambda|TypeValue|TString|Named)'
+    crates/mojito-mir/src` finds only `expression_children`, and the probe
+    fixtures' MIR is unchanged.
+  - Found while landing R635 (2026-10-12).
+  - Depends on R628, R643.
   - Model: Opus, Not Planned.
 
 - [ ] **R630 A checked declaration op's signature is syntax, where

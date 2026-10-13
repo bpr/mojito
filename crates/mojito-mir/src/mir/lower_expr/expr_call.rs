@@ -119,7 +119,7 @@ impl Flatten<'_> {
                 param_decls,
                 instantiated_contract,
                 instantiated_args,
-                spread: spread_position(args),
+                spread: self.spread_position(args),
             });
             self.install_call_transfers(e, transfer_recv_place.as_ref(), &transfer_arg_places);
             return dest;
@@ -131,14 +131,11 @@ impl Flatten<'_> {
             // Moving a whole pack into its storage (`__RuntimeTuple(*args^)`)
             // is one relocation: the collector already holds the elements
             // in storage shape.
-            if let [
-                Expr {
-                    kind: ExprKind::Spread(spread),
-                    ..
-                },
-            ] = args
-                && matches!(&spread.kind, ExprKind::Transfer(inner)
-                    if self.is_name(inner))
+            if let [argument] = args
+                && let Some(spread) = self.spread_operand(argument)
+                && self
+                    .transfer_operand(spread)
+                    .is_some_and(|inner| self.is_name(inner))
             {
                 return self.expr(spread);
             }
@@ -532,7 +529,7 @@ impl Flatten<'_> {
         }
         let mut callee_place = self.callable_receiver_place(callee);
         let callable_ty = self.checked_ty(callee);
-        let lambda_callee = matches!(callee.kind, ExprKind::Lambda { .. });
+        let lambda_callee = matches!(self.op_of(callee), Some(CheckedOp::Lambda { .. }));
         let callee = self.expr(callee);
         let callable_ty = callable_ty.or_else(|| self.f.reg_types.get(&callee.0).cloned());
         if lambda_callee && callee_place.is_none() {
@@ -665,7 +662,7 @@ impl Flatten<'_> {
             param_arg_regs,
             receiver: None,
             instantiated_args,
-            spread: spread_position(args),
+            spread: self.spread_position(args),
         });
         self.emit_nested_closure_argument_keepalives(args, kwargs);
         self.install_call_transfers(e, None, &transfer_arg_places);
@@ -870,7 +867,7 @@ impl Flatten<'_> {
                 param_arg_regs,
                 receiver,
                 instantiated_args,
-                spread: spread_position(args),
+                spread: self.spread_position(args),
             });
             self.emit_nested_closure_argument_keepalives(args, kwargs);
             return dest;
@@ -935,7 +932,7 @@ impl Flatten<'_> {
             param_arg_regs,
             param_decls: param_decls.to_vec(),
             instantiated_args,
-            spread: spread_position(args),
+            spread: self.spread_position(args),
         });
         self.emit_nested_closure_argument_keepalives(args, kwargs);
         dest
