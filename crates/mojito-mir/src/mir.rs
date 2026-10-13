@@ -5071,14 +5071,22 @@ struct TryRegions<'a> {
 }
 
 /// The invariant construction state shared by every recursive level of a
-/// collection comprehension. Only the clause cursor and checked bindings vary
-/// as the nested control-flow tree is emitted.
+/// collection comprehension. Only the clause cursor varies as the nested
+/// control-flow tree is emitted.
 struct ComprehensionPlan<'a> {
     collection: VarId,
     target: &'a Ty,
     insert: &'a str,
     key: Option<&'a Expr>,
     value: &'a Expr,
+    /// The checked clauses, which decide each clause's kind, binder, and
+    /// iterable node.
+    clauses: &'a [mojito_checked::checked::CheckedComprehensionClause],
+    /// The clauses' syntax, pairwise with `clauses`, which binds only the
+    /// operands still lowered from it.
+    syntax: &'a [mojito_ast::ast::ComprehensionClause],
+    /// The checked binder of each `for` clause, in clause order.
+    bindings: &'a [mojito_checked::checked::CheckedComprehensionBinding],
 }
 
 /// The binders in scope at a declaration: the enclosing struct's and

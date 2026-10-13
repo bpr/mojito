@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R642**.
+Next free ID: **R643**.
 
 ## Ordered Work
 
@@ -4821,15 +4821,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R621 MIR lowers displays and comprehensions from syntax**
-
-  MIR lowering matches `ExprKind` for list, dict, set, and tuple displays
-  and comprehensions, where it should match `CheckedOp`.
-  - `expression_ids_at` in `mir/nested.rs` reads the node instead.
-  - Plan: `R604-a-package-s-checked-body-is-plan.md`, slice 6.
-  - Depends on R617.
-  - Model: Opus, Not Planned.
-
 - [ ] **R622 MIR lowers statements and control flow from syntax**
 
   `mir/lower_stmt.rs` matches `StmtKind`, where it should match the
@@ -4855,6 +4846,23 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     fixtures' MIR is unchanged on the VM and with `--backend pliron`.
   - Found while landing R618 (2026-10-12).
   - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R642 MIR finds lifted applications and thunk-read bindings by
+  span**
+
+  `ComptimeThunks::request_applications` (twice) and `bindings_read`
+  (`mir.rs`) walk `Stmt` syntax with an AST `Visitor` and look each
+  expression's node up through the span-keyed `expression_ids_at`.
+  - Upstream reads a lifted application and the bindings it captures from
+    the typed body, never by source location.
+  - The fix walks the body's checked statement and expression nodes by id:
+    `CheckedOp::operands` for the expressions, a `Def` statement's op for
+    the nested bodies to skip.
+  - Done when `rg expression_ids_at crates/mojito-mir/src` is empty, so
+    R623 can delete it, and the probe fixtures' MIR is unchanged.
+  - Found while landing R621 (2026-10-12).
+  - Depends on R622.
   - Model: Opus, Not Planned.
 
 - [ ] **R623 HIR and MIR keep transitional syntax rebuilders and

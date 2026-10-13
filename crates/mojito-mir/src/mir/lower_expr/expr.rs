@@ -11,6 +11,7 @@ impl Flatten<'_> {
             .literal_or_name(e)
             .or_else(|| self.call_family(e))
             .or_else(|| self.access_family(e))
+            .or_else(|| self.display_family(e))
         {
             return value;
         }
@@ -131,16 +132,22 @@ impl Flatten<'_> {
                 dest
             }
 
-            // --- Aggregates ----------------------------------------------------
-            ExprKind::ListLit(elems) => self.list_literal(e, elems),
-            ExprKind::BraceLit(entries) => self.brace_literal(e, entries),
-            ExprKind::Comprehension {
-                kind,
-                key,
-                value,
-                clauses,
-            } => self.comprehension(e, *kind, key.as_deref(), value, clauses),
-            ExprKind::TupleLit(elems) => self.tuple_literal(e, elems),
+            // Every collection display and comprehension MIR lowers was
+            // rebuilt from its node.
+            ExprKind::ListLit(_)
+            | ExprKind::BraceLit(_)
+            | ExprKind::Comprehension { .. }
+            | ExprKind::TupleLit(_) => {
+                let dest = self.fresh(span(e), None);
+                self.emit(MirInstr::Unsupported(
+                    "a collection display without a checked node reached MIR".to_string(),
+                ));
+                self.emit(MirInstr::Const {
+                    dest,
+                    k: Const::None,
+                });
+                dest
+            }
 
             // Ternary `a if cond else b` — a value-producing branch (like the
             // short-circuit lowering, but both arms assign the result).
@@ -444,8 +451,8 @@ impl Flatten<'_> {
         d
     }
 
-    pub(super) fn list_literal(&mut self, e: &Expr, elems: &[Expr]) -> Reg {
-        if let Some((target, constructor)) = self.array_literal_plan(e) {
+    pub(super) fn list_literal(&mut self, e: &Expr, node: &CheckedExpr, elems: &[Expr]) -> Reg {
+        if let Some((target, constructor)) = array_literal_plan(node) {
             // One nominal constructor call: the element registers are
             // the variadic arguments, `__list_literal__` selects the
             // literal overload, and the `length` parameter argument
@@ -491,7 +498,7 @@ impl Flatten<'_> {
             });
             return d;
         }
-        if let Some((target, Some(insert))) = self.collection_plan(e) {
+        if let Some((target, Some(insert))) = collection_plan(node) {
             let collection = self.begin_nominal_collection(e, &target);
             for element in elems {
                 let value = self.expr(element);
@@ -499,31 +506,16 @@ impl Flatten<'_> {
             }
             return self.finish_nominal_collection(e, collection, &target);
         }
-        // The unchecked CFG helper has no semantic facts. Keep it
-        // syntax-total by emitting an ordinary constructor call; the
-        // production checked path above always carries an exact target
-        // and insertion method.
-        let regs = self.args(elems);
-        let d = self.fresh(span(e), None);
-        self.emit(MirInstr::Call {
-            dest: d,
-            func: FuncRef::named("List"),
-            raises: None,
-            args: regs.clone(),
-            kwargs: Vec::new(),
-            arg_places: vec![None; regs.len()],
-            kwarg_places: Vec::new(),
-            capture_accesses: Vec::new(),
-            param_arg_regs: Vec::new(),
-            receiver: None,
-            instantiated_args: Vec::new(),
-            spread: None,
-        });
-        d
+        self.display_without_plan(e, "a list display")
     }
 
-    pub(super) fn brace_literal(&mut self, e: &Expr, entries: &[(Expr, Option<Expr>)]) -> Reg {
-        if let Some((target, Some(insert))) = self.collection_plan(e) {
+    pub(super) fn brace_literal(
+        &mut self,
+        e: &Expr,
+        node: &CheckedExpr,
+        entries: &[(Expr, Option<Expr>)],
+    ) -> Reg {
+        if let Some((target, Some(insert))) = collection_plan(node) {
             let collection = self.begin_nominal_collection(e, &target);
             let dictionary = dict_elements(&target).is_some();
             for (key, value) in entries {
@@ -542,44 +534,11 @@ impl Flatten<'_> {
             }
             return self.finish_nominal_collection(e, collection, &target);
         }
-        // As above, this is only the syntax-only CFG compatibility
-        // path. A verified program never guesses its collection kind.
-        let dictionary = entries.first().is_none_or(|(_, value)| value.is_some());
-        let d = self.fresh(span(e), None);
-        let regs = if dictionary {
-            entries
-                .iter()
-                .flat_map(|(key, value)| {
-                    let key = self.expr(key);
-                    let value = value.as_ref().map(|value| self.expr(value));
-                    std::iter::once(key).chain(value)
-                })
-                .collect::<Vec<_>>()
-        } else {
-            entries
-                .iter()
-                .map(|(key, _)| self.expr(key))
-                .collect::<Vec<_>>()
-        };
-        self.emit(MirInstr::Call {
-            dest: d,
-            func: FuncRef::named(if dictionary { "Dict" } else { "Set" }),
-            raises: None,
-            args: regs.clone(),
-            kwargs: Vec::new(),
-            arg_places: vec![None; regs.len()],
-            kwarg_places: Vec::new(),
-            capture_accesses: Vec::new(),
-            param_arg_regs: Vec::new(),
-            receiver: None,
-            instantiated_args: Vec::new(),
-            spread: None,
-        });
-        d
+        self.display_without_plan(e, "a brace display")
     }
 
-    pub(super) fn tuple_literal(&mut self, e: &Expr, elems: &[Expr]) -> Reg {
-        if let Some((target, None)) = self.collection_plan(e)
+    pub(super) fn tuple_literal(&mut self, e: &Expr, node: &CheckedExpr, elems: &[Expr]) -> Reg {
+        if let Some((target, None)) = collection_plan(node)
             && let TyKind::Struct(name, _) = target.kind()
         {
             let regs = self.args(elems);
@@ -600,26 +559,7 @@ impl Flatten<'_> {
             });
             return dest;
         }
-        // Syntax-only lowering cannot select a variadic specialization,
-        // but it still emits an ordinary public constructor call. The
-        // private `MakeTuple` opcode is reserved for `__RuntimeTuple`.
-        let regs = self.args(elems);
-        let d = self.fresh(span(e), None);
-        self.emit(MirInstr::Call {
-            dest: d,
-            func: FuncRef::named("Tuple"),
-            raises: None,
-            args: regs.clone(),
-            kwargs: Vec::new(),
-            arg_places: vec![None; regs.len()],
-            kwarg_places: Vec::new(),
-            capture_accesses: Vec::new(),
-            param_arg_regs: Vec::new(),
-            receiver: None,
-            instantiated_args: Vec::new(),
-            spread: None,
-        });
-        d
+        self.display_without_plan(e, "a tuple display")
     }
 
     pub(super) fn nested_type_apply(&mut self, e: &Expr, name: &str) -> Reg {
@@ -777,6 +717,49 @@ impl Flatten<'_> {
             }
             _ => return None,
         })
+    }
+
+    /// Lower `e` by its node's op when that op is a list, brace, or tuple
+    /// display or a comprehension: `None` for any other op, which the syntax
+    /// dispatch lowers. The op decides; the syntax only binds the operands
+    /// still lowered from it.
+    fn display_family(&mut self, e: &Expr) -> Option<Reg> {
+        let tables = std::sync::Arc::clone(&self.checked);
+        let node = tables.expression(self.node_of(e)?)?;
+        Some(match (&node.op, &e.kind) {
+            (CheckedOp::ListLit(_), ExprKind::ListLit(elems)) => self.list_literal(e, node, elems),
+            (CheckedOp::BraceLit(_), ExprKind::BraceLit(entries)) => {
+                self.brace_literal(e, node, entries)
+            }
+            (
+                CheckedOp::Comprehension { clauses, .. },
+                ExprKind::Comprehension {
+                    key,
+                    value,
+                    clauses: clause_syntax,
+                    ..
+                },
+            ) => self.comprehension(e, node, clauses, key.as_deref(), value, clause_syntax),
+            (CheckedOp::TupleLit(_), ExprKind::TupleLit(elems)) => {
+                self.tuple_literal(e, node, elems)
+            }
+            _ => return None,
+        })
+    }
+
+    /// The boundary for display `e` (described as `what`) whose node carries
+    /// no construction the checker selected: lowering never guesses the
+    /// collection from its delimiters.
+    fn display_without_plan(&mut self, e: &Expr, what: &str) -> Reg {
+        let dest = self.fresh(span(e), None);
+        self.emit(MirInstr::Unsupported(format!(
+            "{what} without its checked construction reached MIR"
+        )));
+        self.emit(MirInstr::Const {
+            dest,
+            k: Const::None,
+        });
+        dest
     }
 
     /// Call node `node`, written `name`: a crossing the elaborator left

@@ -800,23 +800,19 @@ fn loop_index(
     checked: &mojito_checked::checked::CheckedProgram,
     statement: &Stmt,
 ) -> Option<LoopIndex> {
-    let StmtKind::ComptimeFor { iter, .. } = &statement.kind else {
+    let node = checked.tables().statement_at(&statement.source_span())?;
+    let mojito_checked::checked::CheckedStmtOp::ComptimeFor { iter, .. } = &node.op else {
         return None;
     };
     let iteration = checked
-        .expression_ids_at(&iter.source_span())
+        .expression(*iter)?
+        .adjustments
         .iter()
-        .filter_map(|id| checked.expression(*id))
-        .flat_map(|node| &node.adjustments)
         .find_map(|adjustment| match adjustment {
             mojito_checked::checked::SemanticAdjustment::ComptimeIteration(iteration) => {
                 Some(iteration)
             }
             _ => None,
         })?;
-    let binding = checked
-        .tables()
-        .statement_at(&statement.source_span())
-        .and_then(|node| node.binding);
-    Some(LoopIndex::of(iteration, binding))
+    Some(LoopIndex::of(iteration, node.binding))
 }

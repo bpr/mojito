@@ -687,10 +687,12 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   (`literal_or_name`), for calls, invocations, method calls, and callable
   type applications (`call_family`, `call_op`), and for member reads,
   subscripts, slices, multi-subscripts, and `Variant` projections
-  (`access_family`), whose entry points take the node and read its
+  (`access_family`), and for list, brace, and tuple displays and
+  comprehensions (`display_family`, reading the construction through
+  `ctrl.rs`'s `collection_plan`/`array_literal_plan`), whose entry points take the node and read its
   attributes and adjustments; the rest is a dispatch table over
   `ExprKind`: each arm calls one `Flatten` method.
-  `expr.rs` keeps the variable-read, operator, and literal-aggregate arms
+  `expr.rs` keeps the variable-read and operator arms
   (a t-string reaching it is an explicit `Unsupported` boundary); `expr_call.rs` owns direct calls (`call_expr`,
   `checked_construction`, `direct_call`) and callable-value invocations (`invoke_expr`,
   `variant_operation`, `parameterized_method_call`); `expr_method.rs` owns
@@ -719,7 +721,8 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `binder_scope`) instantiates a nested body under its enclosing instance. A
   declaration inside a kept `comptime for` also declares the loop indices
   (`MirFunctionDeclaration::region_binders`, from `find_nested_defs`'s loop
-  stack and `nested.rs::loop_index`); `mono/unroll.rs`
+  stack and `nested.rs::loop_index`, which reads the iterable through the
+  statement's `CheckedStmtOp::ComptimeFor`); `mono/unroll.rs`
   (`instantiate_region_references`, `region_generator_slots`) points each
   region copy's closure at its instance, a generic one at the copy's
   generator (`Specializer::region_generators`).
@@ -1021,7 +1024,7 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   reflected name list by `reflection_list`, and a display over the binders
   left as `ComptimeSource::Evaluated` when `evaluated_display` admits its
   elements, carrying the display's own construction, which the record
-  displaces on the display's span and `Flatten::display_adjustments`,
+  displaces on the display's span and `display_adjustments`,
   `mir/lower_expr/ctrl.rs`, reads back). `lower_term` turns an evaluated
   source into the application of a thunk
   (`ComptimeThunks::request_sequence`, `mir.rs`, lowered with the condition

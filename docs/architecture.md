@@ -1771,7 +1771,12 @@ dispatch the same way (`Flatten::access_family`), reading the field name,
 the subscript arguments' kinds and keywords, and every adjustment from the
 node; the place builders, the subscript stores, and the projection
 predicates decide by the op too, the syntax only binding the operands still
-lowered from it. A static
+lowered from it. List, brace, and tuple displays and comprehensions dispatch
+the same way (`Flatten::display_family`): the constructor and insertion
+method come from the node's construction adjustment, each comprehension
+clause's kind, binder, and iterable come from the op, and a display without
+a checked construction is an explicit `Unsupported` boundary, never a
+collection guessed from its delimiters. A static
 call's receiver is a type because its node is a name the check bound to
 nothing and typed as no value, never because no local shares its spelling.
 A subscript accessor's compile-time value argument names its operand by

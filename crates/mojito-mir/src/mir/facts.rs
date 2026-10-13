@@ -104,15 +104,6 @@ impl Flatten<'_> {
         self.facts(expression).and_then(|facts| facts.owner)
     }
 
-    pub(super) fn comprehension_bindings(
-        &self,
-        expression: &Expr,
-    ) -> Vec<mojito_checked::checked::CheckedComprehensionBinding> {
-        self.checked_node(expression)
-            .map(|node| node.comprehension_bindings.clone())
-            .unwrap_or_default()
-    }
-
     pub(super) fn expression_var(&mut self, name: &str, expression: &Expr) -> VarId {
         if let Some(owner) = self.checked_owner(expression) {
             return self.binding_var(owner, name);
@@ -794,7 +785,10 @@ impl Flatten<'_> {
                     .collect()
             }
             (_, ExprKind::Transfer(inner)) => self.aggregate_borrows(inner),
-            (_, ExprKind::ListLit(values) | ExprKind::TupleLit(values)) => values
+            (
+                Some(CheckedOp::ListLit(_) | CheckedOp::TupleLit(_)),
+                ExprKind::ListLit(values) | ExprKind::TupleLit(values),
+            ) => values
                 .iter()
                 .flat_map(|value| self.aggregate_borrows(value))
                 .collect(),

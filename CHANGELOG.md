@@ -8,6 +8,16 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- MIR lowers list, dict, set, and tuple displays and comprehensions from
+  their checked ops (R621), as upstream's lowering consumes a typed
+  collection construction: the constructor and insertion method come from
+  the node's construction adjustment, and each comprehension clause's
+  kind, binder, and iterable from the op. A display without its checked
+  construction is an explicit `Unsupported` boundary instead of a
+  collection guessed from its delimiters, and a `comptime for`'s
+  iteration is read through its statement node rather than by span. No
+  program's output or MIR changes.
+
 - A subscript accessor's compile-time value argument names its operand by
   bracket position rather than by source span (R641), as upstream's
   accessor call carries its parameters positionally: MIR reads the

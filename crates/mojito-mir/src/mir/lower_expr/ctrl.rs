@@ -3,7 +3,38 @@
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
+use mojito_checked::checked::{
+    CheckedComprehensionClause, CheckedExpr, CheckedOp, ComptimeIteration, ComptimeSource,
+    SemanticAdjustment,
+};
 use mojito_types::types::TyKind;
+
+/// Return the collection constructor and insertion protocol the checker
+/// selected for display or comprehension `node`. Collection syntax is
+/// deliberately absent from this decision: lowering consumes the nominal plan
+/// just like any other resolved call.
+pub(super) fn collection_plan(node: &CheckedExpr) -> Option<(Ty, Option<String>)> {
+    display_adjustments(node).find_map(|adjustment| match adjustment {
+        SemanticAdjustment::ConstructCollection { target, insert, .. } => {
+            Some((target.clone(), insert.clone()))
+        }
+        _ => None,
+    })
+}
+
+/// Return the fixed-size array literal constructor the checker selected for
+/// list display `node`: the concrete target type and the exact lowered
+/// `__init__` overload symbol of the variadic literal constructor.
+pub(super) fn array_literal_plan(node: &CheckedExpr) -> Option<(Ty, String)> {
+    display_adjustments(node).find_map(|adjustment| match adjustment {
+        SemanticAdjustment::ConstructArrayLiteral {
+            target,
+            constructor,
+            ..
+        } => Some((target.clone(), constructor.clone())),
+        _ => None,
+    })
+}
 
 impl Flatten<'_> {
     /// A condition whose value is a `Boolable` struct (checker-marked
@@ -203,66 +234,6 @@ impl Flatten<'_> {
             mode: UseMode::Copy,
         });
         d
-    }
-
-    /// Return the collection constructor and insertion protocol selected by the
-    /// checker.  Collection syntax is deliberately absent from this decision:
-    /// lowering consumes the nominal plan just like any other resolved call.
-    pub(in crate::mir) fn collection_plan(
-        &self,
-        expression: &Expr,
-    ) -> Option<(Ty, Option<String>)> {
-        self.display_adjustments(expression)
-            .into_iter()
-            .find_map(|adjustment| match adjustment {
-                mojito_checked::checked::SemanticAdjustment::ConstructCollection {
-                    target,
-                    insert,
-                    ..
-                } => Some((target, insert)),
-                _ => None,
-            })
-    }
-
-    /// Return the fixed-size array literal constructor selected by the
-    /// checker: the concrete target type and the exact lowered `__init__`
-    /// overload symbol of the variadic literal constructor.
-    pub(in crate::mir) fn array_literal_plan(&self, expression: &Expr) -> Option<(Ty, String)> {
-        self.display_adjustments(expression)
-            .into_iter()
-            .find_map(|adjustment| match adjustment {
-                mojito_checked::checked::SemanticAdjustment::ConstructArrayLiteral {
-                    target,
-                    constructor,
-                    ..
-                } => Some((target, constructor)),
-                _ => None,
-            })
-    }
-
-    /// The checked adjustments of a collection display. A `comptime for`
-    /// display the elaborator evaluates carries its construction under the
-    /// loop's record, which holds the display's span, as a local `comptime`
-    /// binding's does under the binding's.
-    fn display_adjustments(
-        &self,
-        expression: &Expr,
-    ) -> Vec<mojito_checked::checked::SemanticAdjustment> {
-        use mojito_checked::checked::{ComptimeIteration, ComptimeSource, SemanticAdjustment};
-        self.checked_adjustments(expression)
-            .into_iter()
-            .map(|adjustment| match adjustment {
-                SemanticAdjustment::ComptimeIteration(iteration) => match *iteration {
-                    ComptimeIteration {
-                        source: ComptimeSource::Evaluated { construction, .. },
-                        ..
-                    } => *construction,
-                    sequence => SemanticAdjustment::ComptimeIteration(Box::new(sequence)),
-                },
-                SemanticAdjustment::ComptimeDisplay { construction, .. } => *construction,
-                other => other,
-            })
-            .collect()
     }
 
     /// Install the caller-side loans a callee's transfer effects imply at
@@ -497,12 +468,10 @@ impl Flatten<'_> {
     /// the final leaf performs the collection family's insertion protocol.
     pub(in crate::mir) fn comprehension_clauses(
         &mut self,
-        clauses: &[mojito_ast::ast::ComprehensionClause],
-        bindings: &[mojito_checked::checked::CheckedComprehensionBinding],
-        index: usize,
         plan: &ComprehensionPlan<'_>,
+        index: usize,
     ) {
-        if index == clauses.len() {
+        if index == plan.clauses.len() {
             // Dictionary evaluation is key-before-value, matching an ordinary
             // display and indexed assignment. List/set leaves evaluate one item.
             let key = plan.key.map(|expression| self.expr(expression));
@@ -522,8 +491,11 @@ impl Flatten<'_> {
             return;
         }
 
-        match &clauses[index] {
-            mojito_ast::ast::ComprehensionClause::If(condition) => {
+        match (&plan.clauses[index], &plan.syntax[index]) {
+            (
+                CheckedComprehensionClause::If(_),
+                mojito_ast::ast::ComprehensionClause::If(condition),
+            ) => {
                 let value = self.expr(condition);
                 let condition = self.truthiness(condition, value);
                 let body = self.new_block();
@@ -534,25 +506,34 @@ impl Flatten<'_> {
                     else_b: continuation,
                 };
                 self.cur = body;
-                self.comprehension_clauses(clauses, bindings, index + 1, plan);
+                self.comprehension_clauses(plan, index + 1);
                 self.f.blocks[self.cur].term = MirTerm::Jump(continuation);
                 self.cur = continuation;
             }
-            mojito_ast::ast::ComprehensionClause::For { var, iter, .. } => {
+            (
+                CheckedComprehensionClause::For {
+                    var, iter: iter_id, ..
+                },
+                mojito_ast::ast::ComprehensionClause::For { iter, .. },
+            ) => {
                 let iterator_name = format!("$compiter{}", self.vars.len());
                 let iterator = self.var(&iterator_name);
-                let iterator_ty = self.checked_ty(iter);
-                let protocol = self
-                    .checked_adjustments(iter)
-                    .into_iter()
-                    .find_map(|adjustment| match adjustment {
-                        mojito_checked::checked::SemanticAdjustment::Iterate(protocol) => {
-                            Some(protocol)
-                        }
-                        _ => None,
+                let tables = std::sync::Arc::clone(&self.checked);
+                let iter_node = tables.expression(*iter_id);
+                let iterator_ty = iter_node.and_then(|node| node.ty.clone());
+                let protocol = iter_node
+                    .and_then(|node| {
+                        node.adjustments
+                            .iter()
+                            .find_map(|adjustment| match adjustment {
+                                SemanticAdjustment::Iterate(protocol) => Some(protocol.clone()),
+                                _ => None,
+                            })
                     })
-                    .unwrap_or(mojito_checked::checked::IterationProtocol {
-                        mode: if matches!(iter.kind, ExprKind::Transfer(_)) {
+                    .unwrap_or_else(|| mojito_checked::checked::IterationProtocol {
+                        mode: if iter_node
+                            .is_some_and(|node| matches!(node.op, CheckedOp::Transfer(_)))
+                        {
                             mojito_checked::checked::IterationMode::Owned
                         } else {
                             mojito_checked::checked::IterationMode::Borrowed
@@ -616,13 +597,12 @@ impl Flatten<'_> {
                 let header = self.new_block();
                 let body = self.new_block();
                 let exit = self.new_block();
-                let binding_index = clauses[..index]
+                let binding_index = plan.clauses[..index]
                     .iter()
-                    .filter(|clause| {
-                        matches!(clause, mojito_ast::ast::ComprehensionClause::For { .. })
-                    })
+                    .filter(|clause| matches!(clause, CheckedComprehensionClause::For { .. }))
                     .count();
-                let binding = bindings
+                let binding = plan
+                    .bindings
                     .get(binding_index)
                     .expect("checked comprehension binder metadata");
                 let yield_ty = protocol.next.as_ref().map_or_else(
@@ -685,7 +665,7 @@ impl Flatten<'_> {
                     iterator_object,
                     binding.owner,
                 );
-                self.comprehension_clauses(clauses, bindings, index + 1, plan);
+                self.comprehension_clauses(plan, index + 1);
                 self.f.blocks[self.cur].term = MirTerm::Jump(header);
                 self.cur = exit;
                 if split_source && !borrowed && protocol.source_retained {
@@ -701,31 +681,55 @@ impl Flatten<'_> {
                     self.emit(MirInstr::DropVar { var: iterator });
                 }
             }
+            _ => debug_assert!(
+                false,
+                "a comprehension clause's op and syntax disagree in kind"
+            ),
         }
     }
 
     pub(in crate::mir) fn comprehension(
         &mut self,
         expression: &Expr,
-        _kind: mojito_ast::ast::CollectionKind,
+        node: &CheckedExpr,
+        clauses: &[CheckedComprehensionClause],
         key: Option<&Expr>,
         value: &Expr,
-        clauses: &[mojito_ast::ast::ComprehensionClause],
+        syntax: &[mojito_ast::ast::ComprehensionClause],
     ) -> Reg {
-        let (target, insert) = self
-            .collection_plan(expression)
+        let (target, insert) = collection_plan(node)
             .expect("checked collection comprehension has a nominal construction plan");
         let insert = insert.expect("list/set/dict comprehension has an insertion method");
         let collection = self.begin_nominal_collection(expression, &target);
-        let bindings = self.comprehension_bindings(expression);
         let plan = ComprehensionPlan {
             collection,
             target: &target,
             insert: &insert,
             key,
             value,
+            clauses,
+            syntax,
+            bindings: &node.comprehension_bindings,
         };
-        self.comprehension_clauses(clauses, &bindings, 0, &plan);
+        self.comprehension_clauses(&plan, 0);
         self.finish_nominal_collection(expression, collection, &target)
     }
+}
+
+/// The checked adjustments of a collection display. A `comptime for` display
+/// the elaborator evaluates carries its construction under the loop's record,
+/// which holds the display's span, as a local `comptime` binding's does under
+/// the binding's.
+fn display_adjustments(node: &CheckedExpr) -> impl Iterator<Item = &SemanticAdjustment> {
+    node.adjustments.iter().map(|adjustment| match adjustment {
+        SemanticAdjustment::ComptimeIteration(iteration) => match &**iteration {
+            ComptimeIteration {
+                source: ComptimeSource::Evaluated { construction, .. },
+                ..
+            } => &**construction,
+            _ => adjustment,
+        },
+        SemanticAdjustment::ComptimeDisplay { construction, .. } => &**construction,
+        other => other,
+    })
 }
