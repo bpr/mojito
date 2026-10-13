@@ -755,7 +755,9 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   method calls (`method_call_expr`, its value and storage special forms,
   `ordinary_method_call`, `type_receiver_name`); `expr_access.rs` owns
   member, subscript, slice, and variant-projection reads (both projection
-  spellings share `variant_payload_read`). The place builders
+  spellings share `variant_payload_read`, and both pointer subscript
+  spellings share `pointer_subscript_read`, a borrowed pointee read
+  followed by the checked `copy_boundary`). The place builders
   (`lower_stmt.rs`), `lower_projected_reference_place`, and
   `Flatten::pointer_keyword_subscript` (`mir.rs`) decide by the op, and
   `Node::{member_object, index_operands, transfer_operand,

@@ -873,6 +873,10 @@ impl VmBackend {
                         )
                     })?;
                     regs[dest.0 as usize] = match (intrinsic, base_value) {
+                        // A pointer subscript is a shallow read of the
+                        // pointee, as `LoadPlace` and `ReadRef` are; the
+                        // checked `value.copy` makes any copy.
+                        //
                         // `ptr[i]` through a place handle (a `Pointer(to=x)`
                         // bound to a placeholder-origin parameter) reads the
                         // pointee; the handle designates one value.
@@ -885,22 +889,12 @@ impl VmBackend {
                                         .to_string(),
                                 ));
                             }
-                            let value = self.read_reference(&handle, frame_id, vars)?;
-                            if self.has_copyinit {
-                                self.clone_value(prog, &value)?
-                            } else {
-                                value
-                            }
+                            self.read_reference(&handle, frame_id, vars)?
                         }
                         // `ptr[i]` loads the pointee at `base + i` from the heap arena.
                         (MirIntrinsicSubscript::Pointer, Value::Pointer { allocation, offset }) => {
                             let off = self.normalize_index(prog, &regs[index.0 as usize])?;
-                            let value = self.heap_read(allocation, offset, off)?;
-                            if self.has_copyinit {
-                                self.clone_value(prog, &value)?
-                            } else {
-                                value
-                            }
+                            self.heap_read(allocation, offset, off)?
                         }
                         (MirIntrinsicSubscript::ComptimeList, Value::ComptimeList(items))
                             if self.ctfe_fuel.is_some() =>

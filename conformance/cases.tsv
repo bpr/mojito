@@ -454,6 +454,7 @@ imm-origin-binders	run	assets/ok/imm_origin_binders.mojo
 pointer-immutable-conversion	run	assets/ok/pointer_immutable_conversion.mojo
 pointer-origin-constructors	run	assets/ok/pointer_origin_constructors.mojo
 pointer-bound-copy	run	assets/ok/pointer_bound_copy.mojo
+pointer-subscript-reads-in-place	run	assets/ok/pointer_subscript_reads_in_place.mojo
 mut-pointer-parameter-reassign	run	assets/ok/mut_pointer_parameter_reassign.mojo
 live-pointer-ref-argument	run	assets/ok/live_pointer_ref_argument.mojo
 comptime-if-module-level	reject	assets/parse_error/comptime_if_module_level.mojo

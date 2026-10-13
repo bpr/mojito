@@ -244,33 +244,17 @@ impl<'a> Flatten<'a> {
             self.emit(MirInstr::LoadPlace { dest: d, place });
             return d;
         }
-        // Dereferencing an origin-bearing pointer reads its source
-        // place; the checker fixed the offset to 0. A stably bound
-        // pointer substitutes the owner place directly, keeping the
-        // owner touched (and so droppable) at each access; otherwise
-        // the access reads through the runtime handle.
-        if let Some(place) = self.pointer_deref_place(object) {
-            let d = self.fresh(e.location(), Some(place.root));
-            self.emit(MirInstr::LoadPlace { dest: d, place });
-            return d;
+        if is_pointer(object) && e.call_contract().is_none() {
+            return self.pointer_subscript_read(e, object, index);
         }
-        if let Some(d) = self.temporary_pointer_deref(e, object) {
-            return d;
-        }
-        // A pointer field of a call result the checker materialized
-        // (`make(b).src[]`) dereferences through the temporary's
-        // hidden slot, so the viewed storage outlives the read.
+        // A field of a call result the checker materialized
+        // (`make(b).t[0]`) is indexed through the temporary's hidden
+        // slot, so the viewed storage outlives the read.
         if object.rooted_at_materialized_temporary()
             && let Some(place) = self.lower_projected_reference_place(e)
         {
             let d = self.fresh(e.location(), Some(place.root));
             self.emit(MirInstr::LoadPlace { dest: d, place });
-            return d;
-        }
-        if object.is_origin_bearing_pointer() {
-            let reference = self.expr(object);
-            let d = self.fresh(e.location(), None);
-            self.emit(MirInstr::ReadRef { dest: d, reference });
             return d;
         }
         if let Some(contract) = self.type_keyed_accessor_call(e) {
@@ -390,44 +374,12 @@ impl<'a> Flatten<'a> {
             id.map(|id| this.outside_call_setup(|this| this.expr(operand(id))))
         };
         // `ptr[unsafe_offset=i]` — the keyword spelling of pointer
-        // indexed dereference — lowers exactly like `ptr[i]`: place
-        // substitution or handle read for origin-bearing pointers,
-        // else the pointer-intrinsic `Index` read.
-        if matches!(
-            object.ty().as_ref().map(Ty::kind),
-            Some(TyKind::Pointer { .. })
-        ) && let [CheckedSubscriptArg::Keyword { name, value }] = args
+        // indexed dereference — reads exactly like `ptr[i]`.
+        if is_pointer(object)
+            && let [CheckedSubscriptArg::Keyword { name, value }] = args
             && name == "unsafe_offset"
         {
-            if let Some(place) = self.pointer_deref_place(object) {
-                let d = self.fresh(e.location(), Some(place.root));
-                self.emit(MirInstr::LoadPlace { dest: d, place });
-                return d;
-            }
-            if let Some(d) = self.temporary_pointer_deref(e, object) {
-                return d;
-            }
-            if object.is_origin_bearing_pointer() {
-                let reference = self.expr(object);
-                let d = self.fresh(e.location(), None);
-                self.emit(MirInstr::ReadRef { dest: d, reference });
-                return d;
-            }
-            let base = self.expr(object);
-            let base_place = self.simple_place(object);
-            let (idx, index_place) = self.lower_call_argument(operand(*value));
-            let intrinsic = object.intrinsic_index_dispatch();
-            let d = self.fresh(e.location(), None);
-            self.emit(MirInstr::Index {
-                dest: d,
-                base,
-                index: idx,
-                base_place: base_place.map(Box::new),
-                index_place: index_place.map(Box::new),
-                call: None,
-                intrinsic,
-            });
-            return d;
+            return self.pointer_subscript_read(e, object, operand(*value));
         }
         let has_call = e.call_contract().is_some();
         let (object_reg, object_place) = if has_call {
@@ -519,6 +471,95 @@ impl<'a> Flatten<'a> {
         self.variant_payload_read(e, place)
     }
 
+    /// The checked value-copy boundary of place read `e`, whose borrowed
+    /// value is `loaded`: a read selected for a consuming value context
+    /// runs its `__copyinit__`; any other read stays the borrow.
+    fn copy_boundary(&mut self, e: Node<'a>, loaded: Reg, root: Option<VarId>) -> Reg {
+        let node = e.checked;
+        if !copies_place_value(node) {
+            return loaded;
+        }
+        let ty = self
+            .f
+            .reg_types
+            .get(&loaded.0)
+            .cloned()
+            .or_else(|| node.ty.clone())
+            .unwrap_or_else(Ty::error);
+        let copied = self.fresh_typed(e.location(), root, ty);
+        self.emit(MirInstr::CopyValue {
+            dest: copied,
+            value: loaded,
+        });
+        copied
+    }
+
+    /// Read pointer subscript node `e`, `object[index]` or
+    /// `object[unsafe_offset=index]`. Upstream's `__getitem__` returns
+    /// `ref T`, so the subscript is a place: the read borrows the pointee,
+    /// and only the checked value-copy boundary copies it.
+    fn pointer_subscript_read(&mut self, e: Node<'a>, object: Node<'a>, index: Node<'a>) -> Reg {
+        let (read, root) = self.pointee_read(e, object, index);
+        self.copy_boundary(e, read, root)
+    }
+
+    /// The borrowed read of the pointee pointer subscript node `e` names.
+    /// Dereferencing an origin-bearing pointer reads its source place; the
+    /// checker fixed the offset to 0. A stably bound pointer substitutes
+    /// the owner place directly, keeping the owner touched (and so
+    /// droppable) at each access; a pointer field of a call result the
+    /// checker materialized (`make(b).src[]`) dereferences through the
+    /// temporary's hidden slot; otherwise the access reads through the
+    /// runtime handle, or the pointer-intrinsic `Index` read.
+    fn pointee_read(
+        &mut self,
+        e: Node<'a>,
+        object: Node<'a>,
+        index: Node<'a>,
+    ) -> (Reg, Option<VarId>) {
+        if let Some(place) = self.pointer_deref_place(object) {
+            return self.pointee_place_read(e, place);
+        }
+        if let Some(d) = self.temporary_pointer_deref(e, object) {
+            return (d, None);
+        }
+        if object.rooted_at_materialized_temporary()
+            && let Some(place) = self.lower_projected_reference_place(e)
+        {
+            return self.pointee_place_read(e, place);
+        }
+        if object.is_origin_bearing_pointer() {
+            let reference = self.expr(object);
+            let d = self.fresh(e.location(), None);
+            self.emit(MirInstr::ReadRef { dest: d, reference });
+            return (d, None);
+        }
+        let base = self.expr(object);
+        let base_place = self.simple_place(object);
+        let (idx, index_place) = self.lower_call_argument(index);
+        let d = self.fresh(e.location(), None);
+        self.emit_interior_invalidations(index, None);
+        self.emit_interior_invalidations(e, None);
+        self.emit(MirInstr::Index {
+            dest: d,
+            base,
+            index: idx,
+            base_place: base_place.map(Box::new),
+            index_place: index_place.map(Box::new),
+            call: None,
+            intrinsic: Some(MirIntrinsicSubscript::Pointer),
+        });
+        (d, None)
+    }
+
+    /// Load the pointee at `place`, which pointer subscript node `e` reads.
+    fn pointee_place_read(&mut self, e: Node<'a>, place: MirPlace) -> (Reg, Option<VarId>) {
+        let root = place.root;
+        let d = self.fresh(e.location(), Some(root));
+        self.emit(MirInstr::LoadPlace { dest: d, place });
+        (d, Some(root))
+    }
+
     /// A value read of a homogeneous collector's element (`a[i]` over
     /// `*a: T`) loads the element place, as a field read does, and runs the
     /// checked value-copy boundary on that element alone; reading the
@@ -547,22 +588,7 @@ impl<'a> Flatten<'a> {
             dest: loaded,
             place,
         });
-        if !copies_place_value(node) {
-            return Some(loaded);
-        }
-        let ty = self
-            .f
-            .reg_types
-            .get(&loaded.0)
-            .cloned()
-            .or_else(|| node.ty.clone())
-            .unwrap_or_else(Ty::error);
-        let copied = self.fresh_typed(e.location(), Some(root), ty);
-        self.emit(MirInstr::CopyValue {
-            dest: copied,
-            value: loaded,
-        });
-        Some(copied)
+        Some(self.copy_boundary(e, loaded, Some(root)))
     }
 
     /// Load the payload `Variant` projection node `node` selects out of the
@@ -603,6 +629,14 @@ impl<'a> Flatten<'a> {
         }
         dest
     }
+}
+
+/// Whether `object` is a pointer, whose subscript reads its pointee.
+fn is_pointer(object: Node<'_>) -> bool {
+    matches!(
+        object.ty().as_ref().map(Ty::kind),
+        Some(TyKind::Pointer { .. })
+    )
 }
 
 /// Whether `node` carries the checked value-copy boundary.

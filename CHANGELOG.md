@@ -8,6 +8,13 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A pointer subscript (`p[i]`, `p[]`, `p[unsafe_offset=i]`) reads its
+  pointee in place, as upstream's `ref`-returning `__getitem__` does, and
+  only a consuming use copies it (R700): `p[0].copy()` copies once instead
+  of twice with a leaked intermediate, `print(p[0].v)` copies nothing, and
+  `var z = pa[]` through `Pointer(to=a)` copies `a` on the VM instead of
+  aliasing it. `List` slicing, through `List._get_copy`, copies each
+  element once.
 - A non-empty dict display is `Dict`'s `__dict_literal__` constructor over
   a key list and a value list, as the pin lowers it (R694): each entry is
   copied as upstream's constructor copies it, so `{1: mk(4)}` traces

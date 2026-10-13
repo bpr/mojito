@@ -578,6 +578,7 @@ assets/ok/pointer_origin_cast_upgrade_reads.mojo	-	ineligible	no-scalar-entry-sh
 assets/ok/pointer_origin_constructors.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pointer_origin_field_inference.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pointer_placeholder_parameter.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/pointer_subscript_reads_in_place.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pointer_take_pointee_tracked.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pointer_temp_argument_loan.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pointer_temp_argument_loan_return.mojo	-	ineligible	no-scalar-entry-shape

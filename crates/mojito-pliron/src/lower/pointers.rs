@@ -23,7 +23,10 @@ impl FnLowering<'_> {
         };
         let ptr = self.reg_value(ctx, base, ScalarTy::Ptr)?;
         let address = self.pointer_element_address(ctx, ptr, index, element, dest)?;
-        self.load_from(ctx, address, element, dest)
+        // A pointer subscript borrows its pointee, as upstream's
+        // `ref`-returning `__getitem__` does; the checked `value.copy`
+        // makes any copy.
+        self.load_moved_from(ctx, address, element, dest)
     }
 
     /// `pointer + index * sizeof(element)` as an opaque address.

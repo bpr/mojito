@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R701**.
+Next free ID: **R702**.
 
 ## Ordered Work
 
@@ -295,23 +295,6 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
   - Mojito copies `x` into the discard and destroys both, where the pin
     moves the last use.
   - Found while landing R467 (2026-10-07).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **R700 `p[i].copy()` through a generic `UnsafePointer` copies twice
-  and never destroys the first copy**
-
-  Problem: `return p[0].copy()` in `def g[T: Copyable & Movable &
-  Deinitable](p: UnsafePointer[T, _]) -> T` prints `copy 4` at the pin,
-  and `copy 4 copy 14` in Mojito, whose `14` is never destroyed.
-  - The returned value is the second copy (`24`), so the caller also sees
-    the wrong value.
-  - `List._get_copy` (`stdlib/std/collections/list.mojo`,
-    `self.data[index].copy()`) has this shape, and about 20 bundled
-    callers reach it.
-  - Probe: the `g` above over `[mk(4)].unsafe_ptr()`, with a struct whose
-    copy constructor prints and adds 10.
-  - Found while landing R694 (2026-10-13).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -1138,6 +1121,20 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
   - `two(lst[0], bl(lst))` over a `List` is rejected at the pin too, so
     the difference is specific to how the pin's `Dict` lookup reads.
   - Found while landing R686 (2026-10-13).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R701 A collection element passed to a `ref` parameter is rejected**
+
+  Problem: `def c4(ref x: S) -> Int` called as `c4(l[0])` over `List[S]`,
+  `S` only `Copyable`, fails with "value of type 'S' cannot be implicitly
+  copied ... (ordinary value read through a reference result)", where the
+  pin binds the element by reference.
+  - The generic `ref x: T` form fails the same way.
+  - The rejection is the checker's implicit-copy test on a reference
+    result (`crates/mojito-checker/src/checker.rs`), which treats the
+    `ref` slot as a consuming read.
+  - Found while landing R700 (2026-10-13).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

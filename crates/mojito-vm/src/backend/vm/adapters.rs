@@ -366,12 +366,7 @@ impl VmBackend {
             }
             Value::Pointer { allocation, offset } => {
                 let off = value_as_index(&regs[ireg.0 as usize])?;
-                let value = self.heap_read(*allocation, *offset, off)?;
-                Ok(Some(if self.has_copyinit {
-                    self.clone_value(prog, &value)?
-                } else {
-                    value
-                }))
+                Ok(Some(self.heap_read(*allocation, *offset, off)?))
             }
             _ => Ok(None),
         }
