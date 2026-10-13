@@ -6,11 +6,15 @@
 
 use crate::checked::{CheckedConst, ExplicitDestroyInfo, StructConformance};
 use mojito_ast::ast::ArgConvention;
-use mojito_symbol::symbol::{OverloadFamily, OverloadSets, overload_family, split_method_symbol};
+use mojito_symbol::symbol::{
+    OverloadFamily, OverloadSets, SignatureKey, TRAIT_DISPATCH, method_symbol, overload_family,
+    split_method_symbol,
+};
 use mojito_types::origin::OriginParamId;
 use mojito_types::param_expr::{ParamExpr, ParamRef};
 use mojito_types::types::{GenericConstraint, ParamDecl, Ty};
 use std::collections::{HashMap, HashSet};
+use std::sync::LazyLock;
 
 /// A package stores each one as a bytecode record, its sets and maps
 /// written sorted, so equal declarations encode equal bytes.
@@ -122,6 +126,50 @@ pub struct TraitDeclaration {
     /// upstream's trait declares each, and a defaulted one's member
     /// function is its body, not another declaration of the name.
     pub requirements: Vec<TraitRequirement>,
+}
+
+/// The declaration of the compiler-known comparison trait `name`
+/// (`Equatable`, `Comparable`), as upstream's `std/builtin/comparable.mojo`
+/// declares it: each requirement's parameter is `Self`.
+///
+/// Until the bundled library declares them, this is their declaration. A
+/// program or package that declares a trait of the name shadows it.
+pub fn compiler_trait_declaration(name: &str) -> Option<&'static TraitDeclaration> {
+    static DECLARATIONS: LazyLock<[TraitDeclaration; 2]> = LazyLock::new(|| {
+        let declaration =
+            |name: &str, refines: &[&str], parameter: &str, methods: &[&str]| TraitDeclaration {
+                name: name.to_string(),
+                refines: refines.iter().map(ToString::to_string).collect(),
+                requirements: methods
+                    .iter()
+                    .map(|method| TraitRequirement {
+                        name: (*method).to_string(),
+                        arity: 1,
+                        dispatch: method_symbol(
+                            TRAIT_DISPATCH,
+                            method,
+                            &SignatureKey::from_tys_with_self([&Ty::self_type()], None),
+                        ),
+                        param_names: vec![parameter.to_string()],
+                        param_types: vec![Ty::self_type()],
+                        param_conventions: vec![None],
+                        variadic_index: None,
+                    })
+                    .collect(),
+            };
+        [
+            declaration("Equatable", &[], "other", &["__eq__", "__ne__"]),
+            declaration(
+                "Comparable",
+                &["Equatable"],
+                "rhs",
+                &["__lt__", "__gt__", "__le__", "__ge__"],
+            ),
+        ]
+    });
+    DECLARATIONS
+        .iter()
+        .find(|declaration| declaration.name == name)
 }
 
 /// One requirement of a trait declaration, a bodyless method declaration.

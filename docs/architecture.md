@@ -2099,8 +2099,12 @@ builtins). The checker records every struct operator's selected dunder as the
 operator's `BinOp.resolved` — a lone one as `{struct}.{dunder}`, an overloaded
 one by its overload key — so the operator is that method call: ownership treats
 a resolved `BinOp` as a call, and its operands' owners die at the operator, as
-after `a.__add__(b)`. An operator over a type parameter names no dunder; the
-elaborator retargets it at each instance.
+after `a.__add__(b)`. A comparison over a type parameter bounded by
+`Equatable` or `Comparable` names the bound's requirement
+(`__trait_dispatch.__lt__$ov$Self`), so it too is a call; the elaborator
+retargets it at a struct instance and clears it at a builtin one. Any other
+operator over a type parameter names no dunder; the elaborator retargets it at
+each instance.
 
 Augmented assignment (`place OP= rhs`) on a user-defined value dispatches to the
 dedicated in-place dunder rather than the binary operator: the checker selects
@@ -4191,7 +4195,9 @@ current Mojo:
   its declaration's, or for a call through a trait bound in a generic body,
   the requirement the bound trait or a parent declares, found by the call's
   `__trait_dispatch.*` symbol (`MirDeclarations::bound_requirement`), as
-  upstream binds such a call to the trait's declared requirement. A
+  upstream binds such a call to the trait's declared requirement. The
+  compiler-known comparison traits, which the bundled library does not yet
+  declare, answer from `compiler_trait_declaration`. A
   memory-only parameter takes the argument's address: a generic `T`, a
   variadic collector, or a callee with no declaration (`t.n` fed to `print`).
   Its owner then lives through the call, so the owner's `DropVar` follows the

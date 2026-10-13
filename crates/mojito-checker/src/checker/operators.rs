@@ -3,6 +3,8 @@
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
+use mojito_checked::declaration::compiler_trait_declaration;
+use mojito_symbol::symbol::TRAIT_DISPATCH;
 use mojito_types::types::TyKind;
 
 impl Checker {
@@ -300,9 +302,18 @@ impl Checker {
             // A comparison through a bound dispatches the requirement's read
             // dunder (`__eq__(self, other: Self)`), which reads a named
             // operand where it lies, as a struct's own dunder does.
-            if span.is_some() && matches!(lt.kind(), TyKind::Param { .. }) && lt == rt {
+            // It is that requirement's call, so the operator names it as
+            // its target, as a struct operator names its dunder. An assumed
+            // conformance names it too, though no bound declares it.
+            if let Some(span) = span
+                && matches!(lt.kind(), TyKind::Param { .. })
+                && lt == rt
+            {
                 self.borrow_parameter_place_argument(left, &lt);
                 self.borrow_parameter_place_argument(right, &rt);
+                if let Some(target) = self.bound_comparison_target(op) {
+                    self.record_at(span).overload_target = Some(target);
+                }
             }
             return Ok(ty);
         }
@@ -1095,6 +1106,31 @@ impl Checker {
         } else {
             format!("{sname}.{dunder}")
         }
+    }
+
+    /// The requirement a comparison over a bound type parameter selects
+    /// (`__trait_dispatch.__lt__$ov$Self`): the comparison trait's the
+    /// program declares, else the compiler-known one's.
+    fn bound_comparison_target(&self, op: InfixOp) -> Option<String> {
+        let trait_name = match op {
+            InfixOp::Eq | InfixOp::Ne => "Equatable",
+            InfixOp::Lt | InfixOp::Gt | InfixOp::Le | InfixOp::Ge => "Comparable",
+            _ => return None,
+        };
+        let dunder = op.dunder()?;
+        if let Some(info) = self.traits.get(trait_name) {
+            return info
+                .methods
+                .get(dunder)?
+                .iter()
+                .find(|sig| matches!(sig.params.as_slice(), [param] if *param == TyKind::SelfType))
+                .map(|sig| method_lowered_name(TRAIT_DISPATCH, dunder, sig, None));
+        }
+        compiler_trait_declaration(trait_name)?
+            .requirements
+            .iter()
+            .find(|requirement| requirement.name == dunder)
+            .map(|requirement| requirement.dispatch.clone())
     }
 }
 

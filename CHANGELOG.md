@@ -8,6 +8,11 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A comparison (`==`, `!=`, `<`, `>`, `<=`, `>=`) over a type parameter
+  bounded by `Equatable` or `Comparable` names the bound's requirement, so
+  it is that requirement's call, as the pin does (R702): `print(x < a)`
+  over a copied `x` destroys `x` when `__lt__` returns, before `print`
+  runs. A builtin instance still compares primitively.
 - A trait requirement carries its signature, so a method or subscript call
   through a trait bound in a generic body passes its arguments by the
   requirement's declared conventions, as the pin does (R682):

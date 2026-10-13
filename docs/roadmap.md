@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R705**.
+Next free ID: **R709**.
 
 ## Ordered Work
 
@@ -296,25 +296,6 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
     moves the last use.
   - Found while landing R467 (2026-10-07).
   - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **R702 An operator through a trait bound keeps its operand's owner
-  through the result's consumer**
-
-  Problem: `def f[T: Comparable & Copyable & Deinitable](a: T)` with
-  `var x = a.copy(); print(x < a)`, called as `f(S(9))` over a struct with
-  a printing destructor, prints `del 9, False, del 9` at the pin and
-  `False, del 9, del 9` in Mojito.
-  - The `binary` over `T` carries `resolved: absent`: the checker selects
-    no requirement for a type-parameter operand, so ownership treats the
-    operator as a value operation and `x`'s owner outlives `print`.
-  - A concrete struct operator already names its dunder (`S.__lt__`) and
-    so dies at the operator, as after `x.__lt__(a)`.
-  - The Mojo-shaped fix records the bound's requirement
-    (`__trait_dispatch.__lt__…`) as the operator's target, which needs
-    the requirement signature R682 gives a trait-dispatch call.
-  - Found while landing R687 (2026-10-13).
-  - Depends on R682.
   - Model: Opus, Not Planned.
 
 - [ ] **R703 A chained comparison's struct links name no dunder**
@@ -1225,6 +1206,47 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     The fix must give the drop analysis the assumed trait too.
   - Found while landing R682 (2026-10-13).
   - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R707 A struct declaring `Comparable` does not conform to
+  `Equatable`**
+
+  Problem: `eq(S(9))` over `def eq[T: Equatable & Copyable](a: T)`, where
+  `S` declares `(Comparable, Copyable)`, is rejected with "type 'S' for
+  parameter 'T' does not conform to trait 'Equatable'", where the pin
+  accepts it because `Comparable` refines `Equatable`.
+  - `struct_conformance_applies` asks `trait_refines`, which knows no
+    refinement between compiler-known traits.
+  - `compiler_trait_declaration` (`mojito-checked::declaration`) already
+    records `Comparable` refining `Equatable`.
+  - Found while landing R702 (2026-10-13).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R708 A dunder call through a compiler-known comparison bound is
+  rejected**
+
+  Problem: `a.__lt__(b)` in `def g[T: Comparable](a: T, b: T)` is
+  rejected with "type 'T' has no method '__lt__'", where the pin runs it.
+  - Method resolution over a bound reads only the declared traits
+    (`self.traits`), and `Equatable`/`Comparable` are compiler-known.
+  - `compiler_trait_declaration` holds the requirement signatures, and an
+    operator over the bound already names the same
+    `__trait_dispatch.__lt__$ov$Self` target.
+  - Found while landing R702 (2026-10-13).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R706 A struct declaring only `__lt__` has no `>`, `<=`, or `>=`**
+
+  Problem: over a `struct S(Comparable)` declaring `__lt__` and `__eq__`,
+  `S(2) >= S(1)` is rejected with "operator '>=' is not defined", and
+  `a >= b` through `T: Comparable` stops in the VM with "unknown method
+  'S.__ge__'", where the pin prints `True` both times.
+  - Upstream's `Comparable` defaults `__gt__`, `__le__`, and `__ge__`
+    through `__lt__`; Mojito has no declaration to take them from.
+  - Found while landing R702 (2026-10-13).
+  - Depends on R705.
   - Model: Opus, Not Planned.
 
 - [ ] **R690 A subscript assignment is accepted without a `__getitem__`
@@ -4984,6 +5006,22 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     checks, since the file's declarations are renamed while the checker
     still recognizes them by spelling.
   - Found while landing R605 (2026-10-10).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R705 `Equatable` and `Comparable` are compiler-known, where
+  upstream's library declares them**
+
+  Upstream declares both traits in `std/builtin/comparable.mojo`, with
+  `__ne__` defaulted through `__eq__` and `__gt__`/`__le__`/`__ge__`
+  through `__lt__`; Mojito knows them by name.
+  - `compiler_trait_declaration` (`mojito-checked::declaration`) stands in
+    for their requirements, and the checker's `has_equality_bound`,
+    `has_order_bound`, and `NegatedEquality` stand in for the defaults.
+  - This entry bundles the two declarations with their non-reflective
+    defaults and deletes `compiler_trait_declaration`; upstream's
+    reflective `__eq__` default stays out, waiting on R278 and R269.
+  - Found while landing R702 (2026-10-13).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

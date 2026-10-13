@@ -61,6 +61,14 @@ fn trait_bound_call_loads_by_value_argument_before_the_call() {
 }
 
 #[test]
+fn trait_bound_comparison_destroys_operand_before_consumer() {
+    // `x < a` through the `Comparable` bound is `__lt__`'s call, so the copy
+    // `x` dies when it returns, before `print` runs, as the pin orders it.
+    let src = "struct S(Comparable, Copyable):\n    var v: Int\n    def __init__(out self, v: Int):\n        self.v = v\n    def __init__(out self, *, copy: Self):\n        self.v = copy.v\n    def __lt__(self, other: Self) -> Bool:\n        return self.v < other.v\n    def __eq__(self, other: Self) -> Bool:\n        return self.v == other.v\n    def __deinit__(deinit self):\n        print(\"del\", self.v)\n\ndef f[T: Comparable & Copyable & Deinitable](a: T):\n    var x = a.copy()\n    print(x < a)\n\ndef main():\n    f(S(9))\n";
+    assert_eq!(vm(src), "del 9\nFalse\ndel 9\n");
+}
+
+#[test]
 fn mut_self_reassignment_destroys_the_replaced_value() {
     // `self = Holder(2)` writes through the receiver's own handle into the
     // caller's storage, so no redefining `DefVar` ends the old value's live

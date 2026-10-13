@@ -1891,6 +1891,19 @@ impl<'a> Specializer<'a> {
                 {
                     *instruction = dunder_method_call(*dest, *a, op.dunder(), None, Vec::new());
                 }
+                // A comparison through a bound names its requirement; the
+                // builtin an instance binds answers it itself.
+                if let MirInstr::BinOp { a, resolved, .. } = instruction
+                    && resolved
+                        .as_deref()
+                        .is_some_and(mojito_symbol::symbol::is_trait_dispatch_symbol)
+                    && !matches!(
+                        (function.reg_types.get(&a.0).map(peel_refs)).map(Ty::kind),
+                        Some(TyKind::Struct(..))
+                    )
+                {
+                    *resolved = None;
+                }
                 // A binary operator on a nominal left operand is the same VM
                 // dunder dispatch (`apply_binop` → `call_dunder`): rewrite to
                 // the operator method so the shared resolver monomorphizes
@@ -1915,10 +1928,12 @@ impl<'a> Specializer<'a> {
                     )
                 {
                     // A type that declares `__eq__` and no `__ne__` takes
-                    // `Equatable`'s default `!=`: dispatch `__eq__` and
-                    // negate its result.
+                    // `Equatable`'s default `!=`, through a bound as well:
+                    // dispatch `__eq__` and negate its result.
                     if *op == mojito_ast::ast::InfixOp::Ne
-                        && resolved.is_none()
+                        && resolved
+                            .as_deref()
+                            .is_none_or(mojito_symbol::symbol::is_trait_dispatch_symbol)
                         && self.negates_equality(function, *a)
                     {
                         let equal = Reg(function.n_regs);

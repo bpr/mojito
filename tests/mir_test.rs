@@ -4075,3 +4075,42 @@ fn lone_struct_dunder_operator_names_its_method() {
         .collect::<Vec<_>>();
     assert_eq!(resolved, [Some("S.__add__"), None], "{instructions:#?}");
 }
+
+#[test]
+fn bound_comparison_names_its_requirement() {
+    // A comparison through a `Comparable` bound is its requirement's call,
+    // and the bound finds `__eq__` on the `Equatable` it refines.
+    let mir = checked_program_mir(
+        "def f[T: Comparable](a: T, b: T) -> Bool:\n    return a < b and a == b\n\ndef main():\n    print(f(1, 2))\n",
+    );
+    let resolved = mir_function(&mir, "f")
+        .blocks
+        .iter()
+        .flat_map(|block| &block.instrs)
+        .filter_map(|instruction| match instruction {
+            MirInstr::BinOp { resolved, .. } => Some(resolved.as_deref()),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        resolved,
+        [
+            Some("__trait_dispatch.__lt__$ov$Self"),
+            Some("__trait_dispatch.__eq__$ov$Self")
+        ]
+    );
+    let bounds = ["Comparable".to_string()];
+    let equal = mir
+        .declarations
+        .bound_requirement(&bounds, "__trait_dispatch.__eq__$ov$Self")
+        .expect("Equatable.__eq__");
+    assert_eq!(
+        (equal.name.as_str(), equal.param_conventions.as_slice()),
+        ("__eq__", &[None][..])
+    );
+    assert!(
+        mir.declarations
+            .bound_requirement(&bounds, "__trait_dispatch.__hash__$ov$Self")
+            .is_none()
+    );
+}
