@@ -3,7 +3,9 @@
 //! since Phase 1 is about structure, not instruction contents.
 
 use mojito::Ty;
-use mojito::hir::{BlockId, Cfg, Terminator};
+use mojito::checked::CheckedStmtOp;
+use mojito::hir::{BlockId, Cfg, RegionSeed, Terminator};
+use mojito::origin::OwnerId;
 use mojito::{check_program, parse};
 
 /// Check a module-scope snippet and lower its statements to a CFG.
@@ -77,7 +79,7 @@ fn loop_body_region(src: &str, header: BlockId, exit: BlockId) -> Cfg {
         })
         .expect("a loop in main");
     Cfg::build_seeded_checked_region(
-        Vec::new(),
+        RegionSeed::default(),
         &loop_body,
         &[(header, exit, Vec::new())],
         std::sync::Arc::clone(tables),
@@ -691,4 +693,88 @@ fn named_local_rebinds_one_slot() {
     let dests = bind_dests(&cfg);
     assert_eq!(dests.len(), 2);
     assert_eq!(dests[0], dests[1]);
+}
+
+/// The `try` statements HIR keeps in `cfg`, in graph order.
+fn try_statements(cfg: &Cfg) -> Vec<&mojito::checked::CheckedStmt> {
+    cfg.g
+        .node_weights()
+        .flat_map(|block| &block.instrs)
+        .filter_map(|instruction| match instruction {
+            mojito::hir::HirInstr::Try { stmt, .. } => cfg.checked.statement(stmt.node),
+            _ => None,
+        })
+        .collect()
+}
+
+/// The seed a `try` region of `cfg` starts from.
+fn region_seed(cfg: &Cfg, handler: Option<(Option<OwnerId>, String)>) -> RegionSeed {
+    RegionSeed {
+        vars: cfg.vars.clone(),
+        bindings: cfg.bindings.clone(),
+        handler,
+    }
+}
+
+#[test]
+fn try_region_resolves_a_name_by_its_binding() {
+    let src = "def main():\n    var h = 1\n    if True:\n        var h = 2\n        try:\n            h = 5\n            print(h)\n        except e:\n            print(e)\n";
+    let cfg = checked_function_cfg(src, "main");
+    let statement = try_statements(&cfg)[0];
+    let CheckedStmtOp::Try { body, .. } = &statement.op else {
+        panic!("expected a try statement");
+    };
+    let region = Cfg::build_seeded_checked_region(
+        region_seed(&cfg, None),
+        body,
+        &[],
+        std::sync::Arc::clone(&cfg.checked),
+    );
+    let dests = bind_dests(&region);
+    assert_eq!(dests.len(), 1);
+    let outer = cfg
+        .vars
+        .iter()
+        .position(|name| name == "h")
+        .expect("outer h") as u32;
+    assert_ne!(dests[0], outer, "the assignment writes the inner `h`");
+    assert!(cfg.bindings.values().any(|slot| *slot == dests[0]));
+    assert!(region.slots.values().all(|slot| *slot != outer));
+}
+
+#[test]
+fn sequential_except_names_get_distinct_slots() {
+    let src = "def main():\n    try:\n        raise Error(\"a\")\n    except e:\n        print(e)\n    try:\n        raise Error(\"b\")\n    except e:\n        print(e)\n";
+    let cfg = checked_function_cfg(src, "main");
+    let mut seed = region_seed(&cfg, None);
+    let mut handlers = Vec::new();
+    for statement in try_statements(&cfg) {
+        let CheckedStmtOp::Try {
+            except: Some((Some(name), body)),
+            ..
+        } = &statement.op
+        else {
+            panic!("expected a try statement with a named handler");
+        };
+        let binding = statement.binding.expect("the handler's binding");
+        seed.handler = Some((Some(binding), name.clone()));
+        let region = Cfg::build_seeded_checked_region(
+            seed.clone(),
+            body,
+            &[],
+            std::sync::Arc::clone(&cfg.checked),
+        );
+        let slot = region.bindings[&binding];
+        assert!(region.slots.values().any(|read| *read == slot));
+        assert!(
+            handlers
+                .iter()
+                .all(|earlier| !region.slots.values().any(|read| read == earlier))
+        );
+        handlers.push(slot);
+        seed.vars = region.vars;
+        seed.bindings = region.bindings;
+    }
+    assert_eq!(handlers.len(), 2);
+    assert_ne!(handlers[0], handlers[1]);
 }

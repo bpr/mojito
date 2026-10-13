@@ -1762,19 +1762,45 @@ impl<'a> Flatten<'a> {
     /// self-contained mini-CFG (block ids local, entry = 0) that **shares this
     /// function's register, variable, and span space** — so it addresses the same
     /// slots. The region's own control flow (`if`/`while`/`for`) becomes local
-    /// blocks; the VM runs it recursively.
+    /// blocks; the VM runs it recursively. An `except` region's `handler` is
+    /// its binding, spelling, and error type: HIR declares its slot, returned
+    /// beside the blocks.
     pub(super) fn lower_region(
         &mut self,
         body: &[CheckedStmtId],
+        handler: Option<(Option<mojito_types::origin::OwnerId>, &str, Ty)>,
         ext_loops: &[(hir::BlockId, hir::BlockId, Vec<VarId>)],
         outer_map: &HashMap<hir::BlockId, MirBlockId>,
-    ) -> Vec<MirBlock> {
+    ) -> (Vec<MirBlock>, Option<VarId>) {
         let region_cfg = hir::Cfg::build_seeded_checked_region(
-            self.vars.clone(),
+            hir::RegionSeed {
+                vars: self.vars.clone(),
+                bindings: self.owner_vars.clone(),
+                handler: handler
+                    .as_ref()
+                    .map(|(binding, name, _)| (*binding, (*name).to_string())),
+            },
             body,
             ext_loops,
             std::sync::Arc::clone(self.checked),
         );
+        let handler_slot = handler.map(|(binding, name, error)| {
+            let slot = binding
+                .and_then(|binding| region_cfg.bindings.get(&binding).copied())
+                .unwrap_or_else(|| {
+                    region_cfg
+                        .vars
+                        .iter()
+                        .position(|candidate| candidate == name)
+                        .expect("the region interned its handler's slot")
+                        as VarId
+                });
+            self.var_types.entry(slot).or_insert(error);
+            if let Some(binding) = binding {
+                self.owner_vars.insert(binding, slot);
+            }
+            slot
+        });
         let mut region = MirFunction {
             blocks: Vec::new(),
             n_regs: 0,
@@ -1861,7 +1887,7 @@ impl<'a> Flatten<'a> {
         }
         self.f.spans = std::mem::take(&mut region.spans);
         self.f.reg_types = std::mem::take(&mut region.reg_types);
-        region.blocks
+        (region.blocks, handler_slot)
     }
 
     /// Lower a `try`'s sub-regions and emit the [`MirInstr::Try`]. `ext_loops` are
@@ -1885,28 +1911,22 @@ impl<'a> Flatten<'a> {
             finalbody,
             handler_binding,
         } = regions;
-        let body_blocks = self.lower_region(body, ext_loops, outer_map);
-        let handler = match except {
-            Some((name, ex_body)) => {
-                let slot = name.map(|name| match handler_binding {
-                    Some(binding) => self.declare_binding_var(binding, name),
-                    None => self.var(name),
-                });
-                if let Some(slot) = slot {
-                    // The checker rejects a try whose body can raise more than
-                    // one error type, so copying the first propagating raising
-                    // fact types the handler binding without re-inference.
-                    let error = region_error_type(&body_blocks, &self.f.reg_types)
-                        .unwrap_or_else(Ty::error);
-                    self.var_types.entry(slot).or_insert(error);
-                }
-                let blocks = self.lower_region(ex_body, ext_loops, outer_map);
-                Some((slot, blocks))
-            }
-            None => None,
-        };
-        let orelse_blocks = orelse.map(|b| self.lower_region(b, ext_loops, outer_map));
-        let finalbody_blocks = finalbody.map(|b| self.lower_region(b, ext_loops, outer_map));
+        let (body_blocks, _) = self.lower_region(body, None, ext_loops, outer_map);
+        let handler = except.map(|(name, ex_body)| {
+            // The checker rejects a try whose body can raise more than one
+            // error type, so copying the first propagating raising fact types
+            // the handler binding without re-inference.
+            let handler = name.map(|name| {
+                let error =
+                    region_error_type(&body_blocks, &self.f.reg_types).unwrap_or_else(Ty::error);
+                (handler_binding, name, error)
+            });
+            let (blocks, slot) = self.lower_region(ex_body, handler, ext_loops, outer_map);
+            (slot, blocks)
+        });
+        let orelse_blocks = orelse.map(|b| self.lower_region(b, None, ext_loops, outer_map).0);
+        let finalbody_blocks =
+            finalbody.map(|b| self.lower_region(b, None, ext_loops, outer_map).0);
         self.emit(MirInstr::Try {
             body: body_blocks,
             handler,

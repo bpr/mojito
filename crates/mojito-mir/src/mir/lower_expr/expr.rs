@@ -777,6 +777,10 @@ impl<'a> Flatten<'a> {
             (None, Some(owner)) => self.binding_var(owner, &name),
             (None, None) => self.var(&name),
         };
+        debug_assert!(
+            self.slots.get(&checked.id).is_none_or(|slot| *slot == var),
+            "HIR's slot for a name is its binding's"
+        );
         self.read_slot(var, checked.location(), Some(checked))
     }
 

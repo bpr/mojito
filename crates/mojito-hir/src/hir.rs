@@ -15,6 +15,7 @@ use mojito_checked::checked::{
     CheckedExpr, CheckedNodeId, CheckedOp, CheckedProgram, CheckedStmtId, CheckedStmtOp,
     CheckedTables, SemanticAdjustment,
 };
+use mojito_types::origin::OwnerId;
 use mojito_types::types::Ty;
 use mojito_types::types::TyKind;
 use petgraph::stable_graph::{NodeIndex, StableGraph};
@@ -274,6 +275,9 @@ pub struct Cfg {
     /// this CFG's expressions reads, as resolved in its lexical scope: the
     /// value an upstream operand names.
     pub slots: HashMap<CheckedNodeId, VarId>,
+    /// The slot of each checked binding this CFG declared or was seeded
+    /// with: a local name node's [`Cfg::slots`] entry is its binding's slot.
+    pub bindings: HashMap<OwnerId, VarId>,
     /// The statement nodes of the body this CFG lowers.
     pub body: Vec<CheckedStmtId>,
 }
@@ -332,14 +336,15 @@ impl Cfg {
     }
 
     /// Lower a checked `try` region, the statement nodes `body`, into a CFG
-    /// whose variable interner **starts** seeded with `seed_vars` (so the
-    /// region shares the enclosing frame's `VarId`s — a name already interned
-    /// keeps its id, new names append). The region's loop stack starts with the enclosing function's
-    /// loops (`external_loops`, innermost-last, as `(header, exit, cleanup)`
-    /// in the *enclosing* CFG): a `break`/`continue` that targets one of them
-    /// lowers to a [`Terminator::EscapeJump`]. `n_params` is 0.
+    /// that starts from the enclosing frame's [`RegionSeed`]: it shares the
+    /// frame's `VarId`s (a name already interned keeps its id, new names
+    /// append) and resolves a name to its binding's slot there. The region's
+    /// loop stack starts with the enclosing function's loops
+    /// (`external_loops`, innermost-last, as `(header, exit, cleanup)` in the
+    /// *enclosing* CFG): a `break`/`continue` that targets one of them lowers
+    /// to a [`Terminator::EscapeJump`]. `n_params` is 0.
     pub fn build_seeded_checked_region(
-        seed_vars: Vec<String>,
+        seed: RegionSeed,
         body: &[CheckedStmtId],
         external_loops: &[(BlockId, BlockId, Vec<VarId>)],
         checked: Arc<CheckedTables>,
@@ -355,17 +360,26 @@ impl Cfg {
                 cleanup: cleanup.clone(),
             })
             .collect();
+        let RegionSeed {
+            vars,
+            bindings,
+            handler,
+        } = seed;
         let mut lower = Lower {
             g,
             cur: entry,
             loops,
-            scopes: vec![seed_vars.iter().map(|n| (n.clone(), n.clone())).collect()],
+            scopes: vec![vars.iter().map(|n| (n.clone(), n.clone())).collect()],
             captures: HashSet::new(),
-            vars: seed_vars,
+            vars,
             is_function: false,
             checked,
             slots: HashMap::new(),
+            bindings,
         };
+        if let Some((binding, name)) = handler {
+            lower.declare_handler(binding, &name);
+        }
         for id in body {
             lower.stmt(*id);
         }
@@ -418,6 +432,7 @@ impl Cfg {
             is_function: true,
             checked,
             slots: HashMap::new(),
+            bindings: HashMap::new(),
         };
         let explicit = explicit_local_names(&lower.checked, body);
         let mut implicit = HashSet::new();
@@ -441,6 +456,19 @@ impl Cfg {
         lower.seal(Terminator::Return(None)); // implicit `return None` off the end
         lower.finish(entry, params.len(), body.to_vec())
     }
+}
+
+/// What a `try` region starts from.
+///
+/// The enclosing frame's slot spellings (`vars`, so `VarId`s agree), the
+/// slot of each checked binding the frame has declared (`bindings`), and
+/// the `except` binding the region declares first, when it is a handler
+/// that names its error.
+#[derive(Debug, Clone, Default)]
+pub struct RegionSeed {
+    pub vars: Vec<String>,
+    pub bindings: HashMap<OwnerId, VarId>,
+    pub handler: Option<(Option<OwnerId>, String)>,
 }
 
 fn collect_function_implicit_names(
@@ -509,6 +537,8 @@ struct Lower {
     checked: Arc<CheckedTables>,
     /// The slot each local-name node resolved to.
     slots: HashMap<CheckedNodeId, VarId>,
+    /// The slot of each checked binding declared so far.
+    bindings: HashMap<OwnerId, VarId>,
 }
 
 impl Lower {
@@ -647,6 +677,7 @@ impl Lower {
             n_params,
             checked: self.checked,
             slots: self.slots,
+            bindings: self.bindings,
             body,
         }
     }
@@ -687,6 +718,37 @@ impl Lower {
         self.var(&runtime)
     }
 
+    /// [`Lower::declare_var`] for a declaration of checked `binding`, whose
+    /// slot later reads of the binding resolve to.
+    fn declare_binding(&mut self, name: &str, binding: Option<OwnerId>) -> VarId {
+        let slot = self.declare_var(name);
+        if let Some(binding) = binding {
+            self.bindings.insert(binding, slot);
+        }
+        slot
+    }
+
+    /// Declare an `except` name's slot in the region's root scope: the slot
+    /// the frame already gave its binding, else its own spelling unless a
+    /// slot of the frame already has it, then one suffixed by its binding.
+    fn declare_handler(&mut self, binding: Option<OwnerId>, name: &str) {
+        let declared = binding.and_then(|binding| self.bindings.get(&binding).copied());
+        let runtime = match (declared, binding) {
+            (Some(slot), _) => self.vars[slot as usize].clone(),
+            (None, Some(binding)) if self.vars.iter().any(|candidate| candidate == name) => {
+                format!("{name}$binding{}", binding.0)
+            }
+            _ => name.to_string(),
+        };
+        let slot = self.var(&runtime);
+        if let Some(scope) = self.scopes.first_mut() {
+            scope.insert(name.to_string(), runtime);
+        }
+        if let Some(binding) = binding {
+            self.bindings.insert(binding, slot);
+        }
+    }
+
     /// Expression `id` evaluated in this frame: its names resolved to the
     /// slots in scope here, and its tree.
     fn expr(&mut self, id: CheckedNodeId) -> HirExpr {
@@ -714,7 +776,10 @@ impl Lower {
         if let Some(name) = name
             && self.scopes.iter().any(|scope| scope.contains_key(name))
         {
-            let slot = self.var(&self.resolved(name));
+            let slot = match node.binding.and_then(|binding| self.bindings.get(&binding)) {
+                Some(slot) => *slot,
+                None => self.var(&self.resolved(name)),
+            };
             let recorded = *self.slots.entry(id).or_insert(slot);
             debug_assert_eq!(recorded, slot, "a node resolves to one slot per frame");
         }
@@ -844,7 +909,7 @@ impl Lower {
                 self.seal(Terminator::Jump(header));
                 self.cur = header;
                 self.scopes.push(HashMap::new());
-                let index = self.declare_var(var);
+                let index = self.declare_binding(var, s.binding);
                 self.seal(Terminator::ComptimeLoop {
                     iter,
                     var: var.clone(),
@@ -982,7 +1047,6 @@ impl Lower {
                 let exit = self.new_block();
                 let normal_exit = orelse.as_ref().map_or(exit, |_| self.new_block());
                 self.scopes.push(HashMap::new());
-                let v = self.declare_var(var);
                 let declaration = s
                     .declaration
                     .and_then(|id| checked.declaration(id))
@@ -990,6 +1054,7 @@ impl Lower {
                 let binding = declaration
                     .binding
                     .expect("checked for-loop binding has a stable owner");
+                let v = self.declare_binding(var, Some(binding));
                 debug_assert_eq!(declaration.ty.as_ref(), Some(&binding_plan.binding_ty));
                 let raw_var = self.var(&format!("$yield{}", self.vars.len()));
                 self.seal(Terminator::Jump(header));
@@ -1123,7 +1188,7 @@ impl Lower {
                     self.push(HirInstr::Stmt(self.statement(id)));
                     return;
                 };
-                let dest = self.declare_var(name);
+                let dest = self.declare_binding(name, s.binding);
                 self.push(HirInstr::Declare {
                     dest,
                     ty,
@@ -1135,7 +1200,7 @@ impl Lower {
                     .expression(*value)
                     .and_then(|node| node.binding_ty.clone());
                 let value = self.expr(*value);
-                let v = self.declare_var(name);
+                let v = self.declare_binding(name, s.binding);
                 self.push(HirInstr::Bind {
                     dest: v,
                     expr: value,
@@ -1145,7 +1210,7 @@ impl Lower {
             }
             CheckedStmtOp::RefDecl { name, value } => {
                 let value = self.expr(*value);
-                let runtime = self.declare_var(name);
+                let runtime = self.declare_binding(name, s.binding);
                 self.push(HirInstr::Stmt(HirStmt {
                     node: id,
                     expressions: vec![value],
@@ -1156,6 +1221,19 @@ impl Lower {
             CheckedStmtOp::Assign { name, value } if name == "_" => {
                 let value = self.expr(*value);
                 let dest = self.var(&format!("$discard_s{}", self.vars.len()));
+                self.push(HirInstr::Bind {
+                    dest,
+                    expr: value,
+                    binding_ty: None,
+                    binding: s.binding,
+                });
+            }
+            CheckedStmtOp::Assign { value, .. }
+                if let Some(dest) = s
+                    .binding
+                    .and_then(|binding| self.bindings.get(&binding).copied()) =>
+            {
+                let value = self.expr(*value);
                 self.push(HirInstr::Bind {
                     dest,
                     expr: value,
@@ -1180,6 +1258,9 @@ impl Lower {
                 } else {
                     self.var(&self.resolved(name))
                 };
+                if let Some(binding) = s.binding {
+                    self.bindings.insert(binding, v);
+                }
                 self.push(HirInstr::Bind {
                     dest: v,
                     expr: value,

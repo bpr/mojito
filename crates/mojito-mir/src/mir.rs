@@ -3158,6 +3158,10 @@ impl<'a> Flatten<'a> {
         }
         let checked_var = binding.map(|owner| self.binding_var(owner, name));
         let var = checked_var.unwrap_or_else(|| self.var(name));
+        debug_assert!(
+            self.slots.get(&node.id).is_none_or(|slot| *slot == var),
+            "HIR's slot for a name is its binding's"
+        );
         let mut place = self.var_place(var);
         if place.root_ty.is_none() {
             // HIR's place for a name, whose type the place fact is, exists

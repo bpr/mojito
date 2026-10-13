@@ -1776,7 +1776,8 @@ values on checked nodes. `HirExpr` names its node and recursively retains its
 operands' trees in `CheckedOp::operands` order, with the place HIR computed for
 each; it holds no syntax and no copy of a node attribute. MIR rebuilds no syntax
 for a body expression or statement; a local name is spelled as the slot
-`Cfg::slots` resolved it to (`name_spelling`) only where MIR names a slot.
+`Cfg::slots` resolved it to (`name_spelling`) only where MIR names a slot,
+which is its checked binding's slot (`Cfg::bindings`), the one MIR reads.
 MIR reads every checked fact off a node handle,
 `Node` (`mir/node.rs`): HIR's tree for the expression with its checked node,
 operand `i` being the `i`th of the op's `CheckedOp::operands`, as upstream
@@ -1803,7 +1804,7 @@ of scope with its CFG, as the check scopes them (`Flatten::displays`).
 Literals and name
 reads lower by matching the node's `CheckedOp`, reading the node's own
 attributes (`Flatten::literal_or_name`); a name's slot is its binding's
-(`binding_var`), the slot only spelling it, and the name predicates of the
+(`binding_var`), and HIR's `Cfg::slots` entry for the name is that same slot, and the name predicates of the
 other families match the op too. Calls, callable-value invocations, method
 calls, and callable type applications dispatch the same way
 (`Flatten::call_family`): the op decides, the entry points read the callee,
@@ -2378,8 +2379,15 @@ terminators carry `HirExpr`: a checked node, its operands' trees, and its
 checked place; its type, category, effects, and adjustments are the node's own
 attributes. Opaque statements (`HirStmt`) carry their statement node and their
 expression roots' trees. A use names its definition rather than a spelling:
-`Cfg::slots` records the slot each local-name node resolves to in HIR's lexical
-scopes. HIR retains responsibility for statement control flow.
+`Cfg::slots` records the slot each local-name node resolves to: its checked
+binding's slot (`Cfg::bindings`), recorded where HIR declares the binding or
+where an assignment to a name, whose target binding the check records on the
+statement, first writes it, and otherwise the name's slot in HIR's lexical
+scopes. A `try` region starts from its frame's `RegionSeed`: the frame's slot
+spellings and its binding-to-slot map, so a name in the region, read or
+assigned, is the binding its scope declared, and an `except` region declares
+its handler binding's slot first. HIR retains responsibility for statement
+control flow.
 The CFG design admits additional edge kinds for suspension/resumption and pattern
 failure without baking them into expression lowering.
 

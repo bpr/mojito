@@ -904,6 +904,12 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- An assignment inside a `try`, `except`, `else`, or `finally` body to a
+  name a nested scope redeclares (`var h = 2` inside an `if`, then `h = 5`
+  in a `try` there) writes that inner variable, as Mojo's lexical scoping
+  does (R636). It used to write the outer same-spelled variable. HIR now
+  resolves a name to its checked binding's slot, a `try` region starts from
+  its frame's binding slots, and HIR declares an `except` name's slot.
 - A module constant of a one-lane SIMD type — declared (`comptime S: UInt8
   = 2`, the bundled `SEEK_END`), folded from a call (`comptime C =
   hash(Int(1))`, a `lane(...) -> Int32` application) — compiles natively and

@@ -1645,9 +1645,10 @@ pub struct CheckedStmt {
     pub module: Option<String>,
     #[serde(with = "mojito_common::token::node_syntax")]
     pub syntax_id: SyntaxId,
-    /// The binding the statement introduces.
+    /// The binding the statement introduces, or the one an assignment to a
+    /// name writes.
     pub binding: Option<mojito_types::origin::OwnerId>,
-    /// The checked type of that binding.
+    /// The checked type of a binding the statement introduces.
     pub binding_ty: Option<Ty>,
     /// The declaration the statement makes.
     pub declaration: Option<CheckedDeclId>,

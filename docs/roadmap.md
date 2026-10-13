@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R752**.
+Next free ID: **R754**.
 
 ## Ordered Work
 
@@ -5486,26 +5486,33 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on R662.
   - Model: Opus, Not Planned.
 
-- [ ] **R636 HIR gives an `except` name or a `with` target the slot of
-  an earlier same-spelled one**
+- [ ] **R752 MIR re-enters HIR to build each `try` region's CFG**
 
-  HIR resolves every handler's `e` (and each `with … as h`) to one slot
-  per spelling, where the check gives each its own binding and MIR its
-  own `e$bindingN` slot.
-  - `Cfg::slots` therefore disagrees with MIR's slot for 24 name reads
-    and places, in `template_raise_forms`, `template_method_raises`,
-    `pliron_finally_overrides`, `raise_borrowed_string_parameter`,
-    `os_dir_operations`, `optional_raising_subscript`, `errno_strerror`,
-    `string_format_declared`, `template_def_slice_stringify`,
-    `template_method_inplace_place`, `template_method_with_statement`,
-    and `with_enter_only`.
-  - MIR reads a name's slot by its binding, so `Cfg::slots` only spells
-    such a name today.
-  - The lever: HIR declares a slot per checked binding, as MIR's
-    `binding_var` does; related to R634.
-  - Done when every name node's `Cfg::slots` slot is the one MIR reads,
-    and the fixtures' MIR is unchanged.
-  - Found while landing R618 (2026-10-12).
+  `Flatten::lower_region` calls `Cfg::build_seeded_checked_region` with
+  MIR's own slot interner and binding map, where upstream lowers a `try`'s
+  regions inside the one function walk.
+  - The lever: HIR builds each sub-region's CFG while it walks the
+    function, and `HirInstr::Try` carries them, so `RegionSeed` goes away.
+  - MIR temporaries stop interleaving with region slots, so `VarId`
+    numbering moves: review the MIR text of the `try`/`with` fixtures.
+  - Done when MIR builds no HIR CFG and VM and `--backend pliron` output
+    is unchanged.
+  - Found while landing R636 (2026-10-13).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R753 MIR still declares some bindings' slots itself**
+
+  HIR's `Cfg::bindings` lacks a nested `def`'s closure slot and a local
+  `comptime` binding's slot, which MIR declares through
+  `Flatten::declare_binding_var`.
+  - A parameter's binding is attached lazily too, by `binding_var`'s
+    spelling fallback.
+  - The lever: HIR declares every binding's slot into `Cfg::bindings`,
+    and `binding_var` becomes a lookup.
+  - Done when `declare_binding_var` is gone and the corpus MIR is
+    unchanged.
+  - Found while landing R636 (2026-10-13).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

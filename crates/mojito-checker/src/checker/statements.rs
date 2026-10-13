@@ -1174,6 +1174,7 @@ impl Checker {
                         if let Some(owner) = self.lookup_owner(name) {
                             self.uninitialized.borrow_mut().remove(&owner);
                         }
+                        self.record_statement_binding(stmt, name);
                         self.set_aggregate_origins(name, aggregate_origins);
                         self.set_aggregate_field_origins(name, aggregate_field_origins);
                         let immutable_binders = self.construction_immutable_binders(value);
