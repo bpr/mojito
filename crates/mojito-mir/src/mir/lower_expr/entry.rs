@@ -75,88 +75,9 @@ impl<'a> Flatten<'a> {
         self.node(expression).expect("rebuilt syntax has its node")
     }
 
-    /// The handles of rebuilt syntax `expressions` ([`Self::node_of`]).
-    pub(in crate::mir) fn nodes_of(&self, expressions: &[Expr]) -> Vec<Node<'a>> {
-        expressions
-            .iter()
-            .map(|expression| self.node_of(expression))
-            .collect()
-    }
-
-    /// The handles of rebuilt keyword arguments `keywords`, with their names
-    /// ([`Self::node_of`]).
-    pub(in crate::mir) fn keywords_of<'e>(
-        &self,
-        keywords: &'e [mojito_ast::ast::KwArg],
-    ) -> Vec<(&'e str, Node<'a>)> {
-        keywords
-            .iter()
-            .map(|keyword| (keyword.name.as_str(), self.node_of(&keyword.value)))
-            .collect()
-    }
-
     /// The handle of HIR expression `expression`.
     pub(in crate::mir) fn handle(&self, expression: &'a mojito_hir::hir::HirExpr) -> Node<'a> {
         Node::new(expression, self.checked)
-    }
-
-    /// The syntax rebuilt from `node`, read from the innermost active frame
-    /// holding it (R646's transitional bridge).
-    pub(in crate::mir) fn syntax(&self, node: Node<'a>) -> Option<Syntax> {
-        self.active_semantics.iter().rev().find_map(|frame| {
-            frame.syntax.get(&node.address()).map(|&target| Syntax {
-                root: frame.root.clone(),
-                target,
-            })
-        })
-    }
-
-    /// Lower call, invocation, or method call node `node` through the syntax
-    /// rebuilt from it: the one crossing that still hands rebuilt syntax to
-    /// expression lowering, for the call family's three lowerers (R653
-    /// deletes it).
-    pub(in crate::mir) fn call_syntax(&mut self, node: Node<'a>) -> Reg {
-        use mojito_checked::checked::CheckedOp;
-        let Some(syntax) = self.syntax(node) else {
-            return self.unsupported_value(
-                node.location(),
-                "an expression without its rebuilt syntax reached MIR",
-            );
-        };
-        let e = syntax.expr();
-        match (node.op(), &e.kind) {
-            (
-                CheckedOp::Call { name, .. },
-                ExprKind::Call {
-                    param_args,
-                    args,
-                    kwargs,
-                    ..
-                },
-            ) => self.call_expr(e, node.checked, name, param_args, args, kwargs),
-            (
-                CheckedOp::Invoke { .. },
-                ExprKind::Invoke {
-                    callee,
-                    param_args,
-                    args,
-                    kwargs,
-                },
-            ) => self.invoke_expr(e, node.checked, callee, param_args, args, kwargs),
-            (
-                CheckedOp::MethodCall { method, .. },
-                ExprKind::MethodCall {
-                    object,
-                    args,
-                    kwargs,
-                    ..
-                },
-            ) => self.method_call_expr(e, node.checked, object, method, args, kwargs),
-            _ => self.unsupported_value(
-                node.location(),
-                "an expression without its checked node reached MIR",
-            ),
-        }
     }
 
     /// The syntax rebuilt for `operand`, an operand of the node `syntax` was

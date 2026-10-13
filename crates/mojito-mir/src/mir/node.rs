@@ -93,6 +93,14 @@ impl<'a> Node<'a> {
         }
     }
 
+    /// The callee of an invocation.
+    pub(super) fn callee(self) -> Option<Self> {
+        match self.op() {
+            CheckedOp::Invoke { callee, .. } => self.operand_of(*callee),
+            _ => None,
+        }
+    }
+
     /// The positional arguments of a call, invocation, or method call.
     pub(super) fn args(self) -> Vec<Self> {
         match self.op() {

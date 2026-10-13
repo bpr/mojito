@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R654**.
+Next free ID: **R655**.
 
 ## Ordered Work
 
@@ -126,6 +126,19 @@ change that needs a new `MJRT_ABI_VERSION`.
   - R541 is the same failure for an applied constant of a sized scalar
     type, so one fix may close both.
   - Found while landing R563 (2026-10-10).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R654 Natively, a folded `hash` constant fails IR verification**
+
+  Problem: `comptime C = hash(Int(1))`, then `print(C)`, prints the hash on
+  the VM and at the pin, and stops natively with "argument 0 type mismatch:
+  expected builtin.integer i64, got llvm.ptr".
+  - `assets/ok/comptime_hash.mojo` hits it, so its `exe-differential`
+    parity row is stale; R652's binary fails the same way.
+  - `hash` returns `UInt64`, so this is likely R541's and R576's
+    sized-scalar constant failure, and one fix may close all three.
+  - Found while landing R653 (2026-10-13).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -4819,28 +4832,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     `generic_instantiations()`.
   - Found while landing R619 (2026-10-12).
   - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **R653 MIR's call family lowers rebuilt syntax**
-
-  `call_family` (`lower_expr/{expr_call,expr_method,calls}.rs`) still
-  takes syntax, and `expr_unconverted` crosses to it through
-  `Flatten::syntax`.
-  - `call_expr`, `invoke_expr`, `method_call_expr`, and
-    `checked_construction` take the call's `Node` and pass the handle's
-    `args()` and `kwargs()` to the argument lowerers, which already take
-    nodes.
-  - An invocation's callee is its node's `Invoke` operand (add
-    `Node::callee`).
-  - `expr_unconverted`'s crossing and the `nodes_of`/`keywords_of`
-    bridges go.
-  - Done when `rg '\bExpr\b|\bKwArg\b|\bParamArg\b|ExprKind'
-    crates/mojito-mir/src/mir/lower_expr` finds only `entry.rs`'s
-    bridges, and the probe fixtures' MIR and output are unchanged on both
-    backends.
-  - Plan: `R647-mir-s-expression-families-lower-rebuilt-plan.md`, section
-    S2.
-  - Depends on R652.
   - Model: Opus, Not Planned.
 
 - [ ] **R648 MIR's calls and statements lower rebuilt syntax**

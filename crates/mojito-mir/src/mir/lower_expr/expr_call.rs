@@ -5,58 +5,46 @@ use super::*;
 use mojito_checked::checked::CheckedExpr;
 use mojito_types::types::TyKind;
 
-use mojito_ast::ast::KwArg;
-impl Flatten<'_> {
-    pub(super) fn call_expr(
-        &mut self,
-        e: &Expr,
-        node: &CheckedExpr,
-        name: &str,
-        param_args: &[ParamArg],
-        args: &[Expr],
-        kwargs: &[KwArg],
-    ) -> Reg {
+impl<'a> Flatten<'a> {
+    pub(super) fn call_expr(&mut self, call: Node<'a>, name: &str) -> Reg {
+        let node = call.checked;
+        let args = call.args();
+        let args = args.as_slice();
+        let kwargs = call.kwargs();
+        let kwargs = kwargs.as_slice();
         if name == "__mojito_fieldwise_copy" {
             return self.expr(
-                self.node_of(
-                    args.first()
-                        .expect("checked synthesized fieldwise copy has one argument"),
-                ),
+                *args
+                    .first()
+                    .expect("checked synthesized fieldwise copy has one argument"),
             );
         }
-        if let Some(dest) = self.checked_construction(e, node, param_args, args, kwargs) {
+        if let Some(dest) = self.checked_construction(call, args, kwargs) {
             return dest;
         }
         // SIMD construction resolves its `[DType.<dt>, width]` parameters
         // here (the MIR is otherwise untyped about them).
-        if let Some(r) = self.try_simd_call(e, args, kwargs) {
+        if let Some(r) = self.try_simd_call(call, args, kwargs) {
             return r;
         }
         // `objs[0](3)` / `grid[i, j](x)`: the checker re-dispatched
         // these value brackets as subscript-then-indirect-call, so the
         // brackets are runtime indices, never compile-time parameters
         // (and never the named-local callable path below).
-        if let Some(plan) = self.node(e).and_then(Node::element_invocation) {
-            let indices: Vec<&Expr> = param_args
-                .iter()
-                .filter_map(|argument| match argument {
-                    ParamArg::Value(value) => Some(value),
-                    _ => None,
-                })
-                .collect();
+        if let Some(plan) = call.element_invocation() {
+            let indices = element_indices(call);
             // The receiver is the local the call names, read as its place.
             let receiver = self
-                .node(e)
-                .and_then(|call| self.local_callee(call, name))
+                .local_callee(call, name)
                 .unwrap_or_else(|| self.var(name));
             let place = self.var_place(receiver);
-            let value = self.fresh(span(e), Some(place.root));
+            let value = self.fresh(call.location(), Some(place.root));
             self.emit(MirInstr::LoadPlace {
                 dest: value,
                 place: place.clone(),
             });
             return self.lower_element_invocation(
-                e,
+                call,
                 (value, Some(place)),
                 plan,
                 &indices,
@@ -73,41 +61,33 @@ impl Flatten<'_> {
             .and_then(|binding| self.nested.get(&binding))
             .cloned()
         {
-            return self.lower_nested_call(e, name, &info, args, kwargs);
+            return self.lower_nested_call(call, name, &info, args, kwargs);
         }
         // The callee is the slot of the local the call's binding names.
-        if let Some(variable) = self.node(e).and_then(|call| self.local_callee(call, name)) {
-            let callee = self.read_slot(variable, span(e), None);
+        if let Some(variable) = self.local_callee(call, name) {
+            let callee = self.read_slot(variable, call.location(), None);
             let callable_ty = self
                 .var_types
                 .get(&variable)
                 .cloned()
                 .or_else(|| self.f.reg_types.get(&callee.0).cloned());
-            let param_arg_regs = self.indirect_param_arg_regs(self.node_of(e));
+            let param_arg_regs = self.indirect_param_arg_regs(call);
             let param_decls = callable_ty
                 .as_ref()
                 .map(generic_callable_param_decls)
                 .unwrap_or_default();
             let saved_anchor_permission = self.allow_argument_anchors;
-            self.allow_argument_anchors = self.node_of(e).call_anchors_arguments();
-            let (regs, arg_places) = self.lower_call_arguments(&self.nodes_of(args), false);
-            let (kw, kwarg_places) = self.lower_call_keywords(&self.keywords_of(kwargs), false);
+            self.allow_argument_anchors = call.call_anchors_arguments();
+            let (regs, arg_places) = self.lower_call_arguments(args, false);
+            let (kw, kwarg_places) = self.lower_call_keywords(kwargs, false);
             self.allow_argument_anchors = saved_anchor_permission;
             let place = self.var_place(variable);
             let callee_place = place.is_typed().then_some(place);
-            let dest = self.fresh(span(e), None);
-            self.emit_call_invalidations(
-                self.node_of(e),
-                &self.nodes_of(args),
-                &self.keywords_of(kwargs),
-            );
-            let capture_accesses = self
-                .node(e)
-                .map(|node| self.call_capture_accesses(node))
-                .unwrap_or_default();
-            let (instantiated_contract, instantiated_args) = self
-                .node(e)
-                .and_then(Node::instantiated_callable_contract)
+            let dest = self.fresh(call.location(), None);
+            self.emit_call_invalidations(call, args, kwargs);
+            let capture_accesses = self.call_capture_accesses(call);
+            let (instantiated_contract, instantiated_args) = call
+                .instantiated_callable_contract()
                 .map_or((None, Vec::new()), |(contract, arguments)| {
                     (Some(contract), arguments)
                 });
@@ -119,7 +99,7 @@ impl Flatten<'_> {
                 dest,
                 callee,
                 resolved: callable_target(&node.adjustments),
-                raises: self.node(e).and_then(Node::raises),
+                raises: call.raises(),
                 args: regs,
                 kwargs: kw,
                 callee_place: callee_place.map(Box::new),
@@ -130,13 +110,9 @@ impl Flatten<'_> {
                 param_decls,
                 instantiated_contract,
                 instantiated_args,
-                spread: self.spread_position(args),
+                spread: Self::spread_position(args),
             });
-            self.install_call_transfers(
-                self.node_of(e),
-                transfer_recv_place.as_ref(),
-                &transfer_arg_places,
-            );
+            self.install_call_transfers(call, transfer_recv_place.as_ref(), &transfer_arg_places);
             return dest;
         }
         // `__RuntimeTuple` is the compiler-private heterogeneous pack
@@ -147,20 +123,17 @@ impl Flatten<'_> {
             // is one relocation: the collector already holds the elements
             // in storage shape.
             if let [argument] = args
-                && let Some(spread) = self.operand(argument, Node::spread_operand)
-                && self
-                    .node(spread)
-                    .and_then(Node::transfer_operand)
-                    .is_some_and(Node::is_name)
+                && let Some(spread) = argument.spread_operand()
+                && spread.transfer_operand().is_some_and(Node::is_name)
             {
-                return self.expr(self.node_of(spread));
+                return self.expr(spread);
             }
-            let regs = self.args(&self.nodes_of(args));
+            let regs = self.args(args);
             let element_types = match node.ty.clone().as_ref().map(Ty::kind) {
                 Some(TyKind::Tuple(elements)) => Some(elements.clone()),
                 _ => None,
             };
-            let dest = self.fresh(span(e), None);
+            let dest = self.fresh(call.location(), None);
             self.emit(MirInstr::MakeTuple {
                 dest,
                 elems: regs,
@@ -168,7 +141,7 @@ impl Flatten<'_> {
             });
             return dest;
         }
-        self.direct_call(e, node, name, args, kwargs)
+        self.direct_call(call, name, args, kwargs)
     }
 
     /// A call the check recorded as a construction or an intrinsic by an
@@ -177,12 +150,11 @@ impl Flatten<'_> {
     /// place, inline storage, a `Variant`): `None` for any other call.
     fn checked_construction(
         &mut self,
-        e: &Expr,
-        node: &CheckedExpr,
-        param_args: &[ParamArg],
-        args: &[Expr],
-        kwargs: &[KwArg],
+        call: Node<'a>,
+        args: &[Node<'a>],
+        kwargs: &[(&'a str, Node<'a>)],
     ) -> Option<Reg> {
+        let node = call.checked;
         if node.adjustments.iter().any(|adjustment| {
             matches!(
                 adjustment,
@@ -191,12 +163,10 @@ impl Flatten<'_> {
         }) {
             return Some(
                 self.expr(
-                    self.node_of(
-                        &kwargs
-                            .first()
-                            .expect("checked built-in copy construction has a 'copy=' argument")
-                            .value,
-                    ),
+                    kwargs
+                        .first()
+                        .expect("checked built-in copy construction has a 'copy=' argument")
+                        .1,
                 ),
             );
         }
@@ -215,9 +185,9 @@ impl Flatten<'_> {
                 .cloned()
         {
             let (kwargs, kwarg_places) = self
-                .copy_construction_keywords(&self.keywords_of(kwargs))
-                .unwrap_or_else(|| self.lower_call_keywords(&self.keywords_of(kwargs), false));
-            let dest = self.fresh(span(e), None);
+                .copy_construction_keywords(kwargs)
+                .unwrap_or_else(|| self.lower_call_keywords(kwargs, false));
+            let dest = self.fresh(call.location(), None);
             self.emit(MirInstr::ConstructTypeParam {
                 dest,
                 param,
@@ -227,7 +197,7 @@ impl Flatten<'_> {
             });
             return Some(dest);
         }
-        if let Some(dest) = self.pack_element_construction(e, node, param_args) {
+        if let Some(dest) = self.pack_element_construction(call) {
             return Some(dest);
         }
         if let Some(mojito_checked::checked::SemanticAdjustment::ConstructType { ty }) = node
@@ -241,7 +211,7 @@ impl Flatten<'_> {
             })
             .cloned()
         {
-            let dest = self.fresh_typed(span(e), None, ty.clone());
+            let dest = self.fresh_typed(call.location(), None, ty.clone());
             self.emit(MirInstr::ConstructType { dest, ty });
             return Some(dest);
         }
@@ -259,7 +229,7 @@ impl Flatten<'_> {
             // A symbolic type has no layout to take the size of; the
             // elaborator substitutes the instance's type, and only the
             // erased oracle reaches the template's own instruction.
-            let dest = self.fresh_typed(span(e), None, Ty::int());
+            let dest = self.fresh_typed(call.location(), None, Ty::int());
             self.emit(MirInstr::SizeOf { dest, ty });
             return Some(dest);
         }
@@ -274,7 +244,7 @@ impl Flatten<'_> {
             })
             .cloned()
         {
-            return Some(self.param_list_address(e, values));
+            return Some(self.param_list_address(call.location(), values));
         }
         if let Some(mojito_checked::checked::SemanticAdjustment::TypeName { text, ty }) = node
             .adjustments
@@ -290,11 +260,11 @@ impl Flatten<'_> {
             // A type naming a compile-time parameter is spelled per
             // instance, so the template carries the type to the elaborator.
             if mojito_types::types::is_symbolic(&ty) {
-                let dest = self.fresh_typed(span(e), None, Ty::string_literal());
+                let dest = self.fresh_typed(call.location(), None, Ty::string_literal());
                 self.emit(MirInstr::TypeName { dest, ty });
                 return Some(dest);
             }
-            return Some(self.constant(self.node_of(e), Const::Str(text)));
+            return Some(self.constant(call, Const::Str(text)));
         }
         // A checked pointer construction materializes the frame/slot
         // handle for its source place; the checked pointer type keeps
@@ -305,12 +275,12 @@ impl Flatten<'_> {
                 mojito_checked::checked::SemanticAdjustment::PointerToPlace { .. }
             )
         }) {
-            let value = &kwargs
+            let value = kwargs
                 .first()
                 .expect("checked pointer construction has a 'to=' argument")
-                .value;
-            let place = self.place(self.node_of(value));
-            let dest = self.fresh(span(e), Some(place.root));
+                .1;
+            let place = self.place(value);
+            let dest = self.fresh(call.location(), Some(place.root));
             self.emit(MirInstr::MakeRef { dest, place });
             return Some(dest);
         }
@@ -326,10 +296,9 @@ impl Flatten<'_> {
                 _ => None,
             })
         {
-            let init = init.then(|| {
-                self.expr(self.node_of(args.first().expect("checked storage construction payload")))
-            });
-            let dest = self.fresh(span(e), None);
+            let init = init
+                .then(|| self.expr(*args.first().expect("checked storage construction payload")));
+            let dest = self.fresh(call.location(), None);
             self.emit(MirInstr::UninitStorage { dest, init });
             return Some(dest);
         }
@@ -348,12 +317,11 @@ impl Flatten<'_> {
             .cloned()
         {
             let value = self.expr(
-                self.node_of(
-                    args.first()
-                        .expect("checked Variant construction has one payload"),
-                ),
+                *args
+                    .first()
+                    .expect("checked Variant construction has one payload"),
             );
-            let dest = self.fresh(span(e), None);
+            let dest = self.fresh(call.location(), None);
             self.emit(MirInstr::MakeVariant {
                 dest,
                 alternatives,
@@ -380,14 +348,12 @@ impl Flatten<'_> {
             // Invoke the zero-parameter factory, then wrap its result:
             // the payload temporary is consumed by the construction.
             let factory = self.expr(
-                self.node_of(
-                    &kwargs
-                        .first()
-                        .expect("checked Variant(init_with=) has one factory")
-                        .value,
-                ),
+                kwargs
+                    .first()
+                    .expect("checked Variant(init_with=) has one factory")
+                    .1,
             );
-            let payload = self.fresh_typed(span(e), None, payload);
+            let payload = self.fresh_typed(call.location(), None, payload);
             self.emit(MirInstr::CallIndirect {
                 dest: payload,
                 callee: factory,
@@ -405,32 +371,29 @@ impl Flatten<'_> {
                 instantiated_args: Vec::new(),
                 spread: None,
             });
-            let dest = self.fresh(span(e), None);
+            let dest = self.fresh(call.location(), None);
             self.emit(MirInstr::MakeVariant {
                 dest,
                 alternatives,
                 index,
                 value: payload,
             });
-            self.emit_nested_closure_argument_keepalives(
-                &self.nodes_of(args),
-                &self.keywords_of(kwargs),
-            );
+            self.emit_nested_closure_argument_keepalives(args, kwargs);
             return Some(dest);
         }
         None
     }
 
-    pub(super) fn invoke_expr(
-        &mut self,
-        e: &Expr,
-        node: &CheckedExpr,
-        callee: &Expr,
-        param_args: &[ParamArg],
-        args: &[Expr],
-        kwargs: &[KwArg],
-    ) -> Reg {
-        if let Some(dest) = self.pack_element_construction(e, node, param_args) {
+    pub(super) fn invoke_expr(&mut self, call: Node<'a>) -> Reg {
+        let node = call.checked;
+        let callee = call
+            .callee()
+            .expect("an invocation's callee is its operand");
+        let args = call.args();
+        let args = args.as_slice();
+        let kwargs = call.kwargs();
+        let kwargs = kwargs.as_slice();
+        if let Some(dest) = self.pack_element_construction(call) {
             return dest;
         }
         // `pointer.unsafe_origin_cast[...]()` retypes provenance only: the
@@ -441,9 +404,9 @@ impl Flatten<'_> {
                 adjustment,
                 mojito_checked::checked::SemanticAdjustment::PointerOriginCast { .. }
             )
-        }) && let Some(object) = self.operand(callee, Node::member_object)
+        }) && let Some(object) = callee.member_object()
         {
-            return self.expr(self.node_of(object));
+            return self.expr(object);
         }
         // Parameterized SIMD methods (`v.cast[DType.<dt>]()`) carry
         // their checker-resolved payload in the adjustment; the
@@ -458,10 +421,10 @@ impl Flatten<'_> {
                 _ => None,
             });
         if let Some((dtype, width)) = simd_cast
-            && let Some(object) = self.operand(callee, Node::member_object)
+            && let Some(object) = callee.member_object()
         {
-            let value = self.expr(self.node_of(object));
-            let dest = self.fresh(span(e), None);
+            let value = self.expr(object);
+            let dest = self.fresh(call.location(), None);
             self.emit(MirInstr::SimdCast {
                 dest,
                 value,
@@ -482,10 +445,10 @@ impl Flatten<'_> {
                 _ => None,
             });
         if let Some((dtype, width)) = simd_to_bits
-            && let Some(object) = self.operand(callee, Node::member_object)
+            && let Some(object) = callee.member_object()
         {
-            let value = self.expr(self.node_of(object));
-            let dest = self.fresh(span(e), None);
+            let value = self.expr(object);
+            let dest = self.fresh(call.location(), None);
             self.emit(MirInstr::SimdBitcast {
                 dest,
                 value,
@@ -504,11 +467,11 @@ impl Flatten<'_> {
                 _ => None,
             });
         if let Some((mask, joined)) = simd_shuffle
-            && let Some(object) = self.operand(callee, Node::member_object)
+            && let Some(object) = callee.member_object()
         {
-            let value = self.expr(self.node_of(object));
-            let other = joined.then(|| self.expr(self.node_of(&args[0])));
-            let dest = self.fresh(span(e), None);
+            let value = self.expr(object);
+            let other = joined.then(|| self.expr(args[0]));
+            let dest = self.fresh(call.location(), None);
             self.emit(MirInstr::SimdShuffle {
                 dest,
                 value,
@@ -534,32 +497,23 @@ impl Flatten<'_> {
             })
             .cloned()
         {
-            return self.variant_operation(e, callee, &operation, args, kwargs);
+            return self.variant_operation(call, callee, &operation, args, kwargs);
         }
         // `a.b[i](x)`: the member-base element call re-dispatched by
         // the checker — the callee expression is the subscripted
         // receiver, and the brackets are runtime indices.
-        if let Some(plan) = self.node(e).and_then(Node::element_invocation) {
-            let indices: Vec<&Expr> = param_args
-                .iter()
-                .filter_map(|argument| match argument {
-                    ParamArg::Value(value) => Some(value),
-                    _ => None,
-                })
-                .collect();
-            let receiver = self.lower_call_receiver(self.node_of(callee));
-            return self.lower_element_invocation(e, receiver, plan, &indices, args, kwargs);
+        if let Some(plan) = call.element_invocation() {
+            let indices = element_indices(call);
+            let receiver = self.lower_call_receiver(callee);
+            return self.lower_element_invocation(call, receiver, plan, &indices, args, kwargs);
         }
         if parameterized_method_decls(node).is_some() {
-            return self.parameterized_method_call(e, node, callee, args, kwargs);
+            return self.parameterized_method_call(call, callee, args, kwargs);
         }
-        let mut callee_place = self.callable_receiver_place(self.node_of(callee));
-        let callable_ty = self.node(callee).and_then(Node::ty);
-        let lambda_callee = matches!(
-            self.node(callee).map(Node::op),
-            Some(CheckedOp::Lambda { .. })
-        );
-        let callee = self.expr(self.node_of(callee));
+        let mut callee_place = self.callable_receiver_place(callee);
+        let callable_ty = callee.ty();
+        let lambda_callee = matches!(callee.op(), CheckedOp::Lambda { .. });
+        let callee = self.expr(callee);
         let callable_ty = callable_ty.or_else(|| self.f.reg_types.get(&callee.0).cloned());
         if lambda_callee && callee_place.is_none() {
             // An immediately invoked lambda's closure is a temporary;
@@ -578,11 +532,11 @@ impl Flatten<'_> {
             let place = MirPlace::root(slot, callable_ty.clone());
             callee_place = place.is_typed().then_some(place);
         }
-        let param_arg_regs = self.indirect_param_arg_regs(self.node_of(e));
+        let param_arg_regs = self.indirect_param_arg_regs(call);
         let resolved = callable_target(&node.adjustments);
-        let raises = self.node(e).and_then(Node::raises);
+        let raises = call.raises();
         self.emit_indirect_invocation(
-            e,
+            call,
             callee,
             callee_place,
             callable_ty.as_ref(),
@@ -599,17 +553,17 @@ impl Flatten<'_> {
     /// and keywords, then the `Call` on the checker-selected target.
     fn direct_call(
         &mut self,
-        e: &Expr,
-        node: &CheckedExpr,
+        call: Node<'a>,
         name: &str,
-        args: &[Expr],
-        kwargs: &[KwArg],
+        args: &[Node<'a>],
+        kwargs: &[(&'a str, Node<'a>)],
     ) -> Reg {
+        let node = call.checked;
         // Compile-time parameter arguments (`Name[param_args](...)`),
         // evaluated before ordinary call arguments: a
         // **value** parameter is a comptime `Int` expression flattened to a
         // register; a **type** parameter is erased (`None`).
-        let param_arg_regs = self.param_arg_regs(self.node_of(e));
+        let param_arg_regs = self.param_arg_regs(call);
         // Retain only checker-selected `mut`/`ref` caller places. A
         // syntactically simple copied argument remains eligible for
         // ASAP destruction after its value has been evaluated.
@@ -634,15 +588,15 @@ impl Flatten<'_> {
         // level up — installs them). The stringify conversion is the
         // exception: its result is a fresh owned string that carries
         // no loans, so a view argument anchors as in a plain call.
-        let view_result = self.node_of(e).borrows_view_result();
+        let view_result = call.borrows_view_result();
         let saved_anchor_permission = self.allow_argument_anchors;
         self.allow_argument_anchors = (stringify
             || !matches!(
                 node.ty.clone().as_ref().map(Ty::kind),
                 Some(TyKind::Struct(constructed, _)) if *constructed == *name
             ))
-            && self.node_of(e).call_anchors_arguments();
-        let (regs, arg_places) = self.lower_call_arguments(&self.nodes_of(args), view_result);
+            && call.call_anchors_arguments();
+        let (regs, arg_places) = self.lower_call_arguments(args, view_result);
         self.allow_argument_anchors = saved_anchor_permission;
         let copy_construction = args.is_empty()
             && matches!(
@@ -650,9 +604,9 @@ impl Flatten<'_> {
                 Some(TyKind::Struct(constructed, _)) if *constructed == *name
             );
         let (kw, kwarg_places) = copy_construction
-            .then(|| self.copy_construction_keywords(&self.keywords_of(kwargs)))
+            .then(|| self.copy_construction_keywords(kwargs))
             .flatten()
-            .unwrap_or_else(|| self.lower_call_keywords(&self.keywords_of(kwargs), view_result));
+            .unwrap_or_else(|| self.lower_call_keywords(kwargs, view_result));
         let (regs, arg_places, kw, kwarg_places) = match node.ty.clone().as_ref().map(Ty::kind) {
             Some(TyKind::Struct(constructed, _)) if *constructed == *name => self
                 .fieldwise_keywords_positional(constructed, (regs, arg_places, kw, kwarg_places)),
@@ -661,9 +615,8 @@ impl Flatten<'_> {
         // Builtin string producers wrapped by the nominal-String
         // conversion keep their own callee but type their register
         // as the compile-time string the wrap consumes.
-        let literal_result = stringify
-            || (matches!(name, "input" | "repr")
-                && self.node_of(e).implicit_conversion().is_some());
+        let literal_result =
+            stringify || (matches!(name, "input" | "repr") && call.implicit_conversion().is_some());
         let target = if stringify {
             "String".to_string()
         } else {
@@ -671,28 +624,18 @@ impl Flatten<'_> {
                 .unwrap_or_else(|| self.overloaded_name(name, args.len()))
         };
         let d = if literal_result {
-            self.fresh_typed(span(e), None, Ty::string_literal())
+            self.fresh_typed(call.location(), None, Ty::string_literal())
         } else {
-            self.fresh(span(e), None)
+            self.fresh(call.location(), None)
         };
-        self.emit_call_invalidations(
-            self.node_of(e),
-            &self.nodes_of(args),
-            &self.keywords_of(kwargs),
-        );
-        let capture_accesses = self
-            .node(e)
-            .map(|node| self.call_capture_accesses(node))
-            .unwrap_or_default();
+        self.emit_call_invalidations(call, args, kwargs);
+        let capture_accesses = self.call_capture_accesses(call);
         let transfer_arg_places = arg_places.clone();
-        let instantiated_args = self
-            .node(e)
-            .map(Node::instantiated_args)
-            .unwrap_or_default();
+        let instantiated_args = call.instantiated_args();
         self.emit(MirInstr::Call {
             dest: d,
             func: FuncRef::named(&target),
-            raises: self.node(e).and_then(Node::raises),
+            raises: call.raises(),
             args: regs,
             kwargs: kw,
             arg_places,
@@ -701,32 +644,29 @@ impl Flatten<'_> {
             param_arg_regs,
             receiver: None,
             instantiated_args,
-            spread: self.spread_position(args),
+            spread: Self::spread_position(args),
         });
-        self.emit_nested_closure_argument_keepalives(
-            &self.nodes_of(args),
-            &self.keywords_of(kwargs),
-        );
-        self.install_call_transfers(self.node_of(e), None, &transfer_arg_places);
+        self.emit_nested_closure_argument_keepalives(args, kwargs);
+        self.install_call_transfers(call, None, &transfer_arg_places);
         d
     }
 
     /// A checked `Variant` operation spelled as a parameterized member call.
     fn variant_operation(
         &mut self,
-        e: &Expr,
-        callee: &Expr,
+        call: Node<'a>,
+        callee: Node<'a>,
         operation: &mojito_checked::checked::SemanticAdjustment,
-        args: &[Expr],
-        kwargs: &[KwArg],
+        args: &[Node<'a>],
+        kwargs: &[(&'a str, Node<'a>)],
     ) -> Reg {
-        let Some(object) = self.operand(callee, Node::member_object) else {
+        let Some(object) = callee.member_object() else {
             unreachable!("checked Variant operation has a member callee")
         };
         match operation.clone() {
             mojito_checked::checked::SemanticAdjustment::VariantIs { index, .. } => {
-                let variant = self.expr(self.node_of(object));
-                let dest = self.fresh(span(e), None);
+                let variant = self.expr(object);
+                let dest = self.fresh(call.location(), None);
                 self.emit(MirInstr::VariantIs {
                     dest,
                     variant,
@@ -737,8 +677,8 @@ impl Flatten<'_> {
             // `unsafe_get[T]()`: the method spelling of the checked
             // projection read (`v[T]`).
             mojito_checked::checked::SemanticAdjustment::VariantProject { index, .. } => {
-                let variant = self.expr(self.node_of(object));
-                let dest = self.fresh(span(e), None);
+                let variant = self.expr(object);
+                let dest = self.fresh(call.location(), None);
                 self.emit(MirInstr::VariantGet {
                     dest,
                     variant,
@@ -748,12 +688,11 @@ impl Flatten<'_> {
             }
             mojito_checked::checked::SemanticAdjustment::VariantSet { index, .. } => {
                 let place = self
-                    .try_place(self.node_of(object))
+                    .try_place(object)
                     .expect("checked Variant.set receiver is a writable place");
-                let value = self
-                    .expr(self.node_of(args.first().expect("checked Variant.set has one payload")));
-                let dest = self.fresh(span(e), None);
-                self.emit_interior_invalidations(self.node_of(e), None);
+                let value = self.expr(*args.first().expect("checked Variant.set has one payload"));
+                let dest = self.fresh(call.location(), None);
+                self.emit_interior_invalidations(call, None);
                 self.emit(MirInstr::VariantSet {
                     dest,
                     place,
@@ -764,70 +703,61 @@ impl Flatten<'_> {
             }
             mojito_checked::checked::SemanticAdjustment::VariantSetInitWith { index, .. } => {
                 let place = self
-                    .try_place(self.node_of(object))
+                    .try_place(object)
                     .expect("checked Variant.set receiver is a writable place");
                 let factory = self.expr(
-                    self.node_of(
-                        &kwargs
-                            .first()
-                            .expect("checked Variant.set(init_with=) has one factory")
-                            .value,
-                    ),
+                    kwargs
+                        .first()
+                        .expect("checked Variant.set(init_with=) has one factory")
+                        .1,
                 );
-                let dest = self.fresh(span(e), None);
-                self.emit_interior_invalidations(self.node_of(e), None);
+                let dest = self.fresh(call.location(), None);
+                self.emit_interior_invalidations(call, None);
                 self.emit(MirInstr::VariantSetInitWith {
                     dest,
                     place,
                     index,
                     factory,
                 });
-                self.emit_nested_closure_argument_keepalives(
-                    &self.nodes_of(args),
-                    &self.keywords_of(kwargs),
-                );
+                self.emit_nested_closure_argument_keepalives(args, kwargs);
                 dest
             }
             mojito_checked::checked::SemanticAdjustment::VariantDeinitWith { index, .. } => {
                 let place = self
-                    .try_place(self.node_of(object))
+                    .try_place(object)
                     .expect("checked Variant.deinit_with receiver is an owned place");
-                let variant = self.fresh(span(object), None);
+                let variant = self.fresh(object.location(), None);
                 self.emit(MirInstr::MovePlace {
                     dest: variant,
                     place,
                 });
                 let handler = self.expr(
-                    self.node_of(
-                        args.first()
-                            .expect("checked Variant.deinit_with has one handler"),
-                    ),
+                    *args
+                        .first()
+                        .expect("checked Variant.deinit_with has one handler"),
                 );
-                let dest = self.fresh(span(e), None);
-                self.emit_interior_invalidations(self.node_of(e), None);
+                let dest = self.fresh(call.location(), None);
+                self.emit_interior_invalidations(call, None);
                 self.emit(MirInstr::VariantDeinitWith {
                     dest,
                     variant,
                     handler,
                     index,
                 });
-                self.emit_nested_closure_argument_keepalives(
-                    &self.nodes_of(args),
-                    &self.keywords_of(kwargs),
-                );
+                self.emit_nested_closure_argument_keepalives(args, kwargs);
                 dest
             }
             mojito_checked::checked::SemanticAdjustment::VariantTake { index, checked, .. } => {
                 let place = self
-                    .try_place(self.node_of(object))
+                    .try_place(object)
                     .expect("checked Variant.take receiver is an owned place");
-                let variant = self.fresh(span(object), None);
+                let variant = self.fresh(object.location(), None);
                 self.emit(MirInstr::MovePlace {
                     dest: variant,
                     place,
                 });
-                let dest = self.fresh(span(e), None);
-                self.emit_interior_invalidations(self.node_of(e), None);
+                let dest = self.fresh(call.location(), None);
+                self.emit_interior_invalidations(call, None);
                 self.emit(MirInstr::VariantTake {
                     dest,
                     variant,
@@ -843,16 +773,15 @@ impl Flatten<'_> {
                 ..
             } => {
                 let place = self
-                    .try_place(self.node_of(object))
+                    .try_place(object)
                     .expect("checked Variant.replace receiver is writable");
                 let value = self.expr(
-                    self.node_of(
-                        args.first()
-                            .expect("checked Variant.replace has one payload"),
-                    ),
+                    *args
+                        .first()
+                        .expect("checked Variant.replace has one payload"),
                 );
-                let dest = self.fresh(span(e), None);
-                self.emit_interior_invalidations(self.node_of(e), None);
+                let dest = self.fresh(call.location(), None);
+                self.emit_interior_invalidations(call, None);
                 self.emit(MirInstr::VariantReplace {
                     dest,
                     place,
@@ -870,18 +799,17 @@ impl Flatten<'_> {
     /// A checked parameterized method call (`recv.method[params](args)`).
     fn parameterized_method_call(
         &mut self,
-        e: &Expr,
-        node: &CheckedExpr,
-        callee: &Expr,
-        args: &[Expr],
-        kwargs: &[KwArg],
+        call: Node<'a>,
+        callee: Node<'a>,
+        args: &[Node<'a>],
+        kwargs: &[(&'a str, Node<'a>)],
     ) -> Reg {
-        let (Some(CheckedOp::Member { field, .. }), Some(object)) = (
-            self.node(callee).map(Node::op).cloned(),
-            self.operand(callee, Node::member_object),
-        ) else {
+        let node = call.checked;
+        let (CheckedOp::Member { field, .. }, Some(object)) = (callee.op(), callee.member_object())
+        else {
             unreachable!("checked parameterized method call has a member callee")
         };
+        let field = field.clone();
         let param_decls = parameterized_method_decls(node).unwrap_or_default();
         // A parameterized **static** call (`Bag[Int, String].has[Bool]()`,
         // `Lanes.ident[Int](3)`): the receiver is a type, so this
@@ -895,60 +823,45 @@ impl Flatten<'_> {
             let (param_arg_regs, instantiated_args) = if param_decls.is_empty() {
                 (Vec::new(), Vec::new())
             } else {
-                (
-                    self.param_arg_regs(self.node_of(e)),
-                    self.node(e)
-                        .map(Node::instantiated_args)
-                        .unwrap_or_default(),
-                )
+                (self.param_arg_regs(call), call.instantiated_args())
             };
             let saved_anchor_permission = self.allow_argument_anchors;
-            self.allow_argument_anchors = self.node_of(e).call_anchors_arguments();
-            let (regs, arg_places) = self.lower_call_arguments(&self.nodes_of(args), false);
+            self.allow_argument_anchors = call.call_anchors_arguments();
+            let (regs, arg_places) = self.lower_call_arguments(args, false);
             self.allow_argument_anchors = saved_anchor_permission;
-            let (kw, kwarg_places) = self.lower_call_keywords(&self.keywords_of(kwargs), false);
-            let dest = self.fresh(span(e), None);
+            let (kw, kwarg_places) = self.lower_call_keywords(kwargs, false);
+            let dest = self.fresh(call.location(), None);
             let target =
                 callable_target(&node.adjustments).unwrap_or_else(|| format!("{name}.{field}"));
-            self.emit_call_invalidations(
-                self.node_of(e),
-                &self.nodes_of(args),
-                &self.keywords_of(kwargs),
-            );
+            self.emit_call_invalidations(call, args, kwargs);
             let receiver = self.static_receiver(object);
             self.emit(MirInstr::Call {
                 dest,
                 func: FuncRef::named(&target),
-                raises: self.node(e).and_then(Node::raises),
+                raises: call.raises(),
                 args: regs,
                 kwargs: kw,
                 arg_places,
                 kwarg_places,
-                capture_accesses: self
-                    .node(e)
-                    .map(|node| self.call_capture_accesses(node))
-                    .unwrap_or_default(),
+                capture_accesses: self.call_capture_accesses(call),
                 param_arg_regs,
                 receiver,
                 instantiated_args,
-                spread: self.spread_position(args),
+                spread: Self::spread_position(args),
             });
-            self.emit_nested_closure_argument_keepalives(
-                &self.nodes_of(args),
-                &self.keywords_of(kwargs),
-            );
+            self.emit_nested_closure_argument_keepalives(args, kwargs);
             return dest;
         }
         // Keep this as a direct method invocation. In particular,
         // do not synthesize a bound-method value (which would make
         // its receiver/environment escapable).
-        if let Some(dest) = self.lower_elided_receiver_call(e, object, args, kwargs) {
+        if let Some(dest) = self.lower_elided_receiver_call(call, object, args, kwargs) {
             return dest;
         }
-        let (recv, recv_place) = self.lower_method_receiver(self.node_of(e), self.node_of(object));
-        let implicitly_copied_receiver = self.node_of(e).implicitly_copies_consuming_receiver();
+        let (recv, recv_place) = self.lower_method_receiver(call, object);
+        let implicitly_copied_receiver = call.implicitly_copies_consuming_receiver();
         let recv = if implicitly_copied_receiver {
-            self.copy_consuming_receiver(self.node_of(object), recv, recv_place.as_ref())
+            self.copy_consuming_receiver(object, recv, recv_place.as_ref())
         } else {
             recv
         };
@@ -959,40 +872,28 @@ impl Flatten<'_> {
         let (param_arg_regs, instantiated_args) = if param_decls.is_empty() {
             (Vec::new(), Vec::new())
         } else {
-            (
-                self.param_arg_regs(self.node_of(e)),
-                self.node(e)
-                    .map(Node::instantiated_args)
-                    .unwrap_or_default(),
-            )
+            (self.param_arg_regs(call), call.instantiated_args())
         };
         let saved_anchor_permission = self.allow_argument_anchors;
-        self.allow_argument_anchors = self.node_of(e).call_anchors_arguments();
-        let (argument_regs, arg_places) = self.lower_call_arguments(&self.nodes_of(args), false);
+        self.allow_argument_anchors = call.call_anchors_arguments();
+        let (argument_regs, arg_places) = self.lower_call_arguments(args, false);
         self.allow_argument_anchors = saved_anchor_permission;
-        let (keyword_regs, kwarg_places) =
-            self.lower_call_keywords(&self.keywords_of(kwargs), false);
-        let dest = self.fresh(span(e), None);
-        self.emit_interior_invalidations(self.node_of(object), None);
-        self.emit_call_invalidations(
-            self.node_of(e),
-            &self.nodes_of(args),
-            &self.keywords_of(kwargs),
-        );
+        let (keyword_regs, kwarg_places) = self.lower_call_keywords(kwargs, false);
+        let dest = self.fresh(call.location(), None);
+        self.emit_interior_invalidations(object, None);
+        self.emit_call_invalidations(call, args, kwargs);
         self.emit(MirInstr::MethodCall {
             dest,
             recv,
             method: field,
             resolved: callable_target(&node.adjustments),
-            raises: self.node(e).and_then(Node::raises),
-            reference_result: (self
-                .node(e)
-                .and_then(Node::call_contract)
+            raises: call.raises(),
+            reference_result: (call
+                .call_contract()
                 .and_then(|contract| contract.reference_result))
             .map(Box::new),
-            result_adapter: self
-                .node(e)
-                .and_then(Node::call_contract)
+            result_adapter: call
+                .call_contract()
                 .and_then(|contract| contract.result_adapter),
             args: argument_regs,
             kwargs: keyword_regs,
@@ -1001,36 +902,26 @@ impl Flatten<'_> {
             } else {
                 recv_place.map(Box::new)
             },
-            recv_writes: self.node_of(e).receiver_writes(),
+            recv_writes: call.receiver_writes(),
             arg_places,
             kwarg_places,
-            capture_accesses: self
-                .node(e)
-                .map(|node| self.call_capture_accesses(node))
-                .unwrap_or_default(),
+            capture_accesses: self.call_capture_accesses(call),
             param_arg_regs,
             param_decls: param_decls.to_vec(),
             instantiated_args,
-            spread: self.spread_position(args),
+            spread: Self::spread_position(args),
         });
-        self.emit_nested_closure_argument_keepalives(
-            &self.nodes_of(args),
-            &self.keywords_of(kwargs),
-        );
+        self.emit_nested_closure_argument_keepalives(args, kwargs);
         dest
     }
 }
 
-impl Flatten<'_> {
+impl<'a> Flatten<'a> {
     /// `Ts[i]()` or `Self.Ts[i]()` over a symbolic pack: the element
     /// construction the checker recorded, its index the call's one
     /// parameter argument.
-    fn pack_element_construction(
-        &mut self,
-        e: &Expr,
-        node: &CheckedExpr,
-        param_args: &[ParamArg],
-    ) -> Option<Reg> {
+    fn pack_element_construction(&mut self, call: Node<'a>) -> Option<Reg> {
+        let node = call.checked;
         let pack = node
             .adjustments
             .iter()
@@ -1043,16 +934,18 @@ impl Flatten<'_> {
         // The elaborator selects the element by the index's expression,
         // a literal one included, which a forwarded argument leaves out.
         let element = self
-            .param_arg_regs(self.node_of(e))
+            .param_arg_regs(call)
             .into_iter()
             .next()
             .map(|mut element| {
-                if let (None, Some(ParamArg::Value(index))) = (&element.expr, param_args.first()) {
-                    element.expr = self.value_binder_expr(index);
+                if let (None, Some(CheckedParamArg::Value(index))) =
+                    (&element.expr, call.param_args().first())
+                {
+                    element.expr = self.value_binder_node(*index);
                 }
                 element
             });
-        let dest = self.fresh(span(e), None);
+        let dest = self.fresh(call.location(), None);
         self.emit(MirInstr::ConstructTypeParam {
             dest,
             param: pack,
@@ -1065,13 +958,17 @@ impl Flatten<'_> {
 
     /// `__param_list_address[*values]()`: the static address of the
     /// parameter list `values`' elements, a `Pointer[E, ImmStaticOrigin]`.
-    fn param_list_address(&mut self, e: &Expr, values: mojito_types::param_expr::ParamExpr) -> Reg {
+    fn param_list_address(
+        &mut self,
+        location: SourceSpan,
+        values: mojito_types::param_expr::ParamExpr,
+    ) -> Reg {
         let element = match values.meta() {
             mojito_types::param_expr::MetaTy::ParamList(element) => element.as_value().cloned(),
             _ => None,
         };
         let Some(element) = element else {
-            let dest = self.fresh(span(e), None);
+            let dest = self.fresh(location, None);
             self.emit(MirInstr::Unsupported(format!(
                 "the parameter list `{values}` is no list of values"
             )));
@@ -1082,7 +979,7 @@ impl Flatten<'_> {
             return dest;
         };
         let dest = self.fresh_typed(
-            span(e),
+            location,
             None,
             TyKind::Pointer {
                 element,
@@ -1109,4 +1006,17 @@ fn parameterized_method_decls(node: &CheckedExpr) -> Option<&[ParamDecl]> {
             } => Some(&param_decls[..]),
             _ => None,
         })
+}
+
+/// The runtime indices of element invocation `call` (`objs[0](3)`): its
+/// compile-time value arguments, which the checker re-dispatched as
+/// subscript operands.
+fn element_indices(call: Node<'_>) -> Vec<Node<'_>> {
+    call.param_args()
+        .iter()
+        .filter_map(|argument| match argument {
+            CheckedParamArg::Value(value) => call.operand_of(*value),
+            _ => None,
+        })
+        .collect()
 }

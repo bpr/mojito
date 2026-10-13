@@ -8,6 +8,13 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- MIR's call family takes the call's node handle (R653): a direct call,
+  an invocation, and a method call read their callee, receiver,
+  arguments, keywords, and compile-time arguments off the handle, as
+  upstream lowering reads a call operation's operands off the operation,
+  so no expression lowering is handed syntax rebuilt from its node. No
+  program's output or MIR changes.
+
 - MIR's literal, access, display, and operator families take the
   expression's node handle (R652) and read each operand off it by the id
   the op names, a slice bound, subscript argument, or comprehension clause

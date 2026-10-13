@@ -8,8 +8,7 @@ use mojito_types::types::TyKind;
 
 impl<'a> Flatten<'a> {
     /// Lower `node` without its adjustments, by the family its op names:
-    /// each reads its operands off the handle, and the call family crosses
-    /// to rebuilt syntax through [`Self::call_syntax`] alone.
+    /// each reads its operands off the handle.
     pub(in crate::mir) fn expr_unconverted(&mut self, node: Node<'a>) -> Reg {
         if let Some(value) = self
             .literal_or_name(node)
@@ -458,7 +457,8 @@ impl<'a> Flatten<'a> {
         }
         Some(match node.op() {
             CheckedOp::Call { name, .. } => self.call_op(node, name),
-            CheckedOp::Invoke { .. } | CheckedOp::MethodCall { .. } => self.call_syntax(node),
+            CheckedOp::Invoke { .. } => self.invoke_expr(node),
+            CheckedOp::MethodCall { method, .. } => self.method_call_expr(node, method),
             CheckedOp::TypeApply { name, .. } if !variant_projection(checked) => {
                 if checked
                     .binding
@@ -652,21 +652,15 @@ impl<'a> Flatten<'a> {
     /// (`materialize[X]()`, `comptime(e)`) lowers its operand, any other
     /// call is an ordinary call.
     fn call_op(&mut self, node: Node<'a>, name: &str) -> Reg {
-        let CheckedOp::Call {
-            param_args,
-            args,
-            kwargs,
-            ..
-        } = node.op()
-        else {
-            return self.call_syntax(node);
-        };
+        let param_args = node.param_args();
+        let args = node.args();
+        let keywordless = node.kwargs().is_empty();
         // `materialize[X]()` the elaborator above MIR left, over a
         // binder: the runtime value of its compile-time operand.
         if name == "materialize"
             && args.is_empty()
-            && kwargs.is_empty()
-            && let [argument @ CheckedParamArg::Value(_)] = param_args.as_slice()
+            && keywordless
+            && let [argument @ CheckedParamArg::Value(_)] = param_args
             && let Some(operand) = node.param_value(argument)
         {
             return self.crossing_operand(operand);
@@ -674,13 +668,13 @@ impl<'a> Flatten<'a> {
         // `comptime(e)` left the same way.
         if name == "comptime"
             && param_args.is_empty()
-            && kwargs.is_empty()
-            && let [operand] = node.args().as_slice()
+            && keywordless
+            && let [operand] = args.as_slice()
             && operand.ty().is_some()
         {
             return self.crossing_operand(*operand);
         }
-        self.call_syntax(node)
+        self.call_expr(node, name)
     }
 
     /// Walrus node `node`, `name := value`: bind the value's slot and yield

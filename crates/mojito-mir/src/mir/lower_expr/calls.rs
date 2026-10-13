@@ -9,11 +9,9 @@ use mojito_types::types::TyKind;
 impl<'a> Flatten<'a> {
     /// The argument position of a call's pack spread (`f(*a)`), the slot the
     /// elaborator expands into the collector's elements.
-    pub(super) fn spread_position(&self, args: &[Expr]) -> Option<usize> {
-        args.iter().position(|argument| {
-            self.node(argument)
-                .is_some_and(|node| node.spread_operand().is_some())
-        })
+    pub(super) fn spread_position(args: &[Node<'a>]) -> Option<usize> {
+        args.iter()
+            .position(|argument| argument.spread_operand().is_some())
     }
 
     /// A `@staticmethod` reached through an instance (`value.static_method()`,
@@ -24,59 +22,44 @@ impl<'a> Flatten<'a> {
     /// the static body reads. `None` when the call keeps its receiver.
     pub(super) fn lower_elided_receiver_call(
         &mut self,
-        e: &Expr,
-        object: &Expr,
-        args: &[Expr],
-        kwargs: &[mojito_ast::ast::KwArg],
+        call: Node<'a>,
+        object: Node<'a>,
+        args: &[Node<'a>],
+        kwargs: &[(&'a str, Node<'a>)],
     ) -> Option<Reg> {
-        let contract = self.node(e).and_then(Node::call_contract)?;
+        let contract = call.call_contract()?;
         if !contract.receiver_elided {
             return None;
         }
-        let _ = self.lower_call_receiver(self.node_of(object));
+        let _ = self.lower_call_receiver(object);
         let receiver = self.static_receiver(object);
         let (param_arg_regs, instantiated_args) = if contract.param_decls.is_empty() {
             (Vec::new(), Vec::new())
         } else {
-            (
-                self.param_arg_regs(self.node_of(e)),
-                self.node(e)
-                    .map(Node::instantiated_args)
-                    .unwrap_or_default(),
-            )
+            (self.param_arg_regs(call), call.instantiated_args())
         };
         let saved_anchor_permission = self.allow_argument_anchors;
-        self.allow_argument_anchors = self.node_of(e).call_anchors_arguments();
-        let (regs, arg_places) = self.lower_call_arguments(&self.nodes_of(args), false);
+        self.allow_argument_anchors = call.call_anchors_arguments();
+        let (regs, arg_places) = self.lower_call_arguments(args, false);
         self.allow_argument_anchors = saved_anchor_permission;
-        let (kw, kwarg_places) = self.lower_call_keywords(&self.keywords_of(kwargs), false);
-        let dest = self.fresh(span(e), None);
-        self.emit_call_invalidations(
-            self.node_of(e),
-            &self.nodes_of(args),
-            &self.keywords_of(kwargs),
-        );
+        let (kw, kwarg_places) = self.lower_call_keywords(kwargs, false);
+        let dest = self.fresh(call.location(), None);
+        self.emit_call_invalidations(call, args, kwargs);
         self.emit(MirInstr::Call {
             dest,
             func: FuncRef::named(&contract.target),
-            raises: self.node(e).and_then(Node::raises),
+            raises: call.raises(),
             args: regs,
             kwargs: kw,
             arg_places,
             kwarg_places,
-            capture_accesses: self
-                .node(e)
-                .map(|node| self.call_capture_accesses(node))
-                .unwrap_or_default(),
+            capture_accesses: self.call_capture_accesses(call),
             param_arg_regs,
             receiver,
             instantiated_args,
-            spread: self.spread_position(args),
+            spread: Self::spread_position(args),
         });
-        self.emit_nested_closure_argument_keepalives(
-            &self.nodes_of(args),
-            &self.keywords_of(kwargs),
-        );
+        self.emit_nested_closure_argument_keepalives(args, kwargs);
         Some(dest)
     }
 
@@ -90,47 +73,39 @@ impl<'a> Flatten<'a> {
     #[allow(clippy::too_many_arguments)]
     pub(super) fn emit_indirect_invocation(
         &mut self,
-        e: &Expr,
+        call: Node<'a>,
         callee: Reg,
         callee_place: Option<MirPlace>,
         callable_ty: Option<&Ty>,
         resolved: Option<String>,
         raises: Option<Ty>,
         param_arg_regs: Vec<MirParamArg>,
-        args: &[Expr],
-        kwargs: &[mojito_ast::ast::KwArg],
+        args: &[Node<'a>],
+        kwargs: &[(&'a str, Node<'a>)],
         call_site_invalidations: bool,
     ) -> Reg {
         let param_decls = callable_ty
             .map(generic_callable_param_decls)
             .unwrap_or_default();
         let saved_anchor_permission = self.allow_argument_anchors;
-        self.allow_argument_anchors = self.node_of(e).call_anchors_arguments();
-        let (arg_regs, arg_places) = self.lower_call_arguments(&self.nodes_of(args), false);
-        let (kw_regs, kwarg_places) = self.lower_call_keywords(&self.keywords_of(kwargs), false);
+        self.allow_argument_anchors = call.call_anchors_arguments();
+        let (arg_regs, arg_places) = self.lower_call_arguments(args, false);
+        let (kw_regs, kwarg_places) = self.lower_call_keywords(kwargs, false);
         self.allow_argument_anchors = saved_anchor_permission;
-        let dest = self.fresh(span(e), None);
+        let dest = self.fresh(call.location(), None);
         if call_site_invalidations {
-            self.emit_call_invalidations(
-                self.node_of(e),
-                &self.nodes_of(args),
-                &self.keywords_of(kwargs),
-            );
+            self.emit_call_invalidations(call, args, kwargs);
         } else {
             for argument in args {
-                self.emit_interior_invalidations(self.node_of(argument), None);
+                self.emit_interior_invalidations(*argument, None);
             }
             for argument in kwargs {
-                self.emit_interior_invalidations(self.node_of(&argument.value), None);
+                self.emit_interior_invalidations(argument.1, None);
             }
         }
-        let capture_accesses = self
-            .node(e)
-            .map(|node| self.call_capture_accesses(node))
-            .unwrap_or_default();
-        let (instantiated_contract, instantiated_args) = self
-            .node(e)
-            .and_then(Node::instantiated_callable_contract)
+        let capture_accesses = self.call_capture_accesses(call);
+        let (instantiated_contract, instantiated_args) = call
+            .instantiated_callable_contract()
             .map_or((None, Vec::new()), |(contract, arguments)| {
                 (Some(contract), arguments)
             });
@@ -151,17 +126,10 @@ impl<'a> Flatten<'a> {
             param_decls,
             instantiated_contract,
             instantiated_args,
-            spread: self.spread_position(args),
+            spread: Self::spread_position(args),
         });
-        self.emit_nested_closure_argument_keepalives(
-            &self.nodes_of(args),
-            &self.keywords_of(kwargs),
-        );
-        self.install_call_transfers(
-            self.node_of(e),
-            transfer_recv_place.as_ref(),
-            &transfer_arg_places,
-        );
+        self.emit_nested_closure_argument_keepalives(args, kwargs);
+        self.install_call_transfers(call, transfer_recv_place.as_ref(), &transfer_arg_places);
         dest
     }
 
@@ -175,15 +143,12 @@ impl<'a> Flatten<'a> {
     /// this call establishes.
     pub(super) fn lower_element_invocation(
         &mut self,
-        e: &Expr,
+        call: Node<'a>,
         (base, base_place): (Reg, Option<MirPlace>),
         plan: mojito_checked::checked::CheckedElementInvocation,
-        // Original checked-tree nodes: MIR fact lookup is pointer-keyed, so a
-        // cloned index subtree would lower without its recorded facts (caller
-        // places, conversions, invalidations).
-        indices: &[&Expr],
-        args: &[Expr],
-        kwargs: &[mojito_ast::ast::KwArg],
+        indices: &[Node<'a>],
+        args: &[Node<'a>],
+        kwargs: &[(&'a str, Node<'a>)],
     ) -> Reg {
         // The getter's reference designates storage inside the receiver, so
         // the receiver's root owns a loan the checked origin cannot name.
@@ -191,25 +156,25 @@ impl<'a> Flatten<'a> {
         let mut index_regs = Vec::with_capacity(indices.len());
         let mut index_places = Vec::with_capacity(indices.len());
         for index in indices {
-            let (register, place) = self.lower_call_argument(self.node_of(index));
+            let (register, place) = self.lower_call_argument(*index);
             index_regs.push(register);
             index_places.push(place);
         }
         for index in indices {
-            self.emit_interior_invalidations(self.node_of(index), None);
+            self.emit_interior_invalidations(*index, None);
         }
-        self.emit_interior_invalidations(self.node_of(e), None);
+        self.emit_interior_invalidations(call, None);
         let reference_result = plan.getter.reference_result.clone();
         let operands = index_regs
             .iter()
             .map(|register| MirSubscriptArg::Index(*register))
             .collect::<Vec<_>>();
-        let call = Some(self.mir_subscript_call_contract(plan.getter, &operands));
-        let element_ty = call
+        let getter = Some(self.mir_subscript_call_contract(plan.getter, &operands));
+        let element_ty = getter
             .as_ref()
             .map(|contract| contract.result_ty.clone())
             .expect("element-call plan carries the getter contract");
-        let element = self.fresh_typed(e.source_span(), None, element_ty);
+        let element = self.fresh_typed(call.location(), None, element_ty);
         if let [index] = index_regs.as_slice() {
             self.emit(MirInstr::Index {
                 dest: element,
@@ -217,7 +182,7 @@ impl<'a> Flatten<'a> {
                 index: *index,
                 base_place: base_place.map(Box::new),
                 index_place: index_places.pop().flatten().map(Box::new),
-                call: call.map(Box::new),
+                call: getter.map(Box::new),
                 intrinsic: None,
             });
         } else {
@@ -229,19 +194,15 @@ impl<'a> Flatten<'a> {
                 arg_places: index_places,
                 kwargs: Vec::new(),
                 kwarg_places: Vec::new(),
-                call: call.map(Box::new),
+                call: getter.map(Box::new),
             });
         }
         let (callee, callee_place) = match reference_result {
             Some(reference) => {
-                let place = self.materialize_call_reference_place(
-                    self.node_of(e),
-                    element,
-                    &reference,
-                    receiver_root,
-                );
+                let place =
+                    self.materialize_call_reference_place(call, element, &reference, receiver_root);
                 let value = self.fresh_typed(
-                    e.source_span(),
+                    call.location(),
                     Some(place.root),
                     place.ty.clone().unwrap_or_else(Ty::error),
                 );
@@ -254,7 +215,7 @@ impl<'a> Flatten<'a> {
             None => (element, None),
         };
         self.emit_indirect_invocation(
-            e,
+            call,
             callee,
             callee_place,
             Some(&plan.callable),
@@ -273,13 +234,12 @@ impl<'a> Flatten<'a> {
     /// `None`, and the caller lowers it as an ordinary call.
     pub(in crate::mir) fn try_simd_call(
         &mut self,
-        e: &Expr,
-        args: &[Expr],
-        kwargs: &[mojito_ast::ast::KwArg],
+        call: Node<'a>,
+        args: &[Node<'a>],
+        kwargs: &[(&'a str, Node<'a>)],
     ) -> Option<Reg> {
-        let (dtype, width) = self
-            .node(e)
-            .map_or(&[][..], Node::adjustments)
+        let (dtype, width) = call
+            .adjustments()
             .iter()
             .find_map(|adjustment| match adjustment {
                 mojito_checked::checked::SemanticAdjustment::ConstructSimd { dtype, width } => {
@@ -290,14 +250,14 @@ impl<'a> Flatten<'a> {
         // `SIMD[DType.bool, N](fill=b)` is the one-lane splat, by keyword.
         // A nullary construction splats a zero lane.
         let elems = match (kwargs, args) {
-            ([fill], _) => vec![self.expr(self.node_of(&fill.value))],
+            ([(_, fill)], _) => vec![self.expr(*fill)],
             ([], []) if dtype.known() == Some(Dtype::Bool) => {
-                vec![self.constant(self.node_of(e), Const::Bool(false))]
+                vec![self.constant(call, Const::Bool(false))]
             }
-            ([], []) => vec![self.constant(self.node_of(e), Const::IntLiteral(0.into()))],
-            _ => self.args(&self.nodes_of(args)),
+            ([], []) => vec![self.constant(call, Const::IntLiteral(0.into()))],
+            _ => self.args(args),
         };
-        let d = self.fresh(span(e), None);
+        let d = self.fresh(call.location(), None);
         self.emit(MirInstr::MakeSimd {
             dest: d,
             dtype,
@@ -312,53 +272,42 @@ impl<'a> Flatten<'a> {
     /// calls and recursion; it does not rely on call-return write-back.
     pub(in crate::mir) fn lower_nested_call(
         &mut self,
-        e: &Expr,
+        call: Node<'a>,
         name: &str,
         info: &NestedInfo,
-        args: &[Expr],
-        kwargs: &[mojito_ast::ast::KwArg],
+        args: &[Node<'a>],
+        kwargs: &[(&'a str, Node<'a>)],
     ) -> Reg {
-        let callee = self.load_nested_closure(name, info, span(e));
+        let callee = self.load_nested_closure(name, info, call.location());
         let callable_ty = info
             .callable_ty
             .clone()
             .or_else(|| self.f.reg_types.get(&callee.0).cloned());
-        let param_arg_regs = self.param_arg_regs(self.node_of(e));
+        let param_arg_regs = self.param_arg_regs(call);
         let param_decls = callable_ty
             .as_ref()
             .map(generic_callable_param_decls)
             .unwrap_or_default();
         let saved_anchor_permission = self.allow_argument_anchors;
-        self.allow_argument_anchors = self.node_of(e).call_anchors_arguments();
-        let (arg_regs, arg_places) = self.lower_call_arguments(&self.nodes_of(args), false);
-        let (kw_regs, kwarg_places) = self.lower_call_keywords(&self.keywords_of(kwargs), false);
+        self.allow_argument_anchors = call.call_anchors_arguments();
+        let (arg_regs, arg_places) = self.lower_call_arguments(args, false);
+        let (kw_regs, kwarg_places) = self.lower_call_keywords(kwargs, false);
         self.allow_argument_anchors = saved_anchor_permission;
-        let d = self.fresh(span(e), None);
-        self.emit_call_invalidations(
-            self.node_of(e),
-            &self.nodes_of(args),
-            &self.keywords_of(kwargs),
-        );
+        let d = self.fresh(call.location(), None);
+        self.emit_call_invalidations(call, args, kwargs);
         let transfer_arg_places = arg_places.clone();
         let callee_place = self
             .owner_vars
             .contains_key(&info.binding)
             .then(|| self.binding_place(info.binding, name));
-        let capture_accesses = self
-            .node(e)
-            .map(|node| self.call_capture_accesses(node))
-            .unwrap_or_default();
+        let capture_accesses = self.call_capture_accesses(call);
         // A generic nested `def` called by name binds its own parameters
         // from the call's solved arguments, as a module `def` does: the call
         // carries them with the contract they instantiate.
-        let (instantiated_contract, instantiated_args) = self
-            .node(e)
-            .and_then(Node::instantiated_callable_contract)
+        let (instantiated_contract, instantiated_args) = call
+            .instantiated_callable_contract()
             .or_else(|| {
-                let arguments = self
-                    .node(e)
-                    .map(Node::instantiated_args)
-                    .unwrap_or_default();
+                let arguments = call.instantiated_args();
                 let contract = callable_ty.as_ref()?;
                 (!arguments.is_empty() && matches!(contract.kind(), TyKind::GenericFunc(_)))
                     .then(|| {
@@ -381,7 +330,7 @@ impl<'a> Flatten<'a> {
             // attaching that abstract target here can disagree with an erased
             // variadic closure ABI even though execution never consults it.
             resolved: None,
-            raises: self.node(e).and_then(Node::raises),
+            raises: call.raises(),
             args: arg_regs,
             kwargs: kw_regs,
             callee_place: callee_place.map(Box::new),
@@ -392,13 +341,10 @@ impl<'a> Flatten<'a> {
             param_decls,
             instantiated_contract,
             instantiated_args,
-            spread: self.spread_position(args),
+            spread: Self::spread_position(args),
         });
-        self.emit_nested_closure_argument_keepalives(
-            &self.nodes_of(args),
-            &self.keywords_of(kwargs),
-        );
-        self.install_call_transfers(self.node_of(e), None, &transfer_arg_places);
+        self.emit_nested_closure_argument_keepalives(args, kwargs);
+        self.install_call_transfers(call, None, &transfer_arg_places);
         let mut owners = Vec::new();
         let mut seen = HashSet::new();
         for capture in &info.captures {

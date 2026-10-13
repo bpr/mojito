@@ -3905,32 +3905,6 @@ impl SyntaxRoot {
     }
 }
 
-/// The rebuilt syntax of one node of an active [`SyntaxFrame`]: the
-/// transitional bridge from a [`Node`] back to the syntax lowering still
-/// reads (R649 deletes it).
-struct Syntax {
-    root: SyntaxRoot,
-    target: usize,
-}
-
-impl Syntax {
-    fn expr(&self) -> &Expr {
-        fn find(expression: &Expr, target: usize) -> Option<&Expr> {
-            if std::ptr::from_ref::<Expr>(expression) as usize == target {
-                return Some(expression);
-            }
-            expression_children(expression)
-                .into_iter()
-                .find_map(|child| find(child, target))
-        }
-        self.root
-            .expressions()
-            .into_iter()
-            .find_map(|root| find(root, self.target))
-            .expect("a frame's syntax index names syntax of its root")
-    }
-}
-
 /// [`lower_cfg`] with a nested-`def` registry in scope: a call to a registered
 /// nested `def` is rewritten to its lifted function (captures prepended) and the
 /// nested `def` statement lowers to nothing.
