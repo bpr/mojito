@@ -113,7 +113,7 @@ pub(super) fn lower_fn_nested(
         &mut thunks,
     );
     if !enclosing_binders.lifted {
-        thunks.request_applications(checked, body);
+        thunks.request_applications(checked, &cfg.body);
     }
     thunks.lower(checked, overloads, out, declarations);
     f.n_params = param_types.len();
@@ -622,7 +622,7 @@ fn lower_nested_node(
             enclosing_binders,
             &mut thunks,
         );
-        thunks.request_applications(checked, dbody);
+        thunks.request_applications(checked, &ncfg.body);
         thunks.lower(checked, overloads, out, declarations);
         nf.n_params = ptys.len();
         for (slot, ty) in ptys.iter().enumerate() {

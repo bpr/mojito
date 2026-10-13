@@ -2478,8 +2478,15 @@ impl Flatten<'_> {
                 let src = self.expr(e);
                 self.emit(MirInstr::Raise { src });
             }
-            (CheckedStmtOp::Comptime { name, .. }, StmtKind::Comptime { value, .. }) => {
-                self.lower_comptime_binding(s, name, value, statement_binding);
+            (
+                CheckedStmtOp::Comptime {
+                    name,
+                    value: value_node,
+                    ..
+                },
+                StmtKind::Comptime { value, .. },
+            ) => {
+                self.lower_comptime_binding(s, node, name, value, *value_node);
             }
             // `pass` has no runtime effect. Imports were consumed by linking and
             // are no-ops in a lowered module body.
@@ -2759,14 +2766,17 @@ impl Flatten<'_> {
     /// runtime form either: it is recorded here for the loops that iterate
     /// the name and the thunks that read it, and only a thunk binds it.
     /// `statement` is the binding's rebuilt syntax, which a thunk keeps as
-    /// its prologue until thunk bodies are statement nodes (R629, R642).
+    /// its prologue until thunk bodies are statement nodes (R629), and
+    /// `node` its statement node; `value_node` is `value`'s node.
     fn lower_comptime_binding(
         &mut self,
         statement: &Stmt,
+        node: &CheckedStmt,
         name: &str,
         value: &Expr,
-        statement_binding: Option<mojito_types::origin::OwnerId>,
+        value_node: mojito_checked::checked::CheckedNodeId,
     ) {
+        let statement_binding = node.binding;
         let display = self
             .checked_adjustments(value)
             .into_iter()
@@ -2785,6 +2795,7 @@ impl Flatten<'_> {
                 self.copy_facts(value, &display, &mut facts);
                 let binding = DisplayBinding {
                     owner,
+                    node: value_node,
                     name: name.to_string(),
                     aliases: Vec::new(),
                     display,
@@ -2795,7 +2806,7 @@ impl Flatten<'_> {
                 };
                 if let Err(finding) = self
                     .comptime_thunks
-                    .bind_display(statement, binding, &sequence)
+                    .bind_display(statement, node.id, binding, &sequence)
                 {
                     self.emit(MirInstr::Unsupported(finding));
                 }
@@ -2849,7 +2860,9 @@ impl Flatten<'_> {
         {
             match denoted {
                 Some(denoted) => self.comptime_thunks.bind_value(binding, denoted),
-                None => self.comptime_thunks.bind_evaluated(binding, statement),
+                None => self
+                    .comptime_thunks
+                    .bind_evaluated(binding, statement, node.id),
             }
         }
         self.bind_comptime_register(name, value, statement_binding, materialized, src);
@@ -3173,7 +3186,7 @@ impl Flatten<'_> {
                             let binders = &self.enclosing_binders;
                             mojito_checked::checked::ComptimeSequence::Elements(
                                 self.comptime_thunks
-                                    .request_sequence(&syntax, binders, ty, element),
+                                    .request_sequence(&syntax, iter.node, binders, ty, element),
                             )
                         }
                         ComptimeSource::Bound { display, .. } => {
@@ -3182,17 +3195,25 @@ impl Flatten<'_> {
                             )
                         }
                         ComptimeSource::EvaluatedRange { bounds } => {
-                            let ExprKind::Call { args, .. } = &syntax.kind else {
+                            let (
+                                ExprKind::Call { args, .. },
+                                CheckedOp::Call {
+                                    args: arg_nodes, ..
+                                },
+                            ) = (&syntax.kind, &self.hir_node(iter).op)
+                            else {
                                 return None;
                             };
+                            let arg_nodes = arg_nodes.clone();
                             let bounds: Vec<ParamExpr> = bounds
                                 .into_iter()
-                                .zip(args)
-                                .map(|(bound, written)| {
+                                .zip(args.iter().zip(arg_nodes))
+                                .map(|(bound, (written, node))| {
                                     bound.unwrap_or_else(|| {
                                         let binders = &self.enclosing_binders;
                                         self.comptime_thunks.request_value(
                                             written,
+                                            node,
                                             binders,
                                             Ty::int(),
                                         )

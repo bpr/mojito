@@ -268,6 +268,8 @@ pub struct Cfg {
     /// this CFG's expressions reads, as resolved in its lexical scope: the
     /// value an upstream operand names.
     pub slots: HashMap<CheckedNodeId, VarId>,
+    /// The statement nodes of the body this CFG lowers.
+    pub body: Vec<CheckedStmtId>,
 }
 
 impl Cfg {
@@ -329,7 +331,7 @@ impl Cfg {
             lower.stmt(*id);
         }
         lower.seal(Terminator::FallOff); // region completed normally (not a return)
-        lower.finish(entry, 0)
+        lower.finish(entry, 0, body.to_vec())
     }
 
     // --- Read-only accessors (so tests/analysis need not import `petgraph`) ---
@@ -402,7 +404,7 @@ impl Cfg {
             lower.root(root);
         }
         lower.seal(Terminator::Return(None)); // implicit `return None` off the end
-        lower.finish(entry, params.len())
+        lower.finish(entry, params.len(), statements)
     }
 }
 
@@ -648,7 +650,7 @@ impl Lower {
         }
     }
 
-    fn finish(self, entry: BlockId, n_params: usize) -> Cfg {
+    fn finish(self, entry: BlockId, n_params: usize, body: Vec<CheckedStmtId>) -> Cfg {
         let var_types = checked_var_types(&self.vars, &self.checked.expressions);
         Cfg {
             g: self.g,
@@ -658,6 +660,7 @@ impl Lower {
             checked: self.checked,
             var_types,
             slots: self.slots,
+            body,
         }
     }
 
@@ -1124,7 +1127,7 @@ impl Lower {
             }
             CheckedStmtOp::Return(value) => self.ret(*value),
 
-            CheckedStmtOp::VarDecl { name, ty: _, value } => {
+            CheckedStmtOp::VarDecl { name, value, .. } => {
                 let binding_ty = checked
                     .expression(*value)
                     .and_then(|node| node.binding_ty.clone());

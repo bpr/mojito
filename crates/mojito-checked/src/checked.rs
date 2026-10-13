@@ -1233,7 +1233,12 @@ pub enum CheckedOp {
     Uninitialized,
     EmptySubscript,
     Identifier(String),
-    TypeValue(Type),
+    /// A type in value position, with the nodes of the applications the
+    /// check lifted out of it ([`CheckedArenaBuilder::type_applications`]).
+    TypeValue {
+        ty: Type,
+        applications: Vec<CheckedNodeId>,
+    },
     Prefix(PrefixOp, CheckedNodeId),
     Infix(InfixOp, CheckedNodeId, CheckedNodeId),
     Call {
@@ -1328,7 +1333,7 @@ impl CheckedOp {
             | Self::Uninitialized
             | Self::EmptySubscript
             | Self::Identifier(_)
-            | Self::TypeValue(_)
+            | Self::TypeValue { .. }
             | Self::Lambda { .. } => {}
             Self::Prefix(_, value)
             | Self::Transfer(value)
@@ -1443,22 +1448,75 @@ impl CheckedOp {
         }
         operands
     }
+
+    /// The nodes the op holds in source order: its operands, with the
+    /// lifted applications of each type it spells where the type is written.
+    fn reached(&self) -> Vec<CheckedNodeId> {
+        let mut nodes = Vec::new();
+        match self {
+            Self::TypeValue { applications, .. } => nodes.extend(applications),
+            Self::Call {
+                param_args,
+                args,
+                kwargs,
+                ..
+            }
+            | Self::Invoke {
+                param_args,
+                args,
+                kwargs,
+                ..
+            } => {
+                if let Self::Invoke { callee, .. } = self {
+                    nodes.push(*callee);
+                }
+                for argument in param_args {
+                    argument.reached(&mut nodes);
+                }
+                nodes.extend(args);
+                nodes.extend(kwargs.iter().map(|kwarg| kwarg.value));
+            }
+            Self::TypeApply { args, .. } => {
+                for argument in args {
+                    argument.reached(&mut nodes);
+                }
+            }
+            _ => nodes = self.operands(),
+        }
+        nodes
+    }
 }
 
 /// A compile-time parameter argument of a checked call or type application.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub enum CheckedParamArg {
-    Type(Type),
+    /// A type argument, with the nodes of the applications the check lifted
+    /// out of it.
+    Type {
+        ty: Type,
+        applications: Vec<CheckedNodeId>,
+    },
     Value(CheckedNodeId),
-    Named { name: String, value: Box<Self> },
+    Named {
+        name: String,
+        value: Box<Self>,
+    },
 }
 
 impl CheckedParamArg {
     fn operands(&self, operands: &mut Vec<CheckedNodeId>) {
         match self {
-            Self::Type(_) => {}
+            Self::Type { .. } => {}
             Self::Value(value) => operands.push(*value),
             Self::Named { value, .. } => value.operands(operands),
+        }
+    }
+
+    fn reached(&self, nodes: &mut Vec<CheckedNodeId>) {
+        match self {
+            Self::Type { applications, .. } => nodes.extend(applications),
+            Self::Value(value) => nodes.push(*value),
+            Self::Named { value, .. } => value.reached(nodes),
         }
     }
 }
@@ -1566,6 +1624,8 @@ pub enum CheckedStmtOp {
     VarDecl {
         name: String,
         ty: Option<Type>,
+        /// The nodes of the applications the check lifted out of `ty`.
+        applications: Vec<CheckedNodeId>,
         value: CheckedNodeId,
     },
     RefDecl {
@@ -1727,6 +1787,63 @@ impl CheckedStmtOp {
             | Self::Pass
             | Self::Break
             | Self::Continue => Vec::new(),
+        }
+    }
+
+    /// The statement's nested statement lists, in source order: a `def`'s
+    /// body, a struct's method bodies, a trait's default bodies, a branch,
+    /// loop, `with`, `try`, or scope body.
+    pub fn bodies(&self) -> Vec<&[CheckedStmtId]> {
+        match self {
+            Self::Def(def) => vec![def.body.as_slice()],
+            Self::Struct(declaration) => declaration
+                .methods
+                .iter()
+                .map(|method| method.body.as_slice())
+                .collect(),
+            Self::Trait(declaration) => declaration
+                .methods
+                .iter()
+                .filter_map(|method| method.default_body.as_deref())
+                .collect(),
+            Self::ComptimeIf { branches, orelse } | Self::If { branches, orelse } => branches
+                .iter()
+                .map(|(_, body)| body.as_slice())
+                .chain(orelse.as_deref())
+                .collect(),
+            Self::While { body, orelse, .. } | Self::For { body, orelse, .. } => {
+                std::iter::once(body.as_slice())
+                    .chain(orelse.as_deref())
+                    .collect()
+            }
+            Self::Try {
+                body,
+                except,
+                orelse,
+                finalbody,
+            } => std::iter::once(body.as_slice())
+                .chain(except.as_ref().map(|(_, body)| body.as_slice()))
+                .chain(orelse.as_deref())
+                .chain(finalbody.as_deref())
+                .collect(),
+            Self::ComptimeFor { body, .. } | Self::With { body, .. } | Self::Scope(body) => {
+                vec![body.as_slice()]
+            }
+            Self::VarDecl { .. }
+            | Self::RefDecl { .. }
+            | Self::Assign { .. }
+            | Self::AugAssign { .. }
+            | Self::Unpack { .. }
+            | Self::SetPlace { .. }
+            | Self::Comptime { .. }
+            | Self::Return(_)
+            | Self::Raise(_)
+            | Self::Import { .. }
+            | Self::FromImport { .. }
+            | Self::Pass
+            | Self::Break
+            | Self::Continue
+            | Self::Expr(_) => Vec::new(),
         }
     }
 
@@ -1944,6 +2061,24 @@ pub struct CheckedCapture {
     pub origins: Vec<mojito_types::origin::CaptureOrigin>,
 }
 
+/// A node a [`CheckedTables::walk`] reaches.
+#[derive(Clone, Copy)]
+pub enum Walked<'a> {
+    Statement(&'a CheckedStmt),
+    Expression(&'a CheckedExpr),
+}
+
+/// What a [`CheckedTables::walk`] visitor asks of the node it was given, as
+/// upstream's `WalkResult` does of an op.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum WalkResult {
+    /// Walk the node's operands and bodies.
+    Advance,
+    /// Walk the node's operands, but not its bodies: a statement's nested
+    /// statement lists, a lambda's hidden `def`.
+    SkipBodies,
+}
+
 /// The whole program's checked expression and statement nodes and its
 /// declarations.
 ///
@@ -2033,7 +2168,7 @@ impl CheckedTables {
             CheckedOp::Identifier(name) => {
                 ExprKind::Identifier(spell(node).unwrap_or_else(|| name.clone()))
             }
-            CheckedOp::TypeValue(ty) => ExprKind::TypeValue(ty.clone()),
+            CheckedOp::TypeValue { ty, .. } => ExprKind::TypeValue(ty.clone()),
             CheckedOp::Prefix(op, value) => ExprKind::Prefix(*op, boxed(value)?),
             CheckedOp::Infix(op, left, right) => ExprKind::Infix(*op, boxed(left)?, boxed(right)?),
             CheckedOp::Call {
@@ -2260,6 +2395,43 @@ impl CheckedTables {
             .and_then(|id| self.statement(*id))
     }
 
+    /// Visit the statement nodes `statements` and every node under them in
+    /// source preorder: a statement, then its annotations' lifted
+    /// applications and its expressions (an `if` condition before its own
+    /// branch), then its bodies; an expression, then its operands, a type
+    /// argument's lifted applications where the argument is written; a
+    /// lambda's hidden `def` as a statement.
+    pub fn walk(
+        &self,
+        statements: &[CheckedStmtId],
+        visit: &mut dyn FnMut(Walked<'_>) -> WalkResult,
+    ) {
+        for id in statements {
+            self.walk_statement(*id, visit);
+        }
+    }
+
+    /// [`Self::walk`] from expression node `id`.
+    pub fn walk_expression(
+        &self,
+        id: CheckedNodeId,
+        visit: &mut dyn FnMut(Walked<'_>) -> WalkResult,
+    ) {
+        let Some(node) = self.expression(id) else {
+            return;
+        };
+        let result = visit(Walked::Expression(node));
+        if let CheckedOp::Lambda { def } = &node.op {
+            if result == WalkResult::Advance {
+                self.walk_statement(*def, visit);
+            }
+            return;
+        }
+        for operand in node.op.reached() {
+            self.walk_expression(operand, visit);
+        }
+    }
+
     /// The syntax of statement `id` and its bodies, rebuilt from their ops,
     /// each expression through [`Self::syntax_of`]. Transitional, as
     /// `syntax_of` is; R623 deletes it.
@@ -2303,7 +2475,9 @@ impl CheckedTables {
                 .collect::<Option<Vec<_>>>()
         };
         let kind = match &node.op {
-            CheckedStmtOp::VarDecl { name, ty, value } => StmtKind::VarDecl {
+            CheckedStmtOp::VarDecl {
+                name, ty, value, ..
+            } => StmtKind::VarDecl {
                 name: name.clone(),
                 ty: ty.clone(),
                 value: expr(value)?,
@@ -2607,9 +2781,48 @@ impl CheckedTables {
         self
     }
 
+    fn walk_statement(&self, id: CheckedStmtId, visit: &mut dyn FnMut(Walked<'_>) -> WalkResult) {
+        let Some(statement) = self.statement(id) else {
+            return;
+        };
+        let bodies = visit(Walked::Statement(statement)) == WalkResult::Advance;
+        let walk = |body: &[CheckedStmtId], visit: &mut dyn FnMut(Walked<'_>) -> WalkResult| {
+            if bodies {
+                self.walk(body, visit);
+            }
+        };
+        match &statement.op {
+            CheckedStmtOp::VarDecl {
+                applications,
+                value,
+                ..
+            } => {
+                for node in applications.iter().chain([value]) {
+                    self.walk_expression(*node, visit);
+                }
+            }
+            CheckedStmtOp::If { branches, orelse }
+            | CheckedStmtOp::ComptimeIf { branches, orelse } => {
+                for (condition, body) in branches {
+                    self.walk_expression(*condition, visit);
+                    walk(body, visit);
+                }
+                walk(orelse.as_deref().unwrap_or_default(), visit);
+            }
+            op => {
+                for node in op.expressions() {
+                    self.walk_expression(node, visit);
+                }
+                for body in op.bodies() {
+                    walk(body, visit);
+                }
+            }
+        }
+    }
+
     fn param_arg_syntax(&self, argument: &CheckedParamArg) -> Option<ParamArg> {
         Some(match argument {
-            CheckedParamArg::Type(ty) => ParamArg::Type(ty.clone()),
+            CheckedParamArg::Type { ty, .. } => ParamArg::Type(ty.clone()),
             CheckedParamArg::Value(value) => ParamArg::Value(self.syntax_of(*value)?),
             CheckedParamArg::Named { name, value } => ParamArg::Named {
                 name: name.clone(),
@@ -3721,10 +3934,10 @@ impl<'a> ArenaBuilder<'a, '_> {
             ExprKind::Uninitialized => CheckedOp::Uninitialized,
             ExprKind::EmptySubscript => CheckedOp::EmptySubscript,
             ExprKind::Identifier(name) => CheckedOp::Identifier(name.clone()),
-            ExprKind::TypeValue(ty) => {
-                self.type_applications(ty);
-                CheckedOp::TypeValue(ty.clone())
-            }
+            ExprKind::TypeValue(ty) => CheckedOp::TypeValue {
+                ty: ty.clone(),
+                applications: self.type_applications(ty),
+            },
             ExprKind::Prefix(op, value) => CheckedOp::Prefix(*op, self.expr(value)),
             ExprKind::Transfer(value) => CheckedOp::Transfer(self.expr(value)),
             ExprKind::Spread(value) => CheckedOp::Spread(self.expr(value)),
@@ -3927,10 +4140,10 @@ impl<'a> ArenaBuilder<'a, '_> {
 
     fn param_arg(&mut self, argument: &ParamArg) -> CheckedParamArg {
         match argument {
-            ParamArg::Type(ty) => {
-                self.type_applications(ty);
-                CheckedParamArg::Type(ty.clone())
-            }
+            ParamArg::Type(ty) => CheckedParamArg::Type {
+                ty: ty.clone(),
+                applications: self.type_applications(ty),
+            },
             ParamArg::Value(value) => CheckedParamArg::Value(self.expr(value)),
             ParamArg::Named { name, value } => CheckedParamArg::Named {
                 name: name.clone(),
@@ -3943,7 +4156,7 @@ impl<'a> ArenaBuilder<'a, '_> {
     /// lifted function for ([`SemanticAdjustment::ComptimeApplication`]):
     /// MIR lowers it in that function, away from the annotation that
     /// spells it. Any other expression of an annotation has no node.
-    fn type_applications(&mut self, ty: &mojito_ast::ast::Type) {
+    fn type_applications(&mut self, ty: &mojito_ast::ast::Type) -> Vec<CheckedNodeId> {
         struct Applied<'a> {
             facts: &'a HashMap<SourceSpan, NodeFacts>,
             found: Vec<Expr>,
@@ -3970,9 +4183,11 @@ impl<'a> ArenaBuilder<'a, '_> {
             found: Vec::new(),
         };
         mojito_ast::visit::walk_type(&mut applied, ty);
-        for expression in &applied.found {
-            self.expr(expression);
-        }
+        applied
+            .found
+            .iter()
+            .map(|expression| self.expr(expression))
+            .collect()
     }
 
     fn block(&mut self, statements: &[Stmt]) -> Vec<CheckedStmtId> {
@@ -4025,16 +4240,15 @@ impl<'a> ArenaBuilder<'a, '_> {
                 .collect::<Vec<_>>()
         };
         match &statement.kind {
-            StmtKind::VarDecl { name, ty, value } => {
-                if let Some(ty) = ty {
-                    self.type_applications(ty);
-                }
-                CheckedStmtOp::VarDecl {
-                    name: name.clone(),
-                    ty: ty.clone(),
-                    value: self.expr(value),
-                }
-            }
+            StmtKind::VarDecl { name, ty, value } => CheckedStmtOp::VarDecl {
+                name: name.clone(),
+                ty: ty.clone(),
+                applications: ty
+                    .as_ref()
+                    .map(|ty| self.type_applications(ty))
+                    .unwrap_or_default(),
+                value: self.expr(value),
+            },
             StmtKind::RefDecl { name, value } => CheckedStmtOp::RefDecl {
                 name: name.clone(),
                 value: self.expr(value),

@@ -116,10 +116,13 @@ impl Flatten<'_> {
             );
         }
         let tables = std::sync::Arc::clone(&self.checked);
-        let op = self
-            .node_of(expression)
-            .and_then(|id| tables.expression(id))
-            .map(|node| &node.op);
+        let Some(node) = self.node_of(expression) else {
+            self.emit(MirInstr::Unsupported(
+                "a compile-time condition without its checked node".into(),
+            ));
+            return GenericConstraint::Bool(false);
+        };
+        let op = tables.expression(node).map(|node| &node.op);
         match (op, expression_children(expression).as_slice()) {
             (Some(CheckedOp::Bool(value)), _) => GenericConstraint::Bool(*value),
             (Some(CheckedOp::Prefix(PrefixOp::Not, _)), [inner]) => {
@@ -135,7 +138,7 @@ impl Flatten<'_> {
             ),
             _ => {
                 let binders = &self.enclosing_binders;
-                self.comptime_thunks.request(expression, binders)
+                self.comptime_thunks.request(expression, node, binders)
             }
         }
     }

@@ -603,3 +603,64 @@ fn checked_hir_retains_the_abstract_iterator_copy_adapter() {
         Some(mojito::checked::CheckedResultAdapter::CopyIteratorReference)
     );
 }
+
+/// How many expressions carrying a lifted application the checked walk
+/// reaches from `body`, given what it does at a nested `def`.
+fn lifted_applications_reached(
+    tables: &mojito::checked::CheckedTables,
+    body: &[mojito::checked::CheckedStmtId],
+    at_def: mojito::checked::WalkResult,
+) -> usize {
+    use mojito::checked::{CheckedStmtOp, SemanticAdjustment, WalkResult, Walked};
+    let mut reached = 0;
+    tables.walk(body, &mut |node| match node {
+        Walked::Statement(statement) if matches!(statement.op, CheckedStmtOp::Def(_)) => at_def,
+        Walked::Statement(_) => WalkResult::Advance,
+        Walked::Expression(expression) => {
+            reached += usize::from(expression.adjustments.iter().any(|adjustment| {
+                matches!(adjustment, SemanticAdjustment::ComptimeApplication { .. })
+            }));
+            WalkResult::Advance
+        }
+    });
+    reached
+}
+
+// The application spelled only in a local's annotation is reached through
+// the declaration's op, though no operand names it; a nested `def`'s is
+// reached only when the walk enters the def's body.
+#[test]
+fn checked_walk_reaches_annotation_applications_and_skips_nested_bodies() {
+    use mojito::checked::WalkResult;
+    let source = "\
+def h(x: Int) -> Int:
+    return x * 2
+
+def f[n: Int]():
+    comptime vals = [n, n * 2]
+    var v: SIMD[DType.int32, h(vals[0]) - vals[0]] = 5
+    print(v)
+
+def outer[n: Int]():
+    def inner():
+        var v: SIMD[DType.int32, h(n) - n] = 5
+        print(v)
+    inner()
+";
+    let compiled = mojito::compiler::Compiler::default()
+        .compile_unlinked(source)
+        .expect("compile");
+    let checked = compiled.checked();
+    let cfg = |function| {
+        let (params, body) = function_body(checked, function);
+        Cfg::build_checked_fn(checked, &params, &body)
+    };
+    let f = cfg("f");
+    assert!(lifted_applications_reached(&f.checked, &f.body, WalkResult::Advance) > 0);
+    let outer = cfg("outer");
+    assert!(lifted_applications_reached(&outer.checked, &outer.body, WalkResult::Advance) > 0);
+    assert_eq!(
+        lifted_applications_reached(&outer.checked, &outer.body, WalkResult::SkipBodies),
+        0
+    );
+}

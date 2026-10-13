@@ -890,11 +890,15 @@ binders the expression reads (`binders_read`), two occurrences of one
 expression over the same bindings share it, as the pin identifies them by
 structure, and arithmetic over applications stays arithmetic. MIR lifts each
 such function once the body that spells its expression is lowered
-(`ComptimeThunks::request_applications`), over the narrowest scope that
+(`ComptimeThunks::request_applications`, which walks the body's checked
+nodes with `CheckedTables::walk` and skips a nested declaration's body),
+over the narrowest scope that
 declares its binders, and reads the expression as that application wherever
 it denotes one (`Flatten::comptime_application`). The checked arena holds a
 node for such an expression inside an annotation, which has none otherwise
-(`type_applications`, `checked.rs`). A closed one in a plain `def`
+(`type_applications`, `checked.rs`), and the op that spells the annotation
+names it (`CheckedOp::TypeValue`, `CheckedParamArg::Type`,
+`CheckedStmtOp::VarDecl`'s `applications`), apart from its operands. A closed one in a plain `def`
 (`g[h(3)]()`) is lifted the same way, over no binder. A call of a
 module `def` or a static method over `Int` and `Bool` values lifts nothing:
 it is the application of that callable to the parameter expressions of its

@@ -7,8 +7,9 @@
 //! constant) and every function lifted from it.
 
 use crate::checked::{
-    AnnotationSite, CheckedDefaultWrapper, CheckedProgram, CheckedStmtOp, CheckedTables,
-    CheckedTraitMember, DeclarationEffect, DiscoveryResult, GenericSite, InstalledSites,
+    AnnotationSite, CheckedDefaultWrapper, CheckedProgram, CheckedStmtId, CheckedStmtOp,
+    CheckedTables, CheckedTraitMember, DeclarationEffect, DiscoveryResult, GenericSite,
+    InstalledSites,
 };
 use crate::package::{LibraryRoot, ProgramConstants, ProgramOverloads};
 use mojito_ast::ast::{Expr, Method, Stmt, StmtKind};
@@ -38,8 +39,11 @@ pub enum LoweringUnit<'a> {
     },
     /// A trait default, as its trait's member.
     TraitMember(&'a CheckedTraitMember),
-    /// A module `comptime` constant.
-    Constant(&'a Stmt),
+    /// A module `comptime` constant, and its statement node.
+    Constant {
+        statement: &'a Stmt,
+        root: CheckedStmtId,
+    },
 }
 
 impl LoweringUnit<'_> {
@@ -67,7 +71,7 @@ impl CheckedProgram {
     pub fn lowering_units(&self) -> Vec<LoweringUnit<'_>> {
         let mut units = Vec::new();
         let mut constants = Vec::new();
-        for statement in self.statements() {
+        for (statement, root) in self.statements().iter().zip(self.tables().roots()) {
             match &statement.kind {
                 StmtKind::Def { .. } => units.push(LoweringUnit::Function(statement)),
                 StmtKind::Struct {
@@ -113,7 +117,10 @@ impl CheckedProgram {
                         })
                         .map(LoweringUnit::TraitMember),
                 ),
-                StmtKind::Comptime { .. } => constants.push(LoweringUnit::Constant(statement)),
+                StmtKind::Comptime { .. } => constants.push(LoweringUnit::Constant {
+                    statement,
+                    root: *root,
+                }),
                 _ => {}
             }
         }
@@ -260,7 +267,7 @@ impl CheckedUnit {
         let mut trait_member = None;
         let (kind, statements) = match unit {
             LoweringUnit::Function(statement) => (UnitKind::Function, (*statement).clone()),
-            LoweringUnit::Constant(statement) => (UnitKind::Constant, (*statement).clone()),
+            LoweringUnit::Constant { statement, .. } => (UnitKind::Constant, (*statement).clone()),
             LoweringUnit::Method {
                 structure,
                 method,
@@ -323,7 +330,10 @@ impl UnitProgram {
         let statement = self.program.statements().first();
         Some(match &self.kind {
             UnitKind::Function => LoweringUnit::Function(statement?),
-            UnitKind::Constant => LoweringUnit::Constant(statement?),
+            UnitKind::Constant => LoweringUnit::Constant {
+                statement: statement?,
+                root: *self.program.tables().roots().first()?,
+            },
             UnitKind::TraitMember => {
                 LoweringUnit::TraitMember(self.program.trait_members().first()?)
             }

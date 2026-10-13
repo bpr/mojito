@@ -656,7 +656,7 @@ impl Flatten<'_> {
                 e,
                 "a t-string reached MIR without the construction the checker built for it",
             ),
-            (CheckedOp::TypeValue(_), _) => {
+            (CheckedOp::TypeValue { .. }, _) => {
                 self.unsupported_value(e, "a type value reached MIR lowering")
             }
             _ => return None,

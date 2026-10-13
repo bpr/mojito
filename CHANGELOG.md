@@ -8,6 +8,15 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- MIR finds the compile-time applications the check lifted out of a body,
+  and the local bindings a lifted thunk reads, by walking the body's
+  checked statement and expression nodes (R642), as upstream walks a typed
+  body's ops, rather than walking its syntax and looking each expression's
+  node up by source span. An annotation's lifted applications are now
+  named by the op that spells the annotation, so the walk reaches them
+  without shifting any operand position; the package format is
+  `mojito-package 34`. No program's output or MIR changes.
+
 - MIR lowers prefix and infix operators, comparison chains, ternaries,
   transfers, spreads, and lambdas from their checked ops (R635), as
   upstream's typed op carries its operator as an attribute and its
