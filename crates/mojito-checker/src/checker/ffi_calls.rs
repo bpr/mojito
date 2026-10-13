@@ -25,13 +25,11 @@ impl Checker {
         param_args: &[ParamArg],
         args: &[Expr],
     ) -> Result<Ty, TypeError> {
-        let (callee_name, callee_span) = match param_args.first() {
-            Some(ParamArg::Value(
-                callee @ Expr {
-                    kind: ExprKind::Str(text),
-                    ..
-                },
-            )) => (text.clone(), callee.source_span()),
+        let callee_name = match param_args.first() {
+            Some(ParamArg::Value(Expr {
+                kind: ExprKind::Str(text),
+                ..
+            })) => text.clone(),
             _ => {
                 return Err(TypeError::BadCall {
                     func: "external_call".to_string(),
@@ -66,18 +64,16 @@ impl Checker {
             TyArg::Val(CtValue::Str(callee_name.clone())),
             TyArg::Ty(ret.clone()),
         ];
-        let mut folded_arguments = vec![callee_span];
-        for extra in &param_args[2..] {
+        let mut folded_arguments = vec![0];
+        for (position, extra) in param_args.iter().enumerate().skip(2) {
             let fixed = match extra {
                 ParamArg::Named { name, value } if name == "num_fixed_args" => match &**value {
-                    ParamArg::Value(
-                        count @ Expr {
-                            kind: ExprKind::Int(literal),
-                            ..
-                        },
-                    ) => literal.wrapping_signed(64).inspect(|fixed| {
+                    ParamArg::Value(Expr {
+                        kind: ExprKind::Int(literal),
+                        ..
+                    }) => literal.wrapping_signed(64).inspect(|fixed| {
                         arguments.push(TyArg::Val(CtValue::Int(*fixed)));
-                        folded_arguments.push(count.source_span());
+                        folded_arguments.push(position);
                     }),
                     _ => None,
                 },

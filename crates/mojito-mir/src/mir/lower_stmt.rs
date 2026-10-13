@@ -475,6 +475,14 @@ impl Flatten<'_> {
         if let Some(name) = self.name_spelled(e) {
             return self.name_place_root(&name, e);
         }
+        // A call returning a mutable reference: its result is the place.
+        if matches!(
+            self.op_of(e),
+            Some(CheckedOp::Call { .. } | CheckedOp::MethodCall { .. })
+        ) && let Some(place) = self.materialize_reference_result_place(e)
+        {
+            return place;
+        }
         match &e.kind {
             ExprKind::Member { object, field } => {
                 let mut p = self.place(object);
@@ -550,12 +558,6 @@ impl Flatten<'_> {
                     p.proj.push(Proj::Index(idx));
                 }
                 p
-            }
-            // A call returning a mutable reference: its result is the place.
-            ExprKind::Call { .. } | ExprKind::MethodCall { .. }
-                if let Some(place) = self.materialize_reference_result_place(e) =>
-            {
-                place
             }
             ExprKind::TypeApply { name, .. } => {
                 let index = self
@@ -1683,7 +1685,6 @@ impl Flatten<'_> {
         region_var_types.extend(self.var_types.clone());
         {
             let mut fl = Flatten {
-                call_transfers: self.call_transfers.clone(),
                 f: &mut region,
                 cur: 0,
                 next_reg: self.next_reg,
@@ -2080,17 +2081,20 @@ impl Flatten<'_> {
                         src: source,
                         binding_ty,
                     });
-                    let candidates: Vec<&Expr> = match &value.kind {
-                        ExprKind::Call { args, kwargs, .. } => args
+                    let candidates: Vec<&Expr> = match (self.op_of(value), &value.kind) {
+                        (Some(CheckedOp::Call { .. }), ExprKind::Call { args, kwargs, .. }) => args
                             .iter()
                             .chain(kwargs.iter().map(|argument| &argument.value))
                             .collect(),
-                        ExprKind::MethodCall {
-                            object,
-                            args,
-                            kwargs,
-                            ..
-                        } => std::iter::once(object.as_ref())
+                        (
+                            Some(CheckedOp::MethodCall { .. }),
+                            ExprKind::MethodCall {
+                                object,
+                                args,
+                                kwargs,
+                                ..
+                            },
+                        ) => std::iter::once(object.as_ref())
                             .chain(args.iter())
                             .chain(kwargs.iter().map(|argument| &argument.value))
                             .collect(),

@@ -7,7 +7,7 @@ use mojito_types::types::TyKind;
 
 impl Flatten<'_> {
     pub(in crate::mir) fn expr_unconverted(&mut self, e: &Expr) -> Reg {
-        if let Some(value) = self.literal_or_name(e) {
+        if let Some(value) = self.literal_or_name(e).or_else(|| self.call_family(e)) {
             return value;
         }
         match &e.kind {
@@ -98,66 +98,18 @@ impl Flatten<'_> {
             ExprKind::Infix(op, a, b) => self.infix_op(e, *op, a, b),
 
             // --- Calls / access ------------------------------------------------
-            // A pack or reflection query read as a runtime value is a
-            // parameter constant; its operand is a type, never lowered.
-            ExprKind::Call { .. }
-            | ExprKind::Invoke { .. }
-            | ExprKind::Member { .. }
-            | ExprKind::MethodCall { .. }
-            | ExprKind::Index { .. }
-                if let Some(value) = self.param_value(e) =>
-            {
-                self.param_value_register(e, value)
+            // Every call MIR lowers was rebuilt from its node.
+            ExprKind::Call { .. } | ExprKind::Invoke { .. } | ExprKind::MethodCall { .. } => {
+                let dest = self.fresh(span(e), None);
+                self.emit(MirInstr::Unsupported(
+                    "a call without a checked node reached MIR".to_string(),
+                ));
+                self.emit(MirInstr::Const {
+                    dest,
+                    k: Const::None,
+                });
+                dest
             }
-            // `materialize[X]()` the elaborator above MIR left, over a
-            // binder: the runtime value of its compile-time operand.
-            ExprKind::Call {
-                name,
-                param_args,
-                args,
-                kwargs,
-            } if name == "materialize"
-                && args.is_empty()
-                && kwargs.is_empty()
-                && let [mojito_ast::ast::ParamArg::Value(operand)] = param_args.as_slice() =>
-            {
-                self.crossing_operand(operand)
-            }
-            // `comptime(e)` left the same way.
-            ExprKind::Call {
-                name,
-                param_args,
-                args,
-                kwargs,
-            } if name == "comptime"
-                && param_args.is_empty()
-                && kwargs.is_empty()
-                && let [operand] = args.as_slice()
-                && self.checked_ty(operand).is_some() =>
-            {
-                self.crossing_operand(operand)
-            }
-            // NOTE: keyword args + default-slot matching (`call::match_call_slots`)
-            // are a follow-up; the checker has already validated them, so only the
-            // positional `args` are flattened here.
-            ExprKind::Call {
-                name,
-                param_args,
-                args,
-                kwargs,
-            } => self.call_expr(e, name, param_args, args, kwargs),
-            ExprKind::Invoke {
-                callee,
-                param_args,
-                args,
-                kwargs,
-            } => self.invoke_expr(e, callee, param_args, args, kwargs),
-            ExprKind::MethodCall {
-                object,
-                method,
-                args,
-                kwargs,
-            } => self.method_call_expr(e, object, method, args, kwargs),
             ExprKind::Member { object, field } => self.member_expr(e, object, field),
             // A variant projection spelled with a struct-name index
             // (`v[String]`) carries the same checked adjustment as the
@@ -234,16 +186,6 @@ impl Flatten<'_> {
             {
                 self.variant_project_type_apply(e, name)
             }
-            ExprKind::TypeApply { name, .. } if self.nested_info(e).is_some() => {
-                self.nested_type_apply(e, name)
-            }
-            ExprKind::TypeApply { .. } if self.resolved_callable(e).is_some() => self.constant(
-                e,
-                Const::Function(
-                    self.resolved_callable(e)
-                        .expect("checked callable TypeApply has a lowered target"),
-                ),
-            ),
             // A lambda expression materializes its hidden definition's
             // closure at the expression's evaluation point — copy/move
             // captures snapshot here, once per evaluation.
@@ -742,6 +684,115 @@ impl Flatten<'_> {
         })
     }
 
+    /// Lower `e` by its node's op when that op is a call, an invocation, a
+    /// method call, or a callable type application: `None` for any other
+    /// op, which the syntax dispatch lowers. The op decides; the syntax only
+    /// binds the operands still lowered from it.
+    fn call_family(&mut self, e: &Expr) -> Option<Reg> {
+        let tables = std::sync::Arc::clone(&self.checked);
+        let node = tables.expression(self.node_of(e)?)?;
+        // A pack or reflection query read as a runtime value is a
+        // parameter constant; its operand is a type, never lowered.
+        if matches!(
+            node.op,
+            CheckedOp::Call { .. }
+                | CheckedOp::Invoke { .. }
+                | CheckedOp::Member { .. }
+                | CheckedOp::MethodCall { .. }
+                | CheckedOp::Index { .. }
+        ) && let Some(value) = recorded_param_value(&node.adjustments)
+        {
+            return Some(self.param_value_register(e, value));
+        }
+        Some(match (&node.op, &e.kind) {
+            (
+                CheckedOp::Call { name, .. },
+                ExprKind::Call {
+                    param_args,
+                    args,
+                    kwargs,
+                    ..
+                },
+            ) => self.call_op(e, node, name, param_args, args, kwargs),
+            (
+                CheckedOp::Invoke { .. },
+                ExprKind::Invoke {
+                    callee,
+                    param_args,
+                    args,
+                    kwargs,
+                },
+            ) => self.invoke_expr(e, node, callee, param_args, args, kwargs),
+            (
+                CheckedOp::MethodCall { method, .. },
+                ExprKind::MethodCall {
+                    object,
+                    args,
+                    kwargs,
+                    ..
+                },
+            ) => self.method_call_expr(e, node, object, method, args, kwargs),
+            (CheckedOp::TypeApply { name, .. }, _) if !variant_projection(node) => {
+                if node
+                    .binding
+                    .is_some_and(|binding| self.nested.contains_key(&binding))
+                {
+                    self.nested_type_apply(e, name)
+                } else {
+                    self.literal(node, Const::Function(callable_target(&node.adjustments)?))
+                }
+            }
+            _ => return None,
+        })
+    }
+
+    /// Call node `node`, written `name`: a crossing the elaborator left
+    /// (`materialize[X]()`, `comptime(e)`) lowers its operand, any other
+    /// call is an ordinary call.
+    fn call_op(
+        &mut self,
+        e: &Expr,
+        node: &CheckedExpr,
+        name: &str,
+        param_args: &[ParamArg],
+        args: &[Expr],
+        kwargs: &[mojito_ast::ast::KwArg],
+    ) -> Reg {
+        let CheckedOp::Call {
+            param_args: params,
+            args: arguments,
+            kwargs: keywords,
+            ..
+        } = &node.op
+        else {
+            unreachable!("call_op lowers a call node")
+        };
+        // `materialize[X]()` the elaborator above MIR left, over a
+        // binder: the runtime value of its compile-time operand.
+        if name == "materialize"
+            && arguments.is_empty()
+            && keywords.is_empty()
+            && let [mojito_checked::checked::CheckedParamArg::Value(_)] = params.as_slice()
+            && let [ParamArg::Value(operand)] = param_args
+        {
+            return self.crossing_operand(operand);
+        }
+        // `comptime(e)` left the same way.
+        if name == "comptime"
+            && params.is_empty()
+            && keywords.is_empty()
+            && let [operand] = arguments.as_slice()
+            && self
+                .checked
+                .expression(*operand)
+                .is_some_and(|operand| operand.ty.is_some())
+            && let [operand] = args
+        {
+            return self.crossing_operand(operand);
+        }
+        self.call_expr(e, node, name, param_args, args, kwargs)
+    }
+
     /// Walrus node `node`, `name := value`: bind the value's slot and yield
     /// the value.
     fn walrus(&mut self, value: &Expr, node: &CheckedExpr, name: &str) -> Reg {
@@ -797,4 +848,15 @@ impl Flatten<'_> {
         };
         self.read_slot(var, node.location(), Some(node))
     }
+}
+
+/// Whether type application node `node` projects a `Variant` alternative
+/// (`v[T]`), a place rather than a callable value.
+fn variant_projection(node: &CheckedExpr) -> bool {
+    node.adjustments.iter().any(|adjustment| {
+        matches!(
+            adjustment,
+            mojito_checked::checked::SemanticAdjustment::VariantProject { .. }
+        )
+    })
 }

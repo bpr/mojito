@@ -106,7 +106,6 @@ pub(super) fn lower_fn_nested(
         returns_reference,
         &ref_params,
         &[],
-        checked.call_transfers(),
         &receiver_value_parameters,
         static_receiver.as_ref(),
         &enclosing_origin_parameters,
@@ -617,7 +616,6 @@ fn lower_nested_node(
                 .iter()
                 .map(|capture| capture.binding)
                 .collect::<Vec<_>>(),
-            checked.call_transfers(),
             &[],
             None,
             &[],

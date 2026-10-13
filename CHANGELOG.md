@@ -436,6 +436,13 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- A static call through a type name (`Point.origin()`) calls the static
+  even after a block's local spelled `Point` has gone out of scope, as at
+  the pin, where it used to call the method on the dead local's value
+  (R619). MIR now decides calls, invocations, and method calls by their
+  checked node rather than their syntax, reads a call's loan transfers from
+  its node, and names a folded bracket argument by its position (package
+  format 32). `assets/ok/static_call_through_shadowed_type_name.mojo` pins it.
 - A call or read through a local callable names the declaration its
   name resolves to (R637): a `var f` declared in a block shadows an outer
   `f` only inside that block, and once a block's `var g` is out of scope

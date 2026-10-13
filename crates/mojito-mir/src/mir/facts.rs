@@ -45,6 +45,15 @@ impl Flatten<'_> {
         matches!(self.op_of(expression), Some(CheckedOp::Identifier(_)))
     }
 
+    /// Whether `expression` was rebuilt from a call, invocation, or method
+    /// call node.
+    pub(super) fn is_call(&self, expression: &Expr) -> bool {
+        matches!(
+            self.op_of(expression),
+            Some(CheckedOp::Call { .. } | CheckedOp::Invoke { .. } | CheckedOp::MethodCall { .. })
+        )
+    }
+
     /// The checked node `expression` was rebuilt from, as its record.
     pub(super) fn checked_node(
         &self,
@@ -116,10 +125,14 @@ impl Flatten<'_> {
             .cloned()
     }
 
-    /// The slot of the local call `expression`, written `name`, calls
-    /// through: its binding's, when that binding is a local or parameter.
-    pub(super) fn local_callee(&mut self, expression: &Expr, name: &str) -> Option<VarId> {
-        self.checked_owner(expression)
+    /// The slot call node `node`, written `name`, calls through: its
+    /// binding's, when that binding is a local or parameter.
+    pub(super) fn local_callee(
+        &mut self,
+        node: &mojito_checked::checked::CheckedExpr,
+        name: &str,
+    ) -> Option<VarId> {
+        node.binding
             .and_then(|owner| self.local_binding_var(owner, name))
     }
 
@@ -634,8 +647,8 @@ impl Flatten<'_> {
             }
             return loans;
         }
-        match &expression.kind {
-            ExprKind::Call { args, kwargs, .. } => {
+        match (self.op_of(expression), &expression.kind) {
+            (Some(CheckedOp::Call { .. }), ExprKind::Call { args, kwargs, .. }) => {
                 // A view construction borrows the places its `ref [origin]`
                 // parameters bound (the checker recorded the argument
                 // indexes), so the stored aggregate keeps its source alive.
@@ -756,14 +769,14 @@ impl Flatten<'_> {
                     .flat_map(|argument| self.aggregate_borrows(argument))
                     .collect()
             }
-            ExprKind::Transfer(inner) => self.aggregate_borrows(inner),
-            ExprKind::ListLit(values) | ExprKind::TupleLit(values) => values
+            (_, ExprKind::Transfer(inner)) => self.aggregate_borrows(inner),
+            (_, ExprKind::ListLit(values) | ExprKind::TupleLit(values)) => values
                 .iter()
                 .flat_map(|value| self.aggregate_borrows(value))
                 .collect(),
             // A view-typed slice result (a Span sub-slice or a StringSpan
             // keyword slice) inherits its receiver's loans.
-            ExprKind::Slice { object, .. } | ExprKind::MultiIndex { object, .. } => {
+            (_, ExprKind::Slice { object, .. } | ExprKind::MultiIndex { object, .. }) => {
                 if self
                     .checked_adjustments(expression)
                     .iter()
@@ -798,11 +811,23 @@ impl Flatten<'_> {
             // place; an interior-generation tail becomes the loan's interior
             // domain so container mutation stales it without ordinary reads
             // conflicting.
-            ExprKind::Invoke { .. } | ExprKind::MethodCall { .. } => {
+            (Some(CheckedOp::Invoke { .. } | CheckedOp::MethodCall { .. }), _) => {
+                let method_syntax = match (self.op_of(expression), &expression.kind) {
+                    (
+                        Some(CheckedOp::MethodCall { .. }),
+                        ExprKind::MethodCall {
+                            object,
+                            args,
+                            kwargs,
+                            ..
+                        },
+                    ) => Some((object, args, kwargs)),
+                    _ => None,
+                };
                 // A static call binding `ref [Self.o]` arguments (the checker
                 // recorded the argument indexes, as for a view construction)
                 // lends those places to the returned aggregate.
-                if let ExprKind::MethodCall { args, .. } = &expression.kind
+                if let Some((_, args, _)) = method_syntax
                     && let Some(mojito_checked::checked::SemanticAdjustment::BorrowRefArguments {
                         arguments,
                         ..
@@ -857,17 +882,17 @@ impl Flatten<'_> {
                 }
                 // `unsafe_offset` preserves provenance: forward the receiver's
                 // loans onto the offset pointer.
-                if let (true, ExprKind::MethodCall { object, .. }) = (
-                    self.checked_adjustments(expression)
+                if let Some((object, _, _)) = method_syntax
+                    && self
+                        .checked_adjustments(expression)
                         .iter()
                         .any(|adjustment| {
                             matches!(
                                 adjustment,
                                 mojito_checked::checked::SemanticAdjustment::PointerOffset
                             )
-                        }),
-                    &expression.kind,
-                ) {
+                        })
+                {
                     return self.aggregate_borrows(object);
                 }
                 // A method returning a ref-field struct (a borrowing
@@ -879,15 +904,7 @@ impl Flatten<'_> {
                 // only the storage the view borrows. Its aggregate-typed
                 // place arguments lend the same way (the free-function rule
                 // above).
-                if let (
-                    Some(named),
-                    ExprKind::MethodCall {
-                        object,
-                        args,
-                        kwargs,
-                        ..
-                    },
-                ) = (
+                if let (Some(named), Some((object, args, kwargs))) = (
                     self.checked_adjustments(expression)
                         .into_iter()
                         .find_map(|adjustment| match adjustment {
@@ -897,7 +914,7 @@ impl Flatten<'_> {
                             } => Some(interior),
                             _ => None,
                         }),
-                    &expression.kind,
+                    method_syntax,
                 ) {
                     let lent = |source: &Expr, named: &[String], this: &mut Self| -> Vec<MirLoan> {
                         let mut loans = this.aggregate_borrows(source);

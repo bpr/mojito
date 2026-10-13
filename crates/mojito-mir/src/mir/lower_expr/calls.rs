@@ -278,15 +278,12 @@ impl Flatten<'_> {
     pub(in crate::mir) fn lower_nested_call(
         &mut self,
         e: &Expr,
+        name: &str,
         info: &NestedInfo,
         param_args: &[ParamArg],
         args: &[Expr],
         kwargs: &[mojito_ast::ast::KwArg],
     ) -> Reg {
-        let name = match &e.kind {
-            ExprKind::Call { name, .. } => name.as_str(),
-            _ => unreachable!("nested direct call has call syntax"),
-        };
         let callee = self.load_nested_closure(name, info, span(e));
         let callable_ty = info
             .callable_ty
@@ -550,30 +547,33 @@ impl Flatten<'_> {
     /// A nullary scalar built-in construction (`Int()`, `UInt()`,
     /// `Float64()`, `Bool()`) is its zero; `None` for any other expression.
     /// `UInt` has no constant of its own, so its zero converts an `Int` one.
-    pub(in crate::mir) fn default_scalar_construction(&mut self, e: &Expr) -> Option<Reg> {
-        let ExprKind::Call {
+    pub(in crate::mir) fn default_scalar_construction(
+        &mut self,
+        node: &mojito_checked::checked::CheckedExpr,
+    ) -> Option<Reg> {
+        let mojito_checked::checked::CheckedOp::Call {
             name,
             param_args,
             args,
             kwargs,
-        } = &e.kind
+        } = &node.op
         else {
             return None;
         };
         if !(param_args.is_empty() && args.is_empty() && kwargs.is_empty()) {
             return None;
         }
-        let zero = match (name.as_str(), (self.checked_ty(e)?).kind()) {
+        let zero = match (name.as_str(), node.ty.as_ref()?.kind()) {
             ("Int" | "UInt", TyKind::Int | TyKind::UInt) => Const::Int(0),
             ("Float64", TyKind::Float64) => Const::Float(0.0),
             ("Bool", TyKind::Bool) => Const::Bool(false),
             _ => return None,
         };
-        let value = self.constant(e, zero);
+        let value = self.literal(node, zero);
         if name != "UInt" {
             return Some(value);
         }
-        let dest = self.fresh_typed(span(e), None, Ty::uint());
+        let dest = self.fresh_typed(node.location(), None, Ty::uint());
         self.emit(MirInstr::Call {
             dest,
             func: FuncRef::named("UInt"),

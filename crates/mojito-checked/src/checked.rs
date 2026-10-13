@@ -319,9 +319,9 @@ pub struct GenericInstantiation {
     pub variadic: Option<mojito_symbol::symbol::VariadicKey>,
     pub arguments: Vec<mojito_types::types::TyArg>,
     /// The bracket arguments [`Self::arguments`] carries as closed values, by
-    /// their value expressions' spans
+    /// their positions among the call's bracket arguments as written
     /// ([`SemanticAdjustment::FoldedParameterArguments`]).
-    pub folded_arguments: Vec<SourceSpan>,
+    pub folded_arguments: Vec<usize>,
 }
 
 /// One resolved application of a struct method that declares its own
@@ -349,9 +349,9 @@ pub struct MethodInstantiation {
     /// parameter names mint only the selected one's clone.
     pub overload: Option<String>,
     pub arguments: Vec<mojito_types::types::TyArg>,
-    /// The bracket arguments carried as closed values, as
+    /// The bracket arguments carried as closed values, by position, as
     /// [`GenericInstantiation::folded_arguments`] records a `def`'s.
-    pub folded_arguments: Vec<SourceSpan>,
+    pub folded_arguments: Vec<usize>,
 }
 
 /// One closed application of an ordinary generic struct the checker reached as
@@ -788,12 +788,12 @@ pub enum SemanticAdjustment {
     /// a parameter no runtime parameter or result spells and the call emits
     /// no code for one.
     InstantiatedArguments(Vec<mojito_types::types::TyArg>),
-    /// The value expressions, by span, of the call's bracket arguments that
+    /// The positions, among the call's bracket arguments as written, of those
     /// [`Self::InstantiatedArguments`] carries as closed values
     /// (`tup[(1, Tag(8, "x"))]()`, `s[1 + 2]()`). As Mojo's call carries a parameter
     /// attribute, such an argument has no run-time form at the call site:
     /// MIR lowers no code for it and leaves its slot's register absent.
-    FoldedParameterArguments(Vec<SourceSpan>),
+    FoldedParameterArguments(Vec<usize>),
     /// A consuming method receiver is a source place, but the selected type is
     /// `ImplicitlyCopyable`, so the call consumes a copied value rather than
     /// tombstoning the caller's place. This coexists with parameterized-method
@@ -2823,9 +2823,6 @@ pub struct CheckedProgram {
     generic_instantiations: HashMap<SourceSpan, GenericInstantiation>,
     method_instantiations: HashMap<SourceSpan, MethodInstantiation>,
     struct_instantiations: Vec<StructInstantiation>,
-    /// Caller-substituted loan transfers per call occurrence, keyed by the
-    /// call expression's span; MIR lowering installs the implied loans.
-    call_transfers: HashMap<SourceSpan, Vec<CheckedCallTransfer>>,
     compatibility_implicit_conversions: HashMap<SourceSpan, String>,
     /// The converted-to checked type of each implicit conversion site.
     implicit_conversion_types: HashMap<SourceSpan, Ty>,
@@ -3213,7 +3210,6 @@ impl CheckedProgram {
                 facts.method_instantiation.as_ref()
             }),
             struct_instantiations,
-            call_transfers: fact_index(&node_facts, |facts| facts.call_transfers.as_ref()),
             compatibility_implicit_conversions: fact_index(&node_facts, |facts| {
                 facts.implicit_conversion.as_ref()
             }),
@@ -3276,14 +3272,10 @@ impl CheckedProgram {
                 .ok_or("a trait member's unit has no declaration")?;
         }
         let mut overload_targets = HashMap::new();
-        let mut call_transfers = HashMap::new();
         let mut implicit_conversions = HashMap::new();
         let mut implicit_conversion_types = HashMap::new();
         for node in &tables.expressions {
             let location = node.location();
-            if !node.call_transfers.is_empty() {
-                call_transfers.insert(location.clone(), node.call_transfers.clone());
-            }
             for adjustment in &node.adjustments {
                 match adjustment {
                     SemanticAdjustment::ResolveCallable(target) => {
@@ -3319,7 +3311,6 @@ impl CheckedProgram {
             generic_instantiations: HashMap::new(),
             method_instantiations: HashMap::new(),
             struct_instantiations: Vec::new(),
-            call_transfers,
             compatibility_implicit_conversions: implicit_conversions,
             implicit_conversion_types,
             checked_types,
@@ -3393,11 +3384,6 @@ impl CheckedProgram {
     /// discovery (the driver keeps the closed ones).
     pub fn struct_instantiations(&self) -> &[StructInstantiation] {
         &self.struct_instantiations
-    }
-
-    /// The caller-substituted loan transfers per call occurrence.
-    pub const fn call_transfers(&self) -> &HashMap<SourceSpan, Vec<CheckedCallTransfer>> {
-        &self.call_transfers
     }
 
     /// Checker-selected converting constructor for an expression used in a

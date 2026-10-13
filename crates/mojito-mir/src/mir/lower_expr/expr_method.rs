@@ -2,6 +2,7 @@
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
+use mojito_checked::checked::{CheckedExpr, CheckedOp};
 use mojito_types::types::TyKind;
 
 use mojito_ast::ast::KwArg;
@@ -9,6 +10,7 @@ impl Flatten<'_> {
     pub(super) fn method_call_expr(
         &mut self,
         e: &Expr,
+        node: &CheckedExpr,
         object: &Expr,
         method: &str,
         args: &[Expr],
@@ -17,7 +19,7 @@ impl Flatten<'_> {
         // An instance method called through its type
         // (`List[Int].__len__(xs)`): the checker typed the first
         // argument as the receiver, so lower exactly that call.
-        let receiver_argument = self.checked_adjustments(e).iter().any(|adjustment| {
+        let receiver_argument = node.adjustments.iter().any(|adjustment| {
             matches!(
                 adjustment,
                 mojito_checked::checked::SemanticAdjustment::ReceiverFromFirstArgument { .. }
@@ -33,13 +35,13 @@ impl Flatten<'_> {
         };
         // A string literal's `format`: the checker typed the static call of
         // the bundled stand-in with the literal as its first argument.
-        if self.checked_adjustments(e).iter().any(|adjustment| {
+        if node.adjustments.iter().any(|adjustment| {
             matches!(
                 adjustment,
                 mojito_checked::checked::SemanticAdjustment::LiteralFormat
             )
         }) {
-            let target = self.resolved_callable(e).unwrap_or_else(|| {
+            let target = callable_target(&node.adjustments).unwrap_or_else(|| {
                 format!(
                     "{}.{}",
                     mojito_symbol::symbol::STDLIB_FORMAT_UTILS_STRUCT,
@@ -48,10 +50,10 @@ impl Flatten<'_> {
             });
             return self.static_method_call(e, &target, None, Some(object), args, kwargs);
         }
-        if let Some(dest) = self.method_call_value_form(e, object, method, args, kwargs) {
+        if let Some(dest) = self.method_call_value_form(e, node, object, method, args, kwargs) {
             return dest;
         }
-        if let Some(dest) = self.method_call_storage_form(e, object, method, args, kwargs) {
+        if let Some(dest) = self.method_call_storage_form(e, node, object, method, args, kwargs) {
             return dest;
         }
         // A **static** method — the receiver is a type, not a value
@@ -64,8 +66,7 @@ impl Flatten<'_> {
         // method's own parameters, so struct arguments must not
         // occupy its `param_arg_regs` slots.
         if let Some(type_name) = self.type_receiver_name(object) {
-            let target = self
-                .resolved_callable(e)
+            let target = callable_target(&node.adjustments)
                 .unwrap_or_else(|| format!("{type_name}.{method}"));
             let receiver = self.static_receiver(object);
             return self.static_method_call(e, &target, receiver, None, args, kwargs);
@@ -73,38 +74,24 @@ impl Flatten<'_> {
         if let Some(dest) = self.lower_elided_receiver_call(e, object, &[], args, kwargs) {
             return dest;
         }
-        self.ordinary_method_call(e, object, method, args, kwargs)
+        self.ordinary_method_call(e, node, object, method, args, kwargs)
     }
 
-    /// The struct a static call's receiver names, when the receiver is a
-    /// type rather than a value: a type application (`Dict[Int, Int]`), a
-    /// bare name that is no local (`Point`), or the single-argument
-    /// application that parses as a value subscript over such a name
-    /// (`Box[String]`). The bracket content is a compile-time argument the
-    /// checker already resolved into its symbol selection — never lowered.
+    /// The struct a static call's receiver names, when the receiver's node
+    /// is a type rather than a value: a type application (`Dict[Int, Int]`),
+    /// a name the check bound to nothing (`Point`), or
+    /// the single-argument application that parses as a value subscript over
+    /// such a name (`Box[String]`). The bracket content is a compile-time
+    /// argument the checker already resolved into its symbol selection —
+    /// never lowered.
     pub(super) fn type_receiver_name(&self, object: &Expr) -> Option<String> {
-        // A value binder of the enclosing declaration (`dt.is_integral()` in
-        // a `DType`-keyed body) is a value, read through its slot, and so is
-        // a name the check bound (`lane.is_floating_point()` over `comptime
-        // lane = dt`, which a lifted thunk reads as the expression it
-        // denotes).
-        let not_a_local = |name: String| {
-            (!self.vars.contains(&name)
-                && self.checked_owner(object).is_none()
-                && !self
-                    .enclosing_binders
-                    .values
-                    .iter()
-                    .any(|(binder, _)| binder.name.as_ref() == name.as_str()))
-            .then_some(name)
-        };
-        if let Some(name) = self.name_spelled(object) {
-            return not_a_local(name);
-        }
-        match &object.kind {
-            ExprKind::TypeApply { name, .. } => Some(name.clone()),
-            ExprKind::Index { object: base, .. } => self.name_spelled(base).and_then(not_a_local),
-            _ => None,
+        let node = self.checked_node(object)?;
+        match &node.op {
+            CheckedOp::TypeApply { name, .. } => Some(name.clone()),
+            CheckedOp::Index { object: base, .. } => {
+                self.type_name(self.checked.expression(*base)?)
+            }
+            _ => self.type_name(node),
         }
     }
 
@@ -119,6 +106,25 @@ impl Flatten<'_> {
         )?;
         self.intern_static_self();
         Some(receiver)
+    }
+
+    /// The type name node `node` reads: a name the check bound to nothing
+    /// (`Self` in a static is typed as its instance, yet names no local). A
+    /// value binder of the enclosing declaration
+    /// (`dt.is_integral()` in a `DType`-keyed body) is a value, read through
+    /// its slot.
+    fn type_name(&self, node: &CheckedExpr) -> Option<String> {
+        let CheckedOp::Identifier(name) = &node.op else {
+            return None;
+        };
+        let name = self.spelling(node, name);
+        (node.binding.is_none()
+            && !self
+                .enclosing_binders
+                .values
+                .iter()
+                .any(|(binder, _)| binder.name.as_ref() == name.as_str()))
+        .then_some(name)
     }
 
     /// A call of the checker-selected static `target` over `args`, after a
@@ -186,18 +192,19 @@ impl Flatten<'_> {
     fn method_call_value_form(
         &mut self,
         e: &Expr,
+        node: &CheckedExpr,
         object: &Expr,
         method: &str,
         args: &[Expr],
         kwargs: &[KwArg],
     ) -> Option<Reg> {
         // `v.join(w)`: the checker resolved a two-operand lane gather.
-        let simd_join = self
-            .checked_adjustments(e)
-            .into_iter()
+        let simd_join = node
+            .adjustments
+            .iter()
             .find_map(|adjustment| match adjustment {
                 mojito_checked::checked::SemanticAdjustment::SimdShuffle { mask, joined: true } => {
-                    Some(mask)
+                    Some(mask.clone())
                 }
                 _ => None,
             });
@@ -216,12 +223,15 @@ impl Flatten<'_> {
             return Some(dest);
         }
         if let Some(mojito_checked::checked::SemanticAdjustment::ConstructTypeParam { param }) =
-            self.checked_adjustments(e).into_iter().find(|adjustment| {
-                matches!(
-                    adjustment,
-                    mojito_checked::checked::SemanticAdjustment::ConstructTypeParam { .. }
-                )
-            })
+            node.adjustments
+                .iter()
+                .find(|adjustment| {
+                    matches!(
+                        adjustment,
+                        mojito_checked::checked::SemanticAdjustment::ConstructTypeParam { .. }
+                    )
+                })
+                .cloned()
         {
             let (kwargs, kwarg_places) = self
                 .copy_construction_keywords(kwargs)
@@ -267,7 +277,7 @@ impl Flatten<'_> {
         // body of its own (checker-marked): receiver and argument
         // swap into the `writer.write(x)` shape, the writer's place
         // retained for the accumulator write-back.
-        if self.checked_adjustments(e).iter().any(|adjustment| {
+        if node.adjustments.iter().any(|adjustment| {
             matches!(
                 adjustment,
                 mojito_checked::checked::SemanticAdjustment::InvertedWrite
@@ -307,7 +317,7 @@ impl Flatten<'_> {
         // concrete receiver body. Produce `repr(receiver)` once and
         // feed the text through the supplied Writer's ordinary
         // `write` path.
-        if self.checked_adjustments(e).iter().any(|adjustment| {
+        if node.adjustments.iter().any(|adjustment| {
             matches!(
                 adjustment,
                 mojito_checked::checked::SemanticAdjustment::InvertedReprWrite
@@ -363,13 +373,13 @@ impl Flatten<'_> {
             && args.is_empty()
             && kwargs.is_empty()
             && let Some((dtype, width)) =
-                self.checked_adjustments(e)
-                    .into_iter()
+                node.adjustments
+                    .iter()
                     .find_map(|adjustment| match adjustment {
                         mojito_checked::checked::SemanticAdjustment::SimdToBits {
                             dtype,
                             width,
-                        } => Some((dtype, width)),
+                        } => Some((dtype.clone(), width.clone())),
                         _ => None,
                     })
         {
@@ -386,16 +396,15 @@ impl Flatten<'_> {
         // `v.set(init_with=…)` infers its alternative from the factory
         // (no explicit type parameter), so it arrives as an ordinary
         // method call rather than a parameterized invoke.
-        if let Some(index) =
-            self.checked_adjustments(e)
-                .iter()
-                .find_map(|adjustment| match adjustment {
-                    mojito_checked::checked::SemanticAdjustment::VariantSetInitWith {
-                        index,
-                        ..
-                    } => Some(index.clone()),
-                    _ => None,
-                })
+        if let Some(index) = node
+            .adjustments
+            .iter()
+            .find_map(|adjustment| match adjustment {
+                mojito_checked::checked::SemanticAdjustment::VariantSetInitWith {
+                    index, ..
+                } => Some(index.clone()),
+                _ => None,
+            })
         {
             let place = self
                 .try_place(object)
@@ -420,16 +429,15 @@ impl Flatten<'_> {
         // The parameterless Variant owning operation
         // (`v^.deinit_with(handler)`) is spelled as an ordinary method
         // call rather than a parameterized invoke.
-        if let Some(index) =
-            self.checked_adjustments(e)
-                .iter()
-                .find_map(|adjustment| match adjustment {
-                    mojito_checked::checked::SemanticAdjustment::VariantDeinitWith {
-                        index,
-                        ..
-                    } => Some(index.clone()),
-                    _ => None,
-                })
+        if let Some(index) = node
+            .adjustments
+            .iter()
+            .find_map(|adjustment| match adjustment {
+                mojito_checked::checked::SemanticAdjustment::VariantDeinitWith {
+                    index, ..
+                } => Some(index.clone()),
+                _ => None,
+            })
         {
             let place = self
                 .try_place(object)
@@ -462,6 +470,7 @@ impl Flatten<'_> {
     fn method_call_storage_form(
         &mut self,
         e: &Expr,
+        node: &CheckedExpr,
         object: &Expr,
         method: &str,
         args: &[Expr],
@@ -472,12 +481,15 @@ impl Flatten<'_> {
         // place is the field's, so a closure environment stays
         // reachable through stable storage.
         if let Some(mojito_checked::checked::SemanticAdjustment::FieldInvocation { callable }) =
-            self.checked_adjustments(e).into_iter().find(|adjustment| {
-                matches!(
-                    adjustment,
-                    mojito_checked::checked::SemanticAdjustment::FieldInvocation { .. }
-                )
-            })
+            node.adjustments
+                .iter()
+                .find(|adjustment| {
+                    matches!(
+                        adjustment,
+                        mojito_checked::checked::SemanticAdjustment::FieldInvocation { .. }
+                    )
+                })
+                .cloned()
         {
             let (recv, recv_place) = self.lower_call_receiver(object);
             let callee = self.fresh_typed(span(e), None, callable.clone());
@@ -490,7 +502,7 @@ impl Flatten<'_> {
                 place.project(Proj::Field(method.to_owned()), callable.clone());
                 place
             });
-            let resolved = self.resolved_callable(e);
+            let resolved = callable_target(&node.adjustments);
             let raises = self.checked_raises(e);
             return Some(self.emit_indirect_invocation(
                 e,
@@ -505,15 +517,15 @@ impl Flatten<'_> {
                 true,
             ));
         }
-        let pointer_storage = self
-            .checked_adjustments(e)
-            .into_iter()
+        let pointer_storage = node
+            .adjustments
+            .iter()
             .find_map(|adjustment| match adjustment {
                 mojito_checked::checked::SemanticAdjustment::PointerStorageTake { element } => {
-                    Some((true, element))
+                    Some((true, element.clone()))
                 }
                 mojito_checked::checked::SemanticAdjustment::PointerStorageDestroy { element } => {
-                    Some((false, element))
+                    Some((false, element.clone()))
                 }
                 _ => None,
             });
@@ -550,8 +562,8 @@ impl Flatten<'_> {
         // the place is defined from here, with nothing written.
         // `lit.ownership.mark_destroyed` over the same operand ends the
         // place's value, with nothing destroyed.
-        let marked = self
-            .checked_adjustments(e)
+        let marked = node
+            .adjustments
             .iter()
             .find_map(|adjustment| match adjustment {
                 mojito_checked::checked::SemanticAdjustment::MarkInitialized => Some(true),
@@ -560,12 +572,10 @@ impl Flatten<'_> {
             });
         if let Some(initialized) = marked {
             let operand = match args {
-                [
-                    Expr {
-                        kind: ExprKind::Call { args, .. },
-                        ..
-                    },
-                ] => args.first(),
+                [argument] => match (self.op_of(argument), &argument.kind) {
+                    (Some(CheckedOp::Call { .. }), ExprKind::Call { args, .. }) => args.first(),
+                    _ => None,
+                },
                 _ => None,
             }
             .expect("a checked ownership mark names a place");
@@ -587,18 +597,18 @@ impl Flatten<'_> {
         // — the place is opaque to drop elaboration, so a previously
         // written payload is overwritten raw (it leaks by design).
         // `take`/`destroy` consume the transferred storage value.
-        let uninit_storage = self
-            .checked_adjustments(e)
-            .into_iter()
+        let uninit_storage = node
+            .adjustments
+            .iter()
             .find_map(|adjustment| match adjustment {
                 mojito_checked::checked::SemanticAdjustment::UninitStorageWrite { element } => {
-                    Some((UninitStorageOp::Write, element))
+                    Some((UninitStorageOp::Write, element.clone()))
                 }
                 mojito_checked::checked::SemanticAdjustment::UninitStorageTake { element } => {
-                    Some((UninitStorageOp::Take, element))
+                    Some((UninitStorageOp::Take, element.clone()))
                 }
                 mojito_checked::checked::SemanticAdjustment::UninitStorageDestroy { element } => {
-                    Some((UninitStorageOp::Destroy, element))
+                    Some((UninitStorageOp::Destroy, element.clone()))
                 }
                 _ => None,
             });
@@ -639,7 +649,7 @@ impl Flatten<'_> {
         }
         // `pointer.unsafe_offset(i)` is provenance-preserving element
         // arithmetic: the ordinary pointer `+` operation.
-        if self.checked_adjustments(e).iter().any(|adjustment| {
+        if node.adjustments.iter().any(|adjustment| {
             matches!(
                 adjustment,
                 mojito_checked::checked::SemanticAdjustment::PointerOffset
@@ -666,12 +676,12 @@ impl Flatten<'_> {
         // source place (owner substitution when stably bound, else
         // through the runtime handle); a heap pointer stores through a
         // synthetic binding so chained receivers stay expressible.
-        let pointer_write = self
-            .checked_adjustments(e)
-            .into_iter()
+        let pointer_write = node
+            .adjustments
+            .iter()
             .find_map(|adjustment| match adjustment {
                 mojito_checked::checked::SemanticAdjustment::PointerWrite { element, copy } => {
-                    Some((element, copy))
+                    Some((element.clone(), *copy))
                 }
                 _ => None,
             });
@@ -729,12 +739,13 @@ impl Flatten<'_> {
     fn ordinary_method_call(
         &mut self,
         e: &Expr,
+        node: &CheckedExpr,
         object: &Expr,
         method: &str,
         args: &[Expr],
         kwargs: &[KwArg],
     ) -> Reg {
-        let explicit_destroy = self.checked_adjustments(e).iter().any(|adjustment| {
+        let explicit_destroy = node.adjustments.iter().any(|adjustment| {
             matches!(
                 adjustment,
                 mojito_checked::checked::SemanticAdjustment::ExplicitDestroy
@@ -796,7 +807,7 @@ impl Flatten<'_> {
             dest: d,
             recv,
             method: method.to_owned(),
-            resolved: self.resolved_callable(e),
+            resolved: callable_target(&node.adjustments),
             raises: self.checked_raises(e),
             reference_result: (self
                 .checked_call_contract(e)

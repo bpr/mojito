@@ -428,7 +428,7 @@ impl Flatten<'_> {
     /// Whether a method call's reference result has an origin rooted at one
     /// of the call's own arguments rather than at its receiver.
     fn reference_result_borrows_argument(&self, expression: &Expr) -> bool {
-        let ExprKind::MethodCall { args, kwargs, .. } = &expression.kind else {
+        let Some(CheckedOp::MethodCall { args, kwargs, .. }) = self.op_of(expression) else {
             return false;
         };
         let Some(reference) = self.reference_result(expression) else {
@@ -438,8 +438,23 @@ impl Flatten<'_> {
         origin_place_roots(&reference.origin, &mut roots);
         args.iter()
             .chain(kwargs.iter().map(|keyword| &keyword.value))
-            .filter_map(|argument| self.checked_owner(place_root_expression(argument)))
+            .filter_map(|argument| self.place_root_binding(*argument))
             .any(|owner| roots.contains(&owner))
+    }
+
+    /// The binding place node `place` is rooted at: through every field
+    /// and subscript to the root's own binding.
+    fn place_root_binding(
+        &self,
+        place: mojito_checked::checked::CheckedNodeId,
+    ) -> Option<mojito_types::origin::OwnerId> {
+        let node = self.checked.expression(place)?;
+        match &node.op {
+            CheckedOp::Member { object, .. } | CheckedOp::Index { object, .. } => {
+                self.place_root_binding(*object)
+            }
+            _ => node.binding,
+        }
     }
 
     /// The value of a reference-returning expression, read out of its
@@ -451,7 +466,8 @@ impl Flatten<'_> {
         // borrows from stay alive until the referent is copied. A method
         // call's result takes the same path when its origin names an argument
         // (`pick[o: Origin](self, ref[o] x: T) -> ref[o] T`).
-        if (matches!(e.kind, ExprKind::Call { .. }) || self.reference_result_borrows_argument(e))
+        if (matches!(self.op_of(e), Some(CheckedOp::Call { .. }))
+            || self.reference_result_borrows_argument(e))
             && self.reference_result(e).is_some()
             && let Some(place) = self.materialize_reference_result_place(e)
         {
@@ -604,15 +620,5 @@ fn origin_place_roots(
             .iter()
             .for_each(|member| origin_place_roots(member, roots)),
         _ => {}
-    }
-}
-
-/// The expression naming the binding a place expression is rooted at.
-fn place_root_expression(expression: &Expr) -> &Expr {
-    match &expression.kind {
-        ExprKind::Member { object, .. } | ExprKind::Index { object, .. } => {
-            place_root_expression(object)
-        }
-        _ => expression,
     }
 }

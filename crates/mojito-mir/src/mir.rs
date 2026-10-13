@@ -26,7 +26,7 @@ use mojito_ast::ast::{
 };
 use mojito_ast::call::{effective_keyword_only_index, regular_marker_index};
 use mojito_checked::checked::{AnnotationSite, GenericSite};
-use mojito_checked::checked::{CheckedConst, CheckedProgram, origin_parameter_names};
+use mojito_checked::checked::{CheckedConst, CheckedOp, CheckedProgram, origin_parameter_names};
 pub use mojito_checked::declaration::{
     FunctionDeclaration as MirFunctionDeclaration, StructDeclaration as MirStructDeclaration,
     TraitDeclaration, TraitRequirement,
@@ -69,7 +69,6 @@ pub fn lower_cfg(cfg: &Cfg) -> MirFunction {
         false,
         &[],
         &[],
-        &HashMap::new(),
         &[],
         None,
         &[],
@@ -630,7 +629,6 @@ fn lower_program(
             false,
             &[],
             &[],
-            checked.call_transfers(),
             &[],
             None,
             &[],
@@ -2337,9 +2335,6 @@ struct Flatten<'a> {
     /// (`(root, path)`), so repeated transfers into one domain merge while
     /// sibling domains keep independent generations.
     transfer_domain_loans: HashMap<(VarId, Vec<mojito_types::origin::OriginSeg>), Vec<MirLoan>>,
-    /// Checker-substituted loan transfers per call occurrence: after the
-    /// call, the destination actual's root receives the sources' loans.
-    call_transfers: HashMap<SourceSpan, Vec<mojito_checked::checked::CheckedCallTransfer>>,
     /// The enclosing struct's non-callable value parameters when lowering a
     /// method: `Self.n` in a bracket slot reads the receiver's reified
     /// parameter (`self.n`) instead of reifying a binder spelling.
@@ -2689,8 +2684,8 @@ impl Flatten<'_> {
     /// through the slot's runtime handle.
     fn temporary_pointer_deref(&mut self, e: &Expr, object: &Expr) -> Option<Reg> {
         if !matches!(
-            object.kind,
-            ExprKind::Call { .. } | ExprKind::MethodCall { .. }
+            self.op_of(object),
+            Some(CheckedOp::Call { .. } | CheckedOp::MethodCall { .. })
         ) || !self.is_origin_bearing_pointer(object)
         {
             return None;
@@ -3409,7 +3404,7 @@ impl Flatten<'_> {
     /// `EraseCompileTimeArgument` adjustment, so it is erased by name. A closed
     /// value the call carries in its instantiated arguments (`folded`) is
     /// compile-time data on the call, as at Mojo's.
-    fn param_arg_has_no_runtime_form(&self, argument: &ParamArg, folded: &[SourceSpan]) -> bool {
+    fn param_arg_has_no_runtime_form(&self, argument: &ParamArg, folded: bool) -> bool {
         let expression = match argument {
             ParamArg::Value(expression) => expression,
             ParamArg::Named { value, .. } => match &**value {
@@ -3419,7 +3414,7 @@ impl Flatten<'_> {
             },
             ParamArg::Type(ty) => return self.names_enclosing_origin_parameter(ty),
         };
-        folded.contains(&span(expression))
+        folded
             || self
                 .checked_adjustments(expression)
                 .iter()
@@ -3791,9 +3786,9 @@ impl Flatten<'_> {
             .checked_adjustments(call)
             .into_iter()
             .find_map(|adjustment| match adjustment {
-                mojito_checked::checked::SemanticAdjustment::FoldedParameterArguments(spans) => {
-                    Some(spans)
-                }
+                mojito_checked::checked::SemanticAdjustment::FoldedParameterArguments(
+                    positions,
+                ) => Some(positions),
                 _ => None,
             })
             .unwrap_or_default();
@@ -3816,16 +3811,17 @@ impl Flatten<'_> {
         &mut self,
         call: &Expr,
         arguments: &[ParamArg],
-        folded: &[SourceSpan],
+        folded: &[usize],
     ) -> Vec<MirParamArg> {
         let site = span(call);
         let mut registers = Vec::new();
-        for argument in arguments {
+        for (position, argument) in arguments.iter().enumerate() {
             let name = match argument {
                 ParamArg::Named { name, .. } => Some(name.clone()),
                 ParamArg::Type(_) | ParamArg::Value(_) => None,
             };
-            let value = if self.param_arg_has_no_runtime_form(argument, folded) {
+            let value = if self.param_arg_has_no_runtime_form(argument, folded.contains(&position))
+            {
                 None
             } else {
                 self.param_arg_reg(argument, &site)
@@ -4040,7 +4036,6 @@ fn lower_cfg_nested(
     returns_reference: bool,
     reference_parameters: &[bool],
     capture_bindings: &[mojito_types::origin::OwnerId],
-    call_transfers: &HashMap<SourceSpan, Vec<mojito_checked::checked::CheckedCallTransfer>>,
     receiver_value_parameters: &[(String, Ty)],
     static_receiver: Option<&Ty>,
     enclosing_origin_parameters: &[String],
@@ -4100,7 +4095,6 @@ fn lower_cfg_nested(
             overloads: std::sync::Arc::clone(overloads),
             checked: std::sync::Arc::clone(&cfg.checked),
             slots: cfg.slots.clone(),
-            call_transfers: call_transfers.clone(),
             active_semantics: Vec::new(),
             aliases: HashMap::new(),
             runtime_aliases: reference_parameters

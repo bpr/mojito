@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R638**.
+Next free ID: **R641**.
 
 ## Ordered Work
 
@@ -4774,13 +4774,51 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R619 MIR lowers calls and method calls from syntax**
+- [ ] **R638 MIR lowers a `Variant` projection type application from
+  syntax**
 
-  MIR lowering matches `ExprKind` for calls and method calls
-  (`mir/calls.rs`, `mir/lower_expr/`), where it should match `CheckedOp`.
-  - `call_transfers` and the other span-keyed reads there read the node.
-  - Plan: `R604-a-package-s-checked-body-is-plan.md`, slice 6.
-  - Depends on R617.
+  `v[T]` as a `Variant` projection is a place, and MIR still finds it by
+  matching `ExprKind::TypeApply` where it should match `CheckedOp::TypeApply`.
+  - Sites: `expr_unconverted`'s `variant_project_type_apply` arm,
+    `place_unrebound`, `simple_place_unrebound`, `try_place_unrebound`
+    (`lower_stmt.rs`), `reference_handle` (`mir.rs`), and the
+    `Member | Index | TypeApply` place predicate in `facts.rs`.
+  - `call_family` already takes the callable `TypeApply` and returns `None`
+    for a projection, so the projection arm is reached only from syntax.
+  - Done when `rg 'ExprKind::TypeApply' crates/mojito-mir/src` finds only
+    `expression_children` and the node-less boundary arm.
+  - Found while landing R619 (2026-10-12).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R639 A `comptime for` range's unfolded bounds are read from the
+  range call's syntax**
+
+  `lower_term`'s `ComptimeSource::EvaluatedRange` arm matches the header's
+  rebuilt `ExprKind::Call` to reach each bound it asks a thunk for, where
+  the bound should come from the range call node's `args`.
+  - The thunk request (`ComptimeThunks::request_value`) takes syntax, so
+    the bound's node id must reach it, or the request rebuild the syntax
+    itself.
+  - Done when `lower_stmt.rs` names no `ExprKind::Call`.
+  - Found while landing R619 (2026-10-12).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R640 A trait default wrapper's forwarding call is found by its
+  syntax and its instantiation by span**
+
+  `member_defaults` (`mir.rs`) matches the wrapper body's `Return`/`Expr`
+  syntax for the forwarding call, then looks its
+  `GenericInstantiation` up in the span-keyed
+  `CheckedProgram::generic_instantiations()`.
+  - Upstream's wrapper reads its member's signature; the call's
+    instantiated arguments are its node's `InstantiatedArguments`
+    adjustment, reachable through the wrapper's checked statement.
+  - Done when `member_defaults` reads the call node and no MIR code calls
+    `generic_instantiations()`.
+  - Found while landing R619 (2026-10-12).
+  - Depends on nothing.
   - Model: Opus, Not Planned.
 
 - [ ] **R620 MIR lowers member reads and subscripts from syntax**

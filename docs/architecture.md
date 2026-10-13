@@ -1761,7 +1761,14 @@ are its facts, beside the two facts of HIR's place for it. Literals and name
 reads lower by matching the node's `CheckedOp`, reading the node's own
 attributes (`Flatten::literal_or_name`); a name's slot is its binding's
 (`binding_var`), the slot only spelling it, and the name predicates of the
-other families match the op too. One narrow association remains span-keyed:
+other families match the op too. Calls, callable-value invocations, method
+calls, and callable type applications dispatch the same way
+(`Flatten::call_family`): the op decides, the entry points read the callee,
+the method, and every adjustment from the node, and a call's loans
+transferred to its arguments are the node's own `call_transfers`. A static
+call's receiver is a type because its node is a name the check bound to
+nothing and typed as no value, never because no local shares its spelling.
+One narrow association remains span-keyed:
 source-ordered compile-time value arguments reuse registers already evaluated
 for the corresponding checked subscript operand. This is a register handoff,
 not semantic reconstruction. Register spans otherwise serve diagnostics only.
@@ -2094,8 +2101,9 @@ instance's bindings (`bind_explicit_value_arguments`, `eval_ct`). A closed
 bracket argument of a generic call (`tup[(1, Tag(8, "x"))]()`, `s[1 + 2]()`,
 `f["x"]()`) or of a construction (`Counter[4](1)`) has no run-time form: as
 Mojo's call carries a parameter attribute, the call carries the value in its
-instantiated arguments, the checker names the argument's span
-(`SemanticAdjustment::FoldedParameterArguments`, over
+instantiated arguments, the checker names the argument by its position
+among the call's bracket arguments, as Mojo's call op carries its parameter
+attributes positionally (`SemanticAdjustment::FoldedParameterArguments`, over
 `CtValue::is_parameter_attribute`), and MIR lowers no code for it and leaves
 its slot's register absent. A construction's instantiated arguments are the
 struct's followed by the selected constructor's own, the layout its

@@ -2,6 +2,7 @@
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
+use mojito_checked::checked::CheckedExpr;
 use mojito_types::types::TyKind;
 
 use mojito_ast::ast::KwArg;
@@ -9,6 +10,7 @@ impl Flatten<'_> {
     pub(super) fn call_expr(
         &mut self,
         e: &Expr,
+        node: &CheckedExpr,
         name: &str,
         param_args: &[ParamArg],
         args: &[Expr],
@@ -20,202 +22,7 @@ impl Flatten<'_> {
                     .expect("checked synthesized fieldwise copy has one argument"),
             );
         }
-        if self.checked_adjustments(e).iter().any(|adjustment| {
-            matches!(
-                adjustment,
-                mojito_checked::checked::SemanticAdjustment::BuiltinCopyConstruction
-            )
-        }) {
-            return self.expr(
-                &kwargs
-                    .first()
-                    .expect("checked built-in copy construction has a 'copy=' argument")
-                    .value,
-            );
-        }
-        if let Some(zero) = self.default_scalar_construction(e) {
-            return zero;
-        }
-        if let Some(mojito_checked::checked::SemanticAdjustment::ConstructTypeParam { param }) =
-            self.checked_adjustments(e).into_iter().find(|adjustment| {
-                matches!(
-                    adjustment,
-                    mojito_checked::checked::SemanticAdjustment::ConstructTypeParam { .. }
-                )
-            })
-        {
-            let (kwargs, kwarg_places) = self
-                .copy_construction_keywords(kwargs)
-                .unwrap_or_else(|| self.lower_call_keywords(kwargs, false));
-            let dest = self.fresh(span(e), None);
-            self.emit(MirInstr::ConstructTypeParam {
-                dest,
-                param,
-                kwargs,
-                kwarg_places,
-                element: None,
-            });
-            return dest;
-        }
-        if let Some(dest) = self.pack_element_construction(e, param_args) {
-            return dest;
-        }
-        if let Some(mojito_checked::checked::SemanticAdjustment::ConstructType { ty }) =
-            self.checked_adjustments(e).into_iter().find(|adjustment| {
-                matches!(
-                    adjustment,
-                    mojito_checked::checked::SemanticAdjustment::ConstructType { .. }
-                )
-            })
-        {
-            let dest = self.fresh_typed(span(e), None, ty.clone());
-            self.emit(MirInstr::ConstructType { dest, ty });
-            return dest;
-        }
-        if let Some(mojito_checked::checked::SemanticAdjustment::SizeOf { ty }) =
-            self.checked_adjustments(e).into_iter().find(|adjustment| {
-                matches!(
-                    adjustment,
-                    mojito_checked::checked::SemanticAdjustment::SizeOf { .. }
-                )
-            })
-        {
-            // A symbolic type has no layout to take the size of; the
-            // elaborator substitutes the instance's type, and only the
-            // erased oracle reaches the template's own instruction.
-            let dest = self.fresh_typed(span(e), None, Ty::int());
-            self.emit(MirInstr::SizeOf { dest, ty });
-            return dest;
-        }
-        if let Some(mojito_checked::checked::SemanticAdjustment::ParamListAddress { values }) =
-            self.checked_adjustments(e).into_iter().find(|adjustment| {
-                matches!(
-                    adjustment,
-                    mojito_checked::checked::SemanticAdjustment::ParamListAddress { .. }
-                )
-            })
-        {
-            return self.param_list_address(e, values);
-        }
-        if let Some(mojito_checked::checked::SemanticAdjustment::TypeName { text, ty }) =
-            self.checked_adjustments(e).into_iter().find(|adjustment| {
-                matches!(
-                    adjustment,
-                    mojito_checked::checked::SemanticAdjustment::TypeName { .. }
-                )
-            })
-        {
-            // A type naming a compile-time parameter is spelled per
-            // instance, so the template carries the type to the elaborator.
-            if mojito_types::types::is_symbolic(&ty) {
-                let dest = self.fresh_typed(span(e), None, Ty::string_literal());
-                self.emit(MirInstr::TypeName { dest, ty });
-                return dest;
-            }
-            return self.constant(e, Const::Str(text));
-        }
-        // A checked pointer construction materializes the frame/slot
-        // handle for its source place; the checked pointer type keeps
-        // the origin while the runtime value erases it.
-        if self.checked_adjustments(e).iter().any(|adjustment| {
-            matches!(
-                adjustment,
-                mojito_checked::checked::SemanticAdjustment::PointerToPlace { .. }
-            )
-        }) {
-            let value = &kwargs
-                .first()
-                .expect("checked pointer construction has a 'to=' argument")
-                .value;
-            let place = self.place(value);
-            let dest = self.fresh(span(e), Some(place.root));
-            self.emit(MirInstr::MakeRef { dest, place });
-            return dest;
-        }
-        // Compiler-private inline uninit-storage construction:
-        // uninitialized, or holding a moved initial payload.
-        if let Some(init) = self
-            .checked_adjustments(e)
-            .into_iter()
-            .find_map(|adjustment| match adjustment {
-                mojito_checked::checked::SemanticAdjustment::UninitStorageMake { init, .. } => {
-                    Some(init)
-                }
-                _ => None,
-            })
-        {
-            let init = init
-                .then(|| self.expr(args.first().expect("checked storage construction payload")));
-            let dest = self.fresh(span(e), None);
-            self.emit(MirInstr::UninitStorage { dest, init });
-            return dest;
-        }
-        if let Some(mojito_checked::checked::SemanticAdjustment::ConstructVariant {
-            alternatives,
-            index,
-        }) = self.checked_adjustments(e).into_iter().find(|adjustment| {
-            matches!(
-                adjustment,
-                mojito_checked::checked::SemanticAdjustment::ConstructVariant { .. }
-            )
-        }) {
-            let value = self.expr(
-                args.first()
-                    .expect("checked Variant construction has one payload"),
-            );
-            let dest = self.fresh(span(e), None);
-            self.emit(MirInstr::MakeVariant {
-                dest,
-                alternatives,
-                index,
-                value,
-            });
-            return dest;
-        }
-        if let Some(mojito_checked::checked::SemanticAdjustment::ConstructVariantInitWith {
-            alternatives,
-            index,
-            payload,
-        }) = self.checked_adjustments(e).into_iter().find(|adjustment| {
-            matches!(
-                adjustment,
-                mojito_checked::checked::SemanticAdjustment::ConstructVariantInitWith { .. }
-            )
-        }) {
-            // Invoke the zero-parameter factory, then wrap its result:
-            // the payload temporary is consumed by the construction.
-            let factory = self.expr(
-                &kwargs
-                    .first()
-                    .expect("checked Variant(init_with=) has one factory")
-                    .value,
-            );
-            let payload = self.fresh_typed(span(e), None, payload);
-            self.emit(MirInstr::CallIndirect {
-                dest: payload,
-                callee: factory,
-                resolved: None,
-                raises: None,
-                args: Vec::new(),
-                kwargs: Vec::new(),
-                callee_place: None,
-                arg_places: Vec::new(),
-                kwarg_places: Vec::new(),
-                capture_accesses: Vec::new(),
-                param_arg_regs: Vec::new(),
-                param_decls: Vec::new(),
-                instantiated_contract: None,
-                instantiated_args: Vec::new(),
-                spread: None,
-            });
-            let dest = self.fresh(span(e), None);
-            self.emit(MirInstr::MakeVariant {
-                dest,
-                alternatives,
-                index,
-                value: payload,
-            });
-            self.emit_nested_closure_argument_keepalives(args, kwargs);
+        if let Some(dest) = self.checked_construction(e, node, param_args, args, kwargs) {
             return dest;
         }
         // SIMD construction resolves its `[DType.<dt>, width]` parameters
@@ -236,7 +43,9 @@ impl Flatten<'_> {
                 })
                 .collect();
             // The receiver is the local the call names, read as its place.
-            let receiver = self.local_callee(e, name).unwrap_or_else(|| self.var(name));
+            let receiver = self
+                .local_callee(node, name)
+                .unwrap_or_else(|| self.var(name));
             let place = self.var_place(receiver);
             let value = self.fresh(span(e), Some(place.root));
             self.emit(MirInstr::LoadPlace {
@@ -256,11 +65,15 @@ impl Flatten<'_> {
         // rewrite to its lifted function, prepending the captured enclosing
         // locals as leading arguments (passed as places, so the `mut`
         // capture parameters write back — reference-capture semantics).
-        if let Some(info) = self.nested_info(e) {
-            return self.lower_nested_call(e, &info, param_args, args, kwargs);
+        if let Some(info) = node
+            .binding
+            .and_then(|binding| self.nested.get(&binding))
+            .cloned()
+        {
+            return self.lower_nested_call(e, name, &info, param_args, args, kwargs);
         }
         // The callee is the slot of the local the call's binding names.
-        if let Some(variable) = self.local_callee(e, name) {
+        if let Some(variable) = self.local_callee(node, name) {
             let callee = self.read_slot(variable, span(e), None);
             let callable_ty = self
                 .var_types
@@ -294,7 +107,7 @@ impl Flatten<'_> {
             self.emit(MirInstr::CallIndirect {
                 dest,
                 callee,
-                resolved: self.resolved_callable(e),
+                resolved: callable_target(&node.adjustments),
                 raises: self.checked_raises(e),
                 args: regs,
                 kwargs: kw,
@@ -330,7 +143,7 @@ impl Flatten<'_> {
                 return self.expr(spread);
             }
             let regs = self.args(args);
-            let element_types = match self.checked_ty(e).as_ref().map(Ty::kind) {
+            let element_types = match node.ty.clone().as_ref().map(Ty::kind) {
                 Some(TyKind::Tuple(elements)) => Some(elements.clone()),
                 _ => None,
             };
@@ -342,24 +155,265 @@ impl Flatten<'_> {
             });
             return dest;
         }
-        self.direct_call(e, name, param_args, args, kwargs)
+        self.direct_call(e, node, name, param_args, args, kwargs)
+    }
+
+    /// A call the check recorded as a construction or an intrinsic by an
+    /// adjustment on its node (a copy, a scalar zero, a type parameter's or
+    /// a pack element's construction, a size, a type name, a pointer to a
+    /// place, inline storage, a `Variant`): `None` for any other call.
+    fn checked_construction(
+        &mut self,
+        e: &Expr,
+        node: &CheckedExpr,
+        param_args: &[ParamArg],
+        args: &[Expr],
+        kwargs: &[KwArg],
+    ) -> Option<Reg> {
+        if node.adjustments.iter().any(|adjustment| {
+            matches!(
+                adjustment,
+                mojito_checked::checked::SemanticAdjustment::BuiltinCopyConstruction
+            )
+        }) {
+            return Some(
+                self.expr(
+                    &kwargs
+                        .first()
+                        .expect("checked built-in copy construction has a 'copy=' argument")
+                        .value,
+                ),
+            );
+        }
+        if let Some(zero) = self.default_scalar_construction(node) {
+            return Some(zero);
+        }
+        if let Some(mojito_checked::checked::SemanticAdjustment::ConstructTypeParam { param }) =
+            node.adjustments
+                .iter()
+                .find(|adjustment| {
+                    matches!(
+                        adjustment,
+                        mojito_checked::checked::SemanticAdjustment::ConstructTypeParam { .. }
+                    )
+                })
+                .cloned()
+        {
+            let (kwargs, kwarg_places) = self
+                .copy_construction_keywords(kwargs)
+                .unwrap_or_else(|| self.lower_call_keywords(kwargs, false));
+            let dest = self.fresh(span(e), None);
+            self.emit(MirInstr::ConstructTypeParam {
+                dest,
+                param,
+                kwargs,
+                kwarg_places,
+                element: None,
+            });
+            return Some(dest);
+        }
+        if let Some(dest) = self.pack_element_construction(e, node, param_args) {
+            return Some(dest);
+        }
+        if let Some(mojito_checked::checked::SemanticAdjustment::ConstructType { ty }) = node
+            .adjustments
+            .iter()
+            .find(|adjustment| {
+                matches!(
+                    adjustment,
+                    mojito_checked::checked::SemanticAdjustment::ConstructType { .. }
+                )
+            })
+            .cloned()
+        {
+            let dest = self.fresh_typed(span(e), None, ty.clone());
+            self.emit(MirInstr::ConstructType { dest, ty });
+            return Some(dest);
+        }
+        if let Some(mojito_checked::checked::SemanticAdjustment::SizeOf { ty }) = node
+            .adjustments
+            .iter()
+            .find(|adjustment| {
+                matches!(
+                    adjustment,
+                    mojito_checked::checked::SemanticAdjustment::SizeOf { .. }
+                )
+            })
+            .cloned()
+        {
+            // A symbolic type has no layout to take the size of; the
+            // elaborator substitutes the instance's type, and only the
+            // erased oracle reaches the template's own instruction.
+            let dest = self.fresh_typed(span(e), None, Ty::int());
+            self.emit(MirInstr::SizeOf { dest, ty });
+            return Some(dest);
+        }
+        if let Some(mojito_checked::checked::SemanticAdjustment::ParamListAddress { values }) = node
+            .adjustments
+            .iter()
+            .find(|adjustment| {
+                matches!(
+                    adjustment,
+                    mojito_checked::checked::SemanticAdjustment::ParamListAddress { .. }
+                )
+            })
+            .cloned()
+        {
+            return Some(self.param_list_address(e, values));
+        }
+        if let Some(mojito_checked::checked::SemanticAdjustment::TypeName { text, ty }) = node
+            .adjustments
+            .iter()
+            .find(|adjustment| {
+                matches!(
+                    adjustment,
+                    mojito_checked::checked::SemanticAdjustment::TypeName { .. }
+                )
+            })
+            .cloned()
+        {
+            // A type naming a compile-time parameter is spelled per
+            // instance, so the template carries the type to the elaborator.
+            if mojito_types::types::is_symbolic(&ty) {
+                let dest = self.fresh_typed(span(e), None, Ty::string_literal());
+                self.emit(MirInstr::TypeName { dest, ty });
+                return Some(dest);
+            }
+            return Some(self.constant(e, Const::Str(text)));
+        }
+        // A checked pointer construction materializes the frame/slot
+        // handle for its source place; the checked pointer type keeps
+        // the origin while the runtime value erases it.
+        if node.adjustments.iter().any(|adjustment| {
+            matches!(
+                adjustment,
+                mojito_checked::checked::SemanticAdjustment::PointerToPlace { .. }
+            )
+        }) {
+            let value = &kwargs
+                .first()
+                .expect("checked pointer construction has a 'to=' argument")
+                .value;
+            let place = self.place(value);
+            let dest = self.fresh(span(e), Some(place.root));
+            self.emit(MirInstr::MakeRef { dest, place });
+            return Some(dest);
+        }
+        // Compiler-private inline uninit-storage construction:
+        // uninitialized, or holding a moved initial payload.
+        if let Some(init) = node
+            .adjustments
+            .iter()
+            .find_map(|adjustment| match adjustment {
+                mojito_checked::checked::SemanticAdjustment::UninitStorageMake { init, .. } => {
+                    Some(*init)
+                }
+                _ => None,
+            })
+        {
+            let init = init
+                .then(|| self.expr(args.first().expect("checked storage construction payload")));
+            let dest = self.fresh(span(e), None);
+            self.emit(MirInstr::UninitStorage { dest, init });
+            return Some(dest);
+        }
+        if let Some(mojito_checked::checked::SemanticAdjustment::ConstructVariant {
+            alternatives,
+            index,
+        }) = node
+            .adjustments
+            .iter()
+            .find(|adjustment| {
+                matches!(
+                    adjustment,
+                    mojito_checked::checked::SemanticAdjustment::ConstructVariant { .. }
+                )
+            })
+            .cloned()
+        {
+            let value = self.expr(
+                args.first()
+                    .expect("checked Variant construction has one payload"),
+            );
+            let dest = self.fresh(span(e), None);
+            self.emit(MirInstr::MakeVariant {
+                dest,
+                alternatives,
+                index,
+                value,
+            });
+            return Some(dest);
+        }
+        if let Some(mojito_checked::checked::SemanticAdjustment::ConstructVariantInitWith {
+            alternatives,
+            index,
+            payload,
+        }) = node
+            .adjustments
+            .iter()
+            .find(|adjustment| {
+                matches!(
+                    adjustment,
+                    mojito_checked::checked::SemanticAdjustment::ConstructVariantInitWith { .. }
+                )
+            })
+            .cloned()
+        {
+            // Invoke the zero-parameter factory, then wrap its result:
+            // the payload temporary is consumed by the construction.
+            let factory = self.expr(
+                &kwargs
+                    .first()
+                    .expect("checked Variant(init_with=) has one factory")
+                    .value,
+            );
+            let payload = self.fresh_typed(span(e), None, payload);
+            self.emit(MirInstr::CallIndirect {
+                dest: payload,
+                callee: factory,
+                resolved: None,
+                raises: None,
+                args: Vec::new(),
+                kwargs: Vec::new(),
+                callee_place: None,
+                arg_places: Vec::new(),
+                kwarg_places: Vec::new(),
+                capture_accesses: Vec::new(),
+                param_arg_regs: Vec::new(),
+                param_decls: Vec::new(),
+                instantiated_contract: None,
+                instantiated_args: Vec::new(),
+                spread: None,
+            });
+            let dest = self.fresh(span(e), None);
+            self.emit(MirInstr::MakeVariant {
+                dest,
+                alternatives,
+                index,
+                value: payload,
+            });
+            self.emit_nested_closure_argument_keepalives(args, kwargs);
+            return Some(dest);
+        }
+        None
     }
 
     pub(super) fn invoke_expr(
         &mut self,
         e: &Expr,
+        node: &CheckedExpr,
         callee: &Expr,
         param_args: &[ParamArg],
         args: &[Expr],
         kwargs: &[KwArg],
     ) -> Reg {
-        if let Some(dest) = self.pack_element_construction(e, param_args) {
+        if let Some(dest) = self.pack_element_construction(e, node, param_args) {
             return dest;
         }
         // `pointer.unsafe_origin_cast[...]()` retypes provenance only: the
         // runtime value is the receiver, unchanged, and the origin
         // parameter argument never lowers (origins erase).
-        if self.checked_adjustments(e).iter().any(|adjustment| {
+        if node.adjustments.iter().any(|adjustment| {
             matches!(
                 adjustment,
                 mojito_checked::checked::SemanticAdjustment::PointerOriginCast { .. }
@@ -371,12 +425,12 @@ impl Flatten<'_> {
         // Parameterized SIMD methods (`v.cast[DType.<dt>]()`) carry
         // their checker-resolved payload in the adjustment; the
         // receiver is the member callee's object.
-        let simd_cast = self
-            .checked_adjustments(e)
-            .into_iter()
+        let simd_cast = node
+            .adjustments
+            .iter()
             .find_map(|adjustment| match adjustment {
                 mojito_checked::checked::SemanticAdjustment::SimdCast { dtype, width } => {
-                    Some((dtype, width))
+                    Some((dtype.clone(), width.clone()))
                 }
                 _ => None,
             });
@@ -395,12 +449,12 @@ impl Flatten<'_> {
         }
         // `v.to_bits[DType.<dt>]()` lowers like `cast`, as a lane-wise
         // bit reinterpretation of the member callee's object.
-        let simd_to_bits = self
-            .checked_adjustments(e)
-            .into_iter()
+        let simd_to_bits = node
+            .adjustments
+            .iter()
             .find_map(|adjustment| match adjustment {
                 mojito_checked::checked::SemanticAdjustment::SimdToBits { dtype, width } => {
-                    Some((dtype, width))
+                    Some((dtype.clone(), width.clone()))
                 }
                 _ => None,
             });
@@ -417,12 +471,12 @@ impl Flatten<'_> {
             });
             return dest;
         }
-        let simd_shuffle = self
-            .checked_adjustments(e)
-            .into_iter()
+        let simd_shuffle = node
+            .adjustments
+            .iter()
             .find_map(|adjustment| match adjustment {
                 mojito_checked::checked::SemanticAdjustment::SimdShuffle { mask, joined } => {
-                    Some((mask, joined))
+                    Some((mask.clone(), *joined))
                 }
                 _ => None,
             });
@@ -440,18 +494,23 @@ impl Flatten<'_> {
             });
             return dest;
         }
-        if let Some(operation) = self.checked_adjustments(e).into_iter().find(|adjustment| {
-            matches!(
-                adjustment,
-                mojito_checked::checked::SemanticAdjustment::VariantIs { .. }
-                    | mojito_checked::checked::SemanticAdjustment::VariantProject { .. }
-                    | mojito_checked::checked::SemanticAdjustment::VariantSet { .. }
-                    | mojito_checked::checked::SemanticAdjustment::VariantSetInitWith { .. }
-                    | mojito_checked::checked::SemanticAdjustment::VariantTake { .. }
-                    | mojito_checked::checked::SemanticAdjustment::VariantDeinitWith { .. }
-                    | mojito_checked::checked::SemanticAdjustment::VariantReplace { .. }
-            )
-        }) {
+        if let Some(operation) = node
+            .adjustments
+            .iter()
+            .find(|adjustment| {
+                matches!(
+                    adjustment,
+                    mojito_checked::checked::SemanticAdjustment::VariantIs { .. }
+                        | mojito_checked::checked::SemanticAdjustment::VariantProject { .. }
+                        | mojito_checked::checked::SemanticAdjustment::VariantSet { .. }
+                        | mojito_checked::checked::SemanticAdjustment::VariantSetInitWith { .. }
+                        | mojito_checked::checked::SemanticAdjustment::VariantTake { .. }
+                        | mojito_checked::checked::SemanticAdjustment::VariantDeinitWith { .. }
+                        | mojito_checked::checked::SemanticAdjustment::VariantReplace { .. }
+                )
+            })
+            .cloned()
+        {
             return self.variant_operation(e, callee, &operation, args, kwargs);
         }
         // `a.b[i](x)`: the member-base element call re-dispatched by
@@ -468,24 +527,8 @@ impl Flatten<'_> {
             let receiver = self.lower_call_receiver(callee);
             return self.lower_element_invocation(e, receiver, plan, &indices, args, kwargs);
         }
-        if let Some(param_decls) = self
-            .checked_adjustments(e)
-            .into_iter()
-            .find_map(|adjustment| match adjustment {
-                mojito_checked::checked::SemanticAdjustment::ParameterizedMethodCall {
-                    param_decls,
-                } => Some(param_decls),
-                _ => None,
-            })
-        {
-            return self.parameterized_method_call(
-                e,
-                callee,
-                param_args,
-                args,
-                kwargs,
-                param_decls,
-            );
+        if parameterized_method_decls(node).is_some() {
+            return self.parameterized_method_call(e, node, callee, param_args, args, kwargs);
         }
         let mut callee_place = self.callable_receiver_place(callee);
         let callable_ty = self.checked_ty(callee);
@@ -510,7 +553,7 @@ impl Flatten<'_> {
             callee_place = place.is_typed().then_some(place);
         }
         let param_arg_regs = self.indirect_param_arg_regs(e, param_args);
-        let resolved = self.resolved_callable(e);
+        let resolved = callable_target(&node.adjustments);
         let raises = self.checked_raises(e);
         self.emit_indirect_invocation(
             e,
@@ -531,6 +574,7 @@ impl Flatten<'_> {
     fn direct_call(
         &mut self,
         e: &Expr,
+        node: &CheckedExpr,
         name: &str,
         param_args: &[ParamArg],
         args: &[Expr],
@@ -555,8 +599,8 @@ impl Flatten<'_> {
         // with an explicitly literal-typed result — the surrounding
         // implicit-conversion wrap materializes the nominal struct.
         let stringify = mojito_symbol::symbol::is_stdlib_string_struct(name)
-            && (self.resolved_callable(e).as_deref() == Some("String")
-                || self.checked_ty(e) == Some(Ty::string_literal()));
+            && (callable_target(&node.adjustments).as_deref() == Some("String")
+                || node.ty.clone() == Some(Ty::string_literal()));
         // A call's argument list anchors nested loan-carrying
         // temporaries unless another channel already carries their
         // loans (see `call_anchors_arguments`). A construction's
@@ -569,7 +613,7 @@ impl Flatten<'_> {
         let saved_anchor_permission = self.allow_argument_anchors;
         self.allow_argument_anchors = (stringify
             || !matches!(
-                self.checked_ty(e).as_ref().map(Ty::kind),
+                node.ty.clone().as_ref().map(Ty::kind),
                 Some(TyKind::Struct(constructed, _)) if *constructed == *name
             ))
             && self.call_anchors_arguments(e);
@@ -577,14 +621,14 @@ impl Flatten<'_> {
         self.allow_argument_anchors = saved_anchor_permission;
         let copy_construction = args.is_empty()
             && matches!(
-                self.checked_ty(e).as_ref().map(Ty::kind),
+                node.ty.clone().as_ref().map(Ty::kind),
                 Some(TyKind::Struct(constructed, _)) if *constructed == *name
             );
         let (kw, kwarg_places) = copy_construction
             .then(|| self.copy_construction_keywords(kwargs))
             .flatten()
             .unwrap_or_else(|| self.lower_call_keywords(kwargs, view_result));
-        let (regs, arg_places, kw, kwarg_places) = match self.checked_ty(e).as_ref().map(Ty::kind) {
+        let (regs, arg_places, kw, kwarg_places) = match node.ty.clone().as_ref().map(Ty::kind) {
             Some(TyKind::Struct(constructed, _)) if *constructed == *name => self
                 .fieldwise_keywords_positional(constructed, (regs, arg_places, kw, kwarg_places)),
             _ => (regs, arg_places, kw, kwarg_places),
@@ -597,7 +641,7 @@ impl Flatten<'_> {
         let target = if stringify {
             "String".to_string()
         } else {
-            self.resolved_callable(e)
+            callable_target(&node.adjustments)
                 .unwrap_or_else(|| self.overloaded_name(name, args.len()))
         };
         let d = if literal_result {
@@ -775,15 +819,16 @@ impl Flatten<'_> {
     fn parameterized_method_call(
         &mut self,
         e: &Expr,
+        node: &CheckedExpr,
         callee: &Expr,
         param_args: &[ParamArg],
         args: &[Expr],
         kwargs: &[KwArg],
-        param_decls: Vec<ParamDecl>,
     ) -> Reg {
         let ExprKind::Member { object, field } = &callee.kind else {
             unreachable!("checked parameterized method call has a member callee")
         };
+        let param_decls = parameterized_method_decls(node).unwrap_or_default();
         // A parameterized **static** call (`Bag[Int, String].has[Bool]()`,
         // `Lanes.ident[Int](3)`): the receiver is a type, so this
         // is a call on the checker-selected symbol with the
@@ -807,9 +852,8 @@ impl Flatten<'_> {
             self.allow_argument_anchors = saved_anchor_permission;
             let (kw, kwarg_places) = self.lower_call_keywords(kwargs, false);
             let dest = self.fresh(span(e), None);
-            let target = self
-                .resolved_callable(e)
-                .unwrap_or_else(|| format!("{name}.{field}"));
+            let target =
+                callable_target(&node.adjustments).unwrap_or_else(|| format!("{name}.{field}"));
             self.emit_call_invalidations(e, args, kwargs);
             let receiver = self.static_receiver(object);
             self.emit(MirInstr::Call {
@@ -866,7 +910,7 @@ impl Flatten<'_> {
             dest,
             recv,
             method: field.clone(),
-            resolved: self.resolved_callable(e),
+            resolved: callable_target(&node.adjustments),
             raises: self.checked_raises(e),
             reference_result: (self
                 .checked_call_contract(e)
@@ -887,7 +931,7 @@ impl Flatten<'_> {
             kwarg_places,
             capture_accesses: self.checked_call_capture_accesses(e),
             param_arg_regs,
-            param_decls,
+            param_decls: param_decls.to_vec(),
             instantiated_args,
             spread: spread_position(args),
         });
@@ -900,16 +944,21 @@ impl Flatten<'_> {
     /// `Ts[i]()` or `Self.Ts[i]()` over a symbolic pack: the element
     /// construction the checker recorded, its index the call's one
     /// parameter argument.
-    fn pack_element_construction(&mut self, e: &Expr, param_args: &[ParamArg]) -> Option<Reg> {
-        let pack =
-            self.checked_adjustments(e)
-                .into_iter()
-                .find_map(|adjustment| match adjustment {
-                    mojito_checked::checked::SemanticAdjustment::ConstructPackElement { pack } => {
-                        Some(pack)
-                    }
-                    _ => None,
-                })?;
+    fn pack_element_construction(
+        &mut self,
+        e: &Expr,
+        node: &CheckedExpr,
+        param_args: &[ParamArg],
+    ) -> Option<Reg> {
+        let pack = node
+            .adjustments
+            .iter()
+            .find_map(|adjustment| match adjustment {
+                mojito_checked::checked::SemanticAdjustment::ConstructPackElement { pack } => {
+                    Some(pack.clone())
+                }
+                _ => None,
+            })?;
         // The elaborator selects the element by the index's expression,
         // a literal one included, which a forwarded argument leaves out.
         let element = self
@@ -966,4 +1015,17 @@ impl Flatten<'_> {
         });
         dest
     }
+}
+
+/// The declared compile-time parameters of the parameterized method call
+/// node `node` is (`recv.method[params](args)`), as the check recorded them.
+fn parameterized_method_decls(node: &CheckedExpr) -> Option<&[ParamDecl]> {
+    node.adjustments
+        .iter()
+        .find_map(|adjustment| match adjustment {
+            mojito_checked::checked::SemanticAdjustment::ParameterizedMethodCall {
+                param_decls,
+            } => Some(&param_decls[..]),
+            _ => None,
+        })
 }

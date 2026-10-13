@@ -681,19 +681,23 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `lower_expr/{entry,ctrl,expr,expr_call,expr_method,expr_access,calls}.rs`)
   owns expression lowering (the `expr_unconverted`
   dispatcher, collections/comprehensions, nested closures, the
-  field-invocation indirect-call branch). `expr_unconverted` in `expr.rs` is
-  a dispatch table over `ExprKind`: each arm calls one `Flatten` method.
+  field-invocation indirect-call branch). `expr_unconverted` in `expr.rs`
+  first dispatches on the node's `CheckedOp` for literals and names
+  (`literal_or_name`) and for calls, invocations, method calls, and callable
+  type applications (`call_family`, `call_op`), whose entry points take the
+  node and read its adjustments; the rest is a dispatch table over
+  `ExprKind`: each arm calls one `Flatten` method.
   `expr.rs` keeps the variable-read, operator, and literal-aggregate arms
   (a t-string reaching it is an explicit `Unsupported` boundary); `expr_call.rs` owns direct calls (`call_expr`,
-  `direct_call`) and callable-value invocations (`invoke_expr`,
+  `checked_construction`, `direct_call`) and callable-value invocations (`invoke_expr`,
   `variant_operation`, `parameterized_method_call`); `expr_method.rs` owns
   method calls (`method_call_expr`, its value and storage special forms,
   `ordinary_method_call`, `type_receiver_name`); `expr_access.rs` owns
   member, subscript, slice, and variant-projection reads. The module
   installs merged caller-side
   `EstablishLoans` — domain-keyed for interior-precise destinations — for
-  checked call-transfer records (`install_call_transfers`) after free,
-  method, indirect, and nested calls.
+  checked call-transfer records (`install_call_transfers`, reading the call
+  node's `call_transfers`) after free, method, indirect, and nested calls.
 - `mir/lower_stmt.rs` owns statement, place, subscript-assignment, `try`-region,
   and terminator lowering, plus the borrowed-iteration source binding and loan
   re-establishment helpers shared with comprehension lowering.
@@ -970,7 +974,8 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `bracket_argument_slots`, the one bracket-to-declaration binding) fills
   `GenericInstantiation::folded_arguments` (a construction's and
   `external_call`'s included) and
-  `MethodInstantiation::folded_arguments` with the spans of arguments solved
+  `MethodInstantiation::folded_arguments` with the positions, among the
+  call's bracket arguments as written, of arguments solved
   to `CtValue::is_parameter_attribute` values (a string, or a closed
   scalar, vector, or aggregate), carried to MIR as
   `SemanticAdjustment::FoldedParameterArguments`; `Flatten::param_arg_regs`
@@ -1132,8 +1137,8 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   The same holds for such a binding as a method receiver
   (`lane.is_floating_point()` over `comptime lane = dt`):
   `Flatten::lower_call_receiver` (`mir/calls.rs`) reads it as a value, not
-  a place, and `type_receiver_name` never takes a checked binding for a
-  type name. The header's `source` is the
+  a place, and `type_receiver_name` takes a receiver for a type only when
+  its node is a name the check bound to nothing and typed as no value. The header's `source` is the
   `mojito_checked::checked::ComptimeSequence` (`Range { start, stop, step }`
   or `Elements(expr)`, whose `binder_meta` types the binder; the elements a
   value yields are `CtValue::comptime_iteration_elements`, `ct.rs`, which the

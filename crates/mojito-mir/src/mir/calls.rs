@@ -102,7 +102,9 @@ impl Flatten<'_> {
                     mojito_checked::checked::SemanticAdjustment::BorrowRefArguments { .. }
                 )
             })
-            || self.call_transfers.contains_key(&expression.source_span()))
+            || self
+                .checked_node(expression)
+                .is_some_and(|node| !node.call_transfers.is_empty()))
     }
 
     /// `view_result`: the enclosing call carries `BorrowViewResult`, so a
@@ -925,7 +927,7 @@ impl Flatten<'_> {
         // caller storage through its `ref [origin]` argument; the method body
         // reads through the view, so the source must outlive the call even at
         // its last use — the same hidden anchor a chained view result gets.
-        if matches!(expression.kind, ExprKind::Call { .. })
+        if matches!(self.op_of(expression), Some(CheckedOp::Call { .. }))
             && matches!(
                 self.checked_ty(expression).as_ref().map(Ty::kind),
                 Some(TyKind::Struct(..))
@@ -991,10 +993,7 @@ impl Flatten<'_> {
     ) -> (Reg, Option<MirPlace>) {
         let (value, place) = self.lower_call_receiver(receiver);
         if place.is_some()
-            || !matches!(
-                receiver.kind,
-                ExprKind::Call { .. } | ExprKind::MethodCall { .. } | ExprKind::Invoke { .. }
-            )
+            || !self.is_call(receiver)
             || self.checked_call_contract(call).is_some_and(|contract| {
                 matches!(
                     contract.receiver_convention,
@@ -1044,10 +1043,8 @@ impl Flatten<'_> {
         object: &Expr,
         field: &str,
     ) -> Option<Reg> {
-        if !matches!(
-            object.kind,
-            ExprKind::Call { .. } | ExprKind::MethodCall { .. } | ExprKind::Invoke { .. }
-        ) || self.reference_result(object).is_some()
+        if !self.is_call(object)
+            || self.reference_result(object).is_some()
             || mojito_checked::checked::materialized_borrow_owner(&self.checked_adjustments(object))
                 .is_some()
         {
@@ -1104,11 +1101,7 @@ impl Flatten<'_> {
         adjustments: &[mojito_checked::checked::SemanticAdjustment],
         converted: bool,
     ) -> Reg {
-        let fresh_temporary = converted
-            || matches!(
-                expression.kind,
-                ExprKind::Call { .. } | ExprKind::MethodCall { .. } | ExprKind::Invoke { .. }
-            );
+        let fresh_temporary = converted || self.is_call(expression);
         if !fresh_temporary
             || mojito_checked::checked::materialized_borrow_owner(adjustments).is_some()
             || !self.aggregate_borrows(expression).is_empty()
@@ -1335,8 +1328,8 @@ impl Flatten<'_> {
         );
         let call_temporary = self.allow_argument_anchors
             && matches!(
-                expression.kind,
-                ExprKind::Call { .. } | ExprKind::MethodCall { .. }
+                self.op_of(expression),
+                Some(CheckedOp::Call { .. } | CheckedOp::MethodCall { .. })
             );
         // A converted temporary's view is already bound to its
         // `$conv_view_r` slot by the conversion lowering; a second anchor
@@ -1457,11 +1450,9 @@ impl Flatten<'_> {
                 },
             };
         }
-        matches!(
-            root.kind,
-            ExprKind::Call { .. } | ExprKind::MethodCall { .. } | ExprKind::Invoke { .. }
-        ) && mojito_checked::checked::materialized_borrow_owner(&self.checked_adjustments(root))
-            .is_some()
+        self.is_call(root)
+            && mojito_checked::checked::materialized_borrow_owner(&self.checked_adjustments(root))
+                .is_some()
     }
 
     /// The place of a call result the checker materialized as the holder of
@@ -1470,10 +1461,7 @@ impl Flatten<'_> {
     /// storage alive while the projection chain reads or writes through it.
     /// Any other call result is a value, not a place.
     pub(super) fn materialized_temporary_base_place(&mut self, base: &Expr) -> Option<MirPlace> {
-        if !matches!(
-            base.kind,
-            ExprKind::Call { .. } | ExprKind::MethodCall { .. } | ExprKind::Invoke { .. }
-        ) {
+        if !self.is_call(base) {
             return None;
         }
         let owner =

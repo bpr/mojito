@@ -2173,7 +2173,7 @@ impl Checker {
     }
 }
 
-/// The value expressions of the bracket arguments `param_args` supplies to a
+/// The positions of the bracket arguments `param_args` supplies to a
 /// non-variadic value parameter of `decls` solved to a closed value
 /// ([`CtValue::is_parameter_attribute`]). Mojo's call carries such an
 /// argument as a parameter attribute alone; the call's instantiated arguments
@@ -2183,11 +2183,12 @@ pub(super) fn folded_parameter_arguments(
     decls: &[ParamDecl],
     param_args: &[mojito_ast::ast::ParamArg],
     arguments: &[TyArg],
-) -> Vec<SourceSpan> {
+) -> Vec<usize> {
     param_args
         .iter()
+        .enumerate()
         .zip(bracket_argument_slots(decls, param_args))
-        .filter_map(|(argument, index)| {
+        .filter_map(|((position, argument), index)| {
             let index = index?;
             let ParamDecl::Value {
                 variadic: false, ..
@@ -2198,17 +2199,14 @@ pub(super) fn folded_parameter_arguments(
             let Some(TyArg::Val(value)) = arguments.get(index) else {
                 return None;
             };
-            let expression = match argument {
-                mojito_ast::ast::ParamArg::Value(expression) => expression,
-                mojito_ast::ast::ParamArg::Named { value, .. } => match &**value {
-                    mojito_ast::ast::ParamArg::Value(expression) => expression,
-                    _ => return None,
-                },
-                mojito_ast::ast::ParamArg::Type(_) => return None,
+            let is_value = match argument {
+                mojito_ast::ast::ParamArg::Value(_) => true,
+                mojito_ast::ast::ParamArg::Named { value, .. } => {
+                    matches!(&**value, mojito_ast::ast::ParamArg::Value(_))
+                }
+                mojito_ast::ast::ParamArg::Type(_) => false,
             };
-            value
-                .is_parameter_attribute()
-                .then(|| expression.source_span())
+            (is_value && value.is_parameter_attribute()).then_some(position)
         })
         .collect()
 }

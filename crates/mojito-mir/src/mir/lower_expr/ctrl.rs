@@ -291,7 +291,7 @@ impl Flatten<'_> {
             }
         }
 
-        let Some(transfers) = self.call_transfers.get(&e.source_span()).cloned() else {
+        let Some(transfers) = self.checked_node(e).map(|node| node.call_transfers.clone()) else {
             return;
         };
         for transfer in transfers {
