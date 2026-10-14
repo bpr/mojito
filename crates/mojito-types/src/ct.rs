@@ -224,6 +224,60 @@ pub fn bool_lane_binop(op: mojito_ast::ast::InfixOp, a: bool, b: bool) -> Option
     }
 }
 
+/// The target of a built-in scalar conversion call: `Int(x)`, `UInt(x)`,
+/// `Float64(x)`, or `Bool(x)`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ScalarConversion {
+    Int,
+    UInt,
+    Float64,
+    Bool,
+}
+
+impl ScalarConversion {
+    /// The conversion a builtin callee name denotes, or `None` for any other
+    /// name.
+    pub fn named(name: &str) -> Option<Self> {
+        Some(match name {
+            "Int" => Self::Int,
+            "UInt" => Self::UInt,
+            "Float64" => Self::Float64,
+            "Bool" => Self::Bool,
+            _ => return None,
+        })
+    }
+}
+
+/// Convert one scalar lane to `target`, as upstream's inlined
+/// `SIMD.__init__`/`Bool.__init__` do.
+///
+/// An integer converts by wrapping (or rounding to `Float64`), a float
+/// truncates toward zero with Rust's saturating casts (`fptosi.sat`), a
+/// `bool` is 0/1, and `Bool(x)` is `x != 0`, so `NaN` is `True`.
+pub fn convert_lane(lane: &CtLane, target: ScalarConversion) -> CtValue {
+    match (lane, target) {
+        (CtLane::Int(n), ScalarConversion::Int) => CtValue::Int(*n as i64),
+        (CtLane::Int(n), ScalarConversion::UInt) => CtValue::UInt(*n as u64),
+        (CtLane::Int(n), ScalarConversion::Float64) => CtValue::Float((*n as f64).to_bits()),
+        (CtLane::Int(n), ScalarConversion::Bool) => CtValue::Bool(*n != 0),
+        (CtLane::Float(bits), target) => {
+            let x = f64::from_bits(*bits);
+            match target {
+                ScalarConversion::Int => CtValue::Int(x as i64),
+                ScalarConversion::UInt => CtValue::UInt(x as u64),
+                ScalarConversion::Float64 => CtValue::Float(*bits),
+                ScalarConversion::Bool => CtValue::Bool(x != 0.0),
+            }
+        }
+        (CtLane::Bool(b), ScalarConversion::Int) => CtValue::Int(i64::from(*b)),
+        (CtLane::Bool(b), ScalarConversion::UInt) => CtValue::UInt(u64::from(*b)),
+        (CtLane::Bool(b), ScalarConversion::Float64) => {
+            CtValue::Float(f64::from(u8::from(*b)).to_bits())
+        }
+        (CtLane::Bool(b), ScalarConversion::Bool) => CtValue::Bool(*b),
+    }
+}
+
 /// A compile-time value.
 ///
 /// Scalar values drive folding; `Tuple`/`List` let `comptime for` iterate
@@ -639,6 +693,41 @@ impl CtValue {
             | Self::Deferred(_)
             | Self::Marker(_) => return None,
         })
+    }
+
+    /// The compile-time fold of a built-in scalar conversion of this value
+    /// to `target`, by [`convert_lane`]; a numeric literal converts only to
+    /// `Bool` (`IntLiteral.__bool__`), its numeric materialization being
+    /// [`Self::materialize_as`]'s. `None` for a non-scalar, and for a float
+    /// converted to `Int`/`UInt` that is not finite or whose truncation is
+    /// outside the target's range: the pin's interpreter refuses that
+    /// `pop.cast`, and only run time gives it the saturating value.
+    pub fn folded_conversion(&self, target: ScalarConversion) -> Option<Self> {
+        let lane = match self {
+            Self::IntLiteral(value) if target == ScalarConversion::Bool => {
+                return Some(Self::Bool(!value.is_zero()));
+            }
+            Self::FloatLiteral(value) if target == ScalarConversion::Bool => {
+                return Some(Self::Bool(!value.is_zero()));
+            }
+            Self::Int(n) => CtLane::Int(i128::from(*n)),
+            Self::UInt(n) => CtLane::Int(i128::from(*n)),
+            Self::Float(bits) => CtLane::Float(*bits),
+            Self::Bool(b) => CtLane::Bool(*b),
+            Self::Simd { lanes, .. } if let [lane] = lanes.as_slice() => lane.clone(),
+            _ => return None,
+        };
+        let range = match target {
+            ScalarConversion::Int => Some(-(2f64.powi(63))..2f64.powi(63)),
+            ScalarConversion::UInt => Some(0.0..2f64.powi(64)),
+            ScalarConversion::Float64 | ScalarConversion::Bool => None,
+        };
+        if let (CtLane::Float(bits), Some(range)) = (&lane, range)
+            && !range.contains(&f64::from_bits(*bits).trunc())
+        {
+            return None;
+        }
+        Some(convert_lane(&lane, target))
     }
 
     /// Materialize an exact literal into the compile-time representation of a
@@ -1247,5 +1336,46 @@ mod tests {
         assert_eq!(lane_compare(InfixOp::Lt, f64::NAN, f64::NAN), Some(false));
         assert_eq!(bool_lane_binop(InfixOp::Lt, false, true), Some(true));
         assert_eq!(bool_lane_binop(InfixOp::Add, false, true), None);
+    }
+
+    #[test]
+    fn scalar_conversions_fold_as_the_vm_converts() {
+        use super::{CtValue, ScalarConversion as To};
+        let fold = |value: CtValue, to| value.folded_conversion(to);
+        let float = |x: f64| CtValue::Float(x.to_bits());
+        assert_eq!(
+            fold(CtValue::Int(-1), To::UInt),
+            Some(CtValue::UInt(u64::MAX))
+        );
+        assert_eq!(fold(float(3.5), To::Int), Some(CtValue::Int(3)));
+        assert_eq!(fold(float(-0.5), To::UInt), Some(CtValue::UInt(0)));
+        assert_eq!(fold(float(1e30), To::Int), None);
+        assert_eq!(fold(float(f64::NAN), To::Int), None);
+        assert_eq!(fold(float(-1.0), To::UInt), None);
+        assert_eq!(fold(float(f64::NAN), To::Bool), Some(CtValue::Bool(true)));
+        let lane = |dtype, lane| CtValue::Simd {
+            dtype,
+            lanes: vec![lane],
+        };
+        assert_eq!(
+            fold(lane(Dtype::UInt8, CtLane::Int(200)), To::Int),
+            Some(CtValue::Int(200))
+        );
+        let tenth = f64::from(0.1f32);
+        assert_eq!(
+            fold(
+                lane(Dtype::Float32, CtLane::Float(tenth.to_bits())),
+                To::Float64
+            ),
+            Some(float(tenth))
+        );
+        assert_eq!(
+            fold(CtValue::IntLiteral(IntLiteral::from(1)), To::Bool),
+            Some(CtValue::Bool(true))
+        );
+        assert_eq!(
+            fold(CtValue::IntLiteral(IntLiteral::from(7)), To::Int),
+            None
+        );
     }
 }

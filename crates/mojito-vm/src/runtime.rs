@@ -10,7 +10,8 @@ use std::io::{self, Write};
 
 use mojito_ast::ast::{Dtype, InfixOp, PrefixOp, Type};
 use mojito_types::ct::{
-    CtLane, bool_lane_binop, float_lane_binop, int_lane_binop, lane_compare, wrap_lane,
+    CtLane, CtValue, ScalarConversion, bool_lane_binop, convert_lane, float_lane_binop,
+    int_lane_binop, lane_compare, wrap_lane,
 };
 use mojito_types::types::{Ty, canonical_simd_ty};
 
@@ -930,21 +931,16 @@ pub fn builtin_convert(name: &str, v: Value) -> Result<Value, RuntimeError> {
         }
         _ => {}
     }
-    let (as_i, as_u, as_f, as_bool) = match v {
-        Value::Int(n) => (n, n as u64, n as f64, n != 0),
-        Value::UInt(n) => (n as i64, n, n as f64, n != 0),
-        Value::Float64(x) => (x as i64, x as u64, x, x != 0.0),
-        Value::Bool(b) => (b as i64, b as u64, if b { 1.0 } else { 0.0 }, b),
+    let lane = match v {
+        Value::Int(n) => CtLane::Int(i128::from(n)),
+        Value::UInt(n) => CtLane::Int(i128::from(n)),
+        Value::Float64(x) => CtLane::Float(x.to_bits()),
+        Value::Bool(b) => CtLane::Bool(b),
         // A width-1 SIMD value is a scalar alias (`UInt8`, `Byte`, ...).
         Value::Simd { ref lanes, .. } if lanes.width() == 1 => match lanes {
-            SimdLanes::Int(v) => (v[0] as i64, v[0] as u64, v[0] as f64, v[0] != 0),
-            SimdLanes::Float(v) => (v[0] as i64, v[0] as u64, v[0], v[0] != 0.0),
-            SimdLanes::Bool(v) => (
-                i64::from(v[0]),
-                u64::from(v[0]),
-                if v[0] { 1.0 } else { 0.0 },
-                v[0],
-            ),
+            SimdLanes::Int(v) => CtLane::Int(v[0]),
+            SimdLanes::Float(v) => CtLane::Float(v[0].to_bits()),
+            SimdLanes::Bool(v) => CtLane::Bool(v[0]),
         },
         other => {
             return Err(RuntimeError::TypeError(format!(
@@ -954,12 +950,18 @@ pub fn builtin_convert(name: &str, v: Value) -> Result<Value, RuntimeError> {
             )));
         }
     };
-    Ok(match name {
-        "Int" => Value::Int(as_i),
-        "UInt" => Value::UInt(as_u),
-        "Bool" => Value::Bool(as_bool),
-        _ => Value::Float64(as_f), // "Float64"
-    })
+    let target = ScalarConversion::named(name).ok_or_else(|| {
+        RuntimeError::TypeError(format!("{name}() is not a built-in scalar conversion"))
+    })?;
+    match convert_lane(&lane, target) {
+        CtValue::Int(n) => Ok(Value::Int(n)),
+        CtValue::UInt(n) => Ok(Value::UInt(n)),
+        CtValue::Float(bits) => Ok(Value::Float64(f64::from_bits(bits))),
+        CtValue::Bool(b) => Ok(Value::Bool(b)),
+        other => Err(RuntimeError::TypeError(format!(
+            "{name}() produced the non-scalar {other:?}"
+        ))),
+    }
 }
 
 /// The intrinsic behind `math.floor`/`ceil`/`trunc` — i.e. the `Floorable`/

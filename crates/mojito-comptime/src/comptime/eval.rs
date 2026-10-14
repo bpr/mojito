@@ -4,6 +4,7 @@
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
+use mojito_types::ct::ScalarConversion;
 use mojito_types::types::TyKind;
 
 impl Elab<'_> {
@@ -582,21 +583,22 @@ impl Elab<'_> {
                     None if ty == TyKind::Bool => CtValue::Bool(false),
                     None => CtValue::IntLiteral(0.into()),
                 };
-                // A construction converts between the numeric types
-                // (`Float64(n)`, `Int(x)`), as the pin's initializers do.
-                let value = match (value, ty.kind()) {
-                    (CtValue::Int(value), TyKind::Float64) => {
-                        CtValue::Float((value as f64).to_bits())
-                    }
-                    (CtValue::UInt(value), TyKind::Float64) => {
-                        CtValue::Float((value as f64).to_bits())
-                    }
-                    (CtValue::Float(bits), TyKind::Int) => {
-                        CtValue::Int(f64::from_bits(bits) as i64)
-                    }
-                    (value, _) => value,
+                // A literal is materialized at the type; any other scalar
+                // converts by the one built-in conversion rule (`UInt(n)`,
+                // `Bool(x)`), as the pin's initializers do.
+                let target = match ty.kind() {
+                    TyKind::Int => ScalarConversion::Int,
+                    TyKind::UInt => ScalarConversion::UInt,
+                    TyKind::Float64 => ScalarConversion::Float64,
+                    _ => ScalarConversion::Bool,
                 };
-                value.clone().materialize_as(&ty).ok_or_else(|| {
+                let literal = matches!(value, CtValue::IntLiteral(_) | CtValue::FloatLiteral(_));
+                let converted = if literal && target != ScalarConversion::Bool {
+                    value.clone().materialize_as(&ty)
+                } else {
+                    value.folded_conversion(target)
+                };
+                converted.ok_or_else(|| {
                     ComptimeError::NotComptime(format!(
                         "'{name}({value})' is not a compile-time value"
                     ))

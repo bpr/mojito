@@ -8,6 +8,16 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- `sccp` now folds a built-in scalar conversion of a constant
+  (`UInt(Int(7))`, `Float64(n)`, `Bool(1)`, R856), Mojito's counterpart of
+  the `pop.cast` upstream's inlined `SIMD.__init__` leaves, by one rule
+  (`ct::convert_lane`, `CtValue::folded_conversion`) that the VM's
+  `builtin_convert` and the comptime evaluator now share. A float
+  converted to `Int` or `UInt` out of range or not finite does not fold,
+  and is not a compile-time value, as the pin's interpreter refuses it;
+  `comptime` conversions such as `UInt(Int(7))`, `Bool(1)`, and
+  `Int(UInt(9))`, which the evaluator rejected, now fold.
+
 - A built-in scalar constructed from a literal (`UInt(7)`, `Int(7)`,
   `Float64(2.5)`, R854) is now that literal's materialization, as upstream's
   builtin-inline `SIMD.__init__(IntLiteral)` is the literal's conversion,

@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R857**.
+Next free ID: **R859**.
 
 ## Ordered Work
 
@@ -55,21 +55,6 @@ and Mojito does not yet. The entries below are that stage, staged in
 [`docs/pre-elaboration-optimization-plan.md`](pre-elaboration-optimization-plan.md),
 which names the upstream pass each one follows. Each is measured by the
 `measure` track's counters and checked by its on/off differential.
-
-- [ ] **R856 A built-in scalar conversion of a constant is not folded**
-
-  `UInt(Int(7))`, `Float64(Int(3))`, and `Bool(1)` stay a builtin `call`
-  over a constant operand, where upstream's `SCCP` folds them.
-  - Upstream's `SIMD.__init__[T: Intable]` and `Bool.__init__[T: Boolable]`
-    inline to `value.__int__()` / `__bool__()` plus a `pop.cast`.
-  - `MirInstr::folded_constant` could fold a `call` of `Int`/`UInt`/
-    `Float64`/`Bool` over a scalar constant by the VM's `builtin_convert`
-    rule, moved into `mojito-types` as R841 and R846 moved theirs.
-  - Probe: `print(UInt(Int(7)) // 2, Bool(1))`, whose `call UInt`,
-    `binary`, and `call Bool` survive `emit-mir`.
-  - Found while landing R854 (2026-10-14).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
 
 - [ ] **R855 A multi-lane `simd.make` of literals is not folded**
 
@@ -1836,6 +1821,24 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     module alone.
   - Probe: `conformance/probes/user_trait_named_like_prelude.mojo`.
   - Found while planning R488 (2026-10-08).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R858 A program's own `def Int` breaks a library body's builtin
+  `Int(...)`**
+
+  Problem: `def Int(x: Bool) -> Bool: return x` beside `print(Int(True))`
+  prints `True` at the pin and stops in Mojito with "in
+  `__module$std$$intrinsics$_uint_digits_at`: unsupported monomorphizing
+  `Int` return: expected `Bool`, found `Int`".
+  - The library's bare `call Int` resolves to the program's declaration
+    once both are linked, where at the pin the user's `Int` shadows the
+    builtin in its own module alone.
+  - The same holds with `MOJITO_PRE_ELABORATION=0`, so `sccp` is not the
+    cause; its conversion fold already declines a declared name.
+  - Probe: `def Int(x: Float64) -> Float64: return x + 1` and
+    `print(Int(Float64(2.0)))`, which prints `3.0` at the pin.
+  - Found while landing R856 (2026-10-14).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -5827,6 +5830,23 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     defaults and deletes `compiler_trait_declaration`; upstream's
     reflective `__eq__` default stays out, waiting on R278 and R269.
   - Found while landing R702 (2026-10-13).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R857 A built-in scalar conversion is a named builtin `call`, not a
+  cast op**
+
+  `Int(x)`, `UInt(x)`, `Float64(x)`, and `Bool(x)` stay a
+  `call { func: Int|UInt|Float64|Bool }` that the VM, Pliron, and `sccp`
+  each recognize by its bare name, where upstream inlines
+  `SIMD.__init__` and `Bool.__init__` to a `pop.cast` or a compare.
+  - A MIR cast instruction, lowered by the check, would carry the target
+    type and need no name lookup, so a program's own `def UInt` could not
+    be confused with it.
+  - It touches MIR text and the verifier (a MIR version bump), the VM's
+    `builtin_convert` dispatch, Pliron's `lower_convert`, and
+    `MirInstr::scalar_conversion`, which would become the cast's fold.
+  - Found while landing R856 (2026-10-14).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

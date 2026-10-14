@@ -4888,9 +4888,18 @@ second runs `SCCP` and a `Canonicalizer` again, so `PIPELINE` is
   and `~`, a literal materialized to `Int`, `UInt`, `Float64`, or a
   one-lane SIMD type, a one-element `simd.make` of a literal at any known
   width, or above one lane of a one-lane constant of its dtype or a `Bool`
-  fill (upstream's splat `SIMD.__init__`), and an identity
+  fill (upstream's splat `SIMD.__init__`), a built-in scalar conversion
+  (`MirInstr::scalar_conversion`: a bare `call` of `Int`, `UInt`,
+  `Float64`, or `Bool` with one argument that names no declared function,
+  as the VM and Pliron resolve it, Mojito's counterpart of the
+  `pop.cast` or compare upstream's inlined `SIMD.__init__` and
+  `Bool.__init__` leave), and an identity
   copy, over values whose constant kind is the one their register's type
-  names. A materialization or a one-lane `simd.make` folds to the value
+  names. A conversion folds by `CtValue::folded_conversion` over
+  `ct::convert_lane`, the rule the VM's `runtime::builtin_convert` and the
+  comptime evaluator call too, and folds nothing for a float converted to
+  `Int` or `UInt` that is out of range or not finite, which the pin's
+  interpreter refuses and only run time saturates. A materialization or a one-lane `simd.make` folds to the value
   `CtValue::materialize_as` gives, and a wider splat to that lane repeated
   (`param_expr::fold::splat_lanes`); the lane rule
   (`CtLane::of_int_literal`, `CtLane::of_float_literal`) is the VM's own,

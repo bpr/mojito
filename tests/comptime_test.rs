@@ -1664,3 +1664,15 @@ fn a_conformer_inherits_a_trait_default_as_a_forwarding_wrapper() {
     );
     assert_eq!(compiler.execute(&compiled).unwrap().output, "6 15\n");
 }
+
+#[test]
+fn comptime_scalar_conversions_follow_the_builtin_rule() {
+    // A conversion between `Int`, `UInt`, `Float64`, and `Bool` folds at
+    // compile time by the VM's rule, as the pin's interpreter folds the
+    // inlined `pop.cast`; an out-of-range float-to-integer one is refused.
+    let src = "comptime d = UInt(Int(7)) // 2\ncomptime b = Bool(1)\ncomptime c = Int(UInt(9))\ncomptime a = UInt(Float64(2.5))\ncomptime e = Float64(UInt(3))\n\ndef main():\n    print(d, b, c, a, e)\n";
+    assert_eq!(run(src).unwrap(), "3 True 9 2 3.0\n");
+    let huge = "comptime f = Int(Float64(1e30))\n\ndef main():\n    print(f)\n";
+    let err = run(huge).unwrap_err();
+    assert!(err.contains("is not a compile-time value"), "{err}");
+}

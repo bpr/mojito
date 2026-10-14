@@ -1936,6 +1936,40 @@ impl MirInstr {
         (reg_types.get(&dest.0) == Some(source) && copy_is_identity(source)).then_some(*value)
     }
 
+    /// The operand and target of a built-in scalar conversion
+    /// (`Int(x)`, `UInt(x)`, `Float64(x)`, `Bool(x)`): a `call` of the bare
+    /// builtin name that `declarations` declares no function under, with one
+    /// positional argument and nothing else, which the VM's `call_named` and
+    /// Pliron's `lower_call` treat as the cast upstream's inlined
+    /// `SIMD.__init__`/`Bool.__init__` leave behind.
+    pub fn scalar_conversion(
+        &self,
+        declarations: &MirDeclarations,
+    ) -> Option<(Reg, ScalarConversion)> {
+        let Self::Call {
+            func,
+            raises: None,
+            args,
+            kwargs,
+            param_arg_regs,
+            receiver: None,
+            instantiated_args,
+            spread: None,
+            ..
+        } = self
+        else {
+            return None;
+        };
+        let [arg] = args.as_slice() else {
+            return None;
+        };
+        let builtin = declarations.function(&func.0).is_none();
+        (builtin && kwargs.is_empty() && param_arg_regs.is_empty() && instantiated_args.is_empty())
+            .then(|| ScalarConversion::named(&func.0))
+            .flatten()
+            .map(|target| (*arg, target))
+    }
+
     /// The constant this instruction's one result always equals when its
     /// operands hold the constants `constant` gives: MLIR's `fold` returning
     /// an attribute, which upstream's `SCCP` asks.
@@ -1944,7 +1978,9 @@ impl MirInstr {
     /// `Float64`, or a one-lane SIMD type, a one-lane `simd.make` of a
     /// literal, a wider one-element `simd.make` of a literal, a one-lane
     /// constant of its dtype, or a `Bool` fill (upstream's splat
-    /// `SIMD.__init__`), and a forwarded copy fold, and only over values
+    /// `SIMD.__init__`), a built-in scalar conversion
+    /// ([`Self::scalar_conversion`], upstream's inlined `pop.cast`), and a
+    /// forwarded copy fold, and only over values
     /// whose constant kind is the one their register's type names. A
     /// materialization or a one-lane `simd.make` folds to the lane the VM
     /// materializes (`CtValue::materialize_as`), a wider splat to that lane
@@ -1956,12 +1992,15 @@ impl MirInstr {
     /// folder's; where it and the VM could disagree (a zero scalar divisor,
     /// an out-of-range shift, an overflowing `**`, a NaN or infinite scalar
     /// comparison, `Float64` `//`, `%`, `**`, float-lane `//`, `%`, `**`, and
-    /// `Bool` operators other than `==`/`!=`), nothing folds and the run-time
-    /// operation stays.
+    /// `Bool` operators other than `==`/`!=`, a float converted to `Int` or
+    /// `UInt` out of range or not finite), nothing folds and the run-time
+    /// operation stays. A scalar conversion folds by the VM's own rule
+    /// (`CtValue::folded_conversion`).
     pub fn folded_constant(
         &self,
         constant: impl Fn(Reg) -> Option<Const>,
         reg_types: &HashMap<u32, Ty>,
+        declarations: &MirDeclarations,
     ) -> Option<Const> {
         use mojito_types::param_expr::fold::{fold_infix, fold_invert, fold_neg, splat_lanes};
         let operand = |reg: Reg| const_ct_value(&constant(reg)?, reg_types.get(&reg.0)?);
@@ -2043,6 +2082,10 @@ impl MirInstr {
                 (dest, splat)
             }
             Self::CopyValue { dest, .. } => (dest, operand(self.forwarded_operand(reg_types)?)?),
+            Self::Call { dest, .. } => {
+                let (arg, target) = self.scalar_conversion(declarations)?;
+                (dest, operand(arg)?.folded_conversion(target)?)
+            }
             _ => return None,
         };
         ct_const(value, reg_types.get(&dest.0)?)
@@ -2413,6 +2456,7 @@ mod tests {
     fn folded_constant_folds_only_what_the_vm_computes_alike() {
         use mojito_common::literal::IntLiteral;
         use mojito_types::ct::CtLane;
+        let none = MirDeclarations::default();
         let ty = |kind| Ty::new(kind);
         let binary = |op, a: Const, b: Const, operand: TyKind, dest: TyKind| {
             let reg_types =
@@ -2428,6 +2472,7 @@ mod tests {
             .folded_constant(
                 |reg| [a.clone(), b.clone()].get(reg.0 as usize).cloned(),
                 &reg_types,
+                &none,
             )
         };
         let literal = |value: i64| Const::IntLiteral(IntLiteral::from(value));
@@ -2505,7 +2550,7 @@ mod tests {
             resolved: None,
             raises: Some(ty(TyKind::Int)),
         };
-        assert!(raising.folded_constant(ones, &reg_types).is_none());
+        assert!(raising.folded_constant(ones, &reg_types, &none).is_none());
         let dunder = MirInstr::BinOp {
             op: InfixOp::Add,
             dest: Reg(2),
@@ -2514,7 +2559,7 @@ mod tests {
             resolved: Some("Int.__add__".into()),
             raises: None,
         };
-        assert!(dunder.folded_constant(ones, &reg_types).is_none());
+        assert!(dunder.folded_constant(ones, &reg_types, &none).is_none());
 
         let materialize = |target: TyKind| {
             let reg_types = HashMap::from([(0, ty(TyKind::IntLiteral)), (1, ty(target.clone()))]);
@@ -2530,6 +2575,7 @@ mod tests {
                     ))
                 },
                 &reg_types,
+                &none,
             )
         };
         assert!(matches!(
@@ -2549,7 +2595,7 @@ mod tests {
                 value: Reg(0),
                 target,
             }
-            .folded_constant(|_| Some(literal.clone()), &reg_types)
+            .folded_constant(|_| Some(literal.clone()), &reg_types, &none)
         };
         let simd = |dtype, lane| {
             Const::Value(CtValue::Simd {
@@ -2633,6 +2679,7 @@ mod tests {
             .folded_constant(
                 |reg| [a.clone(), b.clone()].get(reg.0 as usize).cloned(),
                 &reg_types,
+                &none,
             )
         };
         let byte = |value| simd(Dtype::UInt8, CtLane::Int(value));
@@ -2703,7 +2750,7 @@ mod tests {
                 width: mojito_types::types::SimdWidth::Known(width),
                 elems: vec![Reg(0); width as usize],
             }
-            .folded_constant(|_| Some(literal(7)), &reg_types)
+            .folded_constant(|_| Some(literal(7)), &reg_types, &none)
         };
         assert!(matches!(
             make(1),
@@ -2716,7 +2763,7 @@ mod tests {
                 dest: Reg(1),
                 value: Reg(0),
             }
-            .folded_constant(|_| Some(uint.clone()), &reg_types),
+            .folded_constant(|_| Some(uint.clone()), &reg_types, &none),
             Some(Const::Value(CtValue::UInt(1)))
         ));
     }
@@ -2726,6 +2773,7 @@ mod tests {
         use mojito_common::literal::{FloatLiteral, IntLiteral};
         use mojito_types::ct::CtLane;
         use mojito_types::types::canonical_simd_ty;
+        let none = MirDeclarations::default();
         let literal = |value: i64| Const::IntLiteral(IntLiteral::from(value));
         let byte = |value| {
             Const::Value(CtValue::Simd {
@@ -2741,7 +2789,7 @@ mod tests {
                 width: mojito_types::types::SimdWidth::Known(width),
                 elems: vec![Reg(0)],
             }
-            .folded_constant(|_| Some(element.clone()), &reg_types)
+            .folded_constant(|_| Some(element.clone()), &reg_types, &none)
         };
         let lanes_of = |folded: Option<Const>| match folded {
             Some(Const::Value(CtValue::Simd { lanes, .. })) => Some(lanes),
@@ -2797,8 +2845,53 @@ mod tests {
         .folded_constant(
             |reg| [ones.clone(), literal(2)].get(reg.0 as usize).cloned(),
             &reg_types,
+            &none,
         );
         assert_eq!(lanes_of(sum), Some(vec![CtLane::Int(3); 4]));
         assert!(const_ct_value(&ones, &canonical_simd_ty(Dtype::Int32, 2)).is_none());
+    }
+
+    #[test]
+    fn folded_constant_folds_scalar_conversions() {
+        use mojito_common::literal::IntLiteral;
+        let none = MirDeclarations::default();
+        let conversion =
+            |name: &str, kwargs: Vec<(String, Reg)>, operand: Const, source, target| {
+                let reg_types = HashMap::from([(0, Ty::new(source)), (1, Ty::new(target))]);
+                MirInstr::Call {
+                    dest: Reg(1),
+                    func: FuncRef::named(name),
+                    raises: None,
+                    args: vec![Reg(0)],
+                    kwargs,
+                    arg_places: vec![None],
+                    kwarg_places: Vec::new(),
+                    capture_accesses: Vec::new(),
+                    param_arg_regs: Vec::new(),
+                    receiver: None,
+                    instantiated_args: Vec::new(),
+                    spread: None,
+                }
+                .folded_constant(|_| Some(operand.clone()), &reg_types, &none)
+            };
+        assert!(matches!(
+            conversion("UInt", Vec::new(), Const::Int(7), TyKind::Int, TyKind::UInt),
+            Some(Const::Value(CtValue::UInt(7)))
+        ));
+        assert!(matches!(
+            conversion(
+                "Bool",
+                Vec::new(),
+                Const::IntLiteral(IntLiteral::from(1)),
+                TyKind::IntLiteral,
+                TyKind::Bool
+            ),
+            Some(Const::Bool(true))
+        ));
+        let huge = Const::Float(1e30);
+        assert!(conversion("Int", Vec::new(), huge, TyKind::Float64, TyKind::Int).is_none());
+        let keyword = vec![("x".to_string(), Reg(0))];
+        assert!(conversion("Int", keyword, Const::Int(7), TyKind::Int, TyKind::Int).is_none());
+        assert!(conversion("print", Vec::new(), Const::Int(7), TyKind::Int, TyKind::Int).is_none());
     }
 }

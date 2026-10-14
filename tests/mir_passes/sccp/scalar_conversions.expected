@@ -1,0 +1,144 @@
+  functions: [
+      fn {
+        name: uint_of_int,
+        registers: 6,
+        vars: 0,
+        var_names: [],
+        params: 0,
+        param_types: [],
+        owned_params: [],
+        deinit_params: [],
+        ref_params: [],
+        returns_reference: false,
+        var_types: [],
+        return_type: present(UInt),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: IntLiteral }, reg_type { reg: %r1, type: Int }, reg_type { reg: %r2, type: UInt }, reg_type { reg: %r3, type: IntLiteral }, reg_type { reg: %r4, type: UInt }, reg_type { reg: %r5, type: UInt }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 47, end: 48, origin: absent }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 47, end: 48, origin: absent }) }, reg_loc { reg: %r2, location: present(loc { file: file0, start: 38, end: 50, origin: absent }) }, reg_loc { reg: %r3, location: present(loc { file: file0, start: 54, end: 55, origin: absent }) }, reg_loc { reg: %r4, location: present(loc { file: file0, start: 54, end: 55, origin: absent }) }, reg_loc { reg: %r5, location: present(loc { file: file0, start: 38, end: 55, origin: absent }) }],
+        blocks: [
+          bb0 {
+            instructions: [
+              const { dest: %r0, value: int_literal(7) },
+              const { dest: %r1, value: int(7) },
+              const { dest: %r2, value: value(ct_uint(7)) },
+              const { dest: %r3, value: int_literal(2) },
+              const { dest: %r4, value: value(ct_uint(2)) },
+              const { dest: %r5, value: value(ct_uint(3)) }
+            ],
+            terminator: return { value: present(%r5) }
+          }
+        ]
+      },
+      fn {
+        name: bool_of_literal,
+        registers: 2,
+        vars: 0,
+        var_names: [],
+        params: 0,
+        param_types: [],
+        owned_params: [],
+        deinit_params: [],
+        ref_params: [],
+        returns_reference: false,
+        var_types: [],
+        return_type: present(Bool),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: IntLiteral }, reg_type { reg: %r1, type: Bool }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 104, end: 105, origin: absent }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 99, end: 106, origin: absent }) }],
+        blocks: [
+          bb0 {
+            instructions: [
+              const { dest: %r0, value: int_literal(1) },
+              const { dest: %r1, value: bool(true) }
+            ],
+            terminator: return { value: present(%r1) }
+          }
+        ]
+      },
+      fn {
+        name: float_of_uint,
+        registers: 3,
+        vars: 0,
+        var_names: [],
+        params: 0,
+        param_types: [],
+        owned_params: [],
+        deinit_params: [],
+        ref_params: [],
+        returns_reference: false,
+        var_types: [],
+        return_type: present(Float64),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: IntLiteral }, reg_type { reg: %r1, type: UInt }, reg_type { reg: %r2, type: Float64 }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 164, end: 165, origin: absent }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 164, end: 165, origin: absent }) }, reg_loc { reg: %r2, location: present(loc { file: file0, start: 151, end: 167, origin: absent }) }],
+        blocks: [
+          bb0 {
+            instructions: [
+              const { dest: %r0, value: int_literal(3) },
+              const { dest: %r1, value: value(ct_uint(3)) },
+              const { dest: %r2, value: float(4008000000000000) }
+            ],
+            terminator: return { value: present(%r2) }
+          }
+        ]
+      },
+      fn {
+        name: int_of_byte,
+        registers: 3,
+        vars: 0,
+        var_names: [],
+        params: 0,
+        param_types: [],
+        owned_params: [],
+        deinit_params: [],
+        ref_params: [],
+        returns_reference: false,
+        var_types: [],
+        return_type: present(Int),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: IntLiteral }, reg_type { reg: %r1, type: simd { dtype: uint8, width: 1 } }, reg_type { reg: %r2, type: Int }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 216, end: 219, origin: absent }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 210, end: 220, origin: absent }) }, reg_loc { reg: %r2, location: present(loc { file: file0, start: 206, end: 221, origin: absent }) }],
+        blocks: [
+          bb0 {
+            instructions: [
+              const { dest: %r0, value: int_literal(200) },
+              const { dest: %r1, value: value(ct_simd { dtype: uint8, lanes: [lane_int(200)] }) },
+              const { dest: %r2, value: int(200) }
+            ],
+            terminator: return { value: present(%r2) }
+          }
+        ]
+      },
+      fn {
+        name: out_of_range,
+        registers: 3,
+        vars: 0,
+        var_names: [],
+        params: 0,
+        param_types: [],
+        owned_params: [],
+        deinit_params: [],
+        ref_params: [],
+        returns_reference: false,
+        var_types: [],
+        return_type: present(Int),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: FloatLiteral }, reg_type { reg: %r1, type: Float64 }, reg_type { reg: %r2, type: Int }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 273, end: 277, origin: absent }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 273, end: 277, origin: absent }) }, reg_loc { reg: %r2, location: present(loc { file: file0, start: 261, end: 279, origin: absent }) }],
+        blocks: [
+          bb0 {
+            instructions: [
+              const { dest: %r0, value: float_literal(1000000000000000000000000000000.0) },
+              const { dest: %r1, value: float(46293e5939a08cea) },
+              call { dest: %r2, func: Int, raises: absent, args: [%r1], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent }
+            ],
+            terminator: return { value: present(%r2) }
+          }
+        ]
+      }
+  ]

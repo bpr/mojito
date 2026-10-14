@@ -1,0 +1,57 @@
+  functions: [
+      fn {
+        name: UInt,
+        registers: 2,
+        vars: 1,
+        var_names: [x],
+        params: 1,
+        param_types: [Int],
+        owned_params: [false],
+        deinit_params: [false],
+        ref_params: [false],
+        returns_reference: false,
+        var_types: [var_type { var: $v0, type: Int }],
+        return_type: present(UInt),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: IntLiteral }, reg_type { reg: %r1, type: UInt }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 37, end: 38, origin: absent }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 37, end: 38, origin: absent }) }],
+        blocks: [
+          bb0 {
+            instructions: [
+              const { dest: %r0, value: int_literal(5) },
+              const { dest: %r1, value: value(ct_uint(5)) }
+            ],
+            terminator: return { value: present(%r1) }
+          }
+        ]
+      },
+      fn {
+        name: shadowed,
+        registers: 3,
+        vars: 0,
+        var_names: [],
+        params: 0,
+        param_types: [],
+        owned_params: [],
+        deinit_params: [],
+        ref_params: [],
+        returns_reference: false,
+        var_types: [],
+        return_type: present(UInt),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: IntLiteral }, reg_type { reg: %r1, type: Int }, reg_type { reg: %r2, type: UInt }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 84, end: 85, origin: absent }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 84, end: 85, origin: absent }) }, reg_loc { reg: %r2, location: present(loc { file: file0, start: 75, end: 87, origin: absent }) }],
+        blocks: [
+          bb0 {
+            instructions: [
+              const { dest: %r0, value: int_literal(2) },
+              const { dest: %r1, value: int(2) },
+              call { dest: %r2, func: UInt, raises: absent, args: [%r1], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent }
+            ],
+            terminator: return { value: present(%r2) }
+          }
+        ]
+      }
+  ]

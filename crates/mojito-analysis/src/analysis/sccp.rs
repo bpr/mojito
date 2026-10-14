@@ -13,7 +13,9 @@
 //! other result is overdefined. A literal materialized to `UInt` or a scalar
 //! SIMD type, a one-element `simd.make` of a literal at any known width
 //! (the splat), and an operator over `UInt` or SIMD constants fold to a
-//! `Const::Value`, lanes by the VM's own lane rule. A parameter read (`Const::Param`) and
+//! `Const::Value`, lanes by the VM's own lane rule. A built-in scalar
+//! conversion (`UInt(x)`, `Float64(x)`, `Bool(x)`) over a constant folds by
+//! the VM's conversion rule, as `SCCP` folds the inlined `pop.cast`. A parameter read (`Const::Param`) and
 //! an aggregate `Const::Value` are overdefined: the first is the
 //! elaborator's to fold, per instance.
 //!
@@ -41,10 +43,11 @@ pub const SCCP: BodyPass = BodyPass {
 
 /// Propagate `function`'s constants over its executable blocks and replace
 /// each instruction they decide by its constant.
-pub fn sccp(_name: &str, function: &mut MirFunction, _declarations: &MirDeclarations) {
+pub fn sccp(_name: &str, function: &mut MirFunction, declarations: &MirDeclarations) {
     let mut solver = Solver {
         lattice: vec![Lattice::Unknown; function.n_regs as usize],
         reg_types: &function.reg_types,
+        declarations,
         changed: true,
     };
     while std::mem::take(&mut solver.changed) {
@@ -60,7 +63,12 @@ pub fn sccp(_name: &str, function: &mut MirFunction, _declarations: &MirDeclarat
         }
     }
     let lattice = solver.lattice;
-    let folded = rewrite(&mut function.blocks, &lattice, &function.reg_types);
+    let folded = rewrite(
+        &mut function.blocks,
+        &lattice,
+        &function.reg_types,
+        declarations,
+    );
     timing::count("folded_constants", folded as u64);
 }
 
@@ -76,6 +84,7 @@ enum Lattice {
 struct Solver<'a> {
     lattice: Vec<Lattice>,
     reg_types: &'a HashMap<u32, Ty>,
+    declarations: &'a MirDeclarations,
     changed: bool,
 }
 
@@ -143,12 +152,12 @@ impl Solver<'_> {
             _ => None,
         };
         if let (Some(k), [dest]) = (
-            instruction.folded_constant(constant, self.reg_types),
+            instruction.folded_constant(constant, self.reg_types, self.declarations),
             results.as_slice(),
         ) {
             return self.meet(*dest, Lattice::Constant(k));
         }
-        let unknown_operand = fold_operands(instruction)
+        let unknown_operand = fold_operands(instruction, self.declarations)
             .iter()
             .any(|reg| matches!(self.lattice.get(reg.0 as usize), Some(Lattice::Unknown)));
         if !unknown_operand {
@@ -197,7 +206,7 @@ fn regions(instruction: &MirInstr) -> Vec<&Vec<MirBlock>> {
 
 /// The operands of an instruction [`MirInstr::folded_constant`] may fold;
 /// none for any other.
-fn fold_operands(instruction: &MirInstr) -> Vec<Reg> {
+fn fold_operands(instruction: &MirInstr, declarations: &MirDeclarations) -> Vec<Reg> {
     match instruction {
         MirInstr::BinOp { a, b, .. } => vec![*a, *b],
         MirInstr::UnOp { a, .. } => vec![*a],
@@ -205,6 +214,10 @@ fn fold_operands(instruction: &MirInstr) -> Vec<Reg> {
         MirInstr::MaterializeLiteral { value, .. } | MirInstr::CopyValue { value, .. } => {
             vec![*value]
         }
+        MirInstr::Call { .. } => instruction
+            .scalar_conversion(declarations)
+            .map(|(arg, _)| vec![arg])
+            .unwrap_or_default(),
         _ => Vec::new(),
     }
 }
@@ -225,7 +238,12 @@ fn same_constant(left: &Const, right: &Const) -> bool {
 /// Replace each instruction of `blocks` and their regions that folds over
 /// `lattice` by a `const` of its register, clearing the in-place flag of
 /// its binding; returns how many were replaced.
-fn rewrite(blocks: &mut [MirBlock], lattice: &[Lattice], reg_types: &HashMap<u32, Ty>) -> usize {
+fn rewrite(
+    blocks: &mut [MirBlock],
+    lattice: &[Lattice],
+    reg_types: &HashMap<u32, Ty>,
+    declarations: &MirDeclarations,
+) -> usize {
     let constant = |reg: Reg| match lattice.get(reg.0 as usize) {
         Some(Lattice::Constant(k)) => Some(k.clone()),
         _ => None,
@@ -247,14 +265,14 @@ fn rewrite(blocks: &mut [MirBlock], lattice: &[Lattice], reg_types: &HashMap<u32
                     .chain(orelse.as_mut())
                     .chain(finalbody.as_mut())
                 {
-                    folded += rewrite(region, lattice, reg_types);
+                    folded += rewrite(region, lattice, reg_types, declarations);
                 }
                 continue;
             }
             let mut results = Vec::new();
             instruction_result_regs(instruction, &mut results);
             if let (Some(k), [dest]) = (
-                instruction.folded_constant(constant, reg_types),
+                instruction.folded_constant(constant, reg_types, declarations),
                 results.as_slice(),
             ) {
                 folded_here.push(*dest);
