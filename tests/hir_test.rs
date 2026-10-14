@@ -451,10 +451,12 @@ fn nested_loop_in_try_part_takes_a_fresh_label() {
 #[test]
 fn dead_region_op_is_erased() {
     let cfg = checked_function_cfg(
-        "def f(x: Int) -> Int:\n    return 1\n    if x > 0:\n        print(x)\n    return 3\n",
+        "def f(x: Int) -> Int:\n    return 1\n    if x > 0:\n        var y = x\n        print(y)\n    return 3\n",
         "f",
     );
     assert_eq!(cfg.root.blocks.len(), 1);
+    assert_eq!(cfg.g.node_count(), 1, "the dead arm lowers no block");
+    assert!(!cfg.vars.iter().any(|name| name == "y"));
     assert!(
         !entry_instrs(&cfg, &cfg.root)
             .iter()
@@ -464,6 +466,20 @@ fn dead_region_op_is_erased() {
         last_term(&cfg, &cfg.root),
         Terminator::Return(Some(_))
     ));
+}
+
+#[test]
+fn raise_erases_rest_of_block() {
+    let cfg = checked_function_cfg(
+        "def f(x: Int) raises -> Int:\n    raise Error(\"e\")\n    var dead = x\n    return dead\n",
+        "f",
+    );
+    assert!(!cfg.vars.iter().any(|name| name == "dead"));
+    let statements = entry_instrs(&cfg, &cfg.root)
+        .iter()
+        .filter(|instruction| matches!(instruction, HirInstr::Stmt(_)))
+        .count();
+    assert_eq!(statements, 1, "only the `raise` lowers");
 }
 
 #[test]

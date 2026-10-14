@@ -2513,9 +2513,12 @@ N+1 times, the exhausted iterator's copy keeping only the stop arm. A `comptime 
 an `HirInstr::ComptimeIf` (`hlcf.comptime.if`): its conditions, computed
 first as upstream's parser does, then one arm region per condition and an
 else region, each arm that completes ended by `Terminator::ComptimeYield`.
-No HIR terminator jumps between blocks, so `Cfg::g` holds no edge; code
-after a block a `return` or `break` sealed still lowers, into a fresh unreachable block, where
-upstream's `LowerSemanticCF` erases it. MIR lowering builds the matching
+No HIR terminator jumps between blocks, so `Cfg::g` holds no edge. HIR
+lowers only a body's live statements (`CheckedTables::live_statements`):
+the statements after a `return`, `break`, `continue`, or `raise` are erased
+before they lower, as `LowerSemanticCF`'s `eraseOpToEndOfBlock` erases the
+ops after a terminator, so they reach no slot, block, or nested function
+(`find_nested_defs` reads the same rule). MIR lowering builds the matching
 MIR region ops (`Flatten::hir_region`), and `lower-control-flow` lowers them
 to blocks at the end of `lower_cfg`.
 

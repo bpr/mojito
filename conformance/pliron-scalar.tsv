@@ -173,6 +173,7 @@ assets/ok/ctfe_optional_result.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/ctfe_pointer_struct_result.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/ctfe_projection_of_temporary_in_body.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/ctfe_type_generic_def_in_body.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/dead_code_after_terminators.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/decorators.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/def_aggregate_value_binder_served.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/default_args.mojo	-	ineligible	no-scalar-entry-shape

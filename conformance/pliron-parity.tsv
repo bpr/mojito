@@ -173,6 +173,7 @@ assets/ok/ctfe_optional_result.mojo	main	exe-differential	sanitized
 assets/ok/ctfe_pointer_struct_result.mojo	main	exe-differential	sanitized
 assets/ok/ctfe_projection_of_temporary_in_body.mojo	main	exe-differential	sanitized
 assets/ok/ctfe_type_generic_def_in_body.mojo	main	exe-differential	sanitized
+assets/ok/dead_code_after_terminators.mojo	main	exe-differential	sanitized
 assets/ok/decorators.mojo	main	exe-differential	sanitized
 assets/ok/def_aggregate_value_binder_served.mojo	main	exe-differential	sanitized
 assets/ok/default_args.mojo	main	exe-differential	sanitized

@@ -449,9 +449,11 @@ impl Cfg {
             slots: HashMap::new(),
             bindings: HashMap::new(),
         };
-        let explicit = explicit_local_names(&lower.checked, body);
+        let checked = Arc::clone(&lower.checked);
+        let body = checked.live_statements(body);
+        let explicit = explicit_local_names(&checked, body);
         let mut implicit = HashSet::new();
-        collect_function_implicit_names(&lower.checked, body, &explicit, &mut implicit);
+        collect_function_implicit_names(&checked, body, &explicit, &mut implicit);
         let mut implicit: Vec<_> = implicit.into_iter().collect();
         implicit.sort();
         for name in implicit {
@@ -465,7 +467,7 @@ impl Cfg {
         for id in body {
             lower.stmt(*id);
         }
-        if let Some(value) = returned {
+        if let Some(value) = returned.filter(|_| lower.g[lower.cur].term.is_none()) {
             lower.ret(Some(value));
         }
         lower.seal(Terminator::Return(None)); // implicit `return None` off the end
@@ -479,7 +481,11 @@ fn collect_function_implicit_names(
     explicit: &HashSet<String>,
     names: &mut HashSet<String>,
 ) {
-    for statement in body.iter().filter_map(|id| checked.statement(*id)) {
+    for statement in checked
+        .live_statements(body)
+        .iter()
+        .filter_map(|id| checked.statement(*id))
+    {
         let bodies: Vec<&[CheckedStmtId]> = match &statement.op {
             CheckedStmtOp::Assign { name, .. } => {
                 if name != "_" && !explicit.contains(name) {
@@ -645,9 +651,9 @@ impl Lower {
         self.next_label - 1
     }
 
-    /// Append `i` to the current block, or drop it after a `return`,
-    /// `break`, or `continue` sealed the block, as `LowerSemanticCF`'s
-    /// `eraseOpToEndOfBlock` erases dead code: every region stays one block.
+    /// Append `i` to the current block. Dead statements are erased before
+    /// they lower ([`CheckedTables::live_statements`]), and `push` still
+    /// never appends to a sealed block: every region stays one block.
     fn push(&mut self, i: HirInstr) {
         if self.g[self.cur].term.is_none() {
             self.g[self.cur].instrs.push(i);
@@ -841,7 +847,8 @@ impl Lower {
     }
 
     fn block(&mut self, body: &[CheckedStmtId]) {
-        for s in body {
+        let checked = Arc::clone(&self.checked);
+        for s in checked.live_statements(body) {
             self.stmt(*s);
         }
     }
@@ -1376,7 +1383,11 @@ impl Lower {
 
 fn explicit_local_names(checked: &CheckedTables, body: &[CheckedStmtId]) -> HashSet<String> {
     fn walk(checked: &CheckedTables, body: &[CheckedStmtId], names: &mut HashSet<String>) {
-        for statement in body.iter().filter_map(|id| checked.statement(*id)) {
+        for statement in checked
+            .live_statements(body)
+            .iter()
+            .filter_map(|id| checked.statement(*id))
+        {
             match &statement.op {
                 CheckedStmtOp::VarDecl { name, .. } | CheckedStmtOp::RefDecl { name, .. } => {
                     names.insert(name.clone());

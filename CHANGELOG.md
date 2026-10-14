@@ -8,6 +8,11 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- The statements after a `return`, `break`, `continue`, or `raise` are now
+  erased before HIR lowers them, as upstream's `LowerSemanticCF` erases the
+  ops after a terminator (R889), so dead code interns no variable slot,
+  builds no block, and compiles no nested `def` or lambda. Program output
+  is unchanged.
 - A `try`'s parts are now regions of the function's own HIR walk, as
   upstream's parser builds `lit.try`, instead of separately built CFGs, and
   each completes by `try.yield` (`lit.try.yield`, the renamed `falloff`)

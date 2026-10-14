@@ -595,6 +595,32 @@ def main() raises:
 }
 
 #[test]
+fn dead_nested_def_is_not_lowered() {
+    let mir = driver_mir(
+        r#"
+def f(c: Bool) -> Int:
+    var a = 1
+    if c:
+        return a
+        def g() -> Int:
+            return 41
+        print(g())
+    return 2
+
+def main():
+    print(f(True))
+"#,
+    );
+    assert!(!mir.functions.iter().any(|(name, _)| name.contains("f$g")));
+    assert!(
+        !mir.declarations
+            .functions
+            .iter()
+            .any(|declaration| declaration.lowered_name.contains("f$g"))
+    );
+}
+
+#[test]
 fn structured_expression_control_flow_builds_region_ops() {
     let source = r#"
 def main():

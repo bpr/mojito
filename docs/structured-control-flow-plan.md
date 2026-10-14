@@ -234,8 +234,7 @@ last producer. Every stage keeps program output unchanged; the
    - A `break`/`continue` in a `try` part names its loop's label, and
      `lower-control-flow` makes the `EscapeJump`; HIR has no escape
      terminator, and MIR lowering threads no outer block map.
-   - Dead code after a sealed block still lowers, into a fresh
-     unreachable block, where `LowerSemanticCF` erases it.
+   - Dead code after a sealed block is erased; stage 5 records how.
 4. **Compile-time forms.** *Landed (R873).* HIR builds `comptime if`/
    `elif`/`else` as one `HirInstr::ComptimeIf`, every condition first and
    then one arm region per condition plus the else region, each arm that
@@ -254,7 +253,10 @@ last producer. Every stage keeps program output unchanged; the
    parser builds `lit.try`, where each part was a separately built HIR CFG;
    MIR lowers them through `Flatten::try_part`, which scopes the part's
    loans and aliases as before. A region op after a sealed block is erased,
-   as `eraseOpToEndOfBlock` does, so every region is one block. A part
+   as `eraseOpToEndOfBlock` does, so every region is one block. The
+   erasure happens on the checked statement list, before lowering
+   (`CheckedTables::live_statements`, R889), and covers the statements
+   after a `raise` too. A part
    completes by `TryYield` (`try.yield {}`, MIR text 1.59), the renamed
    `FallOff`; a `break`/`continue` in a part was already a labelled
    `Break`/`Continue` (stage 3). The single-block rule runs in production:

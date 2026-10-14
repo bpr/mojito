@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R906**.
+Next free ID: **R907**.
 
 ## Ordered Work
 
@@ -64,19 +64,22 @@ producers first, then the CFG lowering point moving down one consumer at a
 time.
 
 
-- [ ] **R889 Code after a `return`, `break`, or `continue` still lowers,
-  into an unreachable block, where upstream's `LowerSemanticCF` erases it**
+- [ ] **R906 A `raise` is a mid-block MIR instruction, where upstream's
+  `raise` ends its block**
 
-  HIR's `Lower::push_region_op` opens a fresh block for a region op that
-  follows a sealed block, so dead statements reach MIR, the analyses, and
-  the elaborator.
-  - Upstream deletes the ops after a terminator while lowering semantic
-    control flow, so no dead region reaches `CheckLifetimes`.
-  - Straight-line dead instructions are already dropped (`Lower::push`).
-  - It matters once the single-block rule switches on: a dead op after a
-    region terminator is not one block.
-  - Found while landing R872 (2026-10-14).
-  - Depends on R874.
+  `MirInstr::Raise` is followed by its region's normal terminator
+  (`jump`/`yield`), so every analysis special-cases it as "the rest of the
+  block is unreachable".
+  - The special cases: `moves.rs` (two), `interior.rs`, `verify/drops.rs`,
+    and `register_loans.rs`.
+  - Lever: a `raise` region terminator in HIR (`Terminator`) and MIR
+    (`MirTerm`), lowered by `lower-control-flow`; the VM (`exec.rs`),
+    Pliron (`lower/instr.rs`), and the MIR text format (a version bump)
+    follow.
+  - Dead statements after a `raise` are already erased
+    (`CheckedTables::live_statements`).
+  - Found while landing R889 (2026-10-14).
+  - Depends on R889.
   - Model: Opus, Not Planned.
 
 - [ ] **R892 HIR's block arena is a `petgraph` `StableGraph` that holds no

@@ -2689,6 +2689,19 @@ impl CheckedTables {
         }
     }
 
+    /// The live prefix of statement list `body`: its statements up to and
+    /// including the first that ends the block — a `return`, `break`,
+    /// `continue`, or `raise`, or a scope whose own live statements end
+    /// that way. The rest is dead, and lowering erases it as
+    /// `LowerSemanticCF`'s `eraseOpToEndOfBlock` erases the ops after a
+    /// terminator. An `if`, loop, or `try` never ends the block, even when
+    /// every arm leaves it.
+    pub fn live_statements<'a>(&self, body: &'a [CheckedStmtId]) -> &'a [CheckedStmtId] {
+        body.iter()
+            .position(|id| self.ends_block(*id))
+            .map_or(body, |last| &body[..=last])
+    }
+
     /// The tables of one lowering unit: the statement `root` and every node
     /// under it, held as a struct member's unit holds its struct when
     /// `shell` says so, then the statements of a wrapper's `body`, and the
@@ -2874,6 +2887,22 @@ impl CheckedTables {
                 }
             }
         }
+    }
+
+    /// Whether statement `id` ends its block, per [`Self::live_statements`].
+    fn ends_block(&self, id: CheckedStmtId) -> bool {
+        self.statement(id)
+            .is_some_and(|statement| match &statement.op {
+                CheckedStmtOp::Return(_)
+                | CheckedStmtOp::Break
+                | CheckedStmtOp::Continue
+                | CheckedStmtOp::Raise(_) => true,
+                CheckedStmtOp::Scope(body) => self
+                    .live_statements(body)
+                    .last()
+                    .is_some_and(|last| self.ends_block(*last)),
+                _ => false,
+            })
     }
 }
 

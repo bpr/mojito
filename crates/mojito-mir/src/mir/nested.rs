@@ -177,7 +177,7 @@ fn find_nested_defs(
     loops: &mut Vec<CheckedStmtId>,
     out: &mut Vec<NestedSite>,
 ) {
-    for id in ids {
+    for id in tables.live_statements(ids) {
         let node = tables
             .statement(*id)
             .expect("a body statement id names a node of its tables");
