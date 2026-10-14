@@ -830,7 +830,7 @@ impl Decoder {
                 value: self.req(value, fields, "value", |d, v| Some(d.option_reg(v)))?,
                 cleanup: self.req(value, fields, "cleanup", |d, v| Some(d.vars(v)))?,
             }),
-            "falloff" => Some(MirTerm::FallOff),
+            "try.yield" => Some(MirTerm::TryYield),
             "escape" => Some(MirTerm::EscapeJump {
                 target: self.req(value, fields, "target", Self::block_id)?,
                 cleanup: self.req(value, fields, "cleanup", |d, v| Some(d.vars(v)))?,

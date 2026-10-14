@@ -360,8 +360,8 @@ impl RegionDropCtx<'_> {
 
 /// Live-out seeds for one region's mini-CFG, per exit kind.
 pub(super) struct RegionSeeds<'a> {
-    /// Live on the normal `FallOff` continuation.
-    fall_off: &'a HashSet<VarId>,
+    /// Live on the normal `TryYield` continuation.
+    try_yield: &'a HashSet<VarId>,
     /// Live at every potentially-raising instruction: what the raise edge's
     /// observer (handler, `finally`, or an enclosing handler) may still read.
     raise: &'a HashSet<VarId>,
@@ -460,7 +460,7 @@ pub(super) fn elaborate_try_interior(
             fin_entry = join_loan_generation_states(fin_entry, state);
         }
         let return_seeds = RegionSeeds {
-            fall_off: enclosing.return_live,
+            try_yield: enclosing.return_live,
             raise: enclosing.raise,
             finally_live: enclosing.return_live,
             return_live: enclosing.return_live,
@@ -475,7 +475,7 @@ pub(super) fn elaborate_try_interior(
             &RegisterLoanState::default(),
         );
         let seeds = RegionSeeds {
-            fall_off: after,
+            try_yield: after,
             raise: enclosing.raise,
             finally_live: after,
             return_live: enclosing.return_live,
@@ -509,7 +509,7 @@ pub(super) fn elaborate_try_interior(
 
     let handler_live = handler.as_mut().map(|(binding, h)| {
         let seeds = RegionSeeds {
-            fall_off: &fin_live,
+            try_yield: &fin_live,
             raise: &outward_raise,
             finally_live: &fin_live,
             return_live: &return_live,
@@ -537,7 +537,7 @@ pub(super) fn elaborate_try_interior(
     });
     let orelse_live = orelse.as_mut().map(|e| {
         let seeds = RegionSeeds {
-            fall_off: &fin_live,
+            try_yield: &fin_live,
             raise: &outward_raise,
             finally_live: &fin_live,
             return_live: &return_live,
@@ -563,7 +563,7 @@ pub(super) fn elaborate_try_interior(
         |(live, held)| (live, Some(held)),
     );
     let seeds = RegionSeeds {
-        fall_off: &body_fall_off,
+        try_yield: &body_fall_off,
         raise: &body_raise,
         finally_live: &fin_live,
         return_live: &return_live,
@@ -616,7 +616,7 @@ pub(super) fn region_live_in(
 ) -> HashSet<VarId> {
     let Some(liveness) = region_liveness(ctx, blocks, seeds, entry_generations, entry_registers)
     else {
-        return seeds.fall_off.clone();
+        return seeds.try_yield.clone();
     };
     effective_drop_liveness(
         liveness.live_in[0].clone(),
@@ -651,7 +651,7 @@ pub(super) fn elaborate_region_drops(
         live_in,
     }) = region_liveness(ctx, blocks, seeds, entry_generations, entry_registers)
     else {
-        return (seeds.fall_off.clone(), HashSet::new());
+        return (seeds.try_yield.clone(), HashSet::new());
     };
 
     let generation_exits: Vec<LoanGenerationState> = blocks
@@ -898,7 +898,7 @@ pub(super) fn region_block_live_out(
             }
             out
         }
-        MirTerm::FallOff => seeds.fall_off.clone(),
+        MirTerm::TryYield => seeds.try_yield.clone(),
         MirTerm::Return(_) | MirTerm::ReturnWithCleanup { .. } => seeds.return_live.clone(),
         // Region terminators are lowered before this analysis runs.
         MirTerm::Yield(_)
@@ -1324,7 +1324,7 @@ pub(super) const fn rewire_target(term: &mut MirTerm, old: usize, new: usize) {
         // target isn't a critical-edge successor here, so leave it untouched.
         MirTerm::Return(_)
         | MirTerm::ReturnWithCleanup { .. }
-        | MirTerm::FallOff
+        | MirTerm::TryYield
         | MirTerm::EscapeJump { .. }
         | MirTerm::Yield(_)
         | MirTerm::ElifCond(_)

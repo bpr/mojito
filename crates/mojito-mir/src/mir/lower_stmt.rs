@@ -70,19 +70,14 @@ impl<'a> Flatten<'a> {
                 self.bind_discarded_result(e, value);
             }
             HirInstr::Stmt(s) => self.lower_hir_stmt(s),
-            // A `try`: each part is lowered seeded with the enclosing loops, so
-            // an outward `break`/`continue` names the loop it leaves.
-            HirInstr::Try { stmt, loops } => {
-                let tables = self.checked;
-                match tables.statement(stmt.node).and_then(TryRegions::of) {
-                    Some(regions) => self.with_statement_loans(|this| {
-                        this.emit_try(regions, loops);
-                    }),
-                    None => self.emit(MirInstr::Unsupported(
-                        "malformed HIR try instruction".to_string(),
-                    )),
-                }
-            }
+            HirInstr::Try {
+                body,
+                except,
+                orelse,
+                finalbody,
+            } => self.with_statement_loans(|this| {
+                this.emit_try(body, except.as_ref(), orelse.as_ref(), finalbody.as_ref());
+            }),
             HirInstr::KeepAlive(var) => {
                 self.emit(MirInstr::KeepAlive { var: *var });
             }
@@ -1816,154 +1811,72 @@ impl<'a> Flatten<'a> {
     /// (a call result, a literal, …) instead of panicking — used at a method-call
     /// receiver, which may be a temporary. Only evaluates subscript indices when
     /// the whole chain is a place.
-    /// Lower a `try` sub-region (`body`/`except`/`else`/`finally`) into a
-    /// self-contained mini-CFG (block ids local, entry = 0) that **shares this
-    /// function's register, variable, and span space** — so it addresses the same
-    /// slots. The region's own control flow (`if`/`while`/`for`) becomes local
-    /// blocks; the VM runs it recursively. An `except` region's `handler` is
-    /// its binding, spelling, and error type: HIR declares its slot, returned
-    /// beside the blocks.
-    pub(super) fn lower_region(
+    /// Lower a `try`'s parts and emit the [`MirInstr::Try`]. The handler's
+    /// slot is typed by the error its body raises.
+    fn emit_try(
         &mut self,
-        body: &[CheckedStmtId],
-        handler: Option<(Option<mojito_types::origin::OwnerId>, &str, Ty)>,
-        ext_loops: &[hir::EnclosingLoop],
-    ) -> (Vec<MirBlock>, Option<VarId>) {
-        let region_cfg = hir::Cfg::build_seeded_checked_region(
-            hir::RegionSeed {
-                vars: self.vars.clone(),
-                bindings: self.owner_vars.clone(),
-                handler: handler
-                    .as_ref()
-                    .map(|(binding, name, _)| (*binding, (*name).to_string())),
-                labels: self.next_label,
-            },
-            body,
-            ext_loops,
-            std::sync::Arc::clone(self.checked),
-        );
-        let handler_slot = handler.map(|(binding, name, error)| {
-            let slot = binding
-                .and_then(|binding| region_cfg.bindings.get(&binding).copied())
-                .unwrap_or_else(|| {
-                    region_cfg
-                        .vars
-                        .iter()
-                        .position(|candidate| candidate == name)
-                        .expect("the region interned its handler's slot")
-                        as VarId
-                });
-            self.var_types.entry(slot).or_insert(error);
-            if let Some(binding) = binding {
-                self.owner_vars.insert(binding, slot);
+        body: &'a hir::HirRegion,
+        except: Option<&'a hir::HirExcept>,
+        orelse: Option<&'a hir::HirRegion>,
+        finalbody: Option<&'a hir::HirRegion>,
+    ) {
+        let body = self.try_part(body);
+        let handler = except.map(|except| {
+            if let Some(slot) = except.slot {
+                // The checker rejects a try whose body can raise more than
+                // one error type, so copying the first propagating raising
+                // fact types the handler binding without re-inference.
+                let error = region_error_type(&body, &self.f.reg_types).unwrap_or_else(Ty::error);
+                self.var_types.entry(slot).or_insert(error);
+                if let Some(binding) = except.binding {
+                    self.owner_vars.insert(binding, slot);
+                }
             }
-            slot
+            (except.slot, self.try_part(&except.body))
         });
-        let mut region = MirFunction {
-            blocks: Vec::new(),
-            n_regs: 0,
-            n_vars: 0,
-            var_names: Vec::new(),
-            n_params: 0,
-            param_types: Vec::new(),
-            owned_params: Vec::new(),
-            deinit_params: Vec::new(),
-            ref_params: Vec::new(),
-            returns_reference: self.returns_reference,
-            var_tys: HashMap::new(),
-            ret_ty: self.f.ret_ty.clone(),
-            raises: self.f.raises,
-            error_ty: self.f.error_ty.clone(),
-            spans: std::mem::take(&mut self.f.spans), // accumulate into the shared table
-            reg_types: std::mem::take(&mut self.f.reg_types),
-        };
-        {
-            let mut fl = Flatten {
-                f: &mut region,
-                cur: 0,
-                next_reg: self.next_reg,
-                vars: region_cfg.vars.clone(),
-                // The region inherits the frame's slot types; a slot it
-                // declares is typed by its declaring op as the region lowers.
-                var_types: self.var_types.clone(),
-                owner_vars: self.owner_vars.clone(),
-                nested: self.nested.clone(), // a `try` region may call a nested `def`
-                receiver_value_parameters: self.receiver_value_parameters.clone(),
-                static_receiver: self.static_receiver.clone(),
-                enclosing_binders: self.enclosing_binders.clone(),
-                comptime_thunks: std::mem::take(&mut self.comptime_thunks),
-                parameter_reads: self.parameter_reads.clone(),
-                overloads: std::sync::Arc::clone(&self.overloads),
-                checked: &region_cfg.checked,
-                cfg: &region_cfg,
-                next_label: region_cfg.labels,
-                displays: self.displays.clone(),
-                slots: region_cfg.slots.clone(),
-                aliases: self.aliases.clone(),
-                pack_sources: self.pack_sources.clone(),
-                pack_cursors: self.pack_cursors.clone(),
-                runtime_aliases: self.runtime_aliases.clone(),
-                aggregate_loans: self.aggregate_loans.clone(),
-                conversion_view_loans: self.conversion_view_loans.clone(),
-                pending_argument_anchors: Vec::new(),
-                call_setups: Vec::new(),
-                setup_reference: None,
-                argument_depth: 0,
-                allow_argument_anchors: false,
-                transfer_domain_loans: self.transfer_domain_loans.clone(),
-                reassigned_names: self.reassigned_names.clone(),
-                returns_reference: self.returns_reference,
-            };
-            fl.comptime_thunks.enter_scope(&fl.enclosing_binders);
-            fl.f.blocks = fl.hir_region(&region_cfg.root);
-            self.next_reg = fl.next_reg;
-            self.next_label = fl.next_label;
-            self.vars.clone_from(&fl.vars);
-            self.var_types.clone_from(&fl.var_types);
-            self.owner_vars.clone_from(&fl.owner_vars);
-            self.comptime_thunks = std::mem::take(&mut fl.comptime_thunks);
-        }
-        self.f.spans = std::mem::take(&mut region.spans);
-        self.f.reg_types = std::mem::take(&mut region.reg_types);
-        (region.blocks, handler_slot)
-    }
-
-    /// Lower a `try`'s sub-regions and emit the [`MirInstr::Try`]. `ext_loops` are
-    /// the enclosing loops a `break`/`continue` may leave.
-    #[allow(
-        clippy::needless_pass_by_value,
-        reason = "borrow bundle: its own fields are `&mut`"
-    )]
-    pub(super) fn emit_try(&mut self, regions: TryRegions<'_>, ext_loops: &[hir::EnclosingLoop]) {
-        let TryRegions {
+        let orelse = orelse.map(|part| self.try_part(part));
+        let finalbody = finalbody.map(|part| self.try_part(part));
+        self.emit(MirInstr::Try {
             body,
-            except,
+            handler,
             orelse,
             finalbody,
-            handler_binding,
-        } = regions;
-        let (body_blocks, _) = self.lower_region(body, None, ext_loops);
-        let handler = except.map(|(name, ex_body)| {
-            // The checker rejects a try whose body can raise more than one
-            // error type, so copying the first propagating raising fact types
-            // the handler binding without re-inference.
-            let handler = name.map(|name| {
-                let error =
-                    region_error_type(&body_blocks, &self.f.reg_types).unwrap_or_else(Ty::error);
-                (handler_binding, name, error)
-            });
-            let (blocks, slot) = self.lower_region(ex_body, handler, ext_loops);
-            (slot, blocks)
-        });
-        let orelse_blocks = orelse.map(|b| self.lower_region(b, None, ext_loops).0);
-        let finalbody_blocks = finalbody.map(|b| self.lower_region(b, None, ext_loops).0);
-        self.emit(MirInstr::Try {
-            body: body_blocks,
-            handler,
-            orelse: orelse_blocks,
-            finalbody: finalbody_blocks,
             cleanup: Vec::new(),
         });
+    }
+
+    /// Lower `try` part `part` to its own block list. What the part's
+    /// statements record about aliases, loans, displays, packs, and call
+    /// setup goes out of scope with it.
+    fn try_part(&mut self, part: &'a hir::HirRegion) -> Vec<MirBlock> {
+        let aliases = self.aliases.clone();
+        let displays = self.displays.clone();
+        let parameter_reads = self.parameter_reads.clone();
+        let pack_sources = self.pack_sources.clone();
+        let pack_cursors = self.pack_cursors.clone();
+        let runtime_aliases = self.runtime_aliases.clone();
+        let aggregate_loans = self.aggregate_loans.clone();
+        let conversion_view_loans = self.conversion_view_loans.clone();
+        let transfer_domain_loans = self.transfer_domain_loans.clone();
+        let pending_argument_anchors = std::mem::take(&mut self.pending_argument_anchors);
+        let call_setups = std::mem::take(&mut self.call_setups);
+        let argument_depth = std::mem::replace(&mut self.argument_depth, 0);
+        let allow_argument_anchors = std::mem::replace(&mut self.allow_argument_anchors, false);
+        let blocks = self.hir_region(part);
+        self.aliases = aliases;
+        self.displays = displays;
+        self.parameter_reads = parameter_reads;
+        self.pack_sources = pack_sources;
+        self.pack_cursors = pack_cursors;
+        self.runtime_aliases = runtime_aliases;
+        self.aggregate_loans = aggregate_loans;
+        self.conversion_view_loans = conversion_view_loans;
+        self.transfer_domain_loans = transfer_domain_loans;
+        self.pending_argument_anchors = pending_argument_anchors;
+        self.call_setups = call_setups;
+        self.argument_depth = argument_depth;
+        self.allow_argument_anchors = allow_argument_anchors;
+        blocks
     }
 
     /// A place for a call argument's *write-back* — a variable or a field chain,
@@ -3351,7 +3264,7 @@ impl<'a> Flatten<'a> {
             let term = block
                 .term
                 .as_ref()
-                .map_or(MirTerm::FallOff, |term| self.lower_term(term));
+                .map_or(MirTerm::TryYield, |term| self.lower_term(term));
             self.f.blocks[self.cur].term = term;
         }
         self.setup_reference = reference;
@@ -3386,7 +3299,7 @@ impl<'a> Flatten<'a> {
                 }
                 MirTerm::Return(value)
             }
-            Terminator::FallOff => MirTerm::FallOff,
+            Terminator::TryYield => MirTerm::TryYield,
             Terminator::Yield => MirTerm::Yield(Vec::new()),
             Terminator::ComptimeYield => MirTerm::ComptimeYield(Vec::new()),
             Terminator::ElifCond(cond) => {

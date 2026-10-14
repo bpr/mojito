@@ -33,7 +33,7 @@ pub(super) fn refine_deinit_fields(f: &mut MirFunction, declarations: &MirDeclar
     for root in roots {
         let top_live_in = top_level_field_liveness(&f.blocks, &root);
         let seeds = FieldSeeds {
-            fall_off: FieldSet::new(),
+            try_yield: FieldSet::new(),
             raise: FieldSet::new(),
             finally_live: FieldSet::new(),
             top_live_in: &top_live_in,
@@ -80,7 +80,7 @@ impl DeinitRoot<'_> {
 /// Live-out seeds for one region, per exit kind (the field analogue of
 /// [`RegionSeeds`](super::drops::RegionSeeds)).
 struct FieldSeeds<'a> {
-    fall_off: FieldSet,
+    try_yield: FieldSet,
     raise: FieldSet,
     finally_live: FieldSet,
     top_live_in: &'a [FieldSet],
@@ -147,7 +147,7 @@ fn deinit_root<'a>(
 fn top_level_field_liveness(blocks: &[MirBlock], root: &DeinitRoot) -> Vec<FieldSet> {
     let empty: Vec<FieldSet> = vec![FieldSet::new(); blocks.len()];
     let seeds = FieldSeeds {
-        fall_off: FieldSet::new(),
+        try_yield: FieldSet::new(),
         raise: FieldSet::new(),
         finally_live: FieldSet::new(),
         top_live_in: &empty,
@@ -167,7 +167,7 @@ fn refine_region(
 ) -> FieldSet {
     let nb = blocks.len();
     if nb == 0 {
-        return seeds.fall_off.clone();
+        return seeds.try_yield.clone();
     }
     let FieldLiveness {
         live_in,
@@ -314,7 +314,7 @@ fn refine_try(try_instr: &mut MirInstr, root: &DeinitRoot, after: &FieldSet, see
     let fin_live = match finalbody {
         Some(fb) => {
             let fin_seeds = FieldSeeds {
-                fall_off: after.clone(),
+                try_yield: after.clone(),
                 raise: seeds.raise.clone(),
                 finally_live: after.clone(),
                 top_live_in: seeds.top_live_in,
@@ -327,7 +327,7 @@ fn refine_try(try_instr: &mut MirInstr, root: &DeinitRoot, after: &FieldSet, see
     outward_raise.extend(seeds.raise.iter().copied());
 
     let inner_seeds = FieldSeeds {
-        fall_off: fin_live.clone(),
+        try_yield: fin_live.clone(),
         raise: outward_raise.clone(),
         finally_live: fin_live.clone(),
         top_live_in: seeds.top_live_in,
@@ -345,7 +345,7 @@ fn refine_try(try_instr: &mut MirInstr, root: &DeinitRoot, after: &FieldSet, see
         .as_mut()
         .map(|e| refine_region(e, root, &inner_seeds, None));
     let body_seeds = FieldSeeds {
-        fall_off: orelse_live.unwrap_or_else(|| fin_live.clone()),
+        try_yield: orelse_live.unwrap_or_else(|| fin_live.clone()),
         raise: handler_entry.unwrap_or_else(|| outward_raise.clone()),
         finally_live: fin_live,
         top_live_in: seeds.top_live_in,
@@ -467,7 +467,7 @@ fn try_entry_liveness(
     };
     let region_entry = |blocks: &[MirBlock], seeds: &FieldSeeds| -> FieldSet {
         if blocks.is_empty() {
-            seeds.fall_off.clone()
+            seeds.try_yield.clone()
         } else {
             region_field_liveness(blocks, root, seeds).live_in[0].clone()
         }
@@ -476,7 +476,7 @@ fn try_entry_liveness(
         Some(fb) => region_entry(
             fb,
             &FieldSeeds {
-                fall_off: after.clone(),
+                try_yield: after.clone(),
                 raise: seeds.raise.clone(),
                 finally_live: after.clone(),
                 top_live_in: seeds.top_live_in,
@@ -487,7 +487,7 @@ fn try_entry_liveness(
     let mut outward_raise = fin_live.clone();
     outward_raise.extend(seeds.raise.iter().copied());
     let inner_seeds = FieldSeeds {
-        fall_off: fin_live.clone(),
+        try_yield: fin_live.clone(),
         raise: outward_raise.clone(),
         finally_live: fin_live.clone(),
         top_live_in: seeds.top_live_in,
@@ -495,7 +495,7 @@ fn try_entry_liveness(
     let handler_entry = handler.as_ref().map(|(_, h)| region_entry(h, &inner_seeds));
     let orelse_entry = orelse.as_ref().map(|e| region_entry(e, &inner_seeds));
     let body_seeds = FieldSeeds {
-        fall_off: orelse_entry.unwrap_or_else(|| fin_live.clone()),
+        try_yield: orelse_entry.unwrap_or_else(|| fin_live.clone()),
         raise: handler_entry.unwrap_or(outward_raise),
         finally_live: fin_live,
         top_live_in: seeds.top_live_in,
@@ -526,7 +526,7 @@ fn block_field_live_out(
             }
             out
         }
-        MirTerm::FallOff => seeds.fall_off.clone(),
+        MirTerm::TryYield => seeds.try_yield.clone(),
         MirTerm::Return(_) => seeds.finally_live.clone(),
         // Region terminators are lowered before this analysis runs.
         MirTerm::Yield(_)

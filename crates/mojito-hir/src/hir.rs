@@ -12,9 +12,10 @@
 //! run-time `if` is an [`HirInstr::If`] (`hlcf.if`), a `while`/`for` a
 //! labelled [`HirInstr::Loop`] (`hlcf.loop`), a `comptime if` an
 //! [`HirInstr::ComptimeIf`] (`hlcf.comptime.if`), and a `comptime for` an
-//! [`HirInstr::ComptimeFor`] (`hlcf.comptime.for`), each holding its own
-//! regions; `break`/`continue` are region terminators naming their loop, and
-//! no terminator jumps between blocks. A local name resolves to its slot once, here, recorded per node in
+//! [`HirInstr::ComptimeFor`] (`hlcf.comptime.for`), and a `try` an
+//! [`HirInstr::Try`] (`lit.try`), each holding its own regions;
+//! `break`/`continue` are region terminators naming their loop, no
+//! terminator jumps between blocks, and every region is one block. A local name resolves to its slot once, here, recorded per node in
 //! [`Cfg::slots`].
 
 use mojito_checked::checked::{
@@ -177,13 +178,15 @@ pub enum HirInstr {
         plan: mojito_checked::checked::CheckedIterationBinding,
         binding: mojito_types::origin::OwnerId,
     },
-    /// A `try` statement whose sub-regions are lowered in Stage 5 as mini-CFGs.
-    /// `loops` snapshots the enclosing loop stack (innermost last) at this
-    /// point, so a `break`/`continue` inside a part names the loop it leaves
-    /// and a return destroys the iterator storage it crosses after `finally`.
+    /// `lit.try`: `body`, then the `except` handler when it raises, `orelse`
+    /// when it completes, and `finalbody` on every exit. Every part that
+    /// completes ends in [`Terminator::TryYield`]; a `break`/`continue` in a
+    /// part names the enclosing loop it leaves.
     Try {
-        stmt: HirStmt,
-        loops: Vec<EnclosingLoop>,
+        body: HirRegion,
+        except: Option<HirExcept>,
+        orelse: Option<HirRegion>,
+        finalbody: Option<HirRegion>,
     },
     /// `hlcf.if`: `then` when `cond` holds, else each of `elifs` in order,
     /// else `orelse`. Every arm that completes ends in [`Terminator::Yield`].
@@ -228,9 +231,7 @@ pub enum HirInstr {
     },
 }
 
-/// A region of a region op: its blocks, entry first. Every block is a node
-/// of its [`Cfg::g`]; a region's blocks after its entry are dead code that
-/// follows a terminator.
+/// A region of a region op: its one block, a node of its [`Cfg::g`].
 #[derive(Debug, Clone, Default)]
 pub struct HirRegion {
     pub blocks: Vec<BlockId>,
@@ -251,6 +252,16 @@ pub enum HirCond {
 pub struct HirElif {
     pub cond: HirRegion,
     pub then: HirRegion,
+}
+
+/// An [`HirInstr::Try`]'s `except` part: its handler's checked `binding`
+/// and `slot` when it names the error, and its region, whose scope the
+/// handler's name is declared in.
+#[derive(Debug, Clone)]
+pub struct HirExcept {
+    pub binding: Option<OwnerId>,
+    pub slot: Option<VarId>,
+    pub body: HirRegion,
 }
 
 /// The loop a `break`/`continue` leaves: a labelled [`HirInstr::Loop`] or
@@ -282,12 +293,10 @@ pub enum Terminator {
         value: Option<HirExpr>,
         cleanup: Vec<VarId>,
     },
-    /// The normal fall-through end of a **seeded region** (a `try` sub-body). Unlike
-    /// `Return(None)` (an explicit bare `return`), this means "the region completed
-    /// normally" — the VM continues to the `else`/`finally`, not out of the frame.
-    /// Only appears in region CFGs (`build_seeded_checked_region`), never a
-    /// function body.
-    FallOff,
+    /// `lit.try.yield`: an [`HirInstr::Try`] part completed. Unlike
+    /// `Return(None)` (an explicit bare `return`), the `try` continues to its
+    /// `else`/`finally`, not out of the frame.
+    TryYield,
     /// `hlcf.yield`: an [`HirInstr::If`] arm completed.
     Yield,
     /// `hlcf.comptime.yield`: an [`HirInstr::ComptimeIf`] arm completed.
@@ -342,8 +351,8 @@ pub struct Cfg {
     pub bindings: HashMap<OwnerId, VarId>,
     /// The statement nodes of the body this CFG lowers.
     pub body: Vec<CheckedStmtId>,
-    /// The next loop label free after this CFG's loops: a `try` part built
-    /// from its frame numbers its own loops from here.
+    /// The next loop label free after this CFG's loops, from which MIR
+    /// numbers the loops it adds.
     pub labels: u32,
 }
 
@@ -398,50 +407,6 @@ impl Cfg {
             Some(value),
             Arc::clone(checked.tables()),
         )
-    }
-
-    /// Lower a checked `try` region, the statement nodes `body`, into a CFG
-    /// that starts from the enclosing frame's [`RegionSeed`]: it shares the
-    /// frame's `VarId`s (a name already interned keeps its id, new names
-    /// append) and resolves a name to its binding's slot there. The region's
-    /// loop stack starts with the enclosing loops (`loops`, innermost last):
-    /// a `break`/`continue` naming one of them leaves the region, which MIR's
-    /// `lower-control-flow` resolves. `n_params` is 0.
-    pub fn build_seeded_checked_region(
-        seed: RegionSeed,
-        body: &[CheckedStmtId],
-        loops: &[EnclosingLoop],
-        checked: Arc<CheckedTables>,
-    ) -> Self {
-        let mut g = StableGraph::new();
-        let entry = g.add_node(BasicBlock::default());
-        let RegionSeed {
-            vars,
-            bindings,
-            handler,
-            labels,
-        } = seed;
-        let mut lower = Lower {
-            g,
-            cur: entry,
-            region_blocks: vec![entry],
-            loops: loops.to_vec(),
-            next_label: labels,
-            scopes: vec![vars.iter().map(|n| (n.clone(), n.clone())).collect()],
-            captures: HashSet::new(),
-            vars,
-            checked,
-            slots: HashMap::new(),
-            bindings,
-        };
-        if let Some((binding, name)) = handler {
-            lower.declare_handler(binding, &name);
-        }
-        for id in body {
-            lower.stmt(*id);
-        }
-        lower.seal(Terminator::FallOff); // region completed normally (not a return)
-        lower.finish(entry, 0, body.to_vec())
     }
 
     // --- Read-only accessors (so tests/analysis need not import `petgraph`) ---
@@ -506,21 +471,6 @@ impl Cfg {
         lower.seal(Terminator::Return(None)); // implicit `return None` off the end
         lower.finish(entry, params.len(), body.to_vec())
     }
-}
-
-/// What a `try` region starts from.
-///
-/// The enclosing frame's slot spellings (`vars`, so `VarId`s agree), the
-/// slot of each checked binding the frame has declared (`bindings`), the
-/// `except` binding the region declares first, when it is a handler that
-/// names its error, and the first loop label free in the function
-/// (`labels`), so the region's loops keep labels unique.
-#[derive(Debug, Clone, Default)]
-pub struct RegionSeed {
-    pub vars: Vec<String>,
-    pub bindings: HashMap<OwnerId, VarId>,
-    pub handler: Option<(Option<OwnerId>, String)>,
-    pub labels: u32,
 }
 
 fn collect_function_implicit_names(
@@ -689,25 +639,16 @@ impl Lower {
         }
     }
 
-    /// Append region op `op` to the current block, opening a fresh
-    /// (unreachable) one after a block a `return`, `break`, or `continue`
-    /// sealed, so code after it still lowers.
-    fn push_region_op(&mut self, op: HirInstr) {
-        if self.g[self.cur].term.is_some() {
-            self.cur = self.new_block();
-        }
-        self.g[self.cur].instrs.push(op);
-    }
-
     /// A fresh loop label.
     const fn label(&mut self) -> u32 {
         self.next_label += 1;
         self.next_label - 1
     }
 
+    /// Append `i` to the current block, or drop it after a `return`,
+    /// `break`, or `continue` sealed the block, as `LowerSemanticCF`'s
+    /// `eraseOpToEndOfBlock` erases dead code: every region stays one block.
     fn push(&mut self, i: HirInstr) {
-        // Dead code after a terminator (e.g. a statement following `return`) is
-        // dropped rather than appended to an already-sealed block.
         if self.g[self.cur].term.is_none() {
             self.g[self.cur].instrs.push(i);
         }
@@ -795,10 +736,10 @@ impl Lower {
         slot
     }
 
-    /// Declare an `except` name's slot in the region's root scope: the slot
-    /// the frame already gave its binding, else its own spelling unless a
-    /// slot of the frame already has it, then one suffixed by its binding.
-    fn declare_handler(&mut self, binding: Option<OwnerId>, name: &str) {
+    /// Declare an `except` name's slot in the innermost scope: the slot the
+    /// frame already gave its binding, else its own spelling unless a slot
+    /// of the frame already has it, then one suffixed by its binding.
+    fn declare_handler(&mut self, binding: Option<OwnerId>, name: &str) -> VarId {
         let declared = binding.and_then(|binding| self.bindings.get(&binding).copied());
         let runtime = match (declared, binding) {
             (Some(slot), _) => self.vars[slot as usize].clone(),
@@ -808,12 +749,13 @@ impl Lower {
             _ => name.to_string(),
         };
         let slot = self.var(&runtime);
-        if let Some(scope) = self.scopes.first_mut() {
+        if let Some(scope) = self.scopes.last_mut() {
             scope.insert(name.to_string(), runtime);
         }
         if let Some(binding) = binding {
             self.bindings.insert(binding, slot);
         }
+        slot
     }
 
     /// Expression `id` evaluated in this frame: its names resolved to the
@@ -1037,12 +979,20 @@ impl Lower {
                 self.push(HirInstr::Eval(e));
             }
 
-            // A `try`: snapshot the enclosing loop stack so a `break`/`continue`
-            // inside a part names the loop it leaves.
-            CheckedStmtOp::Try { .. } => self.push(HirInstr::Try {
-                stmt: self.statement(id),
-                loops: self.loops.clone(),
-            }),
+            CheckedStmtOp::Try {
+                body,
+                except,
+                orelse,
+                finalbody,
+            } => self.try_statement(
+                body,
+                except
+                    .as_ref()
+                    .map(|(name, body)| (name.as_deref(), body.as_slice())),
+                orelse.as_deref(),
+                finalbody.as_deref(),
+                s.binding,
+            ),
 
             // Everything else (member-write, aug-assign, declarations, imports, …)
             // is kept whole for Stage 4; Stage 5 refines it.
@@ -1070,12 +1020,57 @@ impl Lower {
             });
         }
         let orelse = self.arm(orelse);
-        self.push_region_op(HirInstr::If {
+        self.push(HirInstr::If {
             cond,
             then,
             elifs,
             orelse,
         });
+    }
+
+    /// `try`/`except`/`else`/`finally` as `lit.try`, each part a region of
+    /// this walk; a named handler, the checked `binding`, is declared in its
+    /// `except` region's scope.
+    fn try_statement(
+        &mut self,
+        body: &[CheckedStmtId],
+        except: Option<(Option<&str>, &[CheckedStmtId])>,
+        orelse: Option<&[CheckedStmtId]>,
+        finalbody: Option<&[CheckedStmtId]>,
+        binding: Option<OwnerId>,
+    ) {
+        let body = self.try_part(body);
+        let except = except.map(|(name, body)| {
+            let mut slot = None;
+            let body = self.region(|this| {
+                this.scopes.push(HashMap::new());
+                slot = name.map(|name| this.declare_handler(binding, name));
+                this.block(body);
+                this.scopes.pop();
+                Terminator::TryYield
+            });
+            HirExcept {
+                binding: name.and(binding),
+                slot,
+                body,
+            }
+        });
+        let orelse = orelse.map(|body| self.try_part(body));
+        let finalbody = finalbody.map(|body| self.try_part(body));
+        self.push(HirInstr::Try {
+            body,
+            except,
+            orelse,
+            finalbody,
+        });
+    }
+
+    /// A `try` part: `body` in its own scope, then `try.yield`.
+    fn try_part(&mut self, body: &[CheckedStmtId]) -> HirRegion {
+        self.region(|this| {
+            this.scoped_block(body);
+            Terminator::TryYield
+        })
     }
 
     /// An `if` arm: `body` in its own scope, then `yield`.
@@ -1101,7 +1096,7 @@ impl Lower {
             .map(|(_, body)| self.comptime_arm(Some(body)))
             .collect();
         let orelse = self.comptime_arm(orelse);
-        self.push_region_op(HirInstr::ComptimeIf {
+        self.push(HirInstr::ComptimeIf {
             conds,
             arms,
             orelse,
@@ -1141,7 +1136,7 @@ impl Lower {
         self.loops.pop();
         self.scopes.pop();
         let orelse = self.region(|_| Terminator::ComptimeBreak);
-        self.push_region_op(HirInstr::ComptimeFor {
+        self.push(HirInstr::ComptimeFor {
             iter,
             var: var.to_string(),
             binding,
@@ -1170,7 +1165,7 @@ impl Lower {
             this.loops.pop();
             Terminator::Continue(label)
         });
-        self.push_region_op(HirInstr::Loop { label, body });
+        self.push(HirInstr::Loop { label, body });
     }
 
     /// A loop body's opening test: go on when `cond` holds, else run the
@@ -1185,7 +1180,7 @@ impl Lower {
             }
             Terminator::Break(label)
         });
-        self.push_region_op(HirInstr::If {
+        self.push(HirInstr::If {
             cond,
             then,
             elifs: Vec::new(),
@@ -1347,7 +1342,7 @@ impl Lower {
             Terminator::Continue(label)
         });
         self.scopes.pop();
-        self.push_region_op(HirInstr::Loop { label, body });
+        self.push(HirInstr::Loop { label, body });
         // Lowering emits no drops: the synthetic iterator, defined by
         // `GetIter`, dies on every loop exit edge (`break` included),
         // where drop elaboration destroys it.

@@ -39,7 +39,7 @@ fn function_with(reg_types: Vec<Ty>, instrs: Vec<MirInstr>) -> MirFunction {
     MirFunction {
         blocks: vec![MirBlock {
             instrs,
-            term: MirTerm::FallOff,
+            term: MirTerm::TryYield,
         }],
         n_regs: reg_types.len() as u32,
         n_vars: 0,
@@ -1300,11 +1300,11 @@ fn nested_try_regions_reprint_without_region_source_marks() {
                 instrs: vec![inner_try],
                 term: MirTerm::Jump(1),
             },
-            region_block(MirTerm::FallOff),
+            region_block(MirTerm::TryYield),
         ],
-        handler: Some((Some(3), vec![region_block(MirTerm::FallOff)])),
-        orelse: Some(vec![region_block(MirTerm::FallOff)]),
-        finalbody: Some(vec![region_block(MirTerm::FallOff)]),
+        handler: Some((Some(3), vec![region_block(MirTerm::TryYield)])),
+        orelse: Some(vec![region_block(MirTerm::TryYield)]),
+        finalbody: Some(vec![region_block(MirTerm::TryYield)]),
         cleanup: vec![4, 5],
     };
     let program = program_with(vec![(
@@ -1340,7 +1340,7 @@ fn artifact_with_instruction(instruction_text: &str) -> String {
          returns_reference: false,\n      var_types: [],\n      return_type: present(None),\n      \
          raises: false,\n      error_type: absent,\n      register_types: [],\n      \
          locations: [],\n      blocks: [bb0 {{ instructions: [{instruction_text}], \
-         terminator: falloff {{}} }}]\n    }}\n  ]\n}}\n"
+         terminator: try.yield {{}} }}]\n    }}\n  ]\n}}\n"
     )
 }
 
@@ -1358,7 +1358,7 @@ fn malformed_instruction_payloads_are_diagnosed() {
     );
     assert!(
         diagnostics(&artifact_with_instruction(
-            "try { body: [bb1 { instructions: [], terminator: falloff {} }], \
+            "try { body: [bb1 { instructions: [], terminator: try.yield {} }], \
              handler: absent, orelse: absent, finalbody: absent, cleanup: [] }"
         ))
         .iter()

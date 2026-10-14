@@ -13,8 +13,8 @@ use std::collections::HashSet;
 #[test]
 fn schema_version_and_envelope_are_stable() {
     assert_eq!(MAGIC, "mojito-mir");
-    assert_eq!((VERSION_MAJOR, VERSION_MINOR), (1, 48));
-    assert_eq!(version_header(), "mojito-mir 1.51");
+    assert_eq!((VERSION_MAJOR, VERSION_MINOR), (1, 59));
+    assert_eq!(version_header(), "mojito-mir 1.59");
 }
 
 #[test]
@@ -73,7 +73,7 @@ fn representative_instruction_and_terminator_mappings_are_pinned() {
         "unsupported"
     );
     assert_eq!(terminator_mnemonic(&MirTerm::Jump(2)), "jump");
-    assert_eq!(terminator_mnemonic(&MirTerm::FallOff), "falloff");
+    assert_eq!(terminator_mnemonic(&MirTerm::TryYield), "try.yield");
 }
 
 #[test]

@@ -76,7 +76,7 @@ pub(super) fn renumber_blocks(blocks: &mut [MirBlock], renumber: &dyn Fn(VarId) 
             | MirTerm::Branch { .. }
             | MirTerm::ComptimeBranch { .. }
             | MirTerm::Return(_)
-            | MirTerm::FallOff
+            | MirTerm::TryYield
             | MirTerm::Yield(_)
             | MirTerm::ElifCond(_)
             | MirTerm::Break { .. }
@@ -132,7 +132,7 @@ fn collect_block_slots(block: &MirBlock, addressed: &mut BTreeSet<VarId>) {
         | MirTerm::Branch { .. }
         | MirTerm::ComptimeBranch { .. }
         | MirTerm::Return(_)
-        | MirTerm::FallOff
+        | MirTerm::TryYield
         | MirTerm::Yield(_)
         | MirTerm::ElifCond(_)
         | MirTerm::Break { .. }

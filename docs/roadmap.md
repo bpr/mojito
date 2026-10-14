@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R905**.
+Next free ID: **R906**.
 
 ## Ordered Work
 
@@ -63,22 +63,6 @@ CFG. The entries that close that gap are staged in
 producers first, then the CFG lowering point moving down one consumer at a
 time.
 
-
-- [ ] **R874 A `try`'s parts are multi-block CFGs left through
-  `EscapeJump`/`FallOff` where upstream's regions are single blocks left
-  through labelled terminators**
-
-  `MirInstr::Try` is already a region op, but each part is a mini-CFG
-  (`build_seeded_checked_region`), and a `break` out of it is an
-  `EscapeJump`.
-  - Stage 5 of `docs/structured-control-flow-plan.md`.
-  - Each part becomes one region. `EscapeJump` becomes a labelled
-    `Break`/`Continue`, and `FallOff` becomes `Yield`.
-  - This is the last producer, so `mir::verify`'s single-block rule
-    switches on.
-  - After it lands, `lower-control-flow` runs right after MIR lowering.
-  - Depends on R872.
-  - Model: Opus, Planned.
 
 - [ ] **R889 Code after a `return`, `break`, or `continue` still lowers,
   into an unreachable block, where upstream's `LowerSemanticCF` erases it**
@@ -250,6 +234,25 @@ time.
     for Pliron.
   - Depends on R881.
   - Model: Opus, Planned.
+
+- [ ] **R905 A `break`/`continue` from a `try` nested in another `try`'s
+  part, to a loop inside that outer part, is unsupported**
+
+  The VM run fails with "try with break/continue crossing the try
+  boundary", where the same Mojo program is valid.
+  - The structured form is fine: the part ends in a labelled `break`
+    naming the loop (R874).
+  - The limit is in the lowered form: `lower-control-flow`'s
+    `Lowering::leave` can only aim an `EscapeJump` at a function-level
+    block, and this loop's blocks belong to the outer part.
+  - Once the VM runs region ops (R882), the `break` leaves through the
+    regions, as upstream's interpreter does, and no escape is needed.
+  - Add an `assets/ok` fixture with a `break` and a `continue` across two
+    `try`s, each with a `finally`.
+  - Pliron keeps the limit until R883.
+  - Found while landing R874 (2026-10-14).
+  - Depends on R882.
+  - Model: Opus, Not Planned.
 
 - [ ] **R883 Pliron lowers a MIR CFG where `LowerControlFlow` lowers
   structured ops, so `lower-control-flow` and the CFG terminators survive**

@@ -482,7 +482,7 @@ mod tests {
         let mut function = body(vec![MirInstr::Try {
             body: vec![MirBlock {
                 instrs: Vec::new(),
-                term: MirTerm::FallOff,
+                term: MirTerm::TryYield,
             }],
             handler: Some((
                 None,
@@ -491,7 +491,7 @@ mod tests {
                         dest: Reg(0),
                         ty: Ty::new(TyKind::Struct("Box".to_string(), Vec::new())),
                     }],
-                    term: MirTerm::FallOff,
+                    term: MirTerm::TryYield,
                 }],
             )),
             orelse: None,

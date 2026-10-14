@@ -127,7 +127,7 @@ impl Solver<'_> {
             }
             MirTerm::Return(_)
             | MirTerm::ReturnWithCleanup { .. }
-            | MirTerm::FallOff
+            | MirTerm::TryYield
             | MirTerm::Yield(_)
             | MirTerm::ElifCond(_)
             | MirTerm::Break { .. }

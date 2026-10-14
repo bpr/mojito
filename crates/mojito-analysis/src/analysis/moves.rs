@@ -824,7 +824,7 @@ where
             continue;
         }
         match block.term {
-            MirTerm::FallOff => add_state(&mut flow.normal, &Some(state)),
+            MirTerm::TryYield => add_state(&mut flow.normal, &Some(state)),
             MirTerm::Return(_) | MirTerm::ReturnWithCleanup { .. } | MirTerm::EscapeJump { .. } => {
                 add_state(&mut flow.exits, &Some(state));
             }

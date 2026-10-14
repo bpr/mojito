@@ -18,7 +18,7 @@
 //!   predicate; calls are compared against `MirFunctionDeclaration` facts when
 //!   the callee is declared — builtin callees have no declaration and only
 //!   participate in register checks);
-//! - CFG edges: jump-target bounds per region, `FallOff`/`EscapeJump` only
+//! - CFG edges: jump-target bounds per region, `TryYield`/`EscapeJump` only
 //!   inside `try` sub-regions;
 //! - structured control flow: each region terminator inside the region op
 //!   it ends, a `break`/`continue` inside its loop, and — in
@@ -116,8 +116,8 @@ pub use regs::*;
 pub(crate) use scope::declared_kind;
 use scope::verify_scope;
 pub use scope::{instruction_named_types, instruction_variant_indices};
-pub use structure::verify_structured_function_in;
 use structure::{verify_region_terminator, verify_regions};
+pub use structure::{verify_structured_function_in, verify_structured_shape};
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use subscripts::*;
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
@@ -182,7 +182,7 @@ impl RegionContext {
         self.regions.last().unwrap_or(&RegionKind::Function)
     }
 
-    /// Whether this run of blocks is a `try` part, where `FallOff` is the
+    /// Whether this run of blocks is a `try` part, where `TryYield` is the
     /// legal way to complete.
     fn is_try_part(&self) -> bool {
         matches!(self.kind(), RegionKind::TryPart)

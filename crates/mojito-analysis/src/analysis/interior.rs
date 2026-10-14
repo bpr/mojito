@@ -26,7 +26,7 @@ pub(super) struct InteriorInvalidationState {
 #[derive(Clone, PartialEq, Eq)]
 pub(super) struct InteriorState {
     /// `false` is the dataflow bottom used when a structured region has no
-    /// normal (`FallOff`) exit. It prevents `return`/outer-loop escape paths
+    /// normal (`TryYield`) exit. It prevents `return`/outer-loop escape paths
     /// from contaminating instructions that execute after a `try`.
     reachable: bool,
     active: BTreeMap<VarId, BTreeSet<u32>>,
@@ -412,7 +412,7 @@ pub(super) fn summarize_interior_region(
             continue;
         }
         match body.term {
-            MirTerm::FallOff => add_interior_state(&mut flow.normal, &state),
+            MirTerm::TryYield => add_interior_state(&mut flow.normal, &state),
             MirTerm::Return(_) | MirTerm::ReturnWithCleanup { .. } | MirTerm::EscapeJump { .. } => {
                 add_interior_state(&mut flow.exits, &state);
             }

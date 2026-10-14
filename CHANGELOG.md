@@ -8,6 +8,14 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A `try`'s parts are now regions of the function's own HIR walk, as
+  upstream's parser builds `lit.try`, instead of separately built CFGs, and
+  each completes by `try.yield` (`lit.try.yield`, the renamed `falloff`)
+  (R874). A region op after a `return`, `break`, or `continue` is erased,
+  as `LowerSemanticCF` erases dead code, so every structured region is one
+  block, and MIR lowering now verifies that shape on every body before
+  `lower-control-flow`. Program output is unchanged. MIR text is 1.59 and
+  the package format is 64.
 - A `comptime for` body now opens with upstream's `comptime if` on the
   iterator's `has_next`, whose else arm leaves the loop, as
   `LowerSemanticCF` leaves `hlcf.comptime.for` (R885), and the elaborator

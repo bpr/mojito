@@ -236,7 +236,7 @@ impl VmBackend {
                     self.run_cleanup(prog, cleanup, &mut frame.variables)?;
                     returned
                 }
-                MirTerm::FallOff | MirTerm::EscapeJump { .. } => Value::None,
+                MirTerm::TryYield | MirTerm::EscapeJump { .. } => Value::None,
             };
             // A reference returned by projecting through a stored handle (a
             // `ref[origin]` field's element) — or buried inside a returned

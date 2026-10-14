@@ -51,6 +51,7 @@ pub(super) fn lower_fn_nested(
     request: FunctionLowering<'_>,
     out: &mut Vec<(String, MirFunction)>,
     declarations: &mut MirDeclarations,
+    invariant_errors: &mut Vec<String>,
 ) {
     let FunctionLowering {
         checked,
@@ -103,6 +104,8 @@ pub(super) fn lower_fn_nested(
     }
     let mut thunks = ComptimeThunks::for_owner(name);
     let mut f = lower_cfg_nested(
+        name,
+        invariant_errors,
         &cfg,
         declared,
         &registry,
@@ -118,7 +121,7 @@ pub(super) fn lower_fn_nested(
     if !enclosing_binders.lifted {
         thunks.request_applications(checked, &cfg.body);
     }
-    thunks.lower(checked, overloads, out, declarations);
+    thunks.lower(checked, overloads, out, declarations, invariant_errors);
     f.n_params = param_types.len();
     for (slot, ty) in param_types.iter().enumerate() {
         f.var_tys.entry(slot as VarId).or_insert_with(|| ty.clone());
@@ -148,12 +151,13 @@ pub(super) fn lower_fn_nested(
         lower_nested_node(
             checked,
             child,
-            &registry,
             overloads,
             out,
             declarations,
+            invariant_errors,
             Enclosing {
                 name,
+                registry: &registry,
                 binders: &enclosing_binders,
                 locals: &value_parameter_locals,
             },
@@ -371,12 +375,14 @@ fn scope_registry(
 }
 
 /// The declaration a nested function is lowered inside: its lowered name,
-/// the binders in scope there, and the frame locals of its callable and
-/// constructible type binders and of its own enclosing declarations', which
-/// the nested body reads as its own.
+/// the nested `def`s registered in its scope, the binders in scope there,
+/// and the frame locals of its callable and constructible type binders and
+/// of its own enclosing declarations', which the nested body reads as its
+/// own.
 #[derive(Clone, Copy)]
 struct Enclosing<'a> {
     name: &'a str,
+    registry: &'a HashMap<mojito_types::origin::OwnerId, NestedInfo>,
     binders: &'a EnclosingBinders,
     locals: &'a [(String, Ty)],
 }
@@ -400,16 +406,16 @@ impl Enclosing<'_> {
 fn lower_nested_node(
     checked: &mojito_checked::checked::CheckedProgram,
     node: NestedNode,
-    inherited_registry: &HashMap<mojito_types::origin::OwnerId, NestedInfo>,
     overloads: &std::sync::Arc<mojito_checked::package::ProgramOverloads>,
     out: &mut Vec<(String, MirFunction)>,
     declarations: &mut MirDeclarations,
+    invariant_errors: &mut Vec<String>,
     enclosing: Enclosing<'_>,
 ) {
     let def = def_of(checked, node.node);
     let dparams = &def.params;
     let (positional_only, keyword_only) = (&def.positional_only, &def.keyword_only);
-    let registry = scope_registry(&node.children, inherited_registry);
+    let registry = scope_registry(&node.children, enclosing.registry);
     let captures = &node.captures;
     let mangled = &node.mangled;
     let capture_types: Vec<Ty> = captures
@@ -522,6 +528,7 @@ fn lower_nested_node(
                 },
                 out,
                 declarations,
+                invariant_errors,
             )
         }))
         .collect();
@@ -598,6 +605,8 @@ fn lower_nested_node(
     }
     let mut thunks = ComptimeThunks::for_owner(mangled);
     let mut nf = lower_cfg_nested(
+        mangled,
+        invariant_errors,
         &ncfg,
         declared,
         &registry,
@@ -614,7 +623,7 @@ fn lower_nested_node(
         &mut thunks,
     );
     thunks.request_applications(checked, &ncfg.body);
-    thunks.lower(checked, overloads, out, declarations);
+    thunks.lower(checked, overloads, out, declarations, invariant_errors);
     nf.n_params = ptys.len();
     for (slot, ty) in ptys.iter().enumerate() {
         nf.var_tys
@@ -651,12 +660,13 @@ fn lower_nested_node(
         lower_nested_node(
             checked,
             child,
-            &registry,
             overloads,
             out,
             declarations,
+            invariant_errors,
             Enclosing {
                 name: mangled,
+                registry: &registry,
                 binders: enclosing_binders,
                 locals: &value_parameter_locals,
             },
@@ -678,7 +688,7 @@ fn materialize_named_result_return(function: &mut MirFunction, result: &str) {
             block.term,
             MirTerm::Return(None)
                 | MirTerm::ReturnWithCleanup { value: None, .. }
-                | MirTerm::FallOff
+                | MirTerm::TryYield
         ) {
             let register = Reg(function.n_regs);
             function.n_regs += 1;

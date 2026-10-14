@@ -136,7 +136,7 @@ pub fn terminator_regs_mut(term: &mut MirTerm) -> Vec<&mut Reg> {
         | MirTerm::ComptimeFor { .. }
         | MirTerm::Return(None)
         | MirTerm::ReturnWithCleanup { value: None, .. }
-        | MirTerm::FallOff
+        | MirTerm::TryYield
         | MirTerm::EscapeJump { .. }
         | MirTerm::Break { .. }
         | MirTerm::Continue { .. }
@@ -160,7 +160,7 @@ pub fn terminator_targets(term: &MirTerm) -> Vec<MirBlockId> {
         } => vec![*then_b, *else_b],
         MirTerm::Return(_)
         | MirTerm::ReturnWithCleanup { .. }
-        | MirTerm::FallOff
+        | MirTerm::TryYield
         | MirTerm::EscapeJump { .. }
         | MirTerm::Yield(_)
         | MirTerm::ElifCond(_)
@@ -186,7 +186,7 @@ pub fn terminator_targets_mut(term: &mut MirTerm) -> Vec<&mut MirBlockId> {
         } => vec![then_b, else_b],
         MirTerm::Return(_)
         | MirTerm::ReturnWithCleanup { .. }
-        | MirTerm::FallOff
+        | MirTerm::TryYield
         | MirTerm::EscapeJump { .. }
         | MirTerm::Yield(_)
         | MirTerm::ElifCond(_)
@@ -2281,10 +2281,10 @@ pub enum MirTerm {
         value: Option<Reg>,
         cleanup: Vec<VarId>,
     },
-    /// Normal fall-through end of a `try` sub-region (see [`hir::Terminator::FallOff`]).
-    /// The VM's region runner reads it as "completed normally". Never appears in a
-    /// function body's blocks.
-    FallOff,
+    /// `lit.try.yield`: a `try` part completed (see
+    /// [`hir::Terminator::TryYield`]), so the `try` goes on to its
+    /// `else`/`finally`. Never appears in a function body's blocks.
+    TryYield,
     /// A `break`/`continue` inside a `try` region that targets an enclosing
     /// **function** loop: `target` is that loop's exit/header block in the
     /// *enclosing function*'s `blocks` (not the region's). The VM propagates it out

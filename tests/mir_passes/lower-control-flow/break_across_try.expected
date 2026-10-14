@@ -29,7 +29,7 @@
           },
           bb2 {
             instructions: [
-              try { body: [bb0 { instructions: [var.use { dest: %r0, var: $v0, mode: copy }], terminator: branch { condition: %r0, then: bb1, else: bb2 } }, bb1 { instructions: [], terminator: escape { target: bb1, cleanup: [] } }, bb2 { instructions: [], terminator: falloff {} }], handler: absent, orelse: absent, finalbody: absent, cleanup: [] }
+              try { body: [bb0 { instructions: [var.use { dest: %r0, var: $v0, mode: copy }], terminator: branch { condition: %r0, then: bb1, else: bb2 } }, bb1 { instructions: [], terminator: escape { target: bb1, cleanup: [] } }, bb2 { instructions: [], terminator: try.yield {} }], handler: absent, orelse: absent, finalbody: absent, cleanup: [] }
             ],
             terminator: jump { target: bb2 }
           }

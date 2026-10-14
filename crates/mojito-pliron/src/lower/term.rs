@@ -43,9 +43,9 @@ impl FnLowering<'_> {
             MirTerm::ReturnWithCleanup { value, cleanup } => {
                 self.lower_return_edge(ctx, value.as_ref().copied(), cleanup)
             }
-            MirTerm::FallOff => {
-                let Some(target) = self.falloff_target else {
-                    return Err(self.unsupported("`FallOff` outside a try region".into(), None));
+            MirTerm::TryYield => {
+                let Some(target) = self.try_yield_target else {
+                    return Err(self.unsupported("`TryYield` outside a try region".into(), None));
                 };
                 let jump = BrOp::new(ctx, target, vec![]);
                 self.append(ctx, jump.get_operation(), None);

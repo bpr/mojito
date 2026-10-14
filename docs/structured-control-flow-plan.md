@@ -1,8 +1,8 @@
 # Structured Control Flow Above the Waist: Staged Plan
 
 **Status:** plan recorded 2026-10-14 (R859); stages 1 (R870), 2 (R871),
-3 (R872), and 4 (R873) landed 2026-10-14, and the `comptime for` body's
-`has_next` test (R885) with them. The scheduled tasks are on
+3 (R872), 4 (R873), and 5 (R874) landed 2026-10-14, and the `comptime for`
+body's `has_next` test (R885) with them. The scheduled tasks are on
 [`docs/roadmap.md`](roadmap.md) track `pmir`, one entry per stage below.
 This document is their design record and is updated as stages land. It is
 the structured-control part of
@@ -80,23 +80,27 @@ Checked in `~/src/mojo/repos/modular/Mojo`.
   statements (`CheckedStmtOp`) and, since stage 3, lowers them into a
   region tree: `if`/`while`/`for`/`comptime if`/`comptime for` are
   `HirInstr::If`/`Loop`/`ComptimeIf`/`ComptimeFor` region ops and
-  `break`/`continue` labelled region terminators. No terminator jumps
-  between blocks; the only multi-block shapes left are dead code after a
-  sealed block and a `try` part, which is its own region CFG
-  (`build_seeded_checked_region`).
-- **MIR** (`crates/mojito-mir/src/mir/ir.rs`) is a CFG: `MirTerm` is `Jump`,
-  `Branch`, `ComptimeBranch`, `ComptimeFor`, `Return`, `ReturnWithCleanup`,
-  `FallOff`, and `EscapeJump`.
+  `break`/`continue` labelled region terminators, and, since stage 5, a
+  `try` is `HirInstr::Try` whose parts are regions of the same walk. No
+  terminator jumps between blocks, and dead code after a sealed block is
+  erased, so every region is one block.
+- **MIR** (`crates/mojito-mir/src/mir/ir.rs`) below `lower-control-flow`
+  is a CFG: `MirTerm` is `Jump`, `Branch`, `ComptimeBranch`, `ComptimeFor`,
+  `Return`, `ReturnWithCleanup`, `TryYield`, and `EscapeJump`.
   - The region ops are `MirInstr::Try` and, since stage 1, `If`, `Loop`,
     `ComptimeIf`, and `ComptimeFor`. Each
     region is a `Vec<MirBlock>` sharing the function's registers and
     slots, walked by `instruction_regions`/`instruction_regions_mut` and
-    `block_successors`. A `try` part is left through `EscapeJump`/`FallOff`.
+    `block_successors`. A structured `try` part completes by `TryYield`
+    (`lit.try.yield`) and leaves to a loop by a labelled `Break`/`Continue`,
+    which `lower-control-flow` turns into `EscapeJump`.
   - `lower_expr/ctrl.rs` builds `short_circuit`, `ternary`, `compare_chain`,
     and `comprehension_clauses` as `If`/`Loop` region ops (stage 2), MIR
     lowering builds HIR's region ops as the same ops (stage 3,
     `Flatten::hir_region`), and it ends each body with
     `lower-control-flow`, so every phase below it still sees blocks.
+    Before that pass, `verify_structured_shape` checks the body, a finding
+    being a MIR invariant error (stage 5).
 - **The analyses work on edges.** Ownership, borrow, and initialization
   checks are dataflow over blocks; `analysis/drops.rs` puts drops on edges
   and splits critical edges.
@@ -141,13 +145,15 @@ Checked in `~/src/mojo/repos/modular/Mojo`.
   name the nearest `comptime for`. `Return`/`ReturnWithCleanup` stay and may end any region,
   as `hlcf.return` is `ReturnLike`. A `break` or `continue` crossing a
   `try` is a labelled `Break`/`Continue` naming its loop, replacing
-  `EscapeJump`; `FallOff` becomes `Yield([])`.
+  `EscapeJump`. A `try` part completes by `TryYield`, upstream's
+  `lit.try.yield` (`LIT_TryYieldOp`, `HasParent<"TryOp">`), which stays,
+  since `lit.try` stays a region op through the waist.
 - **One CFG pass.** `lower-control-flow` (upstream's `LowerControlFlow`) is
   the only code that produces `Jump`/`Branch`. It starts as a transitional
   pass right after MIR lowering, moves down one consumer at a time, and
   ends inside the Pliron lowering. The VM then executes region ops, as
   upstream's interpreter does, and `Jump`, `Branch`, `ComptimeBranch`, the
-  `ComptimeFor` terminator, `FallOff`, and `EscapeJump` leave `MirTerm`.
+  `ComptimeFor` terminator, and `EscapeJump` leave `MirTerm`.
 - **The verifier enforces it.** `mir::verify` gains a structured mode —
   every region one block, only region terminators — applied to a body until
   the point where it is lowered.
@@ -191,8 +197,6 @@ last producer. Every stage keeps program output unchanged; the
    - A `break`/`continue` leaving a `try` part to a function-level loop
      lowers to `EscapeJump`; one whose loop sits in an enclosing `try`
      part lowers to today's unsupported boundary.
-   - The structured mode still lets a `try` part complete by `FallOff`
-     until stage 5 replaces it.
 2. **Expressions.** *Landed (R871).* `short_circuit`, `ternary`,
    `compare_chain`, and `comprehension_clauses` emit `If` (a comprehension
    also a `Loop`) inside today's blocks, each region one block built by
@@ -245,8 +249,17 @@ last producer. Every stage keeps program output unchanged; the
    taken arm alone (`mono/unroll.rs`). The CFG `ComptimeFor` terminator
    keeps its `exit` edge, which no executed path now takes, until stages
    11 and 14 delete the terminator.
-5. **`try`.** Each part is one region; `EscapeJump`/`FallOff` become
-   `Break`/`Continue`/`Yield`. The single-block rule switches on.
+5. **`try`.** *Landed (R874).* HIR lowers a `try`'s parts as regions of
+   the function's own walk (`Lower::try_statement`, `HirExcept`), as the
+   parser builds `lit.try`, where each part was a separately built HIR CFG;
+   MIR lowers them through `Flatten::try_part`, which scopes the part's
+   loans and aliases as before. A region op after a sealed block is erased,
+   as `eraseOpToEndOfBlock` does, so every region is one block. A part
+   completes by `TryYield` (`try.yield {}`, MIR text 1.59), the renamed
+   `FallOff`; a `break`/`continue` in a part was already a labelled
+   `Break`/`Continue` (stage 3). The single-block rule runs in production:
+   `lower_cfg_nested` records `verify_structured_shape`'s findings as
+   invariant errors before `lower-control-flow`.
 6. **Move and initialization checks on regions**, as `CheckLifetimes`:
    an `If` joins its arms, a `Loop` iterates to a fixpoint, and the state at
    a `Break`/`Continue` flows to its labelled loop.

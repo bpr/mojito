@@ -68,19 +68,9 @@ pub use symbols::SymbolTable;
 /// threads the register counter, the variable interner (seeded from `cfg.vars`
 /// so IDs agree with the HIR), and the span table across the whole function.
 pub fn lower_cfg(cfg: &Cfg) -> MirFunction {
-    lower_cfg_nested(
-        cfg,
-        HashMap::new(),
-        &HashMap::new(),
-        &std::sync::Arc::default(),
-        false,
-        &[],
-        &[],
-        &[],
-        None,
-        &EnclosingBinders::default(),
-        &mut ComptimeThunks::default(),
-    )
+    let mut mir = lower_cfg_structured(cfg);
+    lower_control_flow(&mut mir);
+    mir
 }
 
 /// [`lower_cfg`] before `lower-control-flow`: expression control flow is
@@ -608,7 +598,13 @@ pub fn lower_unit(
             let mut thunks = ComptimeThunks::for_owner("__toplevel__");
             thunks.enter_scope(&EnclosingBinders::default().with_loops(&[]));
             thunks.request_applications(checked, std::slice::from_ref(&root));
-            thunks.lower(checked, overloads, functions, declarations);
+            thunks.lower(
+                checked,
+                overloads,
+                functions,
+                declarations,
+                invariant_errors,
+            );
         }
     }
 }
@@ -711,6 +707,8 @@ fn lower_program(
         let mut thunks = ComptimeThunks::for_owner("__toplevel__");
         let cfg = Cfg::build_checked_fn(checked, &[], &toplevel);
         let function = lower_cfg_nested(
+            "__toplevel__",
+            &mut invariant_errors,
             &cfg,
             HashMap::new(),
             &HashMap::new(),
@@ -724,7 +722,13 @@ fn lower_program(
             &mut thunks,
         );
         thunks.request_applications(checked, &cfg.body);
-        thunks.lower(checked, overloads, &mut functions, &mut declarations);
+        thunks.lower(
+            checked,
+            overloads,
+            &mut functions,
+            &mut declarations,
+            &mut invariant_errors,
+        );
         function
     };
     for unit in &units[constants..] {
@@ -1022,6 +1026,7 @@ fn lower_function(
                 },
                 functions,
                 declarations,
+                invariant_errors,
             )
         })
         .collect();
@@ -1103,6 +1108,7 @@ fn lower_function(
         },
         functions,
         declarations,
+        invariant_errors,
     );
 }
 
@@ -1229,6 +1235,7 @@ fn lower_struct_member<P: DeclaredParam>(
                 },
                 functions,
                 declarations,
+                invariant_errors,
             )
         })
         .collect();
@@ -1358,6 +1365,7 @@ fn lower_struct_member<P: DeclaredParam>(
         },
         functions,
         declarations,
+        invariant_errors,
     );
 }
 
@@ -1434,6 +1442,7 @@ fn lower_default<P: DeclaredParam>(
     request: DefaultLowering<'_, P>,
     functions: &mut Vec<(String, MirFunction)>,
     declarations: &mut MirDeclarations,
+    invariant_errors: &mut Vec<String>,
 ) -> Option<CheckedConst> {
     let DefaultLowering {
         checked,
@@ -1467,6 +1476,7 @@ fn lower_default<P: DeclaredParam>(
         },
         functions,
         declarations,
+        invariant_errors,
     );
     Some(CheckedConst::Evaluate {
         function,
@@ -1498,6 +1508,7 @@ fn lower_expression_thunk(
     thunk: ExpressionThunk<'_>,
     functions: &mut Vec<(String, MirFunction)>,
     declarations: &mut MirDeclarations,
+    invariant_errors: &mut Vec<String>,
 ) {
     let ExpressionThunk {
         checked,
@@ -1537,6 +1548,7 @@ fn lower_expression_thunk(
         },
         functions,
         declarations,
+        invariant_errors,
     );
     declarations.functions.push(MirFunctionDeclaration {
         lowered_name: name.to_string(),
@@ -1909,6 +1921,7 @@ impl ComptimeThunks {
         overloads: &std::sync::Arc<mojito_checked::package::ProgramOverloads>,
         functions: &mut Vec<(String, MirFunction)>,
         declarations: &mut MirDeclarations,
+        invariant_errors: &mut Vec<String>,
     ) {
         for request in &self.requests {
             // A function the check named is lifted by the first owner that
@@ -1933,6 +1946,7 @@ impl ComptimeThunks {
                 },
                 functions,
                 declarations,
+                invariant_errors,
             );
         }
     }
@@ -2341,8 +2355,7 @@ fn comptime_iteration(
 
 /// Names whose binding may change after the first assignment (or that a nested
 /// `def` captures). CFG-lowered rebindings appear as `HirInstr::Bind`; opaque
-/// statements — notably `try` regions, whose sub-CFGs lower separately — are
-/// scanned recursively.
+/// statements are scanned recursively.
 fn reassigned_names(
     cfg: &Cfg,
     nested: &HashMap<mojito_types::origin::OwnerId, NestedInfo>,
@@ -2403,11 +2416,6 @@ fn reassigned_names(
                 bump(counts, var);
                 scan_all(body, counts);
                 scan_all(orelse.as_deref().unwrap_or_default(), counts);
-            }
-            CheckedStmtOp::Try { .. } => {
-                for body in TryRegions::of(node).iter().flat_map(TryRegions::bodies) {
-                    scan_all(body, counts);
-                }
             }
             _ => {}
         }
@@ -3580,9 +3588,12 @@ struct NestedInfo {
 /// parameters, a named result); every other slot is typed by the op that
 /// declares it as the body lowers. Lowering ends with `lower-control-flow`,
 /// so the body's expression region ops are blocks before its registers are
-/// typed.
+/// typed; the structured body's shape is verified first, a finding recorded
+/// in `invariant_errors` under the function's `name`.
 #[allow(clippy::too_many_arguments)]
 fn lower_cfg_nested(
+    name: &str,
+    invariant_errors: &mut Vec<String>,
     cfg: &Cfg,
     declared: HashMap<VarId, Ty>,
     nested: &HashMap<mojito_types::origin::OwnerId, NestedInfo>,
@@ -3608,6 +3619,7 @@ fn lower_cfg_nested(
         enclosing_binders,
         comptime_thunks,
     );
+    invariant_errors.extend(verify::verify_structured_shape(name, &mir));
     lower_control_flow(&mut mir);
     mir
 }
@@ -4369,49 +4381,6 @@ fn member_defaults(
         })
         .collect::<Result<_, String>>()?;
     Ok((defaults, member.required[1..].to_vec()))
-}
-
-/// The checked bodies and handler binder of one structured `try`, read from
-/// its statement node. Keeping these parts together makes the primary HIR and
-/// fallback lowering paths share one region-lowering contract.
-struct TryRegions<'a> {
-    body: &'a [CheckedStmtId],
-    except: Option<(Option<&'a str>, &'a [CheckedStmtId])>,
-    orelse: Option<&'a [CheckedStmtId]>,
-    finalbody: Option<&'a [CheckedStmtId]>,
-    handler_binding: Option<mojito_types::origin::OwnerId>,
-}
-
-impl<'a> TryRegions<'a> {
-    /// The regions of `node`, when it is a `try`.
-    fn of(node: &'a CheckedStmt) -> Option<Self> {
-        let CheckedStmtOp::Try {
-            body,
-            except,
-            orelse,
-            finalbody,
-        } = &node.op
-        else {
-            return None;
-        };
-        Some(Self {
-            body,
-            except: except
-                .as_ref()
-                .map(|(name, body)| (name.as_deref(), body.as_slice())),
-            orelse: orelse.as_deref(),
-            finalbody: finalbody.as_deref(),
-            handler_binding: node.binding,
-        })
-    }
-
-    /// Every statement list the `try` runs.
-    fn bodies(&self) -> impl Iterator<Item = &'a [CheckedStmtId]> {
-        std::iter::once(self.body)
-            .chain(self.except.map(|(_, body)| body))
-            .chain(self.orelse)
-            .chain(self.finalbody)
-    }
 }
 
 /// The invariant construction state shared by every recursive level of a

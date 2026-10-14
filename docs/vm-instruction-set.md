@@ -195,7 +195,7 @@ stored handle and operating on its referent.
 | `branch` | `Branch` | Conditional block transfer |
 | `return` | `Return` | Return from a function or structured region |
 | `return.cleanup` | `ReturnWithCleanup` | Return after pending `finally` regions, then destroy what the return still holds |
-| `falloff` | `FallOff` | Complete a try sub-region normally |
+| `try.yield` | `TryYield` | Complete a try sub-region normally |
 | `escape` | `EscapeJump` | Leave a try region for an enclosing loop target |
 
 The structured region terminators — `yield`, `if.elifcond.yield`, `break`,
@@ -923,10 +923,10 @@ function actually returns. `return.cleanup`, which drop elaboration writes on a
 return crossing a `finally`, carries the listed variables through every pending
 `finally`, then destroys them in the recorded order.
 
-### `falloff` — Complete Region
+### `try.yield` — Complete Region
 
 ```text
-falloff
+try.yield
 ```
 
 Marks normal completion of a try sub-region. It is not a valid ordinary function

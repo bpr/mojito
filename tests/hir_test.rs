@@ -3,11 +3,7 @@
 //! construct, since Phase 1 is about structure, not instruction contents.
 
 use mojito::Ty;
-use mojito::checked::CheckedStmtOp;
-use mojito::hir::{
-    Cfg, EnclosingLoop, HirCond, HirInstr, HirRegion, LoopTarget, RegionSeed, Terminator,
-};
-use mojito::origin::OwnerId;
+use mojito::hir::{Cfg, HirCond, HirExcept, HirInstr, HirRegion, Terminator};
 use mojito::{check_program, parse};
 
 /// Check a module-scope snippet and lower its statements to a CFG.
@@ -67,42 +63,28 @@ fn root_def_body(
     }
 }
 
-/// The body of the first loop of checked function `main` in `src`, lowered
-/// as a `try` region seeded with the enclosing loop labelled 7, and with 8
-/// as the first label free.
-fn loop_body_region(src: &str) -> Cfg {
-    let program = parse(src).expect("parse error");
-    let checked = check_program(&program).expect("type error");
-    let tables = checked.tables();
-    let statement = |id: &mojito::checked::CheckedStmtId| tables.statement(*id).map(|s| &s.op);
-    let main = tables
-        .roots()
+/// Checked function `main` of `src`, and the label of its first loop.
+fn try_in_loop(src: &str) -> (Cfg, u32) {
+    let cfg = checked_function_cfg(src, "main");
+    let (label, _) = the_loop(&cfg, &cfg.root);
+    (cfg, label)
+}
+
+/// The parts of the one `Try` op of `region`'s entry block.
+fn the_try<'c>(cfg: &'c Cfg, region: &HirRegion) -> (&'c HirRegion, Option<&'c HirExcept>) {
+    entry_instrs(cfg, region)
         .iter()
-        .find_map(|id| match statement(id) {
-            Some(mojito::checked::CheckedStmtOp::Def(def)) if def.name == "main" => Some(def),
+        .find_map(|instruction| match instruction {
+            HirInstr::Try { body, except, .. } => Some((body, except.as_ref())),
             _ => None,
         })
-        .expect("function main");
-    let loop_body = main
-        .body
-        .iter()
-        .find_map(|id| match statement(id) {
-            Some(mojito::checked::CheckedStmtOp::While { body, .. }) => Some(body.clone()),
-            _ => None,
-        })
-        .expect("a loop in main");
-    Cfg::build_seeded_checked_region(
-        RegionSeed {
-            labels: 8,
-            ..RegionSeed::default()
-        },
-        &loop_body,
-        &[EnclosingLoop {
-            target: LoopTarget::Loop(7),
-            cleanup: Vec::new(),
-        }],
-        std::sync::Arc::clone(tables),
-    )
+        .expect("a try op")
+}
+
+/// The body of the `try` that the body of the first loop of `cfg` holds.
+fn loop_try(cfg: &Cfg) -> &HirRegion {
+    let (_, body) = the_loop(cfg, &cfg.root);
+    the_try(cfg, body).0
 }
 
 /// Every block must be sealed with exactly one terminator.
@@ -439,34 +421,49 @@ fn a_comptime_for_break_inside_an_if_is_a_comptime_break() {
 }
 
 #[test]
-fn seeded_region_break_continue_name_the_enclosing_loop() {
-    let region = loop_body_region("def main():\n    while True:\n        break\n");
-    assert!(matches!(
-        last_term(&region, &region.root),
-        Terminator::Break(7)
-    ));
-    let region = loop_body_region("def main():\n    while True:\n        continue\n");
-    assert!(matches!(
-        last_term(&region, &region.root),
-        Terminator::Continue(7)
-    ));
+fn try_part_break_continue_name_the_enclosing_loop() {
+    let (cfg, label) = try_in_loop(
+        "def main():\n    while True:\n        try:\n            break\n        finally:\n            pass\n",
+    );
+    let body = loop_try(&cfg);
+    assert_eq!(body.blocks.len(), 1);
+    assert!(matches!(last_term(&cfg, body), Terminator::Break(l) if *l == label));
+    let (cfg, label) = try_in_loop(
+        "def main():\n    while True:\n        try:\n            continue\n        finally:\n            pass\n",
+    );
+    let body = loop_try(&cfg);
+    assert!(matches!(last_term(&cfg, body), Terminator::Continue(l) if *l == label));
 }
 
 #[test]
-fn nested_loop_in_region_takes_a_fresh_label() {
-    let region =
-        loop_body_region("def main():\n    while True:\n        while True:\n            break\n");
-    let (label, body) = the_loop(&region, &region.root);
-    assert_eq!(label, 8, "the region numbers its loops from its seed");
-    assert!(matches!(last_term(&region, body), Terminator::Break(8)));
-    assert_eq!(region.labels, 9);
-    assert!(
-        !region
-            .g
-            .node_indices()
-            .any(|b| matches!(region.term(b), Some(Terminator::Break(7)))),
-        "a break of the region's own loop does not leave the region"
+fn nested_loop_in_try_part_takes_a_fresh_label() {
+    let (cfg, outer) = try_in_loop(
+        "def main():\n    while True:\n        try:\n            while True:\n                break\n        finally:\n            pass\n",
     );
+    let body = loop_try(&cfg);
+    assert!(matches!(last_term(&cfg, body), Terminator::TryYield));
+    let (label, inner) = the_loop(&cfg, body);
+    assert_ne!(label, outer, "the function numbers every loop once");
+    assert!(matches!(last_term(&cfg, inner), Terminator::Break(l) if *l == label));
+    assert_eq!(cfg.labels, 2);
+}
+
+#[test]
+fn dead_region_op_is_erased() {
+    let cfg = checked_function_cfg(
+        "def f(x: Int) -> Int:\n    return 1\n    if x > 0:\n        print(x)\n    return 3\n",
+        "f",
+    );
+    assert_eq!(cfg.root.blocks.len(), 1);
+    assert!(
+        !entry_instrs(&cfg, &cfg.root)
+            .iter()
+            .any(|instruction| matches!(instruction, HirInstr::If { .. }))
+    );
+    assert!(matches!(
+        last_term(&cfg, &cfg.root),
+        Terminator::Return(Some(_))
+    ));
 }
 
 #[test]
@@ -822,43 +819,36 @@ fn named_local_rebinds_one_slot() {
     assert_eq!(dests[0], dests[1]);
 }
 
-/// The `try` statements HIR keeps in `cfg`, in graph order.
-fn try_statements(cfg: &Cfg) -> Vec<&mojito::checked::CheckedStmt> {
+/// The `try` ops HIR keeps in `cfg`, in graph order: each one's body and
+/// `except` part.
+fn try_ops(cfg: &Cfg) -> Vec<(&HirRegion, Option<&HirExcept>)> {
     cfg.g
         .node_weights()
         .flat_map(|block| &block.instrs)
         .filter_map(|instruction| match instruction {
-            mojito::hir::HirInstr::Try { stmt, .. } => cfg.checked.statement(stmt.node),
+            HirInstr::Try { body, except, .. } => Some((body, except.as_ref())),
             _ => None,
         })
         .collect()
 }
 
-/// The seed a `try` region of `cfg` starts from.
-fn region_seed(cfg: &Cfg, handler: Option<(Option<OwnerId>, String)>) -> RegionSeed {
-    RegionSeed {
-        vars: cfg.vars.clone(),
-        bindings: cfg.bindings.clone(),
-        handler,
-        labels: cfg.labels,
-    }
+/// The slots the `Bind`s of `region`'s block write.
+fn region_bind_dests(cfg: &Cfg, region: &HirRegion) -> Vec<u32> {
+    entry_instrs(cfg, region)
+        .iter()
+        .filter_map(|instruction| match instruction {
+            HirInstr::Bind { dest, .. } => Some(*dest),
+            _ => None,
+        })
+        .collect()
 }
 
 #[test]
 fn try_region_resolves_a_name_by_its_binding() {
     let src = "def main():\n    var h = 1\n    if True:\n        var h = 2\n        try:\n            h = 5\n            print(h)\n        except e:\n            print(e)\n";
     let cfg = checked_function_cfg(src, "main");
-    let statement = try_statements(&cfg)[0];
-    let CheckedStmtOp::Try { body, .. } = &statement.op else {
-        panic!("expected a try statement");
-    };
-    let region = Cfg::build_seeded_checked_region(
-        region_seed(&cfg, None),
-        body,
-        &[],
-        std::sync::Arc::clone(&cfg.checked),
-    );
-    let dests = bind_dests(&region);
+    let (body, _) = try_ops(&cfg)[0];
+    let dests = region_bind_dests(&cfg, body);
     assert_eq!(dests.len(), 1);
     let outer = cfg
         .vars
@@ -867,42 +857,24 @@ fn try_region_resolves_a_name_by_its_binding() {
         .expect("outer h") as u32;
     assert_ne!(dests[0], outer, "the assignment writes the inner `h`");
     assert!(cfg.bindings.values().any(|slot| *slot == dests[0]));
-    assert!(region.slots.values().all(|slot| *slot != outer));
 }
 
 #[test]
 fn sequential_except_names_get_distinct_slots() {
     let src = "def main():\n    try:\n        raise Error(\"a\")\n    except e:\n        print(e)\n    try:\n        raise Error(\"b\")\n    except e:\n        print(e)\n";
     let cfg = checked_function_cfg(src, "main");
-    let mut seed = region_seed(&cfg, None);
-    let mut handlers = Vec::new();
-    for statement in try_statements(&cfg) {
-        let CheckedStmtOp::Try {
-            except: Some((Some(name), body)),
-            ..
-        } = &statement.op
-        else {
-            panic!("expected a try statement with a named handler");
-        };
-        let binding = statement.binding.expect("the handler's binding");
-        seed.handler = Some((Some(binding), name.clone()));
-        let region = Cfg::build_seeded_checked_region(
-            seed.clone(),
-            body,
-            &[],
-            std::sync::Arc::clone(&cfg.checked),
-        );
-        let slot = region.bindings[&binding];
-        assert!(region.slots.values().any(|read| *read == slot));
-        assert!(
-            handlers
-                .iter()
-                .all(|earlier| !region.slots.values().any(|read| read == earlier))
-        );
-        handlers.push(slot);
-        seed.vars = region.vars;
-        seed.bindings = region.bindings;
-    }
+    let handlers: Vec<u32> = try_ops(&cfg)
+        .into_iter()
+        .map(|(_, except)| {
+            let except = except.expect("a handler");
+            let slot = except.slot.expect("a named handler's slot");
+            assert_eq!(cfg.bindings[&except.binding.expect("its binding")], slot);
+            slot
+        })
+        .collect();
     assert_eq!(handlers.len(), 2);
     assert_ne!(handlers[0], handlers[1]);
+    for handler in &handlers {
+        assert!(cfg.slots.values().any(|read| read == handler));
+    }
 }

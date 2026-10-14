@@ -1089,8 +1089,8 @@ fn verifier_rejects_invalid_jump_targets() {
 
 #[test]
 fn verifier_rejects_top_level_falloff_and_escape() {
-    let f = function(vec![block(Vec::new(), MirTerm::FallOff)], 0, &[]);
-    expect_finding(&program(f), "FallOff terminator outside a try region");
+    let f = function(vec![block(Vec::new(), MirTerm::TryYield)], 0, &[]);
+    expect_finding(&program(f), "TryYield terminator outside a try region");
     let f = function(
         vec![block(
             Vec::new(),
@@ -2169,7 +2169,7 @@ fn verifier_rejects_a_drop_of_an_ended_slot() {
                 cleanup: Vec::new(),
             },
         ),
-        block(Vec::new(), MirTerm::FallOff),
+        block(Vec::new(), MirTerm::TryYield),
     ];
     let escaping = vec![
         block(
@@ -2209,7 +2209,7 @@ fn verifier_rejects_a_cleanup_list_naming_an_ended_slot() {
             MirTerm::Return(None),
         )]
     };
-    let body = vec![block(vec![DROP_X, raising_call()], MirTerm::FallOff)];
+    let body = vec![block(vec![DROP_X, raising_call()], MirTerm::TryYield)];
     let raised = top(listed_try(body, Some(Vec::new()), None));
     assert_eq!(
         slot_end_findings(raised),
@@ -2217,8 +2217,8 @@ fn verifier_rejects_a_cleanup_list_naming_an_ended_slot() {
             "MIR function 'test' block 0: try.cleanup of slot $v0 ('x') that every path has already ended"
         ]
     );
-    let body = vec![block(vec![raising_call()], MirTerm::FallOff)];
-    let handler = vec![block(vec![DROP_X], MirTerm::FallOff)];
+    let body = vec![block(vec![raising_call()], MirTerm::TryYield)];
+    let handler = vec![block(vec![DROP_X], MirTerm::TryYield)];
     let findings = slot_end_findings(top(listed_try(body, Some(handler), None)));
     assert!(findings[0].contains("drop.var of slot $v0"), "{findings:?}");
     let returned = vec![block(
@@ -2240,7 +2240,7 @@ fn verifier_rejects_a_cleanup_list_naming_an_ended_slot() {
             cleanup: vec![0],
         },
     )];
-    let finalbody = vec![block(vec![DROP_X], MirTerm::FallOff)];
+    let finalbody = vec![block(vec![DROP_X], MirTerm::TryYield)];
     let findings = slot_end_findings(top(try_region_finally(body, finalbody)));
     assert!(
         findings[0].contains("return.cleanup of slot $v0"),
@@ -2280,7 +2280,7 @@ fn verifier_accepts_a_cleanup_list_naming_a_held_slot() {
     };
     let body = vec![block(
         vec![raising_call(), DROP_X, raising_call()],
-        MirTerm::FallOff,
+        MirTerm::TryYield,
     )];
     let raised = top(listed_try(body, Some(Vec::new()), None));
     assert_eq!(slot_end_findings(raised), Vec::<String>::new());
@@ -2293,7 +2293,7 @@ fn verifier_accepts_a_cleanup_list_naming_a_held_slot() {
     )];
     let finalbody = vec![block(
         vec![MirInstr::KeepAlive { var: 0 }],
-        MirTerm::FallOff,
+        MirTerm::TryYield,
     )];
     let returned = top(try_region_finally(body, finalbody));
     assert_eq!(slot_end_findings(returned), Vec::<String>::new());
@@ -2352,7 +2352,7 @@ fn verifier_accepts_a_drop_of_a_slot_some_path_left_live() {
                 cleanup: Vec::new(),
             },
         ),
-        block(vec![move_x()], MirTerm::FallOff),
+        block(vec![move_x()], MirTerm::TryYield),
     ];
     let escaping = vec![
         block(
@@ -2363,8 +2363,8 @@ fn verifier_accepts_a_drop_of_a_slot_some_path_left_live() {
     ];
     assert_eq!(slot_end_findings(escaping), Vec::<String>::new());
     // The body moves `x` after its last raise, so its handler still owns it.
-    let body = vec![block(vec![raising_call(), move_x()], MirTerm::FallOff)];
-    let handler = vec![block(vec![DROP_X], MirTerm::FallOff)];
+    let body = vec![block(vec![raising_call(), move_x()], MirTerm::TryYield)];
+    let handler = vec![block(vec![DROP_X], MirTerm::TryYield)];
     let raising = vec![block(
         [define_x(), vec![try_region(body, Some(handler))]].concat(),
         MirTerm::Return(None),

@@ -2486,11 +2486,11 @@ expression roots' trees. A use names its definition rather than a spelling:
 binding's slot (`Cfg::bindings`), recorded where HIR declares the binding or
 where an assignment to a name, whose target binding the check records on the
 statement, first writes it, and otherwise the name's slot in HIR's lexical
-scopes. A `try` region starts from its frame's `RegionSeed`: the frame's slot
-spellings and its binding-to-slot map, so a name in the region, read or
-assigned, is the binding its scope declared, and an `except` region declares
-its handler binding's slot first. HIR retains responsibility for statement
-control flow.
+scopes. A `try`'s parts are regions of the function's own walk
+(`Lower::try_statement`), so a name in a part, read or assigned, is the
+binding its scope declared, and an `except` region declares its handler
+binding's slot in its own scope first (`HirExcept`). HIR retains
+responsibility for statement control flow.
 
 Statement control flow is structured, as upstream's parser and
 `LowerSemanticCF` build `hlcf` ops. `Cfg::root` is the body's region: its
@@ -2534,7 +2534,7 @@ Each block is sealed with exactly one terminator:
 pub enum Terminator {
     Return(Option<HirExpr>),
     ReturnWithCleanup { value: Option<HirExpr>, cleanup: Vec<VarId> },
-    FallOff,
+    TryYield,
     Yield,
     ComptimeYield,
     ElifCond(HirExpr),
@@ -3002,13 +3002,13 @@ pub enum MirTerm {
     Branch { cond: Reg, then_b: MirBlockId, else_b: MirBlockId },
     Return(Option<Reg>),
     ReturnWithCleanup { value: Option<Reg>, cleanup: Vec<VarId> },
-    FallOff,
+    TryYield,
     EscapeJump { target: MirBlockId, cleanup: Vec<VarId> },
 }
 ```
 
-Function bodies should not normally end with `FallOff`; that is for try
-sub-regions. `EscapeJump` is for a `break`/`continue` inside a try region whose
+`TryYield` (`lit.try.yield`) completes a `try` part and never ends a function
+body. `EscapeJump` is for a `break`/`continue` inside a try region whose
 target belongs to the enclosing function. Drop elaboration writes
 `ReturnWithCleanup` on a return that crosses a `finally`, listing what the
 return still holds once the crossed `finally` blocks have run; the VM runs
@@ -3123,7 +3123,10 @@ The slot-ends check runs on a body's `lower-control-flow` lowering. A third
 mode, `verify_structured_function_in`, adds upstream's structured form for
 a body: every region, the body included, one block, and no CFG terminator
 (`Jump`, `Branch`, `ComptimeBranch`, the `ComptimeFor` terminator,
-`EscapeJump`). `verify_concrete` rejects every structured op and region
+`EscapeJump`); its shape half, `verify_structured_shape`, runs in
+production on every body `lower_cfg_nested` builds, before
+`lower-control-flow`, each finding a MIR invariant error. `verify_concrete`
+rejects every structured op and region
 terminator, which the transitional lowering removes first.
 `native::mono` verifies its output in the concrete mode, and asks
 `concrete_function_findings` per instance so that a failure names the
@@ -3208,7 +3211,7 @@ too. Elaborated MIR carries none.
 consistency, register bounds and register-type completeness, store/binding/
 return/call-argument type consistency (through the checker's coercion
 predicate — never re-derived rules), CFG-edge validity (jump-target bounds per
-region, `FallOff`/`EscapeJump` only inside `try` sub-regions), effect
+region, `TryYield`/`EscapeJump` only inside `try` sub-regions), effect
 protection (a raising site in a nonraising function must sit under a handler),
 and reference invariants (`StoreRef` targets reference storage; declared
 write-back parameters receive caller places). For method-dispatched nominal subscripts it also
@@ -4772,7 +4775,7 @@ across the edge until the consuming call.
 Region interiors get the same per-instruction and edge drop elaboration as
 top-level blocks: each of a `try`'s four regions is a mini-CFG whose liveness
 is seeded from the enclosing walk at the instruction, per exit kind — the
-normal `FallOff` continuation (`else` entry, then `finally` entry, then the
+normal `TryYield` continuation (`else` entry, then `finally` entry, then the
 code after the block), `EscapeJump` edges (the `finally` still runs after
 them), the return channel (`RegionSeeds::return_live`: what the `finally`
 blocks a return crosses, and those beyond them, still read — the `finally`'s

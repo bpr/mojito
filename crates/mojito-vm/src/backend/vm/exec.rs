@@ -2069,7 +2069,7 @@ impl VmBackend {
 
     /// Run a `try` sub-region's mini-CFG (block ids local, entry = 0) in the current
     /// frame. Returns the control-flow outcome — `Flow::Normal` on normal completion
-    /// (`FallOff`), or `Flow::Return` when a `return` inside the region crosses out —
+    /// (`TryYield`), or `Flow::Return` when a `return` inside the region crosses out —
     /// and propagates a raise as `RuntimeError::Raised`. (`break`/`continue` crossing
     /// the region are refused at lowering, so no such terminator reaches here.)
     pub(super) fn run_region(
@@ -2146,7 +2146,7 @@ impl VmBackend {
                         cleanup: cleanup.clone(),
                     });
                 }
-                MirTerm::FallOff => return Ok(Flow::Normal),
+                MirTerm::TryYield => return Ok(Flow::Normal),
                 // A `break`/`continue` targeting an outer function loop: run this
                 // region's escape-edge cleanup (values that die leaving the region),
                 // then carry the resolved target out as a `Flow::Jump`.

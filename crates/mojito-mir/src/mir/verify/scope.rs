@@ -804,7 +804,7 @@ mod tests {
         MirFunction {
             blocks: vec![MirBlock {
                 instrs: Vec::new(),
-                term: MirTerm::FallOff,
+                term: MirTerm::TryYield,
             }],
             n_regs: reg_types.len() as u32,
             n_vars: 0,

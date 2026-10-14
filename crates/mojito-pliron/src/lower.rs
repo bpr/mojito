@@ -280,7 +280,7 @@ pub fn lower_body(
         exit_sites: Vec::new(),
         finally_overrides: Vec::new(),
         pending_ret: None,
-        falloff_target: None,
+        try_yield_target: None,
         next_region_block: 0,
         trap_blocks: HashMap::new(),
         region: None,
@@ -381,7 +381,7 @@ struct FinallyState {
     /// Forwarding block every pending edge jumps to (branches to the lowered
     /// finalbody entry).
     entry: Ptr<BasicBlock>,
-    /// The post-finalbody dispatch block (the finalbody's `FallOff` target).
+    /// The post-finalbody dispatch block (the finalbody's `TryYield` target).
     dispatch: Ptr<BasicBlock>,
     /// Stages a raise into this finally: copies the staged error into
     /// `pending_err`, tags `kind_slot` 1, and enters the finalbody.
@@ -543,8 +543,8 @@ struct FnLowering<'a> {
     finally_overrides: Vec<usize>,
     /// Staging slot for a scalar return value crossing `finally` regions.
     pending_ret: Option<Value>,
-    /// Where a region's `FallOff` terminator jumps.
-    falloff_target: Option<Ptr<BasicBlock>>,
+    /// Where a region's `TryYield` terminator jumps.
+    try_yield_target: Option<Ptr<BasicBlock>>,
     /// The next synthetic block id in the last-use position space; region
     /// blocks take ids past the function's own, assigned in exactly the
     /// order `record_last_uses` assigns them.

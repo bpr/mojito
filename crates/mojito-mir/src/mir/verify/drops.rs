@@ -140,7 +140,7 @@ impl<'a> Walk<'a> {
                 outputs[index].take().unwrap_or_default()
             };
             match (&block.term, out.normal.as_ref()) {
-                (MirTerm::FallOff, normal) => meet(&mut flow.normal, normal),
+                (MirTerm::TryYield, normal) => meet(&mut flow.normal, normal),
                 (MirTerm::ReturnWithCleanup { cleanup, .. }, Some(state))
                     if !cleanup.is_empty() =>
                 {

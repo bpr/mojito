@@ -368,7 +368,7 @@ impl Lowering<'_> {
             instrs.push(MirInstr::Unsupported(
                 "try with break/continue crossing the try boundary".into(),
             ));
-            MirTerm::FallOff
+            MirTerm::TryYield
         })
     }
 }

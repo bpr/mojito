@@ -1,4 +1,4 @@
-# Mojito Textual MIR Format, Version 1.58
+# Mojito Textual MIR Format, Version 1.59
 
 This document is the normative specification of Mojito's textual verified-MIR
 artifact. The Rust data model in `src/mir.rs` and `src/mir/ir.rs` remains the
@@ -6,7 +6,7 @@ in-memory authority; this format is its stable inspection and interchange
 boundary. `docs/vm-instruction-set.md` explains execution semantics, while this
 document defines syntax and serialized data.
 
-Version 1.58 is implemented end to end for inspection and loading: canonical
+Version 1.59 is implemented end to end for inspection and loading: canonical
 in-memory disassembly, full-grammar assembly parsing, and artifact-loading
 verification (`mir::text::load_artifact`, which reports canonical-verifier
 findings at artifact source spans). Lossless print → parse → print round trips
@@ -22,10 +22,10 @@ which may be generic; it is always elaborated before it runs.
 Every artifact begins with exactly:
 
 ```text
-mojito-mir 1.58
+mojito-mir 1.59
 ```
 
-The writer emits 1.58. The reader accepts 1.0 through 1.58; *Schema 1.0*
+The writer emits 1.59. The reader accepts 1.0 through 1.59; *Schema 1.0*
 below says how a 1.0 artifact is read, and *Binder identity* under *Types*
 how a binder without an identity is.
 
@@ -892,7 +892,7 @@ as explicit options/lists. Backends must not reconstruct omitted selections.
 | `ComptimeFor` | `comptime_for.iterator { binder: <binder>, initial: <param_expr>, has_next: <param_expr>, next_iter: <param_expr>, next_value: <param_expr>, body: bbN, exit: bbN }` — a `comptime for` header by upstream's iterator protocol: the binder `binder` is the iterator, starting at `initial` (the application of the iterable's lifted `__iter__()` call) and replaced by `next_iter` while `has_next` holds, both applications of the `paramfor_*` stubs over the binder; the loop variable is an alias of `next_value`, the `paramfor_next_value` application over it, and has no slot; the body's back edge jumps to the header, and its stop arm, as a `break` does, to `exit`; the elaborator unrolls it, and concrete MIR carries none (schema 1.16; the `iterator` form, schema 1.52; its `next_value`, and the withdrawal of the `range` form, schema 1.55; the withdrawal of the `elements` form `comptime_for.elements { …, elements, … }` and of the header's `slot` field, which the reader now rejects, schema 1.57) |
 | `Return` | `return { value: option<reg> }` |
 | `ReturnWithCleanup` | `return.cleanup { value: option<reg>, cleanup: [var...] }` — drop elaboration writes it on a return that crosses a `finally`: `cleanup` names what the return still holds after the last `finally` it crosses, and runs there (schema 1.53; before, it named loop-owned values) |
-| `FallOff` | `falloff {}` |
+| `TryYield` | `try.yield {}` — `lit.try.yield`: completes a `try` part, which goes on to its `else`/`finally` (schema 1.59; before, `falloff {}`, which the reader now rejects) |
 | `EscapeJump` | `escape { target: bbN, cleanup: [var...] }` — `cleanup` runs at the escape, before the `finally` blocks it crosses |
 | `Yield` | `yield { values: [reg...] }` — `hlcf.yield`: ends an `if` arm, its values defining the op's results (schema 1.54) |
 | `ElifCond` | `if.elifcond.yield { condition: %rN }` — ends an elif condition region with its `Bool` (schema 1.54) |

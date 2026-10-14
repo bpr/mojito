@@ -86,9 +86,11 @@ pub(super) fn verify_terminator(
                 }
             }
         }
-        MirTerm::FallOff => {
+        MirTerm::TryYield => {
             if !context.is_try_part() {
-                errors.push(format!("{prefix}: FallOff terminator outside a try region"));
+                errors.push(format!(
+                    "{prefix}: TryYield terminator outside a try region"
+                ));
             }
         }
         MirTerm::EscapeJump { target, .. } => {

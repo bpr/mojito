@@ -573,13 +573,13 @@ impl FnLowering<'_> {
     /// Lower one `try` sub-region mini-CFG into fresh pliron blocks (the
     /// region's local block ids swap in as `self.blocks`; its position-space
     /// ids continue `next_region_block` exactly as `record_last_uses`
-    /// assigned them). `FallOff` jumps to `falloff`. Returns the region's
+    /// assigned them). `TryYield` jumps to `completed`. Returns the region's
     /// entry block; `self.current` is restored.
     pub(super) fn lower_region(
         &mut self,
         ctx: &mut Context,
         blocks: &[MirBlock],
-        falloff: Ptr<BasicBlock>,
+        completed: Ptr<BasicBlock>,
     ) -> Result<Ptr<BasicBlock>, PlironError> {
         let region = self.region.expect("lowering is inside a function");
         let ids_start = self.next_region_block;
@@ -592,7 +592,7 @@ impl FnLowering<'_> {
         }
         let entry = locals[0];
         let saved_blocks = std::mem::replace(&mut self.blocks, locals);
-        let saved_falloff = self.falloff_target.replace(falloff);
+        let saved_try_yield = self.try_yield_target.replace(completed);
         let saved_current = self.current;
         let saved_position = self.position;
         let mut result = Ok(());
@@ -615,7 +615,7 @@ impl FnLowering<'_> {
             }
         }
         self.blocks = saved_blocks;
-        self.falloff_target = saved_falloff;
+        self.try_yield_target = saved_try_yield;
         self.current = saved_current;
         self.position = saved_position;
         result.map(|()| entry)

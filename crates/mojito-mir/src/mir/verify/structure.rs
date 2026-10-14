@@ -7,17 +7,23 @@ use crate::mir::text::{instruction_mnemonic, terminator_mnemonic};
 use crate::mir::{LoopLabel, instruction_regions};
 use mojito_types::types::TyKind;
 
-/// [`verify_function_in`] for a structured body, upstream's `hlcf` form.
-///
-/// Every region, the body included, holds exactly one block, and no block
-/// ends in a CFG terminator (`jump`, `branch`, `comptime_branch`,
-/// `comptime_for`, `escape`). A `try` part still completes by `falloff`.
+/// [`verify_function_in`] for a structured body, upstream's `hlcf` form,
+/// plus its [`verify_structured_shape`].
 pub fn verify_structured_function_in(
     name: &str,
     function: &MirFunction,
     declarations: &MirDeclarations,
 ) -> Vec<String> {
     let mut errors = verify_function_in(name, function, declarations);
+    errors.extend(verify_structured_shape(name, function));
+    errors
+}
+
+/// The shape of a structured body: every region, the body included, holds
+/// exactly one block, and no block ends in a CFG terminator (`jump`,
+/// `branch`, `comptime_branch`, `comptime_for`, `escape`).
+pub fn verify_structured_shape(name: &str, function: &MirFunction) -> Vec<String> {
+    let mut errors = Vec::new();
     if function.blocks.len() != 1 {
         errors.push(format!(
             "MIR function '{name}' body holds {} blocks",

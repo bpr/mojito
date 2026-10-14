@@ -1496,7 +1496,7 @@ fn term_value(term: &MirTerm) -> String {
                 ("cleanup", list(cleanup.iter().map(|v| var_value(*v)))),
             ],
         ),
-        MirTerm::FallOff
+        MirTerm::TryYield
         | MirTerm::ComptimeBreak
         | MirTerm::ComptimeContinue
         | MirTerm::Unreachable => record(tag, &[]),

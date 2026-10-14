@@ -559,6 +559,42 @@ fn binder_slot_ty<'a>(function: &'a MirFunction, name: &str) -> Option<&'a TyKin
 }
 
 #[test]
+fn try_parts_and_dead_code_lower_to_single_block_regions() {
+    let source = r#"
+def f(x: Int) -> Int:
+    return x
+    if x > 0:
+        print(x)
+    return 0
+
+def main() raises:
+    for i in range(4):
+        try:
+            if i == 1:
+                continue
+            if i == 3:
+                break
+            if i == 2:
+                raise Error("two")
+        except e:
+            print(e)
+            continue
+        else:
+            print("else", i)
+        finally:
+            print("finally", i)
+    print(f(1))
+"#;
+    for name in ["f", "main"] {
+        let (_, mir) = checked_function_with(source, name, lower_cfg_structured);
+        assert_eq!(
+            mojito::mir::verify::verify_structured_shape(name, &mir),
+            Vec::<String>::new()
+        );
+    }
+}
+
+#[test]
 fn structured_expression_control_flow_builds_region_ops() {
     let source = r#"
 def main():

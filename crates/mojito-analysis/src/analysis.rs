@@ -630,11 +630,11 @@ mod interior_origin_tests {
         let try_instr = MirInstr::Try {
             body: vec![block(
                 vec![invalidate(1), MirInstr::Raise { src: Reg(2) }],
-                MirTerm::FallOff,
+                MirTerm::TryYield,
             )],
             handler: Some((
                 None,
-                vec![block(vec![use_reference(1, 3)], MirTerm::FallOff)],
+                vec![block(vec![use_reference(1, 3)], MirTerm::TryYield)],
             )),
             orelse: None,
             finalbody: None,
