@@ -1571,8 +1571,9 @@ fn lower_expression_thunk(
 /// The compile-time expressions one function's lowering lifts as thunks: a
 /// `comptime if` condition the checker compiled to no constraint (it applies
 /// a function, or reads a `Bool` binding), a `comptime for` display the
-/// checker did not close (`[n, n + 1]`), or a range bound or scalar that
-/// reads a local display binding (`len(L)`, `L[0]`) becomes the
+/// checker did not close (`[n, n + 1]`), an iterator loop's spelled
+/// `__iter__()` call, or a scalar that reads a local display binding
+/// (`len(L)`, `L[0]`) becomes the
 /// zero-parameter function `$comptime$<owner>$<k>` over the binders in scope
 /// at the expression — the owner's, then the enclosing `comptime for`
 /// indices — and its branch, loop header, or parameter constant carries the

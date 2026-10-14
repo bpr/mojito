@@ -621,6 +621,9 @@ pub struct Checker {
     /// The index of the next function the check lifts, per owning
     /// declaration.
     lifted_counts: RefCell<HashMap<String, usize>>,
+    /// The element type `paramfor_next_value` gives over each iterator
+    /// type a `comptime for` stepped, typed once per type.
+    comptime_iterator_elements: RefCell<HashMap<Ty, Ty>>,
     /// The sequence of each local display binding, by its owning
     /// declaration and identity, so that a binding checked again denotes
     /// the function it was first given.
@@ -985,6 +988,7 @@ impl Checker {
             lifted_applications: RefCell::new(Vec::new()),
             lifting_owner: None,
             lifted_counts: RefCell::new(HashMap::new()),
+            comptime_iterator_elements: RefCell::new(HashMap::new()),
             lifted_displays: RefCell::new(HashMap::new()),
             lifted_expressions: RefCell::new(FactMap::default()),
             rebind_targets: RebindTargets::default(),

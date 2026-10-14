@@ -92,8 +92,9 @@ impl Checker {
                     .as_decl_ref()
                     .map(|reference| reference.name.trim_start_matches('*').to_string())
                     .ok_or_else(unspellable)?;
-                let index =
-                    pack_index_expression(index, expression.span).ok_or_else(unspellable)?;
+                let index = pack_index_expression(index, expression.span)
+                    .or_else(|| self.comptime_alias_spelling(index, expression.span))
+                    .ok_or_else(unspellable)?;
                 let own = self.self_decls.iter().any(|declaration| {
                     matches!(declaration, ParamDecl::Type { name, variadic: true, .. }
                         if name.trim_start_matches('*') == pack)
@@ -144,6 +145,25 @@ impl Checker {
             }
         };
         Ok(derived_construction(expression, kind))
+    }
+
+    /// The name of the innermost local `comptime` binding that denotes
+    /// `index` (the variable a `comptime for` over an iterator aliases to
+    /// its element), spelled as a read of it.
+    fn comptime_alias_spelling(
+        &self,
+        index: &mojito_types::param_expr::ParamExpr,
+        span: mojito_common::token::Span,
+    ) -> Option<Expr> {
+        self.local_comptime_parameters
+            .iter()
+            .rev()
+            .find_map(|scope| {
+                scope
+                    .iter()
+                    .find_map(|(name, (_, expression))| (expression == index).then_some(name))
+            })
+            .map(|name| Expr::new(ExprKind::Identifier(name.clone()), span))
     }
 }
 

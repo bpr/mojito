@@ -307,18 +307,17 @@ mod tests {
 
     fn comptime_for(body: Vec<MirBlock>) -> MirInstr {
         let context = ParamContext::detached();
-        let constant = |value| context.constant(CtValue::Int(value)).expect("a constant");
         MirInstr::ComptimeFor {
             binder: ParamRef {
                 id: ParamId::new("$comptime_for@f:0..1", 0),
                 name: "i".into(),
             },
             slot: 0,
-            source: ComptimeSequence::Range {
-                start: constant(0),
-                stop: constant(2),
-                step: constant(1),
-            },
+            source: ComptimeSequence::Elements(
+                context
+                    .constant(CtValue::List(vec![CtValue::Int(0), CtValue::Int(1)]))
+                    .expect("a constant"),
+            ),
             body,
             orelse: one(Vec::new(), MirTerm::Unreachable),
         }

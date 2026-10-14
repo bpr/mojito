@@ -11,6 +11,7 @@
 # `comptime if Self.Ts.contains[T](): pass` lines stand where upstream calls
 # `Self._check[T]()`, whose `comptime assert` Mojito does not parse yet.
 from std.reflection.type_info import _unqualified_type_name
+from std.range import range
 
 struct Variant[*Ts: AnyType](
     Copyable where Ts.all_conforms_to[Copyable](),

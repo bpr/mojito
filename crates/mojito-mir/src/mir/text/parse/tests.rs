@@ -1245,7 +1245,6 @@ fn comptime_branch_terminator_reprints() {
 fn comptime_for_terminator_reprints() {
     use mojito_types::param_expr::{ParamContext, ParamId, ParamRef};
     let context = ParamContext::detached();
-    let constant = |value: i64| context.constant(CtValue::Int(value)).expect("a constant");
     let mut function = function_with(vec![Ty::int()], Vec::new());
     function.n_vars = 1;
     function.var_names = vec!["i".to_string()];
@@ -1255,11 +1254,11 @@ fn comptime_for_terminator_reprints() {
             name: "i".into(),
         },
         slot: 0,
-        source: mojito_checked::checked::ComptimeSequence::Range {
-            start: constant(0),
-            stop: constant(4),
-            step: constant(1),
-        },
+        source: mojito_checked::checked::ComptimeSequence::Elements(
+            context
+                .constant(CtValue::List((0..4).map(CtValue::Int).collect()))
+                .expect("a constant"),
+        ),
         body: 1,
         exit: 2,
     };
@@ -1328,6 +1327,7 @@ fn comptime_for_iterator_terminator_reprints() {
             initial,
             has_next: step("has_next", MetaTy::value(Ty::bool())),
             next_iter: step("next_iter", MetaTy::int()),
+            next_value: step("next_value", MetaTy::int()),
         },
         body: 1,
         exit: 2,
@@ -2679,16 +2679,12 @@ fn structured_region_ops_and_terminators_reprint() {
     let one = |instrs: Vec<MirInstr>, term: MirTerm| vec![MirBlock { instrs, term }];
     let binder = test_binder("i");
     let sequences = [
-        mojito_checked::checked::ComptimeSequence::Range {
-            start: constant(CtValue::Int(0)),
-            stop: constant(CtValue::Int(4)),
-            step: constant(CtValue::Int(1)),
-        },
         mojito_checked::checked::ComptimeSequence::Elements(int_parameter("$test:xs", 0, "xs")),
         mojito_checked::checked::ComptimeSequence::Iterator {
             initial: int_parameter("$test:it", 0, "it"),
             has_next: int_parameter("$test:has", 0, "has"),
             next_iter: int_parameter("$test:next", 0, "next"),
+            next_value: int_parameter("$test:value", 0, "value"),
         },
     ];
     let mut instrs = vec![

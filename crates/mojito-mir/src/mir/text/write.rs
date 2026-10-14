@@ -1520,20 +1520,17 @@ fn term_value(term: &MirTerm) -> String {
 /// A `comptime for` source's fields, the form named by which are present.
 fn sequence_fields(source: &ComptimeSequence) -> Vec<(&'static str, String)> {
     match source {
-        ComptimeSequence::Range { start, stop, step } => vec![
-            ("start", param_expr(start)),
-            ("stop", param_expr(stop)),
-            ("step", param_expr(step)),
-        ],
         ComptimeSequence::Elements(elements) => vec![("elements", param_expr(elements))],
         ComptimeSequence::Iterator {
             initial,
             has_next,
             next_iter,
+            next_value,
         } => vec![
             ("initial", param_expr(initial)),
             ("has_next", param_expr(has_next)),
             ("next_iter", param_expr(next_iter)),
+            ("next_value", param_expr(next_value)),
         ],
     }
 }

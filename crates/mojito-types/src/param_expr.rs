@@ -122,8 +122,11 @@ impl ParamContext {
                 found: rendered,
             })?;
         // A tuple at the nominal `Tuple` is a value of that type, not a
-        // compile-time tuple of its elements.
-        if crate::types::tuple_elements(ty).is_some() && !crate::types::ct_value_is_symbolic(&value)
+        // compile-time tuple of its elements, and a frozen struct instance
+        // (named by its monomorphized instance) is a value of the declared
+        // closed struct type it materialized at.
+        if (crate::types::tuple_elements(ty).is_some() || matches!(value, CtValue::Struct { .. }))
+            && !crate::types::ct_value_is_symbolic(&value)
         {
             return Ok(self.make(MetaTy::value(ty.clone()), ParamKind::Constant(value)));
         }

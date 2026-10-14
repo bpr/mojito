@@ -130,6 +130,15 @@ impl Checker {
         {
             reject_kwargs(kwargs)?;
             if method == "__len__" && args.is_empty() && param_args.is_empty() {
+                // Upstream's `__len__` forwards to the static
+                // `Self.Ts.length`: the call reads no runtime value.
+                if let Some(pack) = self.collector_pack(object) {
+                    self.record_pack_query_value(
+                        span.clone(),
+                        &pack,
+                        mojito_types::param_expr::PackQuery::Length,
+                    );
+                }
                 return Ok(Some(Ty::int()));
             }
             return Err(TypeError::SymbolicBoundary(format!(

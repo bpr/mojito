@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R894**.
+Next free ID: **R898**.
 
 ## Ordered Work
 
@@ -480,6 +480,41 @@ time.
     MIR text-schema and package-format bump.
   - Both backends erase origins, so no output depends on it.
   - Found while landing R866 (2026-10-14).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R896 The check types the `paramfor_*` stubs at a cost of about 4 ms
+  per stub in a debug build**
+
+  The first `comptime for` over each iterator type types three generic stub
+  calls, about 12 ms in a debug build, before
+  `Checker::comptime_iterator_elements` caches the element type.
+  - A loop over an iterator type already seen costs about 2 ms more than
+    the built-in `range` rule did.
+  - Measured on `assets/ok/comptime_for_template_served.mojo`: the check's
+    `bodies` phase went from 12 ms to 57 ms (`--timings`).
+  - Lever: find what a generic call bounded by `Iterator & Copyable &
+    Deinitable` costs in `comptime_iterator_protocol`
+    (`crates/mojito-checker/src/checker/comptime_iteration.rs`).
+  - Release numbers were not measured.
+  - Found while landing R791 (2026-10-14).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R897 Each step of a `comptime for` iterator is its own VM call**
+
+  An iterator loop of N elements runs about 3N+2 compile-time
+  applications per instance (`has_next`, `next_iter`, and `next_value` per
+  step, then the iterable), where the built-in `range` rule ran none.
+  - Over the 111 range-loop fixtures, a debug `mojito run` sweep went from
+    12.4 s to 18.1 s.
+  - On ten small loops (65 steps), elaboration went from 163 ms to 259 ms.
+  - Each application's fragment is built and verified once per instance
+    (`Specializer::verified_fragment`), so what remains is the call itself.
+  - Levers: `VmBackend::call_concrete`'s per-call setup, and the
+    `Bindings` clone per step in `Specializer::trip_elements`.
+  - Release numbers were not measured.
+  - Found while landing R791 (2026-10-14).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -4969,6 +5004,24 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
+- [ ] **R895 A type indexed by a `comptime for` variable is spelled with
+  mangled names in diagnostics**
+
+  A diagnostic names an element type over the loop variable as
+  `Ts[__module$std$builtin$$stubs$paramfor_next_value[__module$std$range$_ZeroStartingRange[DType.int]]($iter)]`,
+  where the pin writes
+  `Ts.values[SIMDLength(paramfor_next_value[_ZeroStartingRange](iter))]`.
+  - Both spell the stub application, since the variable is an alias of
+    `paramfor_next_value` over the iterator.
+  - The gap is the linked module prefixes, the dtype argument, and the
+    binder's `$`, all from the `Display` of `ParamExpr`
+    (`crates/mojito-types/src/param_expr.rs`).
+  - Pinned by `assets/type_error/pack_element_missing_bound.mojo` and its
+    row in `conformance/assets-mojo-errors.tsv`.
+  - Found while landing R791 (2026-10-14).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
 ### Behavioral Divergences From The Pinned Mojo *(recurring — reopens at every nightly re-pin)*
 
 Track: `divergences`.
@@ -6868,24 +6921,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on R74.
   - Model: Opus, Planned.
 
-- [ ] **R791 A `comptime for` over a `range` iterates by a built-in rule,
-  not by the range's iterator**
-
-  Problem: a `range` loop records its bounds as `ComptimeSequence::Range`
-  and the elaborator counts them, where upstream iterates
-  `range(...).__iter__()` through the `paramfor_*` stubs as it does every
-  other iterable.
-  - Route `range(...)` through `Checker::check_comptime_iterator_for`
-    (`crates/mojito-checker/src/checker/comptime_iteration.rs`).
-  - Delete `ComptimeSequence::Range`, `ComptimeSource::EvaluatedRange`, and
-    the bound compilation in `record_comptime_iteration`.
-  - A probe stepped `range(3).__iter__()` correctly through user copies of
-    the stubs under CTFE.
-  - The risk is compile time: about 3N+1 VM calls per loop instance across
-    roughly 240 fixture loops. Measure before and after.
-  - Depends on nothing.
-  - Model: Fable, Planned.
-
 - [ ] **R794 A `comptime for` over a compile-time collection iterates by a
   built-in rule, not by the collection's iterator**
 
@@ -6949,6 +6984,25 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Swap in `_abort_base()` and give `std.os` its declaration once it does.
   - Depends on R50.
   - Model: Opus, Not Planned.
+
+- [ ] **R894 Bundled modules loaded while the prelude bootstraps do not see
+  the prelude's names**
+
+  Upstream's library modules use prelude names such as `range` without
+  importing them. Mojito's prelude dependencies see only their explicit
+  imports.
+  - `Linker::load_module` (`crates/mojito-module/src/module.rs`) gives a
+    module no implicit bindings while `prelude_bindings` is still `None`.
+  - Without an import, such a module binds the checker's builtin `range`,
+    which has no `__iter__`, so its `comptime for` cannot step an iterator.
+  - Workaround: `builtin/tuple.mojo`, `utils/variant.mojo`, `string.mojo`,
+    `format/__init__.mojo`, `format/_utils.mojo`, and `format/tstring.mojo`
+    import `range` from `std.range` explicitly.
+  - Fix: bind the prelude's names in bootstrap modules too, then drop the
+    six imports.
+  - Found while landing R791 (2026-10-14).
+  - Depends on nothing.
+  - Model: Fable, Not Planned.
 
 - [ ] **R492 `ParameterList.get_span` addresses its elements through a
   compiler-private stand-in**

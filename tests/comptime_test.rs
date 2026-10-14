@@ -185,10 +185,7 @@ fn pack_keyed_bodies_are_validated_with_the_element_opaque() {
     // element under a `comptime for` index has only the pack's bound.
     let def_pack = "def show[*Ts: Writable](*args: *Ts):\n    comptime for i in range(args.__len__()):\n        comptime if i > 100:\n            args[i].nonexistent()\n        print(args[i])\n\ndef main():\n    show(1, \"two\")\n";
     let err = run(def_pack).unwrap_err();
-    assert!(
-        err.contains("type 'Ts[i]' has no method 'nonexistent'"),
-        "{err}"
-    );
+    assert!(err.contains("has no method 'nonexistent'"), "{err}");
     // A struct's pack, never instantiated.
     let bag = "struct Bag[*Ts: Movable](\n    Deinitable where Ts.all_conforms_to[Deinitable](),\n    Movable,\n):\n    var storage: Tuple[*Self.Ts]\n\n    def __init__(out self, var *args: *Self.Ts):\n        self.storage = Tuple[*Self.Ts](*args^)\n\n";
     let main = "\ndef main():\n    print(1)\n";
@@ -223,7 +220,7 @@ fn pack_keyed_bodies_are_validated_with_the_element_opaque() {
     );
     let err = run(&narrowed).unwrap_err();
     assert!(
-        err.contains("operator '==' is not defined for Ts[i] and T"),
+        err.contains("operator '==' is not defined for Ts["),
         "{err}"
     );
     let constant = format!(

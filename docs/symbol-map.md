@@ -1193,27 +1193,36 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   (`requested_name`) and has no runtime form
   (`lower_comptime_binding`, over the statement's
   `CheckedStmtOp::Comptime::denotes`; a runtime read of a collection is
-  rejected by `reject_display_crossing`), a `range` bound the
-  check does not close records `ComptimeSource::EvaluatedRange`
-  (`record_comptime_iteration`, admitted by `reads_compile_time_alone` over
-  `comptime_binding_owners`), a condition naming an evaluated binding is
-  left uncompiled (`names_evaluated_binding`), and a runtime read is
-  rejected (`reject_display_crossing`, from `inference.rs`). An iterable
-  `comptime_iteration_element` does not serve (it gives `None`) is
-  iterated by upstream's iterator protocol:
+  rejected by `reject_display_crossing`), a condition naming an evaluated
+  binding is left uncompiled (`names_evaluated_binding`), and a runtime
+  read is rejected (`reject_display_crossing`, from `inference.rs`). An
+  iterable `comptime_iteration_element` does not serve (it gives `None`),
+  `range(...)` among them, is iterated by upstream's iterator protocol:
   `Checker::check_comptime_iterator_for` (`checker/comptime_iteration.rs`)
   types the spelled `iterable.__iter__()` call and the three stub calls
-  (`comptime_iterator_protocol`, the stubs in a `Checker::probe`, named by
+  (`comptime_iterator_protocol`, the stubs in a `Checker::probe` once per
+  iterator type, `Checker::comptime_iterator_elements`, named by
   `paramfor_stub` over `std.builtin._stubs`, the bundled
-  `stdlib/std/builtin/_stubs.mojo` the prelude links for its bodies),
-  records the call as the iterable's `SpelledConstruction` and
-  `ComptimeSource::Iterator` in the iterable's `comptime_iteration` fact
+  `stdlib/std/builtin/_stubs.mojo` the linker loads ahead of the prelude),
+  admits an iterable that reads compile-time bindings alone
+  (`reads_compile_time_alone`, where a collector's `args.__len__()` is its
+  pack's length, `pack_length_receivers`), records the call as the
+  iterable's `SpelledConstruction` and `ComptimeSource::Iterator` in the
+  iterable's `comptime_iteration` fact
   (`CheckedArena::spelled_construction` pushes it onto the call's node),
-  and binds the variable as a local alias of the `paramfor_next_value`
-  application. `lower_comptime_for` makes the header's
-  `ComptimeSequence::Iterator`, its `initial` the thunk of the spelled
-  call (`ComptimeThunks::request_value`), and `Specializer::trip_elements`
-  (`native/mono/unroll.rs`) steps it, binding each copy to its iterator.
+  binds the iterator binder among the value binders in scope (so a function
+  lifted in the body takes it), and binds the variable as a local alias of
+  the `paramfor_next_value` application (`next_value`). `lower_comptime_for`
+  makes the header's `ComptimeSequence::Iterator`, its `initial` the thunk
+  of the spelled call (`ComptimeThunks::request_value`), and records the
+  variable's alias (`ComptimeThunks::bind_value`) for the thunks and
+  bracket arguments that read it; `Specializer::trip_elements`
+  (`native/mono/unroll.rs`) steps it, binding each copy to its iterator,
+  and `Specializer::answer_element` runs each copy's element once.
+  `Specializer::demand_application` runs every compile-time application in
+  a fragment built and verified once per instance
+  (`Specializer::verified_fragment`, kept as a `mojito_vm::backend::
+  ConcreteProgram`).
   `Flatten::lower_comptime_binding` (`mir/lower_stmt.rs`) records the
   binding with its value's node handle and sequence (`DisplayBinding`, in
   the scoped `Flatten::displays`; `ComptimeThunks::bind_display`) and gives
@@ -1317,8 +1326,9 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `Flatten::lower_call_receiver` (`mir/calls.rs`) reads it as a value, not
   a place, and `type_receiver_name` takes a receiver for a type only when
   its node is a name the check bound to nothing and typed as no value. The header's `source` is the
-  `mojito_checked::checked::ComptimeSequence` (`Range { start, stop, step }`
-  or `Elements(expr)`, whose `binder_meta` types the binder; the elements a
+  `mojito_checked::checked::ComptimeSequence` (`Elements(expr)` or
+  `Iterator { initial, has_next, next_iter, next_value }`, whose
+  `binder_meta` types the binder; the elements a
   value yields are `CtValue::comptime_iteration_elements`, `ct.rs`, which the
   AST elaborator's `as_sequence` shares), its slot the checked binding's
   (the slot HIR declared for the binding, typed by `binder_meta`).

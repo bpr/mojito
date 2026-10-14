@@ -84,6 +84,8 @@ assets/ok/comptime_for_display_binding.mojo	main	exe-differential	sanitized
 assets/ok/comptime_for_display_element_reads.mojo	main	exe-differential	sanitized
 assets/ok/comptime_for_display_method_reads.mojo	main	exe-differential	sanitized
 assets/ok/comptime_for_display_over_binder.mojo	main	exe-differential	sanitized
+assets/ok/comptime_for_element_alias_index.mojo	main	exe-differential	sanitized
+assets/ok/comptime_for_generic_iterator_parameter.mojo	main	exe-differential	sanitized
 assets/ok/comptime_for_index_typed_local.mojo	main	exe-differential	sanitized
 assets/ok/comptime_for_iterable_struct.mojo	main	exe-differential	sanitized
 assets/ok/comptime_for_iteration_scope.mojo	main	exe-differential	sanitized

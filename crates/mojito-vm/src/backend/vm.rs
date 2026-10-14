@@ -30,6 +30,21 @@ use mojito_types::types::TyKind;
 use places::*;
 use std::collections::HashMap;
 
+/// A verified concrete fragment prepared for compile-time calls, its struct
+/// and signature registries built once for every call into it.
+pub struct ConcreteProgram(Prog);
+
+impl ConcreteProgram {
+    pub fn new(mir: &ConcreteMir) -> Self {
+        let mir: &MirProgram = mir;
+        Self(Prog {
+            structs: build_structs(&mir.declarations),
+            sigs: build_sigs(&mir.declarations),
+            mir: mir.clone(),
+        })
+    }
+}
+
 #[derive(Default)]
 pub struct VmBackend {
     output: String,
@@ -409,24 +424,19 @@ impl VmBackend {
         self.run_prog(&prog)
     }
 
-    /// Call `name` in a verified concrete fragment for its result, under
+    /// Call `name` in a prepared concrete fragment for its result, under
     /// `fuel`: the elaborator's compile-time evaluation. The remaining fuel
     /// comes back with the value, which [`Self::freeze`] turns into a
     /// compile-time value while this VM still owns its heap.
     pub fn call_concrete(
         &mut self,
-        mir: &ConcreteMir,
+        program: &ConcreteProgram,
         name: &str,
         args: &[CtValue],
         fuel: usize,
     ) -> Result<(Value, usize), RuntimeError> {
-        let mir: &MirProgram = mir;
-        let prog = Prog {
-            structs: build_structs(&mir.declarations),
-            sigs: build_sigs(&mir.declarations),
-            mir: mir.clone(),
-        };
-        self.configure_lifecycle(&prog);
+        let prog = &program.0;
+        self.configure_lifecycle(prog);
         let index = prog
             .index_of(name)
             .ok_or_else(|| RuntimeError::UndefinedVariable(name.to_string()))?;
@@ -441,10 +451,10 @@ impl VmBackend {
         let args = args
             .iter()
             .zip(param_types)
-            .map(|(value, ty)| self.thaw(&prog, value, Some(ty)))
+            .map(|(value, ty)| self.thaw(prog, value, Some(ty)))
             .collect::<Result<Vec<_>, _>>()?;
         self.ctfe_fuel = Some(fuel);
-        let result = self.call_function(&prog, index, args);
+        let result = self.call_function(prog, index, args);
         let remaining = self.ctfe_fuel.take().unwrap_or(0);
         Ok((result?, remaining))
     }

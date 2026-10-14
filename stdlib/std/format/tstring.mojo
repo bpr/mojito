@@ -6,6 +6,10 @@
 # string).  Formatting is deferred: write_to streams the captured elements in
 # source order, so print/String() consume a TString through the ordinary
 # Writable machinery.
+
+from std.range import range
+
+
 struct TString[*Ts: Movable & Writable](Deinitable, Movable, Writable):
     var storage: Tuple[*Self.Ts]
 

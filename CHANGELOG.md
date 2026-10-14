@@ -8,6 +8,19 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A `comptime for` over `range(...)` iterates by upstream's iterator
+  protocol (R791): the check spells `range(...).__iter__()`, and the
+  elaborator steps the bundled range struct through the `paramfor_*` stubs,
+  as it steps every other iterator. `ComptimeSequence::Range` and
+  `ComptimeSource::EvaluatedRange` are gone, MIR text 1.55 withdraws the
+  `comptime_for` range form and adds the iterator form's `next_value`, and
+  the package format is 58. Along the way an iterator that is a generic
+  struct instance now works as a parameter argument (`show[x]()`), a
+  collector's `args.__len__()` bounds an iterator loop at compile time, and
+  `Ts[k]()` over a local `comptime k = i` selects its element. Diagnostics
+  that named `Ts[i]` now spell the stub application, as the pin does.
+  Program output is unchanged; a debug sweep of the range-loop fixtures is
+  about 1.45 times slower (R896, R897).
 - A conditional expression whose condition is a parameter value (R887) —
   `1 if flag else 2` over a `Bool` parameter, `n == 0`, `comptime(e)`,
   `conforms_to(T, Copyable)` — lowers as upstream's `hlcf.comptime.if`, so

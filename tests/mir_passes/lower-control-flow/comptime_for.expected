@@ -33,7 +33,7 @@
           bb2 {
             instructions: [
             ],
-            terminator: comptime_for { binder: binder { owner: "$comptime_for@cases.mojo:10..18", slot: 0, name: i }, slot: $v1, start: param_constant(ct_int(0)), stop: param_decl_ref { owner: "count", slot: 0, name: n, type: meta_value(Int) }, step: param_constant(ct_int(1)), body: bb3, exit: bb1 }
+            terminator: comptime_for.elements { binder: binder { owner: "$comptime_for@cases.mojo:10..18", slot: 0, name: i }, slot: $v1, elements: param_constant(ct_list([ct_int(0), ct_int(1), ct_int(2)])), body: bb3, exit: bb1 }
           },
           bb3 {
             instructions: [

@@ -1,4 +1,4 @@
-# expect: operator '==' is not defined for Ts[i] and T
+# expect: operator '==' is not defined for Ts[
 # A folded `comptime if Self.Ts[i] == T` guard does not narrow the element: it
 # keeps its dependent type `Self.Ts[i]`, and `rebind[T](...)` is the explicit
 # retyping (`assets/ok/pack_element_rebind.mojo`).

@@ -11,6 +11,7 @@
 
 from std.reflection.type_info import _unqualified_type_name
 from std.string import String
+from std.range import range
 
 
 # The comma-separated unqualified names of a type pack: `TypeNames[Int,

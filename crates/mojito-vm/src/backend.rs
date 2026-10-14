@@ -15,7 +15,7 @@ use crate::runtime::RuntimeError;
 use crate::runtime::Value;
 
 mod vm;
-pub use vm::VmBackend;
+pub use vm::{ConcreteProgram, VmBackend};
 
 /// A statically dispatched execution backend. The frontend hands it concrete
 /// MIR and it executes, capturing output.

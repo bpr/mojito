@@ -37,6 +37,7 @@ impl Checker {
         let reference = binder.as_decl_ref().cloned().ok_or_else(|| {
             TypeError::InvariantViolation("a comptime for iterator binder is no reference".into())
         })?;
+        let key = reference.id.owner.to_string();
         let iterator_shape = self.param_context.type_shape(iterator_ty.clone());
         let stub = |name: &str, meta| {
             self.param_context.apply(
@@ -65,6 +66,7 @@ impl Checker {
                     iterator: mojito_types::param_expr::MetaTy::value(iterator_ty),
                     has_next,
                     next_iter,
+                    next_value: element.clone(),
                 },
             }));
         let before = self.uninitialized.borrow().clone();
@@ -76,10 +78,18 @@ impl Checker {
         if let Some(scope) = self.local_comptime_parameters.last_mut() {
             scope.insert(var.to_string(), (level, element));
         }
+        // The iterator is a binder in scope, which a function lifted in the
+        // body over the variable takes; no spelling names it.
+        if let Some(scope) = self.innermost_value_scope() {
+            scope.insert(key.clone(), binder);
+        }
         let result = self.declare_immutable(var, element_ty).and_then(|()| {
             self.record_statement_binding(stmt, var);
             self.check_block(body, ret, true)
         });
+        if let Some(scope) = self.innermost_value_scope() {
+            scope.remove(&key);
+        }
         self.pop_scope();
         *self.uninitialized.borrow_mut() = before;
         result
@@ -87,10 +97,10 @@ impl Checker {
 
     /// Type upstream's desugaring of a `comptime for` over `iter`: the
     /// spelled call `iter.__iter__()`, the iterator type it gives, and the
-    /// element type `paramfor_next_value` over that iterator gives. The stub
-    /// calls are typed in a probe, so a bound the iterator fails (an
-    /// iterator that is not `Copyable`) is the call's own rejection and no
-    /// fact of theirs survives.
+    /// element type `paramfor_next_value` over that iterator gives, typed
+    /// once per iterator type. The stub calls are typed in a probe, so a
+    /// bound the iterator fails (an iterator that is not `Copyable`) is the
+    /// call's own rejection and no fact of theirs survives.
     fn comptime_iterator_protocol(
         &self,
         source: &Expr,
@@ -136,6 +146,14 @@ impl Checker {
             source.span,
         );
         let iterator_ty = self.infer(&call)?;
+        if let Some(element_ty) = self
+            .comptime_iterator_elements
+            .borrow()
+            .get(&iterator_ty)
+            .cloned()
+        {
+            return Ok((call, iterator_ty, element_ty));
+        }
         let entry = paramfor_stub("paramfor_next_value");
         if self.lookup(&entry).is_none() {
             return Err(TypeError::Unsupported(format!(
@@ -169,6 +187,9 @@ impl Checker {
             })?
             .pop()
             .ok_or_else(|| TypeError::InvariantViolation("no paramfor stub was typed".into()))?;
+        self.comptime_iterator_elements
+            .borrow_mut()
+            .insert(iterator_ty.clone(), element_ty.clone());
         Ok((call, iterator_ty, element_ty))
     }
 }

@@ -846,10 +846,10 @@ forces a pending module constant the loop iterates): the checker types the body
 once with the variable a symbolic binder of the loop's own, of the element's
 type, and records what the loop iterates
 (`SemanticAdjustment::ComptimeIteration`, its `ComptimeSource` a compiled
-`ComptimeSequence` — a range, a closed display's elements, a value pack, a
+`ComptimeSequence` — a closed display's elements, a value pack, a
 reflection query — or `Evaluated` for a display over the binders, which the
-check types and does not close). Every other iterable is iterated by
-upstream's iterator protocol (`ComptimeSource::Iterator`,
+check types and does not close). Every other iterable, `range(...)` among
+them, is iterated by upstream's iterator protocol (`ComptimeSource::Iterator`,
 `Checker::check_comptime_iterator_for`, `checker/comptime_iteration.rs`):
 the check spells the iterable as its `__iter__()` call, which the checked
 arena hands HIR in the iterable's place and MIR lifts as a thunk over the
@@ -859,8 +859,11 @@ binders in scope, the header's binder is the iterator, and its
 over that binder, which `native::mono` runs on the VM per step, as
 upstream's `processParamForOp` runs them on its interpreter. The loop
 variable is no binder: it is a local alias of `paramfor_next_value` over
-the iterator, which each body copy materializes as any application alias
-is. An aggregate loop variable is a
+the iterator (the header's `next_value`), which each body copy runs once
+and materializes as any application alias is; a function lifted in the
+body over the variable takes the iterator binder. The stubs are linked
+ahead of the prelude, so a bundled module loaded while the prelude
+bootstraps steps its loops by them too. An aggregate loop variable is a
 compile-time parameter of the element's type, as upstream's induction
 variable is: a tuple element's binder is the nominal `Tuple` over its
 elements' types (`ComptimeSequence::binder_meta`), a borrow of the variable
@@ -917,8 +920,8 @@ substitution meets its application at an instance's arguments
 (`Applications`, `Specializer::answer_pending`) and folds what stands above
 it. Every other compile-time read is lifted where it
 stands, as upstream runs it on its interpreter: a `comptime
-if` condition as any uncompiled condition is, a `range` bound the check does
-not close (`ComptimeSource::EvaluatedRange`), and an `Int` or `Bool` a
+if` condition as any uncompiled condition is, a `range` iterable (the
+thunk of its spelled `__iter__()` call), and an `Int` or `Bool` a
 runtime position, another binding, or a crossing reads (`print(L[0])`,
 `comptime(len(L))`), which
 MIR carries as a parameter constant holding the application
@@ -1483,8 +1486,8 @@ binds it below MIR. No method mints an AST clone, per call or per
 instance: every `comptime for` a method's body holds is kept in its template
 (`keep_template_comptime_for`), its sequence and the bindings its body
 declares evaluated per instance below MIR (`ComptimeSource::Applied` for a
-sequence a compile-time application builds, `EvaluatedRange` for a bound,
-an R7 request for a binding). A method body that still fails to elaborate
+sequence a compile-time application builds, the iterable's thunk for an
+iterator loop, an R7 request for a binding). A method body that still fails to elaborate
 over its own binders or its struct's becomes, on its template, the one
 compiler-private call `_mojito_instantiation_failed("…")`
 (`instantiation_failure_stub`): the failure is the pin's `function

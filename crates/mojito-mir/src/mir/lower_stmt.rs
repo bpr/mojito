@@ -3261,42 +3261,22 @@ impl<'a> Flatten<'a> {
                     iterator,
                     has_next,
                     next_iter,
+                    next_value,
                 } => {
                     let ty = iterator.as_value()?.clone();
+                    // The variable is an alias of the element over the
+                    // iterator, which the body's parameter arguments and the
+                    // thunks lifted in it read.
+                    if let Some(owner) = binding {
+                        self.comptime_thunks.bind_value(owner, next_value.clone());
+                    }
                     let binders = &self.enclosing_binders;
                     mojito_checked::checked::ComptimeSequence::Iterator {
                         initial: self.comptime_thunks.request_value(iter.node, binders, ty),
                         has_next,
                         next_iter,
+                        next_value,
                     }
-                }
-                ComptimeSource::EvaluatedRange { bounds } => {
-                    let CheckedOp::Call {
-                        args: arg_nodes, ..
-                    } = &self.hir_node(iter).op
-                    else {
-                        return None;
-                    };
-                    let arg_nodes = arg_nodes.clone();
-                    let bounds: Vec<ParamExpr> = bounds
-                        .into_iter()
-                        .zip(arg_nodes)
-                        .map(|(bound, node)| {
-                            bound.unwrap_or_else(|| {
-                                let binders = &self.enclosing_binders;
-                                self.comptime_thunks.request_value(node, binders, Ty::int())
-                            })
-                        })
-                        .collect();
-                    let constant =
-                        |value: i64| ParamContext::detached().constant(CtValue::Int(value)).ok();
-                    let (start, stop, step) = match bounds.as_slice() {
-                        [stop] => (constant(0)?, stop.clone(), constant(1)?),
-                        [start, stop] => (start.clone(), stop.clone(), constant(1)?),
-                        [start, stop, step] => (start.clone(), stop.clone(), step.clone()),
-                        _ => return None,
-                    };
-                    mojito_checked::checked::ComptimeSequence::Range { start, stop, step }
                 }
             };
             Some((iteration.binder, source))

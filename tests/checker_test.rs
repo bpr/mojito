@@ -160,8 +160,9 @@ fn checked_declarations_preserve_shadowed_function_and_unused_capture_identities
 #[test]
 fn checked_boundary_keys_template_source_provenance_by_occurrence() {
     let source = "def outer[*Ts: ImplicitlyCopyable & Writable & Deinitable](*args: *Ts):\n    comptime for i in range(Ts.length):\n        if True:\n            var x = args[i]\n            def show() {x}:\n                print(x)\n            show()\n\ndef main():\n    outer(1, True)\n";
-    let parsed = parse(source).expect("parse");
-    let elaborated = mojito::elaborate(parsed).expect("elaborate");
+    let linked =
+        mojito::link_source(source, std::path::Path::new("provenance.mojo")).expect("link");
+    let elaborated = mojito::elaborate(linked).expect("elaborate");
     let checked = check_program(&elaborated).expect("check");
     // The check types the template once: its `comptime for` stays in the
     // body for the elaborator to unroll, so its `x` is one declaration and

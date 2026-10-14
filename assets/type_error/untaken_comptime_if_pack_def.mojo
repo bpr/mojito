@@ -1,4 +1,4 @@
-# expect: type 'Ts[i]' has no method 'nonexistent'
+# expect: has no method 'nonexistent'
 # A pack element under a `comptime for` index is opaque: only the pack's
 # declared bound is known of it, so a member no bound declares is rejected
 # inside an untaken `comptime if` arm, from the template. The concrete

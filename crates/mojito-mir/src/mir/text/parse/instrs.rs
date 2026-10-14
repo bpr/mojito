@@ -812,26 +812,6 @@ impl Decoder {
                 else_b: self.req(value, fields, "else", Self::block_id)?,
             }),
             // Before 1.25 the range form named its binder `index`.
-            "comptime_for" => Some(MirTerm::ComptimeFor {
-                binder: self.req(
-                    value,
-                    fields,
-                    if self.field(fields, "binder").is_ok() {
-                        "binder"
-                    } else {
-                        "index"
-                    },
-                    Self::binder_ref,
-                )?,
-                slot: self.req(value, fields, "slot", Self::var)?,
-                source: mojito_checked::checked::ComptimeSequence::Range {
-                    start: self.req(value, fields, "start", Self::param_expr)?,
-                    stop: self.req(value, fields, "stop", Self::param_expr)?,
-                    step: self.req(value, fields, "step", Self::param_expr)?,
-                },
-                body: self.req(value, fields, "body", Self::block_id)?,
-                exit: self.req(value, fields, "exit", Self::block_id)?,
-            }),
             "comptime_for.elements" => Some(MirTerm::ComptimeFor {
                 binder: self.req(value, fields, "binder", Self::binder_ref)?,
                 slot: self.req(value, fields, "slot", Self::var)?,
@@ -851,6 +831,7 @@ impl Decoder {
                     initial: self.req(value, fields, "initial", Self::param_expr)?,
                     has_next: self.req(value, fields, "has_next", Self::param_expr)?,
                     next_iter: self.req(value, fields, "next_iter", Self::param_expr)?,
+                    next_value: self.req(value, fields, "next_value", Self::param_expr)?,
                 },
                 body: self.req(value, fields, "body", Self::block_id)?,
                 exit: self.req(value, fields, "exit", Self::block_id)?,
@@ -923,8 +904,7 @@ impl Decoder {
     }
 
     /// A `comptime.for`'s source, its form named by which fields are
-    /// present: `start`/`stop`/`step`, `elements`, or
-    /// `initial`/`has_next`/`next_iter`.
+    /// present: `elements`, or `initial`/`has_next`/`next_iter`/`next_value`.
     fn comptime_sequence(
         &mut self,
         value: &Value,
@@ -939,17 +919,11 @@ impl Decoder {
                 Self::param_expr,
             )?));
         }
-        if self.field(fields, "initial").is_ok() {
-            return Some(ComptimeSequence::Iterator {
-                initial: self.req(value, fields, "initial", Self::param_expr)?,
-                has_next: self.req(value, fields, "has_next", Self::param_expr)?,
-                next_iter: self.req(value, fields, "next_iter", Self::param_expr)?,
-            });
-        }
-        Some(ComptimeSequence::Range {
-            start: self.req(value, fields, "start", Self::param_expr)?,
-            stop: self.req(value, fields, "stop", Self::param_expr)?,
-            step: self.req(value, fields, "step", Self::param_expr)?,
+        Some(ComptimeSequence::Iterator {
+            initial: self.req(value, fields, "initial", Self::param_expr)?,
+            has_next: self.req(value, fields, "has_next", Self::param_expr)?,
+            next_iter: self.req(value, fields, "next_iter", Self::param_expr)?,
+            next_value: self.req(value, fields, "next_value", Self::param_expr)?,
         })
     }
 

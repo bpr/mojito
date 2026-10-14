@@ -149,6 +149,10 @@ impl Specializer<'_> {
             return Ok(());
         };
         let values = self.trip_elements(frame.template, &binder, &source, bindings)?;
+        let element = match &source {
+            ComptimeSequence::Iterator { next_value, .. } => Some(next_value),
+            ComptimeSequence::Elements(_) => None,
+        };
         let members = loop_body(blocks, header, body, exit, frame.function_level);
         let width = members.len();
         let mut indexed: BTreeSet<VarId> =
@@ -182,7 +186,7 @@ impl Specializer<'_> {
                 frame,
                 bindings,
                 tables,
-                (&binder, slot, value),
+                (&binder, slot, value, element),
                 &indexed,
             )?;
         }
@@ -221,12 +225,15 @@ impl Specializer<'_> {
         frame: &LoopFrame<'_>,
         bindings: &Bindings,
         tables: &mut FrameTables<'_>,
-        (binder, slot, bound): (&ParamRef, VarId, CtValue),
+        (binder, slot, bound, element): (&ParamRef, VarId, CtValue, Option<&ParamExpr>),
         indexed: &BTreeSet<VarId>,
     ) -> Result<(), MonoError> {
         let first = blocks.len();
         let mut iteration = bindings.clone();
         iteration.values.insert(binder.clone(), bound.clone());
+        if let Some(element) = element {
+            self.answer_element(frame.template, element, &iteration)?;
+        }
         let mapping: HashMap<MirBlockId, MirBlockId> = members
             .iter()
             .enumerate()
@@ -443,10 +450,9 @@ impl Specializer<'_> {
     }
 
     /// The values the loop binds under the bindings, in order: the
-    /// integers a range spans — a zero step is an empty range, as `range`
-    /// is — the iterators an iterator header steps through, or the elements
-    /// of any other sequence ([`CtValue::comptime_iteration_elements`]),
-    /// each materialized at the binder's type.
+    /// iterators an iterator header steps through, or the elements of a
+    /// collection ([`CtValue::comptime_iteration_elements`]), each
+    /// materialized at the binder's type.
     fn trip_elements(
         &mut self,
         template: &str,
@@ -463,34 +469,6 @@ impl Specializer<'_> {
             )
         };
         let elements = match source {
-            ComptimeSequence::Range { start, stop, step } => {
-                let mut evaluated = [0i64; 3];
-                for (value, bound) in evaluated.iter_mut().zip([start, stop, step]) {
-                    // A bound the check left to evaluate (`len(L)`) is the
-                    // application of its thunk.
-                    let bound = &self.applied(template, bound, bindings)?;
-                    *value = eval_ct(bound, bindings)
-                        .ok()
-                        .as_ref()
-                        .and_then(mojito_types::param_expr::fold::integer_value)
-                        .and_then(|value| value.to_i64())
-                        .ok_or_else(|| undecided(self, bound))?;
-                }
-                let [start, stop, step] = evaluated;
-                let mut values = Vec::new();
-                let mut current = start;
-                while (step > 0 && current < stop) || (step < 0 && current > stop) {
-                    values.push(CtValue::Int(current));
-                    current = current.checked_add(step).ok_or_else(|| {
-                        self.error(
-                            Some(template),
-                            format!("comptime for over `{binder}` overflows its index"),
-                        )
-                    })?;
-                    self.spend_unroll_fuel(template)?;
-                }
-                return Ok(values);
-            }
             // Upstream's `processParamForOp`: from the iterable's
             // `__iter__()`, each iterator `paramfor_has_next` accepts is one
             // iteration's binding, and `paramfor_next_iter` gives the next.
@@ -499,6 +477,7 @@ impl Specializer<'_> {
                 initial,
                 has_next,
                 next_iter,
+                ..
             } => {
                 let mut iterator = self.evaluated(template, initial, bindings)?;
                 let mut iterators = Vec::new();
@@ -541,6 +520,24 @@ impl Specializer<'_> {
             });
         }
         Ok(values)
+    }
+
+    /// Run an iterator loop copy's element application (`paramfor_next_value`
+    /// over the copy's iterator) once, so that every type and parameter
+    /// expression of the copy reading the variable folds from its answer
+    /// without substituting the instance again.
+    fn answer_element(
+        &mut self,
+        template: &str,
+        element: &ParamExpr,
+        iteration: &Bindings,
+    ) -> Result<(), MonoError> {
+        let outer = std::mem::take(&mut *self.applications.pending.borrow_mut());
+        // Folding the element records its application as pending.
+        let _ = eval_ct(element, iteration);
+        let answered = self.answer_pending(template, iteration);
+        self.applications.pending.borrow_mut().extend(outer);
+        answered.map(drop)
     }
 
     /// The value of a loop header's expression under the bindings: the

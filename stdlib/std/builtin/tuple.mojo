@@ -4,6 +4,7 @@
 # the compiler exact per-index storage and move tracking.
 
 from std.reflection.type_info import _unqualified_type_name
+from std.range import range
 
 
 @explicit_destroy(

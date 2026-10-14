@@ -1302,6 +1302,25 @@ impl Checker {
         ))
     }
 
+    /// The pack a collector named by `object` spreads (`args` of `*args:
+    /// *Ts`), while the pack is still a parameter.
+    pub(super) fn collector_pack(&self, object: &Expr) -> Option<ParamExpr> {
+        let ExprKind::Identifier(name) = &object.kind else {
+            return None;
+        };
+        let pack = match (self.lookup(name)?).kind() {
+            TyKind::VariadicPack(element) => {
+                mojito_types::types::pack_spread(std::slice::from_ref(element))
+            }
+            TyKind::Tuple(elements) => mojito_types::types::pack_spread(elements),
+            _ => None,
+        }?;
+        let TyKind::Param { binder, .. } = pack.kind() else {
+            return None;
+        };
+        self.pack_reference(&binder.name)
+    }
+
     /// The length query of a pack that is still a parameter, when `expr`
     /// asks one ([`Self::pack_length_binder`]).
     pub(super) fn pack_length_query(&self, expr: &Expr) -> Option<ParamExpr> {
@@ -1317,22 +1336,6 @@ impl Checker {
     /// `Ts.length` and `len(Ts)` of the pack itself. `len(args)` is a runtime
     /// value, as it is upstream.
     pub(super) fn pack_length_binder(&self, expr: &Expr) -> Option<ParamRef> {
-        let collector_pack = |object: &Expr| {
-            let ExprKind::Identifier(name) = &object.kind else {
-                return None;
-            };
-            let pack = match (self.lookup(name)?).kind() {
-                TyKind::VariadicPack(element) => {
-                    mojito_types::types::pack_spread(std::slice::from_ref(element))
-                }
-                TyKind::Tuple(elements) => mojito_types::types::pack_spread(elements),
-                _ => None,
-            }?;
-            let TyKind::Param { binder, .. } = pack.kind() else {
-                return None;
-            };
-            self.pack_reference(&binder.name)
-        };
         let pack = match &expr.kind {
             ExprKind::Call {
                 name,
@@ -1351,7 +1354,7 @@ impl Checker {
                 args,
                 kwargs,
             } if method == "__len__" && args.is_empty() && kwargs.is_empty() => {
-                collector_pack(object)
+                self.collector_pack(object)
             }
             ExprKind::Member { object, field } if field == "length" => {
                 self.unbound_pack_named(object)

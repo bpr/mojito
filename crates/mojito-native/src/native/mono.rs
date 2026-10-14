@@ -40,7 +40,7 @@ use mojito_types::param_expr::{
 use mojito_types::types::{
     ConstraintOperand, GenericConstraint, ParamDecl, SimdDtype, SimdWidth, Ty, TyArg, TyKind,
 };
-use mojito_vm::backend::VmBackend;
+use mojito_vm::backend::{ConcreteProgram, VmBackend};
 
 /// A concrete program and the concrete identity of every requested public
 /// entry.
@@ -522,6 +522,8 @@ struct Specializer<'a> {
     /// Every compile-time application evaluated so far, by instance name:
     /// the same application under the same bindings runs once.
     evaluations: HashMap<String, CtValue>,
+    /// The prepared fragment each demanded instance runs in, by its name.
+    fragments: HashMap<String, Rc<ConcreteProgram>>,
     /// The applications the instances' types and parameter arguments carry
     /// ([`Bindings::applications`]).
     applications: Rc<Applications>,

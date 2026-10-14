@@ -27,7 +27,7 @@
           bb1 {
             instructions: [
             ],
-            terminator: comptime_for { binder: binder { owner: "$comptime_for@cases.mojo:756..764", slot: 0, name: i }, slot: $v1, start: param_constant(ct_int(0)), stop: param_decl_ref { owner: "comptime_for_targets_kept", slot: 0, name: n, type: meta_value(Int) }, step: param_constant(ct_int(1)), body: bb2, exit: bb3 }
+            terminator: comptime_for.elements { binder: binder { owner: "$comptime_for@cases.mojo:756..764", slot: 0, name: i }, slot: $v1, elements: param_constant(ct_list([ct_int(0), ct_int(1), ct_int(2)])), body: bb2, exit: bb3 }
           },
           bb2 {
             instructions: [
@@ -42,7 +42,7 @@
           bb4 {
             instructions: [
             ],
-            terminator: comptime_for { binder: binder { owner: "$comptime_for@cases.mojo:801..809", slot: 0, name: i }, slot: $v2, start: param_constant(ct_int(0)), stop: param_decl_ref { owner: "comptime_for_targets_kept", slot: 0, name: n, type: meta_value(Int) }, step: param_constant(ct_int(1)), body: bb5, exit: bb6 }
+            terminator: comptime_for.elements { binder: binder { owner: "$comptime_for@cases.mojo:801..809", slot: 0, name: i }, slot: $v2, elements: param_constant(ct_list([ct_int(0), ct_int(1), ct_int(2)])), body: bb5, exit: bb6 }
           },
           bb5 {
             instructions: [

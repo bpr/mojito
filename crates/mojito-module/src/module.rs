@@ -808,6 +808,12 @@ impl<'p> Linker<'p> {
             self.prelude_bindings = Some(HashMap::new());
             return Ok(());
         };
+        // The `comptime for` stubs are compiler-known by module path, as
+        // upstream's `getBuiltinFunction` finds them: linked first, every
+        // module's loop may step its iterator through them.
+        if let Some(stubs) = self.bundled_module(STUBS_MODULE) {
+            self.load_module(&stubs)?;
+        }
         self.load_module(&prelude)?;
         let exports = self
             .exports
@@ -1697,6 +1703,9 @@ const ENTRY_MODULE: &str = "__main__";
 const STD_PACKAGE: &str = "std";
 
 const PRELUDE_MODULE: &str = "std.prelude";
+
+/// The module whose functions step a `comptime for` iterator.
+const STUBS_MODULE: &str = "std.builtin._stubs";
 
 const PRELUDE_EXPORTS: &[&str] = &[
     "Array",

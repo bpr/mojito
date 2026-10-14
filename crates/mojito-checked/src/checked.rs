@@ -488,23 +488,18 @@ pub enum ComptimeSource {
     Applied {
         element: mojito_types::param_expr::MetaTy,
     },
-    /// A `range(...)` with a bound the check does not close (`range(len(L))`
-    /// over a local display binding): each bound as written is its
-    /// parameter expression, or `None` for one MIR lifts as a function over
-    /// the binders in scope, which the elaborator evaluates per instance.
-    EvaluatedRange {
-        bounds: Vec<Option<mojito_types::param_expr::ParamExpr>>,
-    },
     /// Upstream's iterator protocol: the check spelled the iterable as its
     /// `__iter__()` call, which MIR lifts as a function over the binders in
     /// scope, and the binder is the `iterator`-typed iterator. `has_next`
     /// and `next_iter` are the `paramfor_has_next`/`paramfor_next_iter`
     /// applications over the binder, which the elaborator runs to step it;
-    /// the loop variable is an alias of `paramfor_next_value` over it.
+    /// the loop variable is an alias of `next_value`, the
+    /// `paramfor_next_value` application over it.
     Iterator {
         iterator: mojito_types::param_expr::MetaTy,
         has_next: mojito_types::param_expr::ParamExpr,
         next_iter: mojito_types::param_expr::ParamExpr,
+        next_value: mojito_types::param_expr::ParamExpr,
     },
 }
 
@@ -517,7 +512,6 @@ impl ComptimeSource {
             | Self::Applied { element }
             | Self::Bound { element, .. } => element.clone(),
             Self::Iterator { iterator, .. } => iterator.clone(),
-            Self::EvaluatedRange { .. } => mojito_types::param_expr::MetaTy::int(),
         }
     }
 }
@@ -526,30 +520,26 @@ impl ComptimeSource {
 /// a compile-time sequence.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum ComptimeSequence {
-    /// `range(start, stop, step)`: the integers the bounds span.
-    Range {
-        start: mojito_types::param_expr::ParamExpr,
-        stop: mojito_types::param_expr::ParamExpr,
-        step: mojito_types::param_expr::ParamExpr,
-    },
-    /// Any other compile-time iterable, whose value yields the elements
+    /// A compile-time collection, whose value yields the elements
     /// [`mojito_types::ct::CtValue::comptime_iteration_elements`] names: a
     /// list's or a set's elements, a dictionary's keys.
     Elements(mojito_types::param_expr::ParamExpr),
     /// An iterator stepped by upstream's protocol from `initial`, the
     /// iterable's `__iter__()`: while `has_next` over the binder holds, the
-    /// binder takes `next_iter` over it. The binder is the iterator.
+    /// binder takes `next_iter` over it. The binder is the iterator, and
+    /// `next_value` over it the element each copy's variable aliases.
     Iterator {
         initial: mojito_types::param_expr::ParamExpr,
         has_next: mojito_types::param_expr::ParamExpr,
         next_iter: mojito_types::param_expr::ParamExpr,
+        next_value: mojito_types::param_expr::ParamExpr,
     },
 }
 
 impl ComptimeSequence {
-    /// The meta-type of the loop's binder: `Int` over a range, the
-    /// sequence's element otherwise. A tuple element is a value of the
-    /// nominal `Tuple` over its elements' types.
+    /// The meta-type of the loop's binder: the iterator of an iterator
+    /// header, the sequence's element otherwise. A tuple element is a value
+    /// of the nominal `Tuple` over its elements' types.
     pub fn binder_meta(&self) -> mojito_types::param_expr::MetaTy {
         use mojito_types::param_expr::MetaTy;
         fn nominal(meta: &MetaTy) -> Option<mojito_types::types::Ty> {
@@ -563,7 +553,6 @@ impl ComptimeSequence {
             }
         }
         match self {
-            Self::Range { .. } => MetaTy::int(),
             Self::Iterator { initial, .. } => initial.meta().clone(),
             Self::Elements(elements) => match elements.meta().iteration_element() {
                 Some(element @ MetaTy::Tuple(_)) => {
@@ -596,13 +585,13 @@ impl ComptimeSequence {
     /// Every parameter expression the sequence holds.
     pub fn expressions(&self) -> Vec<&mojito_types::param_expr::ParamExpr> {
         match self {
-            Self::Range { start, stop, step } => vec![start, stop, step],
             Self::Elements(elements) => vec![elements],
             Self::Iterator {
                 initial,
                 has_next,
                 next_iter,
-            } => vec![initial, has_next, next_iter],
+                next_value,
+            } => vec![initial, has_next, next_iter, next_value],
         }
     }
 }
@@ -610,13 +599,13 @@ impl ComptimeSequence {
 impl std::fmt::Display for ComptimeSequence {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Range { start, stop, step } => write!(f, "range({start}, {stop}, {step})"),
             Self::Elements(elements) => write!(f, "{elements}"),
             Self::Iterator {
                 initial,
                 has_next,
                 next_iter,
-            } => write!(f, "iter({initial}; {has_next}; {next_iter})"),
+                next_value,
+            } => write!(f, "iter({initial}; {has_next}; {next_iter}; {next_value})"),
         }
     }
 }

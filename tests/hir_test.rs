@@ -25,6 +25,16 @@ fn checked_function_cfg(src: &str, function: &str) -> Cfg {
     Cfg::build_checked_fn(&checked, &params, &body)
 }
 
+/// [`checked_function_cfg`] with the bundled library linked, which a
+/// `comptime for` over a `range` steps through.
+fn linked_function_cfg(src: &str, function: &str) -> Cfg {
+    let linked = mojito::link_source(src, std::path::Path::new("hir_test.mojo")).expect("link");
+    let program = mojito::elaborate(linked).expect("elaborate");
+    let checked = check_program(&program).expect("type error");
+    let (params, body) = function_body(&checked, function);
+    Cfg::build_checked_fn(&checked, &params, &body)
+}
+
 /// The parameter names and body statement nodes of the checked function
 /// named `function`.
 fn function_body(
@@ -350,7 +360,7 @@ fn a_returning_comptime_arm_does_not_yield() {
 
 #[test]
 fn a_comptime_if_arm_break_is_a_comptime_break() {
-    let c = checked_function_cfg(
+    let c = linked_function_cfg(
         "def main():\n    comptime for i in range(3):\n        comptime if i == 1:\n            break\n",
         "main",
     );
@@ -391,7 +401,7 @@ fn for_loop_tests_its_has_next_slot_before_binding() {
 
 #[test]
 fn a_comptime_for_break_inside_an_if_is_a_comptime_break() {
-    let c = checked_function_cfg(
+    let c = linked_function_cfg(
         "def main(a: Bool):\n    comptime for i in range(3):\n        if a:\n            break\n",
         "main",
     );

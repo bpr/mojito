@@ -2,6 +2,7 @@
 trait. `Writable` is a compiler builtin here."""
 
 from std.string import StringSpan
+from std.range import range
 
 
 trait Writer:

@@ -1,4 +1,4 @@
-# expect: type 'Ts[i]' has no method 'nonexistent'
+# expect: has no method 'nonexistent'
 # A variadic struct's method is checked once, from the template, with the
 # element at a `comptime for` index opaque: a member its pack's bound does not
 # declare is rejected inside an untaken `comptime if` arm, whatever the

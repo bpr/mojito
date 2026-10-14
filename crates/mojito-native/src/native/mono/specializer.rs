@@ -42,6 +42,7 @@ impl<'a> Specializer<'a> {
             states: Vec::new(),
             demand_stack: Vec::new(),
             evaluations: HashMap::new(),
+            fragments: HashMap::new(),
             applications: Rc::new(Applications {
                 declared: source
                     .declarations
@@ -769,7 +770,11 @@ impl<'a> Specializer<'a> {
     /// Demand every application the last substitution met with no value
     /// ([`Applications::answer`]) and record its value. Whether one was
     /// answered, so that substituting again gets further.
-    fn answer_pending(&mut self, template: &str, bindings: &Bindings) -> Result<bool, MonoError> {
+    pub(super) fn answer_pending(
+        &mut self,
+        template: &str,
+        bindings: &Bindings,
+    ) -> Result<bool, MonoError> {
         let pending = std::mem::take(&mut *self.applications.pending.borrow_mut());
         let mut answered = false;
         for (function, args) in pending {
@@ -912,7 +917,22 @@ impl<'a> Specializer<'a> {
         });
         match failure {
             Some(error) => Err(error),
-            None => answered.map_err(|error| self.error(Some(template), error.to_string())),
+            // A fold the answer reaches that has no value (an index past
+            // its list) fails the instantiation, as `eval_ct` classifies it.
+            None => answered.map_err(|error| MonoError {
+                kind: if matches!(
+                    error,
+                    mojito_types::param_expr::ParamError::Reflect(_)
+                        | mojito_types::param_expr::ParamError::Constraint(_)
+                        | mojito_types::param_expr::ParamError::Arithmetic(_)
+                ) {
+                    MonoErrorKind::Instantiation
+                } else {
+                    MonoErrorKind::Unsupported
+                },
+                function: Some(template.to_string()),
+                construct: error.to_string(),
+            }),
         }
     }
 
@@ -1009,7 +1029,16 @@ impl<'a> Specializer<'a> {
                     }
                     .ok_or_else(|| unresolved("an unresolved type"))?;
                     arguments.push(InstanceArg::Ty(ty.clone()));
-                    instance_bindings.types.insert(binder, ty);
+                    // A type pack binds its element tuple too, which the
+                    // thunk's reads over the pack (`len(Ts)`) fold under.
+                    match ty.kind() {
+                        TyKind::RuntimePack(elements) => {
+                            unify::bind_pack(&binder, elements.clone(), &mut instance_bindings);
+                        }
+                        _ => {
+                            instance_bindings.types.insert(binder, ty);
+                        }
+                    }
                 }
                 ParamDecl::Value { .. } => {
                     let value = match arg.kind() {
@@ -1032,14 +1061,57 @@ impl<'a> Specializer<'a> {
         if let Some(value) = self.evaluations.get(&evaluation) {
             return Ok(value.clone());
         }
-        let index = self.instance_names[&name];
+        // The fragment an instance's applications run is built and verified
+        // once: its closure is complete when it is first demanded.
+        let fragment = if let Some(fragment) = self.fragments.get(&name) {
+            Rc::clone(fragment)
+        } else {
+            let fragment = Rc::new(ConcreteProgram::new(
+                &self.verified_fragment(template, &name)?,
+            ));
+            self.fragments.insert(name.clone(), Rc::clone(&fragment));
+            fragment
+        };
+        self.fuel = self.fuel.checked_sub(1).ok_or_else(|| {
+            self.error(
+                Some(template),
+                "compile-time execution exceeded the VM CTFE fuel quota".to_string(),
+            )
+        })?;
+        let (value, remaining) = self
+            .vm
+            .call_concrete(&fragment, &name, &called, self.fuel)
+            .map_err(|error| {
+                self.error(
+                    Some(template),
+                    format!("VM CTFE failed for '{name}': {error}"),
+                )
+            })?;
+        self.fuel = remaining;
+        let value = self.vm.freeze(value).map_err(|error| {
+            self.error(
+                Some(template),
+                format!("VM CTFE failed for '{name}': {error}"),
+            )
+        })?;
+        // The result is the function's declared one: a literal it returns
+        // (`return y` of `comptime y: Int = 5`) is materialized at that type.
+        let value = value.clone().materialize_as(&result_ty).unwrap_or(value);
+        self.evaluations.insert(evaluation, value.clone());
+        Ok(value)
+    }
+
+    /// The verified concrete fragment the instance `name` runs in: its
+    /// reference closure, materialized now, and nothing else.
+    fn verified_fragment(&mut self, template: &str, name: &str) -> Result<ConcreteMir, MonoError> {
+        let index = self.instance_names[name];
         let closure = match self.states[index] {
             InstanceState::Active => {
                 let path = self
                     .demand_stack
                     .iter()
                     .map(String::as_str)
-                    .chain(std::iter::once(name.as_str()))
+                    .chain(std::iter::once(name))
                     .collect::<Vec<_>>()
                     .join(" -> ");
                 return Err(self.error(
@@ -1060,7 +1132,7 @@ impl<'a> Specializer<'a> {
             // reach, and only those: the demand blocks on its own closure.
             InstanceState::Pending | InstanceState::Completed => {
                 let frame = self.take_frame();
-                self.demand_stack.push(name.clone());
+                self.demand_stack.push(name.to_string());
                 let closure = self.materialize_closure(index);
                 self.demand_stack.pop();
                 self.restore_frame(frame);
@@ -1102,7 +1174,7 @@ impl<'a> Specializer<'a> {
                 ),
             )
         })?;
-        if let Some(effectful) = effectful_callee(&fragment, &name) {
+        if let Some(effectful) = effectful_callee(&fragment, name) {
             return Err(self.error(
                 Some(template),
                 format!(
@@ -1111,33 +1183,7 @@ impl<'a> Specializer<'a> {
                 ),
             ));
         }
-        self.fuel = self.fuel.checked_sub(1).ok_or_else(|| {
-            self.error(
-                Some(template),
-                "compile-time execution exceeded the VM CTFE fuel quota".to_string(),
-            )
-        })?;
-        let (value, remaining) = self
-            .vm
-            .call_concrete(&fragment, &name, &called, self.fuel)
-            .map_err(|error| {
-                self.error(
-                    Some(template),
-                    format!("VM CTFE failed for '{name}': {error}"),
-                )
-            })?;
-        self.fuel = remaining;
-        let value = self.vm.freeze(value).map_err(|error| {
-            self.error(
-                Some(template),
-                format!("VM CTFE failed for '{name}': {error}"),
-            )
-        })?;
-        // The result is the function's declared one: a literal it returns
-        // (`return y` of `comptime y: Int = 5`) is materialized at that type.
-        let value = value.clone().materialize_as(&result_ty).unwrap_or(value);
-        self.evaluations.insert(evaluation, value.clone());
-        Ok(value)
+        Ok(fragment)
     }
 
     /// The size of the concrete `ty` under the elaboration's target: the
@@ -1373,14 +1419,21 @@ impl<'a> Specializer<'a> {
                     continue;
                 };
                 let dest = *dest;
-                let value = self.applied(template, value, bindings)?;
                 let ty = reg_types.get(&dest.0).cloned();
-                let constant = match self.param_constant(&value, bindings, ty.as_ref()) {
+                let constant = match self
+                    .applied(template, value, bindings)
+                    .and_then(|value| self.param_constant(&value, bindings, ty.as_ref()))
+                {
                     // An unrolled iteration's arm may be one the instance
                     // never takes: its failure waits for the branches.
+                    // It keeps its value closed over the iteration's
+                    // binders, which the reached pass meets again.
                     Err(error) if !reached && error.kind == MonoErrorKind::Instantiation => {
                         self.unreached_failures.insert(dest.0, error);
-                        None
+                        ParamContext::detached()
+                            .replace(value, &symbolic::ct_bindings(bindings))
+                            .ok()
+                            .map(Const::Param)
                     }
                     constant => constant?,
                 };

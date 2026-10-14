@@ -171,7 +171,7 @@ pub fn disassemble_functions(program: &MirProgram) -> Result<String, Disassemble
 
 pub const MAGIC: &str = "mojito-mir";
 pub const VERSION_MAJOR: u16 = 1;
-pub const VERSION_MINOR: u16 = 54;
+pub const VERSION_MINOR: u16 = 55;
 
 pub const INSTRUCTION_MNEMONICS: &[&str] = &[
     "loans.establish",
@@ -404,10 +404,6 @@ pub const fn terminator_mnemonic(terminator: &MirTerm) -> &'static str {
         MirTerm::Jump(_) => "jump",
         MirTerm::Branch { .. } => "branch",
         MirTerm::ComptimeBranch { .. } => "comptime_branch",
-        MirTerm::ComptimeFor {
-            source: mojito_checked::checked::ComptimeSequence::Range { .. },
-            ..
-        } => "comptime_for",
         MirTerm::ComptimeFor {
             source: mojito_checked::checked::ComptimeSequence::Elements(_),
             ..

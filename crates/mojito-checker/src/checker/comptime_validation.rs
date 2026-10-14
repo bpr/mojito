@@ -575,12 +575,11 @@ impl Checker {
     }
 
     /// Check a `comptime for` body once, its variable bound to the element
-    /// type of the iterable: `Int` for `range(...)`, the element of a
-    /// compile-time list or a value pack. The body is a loop body — a
-    /// compile-time `break` and `continue` are a loop's — that may run zero
-    /// times, so definite initialization is unchanged. A `range` over
-    /// parameter expressions is recorded on the iterable for the MIR loop
-    /// header; the elaborator unrolls it.
+    /// type of the iterable: the element of a compile-time list or a value
+    /// pack, or for any other iterable (`range(...)` among them) the element
+    /// its iterator gives ([`Self::check_comptime_iterator_for`]). The body
+    /// is a loop body — a compile-time `break` and `continue` are a loop's —
+    /// that may run zero times, so definite initialization is unchanged.
     pub(super) fn check_comptime_for(
         &mut self,
         stmt: &Stmt,
@@ -662,7 +661,6 @@ impl Checker {
         let applied = sequence.is_none()
             && !evaluated
             && bound.is_none()
-            && !matches!(&iter.kind, ExprKind::Call { name, .. } if name == "range")
             && self.applies_callable(&iter)
             && self.reads_compile_time_alone(&iter);
         let element = match element.kind() {
@@ -690,7 +688,7 @@ impl Checker {
             (Some(binder), Some(display)) => self.record_bound_iteration(source, binder, display),
             (Some(binder), None) if applied => self.record_applied_iteration(source, binder),
             (Some(binder), None) => {
-                self.record_comptime_iteration(source, &iter, binder, sequence, evaluated)?;
+                self.record_comptime_iteration(source, binder, sequence, evaluated);
             }
             (None, _) => {}
         }
@@ -718,24 +716,20 @@ impl Checker {
 
     /// Record the loop header's sequence over the binders in scope
     /// (`SemanticAdjustment::ComptimeIteration`): `elements`, the sequence
-    /// of an iterable that is not a range (a closed collection display's
-    /// constant, a value pack), or a `range(...)` iterable's bounds, each
-    /// compiled as a parameter expression; an `evaluated` display records
-    /// its element alone. A bound the compiler does not
-    /// close — a pack length, a compile-time list's — is the explicit
-    /// boundary of the check, which only sees a loop the elaborator kept.
+    /// of a closed collection display's constant or a value pack, compiled
+    /// as a parameter expression; an `evaluated` display records its element
+    /// alone.
     fn record_comptime_iteration(
         &self,
         source: &Expr,
-        iter: &Expr,
         binder: &ParamExpr,
         elements: Option<ParamExpr>,
         evaluated: bool,
-    ) -> Result<(), TypeError> {
+    ) {
         use mojito_checked::checked::ComptimeSource;
         let element = binder.meta().clone();
         let Some(binder) = binder.as_decl_ref() else {
-            return Ok(());
+            return;
         };
         let record_source = |source_form| {
             self.record_at(source.source_span()).adjustment = Some(Box::new(
@@ -756,61 +750,13 @@ impl Checker {
                     construction: Box::new(construction),
                 });
             }
-            return Ok(());
+            return;
         }
-        let record = |sequence| record_source(ComptimeSource::Sequence(sequence));
         if let Some(elements) = elements {
-            record(mojito_checked::checked::ComptimeSequence::Elements(
-                elements,
+            record_source(ComptimeSource::Sequence(
+                mojito_checked::checked::ComptimeSequence::Elements(elements),
             ));
-            return Ok(());
         }
-        let ExprKind::Call { name, args, .. } = &iter.kind else {
-            return Ok(());
-        };
-        if name != "range" {
-            return Ok(());
-        }
-        let bounds = args
-            .iter()
-            .map(|arg| self.compile_dependent_ct_expr(arg))
-            .collect::<Vec<_>>();
-        // A bound the compiler does not close that reads compile-time
-        // bindings alone (`len(L)` over a local display binding) is
-        // evaluated per instance.
-        if (1..=3).contains(&args.len())
-            && bounds.iter().any(Result::is_err)
-            && bounds
-                .iter()
-                .zip(args)
-                .all(|(bound, arg)| bound.is_ok() || self.reads_compile_time_alone(arg))
-        {
-            record_source(ComptimeSource::EvaluatedRange {
-                bounds: bounds.into_iter().map(Result::ok).collect(),
-            });
-            return Ok(());
-        }
-        let bounds = match bounds.into_iter().collect::<Result<Vec<_>, _>>() {
-            Ok(bounds) => bounds,
-            Err(error) => {
-                return Err(TypeError::Unsupported(format!(
-                    "comptime for bound is not a parameter expression: {error}"
-                )));
-            }
-        };
-        let constant = |value: i64| {
-            self.param_context
-                .constant(mojito_types::ct::CtValue::Int(value))
-                .map_err(|error| TypeError::Unsupported(error.to_string()))
-        };
-        let (start, stop, step) = match bounds.as_slice() {
-            [stop] => (constant(0)?, stop.clone(), constant(1)?),
-            [start, stop] => (start.clone(), stop.clone(), constant(1)?),
-            [start, stop, step] => (start.clone(), stop.clone(), step.clone()),
-            _ => return Ok(()),
-        };
-        record(mojito_checked::checked::ComptimeSequence::Range { start, stop, step });
-        Ok(())
     }
 
     /// The application a local `comptime` binding `expr` names denotes
@@ -858,7 +804,14 @@ impl Checker {
     /// display. Such an expression can run in a function the elaborator
     /// evaluates per instance.
     pub(super) fn reads_compile_time_alone(&self, expr: &Expr) -> bool {
-        names_read(expr).iter().all(|name| {
+        let mut names = names_read(expr);
+        // A collector's `args.__len__()` is its pack's length.
+        for collector in self.pack_length_receivers(expr) {
+            if let Some(position) = names.iter().position(|name| *name == collector) {
+                names.swap_remove(position);
+            }
+        }
+        names.iter().all(|name| {
             self.binding_scope(name).is_none_or(|scope| scope == 0)
                 || self.is_compile_time_binding(name)
                 || self.lookup_owner(name).is_some_and(|owner| {
@@ -866,6 +819,31 @@ impl Checker {
                         || self.is_comptime_binding_owner(owner)
                 })
         })
+    }
+
+    /// The collectors `expr` reads only for their pack's length, once per
+    /// `args.__len__()` it spells.
+    fn pack_length_receivers(&self, expr: &Expr) -> Vec<String> {
+        struct Receivers<'c> {
+            checker: &'c Checker,
+            names: Vec<String>,
+        }
+        impl mojito_ast::visit::Visitor for Receivers<'_> {
+            fn visit_expr(&mut self, expr: &Expr) {
+                if let ExprKind::MethodCall { object, .. } = &expr.kind
+                    && let ExprKind::Identifier(name) = &object.kind
+                    && self.checker.pack_length_binder(expr).is_some()
+                {
+                    self.names.push(name.clone());
+                }
+            }
+        }
+        let mut receivers = Receivers {
+            checker: self,
+            names: Vec::new(),
+        };
+        mojito_ast::visit::walk_expr(&mut receivers, expr);
+        receivers.names
     }
 
     /// [`Self::lifted_application`] where the check stands in a lifting
@@ -1417,7 +1395,7 @@ impl Checker {
 
     /// The value-parameter scope beside the innermost open type-parameter
     /// scope. A level past it is dead: `tparams.pop()` closes both.
-    fn innermost_value_scope(&mut self) -> Option<&mut HashMap<String, ParamExpr>> {
+    pub(super) fn innermost_value_scope(&mut self) -> Option<&mut HashMap<String, ParamExpr>> {
         self.tparams
             .len()
             .checked_sub(1)
@@ -2116,6 +2094,7 @@ impl Checker {
                                 pack: pack.clone(),
                             },
                         ));
+                        self.record_element_index(index);
                     }
                     Ok(element)
                 } else {
@@ -2128,6 +2107,25 @@ impl Checker {
                 }
             }),
         )
+    }
+
+    /// Record the parameter expression a pack element construction's index
+    /// denotes on the index (`i` of `Ts[i]()`, a local `comptime` binding,
+    /// or the alias a `comptime for` over an iterator binds), the element
+    /// the elaborator selects per instance.
+    fn record_element_index(&self, index: &Expr) {
+        let Ok(value) = self.compile_dependent_ct_expr(index) else {
+            return;
+        };
+        let mut record = self.record_at(index.source_span());
+        if record.adjustment.is_none() && value.as_constant().is_none() {
+            record.adjustment = Some(Box::new(
+                mojito_checked::checked::SemanticAdjustment::ParamValue {
+                    value,
+                    materialized: None,
+                },
+            ));
+        }
     }
 
     /// `materialize[X]()` in the executable check: the crossing pass folds
@@ -3011,12 +3009,6 @@ impl Checker {
     /// iteration rule; `None` for an iterable the rule does not serve, which
     /// iterates by its iterator ([`Self::check_comptime_iterator_for`]).
     fn comptime_iteration_element(&self, iter: &Expr) -> Result<Option<Ty>, TypeError> {
-        if let ExprKind::Call { name, args, .. } = &iter.kind
-            && name == "range"
-        {
-            self.infer_range(args)?;
-            return Ok(Some(Ty::int()));
-        }
         // A value pack iterates its elements at compile time; only a
         // runtime read is its `ParameterList`.
         if let Some(pack) = self.value_pack_named(iter) {
