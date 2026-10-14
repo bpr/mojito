@@ -1,4 +1,4 @@
-# Mojito Textual MIR Format, Version 1.55
+# Mojito Textual MIR Format, Version 1.56
 
 This document is the normative specification of Mojito's textual verified-MIR
 artifact. The Rust data model in `src/mir.rs` and `src/mir/ir.rs` remains the
@@ -6,7 +6,7 @@ in-memory authority; this format is its stable inspection and interchange
 boundary. `docs/vm-instruction-set.md` explains execution semantics, while this
 document defines syntax and serialized data.
 
-Version 1.55 is implemented end to end for inspection and loading: canonical
+Version 1.56 is implemented end to end for inspection and loading: canonical
 in-memory disassembly, full-grammar assembly parsing, and artifact-loading
 verification (`mir::text::load_artifact`, which reports canonical-verifier
 findings at artifact source spans). Lossless print → parse → print round trips
@@ -22,10 +22,10 @@ which may be generic; it is always elaborated before it runs.
 Every artifact begins with exactly:
 
 ```text
-mojito-mir 1.55
+mojito-mir 1.56
 ```
 
-The writer emits 1.55. The reader accepts 1.0 through 1.55; *Schema 1.0*
+The writer emits 1.56. The reader accepts 1.0 through 1.56; *Schema 1.0*
 below says how a 1.0 artifact is read, and *Binder identity* under *Types*
 how a binder without an identity is.
 
@@ -589,6 +589,11 @@ zero-length allocation. Offsets count elements and can be negative. The
 checked pointer type supplies the element layout when a backend allocates
 and writes fresh storage. Nested pointers and strings are recursive values.
 
+`ct_store_to_mem(ct-value)` (schema 1.56) carries a frozen reference into
+compile-time memory, upstream's `#lit.store_to_mem`: the value it reads.
+A backend thaws it as a fresh compile-time memory slot holding that value;
+it has no run-time form.
+
 ### Parameter expressions
 
 A parameter expression is typed and canonical
@@ -831,6 +836,7 @@ schema types above. This table is exhaustive and freezes the variant mapping:
 | `Const` / `MaterializeLiteral` / `SizeOf` / `TypeName` | `const` / `literal.materialize` / `layout.size_of` / `type.name` |
 | `ConstructType` | `type.construct_expr` (schema 1.33: `{ dest, type }`) |
 | `ParamListAddress` | `param_list.address` (schema 1.34: `{ dest, values }`, `values` a parameter or closed-tuple constant) |
+| `StoreToMem` | `store_to_mem { dest, src }` (schema 1.56): moves `src` into compile-time memory, which is never destroyed, and sets `dest` to an immutable reference to it — upstream's `store_to_mem`. Only a lifted compile-time evaluation's body holds one |
 | `UseVar` / `DefVar` | `var.use` / `var.store` (schema 1.49: `var.store` adds `in_place`, true when the slot is the preceding non-raising call's result storage) |
 | `MovePlace` / `LoadPlace` | `place.move` / `place.load` |
 | `UnOp` / `BinOp` | `unary` / `binary` (schema 1.53: both add `raises: option<type>`, the error type of the operator method's call, as a call's `raises`) |

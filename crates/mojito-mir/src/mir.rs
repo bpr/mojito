@@ -2690,19 +2690,32 @@ impl<'a> Flatten<'a> {
                     .cloned()
                     .or_else(|| expression.ty());
                 let variable = self.var(&format!("$mat_r{}", value.0));
-                if let Some(ty) = ty.clone() {
-                    self.var_types.insert(variable, ty);
+                match ty {
+                    Some(ty) if self.enclosing_binders.lifted => {
+                        self.bind_comptime_memory(
+                            expression.location(),
+                            variable,
+                            value,
+                            ty,
+                            mojito_types::origin::Mutability::Mutable,
+                        );
+                    }
+                    ty => {
+                        if let Some(ty) = ty.clone() {
+                            self.var_types.insert(variable, ty);
+                        }
+                        self.emit(MirInstr::DefVar {
+                            var: variable,
+                            src: value,
+                            binding_ty: ty,
+                            in_place: false,
+                        });
+                    }
                 }
-                self.emit(MirInstr::DefVar {
-                    var: variable,
-                    src: value,
-                    binding_ty: ty,
-                    in_place: false,
-                });
                 self.owner_vars.insert(owner, variable);
                 variable
             };
-            let place = MirPlace::root(variable, self.var_types.get(&variable).cloned());
+            let place = self.hidden_slot_place(variable);
             let dest = self.fresh(expression.location(), Some(variable));
             self.emit(MirInstr::MakeRef {
                 dest,

@@ -172,6 +172,18 @@ impl VmBackend {
     ) -> Result<Value, RuntimeError> {
         use mojito_types::ct::CtValue;
         let materialized = match value {
+            // A reference is its own handle, never coerced: the referent is
+            // thawed at the type the reference reads and stored in fresh
+            // compile-time memory.
+            CtValue::StoreToMem(referent) => {
+                let referent_ty = match target.map(Ty::kind) {
+                    Some(TyKind::Ref(reference)) => Some(&reference.referent),
+                    Some(TyKind::Pointer { element, .. }) => Some(element),
+                    _ => None,
+                };
+                let referent = self.thaw(prog, referent, referent_ty)?;
+                return Ok(self.store_to_comptime_memory(referent));
+            }
             CtValue::Pointer { memory, offset } => {
                 let Some(TyKind::Pointer { element, .. }) = target.map(Ty::kind) else {
                     return Err(RuntimeError::Unsupported(

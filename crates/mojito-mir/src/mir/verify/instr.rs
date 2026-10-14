@@ -79,6 +79,7 @@ pub(super) fn verify_instruction(
         | MirInstr::ConstructType { .. }
         | MirInstr::SizeOf { .. }
         | MirInstr::ParamListAddress { .. }
+        | MirInstr::StoreToMem { .. }
         | MirInstr::TypeName { .. }
         | MirInstr::CopyValue { .. }
         | MirInstr::Rebind { .. }
@@ -402,6 +403,20 @@ fn verify_value_instruction(cx: &InstrCx<'_>, instruction: &MirInstr, errors: &m
                 ));
             }
         }
+        MirInstr::StoreToMem { dest, src } => match cx.reg_ty(*dest).map(Ty::kind) {
+            None => {}
+            Some(TyKind::Ref(reference)) => {
+                if let Some(stored) = cx.reg_ty(*src)
+                    && *stored != reference.referent
+                {
+                    errors.push(format!(
+                        "{prefix}: store_to_mem of a {stored} yields a reference to {}",
+                        reference.referent
+                    ));
+                }
+            }
+            Some(_) => errors.push(format!("{prefix}: store_to_mem must yield a reference")),
+        },
         MirInstr::ParamListAddress { dest, values } => {
             if !matches!(
                 cx.reg_ty(*dest).map(Ty::kind),

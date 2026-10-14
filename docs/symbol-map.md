@@ -1648,7 +1648,16 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `VmBackend::{call_concrete, freeze}` run a verified fragment for the
   elaborator. `call_concrete` accepts compile-time arguments; typed `thaw`
   (`backend/vm/adapters.rs`) materializes them and `Const::Value` into fresh
-  heap storage. `freeze_value` rejects dead and cyclic pointer allocations.
+  heap storage. `freeze_value` rejects dead and cyclic pointer allocations,
+  and freezes a reference into compile-time memory
+  (`VmBackend::comptime_memory`, addressed as frame `COMPTIME_MEMORY_FRAME`
+  through `frame_variable`, filled by `store_to_comptime_memory`) as
+  `CtValue::StoreToMem`, which `thaw` stores again; a reference to frame
+  storage is rejected. `MirInstr::StoreToMem` (schema 1.56) is emitted by
+  `bind_comptime_memory` (`mir/calls.rs`) in a lifted function's own body,
+  for a local `comptime` binding (`bind_comptime_register`) and a `$mat_r`
+  borrow slot (`materialize_borrow_slot`, the reference-context path in
+  `mir.rs`); `hidden_slot_place` reads such a slot through its reference.
   Pliron's `store_parameter_value` (`lower/consts.rs`) writes frozen pointer
   memory using checked element layouts and reconstructs nested strings.
 - `native::mono`: `InstanceState`, `Specializer::drain`,

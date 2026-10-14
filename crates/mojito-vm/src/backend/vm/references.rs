@@ -12,6 +12,30 @@ use mojito_types::types::TyKind;
 const MAX_REF_HOPS: usize = 64;
 
 impl VmBackend {
+    /// The variable `slot` of the live frame `frame`, or of compile-time
+    /// memory when `frame` is [`COMPTIME_MEMORY_FRAME`]: the storage a
+    /// reference handle rooted outside the current frame designates.
+    pub(super) fn frame_variable(&self, frame: u64, slot: usize) -> Option<&Value> {
+        if frame == COMPTIME_MEMORY_FRAME {
+            return self.comptime_memory.get(slot);
+        }
+        self.frames
+            .iter()
+            .find(|candidate| candidate.id.0 == frame)
+            .and_then(|owner| owner.variables.get(slot))
+    }
+
+    /// [`Self::frame_variable`], mutably.
+    pub(super) fn frame_variable_mut(&mut self, frame: u64, slot: usize) -> Option<&mut Value> {
+        if frame == COMPTIME_MEMORY_FRAME {
+            return self.comptime_memory.get_mut(slot);
+        }
+        self.frames
+            .iter_mut()
+            .find(|candidate| candidate.id.0 == frame)
+            .and_then(|owner| owner.variables.get_mut(slot))
+    }
+
     #[allow(
         clippy::unused_self,
         reason = "TODO: make an associated function or use the receiver"
@@ -92,10 +116,7 @@ impl VmBackend {
         let root = if *frame == current.0 {
             current_variables.get(*slot)
         } else {
-            self.frames
-                .iter()
-                .find(|candidate| candidate.id.0 == *frame)
-                .and_then(|candidate| candidate.variables.get(*slot))
+            self.frame_variable(*frame, *slot)
         };
         match root.map(|root| self.reference_pointer_boundary(root, projection)) {
             Some(Ok(Some(ReferencePointerBoundary {
@@ -171,10 +192,7 @@ impl VmBackend {
         let storage = if frame == current.0 {
             current_variables.get(slot)
         } else {
-            self.frames
-                .iter()
-                .find(|candidate| candidate.id.0 == frame)
-                .and_then(|owner| owner.variables.get(slot))
+            self.frame_variable(frame, slot)
         };
         let Some(mut value) = storage else {
             return (frame, slot, projection);
@@ -295,19 +313,10 @@ impl VmBackend {
                 "vm: expected reference handle".to_string(),
             ));
         };
-        let owner = self
-            .frames
-            .iter()
-            .find(|candidate| candidate.id.0 == *frame)
-            .ok_or_else(|| {
-                RuntimeError::TypeError(format!("vm: stale reference to frame {frame}"))
-            })?;
-        self.read_reference_projection(
-            current,
-            current_variables,
-            &owner.variables[*slot],
-            projection,
-        )
+        let root = self.frame_variable(*frame, *slot).ok_or_else(|| {
+            RuntimeError::TypeError(format!("vm: stale reference to frame {frame}"))
+        })?;
+        self.read_reference_projection(current, current_variables, root, projection)
     }
 
     pub(super) fn write_reference(
@@ -351,13 +360,7 @@ impl VmBackend {
                 value,
             );
         }
-        let owner_index = self
-            .frames
-            .iter()
-            .position(|candidate| candidate.id.0 == *frame)
-            .ok_or_else(|| {
-                RuntimeError::TypeError(format!("vm: stale reference to frame {frame}"))
-            })?;
+        let stale = || RuntimeError::TypeError(format!("vm: stale reference to frame {frame}"));
         // A pointer-index projection leaves frame-owned storage and enters the
         // VM heap. Locate that boundary from an immutable snapshot before
         // borrowing either storage arena mutably.
@@ -366,34 +369,27 @@ impl VmBackend {
             offset,
             index,
             suffix,
-        }) =
-            self.reference_pointer_boundary(&self.frames[owner_index].variables[*slot], projection)?
-        {
+        }) = self.reference_pointer_boundary(
+            self.frame_variable(*frame, *slot).ok_or_else(stale)?,
+            projection,
+        )? {
             let (region, heap_slot) = self.heap_index(allocation, offset, index as i64)?;
             self.write_heap_projection(region, heap_slot, suffix, value)?;
             return Ok(());
         }
-        if write_simd_reference_lane(
-            &mut self.frames[owner_index].variables[*slot],
-            projection,
-            value.clone(),
-        )? {
+        let root = self.frame_variable_mut(*frame, *slot).ok_or_else(stale)?;
+        if write_simd_reference_lane(root, projection, value.clone())? {
             return Ok(());
         }
-        if write_uninit_payload(
-            &mut self.frames[owner_index].variables[*slot],
-            projection,
-            value.clone(),
-        )? {
+        if write_uninit_payload(root, projection, value.clone())? {
             return Ok(());
         }
-        let root_type = crate::runtime::type_name(&self.frames[owner_index].variables[*slot]);
-        *navigate_reference_mut(&mut self.frames[owner_index].variables[*slot], projection)
-            .map_err(|error| {
-                RuntimeError::TypeError(format!(
-                    "{error}; reference root is {root_type} with projection {projection:?}"
-                ))
-            })? = value;
+        let root_type = crate::runtime::type_name(root);
+        *navigate_reference_mut(root, projection).map_err(|error| {
+            RuntimeError::TypeError(format!(
+                "{error}; reference root is {root_type} with projection {projection:?}"
+            ))
+        })? = value;
         Ok(())
     }
 

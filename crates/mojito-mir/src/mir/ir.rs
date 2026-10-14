@@ -296,6 +296,7 @@ pub fn instruction_regs_mut(instruction: &mut MirInstr) -> Vec<&mut Reg> {
         | MirInstr::HasNext { dest, .. }
         | MirInstr::Next { dest, .. } => out.push(dest),
         MirInstr::MaterializeLiteral { dest, value, .. } => out.extend([dest, value]),
+        MirInstr::StoreToMem { dest, src } => out.extend([dest, src]),
         MirInstr::UseVar { dest, .. } => out.push(dest),
         MirInstr::DefVar { src, .. } => out.push(src),
         MirInstr::UnOp { dest, a, .. } => out.extend([dest, a]),
@@ -1250,6 +1251,18 @@ pub enum MirInstr {
         dest: Reg,
         values: Const,
     },
+    /// Move `src` into compile-time memory and set `dest`, a reference
+    /// typed by `dest`'s register, to it: upstream's `#lit.store_to_mem`,
+    /// the `ref[ComptimeOrigin]` a parameter-domain value is borrowed
+    /// through — immutable for a binding (`PMBValue`), mutable for a
+    /// temporary (`PMRValue`). Only a lifted compile-time evaluation's body
+    /// holds one, where it anchors a value the evaluation borrows (a local
+    /// `comptime` binding, a folded receiver); compile-time memory is never
+    /// destroyed, so a reference into it survives the evaluation's result.
+    StoreToMem {
+        dest: Reg,
+        src: Reg,
+    },
     /// The unqualified spelling of one checker-resolved type that names a
     /// compile-time parameter. Only a template holds one: the elaborator
     /// writes the name from the substituted type as a string constant.
@@ -1967,6 +1980,7 @@ impl MirInstr {
             | Self::ConstructType { .. }
             | Self::MovePlace { .. }
             | Self::DefVar { .. }
+            | Self::StoreToMem { .. }
             | Self::DeclareVar { .. }
             | Self::UnOp { .. }
             | Self::BinOp { .. }

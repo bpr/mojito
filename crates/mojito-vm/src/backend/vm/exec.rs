@@ -182,6 +182,10 @@ impl VmBackend {
                     offset: 0,
                 };
             }
+            MirInstr::StoreToMem { dest, src } => {
+                let value = std::mem::replace(&mut regs[src.0 as usize], Value::Moved);
+                regs[dest.0 as usize] = self.store_to_comptime_memory(value);
+            }
             MirInstr::ConstructTypeParam { param, .. } => {
                 return Err(parametric_instruction(&format!(
                     "a construction of the type parameter `{}`",

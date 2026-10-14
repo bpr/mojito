@@ -703,6 +703,9 @@ fn instruction_value(instruction: &MirInstr) -> String {
             tag,
             &[("dest", reg_value(*dest)), ("values", const_value(values))],
         ),
+        MirInstr::StoreToMem { dest, src } => {
+            record(tag, &[("dest", reg_value(*dest)), ("src", reg_value(*src))])
+        }
         MirInstr::SizeOf { dest, ty }
         | MirInstr::TypeName { dest, ty }
         | MirInstr::ConstructType { dest, ty } => {
@@ -2438,6 +2441,7 @@ fn ct_value(value: &CtValue) -> String {
                 ),
             ],
         ),
+        CtValue::StoreToMem(referent) => positional("ct_store_to_mem", &ct_value(referent)),
         CtValue::Int(v) => positional("ct_int", &v.to_string()),
         CtValue::UInt(v) => positional("ct_uint", &v.to_string()),
         CtValue::Float(v) => positional("ct_float_bits", &format!("{v:016x}")),

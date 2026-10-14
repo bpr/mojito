@@ -436,7 +436,7 @@ pub fn operand_regs(instr: &MirInstr) -> Vec<Reg> {
         MirInstr::MaterializeLiteral { value, .. } => out.push(*value),
         MirInstr::UnOp { a, .. } => out.push(*a),
         MirInstr::BinOp { a, b, .. } => out.extend([*a, *b]),
-        MirInstr::DefVar { src, .. } => out.push(*src),
+        MirInstr::DefVar { src, .. } | MirInstr::StoreToMem { src, .. } => out.push(*src),
         MirInstr::CopyValue { value, .. } => out.push(*value),
         MirInstr::LoadPlace { place, .. } | MirInstr::MovePlace { place, .. } => {
             place_regs(place, &mut out);
@@ -566,6 +566,7 @@ pub const fn instr_name(instr: &MirInstr) -> &'static str {
         MirInstr::Const { .. } => "Const",
         MirInstr::SizeOf { .. } => "SizeOf",
         MirInstr::ParamListAddress { .. } => "ParamListAddress",
+        MirInstr::StoreToMem { .. } => "StoreToMem",
         MirInstr::TypeName { .. } => "TypeName",
         MirInstr::ConstructTypeParam { .. } => "ConstructTypeParam",
         MirInstr::ConstructType { .. } => "ConstructType",

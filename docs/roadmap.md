@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R898**.
+Next free ID: **R900**.
 
 ## Ordered Work
 
@@ -4641,20 +4641,22 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R793 A compile-time iterator that borrows its collection cannot be
-  frozen**
+- [ ] **R898 `materialize[it]()` of a compile-time iterator that borrows
+  its collection is refused**
 
-  Problem: `comptime for k in d.keys()` over a local `comptime d = {"a":
-  1}` fails at elaboration with "VM CTFE returned unsupported runtime value
-  <ref 0:0>", where the pin prints the keys.
-  - The loop's initial iterator is a `_DictKeyIter` holding a reference
-    into the dictionary, and `VmBackend::freeze_value`
-    (`crates/mojito-vm/src/backend/vm.rs`) has no arm for a `Value::Ref`.
-  - A list's or a set's `__iter__()` fails the same way.
-  - Freeze the reference's target as frozen memory, as a pointer's is, and
-    thaw rebuilds it.
+  Problem: `comptime it = l.__iter__()` over a local `comptime l = [1, 2,
+  3]`, then `for x in materialize[it]():`, fails concrete verification with
+  "parameter value constant `…(store_to_mem(…), 0)` is not a closed vector,
+  struct, or tuple", where the pin prints `1`, `2`, `3`.
+  - The frozen iterator holds a `CtValue::StoreToMem`, which
+    `CtValue::is_closed_leaf` (`crates/mojito-types/src/ct.rs`) does not
+    accept, and `crossing::ct_to_vm` refuses.
+  - Its run-time form is a reference to fresh storage holding the
+    referent: the VM's `thaw` already builds one, and Pliron's
+    `store_parameter_value` (`lower/consts.rs`) has no arm for it.
+  - Found while landing R793 (2026-10-14).
   - Depends on nothing.
-  - Model: Fable, Not Planned.
+  - Model: Opus, Not Planned.
 
 - [ ] **R797 `comptime for … else` does not parse**
 
@@ -5021,6 +5023,27 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Found while landing R791 (2026-10-14).
   - Depends on nothing.
   - Model: Opus, Not Planned.
+
+- [ ] **R899 A reference to a compile-time value is not typed
+  `ComptimeOrigin`**
+
+  Problem: a run-time read of `comptime it = l.__iter__()` is rejected with
+  "cannot materialize comptime value of type '_ArrayIter[…, 3 : …]' to
+  runtime because it is not 'ImplicitlyCopyable'", where the pin names the
+  type `_ArrayIter[Int, Int(3), ComptimeOrigin]` and says "the type contains
+  an origin referring to a compile-time value".
+  - Upstream types the borrow of a parameter-domain value
+    `ref[ComptimeOrigin] T` (`PMBValue`/`PMRValue`,
+    `lib/MojoParser/IRValues.cpp`).
+  - Mojito's iterator keeps the binding's origin, and `bind_comptime_memory`
+    (`crates/mojito-mir/src/mir/calls.rs`) types the `StoreToMem` handle
+    `Origin::Static`.
+  - The fix is an `Origin::Comptime { mutable }` variant the checker gives a
+    borrow of a compile-time value, and the pin's diagnostic for a type
+    that holds one.
+  - Found while landing R793 (2026-10-14).
+  - Depends on nothing.
+  - Model: Fable, Not Planned.
 
 ### Behavioral Divergences From The Pinned Mojo *(recurring — reopens at every nightly re-pin)*
 

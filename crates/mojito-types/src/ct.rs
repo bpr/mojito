@@ -389,6 +389,14 @@ pub enum CtValue {
         memory: Option<Vec<Option<Self>>>,
         offset: i64,
     },
+    /// A reference into compile-time memory, frozen as the value it reads —
+    /// upstream's `#lit.store_to_mem<value>`, a `ref[ComptimeOrigin]` to a
+    /// parameter-domain value a compile-time evaluation borrowed (the
+    /// collection a `d.keys()` iterator walks). Compile-time memory is never
+    /// destroyed, so the referent freezes by value, as it reads when the
+    /// evaluation ends; each reference freezes its own copy, as
+    /// [`Self::Pointer`]'s memory does.
+    StoreToMem(Box<Self>),
     Type(Ty),
     /// The zero-sized compile-time handle produced by current Mojo's
     /// `reflect[T]` API. Field selection returns another handle, allowing
@@ -723,6 +731,7 @@ impl CtValue {
                 None => format!("Set[{}]", elements.first()?.runtime_type_text()?),
             },
             Self::Pointer { .. }
+            | Self::StoreToMem(_)
             | Self::Type(_)
             | Self::Reflected(_)
             | Self::Expr(_)
@@ -1045,6 +1054,7 @@ impl CtValue {
             },
             // Frozen memory has no source spelling: a backend writes it.
             Self::Pointer { .. }
+            | Self::StoreToMem(_)
             | Self::Type(_)
             | Self::Reflected(_)
             | Self::Expr(_)
@@ -1261,6 +1271,7 @@ impl fmt::Display for CtValue {
                 }
                 write!(f, ")")
             }
+            Self::StoreToMem(value) => write!(f, "store_to_mem({value})"),
             Self::Type(ty) => write!(f, "{ty}"),
             Self::Reflected(ty) => write!(f, "reflect[{ty}]"),
             Self::Expr(expr) => write!(f, "{expr}"),

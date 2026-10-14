@@ -1009,6 +1009,42 @@ impl<'a> Flatten<'a> {
         (ordered_regs, ordered_places, Vec::new(), Vec::new())
     }
 
+    /// Anchor `src`, a value of type `ty` a lifted compile-time evaluation
+    /// borrows, in compile-time memory, and make `var` a runtime alias of the
+    /// reference to it: upstream's `store_to_mem`, whose memory is never
+    /// destroyed, so a borrow of it outlives the evaluation's result (a
+    /// `d.keys()` iterator). A binding is borrowed immutably (upstream's
+    /// `PMBValue`), a temporary mutably (`PMRValue`). The returned place
+    /// reads through `var`.
+    pub(super) fn bind_comptime_memory(
+        &mut self,
+        location: SourceSpan,
+        var: VarId,
+        src: Reg,
+        ty: Ty,
+        mutability: mojito_types::origin::Mutability,
+    ) -> MirPlace {
+        let reference = Ty::new(TyKind::Ref(mojito_types::origin::RefTy {
+            referent: ty.clone(),
+            origin: mojito_types::origin::Origin::Static,
+            mutability,
+        }));
+        let handle = self.fresh_typed(location, Some(var), reference.clone());
+        self.emit(MirInstr::StoreToMem { dest: handle, src });
+        self.var_types.insert(var, reference.clone());
+        self.runtime_aliases.insert(var);
+        self.emit(MirInstr::DefVar {
+            var,
+            src: handle,
+            binding_ty: Some(reference.clone()),
+            in_place: false,
+        });
+        let mut place = MirPlace::root(var, Some(reference));
+        place.ty = Some(ty);
+        place.through = Some(var);
+        place
+    }
+
     /// Store an accessor-produced reference in a hidden local and establish its
     /// checked owner loans.  This turns the handle into the same persistent,
     /// analyzable call-place representation as an explicit `ref` binding while
@@ -1642,6 +1678,19 @@ impl<'a> Flatten<'a> {
                 .cloned()
                 .or_else(|| expression.ty());
             let variable = self.var(&format!("$mat_r{}", value.0));
+            if self.enclosing_binders.lifted
+                && let Some(ty) = ty.clone()
+            {
+                self.bind_comptime_memory(
+                    expression.location(),
+                    variable,
+                    value,
+                    ty,
+                    mojito_types::origin::Mutability::Mutable,
+                );
+                self.owner_vars.insert(owner, variable);
+                return self.read_borrow_slot(expression, value, variable);
+            }
             if let Some(ty) = ty.clone() {
                 self.var_types.insert(variable, ty);
             }
@@ -1670,7 +1719,33 @@ impl<'a> Flatten<'a> {
             }
             variable
         };
-        let place = MirPlace::root(variable, self.var_types.get(&variable).cloned());
+        self.read_borrow_slot(expression, value, variable)
+    }
+
+    /// The place of `variable`, a hidden owned slot: through the reference
+    /// it holds when [`Self::bind_comptime_memory`] anchored it in
+    /// compile-time memory.
+    pub(super) fn hidden_slot_place(&self, variable: VarId) -> MirPlace {
+        let ty = self.var_types.get(&variable).cloned();
+        let mut place = MirPlace::root(variable, ty.clone());
+        if self.runtime_aliases.contains(&variable)
+            && let Some(TyKind::Ref(reference)) = ty.as_ref().map(Ty::kind)
+        {
+            place.ty = Some(reference.referent.clone());
+            place.through = Some(variable);
+        }
+        place
+    }
+
+    /// The value and place of `variable`, the borrow slot `value` was
+    /// stored in, as [`Self::materialize_borrow_slot`] hands them back.
+    fn read_borrow_slot(
+        &mut self,
+        expression: Node<'a>,
+        value: Reg,
+        variable: VarId,
+    ) -> (Reg, Option<MirPlace>) {
+        let place = self.hidden_slot_place(variable);
         // A reference-context lowering already handed back a handle to the
         // slot, which the call binds as it stands.
         if matches!(

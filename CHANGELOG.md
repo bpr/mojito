@@ -8,6 +8,17 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A `comptime for` over a compile-time iterator that borrows its
+  collection now runs (R793): `d.keys()`, `d.items()`, `d.values()`, a
+  list's or a set's `__iter__()`, and a user iterator holding a `Pointer`,
+  over a local `comptime` binding, a module constant, an inline display, or
+  a temporary. A lifted evaluation stores each value it borrows in VM
+  compile-time memory, which is never destroyed, through the new
+  `store_to_mem` instruction (upstream's `#lit.store_to_mem`), and the
+  iterator freezes its reference as `CtValue::StoreToMem`. MIR text is
+  1.56 and the package format is 59. `materialize[it]()` of such an
+  iterator is still rejected (R898), and the reference is not yet typed
+  `ComptimeOrigin` (R899).
 - A `comptime for` over `range(...)` iterates by upstream's iterator
   protocol (R791): the check spells `range(...).__iter__()`, and the
   elaborator steps the bundled range struct through the `paramfor_*` stubs,

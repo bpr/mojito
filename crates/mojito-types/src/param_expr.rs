@@ -2489,7 +2489,7 @@ impl MetaTy {
             CtValue::Struct { name, .. } => {
                 Self::value(TyKind::Struct(name.clone(), Vec::new()).into())
             }
-            CtValue::Pointer { .. } => Self::value(Ty::infer()),
+            CtValue::Pointer { .. } | CtValue::StoreToMem(_) => Self::value(Ty::infer()),
             CtValue::Type(_) => Self::Type,
             CtValue::Reflected(_) => Self::ReflectedType,
             CtValue::Expr(expr) => expr.meta().clone(),

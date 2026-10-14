@@ -241,6 +241,12 @@ impl FnLowering<'_> {
             MirInstr::ParamListAddress { dest, values } => {
                 self.lower_param_list_address(ctx, *dest, values)
             }
+            // Only a lifted compile-time evaluation holds one, and no run-time
+            // call reaches it.
+            MirInstr::StoreToMem { dest, .. } => Err(self.unsupported_reg(
+                "compile-time memory has no run-time form".to_string(),
+                *dest,
+            )),
             MirInstr::MaterializeLiteral {
                 dest,
                 value,

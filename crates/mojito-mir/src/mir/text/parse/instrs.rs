@@ -224,6 +224,10 @@ impl Decoder {
                 dest: self.req(value, fields, "dest", Self::reg)?,
                 values: self.req(value, fields, "values", Self::constant)?,
             }),
+            "store_to_mem" => Some(MirInstr::StoreToMem {
+                dest: self.req(value, fields, "dest", Self::reg)?,
+                src: self.req(value, fields, "src", Self::reg)?,
+            }),
             "type.name" => Some(MirInstr::TypeName {
                 dest: self.req(value, fields, "dest", Self::reg)?,
                 ty: self.req(value, fields, "type", Self::ty)?,

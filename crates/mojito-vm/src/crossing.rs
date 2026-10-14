@@ -57,6 +57,11 @@ pub fn ct_to_vm(value: &CtValue) -> Result<Value, RuntimeError> {
         CtValue::Pointer { .. } => Err(RuntimeError::Unsupported(
             "frozen pointer memory requires a VM heap to thaw".to_string(),
         )),
+        CtValue::StoreToMem(_) => Err(RuntimeError::Unsupported(
+            "cannot materialize a reference into compile-time memory to a runtime value: \
+             the type contains an origin referring to a compile-time value"
+                .to_string(),
+        )),
         CtValue::Int(n) => Ok(Value::Int(*n)),
         CtValue::UInt(n) => Ok(Value::UInt(*n)),
         CtValue::Float(bits) => Ok(Value::Float64(f64::from_bits(*bits))),

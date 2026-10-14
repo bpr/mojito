@@ -895,7 +895,12 @@ condition, and the header's sequence is that function's application, which
 (`VmBackend::freeze`, which freezes a nominal `Tuple` to its elements, a
 `String` to its text, and other structs to their fields and pointer memory)
 into the collection whose elements `CtValue::comptime_iteration_elements` reads, as
-upstream runs the display on its interpreter per instance. A local
+upstream runs the display on its interpreter per instance. A lifted
+function stores each value it borrows — a local `comptime` binding, a
+materialized receiver or argument temporary — in the VM's compile-time
+memory (`MirInstr::StoreToMem`, upstream's `store_to_mem`), which is never
+destroyed, so a result that borrows it (a `d.keys()` iterator) freezes its
+reference as `CtValue::StoreToMem` rather than dangling. A local
 `comptime` binding of such a display is a compile-time value with no runtime
 form, whatever reads it: the check types the name, records the binding on
 the display (`SemanticAdjustment::ComptimeDisplay`) and each loop over the
@@ -1927,7 +1932,9 @@ freezes its allocation recursively; an absent slot remains uninitialized,
 `None` memory denotes a dangling pointer, and an empty allocation remains
 separate from a dangling pointer. Dead allocations and cycles reject
 explicitly. Each pointer freezes independently, so allocation aliasing is
-not preserved (R522).
+not preserved (R522). A `CtValue::StoreToMem` is a frozen reference into
+compile-time memory, upstream's `#lit.store_to_mem`: the value it reads,
+which thaw stores in fresh compile-time memory. It has no run-time form.
 
 A `Const::Value` carries these values across the verified MIR waist. The
 VM's typed `thaw` and Pliron's `store_parameter_value` allocate fresh storage

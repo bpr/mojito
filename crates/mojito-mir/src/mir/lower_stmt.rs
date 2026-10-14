@@ -3042,6 +3042,20 @@ impl<'a> Flatten<'a> {
             .or(converted)
             .or_else(|| value.ty())
             .or_else(|| self.f.reg_types.get(&src.0).cloned());
+        // A lifted evaluation's binding is a parameter-domain value, which
+        // lives in compile-time memory a borrow of it may outlast.
+        if self.enclosing_binders.lifted
+            && let Some(ty) = binding_ty.clone()
+        {
+            self.bind_comptime_memory(
+                value.location(),
+                var,
+                src,
+                ty,
+                mojito_types::origin::Mutability::Immutable,
+            );
+            return;
+        }
         if let Some(ty) = binding_ty.clone() {
             self.var_types.insert(var, ty);
         }

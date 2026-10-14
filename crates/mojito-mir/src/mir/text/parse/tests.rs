@@ -2196,6 +2196,46 @@ fn param_list_addresses_round_trip() {
     }
 }
 
+/// Schema 1.56 carries upstream's `store_to_mem`, and a frozen reference
+/// into compile-time memory as the value it reads.
+#[test]
+fn compile_time_memory_round_trips() {
+    let reference = Ty::new(TyKind::Ref(mojito_types::origin::RefTy {
+        referent: Ty::int(),
+        origin: mojito_types::origin::Origin::Static,
+        mutability: mojito_types::origin::Mutability::Immutable,
+    }));
+    let program = program_with(vec![(
+        "main".into(),
+        function_with(
+            vec![Ty::int(), reference.clone(), reference],
+            vec![
+                MirInstr::Const {
+                    dest: Reg(0),
+                    k: Const::Value(mojito_types::ct::CtValue::Int(3)),
+                },
+                MirInstr::StoreToMem {
+                    dest: Reg(1),
+                    src: Reg(0),
+                },
+                MirInstr::Const {
+                    dest: Reg(2),
+                    k: Const::Value(mojito_types::ct::CtValue::StoreToMem(Box::new(
+                        mojito_types::ct::CtValue::Int(3),
+                    ))),
+                },
+            ],
+        ),
+    )]);
+    assert_reprints(&program);
+    let text = write::program(&program);
+    assert!(
+        text.contains("store_to_mem { dest: %r1, src: %r0 }"),
+        "{text}"
+    );
+    assert!(text.contains("ct_store_to_mem(ct_int(3))"), "{text}");
+}
+
 /// Schema 1.22 carries a method call's own solved compile-time arguments;
 /// an older artifact carries none.
 #[test]

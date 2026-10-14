@@ -94,7 +94,16 @@ pub struct VmBackend {
     /// to the native backend's constant globals, which
     /// `MirInstr::ParamListAddress` addresses.
     static_param_lists: HashMap<String, u64>,
+    /// Compile-time memory: the never-destroyed storage behind each
+    /// [`MirInstr::StoreToMem`] — upstream's `store_to_mem`, a borrowed
+    /// parameter-domain value — addressed by a [`Value::Ref`] rooted at
+    /// [`COMPTIME_MEMORY_FRAME`].
+    comptime_memory: Vec<Value>,
 }
+
+/// The reserved frame id of compile-time memory. Frame ids count up from zero,
+/// so no live frame ever takes it.
+pub(super) const COMPTIME_MEMORY_FRAME: u64 = u64::MAX;
 
 impl VmBackend {
     pub fn new() -> Self {
@@ -475,6 +484,17 @@ impl VmBackend {
         self.bindings.clone()
     }
 
+    /// Move `value` into compile-time memory, which is never destroyed, and
+    /// return the immutable reference to it: upstream's `store_to_mem`.
+    pub(super) fn store_to_comptime_memory(&mut self, value: Value) -> Value {
+        self.comptime_memory.push(value);
+        Value::Ref {
+            frame: COMPTIME_MEMORY_FRAME,
+            slot: self.comptime_memory.len() - 1,
+            projection: Vec::new(),
+        }
+    }
+
     fn freeze_value(
         &self,
         value: Value,
@@ -549,6 +569,22 @@ impl VmBackend {
                 .map(|value| self.freeze_value(value, active))
                 .collect::<Result<Vec<_>, _>>()
                 .map(CtValue::List),
+            Value::Ref {
+                frame: COMPTIME_MEMORY_FRAME,
+                ..
+            } => {
+                let referent = self.read_reference(
+                    &value,
+                    FrameId(COMPTIME_MEMORY_FRAME),
+                    &self.comptime_memory,
+                )?;
+                Ok(CtValue::StoreToMem(Box::new(
+                    self.freeze_value(referent, active)?,
+                )))
+            }
+            Value::Ref { .. } => Err(RuntimeError::Unsupported(
+                "cannot freeze a reference to run-time storage".to_string(),
+            )),
             value => crate::crossing::vm_to_ct(value),
         }
     }
@@ -968,6 +1004,7 @@ fn ct_value_as_runtime(value: CtValue) -> Option<Value> {
                 .collect::<Option<Vec<_>>>()?,
         },
         CtValue::Pointer { .. }
+        | CtValue::StoreToMem(_)
         | CtValue::Dict { .. }
         | CtValue::Set { .. }
         | CtValue::Type(_)
@@ -1474,6 +1511,56 @@ mod pointer_storage_tests {
             .thaw(&empty_program(), &frozen, Some(&ty))
             .expect("survives source");
         assert_eq!(vm.freeze(copy).expect("freeze copy"), frozen);
+    }
+
+    #[test]
+    fn frozen_comptime_reference_round_trips_with_projection() {
+        let mut vm = VmBackend::default();
+        let pair = Value::Struct {
+            name: "Pair".to_string(),
+            fields: vec![
+                ("a".to_string(), Value::Int(1)),
+                ("b".to_string(), Value::Int(2)),
+            ],
+        };
+        let Value::Ref { frame, slot, .. } = vm.store_to_comptime_memory(pair) else {
+            unreachable!("compile-time memory returns a handle")
+        };
+        let field = Value::Ref {
+            frame,
+            slot,
+            projection: vec![crate::runtime::RefProjection::Field("b".to_string())],
+        };
+        let frozen = vm.freeze(field).expect("freeze");
+        assert_eq!(frozen, CtValue::StoreToMem(Box::new(CtValue::Int(2))));
+        let ty = Ty::new(TyKind::Ref(mojito_types::origin::RefTy {
+            referent: Ty::int(),
+            origin: mojito_types::origin::Origin::Static,
+            mutability: mojito_types::origin::Mutability::Immutable,
+        }));
+        let thawed = vm.thaw(&empty_program(), &frozen, Some(&ty)).expect("thaw");
+        assert!(matches!(
+            thawed,
+            Value::Ref { frame: COMPTIME_MEMORY_FRAME, ref projection, .. } if projection.is_empty()
+        ));
+        assert_eq!(
+            vm.read_reference(&thawed, FrameId(0), &[]).expect("read"),
+            Value::Int(2)
+        );
+        assert_eq!(vm.freeze(thawed).expect("freeze again"), frozen);
+    }
+
+    #[test]
+    fn freezing_a_reference_to_frame_storage_is_rejected() {
+        let vm = VmBackend::default();
+        let error = vm
+            .freeze(Value::Ref {
+                frame: 0,
+                slot: 0,
+                projection: Vec::new(),
+            })
+            .expect_err("a frame reference has no compile-time form");
+        assert!(error.to_string().contains("run-time storage"), "{error}");
     }
 
     #[test]

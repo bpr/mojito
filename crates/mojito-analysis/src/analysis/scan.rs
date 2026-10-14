@@ -383,6 +383,7 @@ pub(super) const fn may_raise(instr: &MirInstr) -> bool {
     !matches!(
         instr,
         MirInstr::DefVar { .. }
+            | MirInstr::StoreToMem { .. }
             | MirInstr::DeclareVar { .. }
             | MirInstr::UseVar { .. }
             | MirInstr::DropVar { .. }

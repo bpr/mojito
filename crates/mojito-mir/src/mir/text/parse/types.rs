@@ -1130,6 +1130,9 @@ impl Decoder {
                 "ct_string" => self.string(inner).map(CtValue::Str),
                 "ct_tuple" => Some(CtValue::Tuple(self.ct_values(inner))),
                 "ct_list" => Some(CtValue::List(self.ct_values(inner))),
+                "ct_store_to_mem" => self
+                    .ct_value(inner)
+                    .map(|referent| CtValue::StoreToMem(Box::new(referent))),
                 "ct_dtype" => self.dtype(inner).map(CtValue::Dtype),
                 "ct_type" => self.ty(inner).map(CtValue::Type),
                 "ct_reflected" => self.ty(inner).map(CtValue::Reflected),

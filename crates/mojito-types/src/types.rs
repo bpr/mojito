@@ -3576,6 +3576,9 @@ pub fn rewrite_value(value: &CtValue, rewrite: &mut dyn TyRewrite) -> Result<CtV
                 .transpose()?,
             offset: *offset,
         },
+        CtValue::StoreToMem(referent) => {
+            CtValue::StoreToMem(Box::new(rewrite_value(referent, rewrite)?))
+        }
         CtValue::Expr(expr) => rewrite.expr(expr)?.into_value(),
         CtValue::Type(ty) => CtValue::Type(rewrite_ty(ty, rewrite)?),
         CtValue::Reflected(ty) => CtValue::Reflected(rewrite_ty(ty, rewrite)?),
@@ -4002,6 +4005,7 @@ pub fn ct_value_is_symbolic(value: &CtValue) -> bool {
         CtValue::Pointer { memory, .. } => {
             memory.iter().flatten().flatten().any(ct_value_is_symbolic)
         }
+        CtValue::StoreToMem(referent) => ct_value_is_symbolic(referent),
         CtValue::Expr(_) | CtValue::Deferred(_) | CtValue::Marker(_) => true,
         CtValue::Tuple(values)
         | CtValue::List(values)
