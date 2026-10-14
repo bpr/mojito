@@ -134,6 +134,7 @@ assets/ok/comptime_struct_string_field.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comptime_template_body_bindings.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comptime_tuple.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comptime_value_materialized_without_constructor.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/conditional_expression_parameter_condition.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/conditional_expression_transfer.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/conditional_member_availability.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/conditional_member_trivial_value_clauses.mojo	-	ineligible	no-scalar-entry-shape

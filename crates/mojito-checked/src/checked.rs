@@ -916,6 +916,11 @@ pub enum SemanticAdjustment {
     /// upstream's `mergeCValuesAcrossIfLikeOp` does. Any other result is
     /// stored into a result slot by each arm.
     RegisterPassableResult,
+    /// A conditional expression whose condition is a parameter value:
+    /// lowering builds upstream's `hlcf.comptime.if`, its condition the
+    /// recorded `ComptimeCondition` or a thunk, so the elaborator keeps the
+    /// live arm alone.
+    ComptimeConditional,
     /// A `comptime if` condition the checker compiled as a constraint over
     /// the binders in scope: MIR carries it on the branch, and the elaborator
     /// decides it. A condition with no such record is lowered as a thunk.
@@ -5086,6 +5091,9 @@ fn node_adjustments(facts: &NodeFacts, expression: &Expr) -> Vec<SemanticAdjustm
     if facts.register_passable_result {
         adjustments.push(SemanticAdjustment::RegisterPassableResult);
     }
+    if facts.comptime_conditional {
+        adjustments.push(SemanticAdjustment::ComptimeConditional);
+    }
     if let Some(assertion) = &facts.rebind_assertion
         && assertion.operand != assertion.dest
     {
@@ -5358,6 +5366,7 @@ node_facts! {
         implicitly_copied_consuming_receiver,
         truthiness_condition,
         register_passable_result,
+        comptime_conditional,
     }
 }
 

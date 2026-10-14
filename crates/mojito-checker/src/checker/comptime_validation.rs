@@ -231,13 +231,48 @@ impl Checker {
     /// recorded on its span (`SemanticAdjustment::ComptimeCondition`) for the
     /// MIR branch; a leaf it does not close — an application, a `Bool`
     /// binding — MIR lowers as a thunk the elaborator runs.
-    pub(super) fn check_comptime_condition(&mut self, cond: &Expr) -> Result<(), TypeError> {
+    pub(super) fn check_comptime_condition(&self, cond: &Expr) -> Result<(), TypeError> {
         let _position = self.comptime_position();
         let inlined = self.inline_local_comptime_values(cond);
         if let Some(constraint) = self.check_ct_bool(&inlined)? {
             self.record_comptime_condition(cond, &constraint);
         }
         Ok(())
+    }
+
+    /// Whether the condition of a conditional expression is a parameter
+    /// value, which upstream's `IfElseOpNode` lowers as `hlcf.comptime.if`
+    /// (`getIfPValue`): a `Bool` literal, a `Bool` compile-time binding, a
+    /// `comptime(e)`, a conformance or trivial-type predicate, a `TypeList`
+    /// proposition, `not` of one, or a comparison of compile-time scalars.
+    /// `and`/`or` and a nested conditional are run-time `hlcf.if`s, a call of
+    /// an ordinary function a run-time value, so none of those is one.
+    pub(super) fn parameter_valued_condition(&self, cond: &Expr) -> bool {
+        match &cond.kind {
+            ExprKind::Bool(_) => true,
+            ExprKind::Prefix(PrefixOp::Not, inner) => self.parameter_valued_condition(inner),
+            ExprKind::Identifier(_) | ExprKind::Member { .. } => self
+                .parameter_value_ty(cond)
+                .is_some_and(|ty| matches!(ty.kind(), TyKind::Bool)),
+            ExprKind::Call { name, args, .. } => {
+                (name == "comptime" || name == "conforms_to") && !args.is_empty()
+            }
+            ExprKind::TypeApply { .. } | ExprKind::Index { .. } => {
+                self.predicate_alias_application(cond).is_some()
+                    || predicate_spelling(cond).is_some_and(|name| {
+                        mojito_types::types::trivial_predicate_name(name).is_some()
+                    })
+            }
+            ExprKind::Invoke { .. } => {
+                matches!(self.compile_typelist_proposition(cond), Ok(Some(_)))
+            }
+            ExprKind::Infix(
+                InfixOp::Eq | InfixOp::Ne | InfixOp::Lt | InfixOp::Le | InfixOp::Gt | InfixOp::Ge,
+                left,
+                right,
+            ) => self.parameter_valued_scalar(left) && self.parameter_valued_scalar(right),
+            _ => false,
+        }
     }
 
     /// Record `constraint` as the compile-time reading of `cond`, each
@@ -250,13 +285,78 @@ impl Checker {
         ));
     }
 
+    /// The type of the parameter value `operand` names: a value binder, a
+    /// `comptime for` variable, a local or module `comptime` binding, or the
+    /// enclosing struct's value parameter (`Self.flag`).
+    fn parameter_value_ty(&self, operand: &Expr) -> Option<&Ty> {
+        match &operand.kind {
+            ExprKind::Identifier(name)
+                if self.is_compile_time_binding(name)
+                    || self.lookup_owner(name).is_some_and(|owner| {
+                        self.value_parameter_owners.contains(&owner)
+                            || self.is_comptime_binding_owner(owner)
+                    }) =>
+            {
+                self.lookup(name)
+            }
+            ExprKind::Member { object, field } if matches!(&object.kind, ExprKind::Identifier(name) if name == "Self") => {
+                self.self_decls.iter().find_map(|decl| match decl {
+                    ParamDecl::Value {
+                        name,
+                        ty,
+                        variadic: false,
+                        ..
+                    } if name == field => Some(ty),
+                    _ => None,
+                })
+            }
+            _ => None,
+        }
+    }
+
+    /// Whether `operand` of a comparison is a parameter value whose builtin
+    /// operators fold at compile time: an integer or `Bool` literal, or an
+    /// `Int`, `UInt`, or `Bool` parameter value, under arithmetic. A float's
+    /// comparison is a run-time value, as the pin has it.
+    fn parameter_valued_scalar(&self, operand: &Expr) -> bool {
+        match &operand.kind {
+            ExprKind::Int(_) | ExprKind::Bool(_) => true,
+            ExprKind::Identifier(_) | ExprKind::Member { .. } => {
+                self.parameter_value_ty(operand).is_some_and(|ty| {
+                    matches!(
+                        ty.kind(),
+                        TyKind::Int | TyKind::UInt | TyKind::Bool | TyKind::IntLiteral
+                    )
+                })
+            }
+            ExprKind::Prefix(PrefixOp::Neg | PrefixOp::Invert, inner) => {
+                self.parameter_valued_scalar(inner)
+            }
+            ExprKind::Infix(
+                InfixOp::Add
+                | InfixOp::Sub
+                | InfixOp::Mul
+                | InfixOp::FloorDiv
+                | InfixOp::Mod
+                | InfixOp::Shl
+                | InfixOp::Shr
+                | InfixOp::BitAnd
+                | InfixOp::BitOr
+                | InfixOp::BitXor,
+                left,
+                right,
+            ) => self.parameter_valued_scalar(left) && self.parameter_valued_scalar(right),
+            _ => false,
+        }
+    }
+
     /// The recursive form of [`Self::check_comptime_condition`]: a
     /// connective recurses so a concrete conformance fact can sit beside a
     /// symbolic constraint; a leaf is a generic constraint over the
     /// parameters in scope, a conformance of a concrete type, or a `Bool`
     /// value expression. The constraint the condition compiles to, when every
     /// leaf does.
-    fn check_ct_bool(&mut self, cond: &Expr) -> Result<Option<GenericConstraint>, TypeError> {
+    fn check_ct_bool(&self, cond: &Expr) -> Result<Option<GenericConstraint>, TypeError> {
         match &cond.kind {
             ExprKind::Bool(value) => return Ok(Some(GenericConstraint::Bool(*value))),
             ExprKind::Prefix(PrefixOp::Not, inner) => {
@@ -2716,7 +2816,7 @@ impl Checker {
             _ => Vec::new(),
         };
         let spelled = dependent.expr().to_string();
-        for (subject, guaranteed) in self.assumed_conformances.iter().flatten() {
+        for (subject, guaranteed) in self.assumed_conformances.borrow().iter().flatten() {
             let names_element = match subject {
                 AssumedSubject::Element(element) => element == dependent.expr(),
                 AssumedSubject::Binder(id) => pack.is_some_and(|reference| &reference.id == id),
@@ -3408,6 +3508,19 @@ pub(super) fn names_read(expr: &Expr) -> Vec<String> {
     let mut names = Names(Vec::new());
     mojito_ast::visit::walk_expr(&mut names, expr);
     names.0
+}
+
+/// The predicate name a bracket application spells (`IsTriviallyCopyable`
+/// in `IsTriviallyCopyable[T]`, which may parse as an index).
+fn predicate_spelling(expr: &Expr) -> Option<&str> {
+    match &expr.kind {
+        ExprKind::TypeApply { name, .. } => Some(name),
+        ExprKind::Index { object, .. } => match &object.kind {
+            ExprKind::Identifier(name) => Some(name),
+            _ => None,
+        },
+        _ => None,
+    }
 }
 
 /// Whether two bound lists name the same traits, in any order.

@@ -620,6 +620,46 @@ def main():
     );
 }
 
+#[test]
+fn parameter_valued_conditional_builds_comptime_if() {
+    let source = r#"
+def is_zero(n: Int) -> Bool:
+    return n == 0
+
+def pick[flag: Bool, n: Int]() -> Int:
+    var a = 1 if flag else 2
+    var s = String("on") if n > 0 else String("off")
+    var b = 3 if is_zero(n) else 4
+    var c = 5 if n == 0 and flag else 6
+    print(s)
+    return a + b + c
+
+def main():
+    print(pick[True, 1]())
+"#;
+    let (_, mir) = checked_function_with(source, "pick", lower_cfg_structured);
+    let mut ops = Vec::new();
+    region_ops(&mir.blocks, &mut ops);
+    // The two parameter-valued conditions select an arm per instance, the
+    // `String` arms storing their result; an ordinary call and an `and`
+    // are run-time values, so their conditionals stay `if`s (the `and`
+    // itself one more).
+    assert_eq!(
+        ops,
+        ["comptime.if 1", "comptime.if 1", "if 1", "if 1", "if 1"]
+    );
+    let results: Vec<usize> = mir
+        .blocks
+        .iter()
+        .flat_map(|block| &block.instrs)
+        .filter_map(|instruction| match instruction {
+            MirInstr::ComptimeIf { results, .. } => Some(results.len()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(results, [1, 0]);
+}
+
 /// Push a description of each `if` (its result count), `comptime.if` (its
 /// condition count), and `loop` region op
 /// in `blocks`, outermost first, asserting each region is one block.
@@ -666,6 +706,16 @@ fn checked_main(src: &str) -> (Cfg, MirFunction) {
 
 /// Compile `src` and lower its `main`'s checked CFG with `lower`.
 fn checked_main_with(src: &str, lower: fn(&Cfg) -> MirFunction) -> (Cfg, MirFunction) {
+    checked_function_with(src, "main", lower)
+}
+
+/// Compile `src` and lower the checked CFG of its module function `name`
+/// with `lower`.
+fn checked_function_with(
+    src: &str,
+    name: &str,
+    lower: fn(&Cfg) -> MirFunction,
+) -> (Cfg, MirFunction) {
     let compiled = Compiler::default()
         .compile_source(src, Path::new("mir_test.mojo"))
         .expect("compile");
@@ -675,7 +725,7 @@ fn checked_main_with(src: &str, lower: fn(&Cfg) -> MirFunction) -> (Cfg, MirFunc
         .roots()
         .iter()
         .find_map(|root| match &tables.statement(*root)?.op {
-            mojito::checked::CheckedStmtOp::Def(def) if def.name == "main" => Some((
+            mojito::checked::CheckedStmtOp::Def(def) if def.name == name => Some((
                 def.params
                     .iter()
                     .map(|param| param.name.clone())
@@ -684,7 +734,7 @@ fn checked_main_with(src: &str, lower: fn(&Cfg) -> MirFunction) -> (Cfg, MirFunc
             )),
             _ => None,
         })
-        .expect("main");
+        .expect("the named function");
     let cfg = Cfg::build_checked_fn(checked, &params, &body);
     let mir = lower(&cfg);
     (cfg, mir)

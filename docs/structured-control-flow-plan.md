@@ -21,7 +21,8 @@ Checked in `~/src/mojo/repos/modular/Mojo`.
   - `while` and `for` are `lit.loop` with an `hlcf.if` on the condition or
     the has-next flag.
   - Short-circuit and ternary expressions are `hlcf.if` with results
-    (`ExprNodes.cpp`).
+    (`ExprNodes.cpp`), unless the ternary's condition is a parameter
+    value, which is `hlcf.comptime.if`.
   - `comptime if` and `comptime for` are `hlcf.comptime.if` and
     `hlcf.comptime.for`. No `kgen` op carries control flow.
   - `try` is `lit.try`.

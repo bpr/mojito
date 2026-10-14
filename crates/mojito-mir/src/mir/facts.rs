@@ -593,6 +593,17 @@ impl<'a> Node<'a> {
         })
     }
 
+    /// Whether this conditional expression's condition is a parameter
+    /// value, so it lowers as `hlcf.comptime.if`.
+    pub(super) fn comptime_conditional(self) -> bool {
+        self.adjustments().iter().any(|adjustment| {
+            matches!(
+                adjustment,
+                mojito_checked::checked::SemanticAdjustment::ComptimeConditional
+            )
+        })
+    }
+
     pub(super) fn literal_materialization(self) -> Option<Ty> {
         if !matches!(
             self.ty().as_ref().map(Ty::kind),

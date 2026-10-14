@@ -3111,6 +3111,26 @@ fn checked_calls_mark_ordinary_and_parameterized_implicit_receiver_copies() {
 }
 
 #[test]
+fn parameter_valued_conditions_mark_their_conditionals_comptime() {
+    // `flag` and `n > 0` are parameter values; a call of an ordinary `def`
+    // and an `and` are run-time values, as the pin's `getIfPValue` has them.
+    let source = "def is_zero(n: Int) -> Bool:\n    return n == 0\n\ndef pick[flag: Bool, n: Int]() -> Int:\n    var a = 1 if flag else 2\n    var b = 3 if n > 0 else 4\n    var c = 5 if is_zero(n) else 6\n    var d = 7 if flag and n > 0 else 8\n    return a + b + c + d\n\ndef main():\n    print(pick[True, 1]())\n";
+    let checked = check_program(&parse(source).expect("parse")).expect("check");
+    let marked: Vec<bool> = checked
+        .expressions()
+        .iter()
+        .filter(|expression| matches!(expression.op, mojito::checked::CheckedOp::IfExpr { .. }))
+        .map(|expression| {
+            expression
+                .adjustments
+                .iter()
+                .any(|adjustment| matches!(adjustment, SemanticAdjustment::ComptimeConditional))
+        })
+        .collect();
+    assert_eq!(marked, [true, true, false, false]);
+}
+
+#[test]
 fn display_argument_to_generic_constructor_constructs_its_parameter() {
     // The display is checked against the solved `List[String]` last, so its
     // span records the collection construction, not the bare `Array`

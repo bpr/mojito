@@ -61,7 +61,7 @@ impl<'a> Flatten<'a> {
         name_spelling(&self.slots, &self.vars, node).unwrap_or_else(|| name.to_owned())
     }
 
-    fn comptime_condition_of(
+    pub(in crate::mir) fn comptime_condition_of(
         &mut self,
         expression: Node<'a>,
     ) -> mojito_types::types::GenericConstraint {

@@ -725,9 +725,9 @@ impl Checker {
             .enclosing_struct_type_params
             .replace(self.enclosing_type_params.len());
         self.assume_propositions(Vec::new());
-        self.assumed_conformances.push(HashSet::new());
+        self.assumed_conformances.borrow_mut().push(HashSet::new());
         let result = self.check_default_wrapper_body(self_ty, wrapper, &signature, effect_key);
-        self.assumed_conformances.pop();
+        self.assumed_conformances.borrow_mut().pop();
         self.enclosing_struct_type_params.set(saved_struct_count);
         self.tparams.pop();
         self.method_site = saved_site;

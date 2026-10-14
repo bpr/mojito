@@ -1860,14 +1860,18 @@ impl Checker {
                 return Ok(TyKind::VariadicPack(ty.clone()).into());
             }
             return match self.self_decls.iter().find(|d| d.name() == field) {
-                // A `UInt`-, vector-, struct-, or `DType`-typed value
+                // A `UInt`-, `Bool`-, vector-, struct-, or `DType`-typed value
                 // parameter (`AHasher[key: U256]`, `Tagged[e: Extent]`)
                 // reads as its declared type; the other scalar kinds read as
                 // `Int`.
                 Some(ParamDecl::Value { ty, .. })
                     if matches!(
                         *ty.kind(),
-                        TyKind::UInt | TyKind::Simd { .. } | TyKind::Struct(..) | TyKind::Dtype
+                        TyKind::UInt
+                            | TyKind::Bool
+                            | TyKind::Simd { .. }
+                            | TyKind::Struct(..)
+                            | TyKind::Dtype
                     ) =>
                 {
                     Ok((*ty).clone())

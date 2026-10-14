@@ -1309,14 +1309,26 @@ impl Checker {
             // a program that *uses* the walrus-bound name later won't type-check.
             ExprKind::Named { value, .. } => self.infer(value),
             // Ternary `a if cond else b`: `cond` must be `Bool`; the branches must
-            // have a common type (the result type).
+            // have a common type (the result type). A parameter-valued
+            // condition is checked as a `comptime if` condition is, and its
+            // then arm under the conformances it proves.
             ExprKind::IfExpr {
                 cond,
                 then_branch,
                 else_branch,
             } => {
-                self.expect_bool(cond, "conditional-expression condition")?;
-                let tt = self.infer(then_branch)?;
+                let tt = if self.parameter_valued_condition(cond) {
+                    self.check_comptime_condition(cond)?;
+                    self.record_at(expr.source_span()).comptime_conditional = true;
+                    let proved = self.conformance_arm_assumptions(cond)?;
+                    self.assumed_conformances.borrow_mut().push(proved);
+                    let tt = self.infer(then_branch);
+                    self.assumed_conformances.borrow_mut().pop();
+                    tt?
+                } else {
+                    self.expect_bool(cond, "conditional-expression condition")?;
+                    self.infer(then_branch)?
+                };
                 let et = self.infer(else_branch)?;
                 // A place arm is copied into the conditional's owned result.
                 for (arm, ty) in [(then_branch, &tt), (else_branch, &et)] {

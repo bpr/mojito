@@ -559,7 +559,7 @@ pub struct Checker {
     /// a temporary bound to the declaration changes the identity of `TyKind::Param`
     /// and can make an otherwise identical return type fail to match. The
     /// facts refine capability queries only while that method body is checked.
-    assumed_conformances: Vec<HashSet<(AssumedSubject, String)>>,
+    assumed_conformances: RefCell<Vec<HashSet<(AssumedSubject, String)>>>,
     /// The residual propositions the enclosing declarations' own `where`
     /// clauses assume, level for level beside `assumed_conformances`. A
     /// callee's constraint that stays residual is proven only by being one of
@@ -971,7 +971,7 @@ impl Checker {
             pack_element_views: RefCell::new(HashMap::new()),
             param_context: ParamContext::detached(),
             self_decls: Vec::new(),
-            assumed_conformances: Vec::new(),
+            assumed_conformances: RefCell::new(Vec::new()),
             assumed_propositions: Vec::new(),
             local_type_aliases: vec![HashMap::new()],
             local_comptime_values: vec![HashMap::new()],

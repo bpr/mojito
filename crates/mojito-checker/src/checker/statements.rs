@@ -387,9 +387,9 @@ impl Checker {
                 self.check_comptime_condition(cond)?;
                 // A `conforms_to` the condition proves holds in this arm alone.
                 let proved = self.conformance_arm_assumptions(cond)?;
-                self.assumed_conformances.push(proved);
+                self.assumed_conformances.borrow_mut().push(proved);
                 let checked = self.check_scoped_block(body, ret, in_loop);
-                self.assumed_conformances.pop();
+                self.assumed_conformances.borrow_mut().pop();
                 checked?;
             } else {
                 self.register_named_bindings(cond)?;
@@ -2789,7 +2789,9 @@ impl Checker {
             })
         };
         self.assume_declared_propositions(&decls);
-        self.assumed_conformances.push(function_assumptions);
+        self.assumed_conformances
+            .borrow_mut()
+            .push(function_assumptions);
         // A parameter typed by a dependent pack projection (`values.Ts[index]`
         // in a `Tuple.consume_elements` handler) is opaque inside the user's
         // handler body, as upstream: the pack's `Movable` bound is all the
@@ -3149,7 +3151,7 @@ impl Checker {
             self.capture_contexts.borrow_mut().pop();
         }
         self.raising_context.pop();
-        self.assumed_conformances.pop();
+        self.assumed_conformances.borrow_mut().pop();
         self.tparams.pop();
         result
     }

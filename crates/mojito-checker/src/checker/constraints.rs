@@ -177,7 +177,7 @@ impl Checker {
                 }
             }
             self.assume_propositions(Vec::new());
-            self.assumed_conformances.push(facts);
+            self.assumed_conformances.borrow_mut().push(facts);
             let resolved = (|| {
                 if member.params.is_empty() {
                     let value = self.eval_associated_ct(&member.value, &out)?;
@@ -193,7 +193,7 @@ impl Checker {
                     Ok((None, Some(template)))
                 }
             })();
-            self.assumed_conformances.pop();
+            self.assumed_conformances.borrow_mut().pop();
             match resolved? {
                 (Some(value), _) => {
                     if !compiled.is_empty() {
@@ -2340,7 +2340,7 @@ impl Checker {
     /// pushed. Every push site calls this, so a closed level never lingers
     /// under a later declaration.
     pub(super) fn assume_propositions(&mut self, assumed: Vec<ParamExpr>) {
-        let depth = self.assumed_conformances.len();
+        let depth = self.assumed_conformances.borrow().len();
         self.assumed_propositions.truncate(depth);
         self.assumed_propositions.resize_with(depth, Vec::new);
         self.assumed_propositions.push(assumed);
@@ -2353,7 +2353,7 @@ impl Checker {
         conjuncts(proposition).iter().all(|conjunct| {
             self.assumed_propositions
                 .iter()
-                .take(self.assumed_conformances.len())
+                .take(self.assumed_conformances.borrow().len())
                 .flatten()
                 .any(|assumed| assumed == conjunct)
         })

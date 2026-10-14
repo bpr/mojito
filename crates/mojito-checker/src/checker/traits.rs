@@ -748,7 +748,7 @@ impl Checker {
             let signature = match self.method_where_assumptions(m, &method_decls) {
                 Ok(assumptions) => {
                     self.assume_propositions(Vec::new());
-                    self.assumed_conformances.push(assumptions);
+                    self.assumed_conformances.borrow_mut().push(assumptions);
                     let signature = (|| {
                         let all_types = self.param_tys(&m.params)?;
                         let sig = self.method_sig(m, method_decls, &all_types)?;
@@ -763,7 +763,7 @@ impl Checker {
                         }
                         Ok::<_, TypeError>((all_types, sig))
                     })();
-                    self.assumed_conformances.pop();
+                    self.assumed_conformances.borrow_mut().pop();
                     signature
                 }
                 Err(error) => Err(error),
@@ -1862,14 +1862,18 @@ impl Checker {
             return false;
         };
         let subject = AssumedSubject::Binder(binder.id.clone());
-        self.assumed_conformances.iter().rev().any(|scope| {
-            scope.iter().any(|(parameter, available)| {
-                *parameter == subject
-                    && (available == required
-                        || self.trait_refines(available, required)
-                        || builtin_trait_implies(available, required))
+        self.assumed_conformances
+            .borrow()
+            .iter()
+            .rev()
+            .any(|scope| {
+                scope.iter().any(|(parameter, available)| {
+                    *parameter == subject
+                        && (available == required
+                            || self.trait_refines(available, required)
+                            || builtin_trait_implies(available, required))
+                })
             })
-        })
     }
 
     /// The conformance facts the elaborator decides a `where` clause or a

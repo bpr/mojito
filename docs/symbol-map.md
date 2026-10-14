@@ -780,7 +780,12 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   (`lower_expr/ctrl.rs`) forwards a memory-only conditional expression's
   result slot to its consumer the same way; a result the checker marked
   `SemanticAdjustment::RegisterPassableResult` (`Node::register_passable_result`)
-  is yielded by its `If` instead. `Flatten::region` builds an expression
+  is yielded by its `If` instead. A conditional the checker marked
+  `SemanticAdjustment::ComptimeConditional` (`Node::comptime_conditional`;
+  `Checker::parameter_valued_condition`, `checker/comptime_validation.rs`,
+  decides it as upstream's `getIfPValue`) builds a `ComptimeIf` on its
+  condition's `Flatten::comptime_condition_of` reading instead, its arms
+  ended by `ComptimeYield`. `Flatten::region` builds an expression
   region op's one-block region, and `Flatten::chain_link` nests a
   comparison chain's links as upstream's `emitNextCmp` does.
   `setup_reference` decides which reference-result operands defer their

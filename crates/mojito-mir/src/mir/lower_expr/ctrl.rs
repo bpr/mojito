@@ -117,12 +117,14 @@ impl<'a> Flatten<'a> {
     }
 
     /// Lower a ternary `then_e if cond else else_e` as upstream's `hlcf.if`
-    /// on `cond`, each arm producing the owned result (a `^` arm by a move,
-    /// a place arm by a copy, a temporary arm as it stands). A result the
-    /// checker proved register-passable is yielded by the arms as the op's
-    /// value; any other is stored by each arm into a result slot, which the
-    /// op's consumer receives as a forward, as upstream stores a memory-only
-    /// result into its destination buffer.
+    /// on `cond`, or its `hlcf.comptime.if` when the checker found `cond` a
+    /// parameter value, so the elaborator keeps the live arm alone. Each arm
+    /// produces the owned result (a `^` arm by a move, a place arm by a
+    /// copy, a temporary arm as it stands). A result the checker proved
+    /// register-passable is yielded by the arms as the op's value; any other
+    /// is stored by each arm into a result slot, which the op's consumer
+    /// receives as a forward, as upstream stores a memory-only result into
+    /// its destination buffer.
     pub(in crate::mir) fn ternary(
         &mut self,
         node: Node<'a>,
@@ -131,19 +133,17 @@ impl<'a> Flatten<'a> {
         else_e: Node<'a>,
     ) -> Reg {
         let sp = node.location();
-        let rc = self.expr(cond);
-        let rc = self.truthiness(cond, rc);
+        let test = if node.comptime_conditional() {
+            ArmTest::Comptime(self.comptime_condition_of(cond))
+        } else {
+            let rc = self.expr(cond);
+            ArmTest::Run(self.truthiness(cond, rc))
+        };
         if node.register_passable_result() {
-            let then = self.region(|this| MirTerm::Yield(vec![this.expr(then_e)]));
-            let orelse = self.region(|this| MirTerm::Yield(vec![this.expr(else_e)]));
+            let then = self.region(|this| test.yield_values(vec![this.expr(then_e)]));
+            let orelse = self.region(|this| test.yield_values(vec![this.expr(else_e)]));
             let d = self.fresh(sp, None);
-            self.emit(MirInstr::If {
-                results: vec![d],
-                cond: rc,
-                then,
-                elifs: Vec::new(),
-                orelse,
-            });
+            self.emit(test.op(vec![d], then, orelse));
             return d;
         }
         let result = self.fresh_var();
@@ -156,18 +156,12 @@ impl<'a> Flatten<'a> {
                     binding_ty: None,
                     in_place: false,
                 });
-                MirTerm::Yield(Vec::new())
+                test.yield_values(Vec::new())
             })
         };
         let then = arm(self, then_e);
         let orelse = arm(self, else_e);
-        self.emit(MirInstr::If {
-            results: Vec::new(),
-            cond: rc,
-            then,
-            elifs: Vec::new(),
-            orelse,
-        });
+        self.emit(test.op(Vec::new(), then, orelse));
         let d = self.fresh(sp, None);
         self.emit(MirInstr::UseVar {
             dest: d,
@@ -802,6 +796,42 @@ impl<'a> Flatten<'a> {
             orelse,
         });
         d
+    }
+}
+
+/// What selects a ternary's arm: a run-time `Bool` register (`hlcf.if`),
+/// or a parameter condition the elaborator decides (`hlcf.comptime.if`).
+enum ArmTest {
+    Run(Reg),
+    Comptime(mojito_types::types::GenericConstraint),
+}
+
+impl ArmTest {
+    /// The terminator ending an arm that yields `values`.
+    const fn yield_values(&self, values: Vec<Reg>) -> MirTerm {
+        match self {
+            Self::Run(_) => MirTerm::Yield(values),
+            Self::Comptime(_) => MirTerm::ComptimeYield(values),
+        }
+    }
+
+    /// The two-armed op selecting `then` or `orelse`, defining `results`.
+    fn op(self, results: Vec<Reg>, then: Vec<MirBlock>, orelse: Vec<MirBlock>) -> MirInstr {
+        match self {
+            Self::Run(cond) => MirInstr::If {
+                results,
+                cond,
+                then,
+                elifs: Vec::new(),
+                orelse,
+            },
+            Self::Comptime(cond) => MirInstr::ComptimeIf {
+                results,
+                conds: vec![cond],
+                arms: vec![then],
+                orelse,
+            },
+        }
     }
 }
 

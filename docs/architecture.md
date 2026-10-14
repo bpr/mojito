@@ -3810,7 +3810,10 @@ a fixed order, and `prune_unreachable_blocks`, `block_successors`, the
 analyses, and the elaborator's slot renumbering walk through them.
 
 MIR lowering builds `and`/`or`, conditional expressions, comparison
-chains, and comprehensions as `If`/`Loop`, each region one block, and
+chains, and comprehensions as `If`/`Loop`, each region one block (a
+conditional expression whose condition the checker found a parameter value,
+`SemanticAdjustment::ComptimeConditional`, is a `ComptimeIf` with results,
+as upstream's `IfElseOpNode` emits `hlcf.comptime.if`), and
 `lower_cfg_nested` ends every body with `mir::lower_control_flow` (upstream's
 `LowerControlFlow`) lowers them to blocks and the CFG terminators: a
 region's blocks are appended to its list, the rest of the block moves to a

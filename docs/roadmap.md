@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R893**.
+Next free ID: **R894**.
 
 ## Ordered Work
 
@@ -63,21 +63,6 @@ CFG. The entries that close that gap are staged in
 producers first, then the CFG lowering point moving down one consumer at a
 time.
 
-
-- [ ] **R887 A conditional expression whose condition is a parameter value
-  is a run-time `if` where upstream emits `hlcf.comptime.if`**
-
-  `1 if flag else 2` in `def pick[flag: Bool]()` lowers to a run-time `If`
-  on the parameter's value, so the elaborator checks and lowers both arms.
-  - Upstream (`ExprNodes.cpp`, around line 4629) emits `hlcf.comptime.if`
-    for a parameter-valued condition and keeps only the live arm, so a dead
-    arm is never elaborated.
-  - The lever is `Flatten::ternary` in `lower_expr/ctrl.rs`, which would
-    emit `ComptimeIf` on the checker's constraint for the condition, as a
-    `comptime if` statement carries one.
-  - Found while landing R871 (2026-10-14).
-  - Depends on R873.
-  - Model: Opus, Not Planned.
 
 - [ ] **R885 A `comptime for` region op leaves its loop implicitly when
   its sequence runs out, where upstream's body tests `has_next` itself**
@@ -3218,6 +3203,21 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     after a subscript", a different shape from R381's operator.
   - Found while landing R477 (2026-10-07).
   - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R893 A conditional expression over a sized-integer value parameter
+  will be a run-time `if`, where the pin selects its arm per instance**
+
+  `1 if x == 0 else 2 * f[x - 1]()` in `def f[x: UInt8]()` prints `8` on
+  the pin for `f[3]()`: a sized integer's comparison is a parameter value.
+  - `Checker::parameter_valued_condition`
+    (`checker/comptime_validation.rs`) admits only `Int`, `UInt`, `Bool`,
+    and literal operands, so once R482 accepts the binder, this
+    conditional elaborates both arms and recurses past the instance budget.
+  - A `Float64` operand stays run-time: the pin runs out of memory on the
+    float twin of the probe.
+  - Found while landing R887 (2026-10-14).
+  - Depends on R482.
   - Model: Opus, Not Planned.
 
 - [ ] **R483 A method's explicit value parameter supplied from the caller's

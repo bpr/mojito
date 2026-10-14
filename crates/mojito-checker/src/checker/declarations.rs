@@ -1146,7 +1146,7 @@ impl Checker {
         let result = match assumptions {
             Ok(assumptions) => {
                 self.assume_method_propositions(m, &decls);
-                self.assumed_conformances.push(assumptions);
+                self.assumed_conformances.borrow_mut().push(assumptions);
                 let result = (|| {
                     for param in 0..m.params.len() {
                         let site = mojito_checked::checked::AnnotationSite::MethodParam {
@@ -1194,7 +1194,7 @@ impl Checker {
                     )?;
                     self.check_method_inner(self_ty, m, effect_key)
                 })();
-                self.assumed_conformances.pop();
+                self.assumed_conformances.borrow_mut().pop();
                 result
             }
             Err(error) => Err(error),

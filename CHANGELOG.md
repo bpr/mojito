@@ -8,6 +8,15 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A conditional expression whose condition is a parameter value (R887) —
+  `1 if flag else 2` over a `Bool` parameter, `n == 0`, `comptime(e)`,
+  `conforms_to(T, Copyable)` — lowers as upstream's `hlcf.comptime.if`, so
+  each instance keeps only its live arm and a recursive call in the dead
+  arm is never elaborated; `conforms_to` is now accepted there, and the
+  then arm sees the conformances it proves. `and`/`or` and ordinary calls
+  stay run-time conditions, as the pin has them. A struct's `Bool` value
+  parameter read as `Self.flag` now types as `Bool` rather than `Int`,
+  which fixes `comptime if Self.flag`.
 - HIR builds `comptime if`/`elif`/`else` as one `hlcf.comptime.if` op
   (R873): every condition first, then one arm region per condition and an
   else region, each ended by `comptime.yield`, and MIR lowering builds the
