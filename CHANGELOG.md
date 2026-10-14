@@ -8,6 +8,13 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A generic `x.copy()` instantiated at a built-in receiver is now a value
+  copy in that instance (R839), as upstream's `Copyable.copy` body
+  `Self(copy=self)` is, so the post-elaboration `canonicalize` forwards it
+  and neither backend answers a scalar `copy` method any more.
+  `collections_many`'s concrete instructions fall by 103, with no output
+  change.
+
 - `canonicalize` now forwards a copy of a vector SIMD, a `StringLiteral`,
   or a struct that declares `TrivialRegisterPassable` (R838) when the copy
   is its source's sole reader, as upstream's parser loads such a value into

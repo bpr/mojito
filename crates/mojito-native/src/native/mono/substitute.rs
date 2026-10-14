@@ -166,7 +166,67 @@ pub(super) fn substitute_function(
     substitute_blocks_metadata(&mut function.blocks, bindings)?;
     check_reinterpretation_widths(&function.blocks, &function.reg_types)?;
     repair_storage_result_types(function);
+    copy_builtin_receivers(&mut function.blocks, &function.reg_types);
     Ok(())
+}
+
+/// Rewrite each dispatched `copy()` whose receiver this instance makes a
+/// built-in with a value-read copy into that value copy. `Copyable.copy` is
+/// `Self(copy=self)`, so at such a `Self` it is the [`MirInstr::CopyValue`]
+/// the `T(copy=x)` arm of [`substitute_instruction`] writes. The copy is no
+/// call, so a binding of its result is no longer in place.
+pub(super) fn copy_builtin_receivers(blocks: &mut [MirBlock], reg_types: &HashMap<u32, Ty>) {
+    for block in blocks {
+        let mut copied = HashSet::new();
+        for instruction in &mut block.instrs {
+            match instruction {
+                MirInstr::MethodCall {
+                    dest,
+                    recv,
+                    method,
+                    resolved,
+                    raises: None,
+                    args,
+                    kwargs,
+                    ..
+                } if method == "copy"
+                    && args.is_empty()
+                    && kwargs.is_empty()
+                    && resolved
+                        .as_deref()
+                        .is_none_or(|target| target.starts_with("__trait_dispatch."))
+                    && reg_types.get(&recv.0).is_some_and(|ty| {
+                        mojito_types::types::builtin_copy_is_value_read(ty.kind())
+                    }) =>
+                {
+                    copied.insert(dest.0);
+                    *instruction = MirInstr::CopyValue {
+                        dest: *dest,
+                        value: *recv,
+                    };
+                }
+                MirInstr::DefVar { src, in_place, .. } if copied.contains(&src.0) => {
+                    *in_place = false;
+                }
+                MirInstr::Try {
+                    body,
+                    handler,
+                    orelse,
+                    finalbody,
+                    ..
+                } => {
+                    for region in std::iter::once(body)
+                        .chain(handler.iter_mut().map(|(_, blocks)| blocks))
+                        .chain(orelse.iter_mut())
+                        .chain(finalbody.iter_mut())
+                    {
+                        copy_builtin_receivers(region, reg_types);
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
 }
 
 pub(super) fn repair_storage_result_types(function: &mut MirFunction) {

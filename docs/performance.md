@@ -1317,7 +1317,8 @@ the program's and the package's concrete bodies.
 
 **What stays.** A copy of a struct or of a type parameter may run
 `__copyinit__`, so it stays on the generator; a type-parameter copy an
-instance makes trivial is R839. A copy of a register-passable trivial
+instance makes trivial folds in that instance (R840), and so does a
+dispatched `copy()` (R839). A copy of a register-passable trivial
 aggregate (vector SIMD, `StringLiteral`, a `TrivialRegisterPassable`
 struct) now folds too (R838, below); a tuple copy stays, as upstream's
 `Tuple.__init__(copy=)` call does. A widening copy
@@ -1395,8 +1396,8 @@ not move: the pipeline rewrites instances only.
 `forwarded_copies` 36, and `erased_instructions` 19. The pre-elaboration
 `canonicalize` already forwarded every copy whose generator type is an
 identity copy, so each copy forwarded here is one whose type substitution
-made trivial: a `T`-typed `value.copy` instantiated at a scalar, the case
-R839 asks about. Parameter arithmetic does fold (a probe's
+made trivial: a `T`-typed `value.copy` instantiated at a scalar. A
+dispatched `x.copy()` stayed a method call until R839. Parameter arithmetic does fold (a probe's
 `f[n: Int]` instance drops its `mul`, `add`, `gt`, and `branch` to one
 `const` and a `jump`), but in the corpus values cross blocks through
 variable slots, which `sccp` does not see until `Mem2Reg` exists.
@@ -1515,3 +1516,29 @@ already makes no copy for `var q = p` or a read argument: the copies left
 are a field read returned, stored, or passed owned. On
 `assets/ok/trivial_register_passable_copy_forwarded.mojo` the
 pre-elaboration `canonicalize.forwarded_copies` rises from 1 to 5.
+
+## A dispatched `copy()` at a built-in folds per instance (2026-10-14, R839)
+
+A generic body's `x.copy()` on a `T`-typed receiver lowers to a `copy`
+method call through `__trait_dispatch.copy`. In an instance where `T` is a
+built-in, the elaborator used to clear the target and leave the call for
+both backends to answer as "the copy is the value". It now writes the call
+as `value.copy` (`native::mono::substitute::copy_builtin_receivers`), as
+upstream's `Copyable.copy` body `Self(copy=self)` is at such a `Self`, so
+the post-elaboration `canonicalize` forwards it. The pin agrees: at `Int`,
+`x.copy()`, `T(copy=x)`, and `var y = x` each compile to `ret i64 %0` in
+its *unoptimized* LLVM (`mojo build --emit llvm`), so the fold happens in
+its MLIR pipeline. On `collections_many`, debug binary:
+
+| | before | after | change |
+|---|---:|---:|---:|
+| post-elaboration `forwarded_copies` | 36 | 139 | +103 |
+| `concrete_instructions` | 15 840 | 15 737 | −103 |
+
+The 103 receivers are all scalars or one-lane SIMD: `Int` 20,
+`SIMD[int64, 1]` 16, `Float64` 12, `Bool` 11, `UInt8` 9, `Int32` 7,
+`UInt16` 7, `UInt32` 5, and `Int8`, `Int16`, `UInt64`, `Float32` 4 each.
+A receiver typed `ref` to a built-in still stays a call (R864); a struct
+receiver's `copy` is its copy constructor, a call upstream keeps too. The
+corpus-wide `scripts/instantiation-report` rerun is left to the nightly
+gate.

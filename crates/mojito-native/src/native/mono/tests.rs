@@ -1429,6 +1429,52 @@ fn defaultable_pack_instance_builds_its_elements() {
 }
 
 #[test]
+fn dispatched_copy_of_builtin_instance_is_value_copy() {
+    let source = "def ident[T: Copyable](x: T) -> T:\n\
+                  \x20   var y = x.copy()\n\
+                  \x20   return y^\n\
+                  \n\
+                  def main():\n\
+                  \x20   print(ident(3), ident(UInt8(7)), ident(String(\"s\")))\n";
+    let specialized = specialized_main(source);
+    let instances: Vec<_> = specialized
+        .program
+        .functions
+        .iter()
+        .filter(|(name, _)| name.starts_with("ident$mono$"))
+        .collect();
+    assert_eq!(instances.len(), 3, "one instance per argument type");
+    for (name, instance) in instances {
+        let body = instructions(&instance.blocks);
+        let copy_call = body.iter().find_map(|instruction| match instruction {
+            MirInstr::MethodCall {
+                method, resolved, ..
+            } if method == "copy" => Some(resolved.as_deref()),
+            _ => None,
+        });
+        if matches!(instance.param_types[0].kind(), TyKind::Struct(..)) {
+            assert!(
+                copy_call.is_some_and(|target| target.is_some_and(|t| t.contains("String.copy"))),
+                "{name}: a struct's copy stays its `copy` call"
+            );
+            continue;
+        }
+        assert_eq!(copy_call, None, "{name}: no dispatched copy call remains");
+        assert!(
+            body.iter()
+                .any(|instruction| matches!(instruction, MirInstr::CopyValue { .. })),
+            "{name}: the copy is a value copy"
+        );
+        assert!(
+            !body
+                .iter()
+                .any(|instruction| matches!(instruction, MirInstr::DefVar { in_place: true, .. })),
+            "{name}: a value copy's binding is not in place"
+        );
+    }
+}
+
+#[test]
 fn reflected_field_type_construction_closes_per_unrolled_copy() {
     let source = "struct Zero(Copyable, Defaultable, Writable):\n\
                   \x20   var v: Int\n\

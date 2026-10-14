@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R863**.
+Next free ID: **R865**.
 
 ## Ordered Work
 
@@ -57,19 +57,21 @@ which names the upstream pass each one follows. Each is measured by the
 `measure` track's counters and checked by its on/off differential.
 
 
-- [ ] **R839 A copy typed by a type parameter stays a copy in an instance
-  that makes it trivial**
+- [ ] **R864 A dispatched `copy()` through a reference to a built-in
+  stays a method call in its instance**
 
-  A `value.copy` typed `T`, and a `ConstructTypeParam` with `copy=` that
-  `native::mono::substitute` turns into one, stays a copy in an instance
-  where `T` is `Int`, since `canonicalize` runs on the generator only.
-  - Nine of the copies in the std bodies `collections_many.mojo` reaches are
-    typed by a parameter.
-  - First find out whether upstream's post-elaboration pipeline folds them;
-    if it does, apply `MirInstr::forwarded_operand` to each instance the
-    same way.
-  - Done when the answer is recorded and, if upstream folds, the instance
-    counters show the fold.
+  A generic `value.copy()` whose receiver an instance types `ref` to a
+  built-in stays a `copy` method call with no target, where upstream reads
+  the referent and folds the copy.
+  - Reached by `for value in values: value.copy()` over a `var *values: T`
+    collector at `T = Int` (`assets/ok/template_method_variadic_initializer.mojo`).
+  - `native::mono::substitute::copy_builtin_receivers` skips it, because
+    `types::builtin_copy_is_value_read` rejects `TyKind::Ref`.
+  - The fix makes the reference read explicit before the `CopyValue`
+    (`MirInstr::ReadRef`), which Pliron's "the register carries the scalar
+    itself" convention for such receivers (`lower/methods.rs`) must agree
+    with; then that branch and the VM's non-struct `copy` answer go.
+  - Found while landing R839 (2026-10-14).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -4863,6 +4865,23 @@ retained on purpose and re-probed rather than fixed; they are listed in
     `conformance/probes/copyable_struct_trivial_register_passable_field.mojo`;
     promote it to `assets/ok/` when it runs.
   - Found while landing R838 (2026-10-14).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+- [ ] **R863 A `TrivialRegisterPassable` struct that does not declare
+  `Copyable` cannot be copied explicitly**
+
+  `q.copy()` fails the check with "type 'P' has no method 'copy'", and a
+  generic `x.copy()` or `T(copy=x)` at `P` stops in the VM, where the pin
+  runs all of them.
+  - `TrivialRegisterPassable` refines `ImplicitlyCopyable`, which refines
+    `Copyable`, so the struct's copy members should be synthesized as if
+    `Copyable` were declared; declaring it makes every case run.
+  - Likely the same missed refinement as R861; R724 is the `copy=`
+    construction half for a declared `Copyable`.
+  - Pinned by `conformance/probes/trivial_register_passable_copy_method.mojo`
+    and `trivial_register_passable_generic_copy.mojo`; promote them to
+    `assets/ok/` when they run.
+  - Found while landing R839 (2026-10-14).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

@@ -5017,7 +5017,11 @@ without the three upstream passes Mojito does not have. It folds what only
 an instance knows: the elaborator answers a parameter read
 (`Const::Param`) with an ordinary scalar `const`, so the operators over it
 fold and a `branch` it decides becomes a `jump`, and a copy whose type
-substitution made trivial is forwarded.
+substitution made trivial is forwarded. A dispatched `x.copy()` whose
+instance makes the receiver a built-in arrives as such a copy: the
+elaborator writes it as `value.copy`
+(`mono/substitute.rs:copy_builtin_receivers`), as `Copyable.copy`'s body
+`Self(copy=self)` is at that `Self`.
 
 - **The seam.** `analysis::post_elaborate_program` runs each pass over
   every concrete function but `__toplevel__`, on the driver thread after

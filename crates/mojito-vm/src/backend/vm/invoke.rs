@@ -360,10 +360,11 @@ impl VmBackend {
         } else {
             recv
         };
-        // Trait-dispatched `Copyable.copy` on a non-struct value (a scalar or
-        // built-in aggregate reaching `__trait_dispatch.copy` through a
-        // generic body) is the value itself; concrete built-in receivers never
-        // reach here (the checker resolves them to the value read).
+        // Trait-dispatched `Copyable.copy` through a reference to a non-struct
+        // value (a generic body's `value.copy()` whose receiver an instance
+        // types `ref` to a built-in) is the referent itself. A concrete
+        // built-in receiver is the value read lowering writes, and a generic
+        // one becomes a `CopyValue` in its instance.
         if method == "copy" && !matches!(recv, Value::Struct { .. }) {
             return Ok(recv.clone());
         }

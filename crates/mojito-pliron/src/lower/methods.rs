@@ -135,25 +135,13 @@ impl FnLowering<'_> {
         {
             return self.lower_str_writer_write(ctx, dest, recv, args, recv_place);
         }
-        // Trait-dispatched `Copyable.copy` on a scalar receiver — a generic
-        // body's `value.copy()` monomorphized to a builtin, whose
-        // `__trait_dispatch.` target the specializer clears on non-struct
-        // receivers — is the value read itself, as the VM's non-struct `copy`
-        // intrinsic. Struct receivers arrive resolved to their own `copy`.
-        if resolved.is_none()
-            && method == "copy"
-            && args.is_empty()
-            && kwargs.is_empty()
-            && let Some(scalar) = self.func.reg_types.get(&recv.0).and_then(scalar_copy_ty)
-        {
-            let value = self.reg_value(ctx, recv, scalar)?;
-            self.reg_values.insert(dest.0, value);
-            return Ok(());
-        }
-        // The same dispatch on a receiver register typed as a `ref` to a
-        // scalar (a reference result retained in a hidden `$call_ref` slot,
-        // `span[i].copy()`): the receiver `LoadPlace` read the referent
-        // through the slot, so the register carries the scalar itself.
+        // Trait-dispatched `Copyable.copy` on a receiver register typed as a
+        // `ref` to a scalar (a reference result retained in a hidden
+        // `$call_ref` slot, `span[i].copy()`), whose `__trait_dispatch.`
+        // target the specializer clears: the receiver `LoadPlace` read the
+        // referent through the slot, so the register carries the scalar
+        // itself and the copy is that value, as the VM's non-struct `copy`
+        // intrinsic. A scalar receiver's copy arrives as a `CopyValue`.
         if resolved.is_none()
             && method == "copy"
             && args.is_empty()
