@@ -105,7 +105,8 @@ What goes, by the last stage:
 
 What this plan does not attempt: a dialect stack, pre-elaboration
 optimization, the lazy three-phase parser, parallel elaboration, and
-parametric debug info.
+parametric debug info. Pre-elaboration optimization has its own plan since
+2026-10-13: [`docs/pre-elaboration-optimization-plan.md`](pre-elaboration-optimization-plan.md).
 
 ## The generator contract
 

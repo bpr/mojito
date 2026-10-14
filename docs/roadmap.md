@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R771**.
+Next free ID: **R788**.
 
 ## Ordered Work
 
@@ -49,6 +49,235 @@ belongs to is named in its title.
 Scope: what remains of the plan's stages, and what the pipeline order still
 leaves to close. A defect found on the way is filed by its kind; a
 divergence from the pin goes to a catch-up track, however small.
+
+Upstream also shrinks each generic body before it instantiates anything,
+and Mojito does not yet. The entries below are that stage, staged in
+[`docs/pre-elaboration-optimization-plan.md`](pre-elaboration-optimization-plan.md),
+which names the upstream pass each one follows. Each is measured by the
+`measure` track's counters and checked by its on/off differential.
+
+- [ ] **R777 Mojito has no place to run a pass between drop elaboration
+  and the elaborator**
+
+  Upstream runs a pass pipeline on parametric IR after destructor insertion
+  and before elaboration, and Mojito has nowhere to put one.
+  - The program's own bodies need a seam after `elaborate_drops_program`
+    (`CompiledProgram::elaborated_mir`, `src/compiler.rs`).
+  - Each package body needs one after `elaborate_drops_function`, in the
+    finishing hook `src/package.rs` sets, so it runs once per body, never
+    per instance.
+  - The passes belong in `mojito-analysis`, beside drop elaboration, so no
+    crate edge is added.
+  - Add an empty pipeline at both seams, `mir::verify` after each pass in
+    debug builds, and a switch that turns the pipeline off.
+  - Done when both seams run the (empty) pipeline and the switch is
+    documented in `docs/architecture.md`.
+  - Depends on R771, for the counters a first pass will report against.
+  - Model: Opus, Not Planned.
+
+- [ ] **R778 Generic bodies no entry reaches are kept until elaboration**
+
+  The program's own generic bodies that no entry root reaches are carried
+  to the elaborator, where upstream's `EliminateDeadSymbols` drops them
+  before the other passes run.
+  - The elaborator already ignores them, so the gain is the later passes'
+    time, not output size.
+  - It must not run in a package build, which keeps every export.
+  - Done when the pass runs at the program seam and `docs/performance.md`
+    records its effect on the corpus report.
+  - Depends on R777, R772, R775, R776.
+  - Model: Opus, Not Planned.
+
+- [ ] **R779 Generic bodies carry unreachable blocks and unread pure
+  instructions into every instance**
+
+  Lowering leaves blocks nothing branches to and instructions whose results
+  nothing reads, and the elaborator copies both into each instance, where
+  upstream's canonicalizer removes them once.
+  - An instruction with an effect stays, and every inserted drop is a call
+    with an effect.
+  - Done when the pass runs at both seams, keeps the corpus differential
+    clean, and `docs/performance.md` records the instance instruction count
+    before and after.
+  - Depends on R777, R772, R775, R776.
+  - Model: Opus, Not Planned.
+
+- [ ] **R780 Register copies lowering introduces survive into every
+  instance**
+
+  A register copied only to be read elsewhere is kept as a copy in each
+  instance, where upstream's canonicalizer forwards the source to its
+  readers once.
+  - Only a copy of a register, never a slot's move or copy construction,
+    which ownership has already decided.
+  - Done when the pass runs at both seams, keeps the differential clean, and
+    its corpus effect is recorded.
+  - Depends on R779.
+  - Model: Opus, Not Planned.
+
+- [ ] **R781 Constants that do not depend on a parameter are folded per
+  instance instead of once**
+
+  An operation over values known without the parameters, and a branch it
+  decides, is evaluated again in every instance, where upstream's `SCCP`
+  folds it once on the generator.
+  - What depends on a parameter stays for the elaborator, which already
+    folds it per instance.
+  - Done when the pass runs at both seams, keeps the differential clean, and
+    its corpus effect is recorded.
+  - Depends on R780.
+  - Model: Opus, Planned.
+
+- [ ] **R782 Instances that differ only in a parameter their body never
+  reads are made separately**
+
+  The elaborator keys an instance on every parameter argument, so a
+  generic function whose body and signature ignore one of its parameters is
+  instantiated once per value of it, where upstream's `RemoveUnusedParams`
+  removes the parameter first.
+  - The instance key is `InstanceKey` (`mono/specializer.rs`), and the
+    instance's symbol is mangled from it, so the change reaches symbols.
+  - Run it after the cleanup passes, so a use they remove does not keep a
+    parameter alive.
+  - Done when such instances are one, the differential is clean, and the
+    corpus instance count before and after is recorded.
+  - Depends on R781.
+  - Model: Fable, Planned.
+
+- [ ] **R783 `@always_inline` never reaches MIR**
+
+  Mojito accepts `@always_inline` and `@always_inline("nodebug")` and
+  ignores both, so no later pass can see which functions upstream would
+  inline before elaboration.
+  - A function's MIR declaration should record the decorator and its
+    argument.
+  - It changes the MIR text format (`docs/mir-text-format.md`) and the
+    package format.
+  - Done when both spellings round-trip through MIR text and the package.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R784 Generic bodies call `nodebug` inline functions instead of
+  holding their bodies**
+
+  A call to an `@always_inline("nodebug")` function is kept as a call in
+  every instance, where upstream's `InlineParametric` inlines it into the
+  generator before elaboration.
+  - Inline only what upstream's restriction allows. Too much inlining here
+    multiplies the instances' size instead of cutting it.
+  - The callee's drops come with it, and each inlined instruction takes the
+    call site's span.
+  - Done when the pass runs at both seams, the differential is clean, the
+    heavy lane's debug-correlation premise holds, and the corpus effect is
+    recorded.
+  - Depends on R783, R779, R772, R775, R776.
+  - Model: Fable, Planned.
+
+- [ ] **R785 Every instance of a trait default carries its forwarding
+  wrapper**
+
+  A trait default is a lifted `Trait$default$m` function that each
+  conformer reaches through a forwarding wrapper, so every instance holds
+  two functions where one would do.
+  - The wrapper's body is one forwarding call, so inlining it is the
+    restricted inliner's simplest case.
+  - Done when no instance holds a default's wrapper and the differential is
+    clean.
+  - Depends on R784.
+  - Model: Opus, Planned.
+
+- [ ] **R787 Generic bodies keep slot traffic that registers would carry**
+
+  A generic body's variable slots are copied into every instance as slots,
+  where upstream's `Mem2Reg` and `SROA` promote them to registers and split
+  aggregates once, on the generator.
+  - MIR slots carry ownership state, so this needs a plan of what may be
+    promoted after drop elaboration.
+  - Start it only after the cheaper passes show how much remains.
+  - Depends on R781, R785.
+  - Model: Fable, Planned.
+
+### Measure Instantiation And Test The Passes That Shrink It
+
+Track: `measure`.
+
+How much generic instantiation multiplies a program, and proof that a pass
+which shrinks it changes no program's behavior. The passes it serves are in
+the `pmir` track, staged in
+[`docs/pre-elaboration-optimization-plan.md`](pre-elaboration-optimization-plan.md).
+
+- [ ] **R771 `--timings` does not say how much the elaborator multiplied
+  the program**
+
+  `--timings` counts `concrete_functions` and the package bodies decoded,
+  but not the instances each generator made or how many instructions went
+  in and came out, so a pass meant to shrink instantiation cannot show it
+  did.
+  - Report the generators the elaborator reached, the instances it made,
+    the MIR instruction count of the reached generic bodies, and that of the
+    concrete output.
+  - `ParametricInstances` (`native/mono.rs`) already records each instance's
+    template, and nothing reads it.
+  - Pin each counter's meaning on a tiny fixture, as
+    `docs/performance.md` §3 asks.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R772 There is no corpus-wide record of instantiation size to
+  compare a change against**
+
+  The counters cover one program at a time, and nothing records them across
+  the corpus, so a change's effect on expansion is unknown.
+  - Add a script that runs the counters over `assets/ok` and
+    `benchmarks/compile` and writes one row per fixture.
+  - Commit its output as the baseline, so a pass's effect is that file's
+    diff.
+  - Record the first numbers in `docs/performance.md`.
+  - Depends on R771, R774, so the baseline includes the instantiation-heavy
+    benchmarks.
+  - Model: Opus, Not Planned.
+
+- [ ] **R773 Nothing stops a change from growing the instantiated program**
+
+  No gate notices when the corpus's concrete instruction total grows, so a
+  later change can give back what a pass won without anyone deciding to.
+  - Add a ratchet to the overnight gate (`scripts/run-overnight-gates`)
+    that fails when the total exceeds the committed baseline.
+  - A deliberate increase updates the baseline in the same change.
+  - Depends on R772.
+  - Model: Opus, Not Planned.
+
+- [ ] **R774 The compile benchmarks barely exercise instantiation**
+
+  `benchmarks/compile` has one small `generic.mojo`, so neither the
+  counters nor the timings see a program whose cost is mostly instances.
+  - Add fixtures that reach many instances of the bundled collections,
+    nest generic types several levels deep, and call trait defaults through
+    many conformers.
+  - Each must compile with the pinned Mojo, like any `assets/ok` program.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R775 Nothing checks that a pre-elaboration pass leaves every
+  program's behavior unchanged**
+
+  The VM is the oracle, so a pass is correct only if the VM cannot tell it
+  ran, and nothing compares the two.
+  - Add a corpus test that runs each `assets/ok` fixture with the pipeline
+    on and off and requires the same output.
+  - It belongs in the overnight gate, not the in-session one.
+  - Depends on R777, for the switch.
+  - Model: Opus, Not Planned.
+
+- [ ] **R776 A MIR pass has no text-in, text-out test harness**
+
+  A pass can only be tested through whole programs today, which pins its
+  output poorly.
+  - Add a harness that reads MIR text (`mir::text`), runs one named pass,
+    and compares the printed result with an expected file, as the MIR
+    snapshots do.
+  - Depends on R777.
+  - Model: Opus, Not Planned.
 
 ### Native Backend
 
@@ -177,22 +406,6 @@ change that needs a new `MJRT_ABI_VERSION`.
     "unsupported heterogeneous runtime pack projection": a folded constant
     index into a served `def`'s pack was projected by stride.
   - Found while landing R252 (2026-10-04).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **R262 Finding a nested instance's method clone still spells every
-  level of its type**
-
-  Problem: when the checker minted a per-instantiation clone of a
-  template's method, the elaborator names the clone an instance needs by
-  respelling the instance's whole argument type, so a deeply nested
-  instance of that template pays its depth on each lookup.
-  - `template_spelled_arguments` rebuilds each level under its template
-    name, and `mangle` renders the whole type for the clone's symbol.
-  - A template with no minted clone of the method skips both
-    (`instance_method_clone`), so the nesting probes are linear.
-  - The lever is a clone index keyed by the instance's arguments rather
-    than by a spelled symbol.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -1640,25 +1853,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Probe: `conformance/probes/bound_call_result_converted_at_binding.mojo`.
   - Depends on nothing.
   - Model: Opus, Not Planned.
-
-- [ ] **R45 A matching constructor clone displaces every generic constructor,
-  not only its own template**
-
-  Problem: on a struct specialized whole (a variadic one, as `Variant`), a
-  call that a per-call constructor clone matches never considers a second
-  generic constructor, even one that would rank better.
-  - Such a clone is declared `__init__` beside its template, and selection
-    drops every generic candidate once a clone matches (`ranks_beside_clone`,
-    `checker/declarations.rs`).
-  - The clone carries a mark (`MethodProvenance::PerCallConstructor`), not the template
-    it was minted from, so the filter cannot drop that template alone.
-  - No program is known to hit it. `Variant`'s two generic constructors never
-    match the same call, and no fixture pins it.
-  - A non-generic struct's clone is minted under its mangled name and reached
-    by retargeting, so its overload set holds no clone and needs no filter.
-    Minting the specialized struct's clone the same way removes the filter.
-  - Depends on nothing.
-  - Model: Opus, Planned.
 
 - [ ] **R50 A value-returning body that ends in `abort(...)` is rejected**
 
@@ -3205,21 +3399,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R313 A generic struct's method that still clones per instance has
-  no clone for a `StringLiteral` instance**
-
-  Problem: `Box("a").local_ty()`, on a `Box[T]` whose `local_ty` binds
-  `comptime U = Self.T`, stops with "abort: Box.local_ty: unspecialized
-  type-keyed method", while the pin prints `1 0` beside `Box(1)`.
-  - The receiver is typed `Box[StringLiteral]`, and MIR holds the `Int`
-    instance's clone of `local_ty` but none for `StringLiteral`, so the call
-    reaches the template's stub; `Box(String("a"))` runs.
-  - Only a method R312 still clones can hit it.
-  - Probe: `conformance/probes/stub_method_string_literal_instance.mojo`.
-  - Found while landing R305 (2026-10-05).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R296 A method local annotated with a struct pack element's type is
   rejected**
 
@@ -3370,39 +3549,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Workaround: spell the application (`AHasher[SIMD[DType.uint64, 4](0)]`),
     as `assets/ok/template_method_bound_witness_shapes.mojo` does.
   - Pinned by `conformance/probes/imported_alias_in_generic_method.mojo`.
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **R69 An uncalled `rebind` method is checked for every instance**
-
-  Problem: a method whose `rebind` does not hold for one instance of its
-  struct (`rebind[Int](self.value)` on `Box[String]`) is refused with "type
-  mismatch for rebind" even when no call reaches it; the pin judges only the
-  instances a call reaches and runs the program.
-  - The elaborator clones every method of an instantiated struct, and each
-    clone discharges its `rebind` equality.
-  - Under `comptime if Self.T == Int` the arm is dropped for `String`, so a
-    keyed `rebind` is unaffected.
-  - Pinned by `conformance/probes/rebind_method_uncalled_instance.mojo`.
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **R458 A generic `def` whose clone fails to elaborate is rejected
-  even when no reachable call needs it**
-
-  Problem: `f[5]()` inside an uncalled `def unused()`, over a `def f[n: Int]`
-  whose `comptime q = [1, 2][i]` runs past the display at `n = 5`, is refused
-  with "comptime index 2 out of range"; the pin instantiates only what the
-  entry reaches and prints `ok`.
-  - The elaborator above MIR mints a `def`'s clone per discovered call and
-    fails the program when one does not elaborate.
-  - A struct method's clone already defers the same failure to
-    `native::mono`, which reports it only where reached: the clone's body
-    becomes `instantiation_failure_stub`'s `_mojito_instantiation_failed`
-    call (`comptime/specialize.rs`, `mono/failure.rs`). The `def` path can
-    reuse it.
-  - Pinned by `conformance/probes/keyed_def_clone_fails_unreached.mojo`.
-  - Found while landing R403 (2026-10-07).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -6437,6 +6583,18 @@ I/O residues left behind the landed files, streams, paths, and tempfile stage.
 recorded limit, listed in impact order: soundness of the executable oracle
 first, then everyday spellings that reject today, then parity details. A
 residue found inside a task moves to the task that owns its fix.
+
+- [ ] **R786 The bundled library marks none of the functions upstream
+  marks `@always_inline`**
+
+  Upstream's std puts `@always_inline` on most of its small methods, and the
+  bundled std has none, so the pre-elaboration inliner has nothing to act on.
+  - Copy upstream's markings, at the pin's hash, onto the functions the
+    bundled library shares with it.
+  - Done when the corpus report shows the inliner's effect on the bundled
+    collections.
+  - Depends on R783, R784.
+  - Model: Opus, Not Planned.
 
 - [ ] **R197 Compile-time Dict/Set key identity ignores a user struct's
   non-fieldwise `__eq__`**
