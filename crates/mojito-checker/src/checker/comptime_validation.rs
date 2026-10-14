@@ -1896,7 +1896,8 @@ impl Checker {
             }
             ExprKind::Index { object, index }
                 if matches!(&object.kind, ExprKind::Member { object, .. }
-                    if matches!(&object.kind, ExprKind::Identifier(name) if name == "Self")) =>
+                    if matches!(&object.kind, ExprKind::Identifier(name) if name == "Self"))
+                    && self.value_pack_named(object).is_none() =>
             {
                 let ExprKind::Member { field, .. } = &object.kind else {
                     unreachable!("guarded above");
@@ -2134,11 +2135,12 @@ impl Checker {
         let ExprKind::Identifier(name) = &expr.kind else {
             return None;
         };
-        let Some(TyKind::VariadicPack(element)) = self.lookup(name).map(Ty::kind) else {
-            return None;
-        };
-        if mojito_types::types::pack_spread(std::slice::from_ref(element)).is_some() {
-            return None;
+        // A signature binds no local: there the name is the binder alone.
+        match self.lookup(name).map(Ty::kind) {
+            Some(TyKind::VariadicPack(element))
+                if mojito_types::types::pack_spread(std::slice::from_ref(element)).is_none() => {}
+            Some(_) => return None,
+            None => {}
         }
         self.value_parameter_in_scope(name).filter(|pack| {
             pack.as_decl_ref().is_some()
@@ -2233,6 +2235,29 @@ impl Checker {
                 .is_some_and(|(_, ordinal)| ordinal == mojito_ast::ast::VALUE_PACK_READ_ORDINAL)
     }
 
+    /// The raw parameter list `expr` reads: `Self.values` inside the bundled
+    /// `ParameterList` itself, which is upstream's `KGENParamListType`
+    /// parameter rather than a `ParameterList` value. Its `len` and its
+    /// compile-time subscript there stand for upstream's
+    /// `#kgen.param_list.size` and `.get` attributes, as
+    /// `__param_list_address` stands for its static array. Everywhere else
+    /// a struct's own pack is a `ParameterList` value, read through its
+    /// members.
+    pub(super) fn reads_raw_parameter_list(&self, expr: &Expr) -> Option<ParamExpr> {
+        let ExprKind::Member { object, field } = &expr.kind else {
+            return None;
+        };
+        let reads_self = matches!(&object.kind, ExprKind::Identifier(name) if name == "Self")
+            && matches!(
+                self.self_ty.as_ref().map(Ty::kind),
+                Some(TyKind::Struct(name, _)) if name == PARAMETER_LIST
+            )
+            && super::overload_support::is_bundled_variadics_source(
+                expr.source_span().source.as_deref(),
+            );
+        reads_self.then(|| self.self_value_pack(field)).flatten()
+    }
+
     /// The value pack a bracket argument spreads whole: `*vs` of a `def`'s
     /// or method's own value pack, or `*Self.vs` of the enclosing struct's.
     pub(super) fn value_pack_spread(&self, argument: &ParamArg) -> Option<ParamExpr> {
@@ -2269,38 +2294,6 @@ impl Checker {
             ),
             _ => None,
         })
-    }
-
-    /// Type `values[index]` over a value pack that is still a parameter: the
-    /// element at a compile-time index, recorded at `span` as the parameter
-    /// constant the elaborator folds per instance.
-    pub(super) fn infer_value_pack_element(
-        &self,
-        span: SourceSpan,
-        pack: &ParamExpr,
-        index: &Expr,
-    ) -> Result<Ty, TypeError> {
-        let index = self
-            .compile_dependent_ct_expr(index)
-            .map_err(|_| TypeError::TypeMismatch {
-                expected: "a compile-time Int index".to_string(),
-                found: "a runtime value".to_string(),
-                context: "value-pack index".to_string(),
-            })?;
-        let element = self
-            .param_context
-            .list_get(pack, &index)
-            .map_err(param_error)?;
-        let ty = element.meta().as_value().cloned().ok_or_else(|| {
-            TypeError::InvariantViolation(format!("value-pack element '{element}' is not a value"))
-        })?;
-        self.record_at(span).adjustment = Some(Box::new(
-            mojito_checked::checked::SemanticAdjustment::ParamValue {
-                value: element,
-                materialized: None,
-            },
-        ));
-        Ok(ty)
     }
 
     /// Record a query of a pack that is still a parameter, read as a runtime

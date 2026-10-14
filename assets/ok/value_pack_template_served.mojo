@@ -1,6 +1,7 @@
 # A `def` keyed on a variadic value pack is served by its template: the body
-# is checked once, with each `len(values)`, `values.__len__()`, and
-# `values[i]` the parameter constant the elaborator folds per instance.
+# is checked once, with each `len(values)` and `values.__len__()` its
+# `ParameterList`'s `size`, and each `values[i]` its `__getitem__`, or in a
+# parameter position the element the elaborator folds per instance.
 
 
 def weighted[*values: Int]() -> Int:

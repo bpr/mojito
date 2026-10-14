@@ -8,6 +8,18 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A value pack is its `ParameterList` in more positions, as upstream's is
+  (R494): the bundled struct declares upstream's compile-time `size`
+  member, `__len__` returns it, and a value pack's runtime `len` or
+  subscript calls `__len__` or `__getitem__` instead of a checker-recorded
+  constant. A compile-time value member reads through an instance
+  (`args.size`, `c.K`), so `vs.size` works in a body, a bracket argument,
+  and a signature type. `comptime e = vs[1]` binds the element where it was
+  an undefined name, a runtime read of a local `var l = vs` no longer
+  yields the element's pointer, and an `x == DType.float32` comparison no
+  longer leaves an untyped slot the native backend rejects
+  (`assets/ok/value_pack_parameter_list_members.mojo`). A compile-time
+  subscript is still a checker rule (R800, R801).
 - A `comptime for` over an iterable the built-in rule does not serve
   iterates by upstream's iterator protocol (R321): the check spells the
   iterable as its `__iter__()` call, the MIR header

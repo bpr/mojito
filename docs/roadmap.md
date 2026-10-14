@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R800**.
+Next free ID: **R806**.
 
 ## Ordered Work
 
@@ -3125,6 +3125,40 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
+- [ ] **R801 A `comptime` value member or alias cannot take parameters**
+
+  Problem: `comptime get[idx: Int]: Int = Self.values[idx]` on a struct,
+  and `comptime plus_one[n: Int]: Int = n + 1` at module scope, fail with
+  "a compile-time value member cannot take parameters", where the pin
+  declares upstream's `ParameterList.__getitem_param__` this way.
+  - Only types are templated today (`ParameterizedMember.template: Ty`,
+    `lower_parameterized_member` in `checker/constraints.rs`,
+    `StructDeclaration::parameterized_associated_types`).
+  - An unannotated member fails with "a parameterized associated type must
+    be defined by a type".
+  - A module alias read with a symbolic argument (`plus_one[k]` in a
+    generic `def`) fails with "Undefined variable".
+  - The member's template must cross the package boundary in the struct
+    record, so the change bumps the package format and the MIR schema.
+  - Found while planning R494 (2026-10-13).
+  - Depends on nothing.
+  - Model: Fable, Planned.
+
+- [ ] **R802 A struct's `comptime` member over the length of its own value
+  pack is rejected**
+
+  Problem: `comptime size: Int = len(Self.values)` in `struct PL[*values:
+  Int]`, read as `PL[1, 2, 3].size` or as `Self.size` in a method, prints
+  `3` at the pin, while Mojito reports "not an associated comptime
+  expression".
+  - `Self.values` is a `ParameterList` value, so the member applies its
+    `__len__` at compile time, which a struct member cannot do yet (R489).
+  - Only the bundled `ParameterList` reads its own raw list's length
+    (`Checker::reads_raw_parameter_list`).
+  - Found while landing R494 (2026-10-13).
+  - Depends on R489, which lets a struct member apply a function.
+  - Model: Opus, Not Planned.
+
 - [ ] **R396 A signature that calls a function over a value that is no
   `Int` or `Bool` is rejected**
 
@@ -3308,6 +3342,31 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - The method form needs the enclosing struct's binder identity, which
     `classify_ct_param` is not given.
   - Found while landing R446 (2026-10-07).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R803 A `where` clause over a value pack's length reads the pack as
+  a type list**
+
+  Problem: `def f[*vs: Int]() -> Int where len(vs) > 1`, called as
+  `f[4, 5]()`, fails with "cannot prove constraint
+  'TypeList[vs.values]().length > 1'", where the pin runs it.
+  - `Checker::typelist_receiver` (`checker/constraints.rs`) takes every
+    enclosing variadic parameter for a type pack, a value pack included.
+  - Found while landing R494 (2026-10-13).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R804 The length of a value pack in a signature type is rejected**
+
+  Problem: `def sized[*vs: Int]() -> Box[len(vs)]` fails with "not a
+  compile-time Int constant: not an associated comptime expression", where
+  the pin types the result by the pack's length.
+  - A signature has no body to lift `len(vs)` from, and `len` is a checker
+    builtin rather than a module function, so `called_application` does not
+    serve it.
+  - `Box[vs.size]` is the spelling that works today.
+  - Found while landing R494 (2026-10-13).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -6240,19 +6299,39 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Fable, Planned.
 
-- [ ] **R494 A compile-time read of a value pack is a checker rule, not a
-  `ParameterList` member**
+- [ ] **R800 A compile-time subscript of a value pack is a checker rule, not
+  `ParameterList.__getitem_param__`**
 
-  Problem: `len(values)`, `values[i]` at a compile-time index, and `comptime
-  for v in values` are recorded by the checker as parameter constants,
-  where upstream answers them through `ParameterList.size` and
-  `__getitem_param__` on the same struct a runtime read constructs.
-  - Only a runtime read is the `ParameterList` construction today
-    (`Checker::infer_value_pack_read`).
-  - `ParameterList.size` waits on a readable struct `comptime` member over
-    the struct's own pack.
-  - Found while landing R325 (2026-10-08).
-  - Depends on R493.
+  Problem: `comptime e = vs[1]`, `Box[vs[0]]`, and `materialize[vs[i]]()`
+  are compiled by the checker straight to a `ListGet` over the pack, where
+  upstream reads them through `ParameterList.__getitem_param__`.
+  - The checker site is the `Index` arm of `compile_dependent_ct_expr`
+    (`checker/constraints.rs`), which also serves display lists and module
+    display constants and must keep doing so.
+  - Add `comptime __getitem_param__[idx: Int]: Self.type = Self.values[idx]`
+    to `stdlib/std/builtin/variadics.mojo`, read under the raw-list gate
+    (`Checker::reads_raw_parameter_list`), as `size` already is.
+  - Upstream's index parameter is `idx: SIMDLength`, which Mojito lacks, so
+    the port spells it `Int` and records that in the module header.
+  - A runtime subscript already calls `__getitem__`, and the length is
+    already `size`.
+  - Found while landing R494 (2026-10-13).
+  - Depends on R801, which gives a `comptime` value member parameters.
+  - Model: Fable, Planned.
+
+- [ ] **R805 A compile-time read of a type pack is a checker rule, not a
+  `TypeList` member**
+
+  Problem: `len(Ts)`, `Ts.length`, and `Ts[i]` over a type pack are
+  recorded by the checker as pack queries, where upstream answers them
+  through `TypeList.size` and `__getitem_param__` on a library struct.
+  - Mojito has no bundled `TypeList`: the checker builds it
+    (`Checker::typelist_receiver`, `unbound_pack_named`, the type-pack arms
+    of `pack_length_binder`).
+  - A value pack's reads already go through the bundled `ParameterList`
+    (R494), which is the model to follow.
+  - Found while landing R494 (2026-10-13).
+  - Depends on R801, which gives a `comptime` value member parameters.
   - Model: Fable, Planned.
 
 - [ ] **R378 A function lifted for a compile-time expression evaluates

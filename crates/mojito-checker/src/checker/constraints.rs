@@ -338,6 +338,25 @@ impl Checker {
                 let ty = self.size_of_operand(param_args, args)?;
                 Ok(CtValue::Expr(self.param_context.size_of(ty)))
             }
+            // `len(Self.values)` over the bundled `ParameterList`'s raw list:
+            // its `#kgen.param_list.size`.
+            ExprKind::Call {
+                name,
+                param_args,
+                args,
+                kwargs,
+            } if name == "len"
+                && param_args.is_empty()
+                && kwargs.is_empty()
+                && let [list] = args.as_slice()
+                && let Some(pack) = self.reads_raw_parameter_list(list)
+                && let Some(pack) = pack.as_decl_ref() =>
+            {
+                Ok(CtValue::Expr(self.param_context.pack_query(
+                    pack,
+                    mojito_types::param_expr::PackQuery::Length,
+                )))
+            }
             // `Int(3)`: a scalar conversion of a compile-time value, which is
             // the declared type's ordinary literal materialization. It makes
             // `Array[Int, Int(3)]` and `Array[Int, 3]` one type.
@@ -1219,6 +1238,9 @@ impl Checker {
         object: &Expr,
         field: &str,
     ) -> Option<Result<ParamExpr, TypeError>> {
+        if let Some(pack) = self.value_pack_named(object) {
+            return self.parameter_list_member(pack, field);
+        }
         let subject = self.member_subject(object)?;
         match subject.kind() {
             TyKind::Param { bounds, .. } => {
@@ -1260,6 +1282,32 @@ impl Checker {
         }
     }
 
+    /// The value member `field` of the `ParameterList` a value pack is
+    /// (`vs.size`), at the pack. `None` when the bundled struct declares no
+    /// such value member.
+    fn parameter_list_member(
+        &self,
+        pack: ParamExpr,
+        field: &str,
+    ) -> Option<Result<ParamExpr, TypeError>> {
+        let info = self
+            .structs
+            .get(super::comptime_validation::PARAMETER_LIST)?;
+        let value = info
+            .associated
+            .get(field)
+            .filter(|value| !matches!(value, CtValue::Type(_)))?;
+        let mojito_types::param_expr::MetaTy::ParamList(element) = pack.meta() else {
+            return None;
+        };
+        let element = element.as_value()?.clone();
+        Some(self.struct_member_at(
+            info,
+            &[TyArg::Ty(element), TyArg::Val(CtValue::Expr(pack))],
+            value,
+        ))
+    }
+
     /// The length query of a pack that is still a parameter, when `expr`
     /// asks one ([`Self::pack_length_binder`]).
     pub(super) fn pack_length_query(&self, expr: &Expr) -> Option<ParamExpr> {
@@ -1299,9 +1347,7 @@ impl Checker {
                 kwargs,
             } if name == "len" && param_args.is_empty() && kwargs.is_empty() => {
                 match args.as_slice() {
-                    [pack] => self
-                        .unbound_pack_named(pack)
-                        .or_else(|| self.value_pack_named(pack)),
+                    [pack] => self.unbound_pack_named(pack),
                     _ => None,
                 }
             }
@@ -1311,7 +1357,7 @@ impl Checker {
                 args,
                 kwargs,
             } if method == "__len__" && args.is_empty() && kwargs.is_empty() => {
-                collector_pack(object).or_else(|| self.value_pack_named(object))
+                collector_pack(object)
             }
             ExprKind::Member { object, field } if field == "length" => {
                 self.unbound_pack_named(object)

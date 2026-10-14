@@ -3214,7 +3214,11 @@ the bundled `ParameterList.get_span`'s stand-in for upstream's
 elaborator closes it to a tuple, and each backend lays the list out once per
 program (a never-freed VM allocation, a private constant global natively).
 A value pack read at run time reaches it as the `ParameterList[*values]()`
-construction the checker spells in the read's place.
+construction the checker spells in the read's place: a runtime subscript
+calls `__getitem__` and a runtime length `__len__`, even at a compile-time
+index. A compile-time length is the struct's `size` member, read through
+the value (`values.size`), whose body the bundled struct alone spells over
+its raw list.
 
 Public collection displays and comprehensions use ordinary `Call` and
 `MethodCall` instructions. `MakeTuple` is reserved for the compiler-private

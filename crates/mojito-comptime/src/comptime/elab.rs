@@ -135,10 +135,7 @@ impl Elab<'_> {
     fn template_pack_element_alias(&self, kind: &StmtKind) -> Option<(String, Type)> {
         let binders = self.template_binders.borrow();
         let binders = binders.last()?;
-        pack_element_alias(kind, &|base| {
-            binders.contains(&format!("*{base}"))
-                || (base.starts_with("Self.") && binders.contains(base))
-        })
+        pack_element_alias(kind, &|base| binders.contains(&format!("*{base}")))
     }
 
     pub(super) fn stmt(
@@ -1046,16 +1043,13 @@ impl Elab<'_> {
         let env = &mut env.clone();
         // A pack's collector stands for the pack in a bound (`len(args)`),
         // so it is a binder of the body too.
-        // A type pack is a binder under both spellings: `Ts` as the body
-        // names it, and `*Ts` marking it a pack ([`Self::block`]).
+        // A type pack is a binder under both spellings: `Ts` (or
+        // `Self.Ts`) as the body names it, and `*Ts` (`*Self.Ts`) marking
+        // it a type pack ([`Self::template_pack_element_alias`]). A value
+        // pack is a `ParameterList` value, never marked.
         let mut binders: HashSet<String> = type_params
             .iter()
-            .flat_map(|parameter| {
-                [
-                    parameter.name.trim_start_matches('*').to_string(),
-                    parameter.name.clone(),
-                ]
-            })
+            .map(|parameter| parameter.name.trim_start_matches('*').to_string())
             .collect();
         binders.extend(def_pack_names(type_params, params));
         binders.extend(struct_pack_collectors(struct_params, params));
@@ -1063,6 +1057,11 @@ impl Elab<'_> {
             struct_params
                 .iter()
                 .map(|parameter| self_qualified(&parameter.name)),
+        );
+        binders.extend(type_packs(type_params).map(|parameter| parameter.name.clone()));
+        binders.extend(
+            type_packs(struct_params)
+                .map(|parameter| format!("*{}", self_qualified(&parameter.name))),
         );
         self.template_binders.borrow_mut().push(binders);
         let body = self.block(body, env, true);
@@ -1309,6 +1308,18 @@ fn spell_aliases_in_conditions(statements: &mut [Stmt], aliases: &HashMap<String
 
 /// The binder-set entry of a struct parameter, which a method body names
 /// only as `Self.<name>`.
+/// The type packs among `parameters`: a variadic parameter the check does
+/// not classify as a value.
+fn type_packs(parameters: &[TypeParam]) -> impl Iterator<Item = &TypeParam> {
+    parameters.iter().filter(|parameter| {
+        parameter.name.starts_with('*')
+            && !matches!(
+                super::params::classify_ct_param(parameter, parameters, ""),
+                Some(mojito_types::types::ParamDecl::Value { .. })
+            )
+    })
+}
+
 fn self_qualified(name: &str) -> String {
     format!("Self.{}", name.trim_start_matches('*'))
 }

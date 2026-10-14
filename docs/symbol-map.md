@@ -1522,12 +1522,19 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   parameter (`*values: Int`) is a `ParamList` of its element
   (`annotations::value_parameter_expr`, `verify::declared_kind`):
   `Checker::value_pack_named` resolves it — a struct's own `Self.values`
-  through `self_value_pack`, which `infer_member` types as the pack — and
-  `infer_value_pack_element` records `values[i]` at a compile-time index as
-  a `ListGet`, while `infer_len`, the intrinsic `__len__` receiver, and
-  `pack_length_binder` record its length, and `comptime_iteration_element`
-  types a `comptime for` over it. Any other read
-  (`for v in values`, a runtime index, a whole binding) is the bundled
+  through `self_value_pack`, which `infer_member` types as the pack. Only a
+  parameter position reads the pack itself: `compile_dependent_ct_expr`'s
+  `Index` arm makes `values[i]` a `ListGet` (upstream's
+  `__getitem_param__`, roadmap R800), and `comptime_iteration_element`
+  types a `comptime for` over it. Its length is the bundled
+  `ParameterList.size` member, read through the value (`values.size`) by
+  the instance arm of `infer_member` (`indexing.rs`, any struct's value
+  member) or, at run time, by `ParameterList.__len__`; a parameter-position
+  `len(values)` is a lifted application of that call. Inside the bundled
+  struct alone `len(Self.values)` is the raw list's length
+  (`Checker::reads_raw_parameter_list`, `eval_associated_ct`), the stand-in
+  for upstream's `#kgen.param_list.size`. Any other read
+  (`for v in values`, any runtime index, a whole binding) is the bundled
   `ParameterList[*values]()` (`stdlib/std/builtin/variadics.mojo`, with
   `_ParameterListIter`): `Checker::infer_value_pack_read` (top of
   `infer_impl`) spells that construction as a `SpelledConstruction` whose

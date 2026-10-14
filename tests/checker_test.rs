@@ -7764,6 +7764,28 @@ fn parameter_list_brackets_spelled_by_user_code_are_rejected() {
 }
 
 #[test]
+fn comptime_member_read_through_an_instance() {
+    // A compile-time value member read through an instance is the member of
+    // the instance's type, as `args.size` reads `ParameterList.size`.
+    ok_std(
+        "struct Foo[k: Int]:\n    comptime K: Int = Self.k + 1\n\n    def __init__(out self):\n        pass\n\n\ndef f[k: Int, *vs: Int]() -> Int:\n    var foo = Foo[k]()\n    comptime n = vs.size\n    return foo.K + n + vs.size\n\n\ndef main():\n    print(f[2, 1, 2, 3]())\n",
+    );
+}
+
+#[test]
+fn comptime_type_member_through_an_instance_is_not_a_value() {
+    // Only a value member reads through an instance; an associated type, or
+    // a name the type does not declare, is no field of the value.
+    for source in [
+        "struct Foo:\n    comptime T = Int\n\n    def __init__(out self):\n        pass\n\n\ndef main():\n    var foo = Foo()\n    print(foo.T)\n",
+        "struct Foo:\n    comptime K: Int = 1\n\n    def __init__(out self):\n        pass\n\n\ndef main():\n    var foo = Foo()\n    print(foo.J)\n",
+    ] {
+        let error = err_std(source);
+        assert!(error.to_string().contains("has no field"), "{error}");
+    }
+}
+
+#[test]
 fn initializer_list_without_a_contextual_type_is_rejected() {
     let error = err("def main():\n    var d = {}\n    print(1)\n");
     assert!(

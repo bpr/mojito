@@ -123,21 +123,6 @@ impl Checker {
             reject_kwargs(kwargs)?;
             return Ok(Some(ty));
         }
-        // A value pack that is still a parameter answers its length as the
-        // parameter constant the elaborator folds.
-        if method == "__len__"
-            && args.is_empty()
-            && param_args.is_empty()
-            && let Some(pack) = self.value_pack_named(object)
-        {
-            reject_kwargs(kwargs)?;
-            self.record_pack_query_value(
-                span.clone(),
-                &pack,
-                mojito_types::param_expr::PackQuery::Length,
-            );
-            return Ok(Some(Ty::int()));
-        }
         // A heterogeneous pack that is still a parameter answers its length;
         // any other member waits for the specialization's concrete storage.
         if let TyKind::VariadicPack(element) = obj_ty.kind()

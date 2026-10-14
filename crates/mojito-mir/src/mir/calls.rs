@@ -317,12 +317,9 @@ impl<'a> Flatten<'a> {
     /// temporary's slot dies at its last use, and a view's referent is
     /// reached through it.
     fn setup_reference(&mut self, expression: Node<'a>) -> bool {
-        let rooted = self
-            .place_chain(expression)
-            .last()
-            .is_none_or(|root| self.simple_place(*root).is_some());
-        rooted
-            && expression.reference_result().is_some()
+        // The root's place is probed last: interning it allocates a slot,
+        // and an operand that is no reference (`DType.float32`) names none.
+        expression.reference_result().is_some()
             && expression.spread_operand().is_none()
             && expression.transfer_operand().is_none()
             && !expression.constant_param_value()
@@ -336,6 +333,10 @@ impl<'a> Flatten<'a> {
             })
             && mojito_checked::checked::materialized_borrow_owner(expression.adjustments())
                 .is_none()
+            && self
+                .place_chain(expression)
+                .last()
+                .is_none_or(|root| self.simple_place(*root).is_some())
     }
 
     /// The objects `expression`'s accessor chain reads through, innermost

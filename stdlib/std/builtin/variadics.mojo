@@ -35,7 +35,7 @@ struct _ParameterListIter[type: Copyable, //, *values: type](
     ) raises StopIteration -> ref[ImmStaticOrigin] Self.type:
         var index = self.index
 
-        if index >= len(Self.values):
+        if index >= Self.values.size:
             raise StopIteration()
         self.index = index + 1
         return Self.values[index]
@@ -44,7 +44,7 @@ struct _ParameterListIter[type: Copyable, //, *values: type](
         return self
 
     def bounds(self) -> Tuple[Int, Optional[Int]]:
-        var len = len(Self.values) - self.index
+        var len = Self.values.size - self.index
         return (len, {len})
 
 
@@ -62,6 +62,11 @@ struct ParameterList[type: AnyType, //, *values: type](
         values: The values in the list.
     """
 
+    # Upstream's `#kgen.param_list.size` over its raw list: `len` of the
+    # struct's own `Self.values` is that attribute here.
+    comptime size: Int = len(Self.values)
+    """The number of elements in the list."""
+
     # ===-------------------------------------------------------------------===#
     # Accessors
     # ===-------------------------------------------------------------------===#
@@ -72,7 +77,7 @@ struct ParameterList[type: AnyType, //, *values: type](
         Returns:
             The number of elements on the variadic list.
         """
-        return len(Self.values)
+        return Self.size
 
     @staticmethod
     def get_span() -> Span[Self.type, ImmStaticOrigin]:
@@ -82,7 +87,7 @@ struct ParameterList[type: AnyType, //, *values: type](
             A span of the elements on the variadic list.
         """
         var first_elt = __param_list_address[*Self.values]()
-        return Span(unsafe_ptr=first_elt, length=len(Self.values))
+        return Span(unsafe_ptr=first_elt, length=Self.size)
 
     def __getitem__(self, idx: Int) -> ref[ImmStaticOrigin] Self.type:
         """Gets a single element on the variadic list.

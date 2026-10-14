@@ -1294,15 +1294,6 @@ impl Checker {
         object: &Expr,
         index: &Expr,
     ) -> Result<Ty, TypeError> {
-        // A compile-time index reads the element as the parameter constant
-        // the elaborator folds; any other index reads the runtime
-        // `ParameterList` the pack is. Source validation types a local
-        // `comptime` index as the runtime value the elaborator later folds.
-        if let Some(pack) = self.value_pack_named(object)
-            && self.compile_dependent_ct_expr(index).is_ok()
-        {
-            return self.infer_value_pack_element(span, &pack, index);
-        }
         let obj_ty = self.infer(object)?;
         // A reference-typed base (a `ref` field projected off a collection
         // element, or reached through a binding) indexes its referent:
@@ -1987,6 +1978,21 @@ impl Checker {
                     TyKind::Ref(reference) => reference.referent.clone(),
                     _ => value,
                 });
+            }
+            // A compile-time value member read through an instance
+            // (`args.size`) is the member of the instance's type: the
+            // receiver only types the read.
+            if let Some(member) = info
+                .associated
+                .get(field)
+                .filter(|value| !matches!(value, CtValue::Type(_)))
+            {
+                let value = self.struct_member_at(info, targs, member)?;
+                let ty = value.meta().as_value().cloned().ok_or_else(|| {
+                    TypeError::InvariantViolation(format!("member '{field}' is not a value"))
+                })?;
+                self.record_member_value(span, value);
+                return Ok(ty);
             }
         }
         Err(TypeError::NoSuchField {

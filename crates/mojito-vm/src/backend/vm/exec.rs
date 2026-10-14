@@ -1507,6 +1507,14 @@ impl VmBackend {
                     );
                 regs[dest.0 as usize] = if pointer_slot {
                     vars[place.root as usize].clone()
+                } else if place.through == Some(place.root)
+                    && let pointer @ Value::Pointer { .. } = &vars[place.root as usize]
+                {
+                    // A reference binding of a static-origin call result holds
+                    // the element's heap pointer (`static_reference_result`).
+                    let referent = self.read_reference(pointer, frame_id, vars)?;
+                    let projection = super::references::place_projection_segments(place, regs)?;
+                    self.read_reference_projection(frame_id, vars, &referent, &projection)?
                 } else if let Some(reference) =
                     self.extend_reference(&vars[place.root as usize], place, regs)?
                 {
