@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R868**.
+Next free ID: **R869**.
 
 ## Ordered Work
 
@@ -56,22 +56,6 @@ and Mojito does not yet. The entries below are that stage, staged in
 which names the upstream pass each one follows. Each is measured by the
 `measure` track's counters and checked by its on/off differential.
 
-
-- [ ] **R866 An instance keeps its origin parameters**
-
-  `native::mono::substitute::substitute_arg` clones each `TyArg::Origin`,
-  so an instance's register types keep `Origin(Param(..))`, as in
-  `Span$mono$TInt[Int, Origin(Param(2))]`, where upstream's elaborator
-  substitutes origin parameters with the rest of a generator's parameters.
-  - Visible since R865 stopped copying slot origins over register types;
-    both backends erase origins and the verifier admits them, so no output
-    depends on it.
-  - The fix carries origin arguments in the instance bindings and
-    substitutes them; the concrete verifier then rejects an origin
-    parameter.
-  - Found while landing R865 (2026-10-14).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
 
 - [ ] **R842 `canonicalize` does not apply constant folds**
 
@@ -249,6 +233,22 @@ which names the upstream pass each one follows. Each is measured by the
   - Dead struct declarations and declarations of removed bodies should go
     too; overload lookups read them, so check those first.
   - Depends on R778.
+  - Model: Opus, Not Planned.
+
+- [ ] **R868 A method instance's bare `Self` erases its owner's origin
+  binders**
+
+  `substitute_ty` rewrites a bare `Self` in a method instance to
+  `Bindings::self_instance`, whose origin tail R866 erased to
+  `Origin::Unbound`, where upstream names the owner's own unspecialized
+  parameters (`::Span[$0, $1, $2, $3]`).
+  - An explicit spelling (`Span[T, origin]`) already keeps `Origin::Param`.
+  - The fix needs `MirStructDeclaration` to carry the struct's origin
+    slots, which the checker computes in `struct_origin_slots`; that is a
+    MIR text-schema and package-format bump.
+  - Both backends erase origins, so no output depends on it.
+  - Found while landing R866 (2026-10-14).
+  - Depends on nothing.
   - Model: Opus, Not Planned.
 
 ### Measure Instantiation And Test The Passes That Shrink It

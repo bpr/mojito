@@ -2110,7 +2110,14 @@ key erases its arguments' origin tails, since the instance symbol spells none â€
 keying on them would mint a second instance under the first one's symbol), and
 the checker's
 instantiation records reset it to unbound so a place origin (a per-check owner
-id) never makes an instantiation look new across passes.
+id) never makes an instantiation look new across passes. An instance's
+bindings are its key's origin-erased form (`Bindings::erase_origins`, sharing
+the key's one erasure `origin_erased`), as upstream binds a type parameter to a
+type whose origins read `origin={ }`, so no caller's binders or places leak
+into the instance whichever caller demands it first. The instance's own origin
+binders and its body's own places stay symbolic, as upstream keeps an
+instance's origin parameters unspecialized (`$0`, `$1`), so concrete MIR
+admits `Origin::Param`.
 
 A type's node caches whether it is closed (`Ty::is_closed`: no parameter,
 projection, literal or inference type, callable, pointer, reference,

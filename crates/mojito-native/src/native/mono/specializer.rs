@@ -195,9 +195,10 @@ impl<'a> Specializer<'a> {
     pub(super) fn enqueue(
         &mut self,
         template: &str,
-        bindings: Bindings,
+        mut bindings: Bindings,
         arguments: Vec<InstanceArg>,
     ) -> Result<String, MonoError> {
+        bindings.erase_origins();
         if let Some(declaration) = self.declarations.get(template)
             && let Availability::Disproven(message) = self.availability(declaration, &bindings)
         {
@@ -229,9 +230,7 @@ impl<'a> Specializer<'a> {
             arguments: arguments
                 .into_iter()
                 .map(|argument| match argument {
-                    InstanceArg::Ty(ty) => InstanceArg::Ty(without_pointer_origins(
-                        &mojito_types::types::erase_origin_arguments(&ty),
-                    )),
+                    InstanceArg::Ty(ty) => InstanceArg::Ty(origin_erased(&ty)),
                     value @ InstanceArg::Value(_) => value,
                 })
                 .collect(),
@@ -3164,38 +3163,6 @@ fn pass_capturing_arguments(
         loads.push(MirInstr::LoadPlace { dest, place });
     }
     preludes.push((index, loads));
-}
-
-/// `ty` with every pointer origin reset to the static one. A pointer's
-/// provenance erases from the runtime ABI and from the instance symbol, as a
-/// struct's origin slots do.
-fn without_pointer_origins(ty: &Ty) -> Ty {
-    let recur = without_pointer_origins;
-    match ty.kind() {
-        TyKind::Pointer { element, .. } => TyKind::Pointer {
-            element: recur(element),
-            origin: mojito_types::origin::PointerOrigin::Static,
-        }
-        .into(),
-        TyKind::Struct(..) if ty.is_closed() => ty.clone(),
-        TyKind::Struct(name, arguments) => ty.reusing(TyKind::Struct(
-            name.clone(),
-            mojito_types::types::map_tyargs(arguments, recur),
-        )),
-        TyKind::Tuple(elements) => TyKind::Tuple(elements.iter().map(recur).collect()).into(),
-        TyKind::RuntimePack(elements) => {
-            TyKind::RuntimePack(elements.iter().map(recur).collect()).into()
-        }
-        TyKind::Variant(alternatives) => {
-            TyKind::Variant(alternatives.iter().map(recur).collect()).into()
-        }
-        TyKind::Ref(reference) => {
-            let mut reference = reference.clone();
-            reference.referent = recur(&reference.referent);
-            TyKind::Ref(reference).into()
-        }
-        _ => ty.clone(),
-    }
 }
 
 /// Drops the compile-time argument slots `instruction` still carries: a

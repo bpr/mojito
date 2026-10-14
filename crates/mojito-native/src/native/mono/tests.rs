@@ -1857,3 +1857,84 @@ fn capturing_generic_callable_parameter_passes_only_its_environment() {
         "`main` passes `offset`'s place, not the closure"
     );
 }
+
+/// Every struct origin argument `ty` carries, at any depth.
+fn struct_origins(ty: &Ty) -> Vec<mojito_types::origin::Origin> {
+    match ty.kind() {
+        TyKind::Struct(_, arguments) => arguments
+            .iter()
+            .flat_map(|argument| match argument {
+                TyArg::Ty(inner) => struct_origins(inner),
+                TyArg::Origin(origin) => vec![origin.clone()],
+                TyArg::Val(_) => Vec::new(),
+            })
+            .collect(),
+        TyKind::Ref(reference) => struct_origins(&reference.referent),
+        TyKind::Pointer { element, .. } => struct_origins(element),
+        _ => Vec::new(),
+    }
+}
+
+#[test]
+fn an_instance_binds_origin_erased_types() {
+    use mojito_types::origin::Origin;
+    let source = "def keep[T: Copyable](value: T) -> T:\n\
+         \x20   return value.copy()\n\
+         def first[o: Origin](s: Span[Int, o]) -> Int:\n\
+         \x20   return s[0]\n\
+         def left() -> Int:\n\
+         \x20   var xs: List[Int] = [1, 2]\n\
+         \x20   return first(keep(Span(xs)))\n\
+         def right() -> Int:\n\
+         \x20   var ys: List[Int] = [3]\n\
+         \x20   return first(keep(Span(ys)))\n\
+         def main():\n\
+         \x20   print(left(), right())\n";
+    let instances = |specialized: &SpecializedProgram, template: &str| {
+        let mut found = specialized
+            .program
+            .functions
+            .iter()
+            .filter(|(name, _)| name.starts_with(template))
+            .map(|(name, function)| {
+                let mut regs = function.reg_types.iter().collect::<Vec<_>>();
+                regs.sort_by_key(|(reg, _)| **reg);
+                (
+                    name.clone(),
+                    function.param_types.clone(),
+                    regs.into_iter()
+                        .map(|(reg, ty)| (*reg, ty.clone()))
+                        .collect::<Vec<_>>(),
+                )
+            })
+            .collect::<Vec<_>>();
+        found.sort_by(|a, b| a.0.cmp(&b.0));
+        found
+    };
+    let first_run = specialized_main(source);
+    let keep = instances(&first_run, "keep");
+    let [(_, params, _)] = keep.as_slice() else {
+        panic!("one `keep` instance across both callers' origins: {keep:?}");
+    };
+    assert!(
+        params
+            .iter()
+            .flat_map(struct_origins)
+            .all(|origin| origin == Origin::Unbound),
+        "`keep`'s bound `T` carries no caller origin: {params:?}"
+    );
+    let first = instances(&first_run, "first");
+    let [(_, params, _)] = first.as_slice() else {
+        panic!("one `first` instance: {first:?}");
+    };
+    assert!(
+        params
+            .iter()
+            .flat_map(struct_origins)
+            .any(|origin| matches!(origin, Origin::Param(_))),
+        "`first` keeps its own origin binder: {params:?}"
+    );
+    let second_run = specialized_main(source);
+    assert_eq!(keep, instances(&second_run, "keep"));
+    assert_eq!(first, instances(&second_run, "first"));
+}

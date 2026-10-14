@@ -8,6 +8,13 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- An instance's type bindings now carry no origin (R866), as upstream binds
+  a type parameter to a type whose origins read `origin={ }`, so an instance
+  demanded by callers differing only in origins no longer keeps whichever
+  caller's binders or places came first, and its concrete MIR no longer
+  varies from run to run. Its own origin parameters stay symbolic, as
+  upstream's do. No program's output changes.
+
 - An instance now keeps its substituted generic register and slot types
   (R865), as upstream's elaborator does, instead of re-deriving them from
   one another after substitution, and the concrete MIR verifier rejects a

@@ -1266,6 +1266,9 @@ pub(super) fn substitute_arg(arg: &TyArg, bindings: &Bindings) -> Result<TyArg, 
             ))
         }
         TyArg::Val(value) => TyArg::Val(value.clone()),
+        // A template's origin is its own binder or a place its body owns:
+        // upstream keeps an instance's origin parameters unspecialized, and
+        // the bindings carry none ([`Bindings::erase_origins`]).
         TyArg::Origin(origin) => TyArg::Origin(origin.clone()),
     })
 }

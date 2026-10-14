@@ -38,7 +38,7 @@ use mojito_types::param_expr::{
     PackQuery, ParamBindings, ParamContext, ParamExpr, ParamKind, ParamRef, SIZE_OF_FUNCTION,
 };
 use mojito_types::types::{
-    ConstraintOperand, GenericConstraint, ParamDecl, SimdDtype, SimdWidth, Ty, TyArg,
+    ConstraintOperand, GenericConstraint, ParamDecl, SimdDtype, SimdWidth, Ty, TyArg, TyKind,
 };
 use mojito_vm::backend::VmBackend;
 
@@ -375,6 +375,31 @@ struct Bindings {
     applications: Option<Rc<Applications>>,
 }
 
+impl Bindings {
+    /// Erase every origin the bound types carry, as upstream binds a type
+    /// parameter to a type whose origins read `origin={ }`. The instance key
+    /// names these erased types, so a binding keeps none of the origins of
+    /// whichever caller first demanded the instance: those name the caller's
+    /// own binders and places, which mean nothing in the callee. The
+    /// instance's own origin binders are not bindings and stay symbolic, as
+    /// upstream keeps an instance's origin parameters unspecialized.
+    fn erase_origins(&mut self) {
+        fn erase_value(value: &mut CtValue) {
+            match value {
+                CtValue::Type(ty) => *ty = origin_erased(ty),
+                CtValue::Tuple(elements) => elements.iter_mut().for_each(erase_value),
+                _ => {}
+            }
+        }
+        self.types
+            .values_mut()
+            .chain(self.associated.values_mut())
+            .chain(self.self_instance.iter_mut().map(|(_, ty)| ty))
+            .for_each(|ty| *ty = origin_erased(ty));
+        self.values.values_mut().for_each(erase_value);
+    }
+}
+
 /// What a call passes for the callable parameters it binds to closures that
 /// capture ([`Specializer::bind_capturing_callables`]).
 #[derive(Default)]
@@ -546,6 +571,47 @@ struct Specializer<'a> {
     /// the name the copy's closure value takes: the template and the copy's
     /// bindings, which a call binding the body's own parameters extends.
     region_generators: HashMap<String, (String, Bindings)>,
+}
+
+/// `ty` with every struct origin argument unbound and every pointer origin
+/// static: the one origin erasure an instance's key and its bindings share.
+/// Origins erase from the runtime ABI and from the instance symbol.
+fn origin_erased(ty: &Ty) -> Ty {
+    let recur = origin_erased;
+    match ty.kind() {
+        TyKind::Struct(..) if ty.is_closed() => ty.clone(),
+        TyKind::Struct(name, arguments) => ty.reusing(TyKind::Struct(
+            name.clone(),
+            arguments
+                .iter()
+                .map(|argument| match argument {
+                    TyArg::Ty(inner) => TyArg::Ty(recur(inner)),
+                    TyArg::Val(value) => TyArg::Val(value.clone()),
+                    TyArg::Origin(_) => TyArg::Origin(mojito_types::origin::Origin::Unbound),
+                })
+                .collect(),
+        )),
+        TyKind::Pointer { element, .. } => TyKind::Pointer {
+            element: recur(element),
+            origin: mojito_types::origin::PointerOrigin::Static,
+        }
+        .into(),
+        TyKind::Tuple(elements) => TyKind::Tuple(elements.iter().map(recur).collect()).into(),
+        TyKind::RuntimePack(elements) => {
+            TyKind::RuntimePack(elements.iter().map(recur).collect()).into()
+        }
+        TyKind::Variant(alternatives) => {
+            TyKind::Variant(alternatives.iter().map(recur).collect()).into()
+        }
+        TyKind::ComptimeList(element) => TyKind::ComptimeList(recur(element)).into(),
+        TyKind::VariadicPack(element) => TyKind::VariadicPack(recur(element)).into(),
+        TyKind::Ref(reference) => {
+            let mut reference = reference.clone();
+            reference.referent = recur(&reference.referent);
+            TyKind::Ref(reference).into()
+        }
+        _ => ty.clone(),
+    }
 }
 
 mod availability;
