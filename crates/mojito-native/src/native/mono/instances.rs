@@ -6,10 +6,16 @@ use super::*;
 use mojito_types::types::TyKind;
 
 impl Specializer<'_> {
-    /// The constant a value-parameter member read (`Self.length`) resolves
-    /// to, when `field` names a value parameter (not a declared field) of
-    /// the receiver's template and the instance type carries its solution.
-    pub(super) fn value_param_constant(&self, receiver: &Ty, field: &str) -> Option<Const> {
+    /// The constant a value-parameter member read (`Self.length`) at `read`
+    /// resolves to, when `field` names a value parameter (not a declared
+    /// field) of the receiver's template and the instance type carries its
+    /// solution.
+    pub(super) fn value_param_constant(
+        &self,
+        receiver: &Ty,
+        field: &str,
+        read: Option<&Ty>,
+    ) -> Option<Const> {
         let TyKind::Struct(name, type_args) = peel_refs(receiver).kind() else {
             return None;
         };
@@ -34,6 +40,9 @@ impl Specializer<'_> {
             CtValue::Bool(v) => Some(Const::Bool(*v)),
             CtValue::Dtype(v) => Some(Const::Dtype(*v)),
             value @ (CtValue::Simd { .. } | CtValue::Struct { .. }) => {
+                Some(Const::Value(value.clone()))
+            }
+            CtValue::Str(_) if read.is_some_and(mojito_types::types::is_nominal_string) => {
                 Some(Const::Value(value.clone()))
             }
             _ => None,

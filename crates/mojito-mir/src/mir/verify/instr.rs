@@ -102,12 +102,26 @@ pub(super) fn verify_instruction(
         MirInstr::Call { .. } | MirInstr::MethodCall { .. } | MirInstr::CallIndirect { .. } => {
             verify_call_instruction(&cx, instruction, errors);
         }
-        // A parameter value constant is a closed vector, or a struct or
-        // tuple of such values and scalars.
+        // A parameter value constant is a closed vector, a struct or tuple
+        // of such values, scalars, and strings, or a string read at the
+        // nominal `String`.
+        MirInstr::Const {
+            k: crate::mir::Const::Value(CtValue::Str(_)),
+            dest,
+        } => {
+            if let Some(ty) = cx.reg_ty(*dest)
+                && !mojito_types::types::is_nominal_string(ty)
+            {
+                errors.push(format!(
+                    "{}: string parameter value constant is read at `{ty}`, not `String`",
+                    cx.prefix
+                ));
+            }
+        }
         MirInstr::Const {
             k: crate::mir::Const::Value(value),
             ..
-        } if !value.is_closed_parameter_value() => errors.push(format!(
+        } if !value.is_materialized_constant() => errors.push(format!(
             "{}: parameter value constant `{value}` is not a closed vector, struct, or tuple",
             cx.prefix
         )),

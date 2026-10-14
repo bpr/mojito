@@ -8,19 +8,17 @@ use mojito_mir::mir::Proj;
 use mojito_types::types::TyKind;
 use mojito_types::types::{FuncTy, VariantIndex};
 
-/// The declarations a parameter value's construction names: a struct
-/// value's fieldwise constructor, and an `Array`'s list-literal
-/// initializer.
+/// The declarations an `Array` display's construction names: the
+/// list-literal initializer.
 #[derive(Clone, Copy)]
 pub(super) struct ConstructionDecls<'d, 'a> {
-    pub(super) structs: &'d Catalog<'a, MirStructDeclaration>,
     pub(super) functions: &'d Catalog<'a, MirFunctionDeclaration>,
 }
 
 impl<'a> ConstructionDecls<'_, 'a> {
     /// The list-literal initializer of the struct `template`, as the
     /// checker selects it for a collection display.
-    fn list_literal_constructor(&self, template: &str) -> Option<&'a str> {
+    fn list_literal_constructor(self, template: &str) -> Option<&'a str> {
         let constructors = format!("{template}.__init__");
         self.functions.prefixed(&constructors).find(|symbol| {
             mojito_symbol::symbol::lifecycle_constructor(symbol) == Some((template, "__init__"))
@@ -95,10 +93,11 @@ pub(super) fn default_construct_parameters(
 }
 
 /// Substitute `bindings` through `function`, whose declaration declares the
-/// compile-time parameters in `scope`. A value parameter whose value owns a
-/// string ([`CtValue::is_constructed_parameter_value`]) is constructed at each
-/// read ([`construct_parameter_reads`]), with the constructors `decls`
-/// declares; its slot holds nothing.
+/// compile-time parameters in `scope`. Each read of a value parameter is its
+/// typed constant, an `Array` display's its construction
+/// ([`construct_parameter_reads`]) with the initializer `decls` declares. A
+/// slot of a value owning storage holds nothing, so no place of it may
+/// remain.
 pub(super) fn substitute_function(
     function: &mut MirFunction,
     bindings: &Bindings,
@@ -108,7 +107,7 @@ pub(super) fn substitute_function(
     let (constructed, locals): (HashMap<_, _>, HashMap<_, _>) =
         bound_parameter_locals(scope, bindings)
             .into_iter()
-            .partition(|(_, value)| value.is_constructed_parameter_value());
+            .partition(|(name, value)| is_array_display(value, parameter_slot_ty(function, name)));
     substitute_value_parameter_reads(
         &mut function.blocks,
         &function.var_names,
@@ -117,6 +116,13 @@ pub(super) fn substitute_function(
         &bindings.callables,
     )?;
     seed_captured_parameter_slots(function, &locals, &bindings.callables);
+    for (var, name) in function.var_names.iter().enumerate() {
+        if let Some(value) = locals.get(name.as_str())
+            && value.is_constructed_parameter_value()
+        {
+            reject_parameter_storage_reads(&function.blocks, var as u32, value)?;
+        }
+    }
     for ty in &mut function.param_types {
         *ty = substitute_ty(ty, bindings)?;
     }
@@ -155,6 +161,7 @@ pub(super) fn substitute_function(
             &mut function.reg_types,
             decls,
         )?;
+        reject_parameter_storage_reads(&function.blocks, var, value)?;
     }
     substitute_blocks_metadata(&mut function.blocks, bindings)?;
     check_reinterpretation_widths(&function.blocks, &function.reg_types)?;
@@ -334,7 +341,7 @@ pub(super) fn substitute_value_parameter_reads(
                 && let Some(constant) = if place.is_whole_root() {
                     value_parameter_constant(value, var_tys.get(&place.root))
                 } else {
-                    projected_parameter_constant(value, &place.storage().proj)
+                    projected_parameter_constant(value, &place.storage().proj, place.ty.as_ref())
                 }
             {
                 // A whole aggregate parameter read as a place (`h(p)`), or a
@@ -373,16 +380,11 @@ pub(super) fn substitute_value_parameter_reads(
     Ok(())
 }
 
-/// Construct the compile-time parameter value `value` wherever `blocks` read
-/// its slot `slot` — a `comptime for` binder's or a value parameter's — at
-/// the read's type (`ty`, the slot's, where the read has none — a binder
-/// over a literal display keeps the literal element type the read defaults):
-/// a value holding a string is no constant, so each read is the construction
-/// upstream's `kgen.param.constant` materializes
-/// ([`parameter_value_construction`]), whose result the read's consumer — a
-/// materialized temporary or a copy — owns. A place rooted at the slot, or a
-/// drop of it, remains only where the check or drop elaboration treated the
-/// parameter as storage, and is an error, since the slot holds nothing.
+/// Construct the `Array` display `value` wherever `blocks` read its slot
+/// `slot` — a `comptime for` binder's or a value parameter's — at the
+/// read's type (`ty`, the slot's, where the read has none)
+/// ([`array_display_construction`]), whose result the read's consumer — a
+/// materialized temporary or a copy — owns.
 pub(super) fn construct_parameter_reads(
     blocks: &mut [MirBlock],
     slot: u32,
@@ -402,7 +404,7 @@ pub(super) fn construct_parameter_reads(
                     .get(&dest.0)
                     .cloned()
                     .unwrap_or_else(|| ty.clone());
-                instrs.extend(parameter_value_construction(
+                instrs.extend(array_display_construction(
                     dest, value, &read, n_regs, reg_types, decls,
                 )?);
                 continue;
@@ -422,24 +424,55 @@ pub(super) fn construct_parameter_reads(
                 {
                     construct_parameter_reads(region, slot, value, ty, n_regs, reg_types, decls)?;
                 }
-            } else if matches!(
-                instruction,
-                MirInstr::DropVar { var } | MirInstr::ConsumeVar { var } if var == slot
-            ) || mojito_mir::mir::verify::instruction_places(&instruction)
-                .iter()
-                .any(|place| place.root == slot || place.through == Some(slot))
-            {
-                return Err(MonoError {
-                    kind: MonoErrorKind::Unsupported,
-                    function: None,
-                    construct: format!(
-                        "a place read of the compile-time parameter `{value}`, which holds no storage"
-                    ),
-                });
             }
             instrs.push(instruction);
         }
         block.instrs = instrs;
+    }
+    Ok(())
+}
+
+/// Reject what is left of the slot `slot` of the compile-time parameter
+/// `value` once its reads are materialized: a place rooted at the slot, or
+/// a drop of it, remains only where the check or drop elaboration treated
+/// the parameter as storage, and is an error when the value owns storage
+/// its slot does not hold.
+pub(super) fn reject_parameter_storage_reads(
+    blocks: &[MirBlock],
+    slot: u32,
+    value: &CtValue,
+) -> Result<(), MonoError> {
+    for instruction in blocks.iter().flat_map(|block| &block.instrs) {
+        if let MirInstr::Try {
+            body,
+            handler,
+            orelse,
+            finalbody,
+            ..
+        } = instruction
+        {
+            for region in std::iter::once(body)
+                .chain(handler.iter().map(|(_, blocks)| blocks))
+                .chain(orelse)
+                .chain(finalbody)
+            {
+                reject_parameter_storage_reads(region, slot, value)?;
+            }
+        } else if matches!(
+            instruction,
+            MirInstr::DropVar { var } | MirInstr::ConsumeVar { var } if *var == slot
+        ) || mojito_mir::mir::verify::instruction_places(instruction)
+            .iter()
+            .any(|place| place.root == slot || place.through == Some(slot))
+        {
+            return Err(MonoError {
+                kind: MonoErrorKind::Unsupported,
+                function: None,
+                construct: format!(
+                    "a place read of the compile-time parameter `{value}`, which holds no storage"
+                ),
+            });
+        }
     }
     Ok(())
 }
@@ -1318,8 +1351,11 @@ pub(super) fn sub_types(types: &[Ty], bindings: &Bindings) -> Result<Vec<Ty>, Mo
     types.iter().map(|ty| substitute_ty(ty, bindings)).collect()
 }
 
-/// The constant a value parameter's slot holds: a scalar, a function named
-/// by a callable-typed slot, or a string, read as its literal.
+/// The constant a read of the parameter value `value` at `slot_ty` is: a
+/// scalar, a function named by a callable-typed slot, a string read at the
+/// nominal `String` or a vector, struct, or tuple as the typed constant a
+/// backend materializes at that type (upstream's `kgen.param.constant`),
+/// and any other string as its literal.
 pub(super) fn value_parameter_constant(value: &CtValue, slot_ty: Option<&Ty>) -> Option<Const> {
     match value {
         CtValue::Int(value) => Some(Const::Int(*value)),
@@ -1336,6 +1372,9 @@ pub(super) fn value_parameter_constant(value: &CtValue, slot_ty: Option<&Ty>) ->
         {
             Some(Const::Function(value.clone()))
         }
+        CtValue::Str(_) if slot_ty.is_some_and(mojito_types::types::is_nominal_string) => {
+            Some(Const::Value(value.clone()))
+        }
         CtValue::Str(value) => Some(Const::Str(value.clone())),
         value @ (CtValue::Simd { .. } | CtValue::Struct { .. } | CtValue::Tuple(_)) => {
             Some(Const::Value(value.clone()))
@@ -1344,19 +1383,13 @@ pub(super) fn value_parameter_constant(value: &CtValue, slot_ty: Option<&Ty>) ->
     }
 }
 
-/// The value a parameter constant `k` read at `ty` is constructed from
-/// rather than read as a constant: a string at the nominal `String`, an
-/// aggregate holding one ([`CtValue::is_constructed_parameter_value`]), or
-/// a list read at an `Array`, which owns its storage.
+/// The display a parameter constant `k` read at `ty` is constructed from
+/// rather than read as a constant: a list or tuple read at an `Array`
+/// ([`array_display_construction`]).
 pub(super) fn constructed_parameter_constant(k: &Const, ty: &Ty) -> Option<CtValue> {
     match k {
-        Const::Str(text) if matches!(ty.kind(), TyKind::Struct(name, _) if mojito_types::types::is_stdlib_string_struct(name)) => {
-            Some(CtValue::Str(text.clone()))
-        }
-        Const::Value(value)
-            if value.is_constructed_parameter_value()
-                || (matches!(value, CtValue::Tuple(_) | CtValue::List(_))
-                    && array_instance_parts(ty).is_some()) =>
+        Const::Value(value @ (CtValue::Tuple(_) | CtValue::List(_)))
+            if array_instance_parts(ty).is_some() =>
         {
             Some(value.clone())
         }
@@ -1364,12 +1397,20 @@ pub(super) fn constructed_parameter_constant(k: &Const, ty: &Ty) -> Option<CtVal
     }
 }
 
+/// Whether a parameter value bound to a slot of `ty` is an `Array` display,
+/// constructed at each read ([`construct_parameter_reads`]).
+pub(super) fn is_array_display(value: &CtValue, ty: Option<&Ty>) -> bool {
+    matches!(value, CtValue::Tuple(_) | CtValue::List(_))
+        && ty.is_some_and(|ty| array_instance_parts(ty).is_some())
+}
+
 /// The constant a chain of field projections selects out of a struct-typed
-/// parameter value, `None` unless every step names a field of a closed
-/// struct value.
+/// parameter value, read at `ty`, `None` unless every step names a field
+/// of a closed struct value.
 fn projected_parameter_constant(
     value: &CtValue,
     projections: &[mojito_mir::mir::Proj],
+    ty: Option<&Ty>,
 ) -> Option<Const> {
     let value =
         projections
@@ -1382,13 +1423,15 @@ fn projected_parameter_constant(
                 _ => None,
             })?;
     (!projections.is_empty())
-        .then(|| value_parameter_constant(value, None))
+        .then(|| value_parameter_constant(value, ty))
         .flatten()
 }
 
 /// Seed, at the entry block, every folded value parameter slot a closure
 /// captures. A folded slot is never stored, so the capture would borrow
-/// uninitialized storage: it is stored its constant first.
+/// uninitialized storage: it is stored its constant first. A slot is no
+/// drop root, so a value owning a buffer is not seeded, and a string is
+/// its literal.
 fn seed_captured_parameter_slots(
     function: &mut MirFunction,
     locals: &HashMap<String, &CtValue>,
@@ -1411,7 +1454,11 @@ fn seed_captured_parameter_slots(
             .or_else(|| {
                 locals
                     .get(name.as_str())
-                    .and_then(|value| value_parameter_constant(value, Some(&ty)))
+                    .filter(|value| !value.is_constructed_parameter_value())
+                    .and_then(|value| match value_parameter_constant(value, Some(&ty))? {
+                        Const::Value(CtValue::Str(text)) => Some(Const::Str(text)),
+                        constant => Some(constant),
+                    })
             });
         let Some(k) = constant else {
             continue;
@@ -1433,13 +1480,10 @@ fn seed_captured_parameter_slots(
 }
 
 /// The run-time construction of the parameter value `value`, of the concrete
-/// type `ty`, into `dest`: a string at the nominal `String` is its literal's
-/// `String` constructor, a list at an `Array` the list-literal initializer
-/// over its elements (the call a display `[a, b]` lowers to), a tuple the
-/// `Tuple` constructor over its elements, and a struct its fieldwise
-/// constructor, as `CtValue::materialize` spells a frozen struct; any other
-/// leaf is its constant.
-pub(super) fn parameter_value_construction(
+/// type `ty`, into `dest`: a list at an `Array` is the list-literal
+/// initializer over its elements (the call a display `[a, b]` lowers to),
+/// and any other value its typed constant ([`value_parameter_constant`]).
+pub(super) fn array_display_construction(
     dest: Reg,
     value: &CtValue,
     ty: &Ty,
@@ -1452,26 +1496,8 @@ pub(super) fn parameter_value_construction(
         function: None,
         construct: format!("constructing the parameter value `{value}` at `{ty}`"),
     };
-    let (func, parts): (String, Vec<(&CtValue, Ty)>) = match (value, ty.kind()) {
-        (CtValue::Str(text), TyKind::Struct(name, _))
-            if mojito_types::types::is_stdlib_string_struct(name) =>
-        {
-            let literal = Reg(*n_regs);
-            *n_regs += 1;
-            reg_types.insert(literal.0, Ty::string_literal());
-            return Ok(vec![
-                MirInstr::Const {
-                    dest: literal,
-                    k: Const::Str(text.clone()),
-                },
-                plain_call(
-                    dest,
-                    &mojito_symbol::symbol::nominal_string_literal_ctor_symbol(),
-                    vec![literal],
-                ),
-            ]);
-        }
-        (CtValue::Tuple(elements) | CtValue::List(elements), _)
+    match value {
+        CtValue::Tuple(elements) | CtValue::List(elements)
             if let Some((element, length)) = array_instance_parts(ty) =>
         {
             if usize::try_from(length).ok() != Some(elements.len()) {
@@ -1490,44 +1516,19 @@ pub(super) fn parameter_value_construction(
                 n_regs,
                 reg_types,
             ));
-            return Ok(instrs);
-        }
-        (CtValue::Tuple(elements), _) if value.is_constructed_parameter_value() => {
-            let types = tuple_instance_parts(ty)
-                .filter(|types| types.len() == elements.len())
-                .ok_or_else(unsupported)?;
-            (
-                "Tuple".to_string(),
-                elements.iter().zip(types.into_iter().cloned()).collect(),
-            )
-        }
-        (CtValue::Struct { name, fields }, _) if value.is_constructed_parameter_value() => {
-            let declared = decls
-                .structs
-                .get(name.as_str())
-                .filter(|declaration| declaration.param_decls.is_empty())
-                .ok_or_else(unsupported)?;
-            let parts = fields
-                .iter()
-                .map(|(field, value)| {
-                    declared
-                        .fields
-                        .iter()
-                        .find(|(declared, _)| declared == field)
-                        .map(|(_, ty)| (value, ty.clone()))
-                        .ok_or_else(unsupported)
-                })
-                .collect::<Result<_, _>>()?;
-            (name.clone(), parts)
+            Ok(instrs)
         }
         _ => {
             let k = value_parameter_constant(value, Some(ty)).ok_or_else(unsupported)?;
-            return Ok(vec![MirInstr::Const { dest, k }]);
+            Ok(vec![MirInstr::Const { dest, k }])
         }
-    };
-    let (mut instrs, args) = constructed_parts(parts, n_regs, reg_types, decls)?;
-    instrs.push(plain_call(dest, &func, args));
-    Ok(instrs)
+    }
+}
+
+/// The declared type of the slot `function` names `name`.
+fn parameter_slot_ty<'f>(function: &'f MirFunction, name: &str) -> Option<&'f Ty> {
+    let var = function.var_names.iter().position(|slot| slot == name)?;
+    function.var_tys.get(&u32::try_from(var).ok()?)
 }
 
 fn collect_captured_vars(blocks: &[MirBlock], captured: &mut HashSet<u32>) {
@@ -1786,7 +1787,7 @@ fn constructed_parts<'v>(
     let mut args = Vec::new();
     for (part, part_ty) in parts {
         let arg = fresh_register(part_ty.clone(), n_regs, reg_types);
-        instrs.extend(parameter_value_construction(
+        instrs.extend(array_display_construction(
             arg, part, &part_ty, n_regs, reg_types, decls,
         )?);
         args.push(arg);
@@ -1807,24 +1808,6 @@ fn array_instance_parts(ty: &Ty) -> Option<(&Ty, i64)> {
         [TyArg::Ty(element), TyArg::Val(CtValue::Int(length))] => Some((element, *length)),
         _ => None,
     }
-}
-
-/// The element types of a `Tuple` instance, its monomorphized spelling
-/// included.
-fn tuple_instance_parts(ty: &Ty) -> Option<Vec<&Ty>> {
-    let TyKind::Struct(name, arguments) = ty.kind() else {
-        return None;
-    };
-    if nominal_template(name) != mojito_types::types::TUPLE_TYPE_NAME {
-        return mojito_types::types::tuple_elements(ty);
-    }
-    arguments
-        .iter()
-        .map(|argument| match argument {
-            TyArg::Ty(ty) => Some(ty),
-            TyArg::Val(_) | TyArg::Origin(_) => None,
-        })
-        .collect()
 }
 
 /// The list-literal initializer call over `elements`, as MIR lowers a

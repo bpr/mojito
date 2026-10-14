@@ -86,7 +86,6 @@ impl<'a> Specializer<'a> {
     /// The declarations a parameter value's construction names.
     pub(super) const fn construction_decls(&self) -> ConstructionDecls<'_, 'a> {
         ConstructionDecls {
-            structs: &self.structs,
             functions: &self.declarations,
         }
     }
@@ -1261,9 +1260,9 @@ impl<'a> Specializer<'a> {
     /// by demanding it. One the bindings leave open stays for
     /// the verifier's concrete mode to name; one the bindings close with no
     /// answer (a reflection query of a field the struct lacks) fails the
-    /// instantiation. A value owning a string is constructed at the read's
-    /// register type instead ([`parameter_value_construction`]), minting its
-    /// parts' registers in `n_regs` and `reg_types`. A failure in blocks
+    /// instantiation. A display read at an `Array` is constructed at the
+    /// read's register type instead ([`array_display_construction`]), minting
+    /// its parts' registers in `n_regs` and `reg_types`. A failure in blocks
     /// the instance has not yet `reached` (an unrolled iteration, before
     /// its branches are decided) is held in `unreached_failures` and
     /// reported only if the instance reaches the read.
@@ -1352,15 +1351,14 @@ impl<'a> Specializer<'a> {
                     constant => constant?,
                 };
                 match constant {
-                    // A value owning a string — a field `q.s` of a value
-                    // parameter — is no constant: it is constructed where
-                    // it is read, as upstream's `kgen.param.constant`
-                    // materializes it.
+                    // A display read at an `Array` is built by its
+                    // list-literal initializer; any other value is the
+                    // constant typed by `dest`'s register.
                     Some(k)
                         if let Some(ty) = &ty
                             && let Some(owned) = constructed_parameter_constant(&k, ty) =>
                     {
-                        instrs.extend(parameter_value_construction(
+                        instrs.extend(array_display_construction(
                             dest,
                             &owned,
                             ty,
@@ -2582,7 +2580,11 @@ impl<'a> Specializer<'a> {
                         let Some(receiver) = function.reg_types.get(&base.0) else {
                             continue;
                         };
-                        let Some(constant) = self.value_param_constant(receiver, field) else {
+                        let Some(constant) = self.value_param_constant(
+                            receiver,
+                            field,
+                            function.reg_types.get(&dest.0),
+                        ) else {
                             continue;
                         };
                         *instruction = MirInstr::Const {
@@ -2605,9 +2607,10 @@ impl<'a> Specializer<'a> {
                         let Some(receiver) = function.var_tys.get(&place.root) else {
                             continue;
                         };
+                        let read = function.reg_types.get(&dest.0);
                         let Some(constant) = steps
                             .try_fold(
-                                self.value_param_constant(receiver, field),
+                                self.value_param_constant(receiver, field, read),
                                 |constant, projection| {
                                     let (
                                         mojito_mir::mir::Proj::Field(field),
@@ -2617,7 +2620,7 @@ impl<'a> Specializer<'a> {
                                         return None;
                                     };
                                     Some(fields.iter().find(|(name, _)| name == field).and_then(
-                                        |(_, value)| value_parameter_constant(value, None),
+                                        |(_, value)| value_parameter_constant(value, read),
                                     ))
                                 },
                             )

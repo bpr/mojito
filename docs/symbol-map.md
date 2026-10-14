@@ -1423,21 +1423,25 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   place read and the field-projection loads folding through the bound value
   (`substitute_value_parameter_reads`'s `LoadPlace` arm and
   `projected_parameter_constant`, and the `LoadPlace` arm of the
-  specializer's rewrite); `CtValue::is_closed_parameter_value`
-  (`mojito-types/src/ct.rs`, called from `verify/instr.rs`) admits it. A
-  value with a `String` leaf (`CtValue::is_constructed_parameter_value`)
-  is not folded: `substitute_function` constructs it at each read of its
-  slot (`construct_parameter_reads`, `mono/substitute.rs`, through
-  `parameter_value_construction`), the slot holding nothing, and
-  `seed_captured_parameter_slots` stores a captured folded slot's constant
-  at entry. The VM materializes a folded one through
+  specializer's rewrite), each typed by the read's register;
+  `CtValue::is_materialized_constant` (`mojito-types/src/ct.rs`, called
+  from `verify/instr.rs`) admits it, a bare string only at the nominal
+  `String` (`types::is_nominal_string`). A value with a `String` leaf
+  (`CtValue::is_constructed_parameter_value`) is the same constant, its
+  slot holding nothing: `reject_parameter_storage_reads`
+  (`mono/substitute.rs`) rejects a place of it that survives the
+  substitution, and `seed_captured_parameter_slots` stores a captured
+  folded slot's constant at entry, never one owning a buffer. Only a list
+  read at an `Array` is constructed at each read
+  (`construct_parameter_reads`, through `array_display_construction`). The VM materializes a folded one through
   `ct_value_as_runtime` (`backend/vm.rs`) and, a tuple at any depth as the nominal `Tuple` its
   checked type names, `thaw`
   (`backend/vm/adapters.rs`), and Pliron through `lower_parameter_value`
-  and `store_parameter_value` (`lower/consts.rs`). A `comptime for`
-  element with a `String` leaf is constructed at each read of its binder
-  the same way (`construct_parameter_reads`, from
-  `Specializer::copy_body`, `mono/unroll.rs`). A
+  (a top-level string included) and `store_parameter_value`
+  (`lower/consts.rs`). A `comptime for` element is the same constant at
+  each read of its binder, and an element read at an `Array` is
+  constructed (`construct_parameter_reads`, from `Specializer::copy_body`,
+  `mono/unroll.rs`). A
   borrow of a compile-time value (a value parameter, a `comptime for`
   variable) is a temporary the checker materializes
   (`materialized_reference_actual`, and for a read of a tuple or struct
@@ -1546,10 +1550,10 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   pack operand is never lowered. `verify/scope.rs` checks its binders and
   `verify/concrete.rs` rejects a survivor.
 - `Specializer::answer_param_constants` and `param_constant`
-  (`mono/specializer.rs`) fold it per instance, a value owning a `String`
-  or a list read at an `Array` constructed instead
-  (`constructed_parameter_constant`, `parameter_value_construction`,
-  `mono/substitute.rs`; an `Array` through the list-literal initializer
+  (`mono/specializer.rs`) fold it per instance to the constant typed by
+  its register, a list read at an `Array` constructed instead
+  (`constructed_parameter_constant`, `array_display_construction`,
+  `mono/substitute.rs`, through the list-literal initializer
   `ConstructionDecls::list_literal_constructor` finds, the call MIR lowers a
   display to): a length through `eval_ct`,
   a membership or conformance as a `GenericConstraint` through

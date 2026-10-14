@@ -828,19 +828,23 @@ materializes it into a temporary (`Checker::materialized_reference_actual`,
 `Checker::materialize_parameter_read`) the ownership analysis destroys, the
 binder's own slot owning nothing and so no drop root
 (`analysis::scan::comptime_binder_slots`), and `native::mono` turns every
-read of it, per unrolled copy, into a `Const::Value` where its leaves are
-numbers and booleans, or into the element's construction where one is a
-`String` (`construct_parameter_reads`), as upstream's `kgen.param.constant`
-materializes a parameter at each use. A tuple, struct, or vector value
+read of it, per unrolled copy, into a `Const::Value` typed by the read's
+register, a `String` leaf included, as upstream's `kgen.param.constant`
+materializes a parameter at each use: each backend writes the frozen
+fields into fresh storage, and no initializer runs again. Only an element
+read at an `Array` is constructed, by the list-literal initializer over its
+elements' constants (`construct_parameter_reads`, R789). A tuple, struct, or vector value
 parameter's slot follows the same rule: it owns nothing and is no drop root
 (`mir::materialized_parameter_slots`), and each read of it is the value's
-constant or construction, with nothing built at entry. A field chain off
+typed constant, with nothing built at entry; a place of a slot whose value
+owns a buffer that survives the substitution is an error
+(`reject_parameter_storage_reads`). A field chain off
 either (`q.a`, `q.i.v`) is upstream's struct extract on the parameter
 attribute: the checker records it as a `SemanticAdjustment::ParamValue`
 (`Checker::infer_member` over `struct_value_field`), its root never read,
 and `native::mono` answers the `Const::Param` per instance with the
-field's constant, or with the field's own construction where it owns a
-`String` (`answer_param_constants`). MIR lifts an evaluated display as a
+field's constant, typed by the read's register, a `String` field
+included (`answer_param_constants`). MIR lifts an evaluated display as a
 function over the binders in scope at the header, as it lifts an uncompiled
 condition, and the header's sequence is that function's application, which
 `native::mono` demands, runs on the VM, and freezes
@@ -1170,10 +1174,9 @@ struct, or tuple binder to a `Const::Value` and a field of a struct-typed one
 (the VM's `thaw`, Pliron's `store_parameter_value`);
 a tuple-typed value parameter (`g[p: Tuple[Int, Int]]`) reads the same way.
 A tuple or struct value whose leaves include a `String`
-(`CtValue::is_constructed_parameter_value`) is never folded: no constant
-holds an owned buffer, so the instance constructs it into the parameter's
-slot at entry and its reads stay slot reads, the template's drop of the
-slot destroying it. The elaborator above the check freezes a computed
+(`CtValue::is_constructed_parameter_value`) is the same typed constant
+(`CtValue::is_materialized_constant`): each read materializes a fresh
+value its consumer owns. The elaborator above the check freezes a computed
 struct-typed argument (`Extent.square(4)`) to its fieldwise construction
 (`Elab::freeze_struct_value_arguments`), which the checker reads as the
 frozen value. Every variadic struct is a generator too, `native::mono`
@@ -1885,8 +1888,14 @@ layout rather than rerunning their constructors. The checker owns the
 `ImplicitlyCopyable` crossing rule; an explicit `materialize[...]()` can
 cross a non-implicitly-copyable value. Requested binding reads that need a
 place record a hidden materialized borrow owner, including reads within
-compile-time query thunks. Top-level strings and string-containing
-aggregates still have a constructor path (R524). A local binding of an
+compile-time query thunks. A string read at the nominal `String`, and an
+aggregate holding one, is the same one operation: `native::mono` emits the
+`Const::Value` typed by the read's register and never calls the value's
+initializer, so an `__init__` that transforms its arguments runs once, at
+compile time, as the pin's does. The one residual construction is a
+compile-time list read at an `Array`, built at each read by the
+list-literal initializer over its elements' constants
+(`array_display_construction`, R789). A local binding of an
 application is that application at each read, as a module constant is: it
 has no slot, and every read materializes a fresh value.
 

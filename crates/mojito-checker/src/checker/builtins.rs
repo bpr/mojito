@@ -4,6 +4,7 @@
 use super::*;
 use mojito_types::types::FuncTy;
 use mojito_types::types::TyKind;
+pub(super) use mojito_types::types::is_nominal_string;
 pub use mojito_types::types::{
     builtin_copy_is_value_read, callable_environment_coerces, callable_environment_value_coerces,
     coerces,
@@ -428,12 +429,6 @@ pub(super) fn common_display_element(a: &Ty, b: &Ty) -> Option<Ty> {
         }
         _ => common_elem(a, b),
     }
-}
-
-/// Whether `ty` is the nominal `String`.
-pub(super) fn is_nominal_string(ty: &Ty) -> bool {
-    matches!(ty.kind(), TyKind::Struct(name, args)
-        if args.is_empty() && mojito_symbol::symbol::is_stdlib_string_struct(name))
 }
 
 /// The common type of two numeric operands, coercing literals as needed, or

@@ -126,11 +126,11 @@ impl FnLowering<'_> {
         Ok(())
     }
 
-    /// A closed vector, struct, or tuple parameter value (`Self.key`,
-    /// `Self.e`, a `comptime for` variable over pairs): a vector built lane
-    /// by lane as its explicit construction is (a one-lane vector is its
-    /// lane scalar), an aggregate fieldwise into fresh storage as its
-    /// fieldwise constructor is.
+    /// A parameter value constant (`Self.key`, `Self.e`, a `comptime for`
+    /// variable over pairs): a vector built lane by lane as its explicit
+    /// construction is (a one-lane vector is its lane scalar), and an
+    /// aggregate — or a string read at the nominal `String` — written
+    /// fieldwise into fresh storage, each string leaf a fresh buffer.
     fn lower_parameter_value(
         &mut self,
         ctx: &mut Context,
@@ -150,9 +150,9 @@ impl FnLowering<'_> {
                 }
                 Ok(())
             }
-            CtValue::Struct { .. } | CtValue::Tuple(_) => {
-                // A struct value is typed by its own name; a tuple by the
-                // nominal `Tuple` instance its register names.
+            CtValue::Struct { .. } | CtValue::Tuple(_) | CtValue::Str(_) => {
+                // A struct value is typed by its own name; a tuple and a
+                // string by the nominal instance their register names.
                 let ty = match value {
                     CtValue::Struct { name, .. } => TyKind::Struct(name.clone(), Vec::new()).into(),
                     _ => self.func.reg_types.get(&dest.0).cloned().ok_or_else(|| {

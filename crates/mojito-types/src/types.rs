@@ -3805,6 +3805,12 @@ pub fn is_stdlib_string_struct(name: &str) -> bool {
     name == "String" || name == STDLIB_STRING_STRUCT
 }
 
+/// Whether `ty` is the nominal `String`.
+pub fn is_nominal_string(ty: &Ty) -> bool {
+    matches!(ty.kind(), TyKind::Struct(name, args)
+        if args.is_empty() && is_stdlib_string_struct(name))
+}
+
 /// The bundled formatter behind `format` (upstream's `_FormatUtils`), and
 /// its stand-in for `StringLiteral.format`, which a string literal's call
 /// lowers to while the literal declares no methods.

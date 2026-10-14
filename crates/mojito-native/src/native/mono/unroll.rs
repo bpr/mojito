@@ -259,23 +259,33 @@ impl Specializer<'_> {
         // are over this iteration's binding and their own, which nothing
         // else of the copy may be substituted without.
         self.unroll_in(blocks, first, frame, &iteration, tables)?;
-        // An element holding a string is constructed at each read; any other
-        // folds there. An enclosing value parameter holding a string keeps
-        // its slot reads, which `substitute_function` constructs.
+        // An element read at an `Array` is constructed at each read; any
+        // other is its typed constant there. An enclosing value parameter
+        // read at an `Array` keeps its slot reads, which
+        // `substitute_function` constructs.
+        let slot_ty = |name: &str| {
+            let var = tables.var_names.iter().position(|slot| slot == name)?;
+            tables.var_tys.get(&u32::try_from(var).ok()?)
+        };
         let mut locals = bound_parameter_locals(frame.scope, bindings);
-        locals.retain(|_, value| !value.is_constructed_parameter_value());
-        if bound.is_constructed_parameter_value() {
-            let ty = tables
-                .var_tys
-                .get(&slot)
-                .map(|ty| substitute_ty(ty, &iteration))
-                .transpose()?
-                .ok_or_else(|| {
-                    self.error(
-                        Some(frame.template),
-                        format!("comptime for element `{bound}` has no binder type"),
-                    )
-                })?;
+        locals.retain(|name, value| !is_array_display(value, slot_ty(name)));
+        let ty = tables
+            .var_tys
+            .get(&slot)
+            .map(|ty| substitute_ty(ty, &iteration))
+            .transpose()?;
+        let with_template = |mut error: MonoError| {
+            error.function = Some(frame.template.to_string());
+            error
+        };
+        let array_display = is_array_display(&bound, ty.as_ref());
+        if array_display {
+            let ty = ty.ok_or_else(|| {
+                self.error(
+                    Some(frame.template),
+                    format!("comptime for element `{bound}` has no binder type"),
+                )
+            })?;
             construct_parameter_reads(
                 &mut blocks[first..],
                 slot,
@@ -285,10 +295,7 @@ impl Specializer<'_> {
                 tables.reg_types,
                 self.construction_decls(),
             )
-            .map_err(|mut error| {
-                error.function = Some(frame.template.to_string());
-                error
-            })?;
+            .map_err(with_template)?;
         } else if let Some(name) = tables.var_names.get(slot as usize) {
             locals.insert(name.clone(), &bound);
         }
@@ -299,6 +306,10 @@ impl Specializer<'_> {
             &locals,
             &bindings.callables,
         )?;
+        if array_display || bound.is_constructed_parameter_value() {
+            reject_parameter_storage_reads(&blocks[first..], slot, &bound)
+                .map_err(with_template)?;
+        }
         default_construct_parameters(
             &mut blocks[first..],
             tables.n_regs,

@@ -420,10 +420,19 @@ impl CtValue {
         self.is_closed_leaf() || self.is_closed_aggregate_value()
     }
 
-    /// Whether this value is a struct or tuple an instance constructs at run
-    /// time rather than folds: every leaf is a closed parameter leaf or a
-    /// string, and at least one is a string, which owns a buffer no constant
-    /// can hold.
+    /// Whether this value is one a backend materializes as a typed constant
+    /// at its read: a [closed parameter value](Self::is_closed_parameter_value)
+    /// or a struct or tuple that [owns a string
+    /// buffer](Self::is_constructed_parameter_value), whose every
+    /// materialization writes the frozen fields into fresh storage.
+    pub fn is_materialized_constant(&self) -> bool {
+        self.is_closed_parameter_value() || self.is_constructed_parameter_value()
+    }
+
+    /// Whether this value is a struct or tuple that owns a string buffer:
+    /// every leaf is a closed parameter leaf or a string, and at least one
+    /// is a string. A constant of it is materialized into fresh storage at
+    /// each read, and a slot holding it owns that storage.
     pub fn is_constructed_parameter_value(&self) -> bool {
         fn leaf(value: &CtValue) -> bool {
             matches!(value, CtValue::Str(_))

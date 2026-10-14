@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R789**.
+Next free ID: **R791**.
 
 ## Ordered Work
 
@@ -3088,6 +3088,15 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
+- [ ] **R790 A struct's `String` value parameter read as `Self.s` is typed `Int`**
+
+  `struct Box[s: String]` with `def get(self) -> String: return Self.s` is rejected with "type mismatch for return: expected String, found Int", where the pin prints the string.
+  - A free function's `[s: String]` and `[q: Q]` reads (`q.s` a `String` field) both work; the struct member read is the one that mistypes.
+  - `native::mono` already answers such a read with a `String`-typed constant (`Specializer::value_param_constant`), so the fix is in the checker's member read.
+  - Found while landing R524 (2026-10-13).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
 - [ ] **R489 An associated `comptime` member that applies a function is
   rejected**
 
@@ -6065,11 +6074,14 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
-- [ ] **R524 Compile-time values still have two materialization mechanisms**
+- [ ] **R789 A compile-time list read at an `Array` is still constructed at each read**
 
-  Top-level strings and string-containing aggregates use constructors while frozen pointer memory uses backend constants.
-  - Unify these at the typed constant boundary, matching Mojo's materialization operation.
-  - Nominal VM-evaluated collections already use frozen storage without constructor replay.
+  `materialize[L]()` for `comptime L = [String("x"), String("y")]` runs `Array`'s list-literal initializer at every read, where Mojo materializes one frozen `Array` value.
+  - Every other closed compile-time value is already one typed `Const::Value` (R524); this is the last constructor path (`array_display_construction`, `construct_parameter_reads`, `ConstructionDecls`, `mono/substitute.rs`).
+  - The elements are typed constants, so a transforming `__init__` runs once; the initializer still moves each element into fresh storage, so an element's move initializer with effects shows them at each read.
+  - The Mojo-shaped fix evaluates the display's `Array` once by the elaborator's CTFE (`Specializer::demand_application` → `VmBackend::call_concrete` → `freeze`), frozen to `CtValue::Struct` over pointer memory, and deletes the three pieces above.
+  - That needs a CTFE demand of a generic struct instance's variadic constructor, which `demand_application` does not serve, and a display kept as an `Array` value rather than `CtValue::List`.
+  - Found while landing R524 (2026-10-13).
   - Depends on nothing.
   - Model: Fable, Not Planned.
 

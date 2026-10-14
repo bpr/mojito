@@ -8,6 +8,16 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- Every closed compile-time value is materialized by one operation, the
+  typed `Const::Value` its read's register types, as upstream's
+  `kgen.param.constant` is (R524): a string read at `String`, and a
+  struct or tuple holding one — a module or local `comptime` value, a
+  value parameter, a `comptime for` element — is no longer rebuilt by
+  calling its constructor on the frozen fields, so an `__init__` that
+  transforms its arguments runs once, at compile time, where each read
+  ran it again (`assets/ok/comptime_value_materialized_without_constructor.mojo`).
+  Pliron materializes a top-level string constant. A list read at an
+  `Array` is still constructed at each read (R789).
 - A local `comptime` binding of an application (`comptime s = make(3)`)
   is an alias of it, as upstream's is (R523): each read is the
   application's `ParamValue`, as a module constant's read is
