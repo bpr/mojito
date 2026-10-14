@@ -2056,10 +2056,10 @@ struct MethodSig {
     params: Vec<Ty>,
     names: Vec<String>,
     required: Vec<bool>,
-    /// Per regular parameter, its declared default. A conforming method may
-    /// declare its own: a call through the bound leaving one out runs the
-    /// requirement's, which the check spells at the call where some witness
-    /// differs (`bound_defaults.rs`).
+    /// Per regular parameter, its declared default attribute. A conforming
+    /// method may declare its own: a call through the bound leaving one out
+    /// runs the requirement's, which the check binds at the call where some
+    /// witness differs (`bound_defaults.rs`).
     defaults: Vec<Option<SignatureDefault>>,
     variadic: Option<Ty>,
     variadic_index: Option<usize>,
@@ -2156,34 +2156,35 @@ impl MethodSig {
     }
 }
 
-/// A regular parameter's declared default, as a signature holds it: checked
-/// from source for an own declaration or a trait requirement, whose default
-/// a call through the bound spells, or as an imported method's lowered
-/// declaration holds it.
+/// A regular parameter's declared default, as a checked signature holds it:
+/// the attribute its lowered declaration holds, for an own method, a trait
+/// requirement, and an imported method alike.
 #[derive(Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 enum SignatureDefault {
-    Spelled(Expr),
-    Declared(mojito_checked::checked::CheckedConst),
+    /// A literal, as its lowered declaration's constant before any
+    /// conversion to the parameter type.
+    Constant(mojito_checked::checked::CheckedConst),
+    /// A compile-time expression over the method's own value parameters
+    /// (`factor: Int = n * TWO - m`), module constants folded at the
+    /// declaration; only a trait requirement holds one.
+    Parameter(ParamExpr),
+    /// Any other default, which the lowered declaration runs as code.
+    Evaluated,
 }
 
 impl SignatureDefault {
-    /// The default's checked syntax, unless it is a lowered declaration's.
-    const fn spelled(&self) -> Option<&Expr> {
-        match self {
-            Self::Spelled(expr) => Some(expr),
-            Self::Declared(_) => None,
+    /// The attribute of a lowered declaration's default: its literal, a
+    /// conversion of a literal being the parameter type's.
+    fn of_declared(declared: &mojito_checked::checked::CheckedConst) -> Self {
+        match declared {
+            mojito_checked::checked::CheckedConst::Evaluate { .. } => Self::Evaluated,
+            declared => Self::Constant(declared.unconverted().clone()),
         }
     }
 
-    /// Whether the default is the literal `literal`. A declared conversion
-    /// of a literal is that literal, the conversion being the parameter
-    /// type's; a declared evaluated default is no literal.
-    fn is_literal(&self, literal: &Expr) -> bool {
-        match self {
-            Self::Spelled(expr) => expr == literal,
-            Self::Declared(constant) => mojito_checked::checked::CheckedConst::from_expr(literal)
-                .is_some_and(|literal| &literal == constant.unconverted()),
-        }
+    /// Whether the default is the literal `literal`.
+    fn is_literal(&self, literal: &mojito_checked::checked::CheckedConst) -> bool {
+        matches!(self, Self::Constant(constant) if constant == literal)
     }
 }
 

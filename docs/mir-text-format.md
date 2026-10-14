@@ -924,10 +924,10 @@ lowering unit, one record per library declaration, and one module table
 holding each module's link record, one file per package. The bundled library's is the
 only producer today (`src/package.rs`). No part of a package is MIR text:
 it is a header followed by bytecode records, as upstream's package is
-MLIR bytecode throughout. The format line is `mojito-package 50`.
+MLIR bytecode throughout. The format line is `mojito-package 51`.
 
 ```text
-mojito-package 50
+mojito-package 51
 <the header's length, 8 bytes little-endian>
 <the header, as bytecode>
 <the payload: every record, as bytecode, then the type section>
@@ -1025,14 +1025,16 @@ mojito-package 50
   whose names are not those its keys and lowered part imply, so the join
   restores each name from the string section. A struct's declared parameters, fields,
   fieldwise initializer, destructors, and explicit-destruction obligation,
-  each method's signature apart from what MIR does not carry (its default
-  expressions, reference signatures, view-return and origin facts, and
-  overload qualifier), and a `def`'s type apart from its callable
+  each method's signature apart from what MIR does not carry (its
+  reference signatures, view-return and origin facts, and overload
+  qualifier), its default attributes included, and a `def`'s type apart from its callable
   environment, reference signatures, and transfers (when they are not its
   summary's) are the lowered part's; the package build refuses the
   package when one says other than the check, byte for byte. A residue
   holds no binding owner, span-keyed fact, syntax identity, or parameter
-  hole; its expressions decode stamped with the path the importer reached
+  hole, and a trait requirement holds each default as its attribute (a
+  literal constant, or a parameter expression over the method's value
+  parameters, format 51), never as syntax; its expressions decode stamped with the path the importer reached
   the module by, so a compilation decodes it, and joins it with the
   lowered part, the first time a lookup names one of its keys. One that
   does not decode fails the compilation. A module constant's residue

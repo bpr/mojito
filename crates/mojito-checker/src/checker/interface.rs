@@ -1519,21 +1519,15 @@ fn method_projection_differs(
 }
 
 /// Whether a signature's default and its lowered declaration's hold the
-/// same default: a checked literal as its constant or a conversion of it,
-/// any other checked expression as an evaluated default.
+/// same default: a literal as its constant or a conversion of it, any other
+/// as an evaluated default.
 fn default_declared_alike(
     default: Option<&SignatureDefault>,
     declared: Option<&CheckedConst>,
 ) -> bool {
     match (default, declared) {
         (None, None) => true,
-        (Some(SignatureDefault::Spelled(expr)), Some(declared)) => {
-            match CheckedConst::from_expr(expr) {
-                Some(literal) => &literal == declared.unconverted(),
-                None => matches!(declared, CheckedConst::Evaluate { .. }),
-            }
-        }
-        (Some(SignatureDefault::Declared(default)), Some(declared)) => default == declared,
+        (Some(default), Some(declared)) => default == &SignatureDefault::of_declared(declared),
         _ => false,
     }
 }
@@ -1626,7 +1620,7 @@ impl MethodResidue {
             defaults: declaration
                 .defaults
                 .iter()
-                .map(|default| default.clone().map(SignatureDefault::Declared))
+                .map(|default| default.as_ref().map(SignatureDefault::of_declared))
                 .collect(),
             variadic: declaration.variadic.clone(),
             variadic_index: declaration.variadic_index,

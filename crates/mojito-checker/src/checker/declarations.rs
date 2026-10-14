@@ -542,7 +542,12 @@ impl Checker {
             )?,
             defaults: regular
                 .iter()
-                .map(|(_, p)| p.default.clone().map(SignatureDefault::Spelled))
+                .map(|(_, p)| {
+                    p.default.as_ref().map(|default| {
+                        mojito_checked::checked::CheckedConst::from_expr(default)
+                            .map_or(SignatureDefault::Evaluated, SignatureDefault::Constant)
+                    })
+                })
                 .collect(),
             variadic: collectors.variadic,
             variadic_index: collectors.variadic_index,

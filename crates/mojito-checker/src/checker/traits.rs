@@ -191,23 +191,19 @@ impl Checker {
                         | ParamDecl::Value { constraints, .. } => constraints.push(constraint),
                     }
                 }
-                let defaults = m
-                    .params
-                    .iter()
-                    .map(|param| {
-                        param
-                            .default
-                            .as_ref()
-                            .map(|default| {
-                                self.requirement_default(default, &decls)
-                                    .map(SignatureDefault::Spelled)
-                            })
-                            .transpose()
-                    })
-                    .collect::<Result<Vec<_>, _>>()?;
                 self.push_param_scope(&decls);
                 let signature = (|| {
                     Ok::<_, TypeError>((
+                        m.params
+                            .iter()
+                            .map(|param| {
+                                param
+                                    .default
+                                    .as_ref()
+                                    .map(|default| self.requirement_default(default, &decls))
+                                    .transpose()
+                            })
+                            .collect::<Result<Vec<_>, _>>()?,
                         self.param_tys(&m.params)?,
                         match &m.ret {
                             Some(SourceType::Ref { referent, .. }) => {
@@ -220,7 +216,7 @@ impl Checker {
                     ))
                 })();
                 self.tparams.pop();
-                let (all_types, ret, error) = signature?;
+                let (defaults, all_types, ret, error) = signature?;
                 self.check_result_origins(
                     m.ret.as_ref(),
                     &m.params,
@@ -3126,71 +3122,70 @@ impl Checker {
             })
     }
 
-    /// A requirement's default as an expression that means the same at a
-    /// call through the bound as in the trait's scope: a module constant,
-    /// or a compile-time `Int` expression over them, folds to the value it
-    /// names there. A default reading the method's own value parameters
-    /// keeps them, with each module constant it reads spelled as its
-    /// literal; the call substitutes its compile-time arguments for them
-    /// (`bound_defaults.rs`).
-    fn requirement_default(&self, default: &Expr, decls: &[ParamDecl]) -> Result<Expr, TypeError> {
+    /// A requirement's default as the attribute its signature holds, the
+    /// same at a call through the bound as in the trait's scope: a literal,
+    /// a module constant, or a compile-time `Int` expression over them, as
+    /// the constant it names there; a default reading the method's own value
+    /// parameters as a parameter expression over them, module constants
+    /// folded, which a call through the bound evaluates with its binding of
+    /// them (`bound_defaults.rs`). The requirement's binders are the
+    /// innermost scope.
+    fn requirement_default(
+        &self,
+        default: &Expr,
+        decls: &[ParamDecl],
+    ) -> Result<SignatureDefault, TypeError> {
         if literal_default(default) {
-            return Ok(default.clone());
+            return mojito_checked::checked::CheckedConst::from_expr(default)
+                .map(SignatureDefault::Constant)
+                .ok_or_else(unfoldable_requirement_default);
         }
         if reads_value_parameter(default, decls) {
+            if !self.parameter_default_shape(default, decls) {
+                return Err(unfoldable_requirement_default());
+            }
             return self
-                .parameter_default(default, decls)
-                .ok_or_else(unfoldable_requirement_default);
+                .compile_dependent_ct_expr(default)
+                .map(SignatureDefault::Parameter)
+                .map_err(|_| unfoldable_requirement_default());
         }
         if decls.iter().any(|decl| reads_name(default, decl.name())) {
             return Err(unfoldable_requirement_default());
         }
         self.folded_constant(default)
+            .map(SignatureDefault::Constant)
             .ok_or_else(unfoldable_requirement_default)
     }
 
     /// A module constant, or a compile-time `Int` expression over them, as
-    /// the literal it names in the trait's scope.
-    fn folded_constant(&self, default: &Expr) -> Option<Expr> {
+    /// the constant it names in the trait's scope.
+    fn folded_constant(&self, default: &Expr) -> Option<mojito_checked::checked::CheckedConst> {
         if let ExprKind::Identifier(name) = &default.kind
             && let Some(constant) = self.comptime_literals.get(name)
         {
-            return Some(Expr {
-                kind: constant.kind.clone(),
-                ..default.clone()
-            });
+            return mojito_checked::checked::CheckedConst::from_expr(constant);
         }
-        let value = self.eval_ct(default).ok()?;
-        bound_defaults::constant_literal(&CtValue::IntLiteral(value), default)
+        self.eval_ct(default)
+            .ok()
+            .map(mojito_checked::checked::CheckedConst::Int)
     }
 
-    /// A default over the method's value parameters and module constants,
-    /// with each constant spelled as its literal; `None` when it reads
-    /// anything else.
-    fn parameter_default(&self, default: &Expr, decls: &[ParamDecl]) -> Option<Expr> {
-        let kind = match &default.kind {
-            ExprKind::Identifier(name) => {
-                return match decls.iter().find(|decl| decl.name() == name) {
-                    Some(ParamDecl::Value { .. }) => Some(default.clone()),
-                    Some(ParamDecl::Type { .. }) => None,
-                    None => self.folded_constant(default),
-                };
+    /// Whether a default is an expression over the method's value
+    /// parameters, literals, and module constants alone.
+    fn parameter_default_shape(&self, default: &Expr, decls: &[ParamDecl]) -> bool {
+        match &default.kind {
+            ExprKind::Identifier(name) => match decls.iter().find(|decl| decl.name() == name) {
+                Some(ParamDecl::Value { .. }) => true,
+                Some(ParamDecl::Type { .. }) => false,
+                None => self.folded_constant(default).is_some(),
+            },
+            ExprKind::Prefix(_, operand) => self.parameter_default_shape(operand, decls),
+            ExprKind::Infix(_, left, right) => {
+                self.parameter_default_shape(left, decls)
+                    && self.parameter_default_shape(right, decls)
             }
-            ExprKind::Prefix(op, operand) => {
-                ExprKind::Prefix(*op, Box::new(self.parameter_default(operand, decls)?))
-            }
-            ExprKind::Infix(op, left, right) => ExprKind::Infix(
-                *op,
-                Box::new(self.parameter_default(left, decls)?),
-                Box::new(self.parameter_default(right, decls)?),
-            ),
-            _ if literal_default(default) => return Some(default.clone()),
-            _ => return None,
-        };
-        Some(Expr {
-            kind,
-            ..default.clone()
-        })
+            _ => literal_default(default),
+        }
     }
 }
 

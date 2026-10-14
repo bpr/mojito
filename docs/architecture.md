@@ -4950,15 +4950,17 @@ the call and of every clone of it; a pass that finds a new one is followed by
 another over the spelled tree, and the template catalog carries them so a
 later pass binds them before it starts. The spelled
 nodes' identities are derived from the call's, so a clone's traces to the
-template's. A literal means the same at the call as in the trait, so the
-trait's declaration folds each requirement default to one
+template's. Every checked signature holds a default as an attribute
+(`SignatureDefault`), as the lowered declaration does: a literal constant,
+an evaluated default, or, for a trait requirement only, a parameter
+expression. The trait's declaration makes each requirement default one
 (`requirement_default` in `checker/traits.rs`): a module constant, or a
-compile-time `Int` expression over them, becomes the value it names in the
-trait's scope. A default reading the method's own value parameters keeps
-them, with its module constants folded, and the call spells its
-compile-time arguments in their place (the explicit ones, or a parameter's
-own constant default it leaves to), which mean the same in the caller and in
-each clone; any other default is rejected.
+compile-time `Int` expression over them, becomes the constant it names in
+the trait's scope, and a default reading the method's own value parameters
+becomes a `ParamExpr` over them with its module constants folded. The call
+evaluates that expression with its solved binding of the parameters
+(explicit, defaulted, or inferred) and spells the value in the caller's
+scope, which means the same in each clone; any other default is rejected.
 
 Keeping value-level behavior in `runtime` prevents the VM from baking every
 operation directly into the backend. The VM should be a consumer of checked MIR

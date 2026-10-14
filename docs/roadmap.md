@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R769**.
+Next free ID: **R771**.
 
 ## Ordered Work
 
@@ -2429,6 +2429,22 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - `comptime x = f[3]()` then `print(x)` runs.
   - `assets/ok/value_param_typed_by_type_param.mojo` fails on it.
   - Found while landing R601 (2026-10-10); HEAD before R601 fails the same way.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R770 A struct parameter expression as a method's bracket argument
+  lowers as a run-time read of `self`**
+
+  Problem: in `struct Holder[w: Int]`, `s.scale[Self.w + 1](5)` for a
+  method `def scale[n: Int](self, value: Int)` fails MIR verification
+  ("compile-time value parameter 'n' has register type Holder, declared
+  Int"); the pin runs it.
+  - A bare `Self.w` argument runs, and so does `scale_free[Self.w + 1](5)`
+    for a free `def`.
+  - So the method-call path lowers the compound argument's `Self` as the
+    receiver register instead of the struct's parameter value.
+  - Found while landing R590 (2026-10-13); HEAD before R590 fails the same
+    way.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -5869,22 +5885,26 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
-- [ ] **R590 An own signature holds a parameter default as checked syntax,
-  not as an attribute**
+- [ ] **R769 A call through a bound runs a requirement default by
+  rewriting its syntax**
 
-  A program's own method, and every trait requirement, keeps each default
-  as an expression (`SignatureDefault::Spelled`), while upstream's checked
-  signature holds a default as a parameter attribute.
-  - Only a package method's signature holds its declaration's constant
-    (`SignatureDefault::Declared`).
-  - A requirement default reading the method's value parameters
-    (`factor: Int = n`) has no constant form.
-  - A call through the bound spells such a default with the call's
-    arguments (`bound_defaults.rs`).
-  - The lever: a parametric default attribute, like a `ParamExpr`, that
-    the bound-default spelling substitutes, so every signature holds the
-    one form.
-  - Found while landing R574 (2026-10-10).
+  The check completes such a call by spelling the requirement's default
+  as keyword syntax and checking the program again, while upstream
+  materializes the callee signature's default attribute at the call.
+  - The rewrite is `bind_bound_default_arguments`
+    (`checker/bound_defaults.rs`) and the extra pass in
+    `check_program_carrying`.
+  - The signature already holds the attribute (`SignatureDefault`); a
+    non-constant parameter value is spelled back from its `ParamExpr`
+    (`spelled_parameter_value`) only to feed the rewrite.
+  - The lever: the checked call node records each omitted slot's
+    requirement default, evaluated at the call, and HIR/MIR lower it as an
+    argument (a constant, or a parameter value).
+  - A requirement default must then be typed against its parameter at the
+    trait, so its conversion (`None` into `Optional`) is known there.
+  - This spans the checked call node, HIR, MIR, the VM, and Pliron: the
+    planning session should split it into chained entries.
+  - Found while landing R590 (2026-10-13).
   - Depends on nothing.
   - Model: Fable, Not Planned.
 

@@ -8,6 +8,20 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- Every checked signature holds a parameter default as an attribute
+  (`SignatureDefault`: a literal constant, an evaluated default, or a
+  trait requirement's parameter expression), as its lowered declaration
+  does, rather than an own method or trait requirement holding the
+  default's syntax (R590). A requirement default reading the method's
+  value parameters is a `ParamExpr` with module constants folded, which a
+  call through the bound evaluates with its solved binding of the
+  parameters, so a caller's own binder or an enclosing struct's
+  parameter (`s.scale[Self.w](5)`) now binds it, where `Self.w` was
+  rejected (`assets/ok/trait_requirement_default_from_caller_parameter.mojo`).
+  An imported trait's requirement holds no syntax; the package format is
+  51 and the generated MIR is unchanged. Completing the call without
+  rewriting its syntax is R769; R770 is a struct-parameter bracket
+  argument defect found on the way.
 - The checked program holds no syntax and builds no second table from it
   (R625): `CheckedProgram::statements` and the syntax walk that made the
   declarations (`build_checked_declarations`) are gone, the declarations

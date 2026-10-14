@@ -523,7 +523,6 @@ impl Checker {
                     span,
                     slots: &selected.slots,
                     positional: args.len(),
-                    param_args,
                     solved,
                 },
                 &effective_bounds,

@@ -84,7 +84,7 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
 - `checker::Checker` is one type whose ~250 methods are split across
   `impl Checker` blocks in the `checker/` submodules below; `checker.rs` retains
   the struct, constructors, `check_program` glue, the shared prelude types
-  (`StructInfo`, `MethodSig` with its `SignatureDefault`, overload helpers, `ConformanceOracle`), and the
+  (`StructInfo`, `MethodSig` with its `SignatureDefault` attribute — `Constant`, `Parameter`, or `Evaluated` — overload helpers, `ConformanceOracle`), and the
   call-effect/coercion helpers; the `ConformanceOracle` impl lives in
   `checker/conformance.rs`, and the free overload/signature and trait-support
   helpers live in `checker/overload_support.rs` and
@@ -128,13 +128,16 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   (`CheckContext::bound_default_arguments`, `BoundDefaultArguments`), and
   `bind_bound_default_arguments` spells them as keyword arguments of the
   call, before a pass and again, with another pass, when a pass found new
-  ones (`check_program_carrying`). The spelled defaults are literals, or
-  expressions over the method's value parameters: `requirement_default` in
-  `checker/traits.rs` folds a requirement's default over module constants
-  (`comptimes`, `comptime_literals`, both registered before the trait pass)
-  when the trait is declared, keeping the parameters it reads
-  (`reads_value_parameter`), and `spell_parameters` replaces them with the
-  call's compile-time arguments. A generic call (`ExprKind::Invoke`) binds
+  ones (`check_program_carrying`). `requirement_default` in
+  `checker/traits.rs` makes each requirement default its signature's
+  attribute when the trait is declared: a literal constant, module
+  constants folded (`comptimes`, `comptime_literals`, both registered
+  before the trait pass), or, for one reading the method's value parameters
+  (`reads_value_parameter`), a `ParamExpr` over them
+  (`compile_dependent_ct_expr`). `spelled_parameter_default` evaluates that
+  expression with the call's solved binding of the parameters and
+  `spelled_parameter_value` spells the value in the caller's scope; a
+  constant is spelled by `checked_literal`. A generic call (`ExprKind::Invoke`) binds
   them as a plain method call does.
 - `checker/inference.rs` owns expression inference (`infer`/`infer_impl`)
   and list/tuple/variant construction. `checker/template_string.rs` owns
