@@ -168,6 +168,10 @@ name = "artifact_conformance_test"
 harness = false
 
 [[test]]
+name = "mir_pass_test"
+harness = false
+
+[[test]]
 name = "pliron_backend_test"
 required-features = ["backend-pliron"]
 

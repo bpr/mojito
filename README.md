@@ -86,6 +86,7 @@ cargo run -- <command> [FILE]
 | `run` | compile and execute on the register VM |
 | `emit-mir` | compile and print canonical executable MIR |
 | `exec` | execute a verified textual MIR artifact |
+| `opt` | run named MIR passes (`--pass NAME`) over a textual artifact and print it |
 
 For example:
 

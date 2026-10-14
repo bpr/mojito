@@ -1725,7 +1725,7 @@ pub struct MirBlock {
     pub term: MirTerm,
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 pub struct MirFunction {
     pub blocks: Vec<MirBlock>,
     pub n_regs: u32,

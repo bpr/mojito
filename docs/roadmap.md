@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R822**.
+Next free ID: **R824**.
 
 ## Ordered Work
 
@@ -187,14 +187,19 @@ which shrinks it changes no program's behavior. The passes it serves are in
 the `pmir` track, staged in
 [`docs/pre-elaboration-optimization-plan.md`](pre-elaboration-optimization-plan.md).
 
-- [ ] **R776 A MIR pass has no text-in, text-out test harness**
+- [ ] **R822 The MIR verifier accepts a slot dropped twice**
 
-  A pass can only be tested through whole programs today, which pins its
-  output poorly.
-  - Add a harness that reads MIR text (`mir::text`), runs one named pass,
-    and compares the printed result with an expected file, as the MIR
-    snapshots do.
-  - Depends on R777.
+  Running `elaborate-drops` over a body whose drops are already inserted
+  doubles each `drop.var`, and the result still verifies.
+  - Reproduce: `mojito opt --pass elaborate-drops --pass elaborate-drops
+    tests/mir_passes/elaborate-drops/scalar_vars.mir` prints four
+    `drop.var` and exits 0.
+  - The pre-elaboration passes rely on per-pass verification, so a pass
+    that drops a dead slot must fail there, as upstream's verifier rejects
+    destroying a value that is already dead.
+  - Add a definite-initialization check for `drop.var` to `mir::verify`
+    and a `tests/mir_passes` negative case.
+  - Depends on nothing.
   - Model: Opus, Not Planned.
 
 ### Native Backend
@@ -7460,6 +7465,20 @@ residue found inside a task moves to the task that owns its fix.
 ### Packaging, Artifacts, And Developer Tooling
 
 Track: `tooling`.
+
+- [ ] **R823 The MIR disassembler snapshots are stale**
+
+  `tests/snapshots/mir/{minimal,control_flow,metadata}.mir` still read
+  `mojito-mir 1.51` while the writer prints 1.52, so
+  `mir_disassembler_test::minimal_program_has_a_stable_snapshot` fails at
+  HEAD.
+  - The snapshots pin the version header and the declaration rows, so
+    every format bump breaks them in a lane the bumping session does not
+    run.
+  - Refresh them and pin them through `expect_test::expect_file!`, so
+    `UPDATE_EXPECT=1` blesses them, as `tests/mir_pass_test.rs` does.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
 
 - [ ] **R530 `benchmarks/compile/tuple.mojo` is not valid Mojo**
 

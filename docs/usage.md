@@ -42,6 +42,7 @@ Commands:
 | `emit-mir` | compile and print canonical executable MIR |
 | `compile` | native-compile via the supported Pliron backend (requires the `backend-pliron` feature and LLVM 23.1) |
 | `exec` | execute a verified textual MIR artifact |
+| `opt` | load a textual MIR artifact, run each `--pass NAME` in order (verifying after each), and print the canonical artifact |
 
 `run` and `exec` instantiate every reachable generic body before execution,
 as the native backend does. `--erased` (or `MOJITO_VM_ERASED=1`) runs generic

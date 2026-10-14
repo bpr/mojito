@@ -8,6 +8,15 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A MIR pass can be tested as MIR text in, MIR text out (R776), after
+  MLIR's `mlir-opt`: `analysis::pass_named` registers passes by name
+  (every pre-elaboration pass, plus drop elaboration as
+  `elaborate-drops`), `analysis::opt` and the new `mojito opt [--pass
+  NAME]… [FILE]` command run them over a loaded artifact and verify after
+  each in every build, and `tests/mir_pass_test.rs` compares each case under
+  `tests/mir_passes/<pass>/` with its expected `functions:` section
+  (`mir::text::disassemble_functions`).
+
 - A package body whose lowering, finish, or verify reached a package
   declaration that does not decode now says so in its own verdict (R821):
   each unit's lowering and each body's finish read the package through a

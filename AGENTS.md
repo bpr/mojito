@@ -261,6 +261,10 @@ gigabytes, so it is excluded from `scripts/check-pliron` and from the
 overnight gate; `scripts/check-pliron-heavy` runs it alone, one sweep at a
 time. Put a new whole-corpus sweep there, not in `tests/pliron_*.rs`.
 
+`tests/mir_passes/<pass>/` holds MIR pass tests, MIR text in and the
+expected `functions:` section out, run by `tests/mir_pass_test.rs`; a new
+pass adds its cases there (`tests/mir_passes/README.md`).
+
 Every executing test goes through `Compiler` (`compile_source`,
 `compile_path`, or `compile_unlinked`, with `with_snippet_module_scope` for
 snippet programs that keep executable statements at module scope): the VM

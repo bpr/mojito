@@ -17,6 +17,7 @@ use std::process::ExitCode;
 /// mojito run   [FILE]   # the full pipeline; print output + final bindings
 /// mojito emit-mir [FILE] # compile and print executable textual MIR
 /// mojito exec  [FILE]   # execute a verified textual MIR artifact
+/// mojito opt [--pass NAME]... [FILE] # run named MIR passes, print the artifact
 /// mojito demo           # the built-in showcase (also the no-arg default)
 /// ```
 ///
@@ -60,6 +61,10 @@ fn main() -> ExitCode {
         eprintln!("--runtime-lib is only valid with the compile, run, and link commands");
         return ExitCode::FAILURE;
     }
+    if command != Some("opt") && !cli.passes.is_empty() {
+        eprintln!("--pass is only valid with the opt command");
+        return ExitCode::FAILURE;
+    }
     if cli.timings {
         mojito::timing::enable();
     }
@@ -93,6 +98,7 @@ fn run_command(command: Option<&str>, file: Option<&str>, cli: &CliArgs) -> Exit
         Some("link") => stage_link(file, cli),
         Some("precompile") => stage_precompile(file, cli),
         Some("exec") => stage_exec(file, cli),
+        Some("opt") => stage_opt(file, &cli.passes),
         Some("-h" | "--help" | "help") => {
             print_usage();
             ExitCode::SUCCESS
@@ -134,6 +140,8 @@ struct CliArgs {
     /// `--runtime-lib PATH` for `compile`/`run`/`link`: explicit runtime
     /// archive, first in the backend's ordered discovery contract.
     runtime_lib: Option<String>,
+    /// `--pass NAME` for `opt`, repeatable: the passes to run, in order.
+    passes: Vec<String>,
 }
 
 /// Extract global options from anywhere on the command line. Local imports win,
@@ -150,6 +158,7 @@ fn parse_cli_args(raw: Vec<String>) -> Result<CliArgs, String> {
     let mut timings = false;
     let mut native_debug = None;
     let mut runtime_lib = None;
+    let mut passes = Vec::new();
     let mut iter = raw.into_iter();
     while let Some(arg) = iter.next() {
         if let Some(name) = arg.strip_prefix("--backend=") {
@@ -200,6 +209,10 @@ fn parse_cli_args(raw: Vec<String>) -> Result<CliArgs, String> {
             runtime_lib = Some(path.to_string());
         } else if arg == "--runtime-lib" {
             runtime_lib = Some(iter.next().ok_or("--runtime-lib requires a path")?);
+        } else if let Some(name) = arg.strip_prefix("--pass=") {
+            passes.push(name.to_string());
+        } else if arg == "--pass" {
+            passes.push(iter.next().ok_or("--pass requires a name")?);
         } else if arg.starts_with('-') && arg != "-" && !matches!(arg.as_str(), "-h" | "--help") {
             return Err(format!("unknown option '{arg}'"));
         } else {
@@ -221,6 +234,7 @@ fn parse_cli_args(raw: Vec<String>) -> Result<CliArgs, String> {
         timings,
         native_debug,
         runtime_lib,
+        passes,
     })
 }
 
@@ -744,6 +758,52 @@ fn stage_exec(file: Option<&str>, cli: &CliArgs) -> ExitCode {
     }
 }
 
+/// `opt`: load a verified textual MIR artifact, run the named passes over
+/// its bodies in order, verifying after each, and print the canonical
+/// artifact. With no pass it only canonicalizes.
+fn stage_opt(file: Option<&str>, names: &[String]) -> ExitCode {
+    let passes = match names
+        .iter()
+        .map(|name| {
+            mojito::analysis::pass_named(name).ok_or_else(|| {
+                format!(
+                    "unknown pass '{name}'; registered passes: {}",
+                    mojito::analysis::pass_names()
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                )
+            })
+        })
+        .collect::<Result<Vec<_>, _>>()
+    {
+        Ok(passes) => passes,
+        Err(e) => {
+            eprintln!("opt error: {e}");
+            return ExitCode::FAILURE;
+        }
+    };
+    let bytes = match read_bytes(file) {
+        Ok(bytes) => bytes,
+        Err(e) => {
+            eprintln!("opt: cannot read input: {e}");
+            return ExitCode::FAILURE;
+        }
+    };
+    let printed = mojito::analysis::opt(&bytes, file.unwrap_or("-"), &passes)
+        .map_err(|e| e.to_string())
+        .and_then(|program| mojito::mir::text::disassemble(&program).map_err(|e| e.to_string()));
+    match printed {
+        Ok(text) => {
+            print!("{text}");
+            ExitCode::SUCCESS
+        }
+        Err(e) => {
+            eprintln!("opt error: {e}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
 /// Read the named file, or standard input, as raw bytes — the artifact parser
 /// owns UTF-8 validation and BOM rejection, so `exec` must not pre-decode.
 fn read_bytes(file: Option<&str>) -> std::io::Result<Vec<u8>> {
@@ -773,6 +833,7 @@ fn print_usage() {
          \x20 --runtime-lib PATH     explicit runtime archive (first in discovery order)\n\
          \x20 --print-toolchain      report the resolved native toolchain (compile only)\n\
          \x20 --timings              print per-phase timings and counters to stderr\n\
+         \x20 --pass NAME            a MIR pass for opt to run (repeatable, in order)\n\
 \n\
          commands:\n\
          \x20 lex   [FILE]   print the token stream (one per line)\n\
@@ -783,6 +844,7 @@ fn print_usage() {
          \x20 compile [FILE] native-compile via --backend pliron\n\
          \x20 link  OBJ      link a saved object via its .link.tsv manifest (--backend pliron)\n\
          \x20 exec  [FILE]   execute a verified textual MIR artifact\n\
+         \x20 opt   [FILE]   run the --pass passes over textual MIR and print it\n\
          \x20 precompile DIR write the bundled library DIR's package (default ./std.mojoc)\n\
          \x20 demo           run the built-in showcase (default)\n\n\
          FILE defaults to '-' (standard input).\n"

@@ -22,6 +22,30 @@ pub struct BodyPass {
 /// (`docs/pre-elaboration-optimization-plan.md`) as Mojito adopts it.
 pub const PIPELINE: &[BodyPass] = &[];
 
+/// Drop elaboration as a named pass, so a pass test can run it over MIR
+/// text whose drops are not yet inserted. The pipeline does not list it:
+/// every pipeline body already had its drops inserted.
+pub const ELABORATE_DROPS: BodyPass = BodyPass {
+    name: "elaborate-drops",
+    run: |name, function, declarations| {
+        *function = elaborate_drops_function(name, std::mem::take(function), declarations);
+    },
+};
+
+/// The pass registered under `name`: a [`PIPELINE`] pass, or one run only
+/// on request (drop elaboration).
+pub fn pass_named(name: &str) -> Option<&'static BodyPass> {
+    PIPELINE
+        .iter()
+        .chain(REGISTERED)
+        .find(|pass| pass.name == name)
+}
+
+/// Every registered pass's name, pipeline order first.
+pub fn pass_names() -> impl Iterator<Item = &'static str> {
+    PIPELINE.iter().chain(REGISTERED).map(|pass| pass.name)
+}
+
 /// Run [`PIPELINE`] over the body `name`. In debug builds the body is
 /// verified after each pass, and each finding, naming the pass, goes to
 /// `findings`.
@@ -37,9 +61,7 @@ pub fn run_pipeline(
             findings.extend(
                 mojito_mir::mir::verify::verify_function_in(name, function, declarations)
                     .into_iter()
-                    .map(|finding| {
-                        format!("after pre-elaboration pass `{}`: {finding}", pass.name)
-                    }),
+                    .map(|finding| pass_finding(pass, &finding)),
             );
         }
     }
@@ -83,4 +105,29 @@ pub fn finish_package_body_without_pipeline(
     _findings: &mut Vec<String>,
 ) -> MirFunction {
     elaborate_drops_function(name, function, declarations)
+}
+
+/// A verifier finding on a body after `pass` ran, naming the pass.
+pub(super) fn pass_finding(pass: &BodyPass, finding: &str) -> String {
+    format!("after pre-elaboration pass `{}`: {finding}", pass.name)
+}
+
+/// Passes outside [`PIPELINE`] that [`pass_named`] still answers.
+const REGISTERED: &[BodyPass] = &[ELABORATE_DROPS];
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn every_registered_pass_resolves_by_a_unique_name() {
+        let names: Vec<_> = pass_names().collect();
+        let unique: std::collections::BTreeSet<_> = names.iter().collect();
+        assert_eq!(unique.len(), names.len(), "{names:?}");
+        for name in names {
+            assert_eq!(pass_named(name).map(|pass| pass.name), Some(name));
+        }
+        assert!(pass_named("elaborate-drops").is_some());
+        assert!(pass_named("no-such-pass").is_none());
+    }
 }

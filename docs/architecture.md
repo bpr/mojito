@@ -4773,6 +4773,16 @@ passes that fill it.
   the package body's verdict (`PackageBodies::findings`), which the
   elaborator refuses when it materializes the body. The post-drop verify
   after the seam runs in every build.
+- **Pass tests.** `pass_named` looks a pass up by name, as MLIR's pass
+  registry does: every `PIPELINE` pass, plus `ELABORATE_DROPS`
+  (`elaborate-drops`), drop elaboration run on request. `analysis::opt`,
+  the `mlir-opt` analogue behind `mojito opt [--pass NAME]… [FILE]`, loads a
+  MIR artifact, runs the named passes in order over every body but
+  `__toplevel__`, and verifies the whole program after each pass in every
+  build. `tests/mir_pass_test.rs` pins each case under
+  `tests/mir_passes/<pass>/` by its `functions:` section
+  (`mir::text::disassemble_functions`), so a format bump breaks no expected
+  file.
 - **The switch.** `MOJITO_PRE_ELABORATION=0` turns the pipeline off, and
   `Compiler::with_pre_elaboration(bool)` sets it whatever the environment
   says. The bundled package is imported once per setting

@@ -159,22 +159,14 @@ impl std::error::Error for DisassembleError {}
 /// A program that imports a package is written with the package's
 /// declarations joined to its own, as one artifact.
 pub fn disassemble(program: &MirProgram) -> Result<String, DisassembleError> {
-    if program.declarations.imported.is_some() {
-        return disassemble(&MirProgram {
-            functions: program.functions.clone(),
-            declarations: program.declarations.materialized(),
-            invariant_errors: program.invariant_errors.clone(),
-        });
-    }
-    let mut findings = program.invariant_errors.clone();
-    findings.extend(super::verify::verify(program));
-    findings.extend(write::schema_findings(program));
-    findings.sort();
-    findings.dedup();
-    if !findings.is_empty() {
-        return Err(DisassembleError { findings });
-    }
-    Ok(write::program(program))
+    printed(program, write::program)
+}
+
+/// [`disassemble`]'s `functions: [ … ]` section alone, its file ids those
+/// of the whole artifact: what a pass over bodies changes, and nothing a
+/// format bump does.
+pub fn disassemble_functions(program: &MirProgram) -> Result<String, DisassembleError> {
+    printed(program, write::functions_section)
 }
 
 pub const MAGIC: &str = "mojito-mir";
@@ -578,6 +570,34 @@ fn resolve_candidate_span(source_map: &ArtifactSourceMap, candidates: &[String])
 pub mod package;
 mod parse;
 mod write;
+
+/// Verify `program` as [`disassemble`] does and print it with `print`,
+/// writing a program that imports a package with the package's
+/// declarations joined to its own.
+fn printed(
+    program: &MirProgram,
+    print: fn(&MirProgram) -> String,
+) -> Result<String, DisassembleError> {
+    if program.declarations.imported.is_some() {
+        return printed(
+            &MirProgram {
+                functions: program.functions.clone(),
+                declarations: program.declarations.materialized(),
+                invariant_errors: program.invariant_errors.clone(),
+            },
+            print,
+        );
+    }
+    let mut findings = program.invariant_errors.clone();
+    findings.extend(super::verify::verify(program));
+    findings.extend(write::schema_findings(program));
+    findings.sort();
+    findings.dedup();
+    if !findings.is_empty() {
+        return Err(DisassembleError { findings });
+    }
+    Ok(print(program))
+}
 
 #[cfg(test)]
 mod tests {

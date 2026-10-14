@@ -67,22 +67,16 @@ pub(super) fn program(program: &MirProgram) -> String {
     let files = files(program);
     let mut output = String::new();
     write_artifact_head(&mut output, program, &files);
-    writeln!(output, "  functions: [").unwrap();
-    for (index, (name, function)) in program.functions.iter().enumerate() {
-        write_function(&mut output, name, function, &files, 2);
-        writeln!(
-            output,
-            "{}",
-            if index + 1 == program.functions.len() {
-                ""
-            } else {
-                ","
-            }
-        )
-        .unwrap();
-    }
-    writeln!(output, "  ]").unwrap();
+    write_functions(&mut output, program, &files);
     writeln!(output, "}}").unwrap();
+    output
+}
+
+/// The artifact's `functions: [ … ]` section alone, numbered against the
+/// whole artifact's file table.
+pub(super) fn functions_section(program: &MirProgram) -> String {
+    let mut output = String::new();
+    write_functions(&mut output, program, &files(program));
     output
 }
 
@@ -433,6 +427,28 @@ fn write_declarations(output: &mut String, declarations: &[MirFunctionDeclaratio
         .unwrap();
     }
     writeln!(output, "  ],").unwrap();
+}
+
+fn write_functions(
+    output: &mut String,
+    program: &MirProgram,
+    files: &BTreeMap<Option<String>, usize>,
+) {
+    writeln!(output, "  functions: [").unwrap();
+    for (index, (name, function)) in program.functions.iter().enumerate() {
+        write_function(output, name, function, files, 2);
+        writeln!(
+            output,
+            "{}",
+            if index + 1 == program.functions.len() {
+                ""
+            } else {
+                ","
+            }
+        )
+        .unwrap();
+    }
+    writeln!(output, "  ]").unwrap();
 }
 
 fn write_function(
