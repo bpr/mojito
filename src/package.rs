@@ -61,6 +61,11 @@ pub const BUILD_ID: &str = env!("MOJITO_BUILD_ID");
 
 /// The bundled library's package for this build, read once per process.
 ///
+/// `pre_elaboration` picks the finishing hook its bodies get: each setting
+/// imports the package once, since a finished body is cached with the hook
+/// that finished it. The cache file is the same for both, since it holds
+/// bodies before drop elaboration.
+///
 /// An installed compiler maps the package its bundle ships
 /// (`<prefix>/lib/mojito/std.mojoc`). A development build's comes from
 /// the cache when this build already wrote it, else it is built and cached
@@ -74,9 +79,11 @@ pub const BUILD_ID: &str = env!("MOJITO_BUILD_ID");
 ///
 /// An installed compiler whose package is missing, unreadable, or another
 /// build's, as upstream's refuses a missing or mismatched `std.mojoc`.
-pub fn bundled_std_package() -> Result<Option<Arc<ImportedPackage>>, ModuleError> {
-    static PACKAGE: OnceLock<BundledPackage> = OnceLock::new();
-    PACKAGE
+pub fn bundled_std_package(
+    pre_elaboration: bool,
+) -> Result<Option<Arc<ImportedPackage>>, ModuleError> {
+    static PACKAGE: [OnceLock<BundledPackage>; 2] = [OnceLock::new(), OnceLock::new()];
+    PACKAGE[usize::from(pre_elaboration)]
         .get_or_init(|| {
             let Some(root) = bundled_root().map(|root| root.join("stdlib")) else {
                 return Ok(None);
@@ -87,11 +94,13 @@ pub fn bundled_std_package() -> Result<Option<Arc<ImportedPackage>>, ModuleError
                 return std::fs::File::open(&path)
                     .and_then(|file| PackageBytes::map(&file))
                     .map_err(|error| error.to_string())
-                    .and_then(|bytes| import(bytes, &header, &LibraryRoot::new(&root)))
+                    .and_then(|bytes| {
+                        import(bytes, &header, &LibraryRoot::new(&root), pre_elaboration)
+                    })
                     .map(|package| Some(Arc::new(package)))
                     .map_err(|reason| (path, reason));
             }
-            match load_or_build(&root, &header) {
+            match load_or_build(&root, &header, pre_elaboration) {
                 Ok(package) => Ok(Some(Arc::new(package))),
                 Err(error) => {
                     eprintln!(
@@ -178,7 +187,11 @@ fn std_header() -> PackageHeader {
 /// Map the cached package `header` names, or build and cache it. One
 /// process builds while any other that needs the same package waits for
 /// it, under a lock file a crashed builder leaves stale after a while.
-fn load_or_build(root: &Path, header: &PackageHeader) -> Result<ImportedPackage, String> {
+fn load_or_build(
+    root: &Path,
+    header: &PackageHeader,
+    pre_elaboration: bool,
+) -> Result<ImportedPackage, String> {
     const STALE: std::time::Duration = std::time::Duration::from_mins(5);
     let library = LibraryRoot::new(root);
     let cache = cache_dir();
@@ -190,7 +203,7 @@ fn load_or_build(root: &Path, header: &PackageHeader) -> Result<ImportedPackage,
         let bytes = std::fs::File::open(&path).and_then(|file| PackageBytes::map(&file));
         drop(map);
         if let Ok(bytes) = bytes
-            && let Ok(package) = import(bytes, header, &library)
+            && let Ok(package) = import(bytes, header, &library, pre_elaboration)
         {
             return Ok(package);
         }
@@ -214,7 +227,12 @@ fn load_or_build(root: &Path, header: &PackageHeader) -> Result<ImportedPackage,
                     prune(&cache, &path);
                 }
                 let _ = std::fs::remove_file(&lock);
-                return import(PackageBytes::Owned(built?), header, &library);
+                return import(
+                    PackageBytes::Owned(built?),
+                    header,
+                    &library,
+                    pre_elaboration,
+                );
             }
             Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
                 let stale = std::fs::metadata(&lock)
@@ -236,14 +254,18 @@ fn load_or_build(root: &Path, header: &PackageHeader) -> Result<ImportedPackage,
         PackageBytes::Owned(build(root, header).map_err(|error| error.to_string())?),
         header,
         &library,
+        pre_elaboration,
     )
 }
 
-/// Read `bytes` as the package `header` names, its library under `root`.
+/// Read `bytes` as the package `header` names, its library under `root`,
+/// each body finished with drop elaboration and, with `pre_elaboration`,
+/// the pre-elaboration pipeline.
 fn import(
     bytes: PackageBytes,
     header: &PackageHeader,
     root: &LibraryRoot,
+    pre_elaboration: bool,
 ) -> Result<ImportedPackage, String> {
     let package = read_package(bytes, root).map_err(|error| error.to_string())?;
     if package.header != *header {
@@ -273,9 +295,11 @@ fn import(
             &package.declarations,
         ))),
         declarations: package.declarations,
-        bodies: package
-            .bodies
-            .finishing(crate::analysis::elaborate_drops_function),
+        bodies: package.bodies.finishing(if pre_elaboration {
+            crate::analysis::finish_package_body
+        } else {
+            crate::analysis::finish_package_body_without_pipeline
+        }),
     })
 }
 
@@ -559,12 +583,12 @@ mod tests {
         let header = std_header();
         let text = empty_package(&header);
         let root = library("/a/stdlib");
-        assert!(import(PackageBytes::Owned(text.clone()), &header, &root).is_ok());
+        assert!(import(PackageBytes::Owned(text.clone()), &header, &root, true).is_ok());
         let other = PackageHeader {
             compiler: "another-build".to_string(),
             ..header
         };
-        assert!(import(PackageBytes::Owned(text), &other, &root).is_err());
+        assert!(import(PackageBytes::Owned(text), &other, &root, true).is_err());
     }
 
     #[test]
@@ -572,8 +596,13 @@ mod tests {
         let header = std_header();
         let text = empty_package(&header);
         assert!(refuse_install_paths(&text, &library("/a/stdlib")).is_ok());
-        let package = import(PackageBytes::Owned(text), &header, &library("/b/stdlib"))
-            .expect("imports under another root");
+        let package = import(
+            PackageBytes::Owned(text),
+            &header,
+            &library("/b/stdlib"),
+            true,
+        )
+        .expect("imports under another root");
         let module = package.declarations.modules().next().expect("one module");
         assert_eq!(module.path, "/b/stdlib/std/x.mojo");
         assert_eq!(module.canonical, "/b/stdlib/std/x.mojo");
@@ -698,7 +727,7 @@ mod tests {
     #[test]
     fn a_package_links_what_its_source_links() {
         use crate::module::{link_source_with_options, link_source_with_package};
-        let package = bundled_std_package()
+        let package = bundled_std_package(true)
             .expect("the installed package reads")
             .expect("the bundled library packages");
         let root = bundled_root().expect("a bundled root").join("stdlib");
@@ -736,7 +765,7 @@ mod tests {
 
     #[test]
     fn every_library_module_has_an_interface() {
-        let package = bundled_std_package()
+        let package = bundled_std_package(true)
             .expect("the installed package reads")
             .expect("the bundled library packages");
         let directory = package.declarations.directory();

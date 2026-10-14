@@ -719,6 +719,7 @@ total
     ownership.loans
   backend.prepare
     drops.elaborate
+    pre_elaboration
     mir.verify.post_drop
     vm.mir_clone
     vm.registry_build

@@ -27,7 +27,8 @@ use std::sync::{Arc, OnceLock};
 /// and ownership analysis and is therefore ready for any backend.
 ///
 /// It holds the three MIR phases apart: parametric MIR ([`Self::mir`]),
-/// drop-elaborated MIR ([`Self::drop_elaborated_mir`]), and concrete MIR
+/// drop-elaborated MIR ([`Self::drop_elaborated_mir`], drops inserted and
+/// the pre-elaboration pipeline run), and concrete MIR
 /// ([`Self::concrete_mir`]). The last two are computed once, on first use.
 #[derive(Debug, Clone)]
 pub struct CompiledProgram {
@@ -43,6 +44,8 @@ pub struct CompiledProgram {
     /// The compiled package the program imports, whose bodies were checked
     /// and lowered when it was built.
     package: Option<Arc<ImportedPackage>>,
+    /// Run the pre-elaboration pipeline over the program's own bodies.
+    pre_elaboration: bool,
 }
 impl CompiledProgram {
     /// The semantically checked program carried by this ownership-verified
@@ -67,9 +70,9 @@ impl CompiledProgram {
     }
 
     /// The program's own drop-elaborated MIR, re-verified: [`Self::mir`]
-    /// with drops inserted. It is the elaborator's input, beside an
-    /// imported package's bodies, whose drops are inserted as each is
-    /// materialized.
+    /// with drops inserted and the pre-elaboration pipeline run. It is the
+    /// elaborator's input, beside an imported package's bodies, which are
+    /// finished the same way as each is materialized.
     /// Post-drop verification findings are folded into `invariant_errors`;
     /// consumers refuse a non-empty list.
     pub fn elaborated_mir(&self) -> &MirProgram {
@@ -78,6 +81,10 @@ impl CompiledProgram {
                 let _drops = timing::span("drops.elaborate");
                 crate::analysis::elaborate_drops_program(self.mir.clone())
             };
+            if self.pre_elaboration {
+                let _passes = timing::span("pre_elaboration");
+                crate::analysis::pre_elaborate_program(&mut mir);
+            }
             let _verify = timing::span("mir.verify.post_drop");
             let findings = crate::mir::verify::verify(&mir);
             mir.invariant_errors.extend(findings);
@@ -85,7 +92,8 @@ impl CompiledProgram {
         })
     }
 
-    /// Drop-elaborated MIR: parametric MIR with drops inserted, re-verified.
+    /// Drop-elaborated MIR: parametric MIR with drops inserted and the
+    /// pre-elaboration pipeline run, re-verified.
     /// It may still be generic. It is the whole program: an imported
     /// package's bodies, every one lowered, join [`Self::elaborated_mir`],
     /// so it serializes as one artifact.
@@ -251,6 +259,10 @@ pub struct Compiler {
     /// environment variable (`0` compiles the library from source, a
     /// development build's seam an installed compiler refuses).
     std_package: Option<bool>,
+    /// Run the pre-elaboration pipeline between drop elaboration and the
+    /// elaborator. `None` defers to the `MOJITO_PRE_ELABORATION`
+    /// environment variable (`0` disables).
+    pre_elaboration: Option<bool>,
 }
 /// Reject runtime statements at module scope, matching Mojo's source rules.
 /// Declarations, imports, compile-time constants, and `pass` are permitted.
@@ -301,6 +313,7 @@ impl Compiler {
             allow_executable_module_scope: false,
             body_fact_reuse: None,
             std_package: None,
+            pre_elaboration: None,
             target: match crate::native::target::Triple::host() {
                 Some(triple) => Some(crate::native::target::NativeTarget::new(triple)),
                 None => None,
@@ -326,6 +339,14 @@ impl Compiler {
     #[must_use]
     pub const fn with_std_package(mut self, import: bool) -> Self {
         self.std_package = Some(import);
+        self
+    }
+    /// Run the pre-elaboration pipeline, or skip it, whatever the
+    /// environment says: off, the elaborator reads bodies as drop
+    /// elaboration leaves them.
+    #[must_use]
+    pub const fn with_pre_elaboration(mut self, run: bool) -> Self {
+        self.pre_elaboration = Some(run);
         self
     }
     /// Permit executable module-scope statements for isolated compiler tests.
@@ -414,7 +435,14 @@ impl Compiler {
                 None => Ok(None),
             };
         }
-        crate::package::bundled_std_package().map_err(CompilerError::Module)
+        crate::package::bundled_std_package(self.pre_elaboration()).map_err(CompilerError::Module)
+    }
+
+    /// Whether the pre-elaboration pipeline runs.
+    fn pre_elaboration(&self) -> bool {
+        self.pre_elaboration.unwrap_or_else(|| {
+            std::env::var_os("MOJITO_PRE_ELABORATION").is_none_or(|value| value != "0")
+        })
     }
 
     /// Link with `link` and compile the result, importing the bundled
@@ -545,6 +573,7 @@ impl Compiler {
             concrete: OnceLock::new(),
             target: self.target,
             package,
+            pre_elaboration: self.pre_elaboration(),
         })
     }
     /// Execute an ownership-verified program using the configured backend.

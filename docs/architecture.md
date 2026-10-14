@@ -58,6 +58,7 @@ Vec<Stmt>
   -> MIR
   -> ownership / borrow / liveness analysis
   -> drop elaboration
+  -> pre-elaboration pipeline
   -> elaboration to concrete MIR (native::mono)
   -> register VM
 ```
@@ -77,8 +78,8 @@ each named by its accessor and each computed once:
 | Phase | Accessor | What it is | Who consumes it |
 |---|---|---|---|
 | Parametric MIR | `mir()` | The ownership-verified, pre-drop `MirProgram` the driver lowered; generic bodies name their parameters. With an imported package, the program's own functions and declarations, with the package's MIR declarations attached and each resolved the first time a lookup names it | Ownership analysis |
-| Drop-elaborated MIR | `elaborated_mir()` | Parametric MIR with drops inserted, re-verified; may still be generic | The elaborator, beside an imported package's bodies |
-| Whole drop-elaborated MIR | `drop_elaborated_mir()` | `elaborated_mir()` with every package body joined, decoded and drop-elaborated; the same program when nothing is imported | `emit_mir` and the serialized artifact |
+| Drop-elaborated MIR | `elaborated_mir()` | Parametric MIR with drops inserted and the pre-elaboration pipeline run, re-verified; may still be generic | The elaborator, beside an imported package's bodies |
+| Whole drop-elaborated MIR | `drop_elaborated_mir()` | `elaborated_mir()` with every package body joined, decoded, drop-elaborated, and through the pre-elaboration pipeline; the same program when nothing is imported | `emit_mir` and the serialized artifact |
 | Concrete MIR | `concrete_mir()` | The elaborator's entry-rooted output, a `SpecializedProgram` whose `mir::ConcreteMir` passed `verify_concrete` | The VM and the native backend |
 
 ### The Bundled Library Is An Imported Package
@@ -110,10 +111,10 @@ import (every compilation that links the bundled library):
     -> MIR of the program's own declarations, with the package's
        declaration records attached (each decoded on first lookup)
     -> verify + ownership (own functions)
-    -> drop elaboration (own functions)
+    -> drop elaboration + pre-elaboration pipeline (own functions)
     -> native::mono, which, when it first reaches a package body,
-       lowers the body's unit (checked arena -> HIR CFG -> MIR) and
-       inserts its drops then -> VM
+       lowers the body's unit (checked arena -> HIR CFG -> MIR),
+       inserts its drops, and runs the pipeline then -> VM
 ```
 
 - **The package file** (`mir::text::package`) is a header followed by
@@ -4720,6 +4721,38 @@ Iterator-driven loops also place an explicit drop at their common exhaustion or
 current binding and iterator owners on `ReturnWithCleanup`; this preserves
 return-value evaluation order and carries destruction through nested
 `try/finally` regions.
+
+### Pre-Elaboration Pipeline
+
+Upstream runs a pass pipeline on parametric IR after destructor insertion and
+before the elaborator. Mojito's is `analysis::PIPELINE`
+(`crates/mojito-analysis/src/analysis/pre_elaboration.rs`), an ordered list of
+`BodyPass` rows, each a per-body rewrite of drop-elaborated parametric MIR. The
+list is empty today; `docs/pre-elaboration-optimization-plan.md` stages the
+passes that fill it.
+
+- **Two seams, once per body.** `CompiledProgram::elaborated_mir` runs
+  `pre_elaborate_program` over the program's own bodies after
+  `elaborate_drops_program` (the `pre_elaboration` `--timings` span), and an
+  imported package's finishing hook (`finish_package_body`, a
+  `mir::text::package::BodyFinish`) runs it after `elaborate_drops_function`
+  as each body is first materialized. The pipeline runs once per generator,
+  never per instance.
+- **Where it does not run.** A package build serializes pre-drop MIR, so it
+  never reaches the program seam; its bodies get the pipeline at import. A
+  serialized artifact is already past the seam and is not run again.
+  `__toplevel__` is skipped, as ASAP drops skip it, so its slots keep the
+  values `bindings()` reports.
+- **Verification.** In debug builds each body is verified after every pass
+  (`run_pipeline`), each finding naming the pass, into `invariant_errors` or
+  the package's failures. The post-drop verify after the seam runs in every
+  build.
+- **The switch.** `MOJITO_PRE_ELABORATION=0` turns the pipeline off, and
+  `Compiler::with_pre_elaboration(bool)` sets it whatever the environment
+  says. The bundled package is imported once per setting
+  (`bundled_std_package(pre_elaboration)`), since a finished body is cached
+  with the hook that finished it; both share one cache file, which holds
+  pre-drop bodies.
 
 ## Stage 8: Register VM
 

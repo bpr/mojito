@@ -8,6 +8,11 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- Mojito has a pre-elaboration pass pipeline (R777): `analysis::PIPELINE`
+  runs between drop elaboration and the elaborator, over the program's own
+  bodies and over each imported package body as it is finished, once per
+  body, verifying after each pass in debug builds. It is empty, so nothing
+  changes yet; `MOJITO_PRE_ELABORATION=0` turns it off.
 - Every `benchmarks/compile` program now runs at the pinned Mojo with
   Mojito's output (R818): `tuple.mojo`'s `Pair` declares `Sized`, which the
   pin requires for `len` and Mojito does not yet (R191), so

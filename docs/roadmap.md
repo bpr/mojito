@@ -56,25 +56,6 @@ and Mojito does not yet. The entries below are that stage, staged in
 which names the upstream pass each one follows. Each is measured by the
 `measure` track's counters and checked by its on/off differential.
 
-- [ ] **R777 Mojito has no place to run a pass between drop elaboration
-  and the elaborator**
-
-  Upstream runs a pass pipeline on parametric IR after destructor insertion
-  and before elaboration, and Mojito has nowhere to put one.
-  - The program's own bodies need a seam after `elaborate_drops_program`
-    (`CompiledProgram::elaborated_mir`, `src/compiler.rs`).
-  - Each package body needs one after `elaborate_drops_function`, in the
-    finishing hook `src/package.rs` sets, so it runs once per body, never
-    per instance.
-  - The passes belong in `mojito-analysis`, beside drop elaboration, so no
-    crate edge is added.
-  - Add an empty pipeline at both seams, `mir::verify` after each pass in
-    debug builds, and a switch that turns the pipeline off.
-  - Done when both seams run the (empty) pipeline and the switch is
-    documented in `docs/architecture.md`.
-  - Depends on R771, for the counters a first pass will report against.
-  - Model: Opus, Not Planned.
-
 - [ ] **R778 Generic bodies no entry reaches are kept until elaboration**
 
   The program's own generic bodies that no entry root reaches are carried

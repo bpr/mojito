@@ -111,10 +111,13 @@ pub struct PackageBodies {
     failures: Mutex<Vec<String>>,
 }
 
-/// What an importer does to a lowered body before using it — insert its
-/// drops — given the body's name and the package's declarations. A plain
-/// function, since the phase it runs sits above MIR.
-pub type BodyFinish = fn(&str, MirFunction, &MirDeclarations) -> MirFunction;
+/// What an importer does to a lowered body before using it: insert its
+/// drops and run the pre-elaboration pipeline.
+///
+/// It is given the body's name and the package's declarations, and pushes
+/// the findings of its own verification to the vector. A plain function,
+/// since the phases it runs sit above MIR.
+pub type BodyFinish = fn(&str, MirFunction, &MirDeclarations, &mut Vec<String>) -> MirFunction;
 
 impl PackageBodies {
     /// The body of `name`, lowered and finished on first use; `None` when
@@ -139,13 +142,17 @@ impl PackageBodies {
                 let Some(finish) = self.finish else {
                     return Some(function);
                 };
+                let mut findings = Vec::new();
                 let function = {
                     let _finish = timing::span("package.body.finish");
-                    finish(name, function, &self.declarations)
+                    finish(name, function, &self.declarations, &mut findings)
                 };
                 let _verify = timing::span("package.body.verify");
-                let findings =
-                    crate::mir::verify::verify_function_in(name, &function, &self.declarations);
+                findings.extend(crate::mir::verify::verify_function_in(
+                    name,
+                    &function,
+                    &self.declarations,
+                ));
                 if !findings.is_empty() {
                     self.fail(findings.join("; "));
                 }
