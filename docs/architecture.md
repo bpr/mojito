@@ -60,6 +60,7 @@ Vec<Stmt>
   -> drop elaboration
   -> pre-elaboration pipeline
   -> elaboration to concrete MIR (native::mono)
+  -> post-elaboration pipeline
   -> register VM
 ```
 
@@ -4930,6 +4931,45 @@ second runs `SCCP` and a `Canonicalizer` again, so `PIPELINE` is
   verifier finding in either run; a finding in a package body the program
   reaches fails its elaboration. The `quick` profile excludes the corpus binary, so the group
   runs in the overnight gate.
+
+### Post-Elaboration Pipeline
+
+Upstream nests a per-function `'kgen.func'` pipeline after
+`ElaborateGenerators`: the pinned compiler's `--mlir-timing` report lists
+`SROA`, `Mem2Reg`, `SCCP`, `Canonicalizer`, and `CSEPass` on each concrete
+function. Mojito's is `analysis::POST_ELABORATION_PIPELINE`
+(`crates/mojito-analysis/src/analysis/post_elaboration.rs`, R840):
+`sccp`, then `canonicalize`, the pre-elaboration pipeline's own body passes,
+without the three upstream passes Mojito does not have. It folds what only
+an instance knows: the elaborator answers a parameter read
+(`Const::Param`) with an ordinary scalar `const`, so the operators over it
+fold and a `branch` it decides becomes a `jump`, and a copy whose type
+substitution made trivial is forwarded.
+
+- **The seam.** `analysis::post_elaborate_program` runs each pass over
+  every concrete function but `__toplevel__`, on the driver thread after
+  `native::mono` returns (timing counters are thread-local, and the
+  elaborator runs on its own deep-stack thread). It runs under the
+  `post_elaboration` `--timings` span, nested in `elaborate`, so its
+  counters read `elaborate.post_elaboration.sccp.folded_constants` and so
+  on. `native::mono` does not depend on `mojito-analysis`: the driver hands
+  the pipeline to `SpecializedProgram::rewritten`, which knows no pass.
+- **Re-admission and recount.** `SpecializedProgram::rewritten` takes the
+  program out of its `ConcreteMir`, runs the rewrite, re-admits it through
+  `ConcreteMir::verified` in every build, and recounts its
+  `ElaborationCounts` (`ElaborationCounts::recount`, from each generator's
+  `GeneratorCount::instance_names`), so `concrete_instructions` measures
+  what the backends receive. No body is verified after each pass: the one
+  re-admission covers the whole program.
+- **Callers.** `CompiledProgram::concrete_mir` (behind the switch),
+  `artifact::run_artifact` (`exec`, always), and
+  `mojito_pliron::compile_mir` (a scalar entry requested by name, always).
+  The compile-time applications the elaborator runs on the VM read the
+  elaborator's unfolded fragments.
+- **The switch.** `MOJITO_PRE_ELABORATION=0` and
+  `Compiler::with_pre_elaboration(false)` turn this pipeline off along with
+  the pre-elaboration one, so the `pre_elaboration::*` differential covers
+  both.
 
 ## Stage 8: Register VM
 

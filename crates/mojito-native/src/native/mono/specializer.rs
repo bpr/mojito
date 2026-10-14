@@ -3350,16 +3350,16 @@ fn elaboration_counts(
     templates: &bodies::Bodies<'_>,
     program: &MirProgram,
 ) -> ElaborationCounts {
-    let output: HashMap<&str, &MirFunction> = program
+    let output: HashSet<&str> = program
         .functions
         .iter()
-        .map(|(name, function)| (name.as_str(), function))
+        .map(|(name, _)| name.as_str())
         .collect();
     let mut generators: BTreeMap<&str, GeneratorCount> = BTreeMap::new();
     for (key, name) in instances {
-        let Some(instance) = output.get(name.as_str()).filter(|_| *name != key.template) else {
+        if *name == key.template || !output.contains(name.as_str()) {
             continue;
-        };
+        }
         let row = generators
             .entry(key.template.as_str())
             .or_insert_with(|| GeneratorCount {
@@ -3370,14 +3370,12 @@ fn elaboration_counts(
                 ..GeneratorCount::default()
             });
         row.instances += 1;
-        row.instance_instructions += instance.instruction_count();
+        row.instance_names.push(name.clone());
     }
-    ElaborationCounts {
+    let mut counts = ElaborationCounts {
         generators: generators.into_values().collect(),
-        concrete_instructions: program
-            .functions
-            .iter()
-            .map(|(_, function)| function.instruction_count())
-            .sum(),
-    }
+        concrete_instructions: 0,
+    };
+    counts.recount(program);
+    counts
 }

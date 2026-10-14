@@ -4104,3 +4104,39 @@ fn elaboration_counts_name_generators_and_their_instances() {
     );
     assert!(counts.generator_instances() < concrete.program.functions.len());
 }
+
+#[test]
+fn post_elaboration_folds_parameter_arithmetic() {
+    let shape = |compiler: Compiler| {
+        let program = compiler
+            .compile_source(
+                "def f[n: Int]() -> Int:\n    var x = n * 2 + 1\n    if n > 3:\n        return x\n    return -x\n\ndef main():\n    print(f[5]())\n",
+                std::path::Path::new("/tmp/mojito_post_elaboration.mojo"),
+            )
+            .expect("compile the generator");
+        let concrete = program.concrete_mir().expect("elaborate");
+        let (_, instance) = concrete
+            .program
+            .functions
+            .iter()
+            .find(|(name, _)| name == "f$mono$V5")
+            .expect("the instance `f$mono$V5`");
+        let instructions = || instance.blocks.iter().flat_map(|block| &block.instrs);
+        (
+            instructions()
+                .any(|instruction| matches!(instruction, mojito::mir::MirInstr::BinOp { .. })),
+            instance
+                .blocks
+                .iter()
+                .any(|block| matches!(block.term, mojito::mir::MirTerm::Branch { .. })),
+        )
+    };
+    assert_eq!(
+        shape(Compiler::default().with_pre_elaboration(true)),
+        (false, false)
+    );
+    assert_eq!(
+        shape(Compiler::default().with_pre_elaboration(false)),
+        (true, true)
+    );
+}

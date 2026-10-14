@@ -1,0 +1,34 @@
+  functions: [
+      fn {
+        name: in_place_binding,
+        registers: 5,
+        vars: 1,
+        var_names: [x],
+        params: 0,
+        param_types: [],
+        owned_params: [],
+        deinit_params: [],
+        ref_params: [],
+        returns_reference: false,
+        var_types: [var_type { var: $v0, type: Int }],
+        return_type: present(Int),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: Int }, reg_type { reg: %r1, type: IntLiteral }, reg_type { reg: %r2, type: Int }, reg_type { reg: %r3, type: Int }, reg_type { reg: %r4, type: Int }],
+        locations: [reg_loc { reg: %r0, location: absent }, reg_loc { reg: %r1, location: absent }, reg_loc { reg: %r2, location: absent }, reg_loc { reg: %r3, location: absent }, reg_loc { reg: %r4, location: absent }],
+        blocks: [
+          bb0 {
+            instructions: [
+              const { dest: %r0, value: int(2) },
+              const { dest: %r1, value: int_literal(3) },
+              const { dest: %r2, value: int(3) },
+              const { dest: %r3, value: int(5) },
+              var.store { var: $v0, src: %r3, binding_type: present(Int), in_place: false },
+              var.use { dest: %r4, var: $v0, mode: copy },
+              drop.var { var: $v0 }
+            ],
+            terminator: return { value: present(%r4) }
+          }
+        ]
+      }
+  ]

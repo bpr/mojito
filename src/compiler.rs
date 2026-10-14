@@ -44,7 +44,8 @@ pub struct CompiledProgram {
     /// The compiled package the program imports, whose bodies were checked
     /// and lowered when it was built.
     package: Option<Arc<ImportedPackage>>,
-    /// Run the pre-elaboration pipeline over the program's own bodies.
+    /// Run the pre-elaboration pipeline over the program's own bodies, and
+    /// the post-elaboration pipeline over the concrete program.
     pre_elaboration: bool,
 }
 impl CompiledProgram {
@@ -139,6 +140,14 @@ impl CompiledProgram {
                     &crate::mir::entry_roots(mir),
                     self.target.as_ref(),
                 );
+                let concrete = if self.pre_elaboration {
+                    let _passes = timing::span("post_elaboration");
+                    concrete.and_then(|concrete| {
+                        concrete.rewritten(crate::analysis::post_elaborate_program)
+                    })
+                } else {
+                    concrete
+                };
                 if let Ok(concrete) = &concrete {
                     timing::count(
                         "concrete_functions",
@@ -335,9 +344,10 @@ impl Compiler {
         self.std_package = Some(import);
         self
     }
-    /// Run the pre-elaboration pipeline, or skip it, whatever the
-    /// environment says: off, the elaborator reads bodies as drop
-    /// elaboration leaves them.
+    /// Run the pre- and post-elaboration pipelines, or skip them, whatever
+    /// the environment says: off, the elaborator reads bodies as drop
+    /// elaboration leaves them, and the backends read its output as it
+    /// emits it.
     #[must_use]
     pub const fn with_pre_elaboration(mut self, run: bool) -> Self {
         self.pre_elaboration = Some(run);
@@ -432,7 +442,7 @@ impl Compiler {
         crate::package::bundled_std_package(self.pre_elaboration()).map_err(CompilerError::Module)
     }
 
-    /// Whether the pre-elaboration pipeline runs.
+    /// Whether the pre- and post-elaboration pipelines run.
     fn pre_elaboration(&self) -> bool {
         self.pre_elaboration.unwrap_or_else(|| {
             std::env::var_os("MOJITO_PRE_ELABORATION").is_none_or(|value| value != "0")

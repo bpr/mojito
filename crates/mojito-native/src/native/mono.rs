@@ -51,6 +51,36 @@ pub struct SpecializedProgram {
     pub counts: ElaborationCounts,
 }
 
+impl SpecializedProgram {
+    /// Run `rewrite` over the concrete program, re-admit its result as
+    /// concrete, and recount it: the seam a post-elaboration pipeline runs
+    /// at, as upstream nests its per-function pipeline after
+    /// `ElaborateGenerators`.
+    pub fn rewritten(self, rewrite: impl FnOnce(&mut MirProgram)) -> Result<Self, MonoError> {
+        let Self {
+            program,
+            entries,
+            mut counts,
+        } = self;
+        let mut program = program.into_program();
+        rewrite(&mut program);
+        let program = ConcreteMir::verified(program).map_err(|findings| MonoError {
+            kind: MonoErrorKind::Unsupported,
+            function: None,
+            construct: format!(
+                "concrete MIR that does not verify after the post-elaboration pipeline: {}",
+                findings.join("; ")
+            ),
+        })?;
+        counts.recount(&program);
+        Ok(Self {
+            program,
+            entries,
+            counts,
+        })
+    }
+}
+
 /// What the elaboration multiplied: each generator it reached and the
 /// instances it made of it, and the size of the concrete output. These are
 /// the elaborator's pass statistics; the driver reports them.
@@ -84,6 +114,30 @@ impl ElaborationCounts {
             .map(|row| row.instance_instructions)
             .sum()
     }
+
+    /// Recount the concrete instructions, every generator's instances' and
+    /// the whole program's, over `program`, a rewrite of the elaboration's
+    /// output. Template sizes stay as the elaborator read them.
+    pub fn recount(&mut self, program: &MirProgram) {
+        let output: HashMap<&str, &MirFunction> = program
+            .functions
+            .iter()
+            .map(|(name, function)| (name.as_str(), function))
+            .collect();
+        for row in &mut self.generators {
+            row.instance_instructions = row
+                .instance_names
+                .iter()
+                .filter_map(|name| output.get(name.as_str()))
+                .map(|function| function.instruction_count())
+                .sum();
+        }
+        self.concrete_instructions = program
+            .functions
+            .iter()
+            .map(|(_, function)| function.instruction_count())
+            .sum();
+    }
 }
 
 /// One generator: a template the elaboration instantiated under a name of
@@ -97,6 +151,8 @@ pub struct GeneratorCount {
     pub template_instructions: usize,
     /// Instructions of its instances in the concrete output, summed.
     pub instance_instructions: usize,
+    /// Its instances' names in the concrete output.
+    pub instance_names: Vec<String>,
 }
 
 /// A source-template-oriented specialization failure.

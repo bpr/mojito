@@ -14,8 +14,10 @@
 //!
 //! The rewrite replaces each instruction that folds over the final lattice
 //! by a `const` defining the same register, as MLIR materializes the
-//! constant and erases the op. Terminators are left alone: the
-//! `Canonicalizer` after it folds a `branch` on a constant.
+//! constant and erases the op. A folded producer's in-place binding is no
+//! longer in place, as a `const` is no call-family producer. Terminators
+//! are left alone: the `Canonicalizer` after it folds a `branch` on a
+//! constant.
 
 use super::pre_elaboration::BodyPass;
 use mojito_common::timing;
@@ -217,7 +219,8 @@ fn same_constant(left: &Const, right: &Const) -> bool {
 }
 
 /// Replace each instruction of `blocks` and their regions that folds over
-/// `lattice` by a `const` of its register; returns how many were replaced.
+/// `lattice` by a `const` of its register, clearing the in-place flag of
+/// its binding; returns how many were replaced.
 fn rewrite(blocks: &mut [MirBlock], lattice: &[Lattice], reg_types: &HashMap<u32, Ty>) -> usize {
     let constant = |reg: Reg| match lattice.get(reg.0 as usize) {
         Some(Lattice::Constant(k)) => Some(k.clone()),
@@ -225,6 +228,7 @@ fn rewrite(blocks: &mut [MirBlock], lattice: &[Lattice], reg_types: &HashMap<u32
     };
     let mut folded = 0;
     for block in blocks {
+        let mut folded_here = Vec::new();
         for instruction in &mut block.instrs {
             if let MirInstr::Try {
                 body,
@@ -249,8 +253,16 @@ fn rewrite(blocks: &mut [MirBlock], lattice: &[Lattice], reg_types: &HashMap<u32
                 instruction.folded_constant(constant, reg_types),
                 results.as_slice(),
             ) {
+                folded_here.push(*dest);
                 *instruction = MirInstr::Const { dest: *dest, k };
                 folded += 1;
+            }
+        }
+        for instruction in &mut block.instrs {
+            if let MirInstr::DefVar { src, in_place, .. } = instruction
+                && folded_here.contains(src)
+            {
+                *in_place = false;
             }
         }
     }

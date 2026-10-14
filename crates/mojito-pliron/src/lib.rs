@@ -187,7 +187,8 @@ pub fn compile(
     })
 }
 
-/// Elaborate drop-elaborated MIR from `options.entries` and compile it.
+/// Elaborate drop-elaborated MIR from `options.entries`, run the
+/// post-elaboration pipeline over it, and compile it.
 ///
 /// This is the entry for a root a caller requests by name (a scalar entry
 /// under test), which the driver's cached concrete graph does not hold.
@@ -198,13 +199,16 @@ pub fn compile_mir(
     check_invariants(program)?;
     let specialized =
         mojito_native::native::mono::specialize(program, &options.entries, Some(&options.target))
+            .and_then(|concrete| {
+                concrete.rewritten(mojito_analysis::analysis::post_elaborate_program)
+            })
             .map_err(|error| PlironError {
-            function: error.function,
-            kind: PlironErrorKind::Unsupported {
-                construct: error.construct,
-            },
-            location: None,
-        })?;
+                function: error.function,
+                kind: PlironErrorKind::Unsupported {
+                    construct: error.construct,
+                },
+                location: None,
+            })?;
     compile(&specialized, options)
 }
 

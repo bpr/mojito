@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R844**.
+Next free ID: **R846**.
 
 ## Ordered Work
 
@@ -55,25 +55,6 @@ and Mojito does not yet. The entries below are that stage, staged in
 [`docs/pre-elaboration-optimization-plan.md`](pre-elaboration-optimization-plan.md),
 which names the upstream pass each one follows. Each is measured by the
 `measure` track's counters and checked by its on/off differential.
-
-- [ ] **R840 Operators and branches over a folded parameter read run in
-  every instance at run time**
-
-  The elaborator turns a `Const::Param` into a constant per instance, but
-  nothing then folds the operators over it or the `branch` it decides, where
-  upstream's post-elaboration `'kgen.func'` pipeline runs `SCCP` and
-  `Canonicalizer` on each concrete function.
-  - The pin's `mojo build --mlir-timing` shows that pipeline (`SROA`,
-    `Mem2Reg`, `SCCP`, `Canonicalizer`, `CSEPass`) after
-    `ElaborateGenerators`.
-  - The fix runs `sccp` and `canonicalize` over each instance the
-    elaborator emits; `MirInstr::folded_constant` already serves it.
-  - The same report answers R839's question: upstream's `Canonicalizer`
-    does run on concrete functions.
-  - Done when an instance's `Const::Param` arithmetic folds, the
-    differential is clean, and the concrete-instruction change is recorded.
-  - Depends on R781.
-  - Model: Opus, Not Planned.
 
 - [ ] **R841 A literal materialized to `UInt` or a scalar SIMD type is not
   folded**
@@ -158,6 +139,23 @@ which names the upstream pass each one follows. Each is measured by the
   - Depends on R781.
   - Model: Opus, Not Planned.
 
+- [ ] **R844 The post-elaboration pipeline re-verifies every concrete
+  function, changed or not**
+
+  `SpecializedProgram::rewritten` re-admits the whole program through
+  `ConcreteMir::verified` after `sccp` and `canonicalize`, which costs more
+  than the passes themselves.
+  - On `collections_many`, release binary, re-admission takes about 18 ms
+    and the passes 7.4 ms, against about 121 ms of elaboration (21 %).
+  - MLIR passes report what they preserved; a `BodyPass` could return
+    whether it changed the body, and only changed functions be re-verified
+    (`verify::verify_function_in`, `verify::concrete_function_findings`).
+  - That touches every `BodyPass` and `analysis::opt`.
+  - Done when an unchanged function is not re-verified and the
+    `post_elaboration` span is recorded before and after.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
 - [ ] **R782 Instances that differ only in a parameter their body never
   reads are made separately**
 
@@ -226,6 +224,21 @@ which names the upstream pass each one follows. Each is measured by the
   - Start it only after the cheaper passes show how much remains.
   - Depends on R781, R785.
   - Model: Fable, Planned.
+
+- [ ] **R845 Concrete functions are not CSE'd**
+
+  Upstream's per-function `'kgen.func'` pipeline ends with `CSEPass` after
+  `ElaborateGenerators`, and Mojito's post-elaboration pipeline
+  (`analysis::POST_ELABORATION_PIPELINE`) has no CSE pass.
+  - It is a missing optimization, not a difference in semantics.
+  - A pure instruction is one `MirInstr::would_be_trivially_dead` declares
+    free of effects; two with the same operands in a dominating position
+    are one, as MLIR's `CSE` merges them.
+  - Done when a pass test shows a repeated pure instruction merged, the
+    pass runs last in the post-elaboration pipeline, and the corpus effect
+    is recorded.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
 
 - [ ] **R837 Lifetime-only markers survive into every instance**
 

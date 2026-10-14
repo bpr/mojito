@@ -20,8 +20,9 @@ use std::fmt;
 ///
 /// The loading gate (parse + canonical verify) is the artifact's semantic
 /// gate: the loaded program is not drop-elaborated or ownership-analyzed
-/// again. It is elaborated to concrete MIR from its entry roots, as a
-/// compiled source program is.
+/// again. It is elaborated to concrete MIR from its entry roots, and the
+/// post-elaboration pipeline runs over that, as for a compiled source
+/// program.
 pub fn run_artifact(
     input: &[u8],
     source_name: impl Into<String>,
@@ -34,6 +35,7 @@ pub fn run_artifact(
         &entry_roots(&parsed.program),
         crate::native::target::NativeTarget::host().as_ref(),
     )
+    .and_then(|concrete| concrete.rewritten(crate::analysis::post_elaborate_program))
     .map_err(ArtifactRunError::Elaborate)?;
     backend
         .run_concrete(concrete.program)

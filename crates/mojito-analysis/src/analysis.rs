@@ -36,6 +36,7 @@ use mojito_mir::mir::{
 #[allow(clippy::wildcard_imports, reason = "pages of this split module")]
 use moves::*;
 pub use opt::{OptError, opt};
+pub use post_elaboration::{POST_ELABORATION_PIPELINE, post_elaborate_program};
 pub use pre_elaboration::{
     BodyPass, ELABORATE_DROPS, PIPELINE, Pass, ProgramPass, finish_package_body,
     finish_package_body_without_pipeline, pass_named, pass_names, pre_elaborate_program,
@@ -230,6 +231,7 @@ mod interior;
 mod loans;
 mod moves;
 mod opt;
+mod post_elaboration;
 mod pre_elaboration;
 mod register_loans;
 mod scan;

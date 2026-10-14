@@ -114,7 +114,8 @@ the root `backend-pliron` feature) may, and `scripts/check` excludes it.
    ```text
    source -> lex -> parse -> link -> prepare -> comptime elaboration
           -> one check (CheckedProgram) -> HIR CFG -> MIR -> ownership/liveness
-          -> drop elaboration -> concrete MIR (native::mono) -> VM
+          -> drop elaboration -> concrete MIR (native::mono)
+          -> post-elaboration passes -> VM
    ```
 
 4. `CheckedProgram` is the semantic handoff. Later phases consume checked facts;

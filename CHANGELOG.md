@@ -8,6 +8,16 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A post-elaboration pipeline, `sccp` then `canonicalize`, now runs over
+  every concrete function the elaborator emits (R840), as upstream's
+  per-function `'kgen.func'` pipeline runs `SCCP` and `Canonicalizer` after
+  `ElaborateGenerators`: operators over an answered parameter read fold, a
+  `branch` they decide becomes a `jump`, and a copy whose type substitution
+  made trivial is forwarded. The program is re-admitted as concrete MIR and
+  its elaboration counts recounted. `sccp` now clears a folded producer's
+  in-place binding, which the verifier rejected. Corpus concrete
+  instructions fall by 0.96 %; `benchmarks/instantiation.tsv` is rerun.
+
 - The pre-elaboration pipeline now runs `sccp` (R781), upstream's `SCCP`,
   then `canonicalize` again, as upstream's second round does: operators,
   literal materializations to `Int` and `Float64`, and copies over

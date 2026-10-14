@@ -1352,9 +1352,57 @@ from 98 to 62, `binary` from 1 686 to 1 674, and `branch` from 949 to 946.
 Real arithmetic and decided branches are rare because values cross blocks
 through variable slots, not registers; `Mem2Reg` would widen what the
 lattice sees. The 24 materializations left target `UInt` or a scalar SIMD
-type (R841). Operators over a parameter read stay in every instance until
-the elaborator's output is folded too (R840).
+type (R841). Operators over a parameter read are folded in each instance
+by the post-elaboration pipeline (R840, below).
 
 The program-seam counters are `pre_elaboration.sccp.folded_constants` and
 `pre_elaboration.canonicalize.folded_branches` (9 and 3 on a small probe);
 both `canonicalize` runs count into the one span.
+
+## The elaborator's output is folded per instance (2026-10-14, R840)
+
+`sccp` then `canonicalize` now run over every concrete function the
+elaborator emits, as upstream's per-function `'kgen.func'` pipeline runs
+`SCCP` and `Canonicalizer` after `ElaborateGenerators`
+(`docs/architecture.md` §Post-Elaboration Pipeline).
+`scripts/instantiation-report` over all 1 020 fixtures, debug binary;
+*before* is R781's committed baseline:
+
+| | before | after | change |
+|---|---:|---:|---:|
+| corpus `concrete_instructions` | 802 472 | 794 792 | −7 680 (−0.96 %) |
+| corpus `generator_instance_instructions` | 358 548 | 351 199 | −7 349 (−2.05 %) |
+| `collections_many` concrete instructions | 16 035 | 15 905 | −130 |
+| `stdlib_heavy` concrete instructions | 3 311 | 3 275 | −36 |
+| `nested_generics` concrete instructions | 3 701 | 3 697 | −4 |
+| `trait_defaults` concrete instructions | 1 888 | 1 884 | −4 |
+
+679 fixtures shrank and none grew; the largest drops are
+`hashlib_values` (−248), `comptime_display_binding_reads` (−185), and
+`template_keyed_runtime_if` (−171). Generator counts and template sizes do
+not move: the pipeline rewrites instances only.
+
+**Most of it is copies.** `collections_many`'s counters are
+`folded_constants` 3, `folded_branches` 3, `erased_blocks` 12,
+`forwarded_copies` 36, and `erased_instructions` 19. The pre-elaboration
+`canonicalize` already forwarded every copy whose generator type is an
+identity copy, so each copy forwarded here is one whose type substitution
+made trivial: a `T`-typed `value.copy` instantiated at a scalar, the case
+R839 asks about. Parameter arithmetic does fold (a probe's
+`f[n: Int]` instance drops its `mul`, `add`, `gt`, and `branch` to one
+`const` and a `jump`), but in the corpus values cross blocks through
+variable slots, which `sccp` does not see until `Mem2Reg` exists.
+
+**Cost.** On `collections_many`, release binary, the `post_elaboration`
+span takes about 26 ms: `sccp` 2.5 ms, `canonicalize` 4.9 ms, and the
+whole-program re-admission (`ConcreteMir::verified`) the remaining
+18 ms, against about 121 ms of elaboration. Debug: 142 ms, of which the
+passes are 40 ms, against about 930 ms. Re-verifying only the functions a
+pass changed is filed as its own entry.
+
+The counters are `elaborate.post_elaboration.sccp.folded_constants` and
+`elaborate.post_elaboration.canonicalize.{folded_branches, erased_blocks,
+forwarded_copies, erased_instructions}`. A folded producer's in-place
+binding (`var.store … in_place: true`) is cleared by `sccp` itself, since
+a `const` is no call-family producer; instances hit that case constantly,
+and generators could have.
