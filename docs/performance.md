@@ -1403,11 +1403,11 @@ dispatched `x.copy()` stayed a method call until R839. Parameter arithmetic does
 variable slots, which `sccp` does not see until `Mem2Reg` exists.
 
 **Cost.** On `collections_many`, release binary, the `post_elaboration`
-span takes about 26 ms: `sccp` 2.5 ms, `canonicalize` 4.9 ms, and the
+span took about 26 ms: `sccp` 2.5 ms, `canonicalize` 4.9 ms, and the
 whole-program re-admission (`ConcreteMir::verified`) the remaining
 18 ms, against about 121 ms of elaboration. Debug: 142 ms, of which the
-passes are 40 ms, against about 930 ms. Re-verifying only the functions a
-pass changed is filed as its own entry.
+passes are 40 ms, against about 930 ms. R844 re-verifies only the
+functions a pass changed; see the next section.
 
 The counters are `elaborate.post_elaboration.sccp.folded_constants` and
 `elaborate.post_elaboration.canonicalize.{folded_branches, erased_blocks,
@@ -1415,6 +1415,24 @@ forwarded_copies, erased_instructions}`. A folded producer's in-place
 binding (`var.store … in_place: true`) is cleared by `sccp` itself, since
 a `const` is no call-family producer; instances hit that case constantly,
 and generators could have.
+
+## Post-elaboration re-admission verifies changed bodies only (2026-10-14, R844)
+
+Each `BodyPass` now reports whether it changed its body, and
+`ConcreteMir::rewrite_bodies` re-verifies only those bodies in a release
+build. On `collections_many`, release binary, three runs each, same
+machine and session:
+
+| | before | after |
+|---|---|---|
+| `post_elaboration` inclusive | 31.0–32.3 ms | 16.4–17.1 ms |
+| `post_elaboration` self (re-admission, recount) | 18.4–19.4 ms | 3.8–4.0 ms |
+| `sccp` | 3.4–3.5 ms | 3.2–3.6 ms |
+| `canonicalize` | 9.2–9.5 ms | 9.3–9.5 ms |
+
+759 of the 844 concrete functions are unchanged
+(`elaborate.post_elaboration.unchanged_functions`). The passes themselves
+now cost three times what re-admission does.
 
 ## Scalar SIMD and `UInt` literal materializations fold (2026-10-14, R841)
 

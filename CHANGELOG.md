@@ -8,6 +8,12 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- Each pre- and post-elaboration body pass now reports whether it changed
+  the body, as an MLIR pass reports what it preserved, and the
+  post-elaboration re-admission re-verifies only the changed concrete
+  functions in a release build (R844). On `collections_many` the
+  `post_elaboration` span falls from about 31.6 ms to 16.6 ms. Program
+  output is unchanged.
 - The statements after a `return`, `break`, `continue`, or `raise` are now
   erased before HIR lowers them, as upstream's `LowerSemanticCF` erases the
   ops after a terminator (R889), so dead code interns no variable slot,

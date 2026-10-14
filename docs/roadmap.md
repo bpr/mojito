@@ -56,23 +56,6 @@ and Mojito does not yet. The entries below are that stage, staged in
 which names the upstream pass each one follows. Each is measured by the
 `measure` track's counters and checked by its on/off differential.
 
-- [ ] **R844 The post-elaboration pipeline re-verifies every concrete
-  function, changed or not**
-
-  `SpecializedProgram::rewritten` re-admits the whole program through
-  `ConcreteMir::verified` after `sccp` and `canonicalize`, which costs more
-  than the passes themselves.
-  - On `collections_many`, release binary, re-admission takes about 18 ms
-    and the passes 7.4 ms, against about 121 ms of elaboration (21 %).
-  - MLIR passes report what they preserved; a `BodyPass` could return
-    whether it changed the body, and only changed functions be re-verified
-    (`verify::verify_function_in`, `verify::concrete_function_findings`).
-  - That touches every `BodyPass` and `analysis::opt`.
-  - Done when an unchanged function is not re-verified and the
-    `post_elaboration` span is recorded before and after.
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R782 Instances that differ only in a parameter their body never
   reads are made separately**
 

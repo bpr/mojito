@@ -77,6 +77,19 @@ pub fn verify_concrete(program: &MirProgram) -> Vec<String> {
     errors
 }
 
+/// [`verify_concrete`] for the one function `name` of a concrete program
+/// whose declarations are `declarations`: its structural and concreteness
+/// findings, without the declarations' own.
+pub fn verify_concrete_function_in(
+    name: &str,
+    function: &MirFunction,
+    declarations: &MirDeclarations,
+) -> Vec<String> {
+    let mut errors = verify_function_in(name, function, declarations);
+    errors.extend(concrete_function_findings(name, function));
+    errors
+}
+
 /// Whether two register or place types agree as the verifier compares them
 /// (`types_compatible`): the elaborator judges an instance's `rebind` by it.
 pub fn types_agree(found: &Ty, expected: &Ty) -> bool {

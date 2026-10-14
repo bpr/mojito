@@ -96,7 +96,7 @@ mod tests {
         run: double_drops,
     });
 
-    fn double_drops(_: &str, function: &mut MirFunction, _: &MirDeclarations) {
+    fn double_drops(_: &str, function: &mut MirFunction, _: &MirDeclarations) -> bool {
         for block in &mut function.blocks {
             block.instrs = std::mem::take(&mut block.instrs)
                 .into_iter()
@@ -106,6 +106,7 @@ mod tests {
                 })
                 .collect();
         }
+        true
     }
 
     #[test]

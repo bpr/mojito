@@ -52,26 +52,31 @@ pub struct SpecializedProgram {
 }
 
 impl SpecializedProgram {
-    /// Run `rewrite` over the concrete program, re-admit its result as
-    /// concrete, and recount it: the seam a post-elaboration pipeline runs
-    /// at, as upstream nests its per-function pipeline after
-    /// `ElaborateGenerators`.
-    pub fn rewritten(self, rewrite: impl FnOnce(&mut MirProgram)) -> Result<Self, MonoError> {
+    /// Run `rewrite` over the concrete program's bodies, re-admit its
+    /// result as concrete, and recount it: the seam a post-elaboration
+    /// pipeline runs at, as upstream nests its per-function pipeline after
+    /// `ElaborateGenerators`. `rewrite` returns the index of each body it
+    /// changed, and only those are verified again
+    /// ([`ConcreteMir::rewrite_bodies`]).
+    pub fn rewritten(
+        self,
+        rewrite: impl FnOnce(&mut [(String, MirFunction)], &MirDeclarations) -> Vec<usize>,
+    ) -> Result<Self, MonoError> {
         let Self {
             program,
             entries,
             mut counts,
         } = self;
-        let mut program = program.into_program();
-        rewrite(&mut program);
-        let program = ConcreteMir::verified(program).map_err(|findings| MonoError {
-            kind: MonoErrorKind::Unsupported,
-            function: None,
-            construct: format!(
-                "concrete MIR that does not verify after the post-elaboration pipeline: {}",
-                findings.join("; ")
-            ),
-        })?;
+        let program = program
+            .rewrite_bodies(rewrite)
+            .map_err(|findings| MonoError {
+                kind: MonoErrorKind::Unsupported,
+                function: None,
+                construct: format!(
+                    "concrete MIR that does not verify after the post-elaboration pipeline: {}",
+                    findings.join("; ")
+                ),
+            })?;
         counts.recount(&program);
         Ok(Self {
             program,

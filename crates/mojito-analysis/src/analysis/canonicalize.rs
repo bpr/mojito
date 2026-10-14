@@ -57,20 +57,22 @@ pub const CANONICALIZE: BodyPass = BodyPass {
 /// its `branch` in the same run. Erasure and control-flow simplification repeat until neither changes
 /// anything: an erased instruction can empty a block, and a branch folded
 /// to a jump leaves its condition unread. A removed instruction's results
-/// lose their types and spans; registers are not renumbered.
-pub fn canonicalize(_name: &str, function: &mut MirFunction, declarations: &MirDeclarations) {
-    timing::count(
-        "folded_constants",
-        fold_constants(function, declarations) as u64,
-    );
-    timing::count("folded_branches", fold_constant_branches(function) as u64);
+/// lose their types and spans; registers are not renumbered. Returns
+/// whether any of these rewrites applied.
+pub fn canonicalize(
+    _name: &str,
+    function: &mut MirFunction,
+    declarations: &MirDeclarations,
+) -> bool {
+    let folded_constants = fold_constants(function, declarations);
+    let folded_branches = fold_constant_branches(function);
+    timing::count("folded_constants", folded_constants as u64);
+    timing::count("folded_branches", folded_branches as u64);
     let blocks = block_count(&mut function.blocks);
     let mut edits = simplify_control_flow(&mut function.blocks, true);
     prune_unreachable_blocks(function);
-    timing::count(
-        "forwarded_copies",
-        forward_copies(function, declarations) as u64,
-    );
+    let forwarded_copies = forward_copies(function, declarations);
+    timing::count("forwarded_copies", forwarded_copies as u64);
     let mut erased = HashSet::new();
     loop {
         let before = erased.len();
@@ -87,14 +89,21 @@ pub fn canonicalize(_name: &str, function: &mut MirFunction, declarations: &MirD
     }
     function.reg_types.retain(|reg, _| !erased.contains(reg));
     function.spans.0.retain(|reg, _| !erased.contains(reg));
-    timing::count(
-        "erased_blocks",
-        (blocks - block_count(&mut function.blocks)) as u64,
-    );
+    let erased_blocks = blocks - block_count(&mut function.blocks);
+    timing::count("erased_blocks", erased_blocks as u64);
     timing::count("threaded_branches", edits.threaded as u64);
     timing::count("folded_successors", edits.folded as u64);
     timing::count("merged_blocks", edits.merged as u64);
     timing::count("erased_instructions", erased.len() as u64);
+    folded_constants
+        + folded_branches
+        + forwarded_copies
+        + erased_blocks
+        + edits.threaded
+        + edits.folded
+        + edits.merged
+        + erased.len()
+        > 0
 }
 
 /// How many edges [`simplify_control_flow`] threaded, branches it folded to

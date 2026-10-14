@@ -5143,13 +5143,19 @@ concrete verifier rejects a reference slot read as its handle.
   counters read `elaborate.post_elaboration.sccp.folded_constants` and so
   on. `native::mono` does not depend on `mojito-analysis`: the driver hands
   the pipeline to `SpecializedProgram::rewritten`, which knows no pass.
-- **Re-admission and recount.** `SpecializedProgram::rewritten` takes the
-  program out of its `ConcreteMir`, runs the rewrite, re-admits it through
-  `ConcreteMir::verified` in every build, and recounts its
-  `ElaborationCounts` (`ElaborationCounts::recount`, from each generator's
+- **Re-admission and recount.** Each `BodyPass` returns whether it changed
+  the body, `false` being MLIR's `markAllAnalysesPreserved`, and
+  `post_elaborate_program` returns the indices of the functions some pass
+  changed (counter `elaborate.post_elaboration.unchanged_functions`).
+  `SpecializedProgram::rewritten` runs the rewrite through
+  `ConcreteMir::rewrite_bodies`, which hands it the function list as a
+  slice and the declarations shared, so neither can change, and re-admits
+  the program by verifying only the changed bodies
+  (`verify::verify_concrete_function_in`); a debug build re-verifies the
+  whole program. It then recounts the `ElaborationCounts`
+  (`ElaborationCounts::recount`, from each generator's
   `GeneratorCount::instance_names`), so `concrete_instructions` measures
-  what the backends receive. No body is verified after each pass: the one
-  re-admission covers the whole program.
+  what the backends receive. No body is verified after each pass.
 - **Callers.** `CompiledProgram::concrete_mir` (behind the switch),
   `artifact::run_artifact` (`exec`, always), and
   `mojito_pliron::compile_mir` (a scalar entry requested by name, always).

@@ -21,7 +21,10 @@ use mojito_mir::mir::{MirDeclarations, MirFunction, MirProgram};
 pub struct BodyPass {
     /// The pass's name, as the verifier's findings after it spell it.
     pub name: &'static str,
-    pub run: fn(&str, &mut MirFunction, &MirDeclarations),
+    /// Rewrite the body, and say whether it changed: `false` is MLIR's
+    /// `markAllAnalysesPreserved`, so a caller need not verify the body
+    /// again.
+    pub run: fn(&str, &mut MirFunction, &MirDeclarations) -> bool,
 }
 
 /// One pre-elaboration pass over a whole program, which may remove its
@@ -69,6 +72,7 @@ pub const ELABORATE_DROPS: BodyPass = BodyPass {
     name: "elaborate-drops",
     run: |name, function, declarations| {
         *function = elaborate_drops_function(name, std::mem::take(function), declarations);
+        true
     },
 };
 
@@ -79,7 +83,10 @@ pub const ELABORATE_DROPS: BodyPass = BodyPass {
 /// region op.
 pub const LOWER_CONTROL_FLOW: BodyPass = BodyPass {
     name: "lower-control-flow",
-    run: |_, function, _| mojito_mir::mir::lower_control_flow(function),
+    run: |_, function, _| {
+        mojito_mir::mir::lower_control_flow(function);
+        true
+    },
 };
 
 /// The pass registered under `name`: a [`PIPELINE`] pass, or one run only
@@ -183,7 +190,7 @@ pub(super) fn pass_finding(pass: &str, finding: &str) -> String {
 const REGISTERED: &[Pass] = &[Pass::Body(ELABORATE_DROPS), Pass::Body(LOWER_CONTROL_FLOW)];
 
 /// Run the body pass `pass` over the body `name`, verifying it after the
-/// pass in debug builds.
+/// pass in debug builds when the pass changed it.
 fn run_body_pass(
     pass: &BodyPass,
     name: &str,
@@ -191,8 +198,7 @@ fn run_body_pass(
     declarations: &MirDeclarations,
     findings: &mut Vec<String>,
 ) {
-    (pass.run)(name, function, declarations);
-    if cfg!(debug_assertions) {
+    if (pass.run)(name, function, declarations) && cfg!(debug_assertions) {
         findings.extend(
             mojito_mir::mir::verify::verify_function_in(name, function, declarations)
                 .into_iter()

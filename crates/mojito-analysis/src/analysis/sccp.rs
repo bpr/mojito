@@ -45,8 +45,8 @@ pub const SCCP: BodyPass = BodyPass {
 };
 
 /// Propagate `function`'s constants over its executable blocks and replace
-/// each instruction they decide by its constant.
-pub fn sccp(_name: &str, function: &mut MirFunction, declarations: &MirDeclarations) {
+/// each instruction they decide by its constant; returns whether any was.
+pub fn sccp(_name: &str, function: &mut MirFunction, declarations: &MirDeclarations) -> bool {
     let mut solver = Solver {
         lattice: vec![Lattice::Unknown; function.n_regs as usize],
         reg_types: &function.reg_types,
@@ -77,6 +77,7 @@ pub fn sccp(_name: &str, function: &mut MirFunction, declarations: &MirDeclarati
         declarations,
     );
     timing::count("folded_constants", folded as u64);
+    folded > 0
 }
 
 /// A register's value over the executable blocks.

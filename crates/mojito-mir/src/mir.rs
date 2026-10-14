@@ -142,6 +142,42 @@ impl ConcreteMir {
         }
     }
 
+    /// Run `rewrite` over the bodies of the admitted program and re-admit
+    /// it, verifying again only the bodies `rewrite` reports it changed, by
+    /// index into the function list.
+    ///
+    /// `rewrite` sees the function list as a slice and the declarations
+    /// shared, so neither the list nor the declarations nor an unchanged
+    /// body differs from what was admitted, as an MLIR pass that marks its
+    /// analyses preserved leaves them valid. A debug build re-verifies the
+    /// whole program, which catches a change `rewrite` did not report.
+    pub fn rewrite_bodies(
+        mut self,
+        rewrite: impl FnOnce(&mut [(String, MirFunction)], &MirDeclarations) -> Vec<usize>,
+    ) -> Result<Self, Vec<String>> {
+        let MirProgram {
+            functions,
+            declarations,
+            ..
+        } = &mut self.0;
+        let changed = rewrite(functions, declarations);
+        if cfg!(debug_assertions) {
+            return Self::verified(self.0);
+        }
+        let findings: Vec<String> = changed
+            .into_iter()
+            .filter_map(|at| self.0.functions.get(at))
+            .flat_map(|(name, function)| {
+                verify::verify_concrete_function_in(name, function, &self.0.declarations)
+            })
+            .collect();
+        if findings.is_empty() {
+            Ok(self)
+        } else {
+            Err(findings)
+        }
+    }
+
     pub fn into_program(self) -> MirProgram {
         self.0
     }
