@@ -8,6 +8,15 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- `sccp` now folds a literal splatted to a SIMD type of any width
+  (`var v: SIMD[DType.int32, 4] = 1`, R847) to one constant vector, as
+  upstream folds the splat `SIMD.__init__` to a `#pop.simd` attribute; a
+  splat of a one-lane constant (`SIMD[DType.int32, 4](Int32(7))`) or a
+  `Bool` fill folds the same way, and operators over such vectors fold
+  too. Each lane comes from the one
+  literal-to-lane rule (`CtLane::of_int_literal`, `of_float_literal`), which
+  the VM's `simd_from_values` now calls instead of its own copy.
+
 - `sccp` now folds operators over `UInt` and one-lane SIMD constants
   (R846), and a one-lane `simd.make` of a literal, as upstream's `SCCP`
   folds `pop` arithmetic on `#pop.simd` attributes. Lanes fold by one rule

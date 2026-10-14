@@ -1,0 +1,140 @@
+  functions: [
+      fn {
+        name: int_splat,
+        registers: 2,
+        vars: 0,
+        var_names: [],
+        params: 0,
+        param_types: [],
+        owned_params: [],
+        deinit_params: [],
+        ref_params: [],
+        returns_reference: false,
+        var_types: [],
+        return_type: present(simd { dtype: uint8, width: 4 }),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: IntLiteral }, reg_type { reg: %r1, type: simd { dtype: uint8, width: 4 } }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 73, end: 76, origin: absent }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 52, end: 77, origin: absent }) }],
+        blocks: [
+          bb0 {
+            instructions: [
+              const { dest: %r0, value: int_literal(300) },
+              const { dest: %r1, value: value(ct_simd { dtype: uint8, lanes: [lane_int(44), lane_int(44), lane_int(44), lane_int(44)] }) }
+            ],
+            terminator: return { value: present(%r1) }
+          }
+        ]
+      },
+      fn {
+        name: float_splat,
+        registers: 2,
+        vars: 0,
+        var_names: [],
+        params: 0,
+        param_types: [],
+        owned_params: [],
+        deinit_params: [],
+        ref_params: [],
+        returns_reference: false,
+        var_types: [],
+        return_type: present(simd { dtype: float32, width: 4 }),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: FloatLiteral }, reg_type { reg: %r1, type: simd { dtype: float32, width: 4 } }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 158, end: 161, origin: absent }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 135, end: 162, origin: absent }) }],
+        blocks: [
+          bb0 {
+            instructions: [
+              const { dest: %r0, value: float_literal(1/10) },
+              const { dest: %r1, value: value(ct_simd { dtype: float32, lanes: [lane_float_bits(3fb99999a0000000), lane_float_bits(3fb99999a0000000), lane_float_bits(3fb99999a0000000), lane_float_bits(3fb99999a0000000)] }) }
+            ],
+            terminator: return { value: present(%r1) }
+          }
+        ]
+      },
+      fn {
+        name: splat_sum,
+        registers: 4,
+        vars: 0,
+        var_names: [],
+        params: 0,
+        param_types: [],
+        owned_params: [],
+        deinit_params: [],
+        ref_params: [],
+        returns_reference: false,
+        var_types: [],
+        return_type: present(simd { dtype: int32, width: 4 }),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: IntLiteral }, reg_type { reg: %r1, type: simd { dtype: int32, width: 4 } }, reg_type { reg: %r2, type: IntLiteral }, reg_type { reg: %r3, type: simd { dtype: int32, width: 4 } }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 237, end: 238, origin: absent }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 216, end: 239, origin: absent }) }, reg_loc { reg: %r2, location: present(loc { file: file0, start: 242, end: 243, origin: absent }) }, reg_loc { reg: %r3, location: present(loc { file: file0, start: 216, end: 243, origin: absent }) }],
+        blocks: [
+          bb0 {
+            instructions: [
+              const { dest: %r0, value: int_literal(1) },
+              const { dest: %r1, value: value(ct_simd { dtype: int32, lanes: [lane_int(1), lane_int(1), lane_int(1), lane_int(1)] }) },
+              const { dest: %r2, value: int_literal(2) },
+              const { dest: %r3, value: value(ct_simd { dtype: int32, lanes: [lane_int(3), lane_int(3), lane_int(3), lane_int(3)] }) }
+            ],
+            terminator: return { value: present(%r3) }
+          }
+        ]
+      },
+      fn {
+        name: scalar_splat,
+        registers: 3,
+        vars: 0,
+        var_names: [],
+        params: 0,
+        param_types: [],
+        owned_params: [],
+        deinit_params: [],
+        ref_params: [],
+        returns_reference: false,
+        var_types: [],
+        return_type: present(simd { dtype: int32, width: 4 }),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: IntLiteral }, reg_type { reg: %r1, type: simd { dtype: int32, width: 1 } }, reg_type { reg: %r2, type: simd { dtype: int32, width: 4 } }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 327, end: 328, origin: absent }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 321, end: 329, origin: absent }) }, reg_loc { reg: %r2, location: present(loc { file: file0, start: 300, end: 330, origin: absent }) }],
+        blocks: [
+          bb0 {
+            instructions: [
+              const { dest: %r0, value: int_literal(7) },
+              const { dest: %r1, value: value(ct_simd { dtype: int32, lanes: [lane_int(7)] }) },
+              const { dest: %r2, value: value(ct_simd { dtype: int32, lanes: [lane_int(7), lane_int(7), lane_int(7), lane_int(7)] }) }
+            ],
+            terminator: return { value: present(%r2) }
+          }
+        ]
+      },
+      fn {
+        name: mask_fill,
+        registers: 2,
+        vars: 0,
+        var_names: [],
+        params: 0,
+        param_types: [],
+        owned_params: [],
+        deinit_params: [],
+        ref_params: [],
+        returns_reference: false,
+        var_types: [],
+        return_type: present(simd { dtype: bool, width: 4 }),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: Bool }, reg_type { reg: %r1, type: simd { dtype: bool, width: 4 } }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 408, end: 412, origin: absent }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 383, end: 413, origin: absent }) }],
+        blocks: [
+          bb0 {
+            instructions: [
+              const { dest: %r0, value: bool(true) },
+              const { dest: %r1, value: value(ct_simd { dtype: bool, lanes: [lane_bool(true), lane_bool(true), lane_bool(true), lane_bool(true)] }) }
+            ],
+            terminator: return { value: present(%r1) }
+          }
+        ]
+      }
+  ]

@@ -4871,8 +4871,8 @@ second runs `SCCP` and a `Canonicalizer` again, so `PIPELINE` is
   constant, a `comptime if` or `comptime for` both of its targets, and a
   `try` its regions, whose escapes make their function-level targets
   executable. A scalar `const` (`Int`, `Float64`, `Bool`, `IntLiteral`,
-  `FloatLiteral`, or a `UInt` or one-lane SIMD `Const::Value`,
-  `Const::is_folded_scalar`) is its constant; a parameter read
+  `FloatLiteral`, or a `UInt` or SIMD `Const::Value`, `Const::is_folded`)
+  is its constant; a parameter read
   (`Const::Param`) and an aggregate `Const::Value` are overdefined, the
   first the elaborator's to fold per instance. An
   instruction is the constant `MirInstr::folded_constant` (MLIR's `fold`
@@ -4880,12 +4880,15 @@ second runs `SCCP` and a `Canonicalizer` again, so `PIPELINE` is
   an operand is, and overdefined otherwise. The fold covers built-in
   operators with no checker-selected dunder and no `raises`, `not`, `-`,
   and `~`, a literal materialized to `Int`, `UInt`, `Float64`, or a
-  one-lane SIMD type, a one-lane `simd.make` of a literal (upstream's
-  `SIMD.__init__(IntLiteral)`), and an identity copy, over values whose
-  constant kind is the one their register's type names. A materialization
-  or a one-lane `simd.make` folds to the value `CtValue::materialize_as`
-  gives, whose lane rule (`CtLane::of_int_literal`,
-  `CtLane::of_float_literal`) is the VM's own `runtime::materialize_literal`;
+  one-lane SIMD type, a one-element `simd.make` of a literal at any known
+  width, or above one lane of a one-lane constant of its dtype or a `Bool`
+  fill (upstream's splat `SIMD.__init__`), and an identity
+  copy, over values whose constant kind is the one their register's type
+  names. A materialization or a one-lane `simd.make` folds to the value
+  `CtValue::materialize_as` gives, and a wider splat to that lane repeated
+  (`param_expr::fold::splat_lanes`); the lane rule
+  (`CtLane::of_int_literal`, `CtLane::of_float_literal`) is the VM's own,
+  which `runtime::materialize_literal` and `runtime::simd_from_values` call;
   a `UInt` or SIMD result is a `Const::Value`, upstream's
   `kgen.param.constant` over a typed attribute. The operator fold is
   `param_expr::fold`, the one compile-time folder. Over SIMD lanes it

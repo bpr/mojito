@@ -193,6 +193,24 @@ pub fn integer_value(value: &CtValue) -> Option<IntLiteral> {
     }
 }
 
+/// `value` as `width` lanes of `dtype`: a SIMD value of that shape, a
+/// width-1 SIMD value or a literal splatted, as the VM splats them (upstream's
+/// splat `SIMD.__init__`); `None` for any other value.
+pub fn splat_lanes(value: &CtValue, dtype: Dtype, width: usize) -> Option<Vec<CtLane>> {
+    let lane = match value {
+        CtValue::Simd { dtype: own, lanes } if *own == dtype && lanes.len() == width => {
+            return Some(lanes.clone());
+        }
+        CtValue::Simd { dtype: own, lanes } if *own == dtype && lanes.len() == 1 => {
+            lanes[0].clone()
+        }
+        CtValue::IntLiteral(literal) => CtLane::of_int_literal(literal, dtype)?,
+        CtValue::FloatLiteral(literal) => CtLane::of_float_literal(literal, dtype)?,
+        _ => return None,
+    };
+    Some(vec![lane; width])
+}
+
 /// Fold `left op right` lane by lane, as the VM's `simd_binop` computes it:
 /// a width-1 SIMD operand or a literal splats to the other operand's shape,
 /// and a comparison gives a `bool` mask. A shift whose amount is outside the
@@ -210,8 +228,8 @@ fn fold_lanes(op: InfixOp, left: &CtValue, right: &CtValue) -> Result<CtValue, P
     };
     let is_compare = matches!(op, Eq | Ne | Lt | Gt | Le | Ge);
     let in_width = |amount: &i128| (0..i128::from(dtype.bit_width())).contains(amount);
-    splat(left, dtype, width)
-        .zip(splat(right, dtype, width))
+    splat_lanes(left, dtype, width)
+        .zip(splat_lanes(right, dtype, width))
         .and_then(|(xs, ys)| {
             xs.iter()
                 .zip(&ys)
@@ -245,24 +263,6 @@ fn fold_lanes(op: InfixOp, left: &CtValue, right: &CtValue) -> Result<CtValue, P
             lanes,
         })
         .ok_or_else(|| unsupported("unsupported compile-time SIMD operator"))
-}
-
-/// One operand of a lane operator as `width` lanes of `dtype`: a SIMD value
-/// of that shape, a width-1 SIMD value or a literal splatted, as the VM
-/// splats them; `None` for any other operand.
-fn splat(value: &CtValue, dtype: Dtype, width: usize) -> Option<Vec<CtLane>> {
-    let lane = match value {
-        CtValue::Simd { dtype: own, lanes } if *own == dtype && lanes.len() == width => {
-            return Some(lanes.clone());
-        }
-        CtValue::Simd { dtype: own, lanes } if *own == dtype && lanes.len() == 1 => {
-            lanes[0].clone()
-        }
-        CtValue::IntLiteral(literal) => CtLane::of_int_literal(literal, dtype)?,
-        CtValue::FloatLiteral(literal) => CtLane::of_float_literal(literal, dtype)?,
-        _ => return None,
-    };
-    Some(vec![lane; width])
 }
 
 fn map_lanes(

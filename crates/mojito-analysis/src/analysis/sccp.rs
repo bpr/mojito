@@ -6,14 +6,14 @@
 //! overdefined. Blocks become executable from the entry, a `branch` making
 //! only its taken arm executable while its condition is one constant, and
 //! the instructions of executable blocks are evaluated until nothing
-//! changes: a scalar `const` ([`Const::is_folded_scalar`], a `UInt` or
-//! one-lane SIMD `Const::Value` included) is its constant, an instruction
+//! changes: a scalar or SIMD `const` ([`Const::is_folded`], a `UInt` or
+//! SIMD `Const::Value` included) is its constant, an instruction
 //! that folds ([`MirInstr::folded_constant`]) over constant operands is the
 //! folded constant, one with an unknown operand stays unknown, and every
 //! other result is overdefined. A literal materialized to `UInt` or a scalar
-//! SIMD type, a one-lane `simd.make` of a literal, and an operator over
-//! `UInt` or one-lane SIMD constants fold to a `Const::Value`, lanes by the
-//! VM's own lane rule. A parameter read (`Const::Param`) and
+//! SIMD type, a one-element `simd.make` of a literal at any known width
+//! (the splat), and an operator over `UInt` or SIMD constants fold to a
+//! `Const::Value`, lanes by the VM's own lane rule. A parameter read (`Const::Param`) and
 //! an aggregate `Const::Value` are overdefined: the first is the
 //! elaborator's to fold, per instance.
 //!
@@ -130,7 +130,7 @@ impl Solver<'_> {
         let mut results = Vec::new();
         instruction_result_regs(instruction, &mut results);
         if let MirInstr::Const { dest, k } = instruction {
-            let value = if k.is_folded_scalar() {
+            let value = if k.is_folded() {
                 Lattice::Constant(k.clone())
             } else {
                 Lattice::Overdefined

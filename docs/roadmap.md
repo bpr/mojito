@@ -56,21 +56,6 @@ and Mojito does not yet. The entries below are that stage, staged in
 which names the upstream pass each one follows. Each is measured by the
 `measure` track's counters and checked by its on/off differential.
 
-- [ ] **R847 A literal splatted to a multi-lane SIMD type is not folded**
-
-  `sccp` leaves a literal materialized to a SIMD type of width above one
-  (`var v: SIMD[DType.int32, 4] = 1`), where upstream folds the splat to one
-  constant vector.
-  - The VM's splat arm of `runtime::materialize_literal` builds one lane
-    with `CtLane::of_int_literal` or `of_float_literal`, then fills the
-    vector.
-  - `MirInstr::folded_constant` could build the same `CtValue::Simd` and
-    write it as a `Const::Value`, which the VM and Pliron already lower.
-  - Done when such a splat folds and the native differential is clean on a
-    probe.
-  - Depends on R841.
-  - Model: Opus, Not Planned.
-
 - [ ] **R854 A `UInt(7)` constructor call is not folded**
 
   `sccp` folds `UInt8(7) + 1`, but not `UInt(7) // 2`, because `UInt(7)`

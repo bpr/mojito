@@ -1314,7 +1314,8 @@ pub fn materialize_literal(
                 .ok_or_else(|| literal_materialization_error(&value, &format!("{dtype:?}")))
         }
         // Upstream's implicit `SIMD(IntLiteral)`/`(FloatLiteral)` splat: the
-        // literal materializes as one lane, then fills the vector.
+        // literal materializes as one lane, then fills the vector. It is the
+        // run-time form of the splat `simd.make` that `sccp` folds.
         (value @ (Value::IntLiteral(_) | Value::FloatLiteral(_)), target)
             if let Some((dtype, width)) = mojito_types::types::simd_shape(target)
                 && let Ok(width) = usize::try_from(width)
@@ -1613,19 +1614,14 @@ const fn floor_mod(x: i64, y: i64) -> i64 {
 
 fn value_to_int_lane(v: &Value, dtype: Dtype) -> Result<i128, RuntimeError> {
     if let Value::IntLiteral(value) = v {
-        let (bits, signed) = integer_dtype_bits(dtype).ok_or_else(|| {
-            RuntimeError::TypeError(format!("{dtype:?} is not an integer SIMD dtype"))
-        })?;
-        return if signed {
-            value
-                .wrapping_signed(bits)
-                .map(i128::from)
-                .ok_or_else(|| literal_materialization_error(value, &format!("{dtype:?}")))
-        } else {
-            value
-                .wrapping_unsigned(bits)
-                .map(i128::from)
-                .ok_or_else(|| literal_materialization_error(value, &format!("{dtype:?}")))
+        if integer_dtype_bits(dtype).is_none() {
+            return Err(RuntimeError::TypeError(format!(
+                "{dtype:?} is not an integer SIMD dtype"
+            )));
+        }
+        return match CtLane::of_int_literal(value, dtype) {
+            Some(CtLane::Int(lane)) => Ok(lane),
+            _ => Err(literal_materialization_error(value, &format!("{dtype:?}"))),
         };
     }
     Ok(wrap_lane(dtype, value_to_int(v)?))
@@ -1660,16 +1656,15 @@ fn value_to_float(v: &Value) -> Result<f64, RuntimeError> {
 }
 
 fn value_to_float_lane(v: &Value, dtype: Dtype) -> Result<f64, RuntimeError> {
-    if !dtype.is_narrow_float() {
-        return value_to_float(v);
-    }
-    let alias = dtype.scalar_alias().unwrap_or_default();
+    let alias = dtype.scalar_alias().unwrap_or("floating SIMD lane");
+    let lane = |lane: Option<CtLane>| match lane {
+        Some(CtLane::Float(bits)) => Some(f64::from_bits(bits)),
+        _ => None,
+    };
     match v {
-        Value::IntLiteral(value) => dtype
-            .float_literal_lane(&mojito_common::literal::FloatLiteral::from_int(value))
+        Value::IntLiteral(value) => lane(CtLane::of_int_literal(value, dtype))
             .ok_or_else(|| literal_materialization_error(value, alias)),
-        Value::FloatLiteral(value) => dtype
-            .float_literal_lane(value)
+        Value::FloatLiteral(value) => lane(CtLane::of_float_literal(value, dtype))
             .ok_or_else(|| literal_materialization_error(value, alias)),
         other => Ok(dtype.round_lane(value_to_float(other)?)),
     }
