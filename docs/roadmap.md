@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R819**.
+Next free ID: **R820**.
 
 ## Ordered Work
 
@@ -187,15 +187,19 @@ which shrinks it changes no program's behavior. The passes it serves are in
 the `pmir` track, staged in
 [`docs/pre-elaboration-optimization-plan.md`](pre-elaboration-optimization-plan.md).
 
-- [ ] **R775 Nothing checks that a pre-elaboration pass leaves every
-  program's behavior unchanged**
+- [ ] **R819 `Compiler::execute` runs a program whose package bodies failed
+  verification**
 
-  The VM is the oracle, so a pass is correct only if the VM cannot tell it
-  ran, and nothing compares the two.
-  - Add a corpus test that runs each `assets/ok` fixture with the pipeline
-    on and off and requires the same output.
-  - It belongs in the overnight gate, not the in-session one.
-  - Depends on R777, for the switch.
+  A package body that fails verification after it is finished, a
+  pre-elaboration pass's finding included, is still elaborated and run.
+  - `CompiledProgram::concrete_mir` checks `package.declarations.failures()`
+    but not `package.bodies.failures()`.
+  - Only artifact emission (`drop_elaborated_mir`) reports body findings.
+  - The `pre_elaboration::*` corpus group checks the list itself, so this is
+    a production gap, not a test hole.
+  - Done when `concrete_mir` refuses body failures and the corpus stays
+    green; a library body that fails today is fixed, not excused.
+  - Depends on R775.
   - Model: Opus, Not Planned.
 
 - [ ] **R776 A MIR pass has no text-in, text-out test harness**

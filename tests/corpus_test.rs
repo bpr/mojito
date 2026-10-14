@@ -16,6 +16,13 @@
 //!   and `assets/runtime_error`: the same output or error text. An
 //!   `input()` fixture is covered by the round-trip group alone, since
 //!   `run_artifact` reads process stdin.
+//! - `pre_elaboration::<name>` — the production compile and run with the
+//!   pre-elaboration pipeline on (`Compiler::with_pre_elaboration(true)`) and
+//!   off, over `assets/ok`, `assets/extensions/ok`, and
+//!   `assets/runtime_error`: the same output, the same error text, and no
+//!   verifier finding in either run, the imported package's body findings
+//!   included. An `input()` fixture runs through the built binary with piped
+//!   stdin and `MOJITO_PRE_ELABORATION`.
 //! - `verify::<category>::<name>` — raw phase functions (link → elaborate →
 //!   `check_program` → `lower_checked_program` → `elaborate_drops_program` →
 //!   verify) over every executable fixture category.
@@ -47,8 +54,10 @@ use mojito::{
     link, parse,
 };
 use std::fs;
+use std::io::Write;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
 
 fn main() {
     let arguments = Arguments::from_args();
@@ -56,6 +65,7 @@ fn main() {
     assets_outcome_trials(&mut trials);
     vm_ok_trials(&mut trials);
     artifact_trials(&mut trials);
+    pre_elaboration_trials(&mut trials);
     verify_trials(&mut trials);
     roundtrip_trials(&mut trials);
     origin_trials(&mut trials);
@@ -374,6 +384,147 @@ fn artifact_trials(trials: &mut Vec<Trial>) {
     for (path, name) in paths {
         trials.push(Trial::test(format!("artifact::{name}"), move || {
             artifact_runs_as_source(&path)
+        }));
+    }
+}
+
+/// What the VM observes of one production run with the pre-elaboration
+/// pipeline set to `run`: the output, printed before a trap as well, and the
+/// error text. A verifier finding in the program or in an imported package
+/// body fails the trial.
+fn pipeline_outcome(path: &Path, run: bool) -> Result<(String, Option<String>), Failed> {
+    let setting = on_off(run);
+    let compiled = Compiler::default()
+        .with_pre_elaboration(run)
+        .compile_path(path)
+        .map_err(|error| fail(format!("compile (pipeline {setting}): {error}")))?;
+    let findings = &compiled.elaborated_mir().invariant_errors;
+    if !findings.is_empty() {
+        return Err(fail(format!(
+            "verifier findings (pipeline {setting}): {findings:?}"
+        )));
+    }
+    let concrete = compiled
+        .concrete_mir()
+        .map_err(|error| fail(format!("elaborate (pipeline {setting}): {error}")))?
+        .program
+        .clone();
+    let body_findings = compiled
+        .imported_package()
+        .map(|package| package.bodies.failures())
+        .unwrap_or_default();
+    if !body_findings.is_empty() {
+        return Err(fail(format!(
+            "package body findings (pipeline {setting}): {body_findings:?}"
+        )));
+    }
+    Ok(catch_unwind(AssertUnwindSafe(|| {
+        let mut vm = VmBackend::new();
+        let error = vm
+            .run_concrete(concrete)
+            .err()
+            .map(|error| error.to_string());
+        (vm.output(), error)
+    }))
+    .unwrap_or_else(|_| (String::new(), Some("the VM panicked".to_string()))))
+}
+
+/// The built binary's run of a fixture that reads `stdin`, with the
+/// pre-elaboration pipeline set to `run` through `MOJITO_PRE_ELABORATION`:
+/// stdout, stderr, and the exit code.
+fn binary_outcome(
+    path: &Path,
+    stdin: &[u8],
+    run: bool,
+) -> Result<(String, String, Option<i32>), Failed> {
+    let mut child = Command::new(env!("CARGO_BIN_EXE_mojito"))
+        .arg("run")
+        .arg(path)
+        .env("MOJITO_PRE_ELABORATION", if run { "1" } else { "0" })
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|error| fail(format!("spawn mojito: {error}")))?;
+    child
+        .stdin
+        .take()
+        .ok_or_else(|| fail("mojito stdin not piped".to_string()))?
+        .write_all(stdin)
+        .map_err(|error| fail(format!("write mojito stdin: {error}")))?;
+    let output = child
+        .wait_with_output()
+        .map_err(|error| fail(format!("wait for mojito: {error}")))?;
+    Ok((
+        String::from_utf8_lossy(&output.stdout).into_owned(),
+        String::from_utf8_lossy(&output.stderr).into_owned(),
+        output.status.code(),
+    ))
+}
+
+const fn on_off(run: bool) -> &'static str {
+    if run { "on" } else { "off" }
+}
+
+/// Require the pre-elaboration pipeline to leave what the VM observes of the
+/// fixture unchanged.
+fn pipeline_preserves_behavior(path: &Path) -> Result<(), Failed> {
+    let ((off_output, off_error), (on_output, on_error)) = match fixture_stdin(path) {
+        Some(stdin) => {
+            let (off_output, off_error, off_code) = binary_outcome(path, stdin, false)?;
+            let (on_output, on_error, on_code) = binary_outcome(path, stdin, true)?;
+            if off_code != on_code {
+                return Err(fail(format!(
+                    "exit code {off_code:?} with the pipeline off, {on_code:?} with it on"
+                )));
+            }
+            ((off_output, Some(off_error)), (on_output, Some(on_error)))
+        }
+        None => (
+            pipeline_outcome(path, false)?,
+            pipeline_outcome(path, true)?,
+        ),
+    };
+    if off_output != on_output {
+        return Err(fail(format!(
+            "output differs (first: pipeline off, second: pipeline on): {}",
+            first_divergence(&off_output, &on_output)
+        )));
+    }
+    if off_error != on_error {
+        return Err(fail(format!(
+            "error with the pipeline off: {off_error:?}; with it on: {on_error:?}"
+        )));
+    }
+    Ok(())
+}
+
+fn pre_elaboration_trials(trials: &mut Vec<Trial>) {
+    let paths: Vec<(PathBuf, String)> = ["ok", "runtime_error"]
+        .into_iter()
+        .flat_map(|category| {
+            labeled_fixtures(category)
+                .into_iter()
+                .map(move |(path, label)| {
+                    let name = match (category, label == category) {
+                        ("ok", true) => stem(&path),
+                        ("ok", false) => format!("extensions::{}", stem(&path)),
+                        _ => format!("{label}::{}", stem(&path)),
+                    };
+                    (path, name)
+                })
+        })
+        .collect();
+    let count = paths.len();
+    trials.push(Trial::test("pre_elaboration::guard_corpus", move || {
+        if count == 0 {
+            return Err(fail("expected some executable fixtures".to_string()));
+        }
+        Ok(())
+    }));
+    for (path, name) in paths {
+        trials.push(Trial::test(format!("pre_elaboration::{name}"), move || {
+            pipeline_preserves_behavior(&path)
         }));
     }
 }

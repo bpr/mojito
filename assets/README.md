@@ -2,7 +2,7 @@
 
 Drop `.mojo` files here to get them exercised by the pipeline (lex → parse → check
 → eval). `tests/corpus_test.rs` turns each file into its own test
-(`assets_<folder>::<name>`, plus `vm_ok`/`verify` runs for executable fixtures)
+(`assets_<folder>::<name>`, plus `vm_ok`/`verify`/`pre_elaboration` runs for executable fixtures)
 asserting it lands at the outcome the folder names — so **adding coverage is
 just putting a file in the right folder**; enumeration is dynamic, no code
 changes.

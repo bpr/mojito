@@ -13,6 +13,10 @@ to evolve under the `0.x` compatibility rules.
   bodies and over each imported package body as it is finished, once per
   body, verifying after each pass in debug builds. It is empty, so nothing
   changes yet; `MOJITO_PRE_ELABORATION=0` turns it off.
+- The `pre_elaboration::*` corpus group (R775) runs every executable fixture
+  with the pre-elaboration pipeline on and off and fails on any difference
+  in output, error text, or verifier findings, so a pass can join
+  `analysis::PIPELINE` only if the VM cannot tell it ran.
 - Every `benchmarks/compile` program now runs at the pinned Mojo with
   Mojito's output (R818): `tuple.mojo`'s `Pair` declares `Sized`, which the
   pin requires for `len` and Mojito does not yet (R191), so

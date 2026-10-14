@@ -4753,6 +4753,14 @@ passes that fill it.
   (`bundled_std_package(pre_elaboration)`), since a finished body is cached
   with the hook that finished it; both share one cache file, which holds
   pre-drop bodies.
+- **The differential.** The `pre_elaboration::*` corpus group
+  (`tests/corpus_test.rs`) runs every executable fixture (`assets/ok`,
+  `assets/extensions/ok`, `assets/runtime_error`) with the pipeline on and
+  off, in process or, for an `input()` fixture, through the binary with
+  piped stdin. It requires the same output, the same error text, and no
+  verifier finding in either run, the imported package's body failures
+  included. The `quick` profile excludes the corpus binary, so the group
+  runs in the overnight gate.
 
 ## Stage 8: Register VM
 
