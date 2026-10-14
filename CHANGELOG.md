@@ -8,6 +8,19 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A local `comptime` binding of an application (`comptime s = make(3)`)
+  is an alias of it, as upstream's is (R523): each read is the
+  application's `ParamValue`, as a module constant's read is
+  (`Checker::local_comptime_application`), and the statement op holds the
+  application (`CheckedStmtOp::Comptime::denotes`), so MIR gives the
+  binding no slot. Every read now materializes a fresh value that dies
+  after the read, where one slot died at its last use; a field read
+  extracts from the application; and a nested `def` may read the binding,
+  which was rejected as an uninferable capture
+  (`assets/ok/comptime_local_application_per_read.mojo`,
+  `assets/type_error/comptime_local_struct_application_crossing.mojo`).
+  The package format is 52. A binding of any other parameter expression
+  still stores a slot (R788).
 - Every checked signature holds a parameter default as an attribute
   (`SignatureDefault`: a literal constant, an evaluated default, or a
   trait requirement's parameter expression), as its lowered declaration

@@ -924,10 +924,10 @@ lowering unit, one record per library declaration, and one module table
 holding each module's link record, one file per package. The bundled library's is the
 only producer today (`src/package.rs`). No part of a package is MIR text:
 it is a header followed by bytecode records, as upstream's package is
-MLIR bytecode throughout. The format line is `mojito-package 51`.
+MLIR bytecode throughout. The format line is `mojito-package 52`.
 
 ```text
-mojito-package 51
+mojito-package 52
 <the header's length, 8 bytes little-endian>
 <the header, as bytecode>
 <the payload: every record, as bytecode, then the type section>
@@ -1083,7 +1083,8 @@ mojito-package 51
   as syntax: a declaration op encodes its symbol, its registered name for
   a method, and its checked signature (its compile-time parameters, each
   declared parameter's type, its result type, and its effect), a `def` op
-  its explicit captures, and a struct shell its fields' checked types. An
+  its explicit captures, a local `comptime` op the application it
+  denotes, if any (format 52), and a struct shell its fields' checked types. An
   op's type operand encodes as the attribute the check resolved, a type,
   value, or origin. The facts of
   declaration sites (checked annotation types, compile-time parameter

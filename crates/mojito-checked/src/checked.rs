@@ -1961,6 +1961,10 @@ pub enum CheckedStmtOp {
         name: String,
         where_clauses: Vec<CheckedNodeId>,
         value: CheckedNodeId,
+        /// The application a local binding denotes, as upstream's alias
+        /// attribute: the binding has no storage, and each read is a
+        /// materialization of it.
+        denotes: Option<mojito_types::param_expr::ParamExpr>,
     },
     ComptimeIf {
         branches: Vec<(CheckedNodeId, Vec<CheckedStmtId>)>,
@@ -2274,10 +2278,12 @@ impl CheckedStmtOp {
                 name,
                 where_clauses,
                 value,
+                denotes,
             } => Self::Comptime {
                 name: name.clone(),
                 where_clauses: values(map, where_clauses),
                 value: map.expression(*value),
+                denotes: denotes.clone(),
             },
             Self::ComptimeIf {
                 branches: arms,
@@ -4595,6 +4601,11 @@ impl<'a> ArenaBuilder<'a> {
                 name: name.clone(),
                 where_clauses: values(self, where_clauses),
                 value: self.expr(value),
+                denotes: self
+                    .facts(&statement.source_span())
+                    .comptime_value
+                    .as_deref()
+                    .cloned(),
             },
             StmtKind::AugAssign { place, op, value } => CheckedStmtOp::AugAssign {
                 place: self.expr(place),
@@ -5238,6 +5249,9 @@ node_facts! {
         binding: mojito_types::origin::OwnerId,
         /// The binding a declaring statement introduces.
         statement_binding: mojito_types::origin::OwnerId,
+        /// The application a local `comptime` binding denotes, which each
+        /// of its reads materializes.
+        comptime_value: Box<mojito_types::param_expr::ParamExpr>,
         /// A nested declaration's explicit captures.
         captures: Vec<CheckedCapture>,
         comprehension_bindings: Vec<CheckedComprehensionBinding>,

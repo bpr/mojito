@@ -1937,6 +1937,11 @@ impl Checker {
                     }
                     self.declare_immutable(name, declared)?;
                 }
+                // A binding of an application holds it as its attribute,
+                // which every read materializes.
+                if let Some(application) = self.local_comptime_application(name) {
+                    self.record_at(stmt.source_span()).comptime_value = Some(Box::new(application));
+                }
                 self.record_statement_binding(stmt, name);
                 Ok(())
             }

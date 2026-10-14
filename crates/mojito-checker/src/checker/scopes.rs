@@ -392,12 +392,17 @@ impl Checker {
             return Ok(());
         };
         // Module globals are not captures, and neither is a compile-time
-        // binding (a literal once elaborated) or an enclosing declaration's
+        // binding (a literal once elaborated), an enclosing declaration's
         // value parameter, which a nested function reads as its own
-        // parameter. For a value crossing more than one nested-function
+        // parameter, or a local alias of an application, which each read
+        // materializes. For a value crossing more than one nested-function
         // boundary, every intervening environment must forward it: an inner
         // `{value}` cannot tunnel through a middle `{}`.
-        if scope == 0 || self.is_compile_time_binding(name) || self.is_value_parameter(name) {
+        if scope == 0
+            || self.is_compile_time_binding(name)
+            || self.is_value_parameter(name)
+            || self.local_comptime_application(name).is_some()
+        {
             return Ok(());
         }
         for policy in contexts

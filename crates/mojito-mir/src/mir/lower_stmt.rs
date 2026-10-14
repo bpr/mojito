@@ -2631,8 +2631,8 @@ impl<'a> Flatten<'a> {
                 let src = self.expr(value);
                 self.emit(MirInstr::Raise { src });
             }
-            (CheckedStmtOp::Comptime { name, .. }, &[value]) => {
-                self.lower_comptime_binding(node, name, value);
+            (CheckedStmtOp::Comptime { name, denotes, .. }, &[value]) => {
+                self.lower_comptime_binding(node, name, denotes.as_ref(), value);
             }
             // `pass` has no runtime effect. Imports were consumed by linking and
             // are no-ops in a lowered module body.
@@ -2909,15 +2909,22 @@ impl<'a> Flatten<'a> {
         }
     }
 
-    /// `comptime N = e` is an ordinary binding at runtime. A local type
+    /// `comptime N = e` is an ordinary binding at runtime, unless the check
+    /// bound it to an application, which each read materializes. A local type
     /// alias (`comptime U = T` over a template's binder) lives in the
     /// checker's scope alone: it records no binding and its value no type.
     /// A display the elaborator evaluates (`comptime L = [n, n + 1]`) has no
     /// runtime form either: it is recorded here for the loops that iterate
     /// the name and the thunks that read it, and only a thunk binds it.
-    /// `node` is the binding's statement node and `value` its value's
-    /// handle.
-    fn lower_comptime_binding(&mut self, node: &CheckedStmt, name: &str, value: Node<'a>) {
+    /// `node` is the binding's statement node, `denotes` the application
+    /// the check bound it to, and `value` its value's handle.
+    fn lower_comptime_binding(
+        &mut self,
+        node: &CheckedStmt,
+        name: &str,
+        denotes: Option<&mojito_types::param_expr::ParamExpr>,
+        value: Node<'a>,
+    ) {
         let statement_binding = node.binding;
         let display = value
             .adjustments()
@@ -2963,19 +2970,15 @@ impl<'a> Flatten<'a> {
         // A thunk lifted after the binding reads it as the expression over
         // the binders it denotes (`comptime k = n + 1`).
         let mut denoted = self.value_binder_node(value.id());
-        // A collection a request builds (`comptime l = mk(n)`) is never
-        // implicitly copyable, so the check admits no runtime read of it:
-        // it is the application alone, with no slot.
-        if let Some(application) = self.comptime_application(value)
+        // A binding the check bound to an application (`comptime s =
+        // label(3)`) is that application at each read, as upstream's alias
+        // is: every read materializes it, so it has no slot.
+        if let Some(application) = denotes
             && let Some(binding) = statement_binding
             && !self.enclosing_binders.lifted
-            && value.ty().is_some_and(|ty| {
-                mojito_types::types::list_element(&ty).is_some()
-                    || mojito_types::types::set_element(&ty).is_some()
-                    || mojito_types::types::dict_elements(&ty).is_some()
-            })
         {
-            self.comptime_thunks.bind_value(binding, application);
+            self.comptime_thunks
+                .bind_value(binding, application.clone());
             return;
         }
         let materialized = value.literal_materialization();

@@ -1226,9 +1226,14 @@ closed module constant and keeps its declaration; one whose initializer
 applies a callable, asks a layout, or reads such a constant is marked
 (`CtMarker::Applied`) and kept as written. The check classifies every
 module constant in its declaration pass and records a body's read as a
-`SemanticAdjustment::ParamValue` (`Checker::module_constant_value`), which
-MIR lowers as `Const::Param` and `native::mono` folds or demands
-(`docs/notes/ctfe-request-path.md` §Today, decision D3). A constant whose
+`SemanticAdjustment::ParamValue` (`Checker::module_constant_value`), as
+is a read of a local `comptime` binding of an application
+(`Checker::local_comptime_application`), which MIR lowers as
+`Const::Param` and `native::mono` folds or demands
+(`docs/notes/ctfe-request-path.md` §Today, decision D3). A local
+binding's statement op holds its application
+(`CheckedStmtOp::Comptime::denotes`), as upstream's alias does, so it has
+no slot, and a nested `def` reads it without capturing it. A constant whose
 initializer the check lifts (a display, a method call) is the application
 `$comptime$<name>$module`, evaluated once, and is declared ahead of the
 first body after which its initializer types (`Checker::check_module_block`);
@@ -1881,8 +1886,9 @@ layout rather than rerunning their constructors. The checker owns the
 cross a non-implicitly-copyable value. Requested binding reads that need a
 place record a hidden materialized borrow owner, including reads within
 compile-time query thunks. Top-level strings and string-containing
-aggregates still have a constructor path (R524); local implicitly-copyable
-bindings still materialize at their declaration (R523).
+aggregates still have a constructor path (R524). A local binding of an
+application is that application at each read, as a module constant is: it
+has no slot, and every read materializes a fresh value.
 
 `SemanticAdjustment::SelectedCall` is the canonical method-like boundary for
 ordinary method calls and method-dispatched nominal subscripts. It records the exact lowered

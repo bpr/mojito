@@ -677,6 +677,28 @@ impl Checker {
         }))
     }
 
+    /// The application a local `comptime NAME = f(…)` binding denotes, which
+    /// each of its reads materializes as upstream's alias reference does: the
+    /// binding has no storage of its own. `None` for any other binding, and
+    /// for a name an inner binding shadows.
+    pub(super) fn local_comptime_application(&self, name: &str) -> Option<ParamExpr> {
+        let scope = self.binding_scope(name)?;
+        if scope == 0 || self.function_bases.is_empty() {
+            return None;
+        }
+        self.local_comptime_parameters
+            .get(scope)?
+            .get(name)
+            .map(|(_, expression)| expression)
+            .filter(|expression| {
+                matches!(
+                    expression.kind(),
+                    mojito_types::param_expr::ParamKind::Apply { .. }
+                )
+            })
+            .cloned()
+    }
+
     /// The parameter expression the module constant `name` denotes where a
     /// body reads it, unless a local shadows the name: a folded `Int` is its
     /// literal, an applied constant its application, and a literal its

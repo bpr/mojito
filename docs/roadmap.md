@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R788**.
+Next free ID: **R789**.
 
 ## Ordered Work
 
@@ -6054,11 +6054,14 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
-- [ ] **R523 A local implicitly-copyable compile-time binding materializes at its declaration**
+- [ ] **R788 A local compile-time binding of a non-application parameter expression still stores a slot**
 
-  A local `comptime s = label(3)` stores one runtime slot where Mojo materializes each read.
-  - Requested collections already lower without a binding slot.
-  - Move implicitly-copyable bindings to the same parameter-expression read path.
+  `comptime m = N + 1`, a folded `comptime n = 5`, `comptime m = f(1) + g(2)`, and an evaluated value (`comptime t = (L[0], L[1])`) each store one slot at the declaration, where Mojo's alias materializes every read.
+  - The difference cannot be observed for these types (`Int`, `Bool`, trivially destroyed values), so this is structure only.
+  - A binding of an application already has no slot: `Checker::local_comptime_application` makes each read a `ParamValue`, and `CheckedStmtOp::Comptime::denotes` tells MIR.
+  - The fix widens that rule to every parameter expression the binding denotes, and gives `bind_evaluated` values a per-read evaluation.
+  - A binding inside a lifted thunk (`EnclosingBinders::lifted`) also keeps a dead slot today; drop it in the same change.
+  - Found while landing R523 (2026-10-13).
   - Depends on nothing.
   - Model: Fable, Not Planned.
 

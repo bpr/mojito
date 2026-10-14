@@ -998,7 +998,9 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `lifts_comptime_value`, which adds a collection display and a
   `Dict[...]`/`Set[...]` constructor call, module or local. The checker
   folds every other closed module constant into `Checker.module_values`
-  (`Checker::module_value`, `Checker::module_constant_value`). The
+  (`Checker::module_value`, `Checker::module_constant_value`); a local
+  binding of an application is read the same way
+  (`Checker::local_comptime_application`). The
   elaborator keeps every collection-valued `comptime` binding for the
   check — a display or constructor (`Elab::keep_template_comptime_binding`),
   a closed field-name list (`crossing::lists_field_names`), a method call of
@@ -1171,9 +1173,10 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   compile-time application builds records `ComptimeSource::Applied`
   (`record_applied_iteration`), which MIR lifts as `Evaluated`'s is, a
   name bound to one records its application as the sequence
-  (`requested_name`) and has no runtime form when it is a collection
-  (`lower_comptime_binding`; a runtime read rejected by
-  `reject_display_crossing`), a `range` bound the
+  (`requested_name`) and has no runtime form
+  (`lower_comptime_binding`, over the statement's
+  `CheckedStmtOp::Comptime::denotes`; a runtime read of a collection is
+  rejected by `reject_display_crossing`), a `range` bound the
   check does not close records `ComptimeSource::EvaluatedRange`
   (`record_comptime_iteration`, admitted by `reads_compile_time_alone` over
   `comptime_binding_owners`), a condition naming an evaluated binding is
@@ -1247,7 +1250,8 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   callable at a type no parameter expression spells (a `String`, a tuple, a
   struct) is lifted by name at its own type
   (`Checker::requested_binding`, `checker/comptime_validation.rs`), in any
-  body, a projection of a temporary it builds copied out as the thunk's
+  body, and each read of the binding materializes that application (a
+  `ParamValue`, `Checker::local_comptime_application`) where no slot holds it, a projection of a temporary it builds copied out as the thunk's
   `return` operand (`Checker::copy_compile_time_result`);
   `Flatten::crossing_operand` (`mir/lower_expr/expr_access.rs`) is the
   operand of a kept `materialize[X]()` or `comptime(e)`
@@ -1271,7 +1275,8 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   one it has no value for, and `Specializer::materialize_body` demands
   those and substitutes the template again (`substituted`,
   `answer_pending`). A thunk reads an enclosing local
-  `comptime` value (`comptime k = n + 1`) as its parameter expression:
+  `comptime` value (`comptime k = n + 1`, or an application the statement
+  op `denotes`) as its parameter expression:
   `lower_comptime_binding` records it (`ComptimeThunks::bind_value`), each
   request carries the bindings so far (`EnclosingBinders::comptime_bindings`),
   and `Flatten::identifier_read` (`mir/lower_expr/expr.rs`) answers the read.

@@ -1077,12 +1077,15 @@ impl Checker {
                         "variable '{name}' may be uninitialized"
                     )));
                 }
-                // A read of a module constant is the parameter value its
-                // declaration denotes, as upstream's alias reference is. A
-                // re-inference keeps the temporary a borrow of the read
-                // already materialized it as, which the borrow's origin
-                // names.
-                if let Some(value) = self.module_constant_value(name) {
+                // A read of a module constant, or of a local binding of an
+                // application, is the parameter value its declaration
+                // denotes, as upstream's alias reference is. A re-inference
+                // keeps the temporary a borrow of the read already
+                // materialized it as, which the borrow's origin names.
+                if let Some(value) = self
+                    .module_constant_value(name)
+                    .or_else(|| self.local_comptime_application(name))
+                {
                     let mut record = self.record_at(expr.source_span());
                     let materialized = match record.adjustment.as_deref() {
                         Some(mojito_checked::checked::SemanticAdjustment::ParamValue {

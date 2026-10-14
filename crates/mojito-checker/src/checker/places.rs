@@ -238,13 +238,14 @@ impl Checker {
     /// `comptime for` variable): the binding itself (`q`) or a pure field
     /// chain off it (`q.i.v`), a parameter expression rather than storage.
     /// A module constant bound to a requested value, or folded to a closed
-    /// attribute, is one too: it has no storage, and each read materializes
-    /// it.
+    /// attribute, is one too, as is a local binding of an application: it
+    /// has no storage, and each read materializes it.
     pub(super) fn is_parameter_read(&self, expr: &Expr) -> bool {
         field_chain_root(expr).is_some_and(|root| {
             root != "Self"
                 && (self.is_compile_time_binding(root)
                     || self.is_value_parameter(root)
+                    || self.local_comptime_application(root).is_some()
                     || (self.binding_scope(root) == Some(0)
                         && (self.local_comptime_parameters[0].contains_key(root)
                             || self.installs(interface::Table::ComptimeParameters, root)
