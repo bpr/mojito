@@ -14,15 +14,14 @@
         return_type: present(Int),
         raises: false,
         error_type: absent,
-        register_types: [reg_type { reg: %r0, type: Int }, reg_type { reg: %r1, type: Int }, reg_type { reg: %r2, type: IntLiteral }, reg_type { reg: %r3, type: Int }, reg_type { reg: %r4, type: Bool }, reg_type { reg: %r5, type: Int }, reg_type { reg: %r6, type: Int }, reg_type { reg: %r7, type: IntLiteral }, reg_type { reg: %r8, type: Int }, reg_type { reg: %r9, type: Int }, reg_type { reg: %r10, type: None }],
-        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 50, end: 51, origin: present($v0) }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 59, end: 60, origin: present($v1) }) }, reg_loc { reg: %r2, location: present(loc { file: file0, start: 63, end: 64, origin: absent }) }, reg_loc { reg: %r3, location: present(loc { file: file0, start: 63, end: 64, origin: absent }) }, reg_loc { reg: %r4, location: present(loc { file: file0, start: 59, end: 64, origin: absent }) }, reg_loc { reg: %r5, location: present(loc { file: file0, start: 92, end: 93, origin: present($v1) }) }, reg_loc { reg: %r6, location: present(loc { file: file0, start: 74, end: 75, origin: present($v1) }) }, reg_loc { reg: %r7, location: present(loc { file: file0, start: 79, end: 80, origin: absent }) }, reg_loc { reg: %r8, location: present(loc { file: file0, start: 79, end: 80, origin: absent }) }, reg_loc { reg: %r9, location: present(loc { file: file0, start: 74, end: 75, origin: absent }) }, reg_loc { reg: %r10, location: present(loc { file: file0, start: 74, end: 75, origin: present($v1) }) }],
+        register_types: [reg_type { reg: %r0, type: Int }, reg_type { reg: %r1, type: Int }, reg_type { reg: %r3, type: Int }, reg_type { reg: %r4, type: Bool }, reg_type { reg: %r5, type: Int }, reg_type { reg: %r6, type: Int }, reg_type { reg: %r8, type: Int }, reg_type { reg: %r9, type: Int }, reg_type { reg: %r10, type: None }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 50, end: 51, origin: present($v0) }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 59, end: 60, origin: present($v1) }) }, reg_loc { reg: %r2, location: absent }, reg_loc { reg: %r3, location: present(loc { file: file0, start: 63, end: 64, origin: absent }) }, reg_loc { reg: %r4, location: present(loc { file: file0, start: 59, end: 64, origin: absent }) }, reg_loc { reg: %r5, location: present(loc { file: file0, start: 92, end: 93, origin: present($v1) }) }, reg_loc { reg: %r6, location: present(loc { file: file0, start: 74, end: 75, origin: present($v1) }) }, reg_loc { reg: %r7, location: absent }, reg_loc { reg: %r8, location: present(loc { file: file0, start: 79, end: 80, origin: absent }) }, reg_loc { reg: %r9, location: present(loc { file: file0, start: 74, end: 75, origin: absent }) }, reg_loc { reg: %r10, location: present(loc { file: file0, start: 74, end: 75, origin: present($v1) }) }],
         blocks: [
           bb0 {
             instructions: [
               var.use { dest: %r0, var: $v0, mode: copy },
               var.store { var: $v1, src: %r0, binding_type: present(Int), in_place: false },
-              const { dest: %r2, value: int_literal(2) },
-              literal.materialize { dest: %r3, value: %r2, target: Int },
+              const { dest: %r3, value: int(2) },
               var.use { dest: %r1, var: $v1, mode: copy },
               binary { op: gt, dest: %r4, a: %r1, b: %r3, resolved: absent, raises: absent }
             ],
@@ -39,8 +38,7 @@
             instructions: [
               var.use { dest: %r6, var: $v1, mode: copy },
               drop.var { var: $v1 },
-              const { dest: %r7, value: int_literal(1) },
-              literal.materialize { dest: %r8, value: %r7, target: Int },
+              const { dest: %r8, value: int(1) },
               binary { op: add, dest: %r9, a: %r6, b: %r8, resolved: absent, raises: absent },
               interiors.invalidate { base: interior_origin { root: $v1, path: [] }, except: absent, include_base_generation: false, marker: %r10 },
               var.store { var: $v1, src: %r9, binding_type: absent, in_place: false }

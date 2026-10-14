@@ -1548,3 +1548,18 @@ to 5 on `template_method_variadic_initializer` and from 4 to 6 on
 receiver's `copy` is its copy constructor, a call upstream keeps too. The
 corpus-wide `scripts/instantiation-report` rerun is left to the nightly
 gate.
+
+## Canonicalize folds constant operators (2026-10-14, R842)
+
+`canonicalize` now folds an instruction over operands defined once by a
+folded `const`, as MLIR's greedy driver applies a `fold`, through the
+replacement `sccp` uses (`analysis/fold.rs`). The first `canonicalize`
+runs before `sccp`, so the program-seam folds move between counters and
+the MIR does not change. On `collections_many`, debug binary,
+`pre_elaboration.sccp.folded_constants` falls from 54 to 0 and
+`pre_elaboration.canonicalize.folded_constants` reads 54; the
+post-elaboration counts (6 and 0) and `concrete_instructions` (15 737) do
+not move. `emit-mir` matched the previous binary on 126 `assets/ok`
+fixtures (every eighth). Every fold `sccp` made there was straight-line;
+its executable-block reasoning will matter once `Mem2Reg` (R787) puts
+values in registers across blocks.

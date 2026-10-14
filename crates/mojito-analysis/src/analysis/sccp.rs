@@ -20,13 +20,14 @@
 //! an aggregate `Const::Value` are overdefined: the first is the
 //! elaborator's to fold, per instance.
 //!
-//! The rewrite replaces each instruction that folds over the final lattice
-//! by a `const` defining the same register, as MLIR materializes the
-//! constant and erases the op. A folded producer's in-place binding is no
-//! longer in place, as a `const` is no call-family producer. Terminators
-//! are left alone: the `Canonicalizer` after it folds a `branch` on a
-//! constant.
+//! Each instruction that folds over the final lattice becomes a `const`
+//! through the replacement `canonicalize` shares (`fold::replace_folded`).
+//! The first `canonicalize` has already folded what straight-line constants
+//! decide, so `sccp` adds the folds that need its executable-block reasoning
+//! or a lattice meet. Terminators are left alone: the `Canonicalizer` after
+//! it folds a `branch` on a constant.
 
+use super::fold;
 use super::pre_elaboration::BodyPass;
 use mojito_common::timing;
 use mojito_mir::mir::verify::instruction_result_regs;
@@ -64,9 +65,13 @@ pub fn sccp(_name: &str, function: &mut MirFunction, declarations: &MirDeclarati
         }
     }
     let lattice = solver.lattice;
-    let folded = rewrite(
+    let constant = |reg: Reg| match lattice.get(reg.0 as usize) {
+        Some(Lattice::Constant(k)) => Some(k.clone()),
+        _ => None,
+    };
+    let folded = fold::replace_folded(
         &mut function.blocks,
-        &lattice,
+        &constant,
         &function.reg_types,
         declarations,
     );
@@ -234,60 +239,4 @@ fn same_constant(left: &Const, right: &Const) -> bool {
         (Const::Value(a), Const::Value(b)) => a == b,
         _ => false,
     }
-}
-
-/// Replace each instruction of `blocks` and their regions that folds over
-/// `lattice` by a `const` of its register, clearing the in-place flag of
-/// its binding; returns how many were replaced.
-fn rewrite(
-    blocks: &mut [MirBlock],
-    lattice: &[Lattice],
-    reg_types: &HashMap<u32, Ty>,
-    declarations: &MirDeclarations,
-) -> usize {
-    let constant = |reg: Reg| match lattice.get(reg.0 as usize) {
-        Some(Lattice::Constant(k)) => Some(k.clone()),
-        _ => None,
-    };
-    let mut folded = 0;
-    for block in blocks {
-        let mut folded_here = Vec::new();
-        for instruction in &mut block.instrs {
-            if let MirInstr::Try {
-                body,
-                handler,
-                orelse,
-                finalbody,
-                ..
-            } = instruction
-            {
-                for region in std::iter::once(body)
-                    .chain(handler.as_mut().map(|(_, blocks)| blocks))
-                    .chain(orelse.as_mut())
-                    .chain(finalbody.as_mut())
-                {
-                    folded += rewrite(region, lattice, reg_types, declarations);
-                }
-                continue;
-            }
-            let mut results = Vec::new();
-            instruction_result_regs(instruction, &mut results);
-            if let (Some(k), [dest]) = (
-                instruction.folded_constant(constant, reg_types, declarations),
-                results.as_slice(),
-            ) {
-                folded_here.push(*dest);
-                *instruction = MirInstr::Const { dest: *dest, k };
-                folded += 1;
-            }
-        }
-        for instruction in &mut block.instrs {
-            if let MirInstr::DefVar { src, in_place, .. } = instruction
-                && folded_here.contains(src)
-            {
-                *in_place = false;
-            }
-        }
-    }
-    folded
 }

@@ -227,6 +227,7 @@ mod copy_elision;
 mod dead_symbols;
 mod drops;
 mod field_drops;
+mod fold;
 mod interior;
 mod loans;
 mod moves;

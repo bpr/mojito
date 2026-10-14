@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R869**.
+Next free ID: **R870**.
 
 ## Ordered Work
 
@@ -56,20 +56,6 @@ and Mojito does not yet. The entries below are that stage, staged in
 which names the upstream pass each one follows. Each is measured by the
 `measure` track's counters and checked by its on/off differential.
 
-
-- [ ] **R842 `canonicalize` does not apply constant folds**
-
-  MLIR's greedy driver folds an op whose operands are all constants, and
-  Mojito's `canonicalize` leaves that to `sccp`.
-  - No output changes while `sccp` precedes the second `canonicalize`.
-  - It matters once a round runs `canonicalize` without `sccp`, as the
-    pin's third round does.
-  - The fold is `MirInstr::folded_constant` over operands defined once by a
-    `const`.
-  - Done when a pass test shows `canonicalize` alone folding a constant
-    operator.
-  - Depends on R781.
-  - Model: Opus, Not Planned.
 
 - [ ] **R859 Parametric MIR's run-time control flow is a CFG where
   upstream's generators keep it structured**
@@ -150,6 +136,19 @@ which names the upstream pass each one follows. Each is measured by the
     recorded.
   - Depends on R783, R779, R772, R775, R776.
   - Model: Fable, Planned.
+
+- [ ] **R869 The pre-elaboration pipeline does not repeat upstream's
+  rounds around `InlineParametric`**
+
+  The pin runs three generator rounds, the second and third after an
+  `InlineParametric`, and the third with `Canonicalizer` but no `SCCP`;
+  Mojito's `PIPELINE` models only the first two.
+  - Since R842, `canonicalize` folds constant operators alone, so a
+    third round can clean up inlined bodies without `sccp`.
+  - Done when `PIPELINE` lists the pin's rounds in order and the
+    on/off differential is clean.
+  - Depends on R784.
+  - Model: Opus, Not Planned.
 
 - [ ] **R785 Every instance of a trait default carries its forwarding
   wrapper**

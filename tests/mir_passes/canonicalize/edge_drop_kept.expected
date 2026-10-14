@@ -14,13 +14,12 @@
         return_type: present(None),
         raises: false,
         error_type: absent,
-        register_types: [reg_type { reg: %r0, type: IntLiteral }, reg_type { reg: %r1, type: Int }, reg_type { reg: %r2, type: struct_type { name: Noisy, arguments: [] } }, reg_type { reg: %r3, type: Bool }, reg_type { reg: %r4, type: StringLiteral }, reg_type { reg: %r5, type: None }, reg_type { reg: %r6, type: struct_type { name: Noisy, arguments: [] } }, reg_type { reg: %r7, type: None }],
-        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 594, end: 595, origin: absent }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 594, end: 595, origin: absent }) }, reg_loc { reg: %r2, location: present(loc { file: file0, start: 588, end: 596, origin: absent }) }, reg_loc { reg: %r3, location: present(loc { file: file0, start: 604, end: 608, origin: present($v0) }) }, reg_loc { reg: %r4, location: present(loc { file: file0, start: 660, end: 665, origin: absent }) }, reg_loc { reg: %r5, location: present(loc { file: file0, start: 654, end: 666, origin: absent }) }, reg_loc { reg: %r6, location: present(loc { file: file0, start: 623, end: 625, origin: present($v1) }) }, reg_loc { reg: %r7, location: present(loc { file: file0, start: 618, end: 626, origin: absent }) }],
+        register_types: [reg_type { reg: %r1, type: Int }, reg_type { reg: %r2, type: struct_type { name: Noisy, arguments: [] } }, reg_type { reg: %r3, type: Bool }, reg_type { reg: %r4, type: StringLiteral }, reg_type { reg: %r5, type: None }, reg_type { reg: %r6, type: struct_type { name: Noisy, arguments: [] } }, reg_type { reg: %r7, type: None }],
+        locations: [reg_loc { reg: %r0, location: absent }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 594, end: 595, origin: absent }) }, reg_loc { reg: %r2, location: present(loc { file: file0, start: 588, end: 596, origin: absent }) }, reg_loc { reg: %r3, location: present(loc { file: file0, start: 604, end: 608, origin: present($v0) }) }, reg_loc { reg: %r4, location: present(loc { file: file0, start: 660, end: 665, origin: absent }) }, reg_loc { reg: %r5, location: present(loc { file: file0, start: 654, end: 666, origin: absent }) }, reg_loc { reg: %r6, location: present(loc { file: file0, start: 623, end: 625, origin: present($v1) }) }, reg_loc { reg: %r7, location: present(loc { file: file0, start: 618, end: 626, origin: absent }) }],
         blocks: [
           bb0 {
             instructions: [
-              const { dest: %r0, value: int_literal(1) },
-              literal.materialize { dest: %r1, value: %r0, target: Int },
+              const { dest: %r1, value: int(1) },
               call { dest: %r2, func: Noisy, raises: absent, args: [%r1], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent },
               var.store { var: $v1, src: %r2, binding_type: present(struct_type { name: Noisy, arguments: [] }), in_place: true },
               var.use { dest: %r3, var: $v0, mode: copy }

@@ -1,8 +1,12 @@
 //! `canonicalize`: upstream's `Canonicalizer`, MLIR's `canonicalize` pass,
 //! which its pre-elaboration pipeline runs after `EliminateDeadSymbols`.
 //!
-//! This is its region simplification, folding, and dead-op erasure: a
-//! `branch` on a constant condition becomes a `jump` to the taken arm, as
+//! This is its folding, region simplification, and dead-op erasure: an
+//! instruction [`MirInstr::folded_constant`] folds over operands defined
+//! once by a constant becomes that `const`, as MLIR's greedy driver applies
+//! a `fold` that returns an attribute (through the replacement `sccp`
+//! shares, `fold::replace_folded`); a `branch` on a constant condition
+//! becomes a `jump` to the taken arm, as
 //! `hlcf.if`'s `RemoveStaticCondition` pattern keeps the arm a static
 //! condition takes; blocks the entry does not reach go, as MLIR's
 //! `eraseUnreachableBlocks` erases them; an instruction that folds to one of
@@ -26,6 +30,7 @@
 //! are never rewritten: the elaborator finds the loop body as the blocks its
 //! `body` target dominates.
 
+use super::fold;
 use super::pre_elaboration::BodyPass;
 use mojito_common::timing;
 use mojito_mir::mir::verify::instruction_result_regs;
@@ -43,15 +48,21 @@ pub const CANONICALIZE: BodyPass = BodyPass {
     run: canonicalize,
 };
 
-/// Fold each `branch` on a constant, simplify the control flow, erase
-/// unreachable blocks, forward identity copies, and erase dead
-/// instructions of `function`.
+/// Fold constants and constant branches, simplify the control flow, and
+/// erase what `function` no longer reaches or reads.
 ///
-/// Erasure and control-flow simplification repeat until neither changes
+/// Each instruction over constant operands becomes a `const`, each `branch`
+/// on a constant a `jump`; unreachable blocks go, identity copies are
+/// forwarded, and dead instructions are erased. Constants fold first, so a comparison folded to a `const bool` decides
+/// its `branch` in the same run. Erasure and control-flow simplification repeat until neither changes
 /// anything: an erased instruction can empty a block, and a branch folded
 /// to a jump leaves its condition unread. A removed instruction's results
 /// lose their types and spans; registers are not renumbered.
 pub fn canonicalize(_name: &str, function: &mut MirFunction, declarations: &MirDeclarations) {
+    timing::count(
+        "folded_constants",
+        fold_constants(function, declarations) as u64,
+    );
     timing::count("folded_branches", fold_constant_branches(function) as u64);
     let blocks = block_count(&mut function.blocks);
     let mut edits = simplify_control_flow(&mut function.blocks, true);
@@ -278,6 +289,44 @@ fn merge_single_predecessors(blocks: &mut [MirBlock], function_level: bool) -> u
         }
     }
     merged
+}
+
+/// Replace each instruction of `function` that [`MirInstr::folded_constant`]
+/// folds over operands defined once by a folded `const`
+/// ([`Const::is_folded`]) by that `const`, until none folds; returns how
+/// many were replaced.
+///
+/// One definition makes every read of an operand see its constant; a folded
+/// instruction's own result may have several, as replacing one definition
+/// by the constant it computes is exact. Each round folds one level of a
+/// chain, the fixpoint MLIR's greedy driver reaches through its worklist.
+fn fold_constants(function: &mut MirFunction, declarations: &MirDeclarations) -> usize {
+    let mut folded = 0;
+    loop {
+        let definitions = definition_counts(&mut function.blocks, function.n_regs);
+        let mut constants = HashMap::new();
+        visit_blocks(&mut function.blocks, &mut |block| {
+            for instruction in &block.instrs {
+                if let MirInstr::Const { dest, k } = instruction
+                    && k.is_folded()
+                    && definitions.get(dest.0 as usize) == Some(&1)
+                {
+                    constants.insert(dest.0, k.clone());
+                }
+            }
+        });
+        let constant = |reg: Reg| constants.get(&reg.0).cloned();
+        let round = fold::replace_folded(
+            &mut function.blocks,
+            &constant,
+            &function.reg_types,
+            declarations,
+        );
+        if round == 0 {
+            return folded;
+        }
+        folded += round;
+    }
 }
 
 /// Rewrite each `branch` of `function` whose condition is defined once, by

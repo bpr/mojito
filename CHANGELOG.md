@@ -8,6 +8,11 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- `canonicalize` now folds an instruction whose operands are each defined
+  once by a constant (R842), as MLIR's greedy driver applies an op's `fold`,
+  so the first `canonicalize` folds constant operators before `sccp` runs,
+  through one replacement routine both passes share. Concrete MIR is
+  unchanged.
 - An instance's type bindings now carry no origin (R866), as upstream binds
   a type parameter to a type whose origins read `origin={ }`, so an instance
   demanded by callers differing only in origins no longer keeps whichever

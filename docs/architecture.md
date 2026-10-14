@@ -4847,8 +4847,18 @@ second runs `SCCP` and a `Canonicalizer` again, so `PIPELINE` is
 - **`canonicalize` runs next** (`analysis::CANONICALIZE`,
   `analysis/canonicalize.rs`, R779), upstream's `Canonicalizer` (MLIR's
   `canonicalize`), which upstream runs after `EliminateDeadSymbols`, `SROA`,
-  and `Mem2Reg`. It first rewrites a `branch` whose condition has one
-  definition, a `const bool`, to a `jump` to the arm it takes (R781, as
+  and `Mem2Reg`. It first replaces each instruction
+  `MirInstr::folded_constant` folds over operands defined once by a folded
+  `const` (`Const::is_folded`) by that `const`, repeating until nothing
+  folds (R842), as MLIR's greedy driver applies a `fold` that returns an
+  attribute; a result may have several definitions, but every operand has
+  one, so each read sees its constant. The replacement is `sccp`'s own
+  (`analysis/fold.rs`, as MLIR's `OperationFolder` serves `SCCP` and the
+  greedy driver alike), so upstream's first round folds constant operators
+  with no `SCCP` in it, and Mojito's first `canonicalize` folds what
+  straight-line constants decide. It then rewrites a `branch` whose
+  condition has one definition, a `const bool`, to a `jump` to the arm it
+  takes, a comparison it just folded included (R781, as
   `hlcf.if`'s `RemoveStaticCondition` keeps the arm a static condition
   takes); the untaken arm keeps its own drops at its entry, so removing it
   ends nothing twice. It then simplifies the control flow (R836), at the
@@ -4911,7 +4921,7 @@ second runs `SCCP` and a `Canonicalizer` again, so `PIPELINE` is
   Erasure can empty a block and a folded branch leaves its condition
   unread, so the control-flow simplification and erasure repeat until
   neither changes anything.
-  Its `--timings` counters are `folded_branches`, `threaded_branches`,
+  Its `--timings` counters are `folded_constants`, `folded_branches`, `threaded_branches`,
   `folded_successors`, `merged_blocks`, `erased_blocks`,
   `forwarded_copies`, and `erased_instructions`.
 - **`sccp` runs between the two `canonicalize` runs** (`analysis::SCCP`,
@@ -4968,8 +4978,12 @@ second runs `SCCP` and a `Canonicalizer` again, so `PIPELINE` is
   infinite scalar comparison, `Float64` `//`, `%`, and `**`, float-lane
   `//`, `%`, and `**`, `Bool` operators but `==` and `!=`).
   The rewrite replaces each instruction that folds over the final lattice
-  by a `const` of the same register, which keeps its type and span; the
-  pass never rewrites a terminator, which the `canonicalize` after it does.
+  by a `const` of the same register, which keeps its type and span, through
+  the replacement `canonicalize` shares (`analysis/fold.rs`); the first
+  `canonicalize` has already folded what straight-line constants decide,
+  so `sccp` adds the folds that need its executable-block reasoning or a
+  lattice meet. The pass never rewrites a terminator, which the
+  `canonicalize` after it does.
   Its `--timings` counter is `folded_constants`.
 - **Two seams, once per body.** `CompiledProgram::elaborated_mir` runs
   `pre_elaborate_program` over the program's own bodies after
