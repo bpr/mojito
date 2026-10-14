@@ -4490,6 +4490,13 @@ current Mojo:
   the body, and one the body never uses dies at the function's entry, before
   the first statement runs.
 
+- Lowering emits no drops of its own, as upstream's destructor insertion
+  owns every destroy. A loop's iterator slot is defined by its `GetIter`
+  and dies on every exit edge, `break` included, where it is dropped once.
+  A `DropVar` or `ConsumeVar` already in the input is the slot's teardown:
+  it is live up to it and dead after it, so the pass splices no second drop
+  and running it over elaborated MIR changes nothing.
+
 The VM does not need to discover last uses dynamically. It just executes
 `DropVar` where the compiler placed it.
 

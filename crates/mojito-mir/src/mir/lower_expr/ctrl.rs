@@ -686,14 +686,13 @@ impl<'a> Flatten<'a> {
                 if split_source && !borrowed && protocol.source_retained {
                     // An owned temporary source is used only by `GetIter` before
                     // the loop, so when the iterator may refer to its storage a
-                    // liveness anchor at the exit keeps it live through the loop;
-                    // then it is destroyed exactly once, after the loop. A source
+                    // liveness anchor at the exit keeps it live through the loop,
+                    // and elaboration destroys it exactly once, after the loop. A source
                     // the iterator cannot refer to dies right after `GetIter`. A
                     // borrowed source is kept live by its loan and owned (dropped)
                     // by its enclosing scope. Mirrors the statement loop's exit
                     // anchor.
                     self.emit(MirInstr::KeepAlive { var: iterator });
-                    self.emit(MirInstr::DropVar { var: iterator });
                 }
             }
         }

@@ -8,6 +8,15 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- Drop elaboration now owns every iterator drop and is idempotent (R822,
+  partly): a `GetIter` defines its iterator slot, an input `DropVar` is the
+  slot's teardown, and HIR/MIR loop lowering emits no drops of its own
+  (`HirInstr::Drop` is gone). A loop iterator used to be dropped twice at
+  its exit, and an inner loop's iterator again at the outer loop's exit;
+  running `elaborate-drops` twice doubled every drop. Drops around a `try`
+  (R824) and the verifier check against a drop of an ended slot (R825)
+  remain.
+
 - A MIR pass can be tested as MIR text in, MIR text out (R776), after
   MLIR's `mlir-opt`: `analysis::pass_named` registers passes by name
   (every pre-elaboration pass, plus drop elaboration as

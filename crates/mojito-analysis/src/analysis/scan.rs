@@ -303,10 +303,11 @@ pub(super) fn collect_region_defs(
     }
 }
 
-/// The variable a MIR instruction writes (a `DefVar`), if any.
+/// The variable a MIR instruction writes (a `DefVar`, or the iterator a
+/// `GetIter` derives), if any.
 pub(super) const fn var_def(i: &MirInstr) -> Option<VarId> {
     match i {
-        MirInstr::DefVar { var, .. } => Some(*var),
+        MirInstr::DefVar { var, .. } | MirInstr::GetIter { dest: var, .. } => Some(*var),
         _ => None,
     }
 }

@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R824**.
+Next free ID: **R826**.
 
 ## Ordered Work
 
@@ -187,20 +187,38 @@ which shrinks it changes no program's behavior. The passes it serves are in
 the `pmir` track, staged in
 [`docs/pre-elaboration-optimization-plan.md`](pre-elaboration-optimization-plan.md).
 
-- [ ] **R822 The MIR verifier accepts a slot dropped twice**
+- [ ] **R824 Drop elaboration drops slots around a `try` that the `try` already ended**
 
-  Running `elaborate-drops` over a body whose drops are already inserted
-  doubles each `drop.var`, and the result still verifies.
-  - Reproduce: `mojito opt --pass elaborate-drops --pass elaborate-drops
-    tests/mir_passes/elaborate-drops/scalar_vars.mir` prints four
-    `drop.var` and exits 0.
-  - The pre-elaboration passes rely on per-pass verification, so a pass
-    that drops a dead slot must fail there, as upstream's verifier rejects
-    destroying a value that is already dead.
-  - Add a definite-initialization check for `drop.var` to `mir::verify`
-    and a `tests/mir_passes` negative case.
+  A slot bound or defined inside a `try` region is also dropped just
+  before or just after the `Try` instruction.
+  - Reproduce: `mojito emit-mir assets/ok/implicit_conversion_raising.mojo`
+    shows `main` dropping the handler's `e` (`$v2`) both before and after
+    its `try`.
+  - Handler error slots are bound by the `Try` handler, not a `DefVar`, so
+    drop liveness has no def for them.
+  - `drops::region_uses` reports a region-local slot's uses as uses by the
+    `Try`, so the slot's outer death splices a drop the region already did.
+  - `with` desugars to `try` and shows the same pattern
+    (`with_statement.mojo`, `discarded_result_destruction.mojo`).
+  - Cause map: `R822-the-mir-verifier-accepts-a-slot-plan.md`, slice 2.
   - Depends on nothing.
   - Model: Opus, Not Planned.
+
+- [ ] **R825 The MIR verifier accepts a drop of a slot every path already ended**
+
+  A `drop.var` of a slot that every path has already dropped, consumed, or
+  moved still verifies, so a pass that drops a dead slot passes the
+  per-pass verification of `mojito opt` and `run_pipeline`.
+  - Reproduce: duplicate a `drop.var` line in
+    `tests/mir_passes/elaborate-drops/already_elaborated.mir` and run
+    `mojito opt` over it: it exits 0.
+  - Upstream's destructor insertion destroys each value exactly once on a
+    live path; this check holds Mojito there.
+  - Add a must-analysis ("ended on every path") to `mir::verify`, plus a
+    unit test in `analysis::opt` and an error mode for `tests/mir_passes`.
+  - Design: `R822-the-mir-verifier-accepts-a-slot-plan.md`, slice 3.
+  - Depends on R824.
+  - Model: Opus, Planned.
 
 ### Native Backend
 

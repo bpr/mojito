@@ -95,9 +95,6 @@ impl<'a> Flatten<'a> {
                     )),
                 }
             }
-            HirInstr::Drop(var) => {
-                self.emit(MirInstr::DropVar { var: *var });
-            }
             HirInstr::KeepAlive(var) => {
                 self.emit(MirInstr::KeepAlive { var: *var });
             }

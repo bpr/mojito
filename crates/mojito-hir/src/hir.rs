@@ -113,9 +113,6 @@ pub enum HirInstr {
     /// Any other straight-line statement (assignment, member-write, declaration,
     /// …), kept whole for Stage 4 and refined when Stage 5 flattens to MIR.
     Stmt(HirStmt),
-    /// An ASAP destructor, spliced in by Stage 7 liveness (never by the Stage 4
-    /// lowerer — present so later stages share the type).
-    Drop(VarId),
     /// A liveness anchor: `var` is read for analysis but not at runtime. Emitted at
     /// a loop exit to keep a split iteration source live through the loop (its only
     /// other use is `GetIter` before the loop), so ASAP-drop does not destroy it
@@ -1128,28 +1125,18 @@ impl Lower {
                     self.seal(Terminator::Jump(exit));
                 }
                 self.cur = exit;
-                // The synthetic iterator owns the normalized iterator value for
-                // the lifetime of the loop.  A normal exhaustion edge is visible
-                // to backward liveness, but a `break` block has no later iterator
-                // use from which drop elaboration could infer that ownership dies.
-                // Make the structured lifetime boundary explicit at the common
-                // exit so every path (including `break`) destroys residual owned
-                // iterator storage before execution continues after the loop. When
-                // a split source may be referred to by its iterator, its explicit
-                // exit drop also extends its liveness through the loop (no loan
-                // records that dependency), so its `__deinit__` runs exactly once,
-                // after the loop.
-                self.push(HirInstr::Drop(iter_var));
+                // Lowering emits no drops: the synthetic iterator, defined by
+                // `GetIter`, dies on every loop exit edge (`break` included),
+                // where drop elaboration destroys it.
                 if loop_owns_source {
                     // An owned temporary source is used only by `GetIter` before
                     // the loop, so a liveness anchor at the exit keeps it live
-                    // through the loop body; then it is destroyed exactly once,
-                    // after the loop. A source the iterator cannot refer to dies
-                    // right after `GetIter`, and a borrowed named source is owned
-                    // by the enclosing scope (dropped there), so the loop neither
-                    // anchors nor drops either.
+                    // through the loop body, and elaboration destroys it exactly
+                    // once, after the loop. A source the iterator cannot refer to
+                    // dies right after `GetIter`, and a borrowed named source is
+                    // owned by the enclosing scope (dropped there), so the loop
+                    // anchors neither.
                     self.push(HirInstr::KeepAlive(it_var));
-                    self.push(HirInstr::Drop(it_var));
                 }
             }
 

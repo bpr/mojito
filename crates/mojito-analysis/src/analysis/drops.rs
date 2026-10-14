@@ -1308,11 +1308,8 @@ impl BlockReplay<'_> {
             entering.clear();
             entering.extend(&uses);
             seed(&instr, &mut entering);
-            // A pending `ConsumeVar` is the variable's teardown, so it stays
-            // live until then.
-            if let MirInstr::ConsumeVar { var } = &instr {
-                entering.push(*var);
-            }
+            // A pending teardown keeps its variable live until then.
+            entering.extend(teardown(&instr));
             // What the instruction itself, or an edge leaving it, still reads.
             let observed = entering.len();
             let register_uses = &self.register_uses[i];
@@ -1350,7 +1347,8 @@ impl BlockReplay<'_> {
                 None => Vec::new(),
             };
 
-            let moved = vars_moved(&instr);
+            let mut moved = vars_moved(&instr);
+            moved.extend(teardown(&instr));
             let retired: Vec<VarId> = if at[i] == at[i + 1] {
                 Vec::new()
             } else {
@@ -1490,13 +1488,21 @@ fn transfer_instruction_drop_liveness(
         live.remove(&d);
     }
     live.extend(drop_liveness_uses(instr, function_defs));
-    // A pending `ConsumeVar` is the variable's teardown: keep it live up to
-    // that point so no earlier death splices a competing `DropVar`.
-    if let MirInstr::ConsumeVar { var } = instr {
-        live.insert(*var);
-    }
+    // A pending teardown keeps its variable live up to that point so no
+    // earlier death splices a competing `DropVar`.
+    live.extend(teardown(instr));
     live.extend(&register_uses.retained);
     live.extend(&register_uses.loaded);
+}
+
+/// The variable an instruction tears down: a `ConsumeVar`, or a `DropVar`
+/// already in the input. Its slot is live up to it and dead after it, so
+/// elaboration splices no second drop of it.
+const fn teardown(instr: &MirInstr) -> Option<VarId> {
+    match instr {
+        MirInstr::ConsumeVar { var } | MirInstr::DropVar { var } => Some(*var),
+        _ => None,
+    }
 }
 
 /// The variables an instruction reads, for drop liveness: [`var_uses`], less
