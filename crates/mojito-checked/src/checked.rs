@@ -1544,6 +1544,226 @@ impl CheckedOp {
         }
         nodes
     }
+
+    /// The op with each node it names replaced by `map`'s, visited in the
+    /// order the check's nodes are built: operands first, then a lambda's
+    /// hidden `def`.
+    pub(crate) fn map_operands(&self, map: &mut dyn NodeMap) -> Self {
+        let values = |map: &mut dyn NodeMap, values: &[CheckedNodeId]| -> Vec<CheckedNodeId> {
+            values.iter().map(|value| map.expression(*value)).collect()
+        };
+        let optional = |map: &mut dyn NodeMap, value: &Option<CheckedNodeId>| {
+            value.map(|value| map.expression(value))
+        };
+        let kwargs = |map: &mut dyn NodeMap, kwargs: &[CheckedKwArg]| {
+            kwargs
+                .iter()
+                .map(|kwarg| CheckedKwArg {
+                    name: kwarg.name.clone(),
+                    value: map.expression(kwarg.value),
+                })
+                .collect()
+        };
+        let param_args = |map: &mut dyn NodeMap, arguments: &[CheckedParamArg]| {
+            arguments
+                .iter()
+                .map(|argument| argument.map_operands(map))
+                .collect()
+        };
+        match self {
+            Self::Int(_)
+            | Self::Float(_)
+            | Self::Bool(_)
+            | Self::Str(_)
+            | Self::None
+            | Self::Uninitialized
+            | Self::EmptySubscript
+            | Self::Identifier(_) => self.clone(),
+            Self::TypeValue { ty, applications } => Self::TypeValue {
+                ty: ty.clone(),
+                applications: values(map, applications),
+            },
+            Self::Prefix(op, value) => Self::Prefix(*op, map.expression(*value)),
+            Self::Transfer(value) => Self::Transfer(map.expression(*value)),
+            Self::Spread(value) => Self::Spread(map.expression(*value)),
+            Self::Named { name, value } => Self::Named {
+                name: name.clone(),
+                value: map.expression(*value),
+            },
+            Self::Infix(op, left, right) => {
+                let left = map.expression(*left);
+                Self::Infix(*op, left, map.expression(*right))
+            }
+            Self::Index { object, index } => Self::Index {
+                object: map.expression(*object),
+                index: map.expression(*index),
+            },
+            Self::Call {
+                name,
+                param_args: arguments,
+                args,
+                kwargs: keywords,
+            } => Self::Call {
+                name: name.clone(),
+                param_args: param_args(map, arguments),
+                args: values(map, args),
+                kwargs: kwargs(map, keywords),
+            },
+            Self::Invoke {
+                callee,
+                param_args: arguments,
+                args,
+                kwargs: keywords,
+            } => Self::Invoke {
+                callee: map.expression(*callee),
+                param_args: param_args(map, arguments),
+                args: values(map, args),
+                kwargs: kwargs(map, keywords),
+            },
+            Self::Member { object, field } => Self::Member {
+                object: map.expression(*object),
+                field: field.clone(),
+            },
+            Self::MethodCall {
+                object,
+                method,
+                args,
+                kwargs: keywords,
+            } => Self::MethodCall {
+                object: map.expression(*object),
+                method: method.clone(),
+                args: values(map, args),
+                kwargs: kwargs(map, keywords),
+            },
+            Self::TypeApply { name, args } => Self::TypeApply {
+                name: name.clone(),
+                args: param_args(map, args),
+            },
+            Self::ListLit(items) => Self::ListLit(values(map, items)),
+            Self::TupleLit(items) => Self::TupleLit(values(map, items)),
+            Self::BraceLit(entries) => Self::BraceLit(
+                entries
+                    .iter()
+                    .map(|(key, value)| (map.expression(*key), optional(map, value)))
+                    .collect(),
+            ),
+            Self::Comprehension {
+                kind,
+                key,
+                value,
+                clauses,
+            } => {
+                let clauses = clauses
+                    .iter()
+                    .map(|clause| match clause {
+                        CheckedComprehensionClause::For { var, binding, iter } => {
+                            CheckedComprehensionClause::For {
+                                var: var.clone(),
+                                binding: *binding,
+                                iter: map.expression(*iter),
+                            }
+                        }
+                        CheckedComprehensionClause::If(condition) => {
+                            CheckedComprehensionClause::If(map.expression(*condition))
+                        }
+                    })
+                    .collect();
+                Self::Comprehension {
+                    kind: *kind,
+                    key: optional(map, key),
+                    value: map.expression(*value),
+                    clauses,
+                }
+            }
+            Self::IfExpr {
+                cond,
+                then_branch,
+                else_branch,
+            } => Self::IfExpr {
+                cond: map.expression(*cond),
+                then_branch: map.expression(*then_branch),
+                else_branch: map.expression(*else_branch),
+            },
+            Self::Compare { first, rest } => Self::Compare {
+                first: map.expression(*first),
+                rest: rest
+                    .iter()
+                    .map(|(op, value)| (*op, map.expression(*value)))
+                    .collect(),
+            },
+            Self::Slice {
+                object,
+                lower,
+                upper,
+                step,
+                explicit_step,
+            } => Self::Slice {
+                object: map.expression(*object),
+                lower: optional(map, lower),
+                upper: optional(map, upper),
+                step: optional(map, step),
+                explicit_step: *explicit_step,
+            },
+            Self::MultiIndex { object, args } => Self::MultiIndex {
+                object: map.expression(*object),
+                args: args
+                    .iter()
+                    .map(|argument| match argument {
+                        CheckedSubscriptArg::Index(value) => {
+                            CheckedSubscriptArg::Index(map.expression(*value))
+                        }
+                        CheckedSubscriptArg::Keyword { name, value } => {
+                            CheckedSubscriptArg::Keyword {
+                                name: name.clone(),
+                                value: map.expression(*value),
+                            }
+                        }
+                        CheckedSubscriptArg::Slice {
+                            lower,
+                            upper,
+                            step,
+                            explicit_step,
+                        } => CheckedSubscriptArg::Slice {
+                            lower: optional(map, lower),
+                            upper: optional(map, upper),
+                            step: optional(map, step),
+                            explicit_step: *explicit_step,
+                        },
+                        CheckedSubscriptArg::KeywordSlice {
+                            name,
+                            lower,
+                            upper,
+                            step,
+                            explicit_step,
+                        } => CheckedSubscriptArg::KeywordSlice {
+                            name: name.clone(),
+                            lower: optional(map, lower),
+                            upper: optional(map, upper),
+                            step: optional(map, step),
+                            explicit_step: *explicit_step,
+                        },
+                    })
+                    .collect(),
+            },
+            Self::TString { parts, raw } => Self::TString {
+                parts: parts
+                    .iter()
+                    .map(|part| match part {
+                        CheckedTStringPart::Literal(text) => {
+                            CheckedTStringPart::Literal(text.clone())
+                        }
+                        CheckedTStringPart::Expr(value) => {
+                            CheckedTStringPart::Expr(map.expression(*value))
+                        }
+                    })
+                    .collect(),
+                raw: *raw,
+            },
+            Self::Lambda { def } => Self::Lambda {
+                def: map.statement(*def),
+            },
+        }
+    }
 }
 
 /// A compile-time parameter argument of a checked call or type application.
@@ -1580,6 +1800,26 @@ impl CheckedParamArg {
             Self::Attribute { applications, .. } => nodes.extend(applications),
             Self::Value(value) => nodes.push(*value),
             Self::Named { value, .. } => value.reached(nodes),
+        }
+    }
+
+    fn map_operands(&self, map: &mut dyn NodeMap) -> Self {
+        match self {
+            Self::Attribute {
+                value,
+                applications,
+            } => Self::Attribute {
+                value: value.clone(),
+                applications: applications
+                    .iter()
+                    .map(|application| map.expression(*application))
+                    .collect(),
+            },
+            Self::Value(value) => Self::Value(map.expression(*value)),
+            Self::Named { name, value } => Self::Named {
+                name: name.clone(),
+                value: Box::new(value.map_operands(map)),
+            },
         }
     }
 }
@@ -1909,6 +2149,208 @@ impl CheckedStmtOp {
         }
     }
 
+    /// The op with each node it names replaced by `map`'s, visited in the
+    /// order the check's nodes are built: a statement's expressions before
+    /// the bodies that follow them, each member in turn.
+    pub(crate) fn map_operands(&self, map: &mut dyn NodeMap) -> Self {
+        let values = |map: &mut dyn NodeMap, values: &[CheckedNodeId]| -> Vec<CheckedNodeId> {
+            values.iter().map(|value| map.expression(*value)).collect()
+        };
+        let block = |map: &mut dyn NodeMap, body: &[CheckedStmtId]| -> Vec<CheckedStmtId> {
+            body.iter()
+                .map(|statement| map.statement(*statement))
+                .collect()
+        };
+        let optional_block = |map: &mut dyn NodeMap, body: &Option<Vec<CheckedStmtId>>| {
+            body.as_ref().map(|body| block(map, body))
+        };
+        let branches = |map: &mut dyn NodeMap, branches: &[(CheckedNodeId, Vec<CheckedStmtId>)]| {
+            branches
+                .iter()
+                .map(|(condition, body)| (map.expression(*condition), block(map, body)))
+                .collect::<Vec<_>>()
+        };
+        match self {
+            Self::VarDecl {
+                name,
+                applications,
+                value,
+            } => Self::VarDecl {
+                name: name.clone(),
+                applications: values(map, applications),
+                value: map.expression(*value),
+            },
+            Self::RefDecl { name, value } => Self::RefDecl {
+                name: name.clone(),
+                value: map.expression(*value),
+            },
+            Self::Assign { name, value } => Self::Assign {
+                name: name.clone(),
+                value: map.expression(*value),
+            },
+            Self::AugAssign { place, op, value } => Self::AugAssign {
+                place: map.expression(*place),
+                op: *op,
+                value: map.expression(*value),
+            },
+            Self::Unpack {
+                targets,
+                value,
+                declares,
+            } => Self::Unpack {
+                targets: values(map, targets),
+                value: map.expression(*value),
+                declares: *declares,
+            },
+            Self::SetPlace { place, value } => Self::SetPlace {
+                place: map.expression(*place),
+                value: map.expression(*value),
+            },
+            Self::Def(def) => Self::Def(Box::new(CheckedDef {
+                params: map_params(map, &def.params),
+                where_clauses: values(map, &def.where_clauses),
+                body: block(map, &def.body),
+                ..(**def).clone()
+            })),
+            Self::Struct(declaration) => {
+                let conformance_conditions = declaration
+                    .conformance_conditions
+                    .iter()
+                    .map(|(name, value)| (name.clone(), map.expression(*value)))
+                    .collect();
+                let where_clauses = values(map, &declaration.where_clauses);
+                let associated = declaration
+                    .associated
+                    .iter()
+                    .map(|member| CheckedStructComptime {
+                        name: member.name.clone(),
+                        where_clauses: values(map, &member.where_clauses),
+                        value: map.expression(member.value),
+                    })
+                    .collect();
+                let methods = declaration
+                    .methods
+                    .iter()
+                    .map(|method| method.map_operands(map))
+                    .collect();
+                Self::Struct(Box::new(CheckedStruct {
+                    name: declaration.name.clone(),
+                    conforms: declaration.conforms.clone(),
+                    conformance_conditions,
+                    where_clauses,
+                    fields: declaration.fields.clone(),
+                    associated,
+                    methods,
+                    fieldwise_init: declaration.fieldwise_init,
+                }))
+            }
+            Self::Trait(declaration) => {
+                let methods = declaration
+                    .methods
+                    .iter()
+                    .map(|method| CheckedTraitMethod {
+                        params: map_params(map, &method.params),
+                        where_clauses: values(map, &method.where_clauses),
+                        default: method.default.map(|default| map.statement(default)),
+                        ..method.clone()
+                    })
+                    .collect();
+                let comptime_members = declaration
+                    .comptime_members
+                    .iter()
+                    .map(|member| CheckedTraitComptime {
+                        name: member.name.clone(),
+                        where_clauses: values(map, &member.where_clauses),
+                    })
+                    .collect();
+                Self::Trait(Box::new(CheckedTrait {
+                    name: declaration.name.clone(),
+                    refines: declaration.refines.clone(),
+                    methods,
+                    comptime_members,
+                }))
+            }
+            Self::Comptime {
+                name,
+                where_clauses,
+                value,
+            } => Self::Comptime {
+                name: name.clone(),
+                where_clauses: values(map, where_clauses),
+                value: map.expression(*value),
+            },
+            Self::ComptimeIf {
+                branches: arms,
+                orelse,
+            } => Self::ComptimeIf {
+                branches: branches(map, arms),
+                orelse: optional_block(map, orelse),
+            },
+            Self::If {
+                branches: arms,
+                orelse,
+            } => Self::If {
+                branches: branches(map, arms),
+                orelse: optional_block(map, orelse),
+            },
+            Self::ComptimeFor { var, iter, body } => Self::ComptimeFor {
+                var: var.clone(),
+                iter: map.expression(*iter),
+                body: block(map, body),
+            },
+            Self::While { cond, body, orelse } => Self::While {
+                cond: map.expression(*cond),
+                body: block(map, body),
+                orelse: optional_block(map, orelse),
+            },
+            Self::For {
+                var,
+                binding,
+                iter,
+                body,
+                orelse,
+            } => Self::For {
+                var: var.clone(),
+                binding: *binding,
+                iter: map.expression(*iter),
+                body: block(map, body),
+                orelse: optional_block(map, orelse),
+            },
+            Self::Return(value) => Self::Return(value.map(|value| map.expression(value))),
+            Self::Raise(value) => Self::Raise(map.expression(*value)),
+            Self::Expr(value) => Self::Expr(map.expression(*value)),
+            Self::With { items, body } => Self::With {
+                items: items
+                    .iter()
+                    .map(|item| CheckedWithItem {
+                        context: map.expression(item.context),
+                        var: item.var.clone(),
+                    })
+                    .collect(),
+                body: block(map, body),
+            },
+            Self::Try {
+                body,
+                except,
+                orelse,
+                finalbody,
+            } => Self::Try {
+                body: block(map, body),
+                except: except
+                    .as_ref()
+                    .map(|(name, body)| (name.clone(), block(map, body))),
+                orelse: optional_block(map, orelse),
+                finalbody: optional_block(map, finalbody),
+            },
+            Self::Scope(body) => Self::Scope(block(map, body)),
+            Self::Import { .. }
+            | Self::FromImport { .. }
+            | Self::Pass
+            | Self::Break
+            | Self::Continue => self.clone(),
+        }
+    }
+
     /// The statement kind's name, for diagnostics.
     pub const fn kind_name(&self) -> &'static str {
         match self {
@@ -2063,6 +2505,30 @@ pub struct CheckedMethod {
     pub where_clauses: Vec<CheckedNodeId>,
     pub body: Vec<CheckedStmtId>,
     pub provenance: MethodProvenance,
+}
+
+impl CheckedMethod {
+    /// The method with each node it names replaced by `map`'s, in the
+    /// order its nodes are built: its parameters' defaults, its
+    /// constraints, its body.
+    fn map_operands(&self, map: &mut dyn NodeMap) -> Self {
+        let params = map_params(map, &self.params);
+        let where_clauses = self
+            .where_clauses
+            .iter()
+            .map(|clause| map.expression(*clause))
+            .collect();
+        Self {
+            params,
+            where_clauses,
+            body: self
+                .body
+                .iter()
+                .map(|statement| map.statement(*statement))
+                .collect(),
+            ..self.clone()
+        }
+    }
 }
 
 /// A checked `trait`: its requirements, a default's body as statement
@@ -2270,6 +2736,75 @@ impl CheckedTables {
         for operand in node.op.reached() {
             self.walk_expression(operand, visit);
         }
+    }
+
+    /// The tables of one lowering unit: the statement `root` and every node
+    /// under it, held as a struct member's unit holds its struct when
+    /// `shell` says so, then the statements of a wrapper's `body`, and the
+    /// declarations the copied statements make.
+    ///
+    /// The nodes are copied in the order the check builds them, children
+    /// before their parent, each renumbered by its position in the copy:
+    /// a unit is its program's subtree, as upstream's is an op of its
+    /// module.
+    pub(crate) fn extract(
+        &self,
+        root: CheckedStmtId,
+        shell: Option<StructShell>,
+        body: &[CheckedStmtId],
+    ) -> Self {
+        let mut copy = Extraction {
+            source: self,
+            expressions: Vec::new(),
+            statements: Vec::new(),
+        };
+        let root = match (shell, self.statement(root)) {
+            (Some(shell), Some(statement)) => copy.shell(statement, shell),
+            _ => copy.statement(root),
+        };
+        let mut declared: Vec<CheckedDeclId> = copy
+            .statements
+            .iter()
+            .filter_map(|statement| statement.declaration)
+            .collect();
+        let wrapper_roots = if body.is_empty() {
+            Vec::new()
+        } else {
+            vec![
+                body.iter()
+                    .map(|statement| copy.statement(*statement))
+                    .collect(),
+            ]
+        };
+        declared.sort_unstable();
+        declared.dedup();
+        let renumbered: HashMap<CheckedDeclId, CheckedDeclId> = declared
+            .iter()
+            .enumerate()
+            .map(|(position, id)| (*id, CheckedDeclId(position as u32)))
+            .collect();
+        let declarations = declared
+            .iter()
+            .filter_map(|id| self.declaration(*id))
+            .map(|declaration| CheckedDeclaration {
+                id: renumbered[&declaration.id],
+                children: declaration
+                    .children
+                    .iter()
+                    .filter_map(|child| renumbered.get(child).copied())
+                    .collect(),
+                ..declaration.clone()
+            })
+            .collect();
+        Self::new(
+            CheckedArena {
+                nodes: copy.expressions,
+                statements: copy.statements,
+                roots: vec![root],
+                wrapper_roots,
+            },
+            declarations,
+        )
     }
 
     /// Each statement node takes the last declaration recorded at its
@@ -2508,20 +3043,6 @@ impl DiscoveryResult {
         CheckedProgram::new(self)
     }
 
-    /// Visit every expression the checked arena would hold a node for, in the
-    /// arena's own order. The traversal is the arena builder's, so a request
-    /// query here sees exactly the expressions one over
-    /// [`CheckedProgram::expressions`] would.
-    pub fn scan_expressions(&self, visit: &mut dyn FnMut(&Expr)) {
-        build_checked_expressions(
-            &self.statements,
-            &self.node_facts,
-            &self.default_wrappers,
-            &self.trait_members,
-            ArenaMode::Scan(visit),
-        );
-    }
-
     /// The generic instantiation recorded at each call.
     pub fn generic_instantiations(&self) -> HashMap<SourceSpan, GenericInstantiation> {
         fact_index(&self.node_facts, |facts| {
@@ -2540,18 +3061,6 @@ impl DiscoveryResult {
         &self.struct_instantiations
     }
 
-    pub fn expression_type(&self, expression: &Expr) -> Option<&Ty> {
-        self.facts_of(expression)?.ty.as_ref()
-    }
-
-    pub fn expression_place_type(&self, expression: &Expr) -> Option<&Ty> {
-        self.facts_of(expression)?.place_ty.as_ref()
-    }
-
-    pub fn expression_binding_type(&self, expression: &Expr) -> Option<&Ty> {
-        self.facts_of(expression)?.binding_ty.as_ref()
-    }
-
     /// The checked type of every declaration the arena would hold.
     pub fn declaration_types(&self) -> Vec<Ty> {
         build_checked_declarations(
@@ -2563,39 +3072,6 @@ impl DiscoveryResult {
         .into_iter()
         .filter_map(|declaration| declaration.ty)
         .collect()
-    }
-
-    /// [`Self::scan_expressions`] over `statements` and the bodies of
-    /// `wrappers` in place of the program's.
-    pub(crate) fn scan_unit_expressions(
-        &self,
-        statements: &[Stmt],
-        wrappers: &[CheckedDefaultWrapper],
-        visit: &mut dyn FnMut(&Expr),
-    ) {
-        build_checked_expressions(
-            statements,
-            &self.node_facts,
-            wrappers,
-            &[],
-            ArenaMode::Scan(visit),
-        );
-    }
-
-    /// The lookups each declaration op's symbol and signature are read
-    /// from.
-    pub(crate) fn signatures(&self) -> Signatures<'_> {
-        Signatures {
-            checked_types: &self.checked_types,
-            generic_parameters: &self.generic_parameters,
-            declaration_effects: &self.declaration_effects,
-            overloads: &self.overloads,
-            constants: &self.constants,
-        }
-    }
-
-    fn facts_of(&self, expression: &Expr) -> Option<&NodeFacts> {
-        self.node_facts.get(&expression.source_span())
     }
 }
 
@@ -3007,10 +3483,7 @@ impl CheckedProgram {
             &node_facts,
             &default_wrappers,
             &trait_members,
-            ArenaMode::Build {
-                signatures,
-                member: None,
-            },
+            signatures,
         );
         drop(expressions_span);
         let _declarations = mojito_common::timing::span("declarations");
@@ -3259,27 +3732,23 @@ pub struct InstalledSites {
     pub declaration_effects: HashMap<AnnotationSite, DeclarationEffect>,
 }
 
-/// The checked tables of one package unit, `statements` and `wrappers`'
-/// bodies, built from the check's `facts` and `signatures` as the whole
-/// program's are. A struct member unit's `member` is its method's
-/// position among the struct's members and its symbol, which its
-/// struct's shell no longer spells.
-pub(crate) fn unit_tables(
-    statements: &[Stmt],
-    wrappers: &[CheckedDefaultWrapper],
-    facts: &HashMap<SourceSpan, NodeFacts>,
-    signatures: Signatures<'_>,
-    member: Option<(usize, &str)>,
-) -> CheckedTables {
-    let arena = build_checked_expressions(
-        statements,
-        facts,
-        wrappers,
-        &[],
-        ArenaMode::Build { signatures, member },
-    );
-    let declarations = build_checked_declarations(statements, &[], signatures.checked_types, facts);
-    CheckedTables::new(arena, declarations)
+/// How a struct member's unit holds the struct it is a member of: as
+/// its name, holding no method but the member's own. Its compile-time
+/// parameters are its declaration's.
+#[derive(Debug, Clone, Copy)]
+pub(crate) enum StructShell {
+    /// A spelled method, at its position among the struct's node's
+    /// methods.
+    Method(usize),
+    /// An inherited default's wrapper, whose body the unit holds beside.
+    Wrapper,
+}
+
+/// What a node operand is replaced by when an op is copied
+/// ([`CheckedOp::map_operands`], [`CheckedStmtOp::map_operands`]).
+pub(crate) trait NodeMap {
+    fn expression(&mut self, id: CheckedNodeId) -> CheckedNodeId;
+    fn statement(&mut self, id: CheckedStmtId) -> CheckedStmtId;
 }
 
 /// The lookups a declaration op's symbol and checked signature are read
@@ -3374,41 +3843,23 @@ impl Signatures<'_> {
     }
 }
 
-/// What [`build_checked_expressions`] does.
-enum ArenaMode<'a, 's> {
-    /// Build the nodes, each declaration op's symbol and signature read
-    /// from `signatures`; `member` is a struct member unit's
-    /// ([`unit_tables`]).
-    Build {
-        signatures: Signatures<'a>,
-        member: Option<(usize, &'a str)>,
-    },
-    /// The traversal alone, each expression reported instead of built.
-    Scan(&'s mut dyn FnMut(&Expr)),
-}
-
 /// The checked arena of `statements`, of `default_wrappers`' bodies, and of
 /// each of `trait_members`' declarations, each node holding the facts
-/// `facts` recorded at its occurrence; in scan `mode`, the traversal alone.
+/// `facts` recorded at its occurrence, each declaration op's symbol and
+/// signature read from `signatures`.
 fn build_checked_expressions<'a>(
     statements: &[Stmt],
     facts: &'a HashMap<SourceSpan, NodeFacts>,
     default_wrappers: &[CheckedDefaultWrapper],
     trait_members: &'a [CheckedTraitMember],
-    mode: ArenaMode<'a, '_>,
+    signatures: Signatures<'a>,
 ) -> CheckedArena {
-    let (scan, signatures, member) = match mode {
-        ArenaMode::Build { signatures, member } => (None, Some(signatures), member),
-        ArenaMode::Scan(visit) => (Some(visit), None, None),
-    };
     let mut builder = ArenaBuilder {
-        scan,
         nodes: Vec::new(),
         statements: Vec::new(),
         facts,
         trait_members,
         signatures,
-        member,
         functions: 0,
     };
     let roots = builder.block(statements);
@@ -3432,28 +3883,96 @@ struct CheckedArena {
     wrapper_roots: Vec<Vec<CheckedStmtId>>,
 }
 
+/// A unit's nodes being copied out of its program's tables
+/// ([`CheckedTables::extract`]).
+struct Extraction<'t> {
+    source: &'t CheckedTables,
+    expressions: Vec<CheckedExpr>,
+    statements: Vec<CheckedStmt>,
+}
+
+impl Extraction<'_> {
+    /// The struct `statement` as a member's unit holds it: its name, and
+    /// the member's method when `shell` names one.
+    fn shell(&mut self, statement: &CheckedStmt, shell: StructShell) -> CheckedStmtId {
+        let CheckedStmtOp::Struct(declaration) = &statement.op else {
+            return self.statement(statement.id);
+        };
+        let methods = match shell {
+            StructShell::Method(member) => declaration
+                .methods
+                .get(member)
+                .map(|method| method.map_operands(self))
+                .into_iter()
+                .collect(),
+            StructShell::Wrapper => Vec::new(),
+        };
+        self.push(CheckedStmt {
+            op: CheckedStmtOp::Struct(Box::new(CheckedStruct {
+                name: declaration.name.clone(),
+                conforms: Vec::new(),
+                conformance_conditions: Vec::new(),
+                where_clauses: Vec::new(),
+                fields: Vec::new(),
+                associated: Vec::new(),
+                methods,
+                fieldwise_init: false,
+            })),
+            ..statement.clone()
+        })
+    }
+
+    fn push(&mut self, statement: CheckedStmt) -> CheckedStmtId {
+        let id = CheckedStmtId(self.statements.len() as u32);
+        self.statements.push(CheckedStmt { id, ..statement });
+        id
+    }
+}
+
+impl NodeMap for Extraction<'_> {
+    fn expression(&mut self, id: CheckedNodeId) -> CheckedNodeId {
+        let source = self.source;
+        let Some(node) = source.expression(id) else {
+            return id;
+        };
+        let op = node.op.map_operands(self);
+        let id = CheckedNodeId(self.expressions.len() as u32);
+        self.expressions.push(CheckedExpr {
+            id,
+            op,
+            ..node.clone()
+        });
+        id
+    }
+
+    fn statement(&mut self, id: CheckedStmtId) -> CheckedStmtId {
+        let source = self.source;
+        let Some(statement) = source.statement(id) else {
+            return id;
+        };
+        let op = statement.op.map_operands(self);
+        self.push(CheckedStmt {
+            op,
+            ..statement.clone()
+        })
+    }
+}
+
 /// The checked arena under construction.
-struct ArenaBuilder<'a, 's> {
-    /// Report each expression instead of building its node: the
-    /// traversal alone, for [`DiscoveryResult::scan_expressions`].
-    scan: Option<&'s mut dyn FnMut(&Expr)>,
+struct ArenaBuilder<'a> {
     nodes: Vec<CheckedExpr>,
     statements: Vec<CheckedStmt>,
     facts: &'a HashMap<SourceSpan, NodeFacts>,
     /// The members whose `def` nodes a trait's defaults are built as.
     trait_members: &'a [CheckedTraitMember],
-    /// What a declaration op's symbol and signature are read from; absent
-    /// in scan mode, which builds no op.
-    signatures: Option<Signatures<'a>>,
-    /// A struct member unit's method's position among its struct's members
-    /// and its symbol.
-    member: Option<(usize, &'a str)>,
+    /// What a declaration op's symbol and signature are read from.
+    signatures: Signatures<'a>,
     /// How many function bodies enclose the statement being built: a
     /// `def` inside one is named by its own name.
     functions: usize,
 }
 
-impl<'a> ArenaBuilder<'a, '_> {
+impl<'a> ArenaBuilder<'a> {
     fn facts(&self, span: &SourceSpan) -> &'a NodeFacts {
         self.facts.get(span).unwrap_or(&NodeFacts::EMPTY)
     }
@@ -3482,10 +4001,6 @@ impl<'a> ArenaBuilder<'a, '_> {
             return node;
         }
         let op = self.op(expression);
-        if let Some(scan) = self.scan.as_mut() {
-            scan(expression);
-            return CheckedNodeId(0);
-        }
         let facts = self.facts(&expression.source_span());
         let adjustments = node_adjustments(facts, expression);
         let variant_projection = matches!(
@@ -3557,13 +4072,11 @@ impl<'a> ArenaBuilder<'a, '_> {
             return None;
         };
         let node = self.expr(&construction.0);
-        if self.scan.is_none() {
-            // A `for` loop iterates the construction it spells.
-            if let Some(protocol) = &self.facts(&expression.source_span()).iteration_protocol {
-                self.nodes[node.0 as usize]
-                    .adjustments
-                    .push(SemanticAdjustment::Iterate((**protocol).clone()));
-            }
+        // A `for` loop iterates the construction it spells.
+        if let Some(protocol) = &self.facts(&expression.source_span()).iteration_protocol {
+            self.nodes[node.0 as usize]
+                .adjustments
+                .push(SemanticAdjustment::Iterate((**protocol).clone()));
         }
         Some(node)
     }
@@ -3863,13 +4376,9 @@ impl<'a> ArenaBuilder<'a, '_> {
             .collect()
     }
 
-    /// `statement`'s node, built after its operands' and bodies' nodes; in
-    /// scan mode, the traversal alone.
+    /// `statement`'s node, built after its operands' and bodies' nodes.
     fn stmt(&mut self, statement: &Stmt) -> CheckedStmtId {
         let op = self.stmt_op(statement);
-        if self.scan.is_some() {
-            return CheckedStmtId(0);
-        }
         let facts = self.facts(&statement.source_span());
         let id = CheckedStmtId(self.statements.len() as u32);
         self.statements.push(CheckedStmt {
@@ -3963,10 +4472,7 @@ impl<'a> ArenaBuilder<'a, '_> {
             } => CheckedStmtOp::Def(Box::new(CheckedDef {
                 name: name.clone(),
                 symbol: self.function_symbol(name, type_params, params),
-                signature: self
-                    .signatures
-                    .map(|signatures| signatures.function(statement, params.len()))
-                    .unwrap_or_default(),
+                signature: self.signatures.function(statement, params.len()),
                 params: self.fn_params(params),
                 positional_only: *positional_only,
                 keyword_only: *keyword_only,
@@ -4005,23 +4511,17 @@ impl<'a> ArenaBuilder<'a, '_> {
                     .map(|(position, method)| {
                         let registered =
                             mojito_symbol::symbol::lifecycle_method_name(method).to_string();
-                        let (index, symbol) =
-                            self.method_symbol(name, type_params, &registered, method, position);
+                        let symbol = self.method_symbol(name, type_params, &registered, method);
                         CheckedMethod {
                             name: method.name.clone(),
                             registered,
                             symbol,
-                            signature: self
-                                .signatures
-                                .map(|signatures| {
-                                    signatures.method(
-                                        statement.module.as_ref(),
-                                        name,
-                                        index,
-                                        method.params.len(),
-                                    )
-                                })
-                                .unwrap_or_default(),
+                            signature: self.signatures.method(
+                                statement.module.as_ref(),
+                                name,
+                                position,
+                                method.params.len(),
+                            ),
                             has_self: method.has_self,
                             self_convention: method.self_convention,
                             params: self.fn_params(&method.params),
@@ -4039,16 +4539,15 @@ impl<'a> ArenaBuilder<'a, '_> {
                     .enumerate()
                     .map(|(field, declared)| CheckedField {
                         name: declared.name.clone(),
-                        ty: self.signatures.and_then(|signatures| {
-                            signatures
-                                .checked_types
-                                .get(&AnnotationSite::StructField {
-                                    module: statement.module.clone(),
-                                    declaration: name.clone(),
-                                    field,
-                                })
-                                .cloned()
-                        }),
+                        ty: self
+                            .signatures
+                            .checked_types
+                            .get(&AnnotationSite::StructField {
+                                module: statement.module.clone(),
+                                declaration: name.clone(),
+                                field,
+                            })
+                            .cloned(),
                     })
                     .collect();
                 CheckedStmtOp::Struct(Box::new(CheckedStruct {
@@ -4199,52 +4698,43 @@ impl<'a> ArenaBuilder<'a, '_> {
 
     /// The symbol the `def` `name` lowers to, as the check names its
     /// owner: a module `def`'s signature-qualified when its name is
-    /// overloaded, a nested one's its own name. Empty in scan mode.
+    /// overloaded, a nested one's its own name.
     fn function_symbol(
         &self,
         name: &str,
         type_params: &[TypeParam],
         params: &[mojito_ast::ast::FnParam],
     ) -> String {
-        match self.signatures {
-            Some(signatures) if self.functions == 0 => mojito_symbol::symbol::lowered_def_name(
-                name,
-                type_params,
-                params,
-                signatures.overloads,
-                &|name| signatures.constants.get(name),
-            ),
-            Some(_) => name.to_string(),
-            None => String::new(),
+        if self.functions > 0 {
+            return name.to_string();
         }
+        let signatures = self.signatures;
+        mojito_symbol::symbol::lowered_def_name(
+            name,
+            type_params,
+            params,
+            signatures.overloads,
+            &|name| signatures.constants.get(name),
+        )
     }
 
-    /// The position among struct `structure`'s members of its method
-    /// `method`, at `position` among the methods it spells and registered
-    /// as `registered`, and the symbol it lowers to; a struct member
-    /// unit's are the unit's. The symbol is empty in scan mode.
+    /// The symbol struct `structure`'s method `method`, registered as
+    /// `registered`, lowers to.
     fn method_symbol(
         &self,
         structure: &str,
         type_params: &[TypeParam],
         registered: &str,
         method: &mojito_ast::ast::Method,
-        position: usize,
-    ) -> (usize, String) {
-        match (self.member, self.signatures) {
-            (Some((index, symbol)), _) => (index, symbol.to_string()),
-            (None, Some(signatures)) => (
-                position,
-                mojito_symbol::symbol::lowered_method_name(
-                    &format!("{structure}.{registered}"),
-                    type_params,
-                    mojito_symbol::symbol::MethodShape::of(method),
-                    signatures.overloads,
-                    &|name| signatures.constants.get(name),
-                ),
-            ),
-            (None, None) => (position, String::new()),
-        }
+    ) -> String {
+        let signatures = self.signatures;
+        mojito_symbol::symbol::lowered_method_name(
+            &format!("{structure}.{registered}"),
+            type_params,
+            mojito_symbol::symbol::MethodShape::of(method),
+            signatures.overloads,
+            &|name| signatures.constants.get(name),
+        )
     }
 }
 
@@ -4273,6 +4763,17 @@ impl mojito_ast::visit::Visitor for LiftedApplications<'_> {
             self.found.push(expression.clone());
         }
     }
+}
+
+/// `params` with each default replaced by `map`'s node.
+fn map_params(map: &mut dyn NodeMap, params: &[CheckedFnParam]) -> Vec<CheckedFnParam> {
+    params
+        .iter()
+        .map(|param| CheckedFnParam {
+            default: param.default.map(|default| map.expression(default)),
+            ..param.clone()
+        })
+        .collect()
 }
 
 fn node_adjustments(facts: &NodeFacts, expression: &Expr) -> Vec<SemanticAdjustment> {

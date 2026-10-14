@@ -2231,11 +2231,11 @@ fn template_value_struct_methods_are_served_on_the_generator() {
 }
 
 #[test]
-fn discovery_scan_matches_the_checked_arena() {
-    // A `DiscoveryResult` answers the checked facts before the arena is
-    // assembled: the expressions visited, their three recorded types, the
-    // declaration types, and the recorded instantiations must be exactly
-    // the arena's, in its order.
+fn discovery_matches_the_checked_program() {
+    // A `DiscoveryResult` answers the checked facts before the program is
+    // assembled: its declaration types and recorded instantiations must be
+    // exactly the program's, in its order. A package unit is the
+    // program's subtree, so no query walks expressions the arena does.
     for benchmark in ["tstring", "generic", "stdlib_heavy"] {
         let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("benchmarks/compile")
@@ -2247,35 +2247,13 @@ fn discovery_scan_matches_the_checked_arena() {
             &mut mojito::checker::CheckContext::default(),
         )
         .expect("check");
-        let mut scanned = Vec::new();
-        discovery.scan_expressions(&mut |expression| {
-            scanned.push((
-                expression.source_span(),
-                discovery.expression_type(expression).cloned(),
-                discovery.expression_place_type(expression).cloned(),
-                discovery.expression_binding_type(expression).cloned(),
-            ));
-        });
         let declaration_types = discovery.declaration_types();
         let generic = discovery.generic_instantiations().clone();
         let methods = discovery.method_instantiations().clone();
         let structs = discovery.struct_instantiations().to_vec();
 
         let checked = discovery.finalize();
-        let arena: Vec<_> = checked
-            .expressions()
-            .iter()
-            .map(|node| {
-                (
-                    node.location(),
-                    node.ty.clone(),
-                    node.place_ty.clone(),
-                    node.binding_ty.clone(),
-                )
-            })
-            .collect();
-        assert!(!arena.is_empty(), "{benchmark}");
-        assert_eq!(scanned, arena, "{benchmark}: expressions and their types");
+        assert!(!checked.expressions().is_empty(), "{benchmark}");
         let arena_declarations: Vec<_> = checked
             .declarations()
             .iter()

@@ -152,8 +152,13 @@ import (every compilation that links the bundled library):
   `def`, one struct method (with its struct's name and the symbol it
   lowers to), an inherited default's wrapper, a trait default, or a
   module constant's lifted applications; its record holds its checked
-  tables (`DiscoveryResult::units`, which builds each unit's nodes from
-  the check's facts as the whole program's are): its expression and
+  tables (`DiscoveryResult::units`, which copies each unit's nodes out of
+  the whole program's checked tables, as upstream's unit is an op of its
+  module, never re-emitted from its source: `CheckedTables::extract`
+  renumbers the subtree under the unit's statement node in the order the
+  check's nodes are built, through `CheckedOp::map_operands` and
+  `CheckedStmtOp::map_operands`, a struct member's unit holding its
+  struct as a shell naming the member alone): its expression and
   statement nodes, each carrying its own op, type, and attributes as
   upstream's ops do and encoding only the attributes it has, behind an
   encoding mask, as an MLIR bytecode op does, and its declarations, beside the facts of the unit's
@@ -1715,9 +1720,6 @@ checked arena. `check_program_for_discovery` stops before the arena: a
 one `NodeFacts` record per occurrence, as an op holds its attributes,
 beside its declaration-site tables (annotation types, generic parameters,
 declaration effects) and its struct instantiations, with
-`DiscoveryResult::scan_expressions`, the arena builder's own traversal with
-node construction switched off, for a client that wants exactly the
-expressions the arena would hold without building it, and
 `DiscoveryResult::finalize` for the arena. A `DiscoveryResult` is not
 executable and never reaches HIR or MIR.
 

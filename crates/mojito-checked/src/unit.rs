@@ -9,10 +9,9 @@
 use crate::checked::{
     AnnotationSite, CheckedDefaultWrapper, CheckedProgram, CheckedStmtId, CheckedStmtOp,
     CheckedTables, CheckedTraitMember, DeclarationEffect, DiscoveryResult, GenericSite,
-    InstalledSites,
+    InstalledSites, StructShell, WalkResult, Walked,
 };
 use crate::package::{LibraryRoot, ProgramConstants, ProgramOverloads};
-use mojito_ast::ast::{Expr, Method, Stmt, StmtKind};
 use mojito_common::token::SyntaxId;
 use mojito_types::origin::encoding_packaged_owners;
 use mojito_types::types::{ParamDecl, Ty};
@@ -68,23 +67,6 @@ impl LoweringUnit<'_> {
             return None;
         };
         Some((&node.module, &declaration.name, member))
-    }
-
-    /// A method unit's position among its struct's members and the symbol
-    /// its node in `tables` lowers to.
-    fn method_symbol<'t>(&self, tables: &'t CheckedTables) -> Option<(usize, &'t str)> {
-        let Self::Method {
-            index,
-            root,
-            member,
-        } = self
-        else {
-            return None;
-        };
-        let CheckedStmtOp::Struct(declaration) = &tables.statement(*root)?.op else {
-            return None;
-        };
-        Some((*index, declaration.methods.get(*member)?.symbol.as_str()))
     }
 }
 
@@ -267,58 +249,49 @@ impl CheckedUnit {
         .map_err(|error| error.to_string())
     }
 
-    /// The shell of `unit`, with no nodes or facts yet, and the syntax its
-    /// nodes are built from: its statements and its wrapper's body, each
-    /// statement node's syntax answered by `statement`.
-    fn syntax<'s>(
-        unit: &LoweringUnit<'_>,
-        statement: &dyn Fn(&CheckedStmtId) -> Option<&'s Stmt>,
-    ) -> Option<(Self, Vec<Stmt>, Vec<CheckedDefaultWrapper>)> {
+    /// The unit `unit` of the program whose nodes are `tables`, with no
+    /// site facts yet: its nodes are its subtree of `tables`.
+    fn extracted(unit: &LoweringUnit<'_>, tables: &CheckedTables) -> Self {
         let mut wrapper = None;
         let mut trait_member = None;
-        let (kind, statements) = match unit {
-            LoweringUnit::Function { root } => (UnitKind::Function, statement(root)?.clone()),
-            LoweringUnit::Constant { root } => (UnitKind::Constant, statement(root)?.clone()),
+        let (kind, root, shell, body) = match unit {
+            LoweringUnit::Function { root } => (UnitKind::Function, *root, None, &[][..]),
+            LoweringUnit::Constant { root } => (UnitKind::Constant, *root, None, &[][..]),
             LoweringUnit::Method {
                 index,
                 root,
                 member,
-            } => {
-                let structure = statement(root)?;
-                let StmtKind::Struct { methods, .. } = &structure.kind else {
-                    return None;
-                };
-                (
-                    UnitKind::Method { index: *index },
-                    member_of(structure, Some(methods.get(*member)?)),
-                )
-            }
+            } => (
+                UnitKind::Method { index: *index },
+                *root,
+                Some(StructShell::Method(*member)),
+                &[][..],
+            ),
             LoweringUnit::Wrapper {
                 root,
                 wrapper: inherited,
-                ..
+                index,
             } => {
-                let structure = statement(root)?;
                 wrapper = Some((*inherited).clone());
-                (UnitKind::Wrapper, member_of(structure, None))
+                (
+                    UnitKind::Wrapper,
+                    *root,
+                    Some(StructShell::Wrapper),
+                    tables.wrapper_roots(*index),
+                )
             }
-            LoweringUnit::TraitMember { member, .. } => {
+            LoweringUnit::TraitMember { member, root } => {
                 trait_member = Some((*member).clone());
-                (UnitKind::TraitMember, member.declaration.clone())
+                (UnitKind::TraitMember, *root, None, &[][..])
             }
         };
-        let wrappers: Vec<_> = wrapper.iter().cloned().collect();
-        Some((
-            Self {
-                kind,
-                wrapper,
-                trait_member,
-                tables: CheckedTables::default(),
-                sites: SiteFacts::default(),
-            },
-            vec![statements],
-            wrappers,
-        ))
+        Self {
+            kind,
+            wrapper,
+            trait_member,
+            tables: tables.extract(root, shell, body),
+            sites: SiteFacts::default(),
+        }
     }
 }
 
@@ -369,19 +342,15 @@ impl UnitProgram {
 impl DiscoveryResult {
     /// Each of `units`' checked nodes and site facts, in order.
     ///
-    /// A unit's nodes are built from the facts the check recorded at its
-    /// own syntax, as the whole program's are. A site fact belongs to
-    /// every unit whose syntax holds the occurrence its key names, or the
-    /// occurrence that one was derived from, and a member's own sites to
-    /// the member; a struct's own sites belong to none, since its
-    /// declaration holds them.
-    ///
-    /// `tables` are the whole program's nodes, whose roots run parallel to
-    /// the check's statements, from which each unit's syntax is sliced.
+    /// A unit's nodes are its subtree of the whole program's `tables`. A
+    /// site fact belongs to every unit whose nodes hold the occurrence its
+    /// key names, or the occurrence that one was derived from, and a
+    /// member's own sites to the member; a struct's own sites belong to
+    /// none, since its declaration holds them.
     ///
     /// # Errors
     ///
-    /// When a unit names a node the program's roots do not hold.
+    /// When a unit names a node the program's tables do not hold.
     pub fn units(
         &self,
         tables: &CheckedTables,
@@ -389,33 +358,27 @@ impl DiscoveryResult {
     ) -> Result<Vec<CheckedUnit>, String> {
         let mut owners = Owners::default();
         let mut syntax = Vec::with_capacity(units.len());
-        let positions: HashMap<_, _> = tables
-            .roots()
-            .iter()
-            .enumerate()
-            .map(|(position, root)| (*root, position))
-            .collect();
-        let statement = |root: &CheckedStmtId| {
-            positions
-                .get(root)
-                .and_then(|position| self.statements.get(*position))
-        };
         let mut sliced: Vec<CheckedUnit> = units
             .iter()
             .enumerate()
             .map(|(position, unit)| {
-                let (checked, statements, wrappers) = CheckedUnit::syntax(unit, &statement)
-                    .ok_or("a lowering unit names no statement of the program")?;
-                let mut occurrences = Occurrences::default();
-                mojito_ast::visit::walk_block(&mut occurrences, &statements);
-                for wrapper in &wrappers {
-                    mojito_ast::visit::walk_block(&mut occurrences, &wrapper.body);
+                let checked = CheckedUnit::extracted(unit, tables);
+                let nodes = &checked.tables;
+                if nodes.roots().is_empty() || nodes.statements.is_empty() {
+                    return Err("a lowering unit names no statement of the program".to_string());
                 }
-                self.scan_unit_expressions(&statements, &wrappers, &mut |expression| {
-                    occurrences.0.push(expression.syntax_id);
-                });
+                let mut occurrences = Vec::new();
+                let mut visit = |node: Walked<'_>| {
+                    occurrences.push(match node {
+                        Walked::Statement(statement) => statement.syntax_id,
+                        Walked::Expression(expression) => expression.syntax_id,
+                    });
+                    WalkResult::Advance
+                };
+                nodes.walk(nodes.roots(), &mut visit);
+                nodes.walk(nodes.wrapper_roots(0), &mut visit);
                 let mut ranks = HashMap::new();
-                for occurrence in occurrences.0 {
+                for occurrence in occurrences {
                     let next = ranks.len();
                     ranks.entry(occurrence).or_insert(next);
                     let units = owners.syntax.entry(occurrence).or_default();
@@ -431,16 +394,7 @@ impl DiscoveryResult {
                         .or_default()
                         .push(position);
                 }
-                Ok(CheckedUnit {
-                    tables: crate::checked::unit_tables(
-                        &statements,
-                        &wrappers,
-                        &self.node_facts,
-                        self.signatures(),
-                        unit.method_symbol(tables),
-                    ),
-                    ..checked
-                })
+                Ok(checked)
             })
             .collect::<Result<_, String>>()?;
         let checked_types = shares(&self.checked_types, &owners, &syntax);
@@ -641,82 +595,58 @@ fn shares<K: SiteKey + Clone, V: Clone>(
         .collect()
 }
 
-/// Every syntax occurrence a walk reaches.
-#[derive(Default)]
-struct Occurrences(Vec<SyntaxId>);
-
-impl mojito_ast::visit::Visitor for Occurrences {
-    fn visit_stmt(&mut self, statement: &Stmt) {
-        self.0.push(statement.syntax_id);
-    }
-
-    fn visit_expr(&mut self, expression: &Expr) {
-        self.0.push(expression.syntax_id);
-    }
-}
-
-/// The struct `structure` as a member of it lowers in it: its name,
-/// holding no method but `method`. Its compile-time parameters are its
-/// declaration's.
-fn member_of(structure: &Stmt, method: Option<&Method>) -> Stmt {
-    let StmtKind::Struct { name, .. } = &structure.kind else {
-        return structure.clone();
-    };
-    Stmt {
-        kind: StmtKind::Struct {
-            name: name.clone(),
-            decorators: Vec::new(),
-            type_params: Vec::new(),
-            conforms: Vec::new(),
-            callable_conformance: None,
-            conformance_conditions: Vec::new(),
-            where_clauses: Vec::new(),
-            fields: Vec::new(),
-            associated: Vec::new(),
-            methods: method.cloned().into_iter().collect(),
-            fieldwise_init: false,
-        },
-        span: structure.span,
-        module: structure.module.clone(),
-        syntax_id: structure.syntax_id,
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use mojito_ast::ast::ExprKind;
 
     #[test]
     fn a_unit_decodes_under_another_root() {
+        use crate::checked::{
+            CheckedExpr, CheckedNodeId, CheckedOp, CheckedStmt, EffectFacts, ValueCategory,
+        };
+        use mojito_ast::ast::{Expr, ExprKind, Stmt, StmtKind};
         let mut statement = Stmt::new(
             StmtKind::Expr(Expr::new(ExprKind::Bool(true), (4, 8))),
             (4, 8),
         );
         mojito_ast::ast::stamp_source(std::slice::from_mut(&mut statement), "/a/stdlib/std/x.mojo");
-        let (shell, statements, wrappers) = CheckedUnit::syntax(
+        let StmtKind::Expr(expression) = &statement.kind else {
+            return;
+        };
+        let mut program = CheckedTables::default();
+        program.expressions.push(CheckedExpr {
+            id: CheckedNodeId(0),
+            op: CheckedOp::Bool(true),
+            span: expression.span,
+            source: expression.source.clone(),
+            syntax_id: expression.syntax_id,
+            ty: None,
+            place_ty: None,
+            binding_ty: None,
+            category: ValueCategory::Value,
+            binding: None,
+            contextual_base: None,
+            effects: EffectFacts::default(),
+            adjustments: Vec::new(),
+            comprehension_bindings: Vec::new(),
+            call_transfers: Vec::new(),
+        });
+        program.statements.push(CheckedStmt {
+            id: CheckedStmtId(0),
+            op: CheckedStmtOp::Expr(CheckedNodeId(0)),
+            span: statement.span,
+            module: statement.module.clone(),
+            syntax_id: statement.syntax_id,
+            binding: None,
+            binding_ty: None,
+            declaration: None,
+        });
+        let unit = CheckedUnit::extracted(
             &LoweringUnit::Function {
                 root: CheckedStmtId(0),
             },
-            &|_| Some(&statement),
-        )
-        .expect("the root names the statement");
-        let unit = CheckedUnit {
-            tables: crate::checked::unit_tables(
-                &statements,
-                &wrappers,
-                &HashMap::new(),
-                crate::checked::Signatures {
-                    checked_types: &HashMap::new(),
-                    generic_parameters: &HashMap::new(),
-                    declaration_effects: &HashMap::new(),
-                    overloads: &ProgramOverloads::default(),
-                    constants: &ProgramConstants::default(),
-                },
-                None,
-            ),
-            ..shell
-        };
+            &program,
+        );
         let built = LibraryRoot {
             stamped: "/a/stdlib".to_string(),
             canonical: "/a/stdlib".to_string(),

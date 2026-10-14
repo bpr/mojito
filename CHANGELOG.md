@@ -8,6 +8,13 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A package unit's checked tables are copied out of the whole program's
+  checked nodes, the subtree under the unit's statement node renumbered
+  in build order, as upstream's unit is an op of its module, rather than
+  rebuilt from the unit's syntax and the check's fact records (R624's
+  first slice). The arena builder runs once per program and has no scan
+  mode; the package bytes and the generated MIR are unchanged. Emitting
+  the nodes during the check is left to R764–R766.
 - Each checked expression, statement, and declaration node in a package
   unit encodes as an MLIR bytecode op does: an encoding mask naming the
   attributes it holds, then its parts, then those attributes alone,

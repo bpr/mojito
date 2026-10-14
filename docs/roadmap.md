@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R764**.
+Next free ID: **R767**.
 
 ## Ordered Work
 
@@ -5692,17 +5692,57 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on R762.
   - Model: Fable, Not Planned.
 
-- [ ] **R624 The check writes fact records for a later pass to gather into
-  nodes, where upstream's parser emits typed ops as it checks**
+- [ ] **R764 The check keeps its facts in an occurrence-keyed map, not on
+  nodes it allocated as it checks**
 
-  `DiscoveryResult::finalize` and `build_checked_expressions` build the
-  checked nodes after the check ends.
-  - The lever: the checker's recording helpers write `NodeFacts` onto the
-    node of the occurrence being checked, and `body_carry` carries node
-    ranges.
-  - Done when `finalize` and `build_checked_expressions` are deleted.
-  - Plan: `R604-a-package-s-checked-body-is-plan.md`, slice 7.
-  - Depends on R613, R623.
+  The checker writes `NodeFacts` into `FactMap<SourceSpan, NodeFacts>`,
+  where upstream's emitter sets each attribute on an op it already made.
+  - The lever: a checker `Emitter` (`checker/emit.rs`) allocates a
+    statement's node and its expression nodes when the check enters the
+    statement, and `record_at`/`fact`/`has_fact`/`clear_fact`/`clear_flag`
+    resolve an occurrence to its node through an index, or to a detached
+    record where no node holds it.
+  - Probes truncate the arenas and restore journaled records; a carried
+    body copies its node range relocated with `CheckedOp::map_operands`
+    and `CheckedStmtOp::map_operands`, and replays its index entries.
+  - The handoff stays a span-keyed map read out of the nodes, so MIR text
+    and package bytes must not change.
+  - Plan: `R624-the-check-writes-fact-records-for-plan.md`, slice 2.
+  - Depends on nothing.
+  - Model: Fable, Not Planned.
+
+- [ ] **R765 Spelled constructions, lifted applications, `with` desugars,
+  lambdas, trait members, and wrappers get their nodes only from the
+  arena builder after the check**
+
+  `ArenaBuilder` still decides these sites from syntax and facts, so the
+  emitter's tables cannot yet replace `finalize`'s.
+  - The lever: allocate each site's nodes where the check decides it,
+    fill declaration ops from the checker's site tables at handoff, and
+    seal `EmittedExpr` into `CheckedExpr` per node.
+  - Cross-check the sealed tables against `finalize`'s under
+    `MOJITO_CHECK_EMITTED=1`, per extracted root, on the probe set with
+    and without `MOJITO_STD_PACKAGE=0`.
+  - Plan: `R624-the-check-writes-fact-records-for-plan.md`, slice 3a.
+  - Depends on R764.
+  - Model: Fable, Not Planned.
+
+- [ ] **R766 The checked handoff is still gathered from fact records by
+  `finalize` and `build_checked_expressions`, where upstream's parser
+  emits typed ops as it checks**
+
+  `CheckedProgram::new` walks the syntax again after the check to build
+  the nodes.
+  - The lever: `HandoffStores::into_discovery` hands over the sealed
+    emitted tables, and `CheckedProgram::new` takes them as they are.
+  - Done when `finalize`, `build_checked_expressions`, `ArenaBuilder`,
+    `CheckedArena`, and `LiftedApplications` are deleted, with MIR text
+    and package bytes unchanged.
+  - Update `docs/architecture.md` §Stage 3 and `docs/symbol-map.md`, and
+    file what stays (detached records, `explicit_destroy` walking syntax).
+  - Plan: `R624-the-check-writes-fact-records-for-plan.md`, slices 3b
+    and 4.
+  - Depends on R765.
   - Model: Fable, Not Planned.
 
 - [ ] **R625 `DiscoveryResult` still stands between the check and
