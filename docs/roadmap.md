@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R856**.
+Next free ID: **R857**.
 
 ## Ordered Work
 
@@ -56,18 +56,18 @@ and Mojito does not yet. The entries below are that stage, staged in
 which names the upstream pass each one follows. Each is measured by the
 `measure` track's counters and checked by its on/off differential.
 
-- [ ] **R854 A `UInt(7)` constructor call is not folded**
+- [ ] **R856 A built-in scalar conversion of a constant is not folded**
 
-  `sccp` folds `UInt8(7) + 1`, but not `UInt(7) // 2`, because `UInt(7)`
-  lowers to a `call` of `UInt`, not to a literal materialization.
-  - Upstream inlines the always-inline `UInt.__init__(IntLiteral)` before
-    its `SCCP`, so the operator sees a constant.
-  - Either the checker spells a `UInt` construction from a literal as a
-    `literal.materialize`, as it spells `UInt8(7)` as a one-lane `simd.make`,
-    or an inliner runs first.
-  - Probe: `print(UInt(7) // 2, UInt(7) > 3)`, whose `binary` survives
-    `emit-mir`.
-  - Found while landing R846 (2026-10-14).
+  `UInt(Int(7))`, `Float64(Int(3))`, and `Bool(1)` stay a builtin `call`
+  over a constant operand, where upstream's `SCCP` folds them.
+  - Upstream's `SIMD.__init__[T: Intable]` and `Bool.__init__[T: Boolable]`
+    inline to `value.__int__()` / `__bool__()` plus a `pop.cast`.
+  - `MirInstr::folded_constant` could fold a `call` of `Int`/`UInt`/
+    `Float64`/`Bool` over a scalar constant by the VM's `builtin_convert`
+    rule, moved into `mojito-types` as R841 and R846 moved theirs.
+  - Probe: `print(UInt(Int(7)) // 2, Bool(1))`, whose `call UInt`,
+    `binary`, and `call Bool` survive `emit-mir`.
+  - Found while landing R854 (2026-10-14).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

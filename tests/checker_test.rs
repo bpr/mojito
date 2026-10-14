@@ -8109,3 +8109,27 @@ fn module_integer_constants_fold_once_as_at_the_pin() {
     assert_eq!(constants.get("B"), Some(mojito::IntLiteral::from(8_i64)));
     assert_eq!(constants.get("C"), None);
 }
+
+#[test]
+fn scalar_construction_from_a_literal_is_its_materialization() {
+    // `UInt(7)` is upstream's builtin-inline `SIMD.__init__(IntLiteral)`, the
+    // literal's conversion; a runtime `Int(x)` and `Int(3.9)` stay calls.
+    let source = "def main():\n    var x = 5\n    print(UInt(7), Int(x), Int(3.9))\n";
+    let checked = check_program(&parse(source).expect("parse")).expect("check");
+    let constructions = checked
+        .expressions()
+        .iter()
+        .filter(|expression| {
+            expression
+                .adjustments
+                .contains(&SemanticAdjustment::LiteralConstruction)
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(constructions.len(), 1, "{constructions:#?}");
+    assert_eq!(constructions[0].ty, Some(Ty::uint()));
+    assert!(checked.expressions().iter().any(|expression| {
+        expression
+            .adjustments
+            .contains(&SemanticAdjustment::MaterializeLiteral(Ty::uint()))
+    }));
+}

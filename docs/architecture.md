@@ -1699,7 +1699,13 @@ use destination-width two's-complement wrapping. Floating targets round once
 from the exact rational directly to binary32 or binary64, preserving signed
 zero and producing IEEE infinity on overflow. Bindings, stores, calls, returns,
 typed tuple/list/set/dictionary elements, and `range` arguments all record their
-scalar boundaries rather than relying on VM container coercion.
+scalar boundaries rather than relying on VM container coercion. A built-in
+scalar constructed from a literal (`UInt(7)`, `Int(7)`, `Float64(2.5)`) is
+that literal's materialization, as upstream's builtin-inline
+`SIMD.__init__(IntLiteral)` is `pop.int_literal_convert`: `infer_conversion`
+records `SemanticAdjustment::LiteralConstruction` on the call and
+`MaterializeLiteral` on its argument, and MIR lowers the call as its argument.
+The nullary `UInt()` is the literal `0` materialized the same way.
 
 A runtime scalar meets a multi-lane vector of its dtype through upstream's
 implicit `SIMD.__init__(Scalar[dtype])`, which the builtin `SIMD` cannot

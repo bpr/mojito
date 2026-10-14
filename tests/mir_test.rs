@@ -1713,6 +1713,31 @@ fn literal_materialization_is_explicit_in_typed_mir() {
 }
 
 #[test]
+fn scalar_literal_construction_is_a_materialization() {
+    let program = parse("def main():\n    print(UInt(7), Float64(2.5), UInt())\n").expect("parse");
+    let checked = mojito::check_program(&program).expect("check");
+    let mir = mojito::mir::lower_checked_program(&checked);
+    let main = &mir
+        .functions
+        .iter()
+        .find(|(name, _)| name == "main")
+        .expect("main lowered")
+        .1;
+    let instructions = main.blocks.iter().flat_map(|block| &block.instrs);
+    assert!(!instructions.clone().any(|instruction| matches!(
+        instruction,
+        MirInstr::Call { func, .. } if matches!(func.0.as_str(), "UInt" | "Float64")
+    )));
+    let targets = instructions
+        .filter_map(|instruction| match instruction {
+            MirInstr::MaterializeLiteral { target, .. } => Some(target.to_string()),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(targets, ["UInt", "Float64", "UInt"]);
+}
+
+#[test]
 fn production_tstrings_call_the_bundled_entry_point() {
     // Through the whole-program Compiler, a `t"…"` lowers as the checker's
     // call of `__make_tstring` over its segments and interpolations, the

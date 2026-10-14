@@ -547,7 +547,8 @@ impl<'a> Flatten<'a> {
 
     /// A nullary scalar built-in construction (`Int()`, `UInt()`,
     /// `Float64()`, `Bool()`) is its zero; `None` for any other expression.
-    /// `UInt` has no constant of its own, so its zero converts an `Int` one.
+    /// The `UInt` zero is the literal `0` materialized, as upstream's
+    /// `SIMD.__init__()` is `SIMD(0)`.
     pub(in crate::mir) fn default_scalar_construction(
         &mut self,
         node: &mojito_checked::checked::CheckedExpr,
@@ -565,31 +566,16 @@ impl<'a> Flatten<'a> {
             return None;
         }
         let zero = match (name.as_str(), node.ty.as_ref()?.kind()) {
-            ("Int" | "UInt", TyKind::Int | TyKind::UInt) => Const::Int(0),
+            ("Int", TyKind::Int) => Const::Int(0),
+            ("UInt", TyKind::UInt) => {
+                let value = self.literal(node, Const::IntLiteral(0.into()));
+                return Some(self.materialize_literal(value, &Ty::uint(), node.location()));
+            }
             ("Float64", TyKind::Float64) => Const::Float(0.0),
             ("Bool", TyKind::Bool) => Const::Bool(false),
             _ => return None,
         };
-        let value = self.literal(node, zero);
-        if name != "UInt" {
-            return Some(value);
-        }
-        let dest = self.fresh_typed(node.location(), None, Ty::uint());
-        self.emit(MirInstr::Call {
-            dest,
-            func: FuncRef::named("UInt"),
-            raises: None,
-            args: vec![value],
-            kwargs: Vec::new(),
-            arg_places: vec![None],
-            kwarg_places: Vec::new(),
-            capture_accesses: Vec::new(),
-            param_arg_regs: Vec::new(),
-            receiver: None,
-            instantiated_args: Vec::new(),
-            spread: None,
-        });
-        Some(dest)
+        Some(self.literal(node, zero))
     }
 
     /// Emit a `Const` writing a fresh register.

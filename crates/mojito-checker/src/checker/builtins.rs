@@ -1021,6 +1021,22 @@ impl Checker {
         }
         let arg_ty = self.infer(&args[0])?;
         let arg_ty = self.opaque_element(&arg_ty).unwrap_or(arg_ty);
+        // A literal argument is converted where the call is built, as
+        // upstream's builtin-inline `SIMD.__init__(IntLiteral)` is
+        // `pop.int_literal_convert`.
+        if matches!(
+            (arg_ty.kind(), target.kind()),
+            (
+                TyKind::IntLiteral,
+                TyKind::Int | TyKind::UInt | TyKind::Float64
+            ) | (TyKind::FloatLiteral, TyKind::Float64)
+        ) {
+            self.record_literal_materializations(&args[0], &arg_ty, &target)?;
+            self.record_at(span.clone()).adjustment = Some(Box::new(
+                mojito_checked::checked::SemanticAdjustment::LiteralConstruction,
+            ));
+            return Ok(target);
+        }
         // `Int(pointer)` is the address conversion (upstream `Pointer.__int__`);
         // a null pointer converts to 0, which is how the libc-facing stdlib
         // tests an optional result.

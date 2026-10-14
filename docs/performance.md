@@ -1437,3 +1437,15 @@ rises from 23 to 51, the post-elaboration count stays 4, and
 `concrete_instructions` falls from 15 904 (R841's figure) to 15 857 (debug
 binary, `--timings`). The corpus-wide `scripts/instantiation-report` rerun is
 left to the nightly gate.
+
+## A scalar construction from a literal folds (2026-10-14, R854)
+
+`UInt(7)`, `Int(7)`, `Float64(2.5)`, and `UInt()` now lower as the literal's
+materialization rather than a builtin `call`, so `sccp` folds them and the
+operators over them. On `print(UInt(7) // 2, UInt(7) > 3)`, `main` keeps
+only two constants and the `print`: none of the three `UInt(7)`
+instructions R846's section names survives. On `collections_many`,
+`pre_elaboration.sccp.folded_constants` rises from 51 to 54, the
+post-elaboration count stays 4, and `concrete_instructions` falls from
+15 857 to 15 852 (debug binary, `--timings`). The corpus-wide
+`scripts/instantiation-report` rerun is left to the nightly gate.

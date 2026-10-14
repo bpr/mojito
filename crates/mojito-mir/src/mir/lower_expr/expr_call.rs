@@ -173,6 +173,14 @@ impl<'a> Flatten<'a> {
                 ),
             );
         }
+        if node.adjustments.iter().any(|adjustment| {
+            matches!(
+                adjustment,
+                mojito_checked::checked::SemanticAdjustment::LiteralConstruction
+            )
+        }) {
+            return args.first().map(|argument| self.expr(*argument));
+        }
         if let Some(zero) = self.default_scalar_construction(node) {
             return Some(zero);
         }

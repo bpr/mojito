@@ -666,6 +666,11 @@ pub enum SemanticAdjustment {
     /// whose copy is the read of its source, so MIR lowers the call as its
     /// one keyword argument's value.
     BuiltinCopyConstruction,
+    /// `UInt(7)`, `Float64(2.5)`: a built-in scalar constructed from a
+    /// literal, upstream's builtin-inline `SIMD.__init__(IntLiteral)`, which
+    /// is the literal's conversion. MIR lowers the call as its one argument,
+    /// which carries the `MaterializeLiteral` to the constructed type.
+    LiteralConstruction,
     /// Complete selected method/subscript contract.  `ResolveCallable` remains
     /// as a compatibility projection while downstream consumers migrate; this
     /// record is authoritative whenever both are present.

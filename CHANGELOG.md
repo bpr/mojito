@@ -8,6 +8,12 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A built-in scalar constructed from a literal (`UInt(7)`, `Int(7)`,
+  `Float64(2.5)`, R854) is now that literal's materialization, as upstream's
+  builtin-inline `SIMD.__init__(IntLiteral)` is the literal's conversion,
+  so `sccp` folds `UInt(7) // 2`; the nullary `UInt()` is the literal `0`
+  materialized. The bundled package format is now 54.
+
 - `sccp` now folds a literal splatted to a SIMD type of any width
   (`var v: SIMD[DType.int32, 4] = 1`, R847) to one constant vector, as
   upstream folds the splat `SIMD.__init__` to a `#pop.simd` attribute; a
