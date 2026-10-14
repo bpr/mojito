@@ -53,6 +53,8 @@ pub mod verify;
 mod calls;
 mod facts;
 pub mod link;
+mod lower_control_flow;
+pub use lower_control_flow::{has_structured_control_flow, lower_control_flow};
 mod lower_expr;
 mod lower_stmt;
 mod node;

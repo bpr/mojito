@@ -20,6 +20,10 @@
 //!   participate in register checks);
 //! - CFG edges: jump-target bounds per region, `FallOff`/`EscapeJump` only
 //!   inside `try` sub-regions;
+//! - structured control flow: each region terminator inside the region op
+//!   it ends, a `break`/`continue` inside its loop, and — in
+//!   [`verify_structured_function_in`]'s mode — one block per region and no
+//!   CFG terminator;
 //! - effects: a raising site (a `Raise`, or a call carrying a checked error
 //!   type) inside a nonraising function must be protected by a handler;
 //! - reference invariants: `StoreRef` initializes reference storage, and a
@@ -90,6 +94,7 @@ mod loans;
 mod places;
 mod regs;
 mod scope;
+mod structure;
 mod subscripts;
 mod types;
 
@@ -111,6 +116,8 @@ pub use regs::*;
 pub(crate) use scope::declared_kind;
 use scope::verify_scope;
 pub use scope::{instruction_named_types, instruction_variant_indices};
+pub use structure::verify_structured_function_in;
+use structure::{verify_region_terminator, verify_regions};
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use subscripts::*;
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
@@ -153,20 +160,58 @@ impl ReferencePermission {
     }
 }
 
-/// Where a run of blocks sits: the function's top level, or one `try`
-/// sub-region (with its handler-protection status).
+/// Where a run of blocks sits: the function's top level, or one region of a
+/// region op (with its handler-protection status).
 struct RegionContext {
     /// Number of blocks in this region — the bound for region-local jumps.
     region_len: usize,
     /// Number of blocks in the enclosing function — the bound for
     /// `EscapeJump` targets.
     function_len: usize,
-    /// Whether this run of blocks is a `try` sub-region (where `FallOff` and
-    /// `EscapeJump` are legal terminators).
-    in_try_region: bool,
+    /// The kind of each region from the function's top level in, this
+    /// region's last: a region terminator is checked against the regions
+    /// enclosing it.
+    regions: Vec<RegionKind>,
     /// Whether a raise from this position reaches an `except` handler before
     /// leaving the function.
     protected: bool,
+}
+
+impl RegionContext {
+    fn kind(&self) -> &RegionKind {
+        self.regions.last().unwrap_or(&RegionKind::Function)
+    }
+
+    /// Whether this run of blocks is a `try` part, where `FallOff` is the
+    /// legal way to complete.
+    fn is_try_part(&self) -> bool {
+        matches!(self.kind(), RegionKind::TryPart)
+    }
+
+    /// Whether some enclosing region is a `try` part, from which an
+    /// `EscapeJump` reaches the function's blocks.
+    fn in_try_region(&self) -> bool {
+        self.regions
+            .iter()
+            .any(|kind| matches!(kind, RegionKind::TryPart))
+    }
+}
+
+/// What a region is to the op that holds it.
+#[derive(Clone)]
+enum RegionKind {
+    Function,
+    TryPart,
+    /// An `if`'s then, elif, or else arm, ended by `Yield` with its
+    /// op's results.
+    IfArm(Vec<Reg>),
+    /// An elif's condition region, ended by `ElifCond`.
+    ElifCond,
+    LoopBody(Option<super::LoopLabel>),
+    /// A `comptime if` arm, ended by `ComptimeYield` with its op's results.
+    ComptimeIfArm(Vec<Reg>),
+    ComptimeForBody,
+    ComptimeForElse,
 }
 
 /// One instruction's verification scope: the function it sits in, the

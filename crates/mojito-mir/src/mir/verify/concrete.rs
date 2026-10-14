@@ -152,18 +152,14 @@ fn concrete_blocks(
     for (index, block) in blocks.iter().enumerate() {
         let head = format!("MIR function '{name}' block {index}");
         for instruction in &block.instrs {
-            if let MirInstr::Try {
-                body,
-                handler,
-                orelse,
-                finalbody,
-                ..
-            } = instruction
-            {
-                let regions = std::iter::once(body)
-                    .chain(handler.iter().map(|(_, blocks)| blocks))
-                    .chain(orelse.iter())
-                    .chain(finalbody.iter());
+            let regions = crate::mir::instruction_regions(instruction);
+            if !regions.is_empty() {
+                if !matches!(instruction, MirInstr::Try { .. }) {
+                    errors.push(format!(
+                        "{head} keeps structured control flow `{}` in elaborated MIR",
+                        crate::mir::text::instruction_mnemonic(instruction)
+                    ));
+                }
                 for region in regions {
                     concrete_blocks(name, function, region, errors);
                 }
@@ -178,6 +174,17 @@ fn concrete_blocks(
             )),
             MirTerm::ComptimeFor { binder, .. } => errors.push(format!(
                 "{head} keeps a compile-time loop over `{binder}` in elaborated MIR"
+            )),
+            MirTerm::Yield(_)
+            | MirTerm::ElifCond(_)
+            | MirTerm::Break { .. }
+            | MirTerm::Continue { .. }
+            | MirTerm::ComptimeYield(_)
+            | MirTerm::ComptimeBreak
+            | MirTerm::ComptimeContinue
+            | MirTerm::Unreachable => errors.push(format!(
+                "{head} keeps the region terminator `{}` in elaborated MIR",
+                crate::mir::text::terminator_mnemonic(&block.term)
             )),
             _ => {}
         }

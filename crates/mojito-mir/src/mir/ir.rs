@@ -40,7 +40,7 @@ pub(super) const fn is_deinit(c: &Option<ArgConvention>) -> bool {
 /// Drop every block unreachable from the entry and renumber the targets
 /// that survive.
 ///
-/// The function level and each `try` region are pruned alike, a region from
+/// The function level and each region are pruned alike, a region from
 /// its own entry. A block a region's `EscapeJump` names is reachable through
 /// the block holding the region. Registers, slots, and spans are untouched.
 pub fn prune_unreachable_blocks(function: &mut MirFunction) {
@@ -48,21 +48,101 @@ pub fn prune_unreachable_blocks(function: &mut MirFunction) {
     renumber_escapes(&mut function.blocks, &kept);
 }
 
+/// Every region an instruction holds, each a block list with local block
+/// ids.
+///
+/// The order is fixed: an `if`'s then region, each elif's condition and
+/// then regions, and its else region; a loop's body; a `comptime if`'s arms
+/// and its else region; a `comptime for`'s body and else region; a `try`'s
+/// body, handler, else, and finally parts.
+pub fn instruction_regions(instruction: &MirInstr) -> Vec<&Vec<MirBlock>> {
+    match instruction {
+        MirInstr::If {
+            then,
+            elifs,
+            orelse,
+            ..
+        } => std::iter::once(then)
+            .chain(elifs.iter().flat_map(|elif| [&elif.cond, &elif.then]))
+            .chain(std::iter::once(orelse))
+            .collect(),
+        MirInstr::Loop { body, .. } => vec![body],
+        MirInstr::ComptimeIf { arms, orelse, .. } => {
+            arms.iter().chain(std::iter::once(orelse)).collect()
+        }
+        MirInstr::ComptimeFor { body, orelse, .. } => vec![body, orelse],
+        MirInstr::Try {
+            body,
+            handler,
+            orelse,
+            finalbody,
+            ..
+        } => std::iter::once(body)
+            .chain(handler.iter().map(|(_, blocks)| blocks))
+            .chain(orelse.iter())
+            .chain(finalbody.iter())
+            .collect(),
+        _ => Vec::new(),
+    }
+}
+
+/// [`instruction_regions`], mutably.
+pub fn instruction_regions_mut(instruction: &mut MirInstr) -> Vec<&mut Vec<MirBlock>> {
+    match instruction {
+        MirInstr::If {
+            then,
+            elifs,
+            orelse,
+            ..
+        } => std::iter::once(then)
+            .chain(
+                elifs
+                    .iter_mut()
+                    .flat_map(|elif| [&mut elif.cond, &mut elif.then]),
+            )
+            .chain(std::iter::once(orelse))
+            .collect(),
+        MirInstr::Loop { body, .. } => vec![body],
+        MirInstr::ComptimeIf { arms, orelse, .. } => {
+            arms.iter_mut().chain(std::iter::once(orelse)).collect()
+        }
+        MirInstr::ComptimeFor { body, orelse, .. } => vec![body, orelse],
+        MirInstr::Try {
+            body,
+            handler,
+            orelse,
+            finalbody,
+            ..
+        } => std::iter::once(body)
+            .chain(handler.iter_mut().map(|(_, blocks)| blocks))
+            .chain(orelse.iter_mut())
+            .chain(finalbody.iter_mut())
+            .collect(),
+        _ => Vec::new(),
+    }
+}
+
 /// Every register a terminator reads, mutably.
 pub fn terminator_regs_mut(term: &mut MirTerm) -> Vec<&mut Reg> {
     match term {
-        MirTerm::Branch { cond, .. } => vec![cond],
+        MirTerm::Branch { cond, .. } | MirTerm::ElifCond(cond) => vec![cond],
         MirTerm::Return(Some(reg))
         | MirTerm::ReturnWithCleanup {
             value: Some(reg), ..
         } => vec![reg],
+        MirTerm::Yield(values) | MirTerm::ComptimeYield(values) => values.iter_mut().collect(),
         MirTerm::Jump(_)
         | MirTerm::ComptimeBranch { .. }
         | MirTerm::ComptimeFor { .. }
         | MirTerm::Return(None)
         | MirTerm::ReturnWithCleanup { value: None, .. }
         | MirTerm::FallOff
-        | MirTerm::EscapeJump { .. } => Vec::new(),
+        | MirTerm::EscapeJump { .. }
+        | MirTerm::Break { .. }
+        | MirTerm::Continue { .. }
+        | MirTerm::ComptimeBreak
+        | MirTerm::ComptimeContinue
+        | MirTerm::Unreachable => Vec::new(),
     }
 }
 
@@ -81,7 +161,15 @@ pub fn terminator_targets(term: &MirTerm) -> Vec<MirBlockId> {
         MirTerm::Return(_)
         | MirTerm::ReturnWithCleanup { .. }
         | MirTerm::FallOff
-        | MirTerm::EscapeJump { .. } => Vec::new(),
+        | MirTerm::EscapeJump { .. }
+        | MirTerm::Yield(_)
+        | MirTerm::ElifCond(_)
+        | MirTerm::Break { .. }
+        | MirTerm::Continue { .. }
+        | MirTerm::ComptimeYield(_)
+        | MirTerm::ComptimeBreak
+        | MirTerm::ComptimeContinue
+        | MirTerm::Unreachable => Vec::new(),
     }
 }
 
@@ -99,7 +187,15 @@ pub fn terminator_targets_mut(term: &mut MirTerm) -> Vec<&mut MirBlockId> {
         MirTerm::Return(_)
         | MirTerm::ReturnWithCleanup { .. }
         | MirTerm::FallOff
-        | MirTerm::EscapeJump { .. } => Vec::new(),
+        | MirTerm::EscapeJump { .. }
+        | MirTerm::Yield(_)
+        | MirTerm::ElifCond(_)
+        | MirTerm::Break { .. }
+        | MirTerm::Continue { .. }
+        | MirTerm::ComptimeYield(_)
+        | MirTerm::ComptimeBreak
+        | MirTerm::ComptimeContinue
+        | MirTerm::Unreachable => Vec::new(),
     }
 }
 
@@ -128,7 +224,7 @@ pub fn instruction_param_args_mut(instruction: &mut MirInstr) -> Vec<&mut MirPar
 /// Every register an instruction defines or reads, mutably.
 ///
 /// The registers of its places and subscript arguments are included, and
-/// none of a `try` region's blocks, which the caller walks itself.
+/// none of a region's blocks, which the caller walks itself.
 /// Renumbering a copied block rewrites them all.
 pub fn instruction_regs_mut(instruction: &mut MirInstr) -> Vec<&mut Reg> {
     fn subscript_arg<'a>(arg: &'a mut MirSubscriptArg, out: &mut Vec<&'a mut Reg>) {
@@ -152,12 +248,11 @@ pub fn instruction_regs_mut(instruction: &mut MirInstr) -> Vec<&mut Reg> {
             out.push(marker);
         }
         MirInstr::InvalidateInteriors { marker, .. } => out.push(marker),
-        MirInstr::MakeRef {
-            dest,
-            place: target,
-        } => {
+        MirInstr::MakeRef { dest, place }
+        | MirInstr::MovePlace { dest, place }
+        | MirInstr::LoadPlace { dest, place } => {
             out.push(dest);
-            place_regs_mut(target, &mut out);
+            place_regs_mut(place, &mut out);
         }
         MirInstr::ReadRef { dest, reference } => out.extend([dest, reference]),
         MirInstr::CopyValue { dest, value } | MirInstr::Rebind { dest, value } => {
@@ -177,7 +272,11 @@ pub fn instruction_regs_mut(instruction: &mut MirInstr) -> Vec<&mut Reg> {
         | MirInstr::ConsumeVar { .. }
         | MirInstr::GetIter { .. }
         | MirInstr::Unsupported(_)
-        | MirInstr::Try { .. } => {}
+        | MirInstr::Try { .. }
+        | MirInstr::Loop { .. }
+        | MirInstr::ComptimeFor { .. } => {}
+        MirInstr::If { results, cond, .. } => out.extend(results.iter_mut().chain([cond])),
+        MirInstr::ComptimeIf { results, .. } => out.extend(results.iter_mut()),
         MirInstr::ConstructTypeParam {
             dest,
             kwargs,
@@ -198,17 +297,6 @@ pub fn instruction_regs_mut(instruction: &mut MirInstr) -> Vec<&mut Reg> {
         | MirInstr::Next { dest, .. } => out.push(dest),
         MirInstr::MaterializeLiteral { dest, value, .. } => out.extend([dest, value]),
         MirInstr::UseVar { dest, .. } => out.push(dest),
-        MirInstr::MovePlace {
-            dest,
-            place: target,
-        }
-        | MirInstr::LoadPlace {
-            dest,
-            place: target,
-        } => {
-            out.push(dest);
-            place_regs_mut(target, &mut out);
-        }
         MirInstr::DefVar { src, .. } => out.push(src),
         MirInstr::UnOp { dest, a, .. } => out.extend([dest, a]),
         MirInstr::BinOp { dest, a, b, .. } => out.extend([dest, a, b]),
@@ -436,8 +524,8 @@ pub fn instruction_regs_mut(instruction: &mut MirInstr) -> Vec<&mut Reg> {
 /// its capture-access roots, loan and interior roots, and the slot operands
 /// of the variable and iterator instructions.
 ///
-/// None of a `try`'s region blocks, handler binding, or cleanup are
-/// included; the caller walks those itself. [`for_each_instruction_slot_mut`]
+/// None of a region op's blocks, nor a `try`'s handler binding or cleanup,
+/// are included; the caller walks those itself. [`for_each_instruction_slot_mut`]
 /// visits the same slots in the same order.
 pub fn instruction_slots(instruction: &MirInstr) -> Vec<VarId> {
     let mut out = Vec::new();
@@ -475,7 +563,8 @@ pub fn instruction_slots(instruction: &MirInstr) -> Vec<VarId> {
         | MirInstr::DefVar { var, .. }
         | MirInstr::DeclareVar { var }
         | MirInstr::DropVar { var }
-        | MirInstr::ConsumeVar { var } => out.push(*var),
+        | MirInstr::ConsumeVar { var }
+        | MirInstr::ComptimeFor { slot: var, .. } => out.push(*var),
         MirInstr::GetIter { source, dest, .. } => out.extend([*source, *dest]),
         MirInstr::HasNext { iter, .. }
         | MirInstr::Next { iter, .. }
@@ -528,7 +617,8 @@ pub fn for_each_instruction_slot_mut(
         | MirInstr::DefVar { var, .. }
         | MirInstr::DeclareVar { var }
         | MirInstr::DropVar { var }
-        | MirInstr::ConsumeVar { var } => visit(var),
+        | MirInstr::ConsumeVar { var }
+        | MirInstr::ComptimeFor { slot: var, .. } => visit(var),
         MirInstr::GetIter { source, dest, .. } => {
             visit(source);
             visit(dest);
@@ -653,24 +743,10 @@ fn prune_block_list(blocks: &mut Vec<MirBlock>) -> Vec<Option<usize>> {
         *old = kept[*old].expect("a surviving block jumps only to surviving blocks");
     };
     for block in blocks.iter_mut() {
-        match &mut block.term {
-            MirTerm::Jump(to) => target(to),
-            MirTerm::Branch { then_b, else_b, .. }
-            | MirTerm::ComptimeBranch { then_b, else_b, .. }
-            | MirTerm::ComptimeFor {
-                body: then_b,
-                exit: else_b,
-                ..
-            } => {
-                target(then_b);
-                target(else_b);
-            }
-            MirTerm::Return(_)
-            | MirTerm::ReturnWithCleanup { .. }
-            | MirTerm::FallOff
-            | MirTerm::EscapeJump { .. } => {}
-        }
-        for region in block.instrs.iter_mut().flat_map(try_regions_mut) {
+        terminator_targets_mut(&mut block.term)
+            .into_iter()
+            .for_each(target);
+        for region in block.instrs.iter_mut().flat_map(instruction_regions_mut) {
             prune_block_list(region);
         }
     }
@@ -681,7 +757,7 @@ fn prune_block_list(blocks: &mut Vec<MirBlock>) -> Vec<Option<usize>> {
 /// targets, and the escape targets of every region it holds.
 pub fn block_successors(block: &MirBlock) -> Vec<MirBlockId> {
     let mut successors = terminator_targets(&block.term);
-    for region in block.instrs.iter().flat_map(try_regions) {
+    for region in block.instrs.iter().flat_map(instruction_regions) {
         collect_escape_targets(region, &mut successors);
     }
     successors
@@ -692,7 +768,7 @@ fn collect_escape_targets(blocks: &[MirBlock], targets: &mut Vec<MirBlockId>) {
         if let MirTerm::EscapeJump { target, .. } = &block.term {
             targets.push(*target);
         }
-        for region in block.instrs.iter().flat_map(try_regions) {
+        for region in block.instrs.iter().flat_map(instruction_regions) {
             collect_escape_targets(region, targets);
         }
     }
@@ -701,7 +777,7 @@ fn collect_escape_targets(blocks: &[MirBlock], targets: &mut Vec<MirBlockId>) {
 /// Renumber every escape target below `blocks` with the function-level table.
 fn renumber_escapes(blocks: &mut [MirBlock], kept: &[Option<usize>]) {
     for block in blocks {
-        for region in block.instrs.iter_mut().flat_map(try_regions_mut) {
+        for region in block.instrs.iter_mut().flat_map(instruction_regions_mut) {
             for inner in region.iter_mut() {
                 if let MirTerm::EscapeJump { target, .. } = &mut inner.term {
                     *target = kept[*target].expect("an escape names a surviving block");
@@ -709,40 +785,6 @@ fn renumber_escapes(blocks: &mut [MirBlock], kept: &[Option<usize>]) {
             }
             renumber_escapes(region, kept);
         }
-    }
-}
-
-fn try_regions(instruction: &MirInstr) -> Vec<&Vec<MirBlock>> {
-    match instruction {
-        MirInstr::Try {
-            body,
-            handler,
-            orelse,
-            finalbody,
-            ..
-        } => std::iter::once(body)
-            .chain(handler.iter().map(|(_, blocks)| blocks))
-            .chain(orelse.iter())
-            .chain(finalbody.iter())
-            .collect(),
-        _ => Vec::new(),
-    }
-}
-
-fn try_regions_mut(instruction: &mut MirInstr) -> Vec<&mut Vec<MirBlock>> {
-    match instruction {
-        MirInstr::Try {
-            body,
-            handler,
-            orelse,
-            finalbody,
-            ..
-        } => std::iter::once(body)
-            .chain(handler.iter_mut().map(|(_, blocks)| blocks))
-            .chain(orelse.iter_mut())
-            .chain(finalbody.iter_mut())
-            .collect(),
-        _ => Vec::new(),
     }
 }
 
@@ -1704,6 +1746,54 @@ pub enum MirInstr {
         finalbody: Option<Vec<MirBlock>>,
         cleanup: Vec<VarId>,
     },
+    /// `hlcf.if`: run `then` when `cond` holds; otherwise try each `elifs`
+    /// arm in order, running its `cond` region (ended by
+    /// [`MirTerm::ElifCond`]) and its `then` when that holds; otherwise run
+    /// `orelse`. An arm that completes ends in [`MirTerm::Yield`], whose
+    /// values define `results`. Regions share the function's registers and
+    /// slots, with local block ids like a [`MirInstr::Try`] part's; the
+    /// structured form holds each as one block. Concrete MIR carries none:
+    /// [`super::lower_control_flow`] lowers it first.
+    If {
+        results: Vec<Reg>,
+        cond: Reg,
+        then: Vec<MirBlock>,
+        elifs: Vec<MirElif>,
+        orelse: Vec<MirBlock>,
+    },
+    /// `hlcf.loop`: run `body` until a [`MirTerm::Break`] leaves it;
+    /// [`MirTerm::Continue`] starts the next iteration. `label` names the
+    /// loop for a labelled `break`/`continue`, which targets the nearest
+    /// enclosing loop carrying it.
+    Loop {
+        label: Option<LoopLabel>,
+        body: Vec<MirBlock>,
+    },
+    /// `hlcf.comptime.if`: run the arm of the first condition of `conds`
+    /// that holds, else `orelse`, the conditions being parameter expressions
+    /// the elaborator decides. `arms` has one region per condition; an arm
+    /// that completes ends in [`MirTerm::ComptimeYield`], whose values
+    /// define `results`.
+    ComptimeIf {
+        results: Vec<Reg>,
+        conds: Vec<GenericConstraint>,
+        arms: Vec<Vec<MirBlock>>,
+        orelse: Vec<MirBlock>,
+    },
+    /// `hlcf.comptime.for`: run `body` once per element of the compile-time
+    /// sequence `source`, binding it to the parameter binder `binder`, read
+    /// through the slot `slot`. The body ends an iteration with
+    /// [`MirTerm::ComptimeContinue`] and leaves the loop with
+    /// [`MirTerm::ComptimeBreak`]; exhaustion continues after the op.
+    /// `orelse` is upstream's else region after `LowerSemanticCF`: one block
+    /// holding [`MirTerm::Unreachable`].
+    ComptimeFor {
+        binder: mojito_types::param_expr::ParamRef,
+        slot: VarId,
+        source: mojito_checked::checked::ComptimeSequence,
+        body: Vec<MirBlock>,
+        orelse: Vec<MirBlock>,
+    },
     /// An ASAP destructor on a register (reserved for the future Op/assembler VM).
     Drop {
         reg: Reg,
@@ -1842,8 +1932,8 @@ impl MirInstr {
     ///   rebind projection: each calls `__getitem__`, traps, or is an
     ///   assertion the elaborator judges per instance;
     /// - every call, store, drop, consume, ownership mark, loan or interior
-    ///   marker, keep-alive, scope start, iterator step, `raise`, `try`, and
-    ///   unsupported instruction.
+    ///   marker, keep-alive, scope start, iterator step, `raise`, region op,
+    ///   and unsupported instruction.
     pub fn would_be_trivially_dead(&self) -> bool {
         let reads_storage = |place: &MirPlace| {
             place
@@ -1904,6 +1994,10 @@ impl MirInstr {
             | Self::VariantReplace { .. }
             | Self::Raise { .. }
             | Self::Try { .. }
+            | Self::If { .. }
+            | Self::Loop { .. }
+            | Self::ComptimeIf { .. }
+            | Self::ComptimeFor { .. }
             | Self::Drop { .. }
             | Self::DropVar { .. }
             | Self::ConsumeVar { .. }
@@ -2184,7 +2278,48 @@ pub enum MirTerm {
         target: MirBlockId,
         cleanup: Vec<VarId>,
     },
+    /// `hlcf.yield`: end an [`MirInstr::If`] arm, its values defining the
+    /// op's results.
+    Yield(Vec<Reg>),
+    /// `hlcf.if.elifcond.yield`: end an elif condition region with the
+    /// `Bool` that selects its arm.
+    ElifCond(Reg),
+    /// `hlcf.break`: leave the nearest enclosing [`MirInstr::Loop`], or
+    /// the nearest one carrying `label`.
+    Break {
+        label: Option<LoopLabel>,
+    },
+    /// `hlcf.continue`: start the next iteration of the loop
+    /// [`MirTerm::Break`] would leave.
+    Continue {
+        label: Option<LoopLabel>,
+    },
+    /// `hlcf.comptime.yield`: end a [`MirInstr::ComptimeIf`] arm, its
+    /// values defining the op's results.
+    ComptimeYield(Vec<Reg>),
+    /// `hlcf.comptime.for.break`: leave the nearest enclosing
+    /// [`MirInstr::ComptimeFor`].
+    ComptimeBreak,
+    /// `hlcf.comptime.for.continue`: end this iteration of the nearest
+    /// enclosing [`MirInstr::ComptimeFor`].
+    ComptimeContinue,
+    /// `hlcf.unreachable`: control never reaches here.
+    Unreachable,
 }
+
+/// One `elif` arm of a [`MirInstr::If`]: the region computing its
+/// condition, ended by [`MirTerm::ElifCond`], and the arm it selects.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct MirElif {
+    pub cond: Vec<MirBlock>,
+    pub then: Vec<MirBlock>,
+}
+
+/// The label of a [`MirInstr::Loop`]: upstream's string attribute, spelled
+/// as a number. Labels need not be unique; a labelled `break`/`continue`
+/// targets the nearest enclosing loop carrying it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+pub struct LoopLabel(pub u32);
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct MirBlock {
@@ -2414,6 +2549,70 @@ mod tests {
         };
         assert!(matches!(
             body[0].term,
+            MirTerm::EscapeJump { target: 1, .. }
+        ));
+    }
+
+    #[test]
+    fn prune_unreachable_blocks_prunes_every_region_from_its_entry() {
+        // An `if` arm and a loop body each hold an unreachable block; the
+        // loop body holds a `try` whose escape alone reaches bb2.
+        let arm = vec![
+            block(Vec::new(), MirTerm::Yield(Vec::new())),
+            block(Vec::new(), MirTerm::Unreachable),
+        ];
+        let escape = vec![block(
+            Vec::new(),
+            MirTerm::EscapeJump {
+                target: 2,
+                cleanup: Vec::new(),
+            },
+        )];
+        let body = vec![
+            block(
+                vec![MirInstr::Try {
+                    body: escape,
+                    handler: None,
+                    orelse: None,
+                    finalbody: None,
+                    cleanup: Vec::new(),
+                }],
+                MirTerm::Jump(2),
+            ),
+            block(Vec::new(), MirTerm::Unreachable),
+            block(Vec::new(), MirTerm::Break { label: None }),
+        ];
+        let mut f = function(vec![
+            block(
+                vec![
+                    MirInstr::If {
+                        results: Vec::new(),
+                        cond: Reg(0),
+                        then: arm.clone(),
+                        elifs: Vec::new(),
+                        orelse: arm,
+                    },
+                    MirInstr::Loop { label: None, body },
+                ],
+                MirTerm::Return(None),
+            ),
+            block(Vec::new(), MirTerm::Return(None)),
+            block(Vec::new(), MirTerm::Return(None)),
+        ]);
+        prune_unreachable_blocks(&mut f);
+        assert_eq!(f.blocks.len(), 2);
+        let regions = instruction_regions(&f.blocks[0].instrs[0]);
+        assert!(regions.iter().all(|region| region.len() == 1));
+        let MirInstr::Loop { body, .. } = &f.blocks[0].instrs[1] else {
+            panic!("the loop survives");
+        };
+        assert_eq!(body.len(), 2);
+        assert!(matches!(body[0].term, MirTerm::Jump(1)));
+        let MirInstr::Try { body: escape, .. } = &body[0].instrs[0] else {
+            panic!("the try survives");
+        };
+        assert!(matches!(
+            escape[0].term,
             MirTerm::EscapeJump { target: 1, .. }
         ));
     }

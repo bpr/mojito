@@ -3085,6 +3085,16 @@ reference) whose register is a reference, or a `UseVar` copy of such a
 slot. A copy-reference result adapter survives elaboration
 only on a `__next__` step that returns a reference, where it copies the
 element out; the elaborator drops it from a step that returns the element.
+Structured control flow is checked in both modes: each region terminator
+sits in the region of the op it ends, with the op's result arity and types;
+a `break`/`continue` names an enclosing loop; a `comptime.for.break` or
+`continue` has a `comptime for` as its nearest loop (`verify/structure.rs`).
+The slot-ends check runs on a body's `lower-control-flow` lowering. A third
+mode, `verify_structured_function_in`, adds upstream's structured form for
+a body: every region, the body included, one block, and no CFG terminator
+(`Jump`, `Branch`, `ComptimeBranch`, the `ComptimeFor` terminator,
+`EscapeJump`). `verify_concrete` rejects every structured op and region
+terminator, which the transitional lowering removes first.
 `native::mono` verifies its output in the concrete mode, and asks
 `concrete_function_findings` per instance so that a failure names the
 instance it came from. The concrete mode also rejects a declaration that
@@ -3762,6 +3772,31 @@ The structure mirrors source-level exception semantics:
 - `finally` runs on every path
 - `return`, `break`, and `continue` crossing the region are represented as
   non-normal flows so `finally` can run before control leaves
+
+### Structured Region Ops
+
+`Try` is one of five region ops. The other four are upstream's `hlcf` ops
+(`docs/structured-control-flow-plan.md`): `If { results, cond, then, elifs,
+orelse }` (`hlcf.if`, each `MirElif` a condition region and an arm), `Loop {
+label, body }` (`hlcf.loop`), `ComptimeIf { results, conds, arms, orelse }`
+(`hlcf.comptime.if`), and `ComptimeFor { binder, slot, source, body, orelse
+}` (`hlcf.comptime.for`, its `orelse` one `Unreachable` block). Their regions
+are block lists like a `try` part's, and end in the region terminators
+`Yield`, `ElifCond`, `Break`/`Continue` (an optional `LoopLabel` naming the
+nearest enclosing loop carrying it), `ComptimeYield`, `ComptimeBreak`/
+`ComptimeContinue`, and `Unreachable`; `Return` may end any region.
+`instruction_regions`/`instruction_regions_mut` walk every op's regions in
+a fixed order, and `prune_unreachable_blocks`, `block_successors`, the
+analyses, and the elaborator's slot renumbering walk through them.
+
+Nothing produces the four ops yet. `mir::lower_control_flow` (upstream's
+`LowerControlFlow`) lowers them to blocks and the CFG terminators: a
+region's blocks are appended to its list, the rest of the block moves to a
+join, an op's results go through one slot each, stored at a `yield` and
+forwarded at the join, a `break`/`continue` leaving a `try` part to a
+function-level loop is an `EscapeJump`, and `Unreachable` is `Return(None)`.
+Every analysis below lowering, the elaborator, the VM, and the Pliron
+backend sees only lowered MIR.
 
 ### Spans
 
@@ -5008,7 +5043,10 @@ second runs `SCCP` and a `Canonicalizer` again, so `PIPELINE` is
   after the seam runs in every build.
 - **Pass tests.** `pass_named` looks a pass up by name, as MLIR's pass
   registry does: every `PIPELINE` pass, plus `ELABORATE_DROPS`
-  (`elaborate-drops`), drop elaboration run on request. `analysis::opt`,
+  (`elaborate-drops`), drop elaboration run on request, and
+  `LOWER_CONTROL_FLOW` (`lower-control-flow`), the transitional lowering of
+  structured region ops to blocks, which nothing in the pipeline calls
+  yet. `analysis::opt`,
   the `mlir-opt` analogue behind `mojito opt [--pass NAME]… [FILE]`, loads a
   MIR artifact, runs the named passes in order (a program pass over the
   program, a body pass over every body but `__toplevel__`), and verifies the

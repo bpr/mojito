@@ -171,7 +171,7 @@ pub fn disassemble_functions(program: &MirProgram) -> Result<String, Disassemble
 
 pub const MAGIC: &str = "mojito-mir";
 pub const VERSION_MAJOR: u16 = 1;
-pub const VERSION_MINOR: u16 = 53;
+pub const VERSION_MINOR: u16 = 54;
 
 pub const INSTRUCTION_MNEMONICS: &[&str] = &[
     "loans.establish",
@@ -225,6 +225,10 @@ pub const INSTRUCTION_MNEMONICS: &[&str] = &[
     "simd.shuffle",
     "raise",
     "try",
+    "if",
+    "loop",
+    "comptime.if",
+    "comptime.for",
     "drop.reg",
     "drop.var",
     "consume.var",
@@ -247,6 +251,14 @@ pub const TERMINATOR_MNEMONICS: &[&str] = &[
     "return.cleanup",
     "falloff",
     "escape",
+    "yield",
+    "if.elifcond.yield",
+    "break",
+    "continue",
+    "comptime.yield",
+    "comptime.for.break",
+    "comptime.for.continue",
+    "unreachable",
 ];
 
 /// Canonical type-constructor spellings in `Ty` declaration order — the closed
@@ -367,6 +379,10 @@ pub const fn instruction_mnemonic(instruction: &MirInstr) -> &'static str {
         MirInstr::SimdShuffle { .. } => "simd.shuffle",
         MirInstr::Raise { .. } => "raise",
         MirInstr::Try { .. } => "try",
+        MirInstr::If { .. } => "if",
+        MirInstr::Loop { .. } => "loop",
+        MirInstr::ComptimeIf { .. } => "comptime.if",
+        MirInstr::ComptimeFor { .. } => "comptime.for",
         MirInstr::Drop { .. } => "drop.reg",
         MirInstr::DeclareVar { .. } => "var.declare",
         MirInstr::DropVar { .. } => "drop.var",
@@ -404,6 +420,14 @@ pub const fn terminator_mnemonic(terminator: &MirTerm) -> &'static str {
         MirTerm::ReturnWithCleanup { .. } => "return.cleanup",
         MirTerm::FallOff => "falloff",
         MirTerm::EscapeJump { .. } => "escape",
+        MirTerm::Yield(_) => "yield",
+        MirTerm::ElifCond(_) => "if.elifcond.yield",
+        MirTerm::Break { .. } => "break",
+        MirTerm::Continue { .. } => "continue",
+        MirTerm::ComptimeYield(_) => "comptime.yield",
+        MirTerm::ComptimeBreak => "comptime.for.break",
+        MirTerm::ComptimeContinue => "comptime.for.continue",
+        MirTerm::Unreachable => "unreachable",
     }
 }
 

@@ -36,8 +36,8 @@ use mojito_common::timing;
 use mojito_mir::mir::verify::instruction_result_regs;
 use mojito_mir::mir::{
     Const, MirBlock, MirBlockId, MirDeclarations, MirFunction, MirInstr, MirTerm, Reg,
-    block_successors, instruction_regs_mut, prune_unreachable_blocks, terminator_regs_mut,
-    terminator_targets, terminator_targets_mut,
+    block_successors, instruction_regions_mut, instruction_regs_mut, prune_unreachable_blocks,
+    terminator_regs_mut, terminator_targets, terminator_targets_mut,
 };
 use mojito_types::types::copy_is_identity;
 use std::collections::{HashMap, HashSet};
@@ -97,25 +97,6 @@ pub fn canonicalize(_name: &str, function: &mut MirFunction, declarations: &MirD
     timing::count("erased_instructions", erased.len() as u64);
 }
 
-/// The block lists of a `try` instruction's regions, mutably.
-fn regions_mut(instruction: &mut MirInstr) -> Vec<&mut Vec<MirBlock>> {
-    let MirInstr::Try {
-        body,
-        handler,
-        orelse,
-        finalbody,
-        ..
-    } = instruction
-    else {
-        return Vec::new();
-    };
-    std::iter::once(body)
-        .chain(handler.as_mut().map(|(_, blocks)| blocks))
-        .chain(orelse.as_mut())
-        .chain(finalbody.as_mut())
-        .collect()
-}
-
 /// How many edges [`simplify_control_flow`] threaded, branches it folded to
 /// a jump, and blocks it merged into their predecessor.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
@@ -147,7 +128,7 @@ fn simplify_control_flow(blocks: &mut [MirBlock], function_level: bool) -> Contr
     let mut edits = ControlFlowEdits::default();
     for region in blocks
         .iter_mut()
-        .flat_map(|block| block.instrs.iter_mut().flat_map(regions_mut))
+        .flat_map(|block| block.instrs.iter_mut().flat_map(instruction_regions_mut))
     {
         edits.add(simplify_control_flow(region, false));
     }
@@ -386,7 +367,7 @@ fn definition_counts(blocks: &mut [MirBlock], n_regs: u32) -> Vec<u32> {
 fn visit_blocks(blocks: &mut [MirBlock], visit: &mut impl FnMut(&mut MirBlock)) {
     for block in blocks {
         visit(block);
-        for region in block.instrs.iter_mut().flat_map(regions_mut) {
+        for region in block.instrs.iter_mut().flat_map(instruction_regions_mut) {
             visit_blocks(region, visit);
         }
     }
@@ -463,7 +444,7 @@ fn block_count(blocks: &mut [MirBlock]) -> usize {
             1 + block
                 .instrs
                 .iter_mut()
-                .flat_map(regions_mut)
+                .flat_map(instruction_regions_mut)
                 .map(|region| block_count(region))
                 .sum::<usize>()
         })
@@ -505,7 +486,7 @@ fn count_reads(blocks: &mut [MirBlock], reads: &mut [u32]) {
                     None => count(reads, reg),
                 }
             }
-            for region in regions_mut(instruction) {
+            for region in instruction_regions_mut(instruction) {
                 count_reads(region, reads);
             }
         }
@@ -520,7 +501,7 @@ fn count_reads(blocks: &mut [MirBlock], reads: &mut [u32]) {
 fn erase_dead(blocks: &mut [MirBlock], reads: &[u32], erased: &mut HashSet<u32>) {
     for block in blocks {
         block.instrs.retain_mut(|instruction| {
-            for region in regions_mut(instruction) {
+            for region in instruction_regions_mut(instruction) {
                 erase_dead(region, reads, erased);
             }
             let mut results = Vec::new();
@@ -548,7 +529,7 @@ fn forward(blocks: &mut [MirBlock], roots: &HashMap<u32, Reg>) {
     };
     for block in blocks {
         block.instrs.retain_mut(|instruction| {
-            for region in regions_mut(instruction) {
+            for region in instruction_regions_mut(instruction) {
                 forward(region, roots);
             }
             let mut results = Vec::new();

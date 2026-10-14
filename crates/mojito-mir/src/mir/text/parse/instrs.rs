@@ -3,6 +3,7 @@
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
+use crate::mir::{LoopLabel, MirElif};
 use mojito_types::types::TyKind;
 
 impl Decoder {
@@ -705,6 +706,33 @@ impl Decoder {
                     cleanup,
                 })
             }
+            "if" => Some(MirInstr::If {
+                results: self.req(value, fields, "results", |d, v| Some(d.regs(v)))?,
+                cond: self.req(value, fields, "condition", Self::reg)?,
+                then: self.req(value, fields, "then", |d, v| Some(d.region_blocks(v)))?,
+                elifs: self.req(value, fields, "elifs", |d, v| Some(d.elifs(v)))?,
+                orelse: self.req(value, fields, "else", |d, v| Some(d.region_blocks(v)))?,
+            }),
+            "loop" => Some(MirInstr::Loop {
+                label: self.req(value, fields, "label", |d, v| Some(d.option_loop_label(v)))?,
+                body: self.req(value, fields, "body", |d, v| Some(d.region_blocks(v)))?,
+            }),
+            "comptime.if" => Some(MirInstr::ComptimeIf {
+                results: self.req(value, fields, "results", |d, v| Some(d.regs(v)))?,
+                conds: self.req(value, fields, "conditions", |d, v| Some(d.constraints(v)))?,
+                arms: self.req(value, fields, "arms", |d, v| {
+                    let arms = d.list(v).ok()?;
+                    Some(arms.iter().map(|arm| d.region_blocks(arm)).collect())
+                })?,
+                orelse: self.req(value, fields, "else", |d, v| Some(d.region_blocks(v)))?,
+            }),
+            "comptime.for" => Some(MirInstr::ComptimeFor {
+                binder: self.req(value, fields, "binder", Self::binder_ref)?,
+                slot: self.req(value, fields, "slot", Self::var)?,
+                source: self.comptime_sequence(value, fields)?,
+                body: self.req(value, fields, "body", |d, v| Some(d.region_blocks(v)))?,
+                orelse: self.req(value, fields, "else", |d, v| Some(d.region_blocks(v)))?,
+            }),
             "drop.reg" => Some(MirInstr::Drop {
                 reg: self.req(value, fields, "reg", Self::reg)?,
             }),
@@ -842,6 +870,33 @@ impl Decoder {
                 target: self.req(value, fields, "target", Self::block_id)?,
                 cleanup: self.req(value, fields, "cleanup", |d, v| Some(d.vars(v)))?,
             }),
+            "yield" => Some(MirTerm::Yield(self.req(
+                value,
+                fields,
+                "values",
+                |d, v| Some(d.regs(v)),
+            )?)),
+            "if.elifcond.yield" => Some(MirTerm::ElifCond(self.req(
+                value,
+                fields,
+                "condition",
+                Self::reg,
+            )?)),
+            "break" => Some(MirTerm::Break {
+                label: self.req(value, fields, "label", |d, v| Some(d.option_loop_label(v)))?,
+            }),
+            "continue" => Some(MirTerm::Continue {
+                label: self.req(value, fields, "label", |d, v| Some(d.option_loop_label(v)))?,
+            }),
+            "comptime.yield" => Some(MirTerm::ComptimeYield(self.req(
+                value,
+                fields,
+                "values",
+                |d, v| Some(d.regs(v)),
+            )?)),
+            "comptime.for.break" => Some(MirTerm::ComptimeBreak),
+            "comptime.for.continue" => Some(MirTerm::ComptimeContinue),
+            "unreachable" => Some(MirTerm::Unreachable),
             other => {
                 self.error(value.span, format!("unknown terminator `{other}`"));
                 None
@@ -849,7 +904,66 @@ impl Decoder {
         }
     }
 
-    /// Blocks of one `try` sub-region. Each region carries its own dense
+    /// The `elif` arms of an `if`: each a condition region and the arm it
+    /// selects.
+    fn elifs(&mut self, value: &Value) -> Vec<MirElif> {
+        let Ok(values) = self.list(value) else {
+            return Vec::new();
+        };
+        values
+            .iter()
+            .filter_map(|value| {
+                let fields = self.record(value, "elif").ok()?;
+                let cond = self.req(value, fields, "condition", |d, v| Some(d.region_blocks(v)))?;
+                let then = self.req(value, fields, "then", |d, v| Some(d.region_blocks(v)))?;
+                self.unknown(fields, &["condition", "then"]);
+                Some(MirElif { cond, then })
+            })
+            .collect()
+    }
+
+    /// A `comptime.for`'s source, its form named by which fields are
+    /// present: `start`/`stop`/`step`, `elements`, or
+    /// `initial`/`has_next`/`next_iter`.
+    fn comptime_sequence(
+        &mut self,
+        value: &Value,
+        fields: &[Field],
+    ) -> Option<mojito_checked::checked::ComptimeSequence> {
+        use mojito_checked::checked::ComptimeSequence;
+        if self.field(fields, "elements").is_ok() {
+            return Some(ComptimeSequence::Elements(self.req(
+                value,
+                fields,
+                "elements",
+                Self::param_expr,
+            )?));
+        }
+        if self.field(fields, "initial").is_ok() {
+            return Some(ComptimeSequence::Iterator {
+                initial: self.req(value, fields, "initial", Self::param_expr)?,
+                has_next: self.req(value, fields, "has_next", Self::param_expr)?,
+                next_iter: self.req(value, fields, "next_iter", Self::param_expr)?,
+            });
+        }
+        Some(ComptimeSequence::Range {
+            start: self.req(value, fields, "start", Self::param_expr)?,
+            stop: self.req(value, fields, "stop", Self::param_expr)?,
+            step: self.req(value, fields, "step", Self::param_expr)?,
+        })
+    }
+
+    fn loop_label(&mut self, value: &Value) -> Option<LoopLabel> {
+        let id = self.identity(Some(value), "loop")?;
+        u32::try_from(id).ok().map(LoopLabel)
+    }
+
+    fn option_loop_label(&mut self, value: &Value) -> Option<LoopLabel> {
+        self.option_value(Some(value))
+            .and_then(|value| self.loop_label(value))
+    }
+
+    /// Blocks of one region. Each region carries its own dense
     /// `bb0..bbN` namespace (see `docs/mir-text-format.md`); region-local
     /// blocks are deliberately absent from the artifact source map — the
     /// enclosing instruction's path already brackets them, and the canonical

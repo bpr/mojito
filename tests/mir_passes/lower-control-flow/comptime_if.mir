@@ -1,0 +1,40 @@
+mojito-mir 1.54
+artifact {
+  features: [],
+  files: [
+  ],
+  traits: [],
+  structs: [
+  ],
+  decls: [
+    decl { lowered_name: sign, param_names: [], param_types: [], defaults: [], required: [], variadic: absent, variadic_convention: absent, variadic_index: absent, kw_variadic: absent, kw_variadic_convention: absent, kw_variadic_index: absent, positional_only: absent, keyword_only: absent, param_decls: [value_param { owner: "sign", slot: 0, name: n, type: Int, default: absent, callable_default: absent, infer_only: false, variadic: false, constraints: [] }], has_receiver: false, receiver_convention: absent, param_conventions: [], return_type: Int, returns_reference: false, raises: false, error_type: absent, ref_params: [], param_writes: [], availability: [], enclosing: absent, region_binders: [] }
+  ],
+  functions: [
+      fn {
+        name: sign,
+        registers: 4,
+        vars: 0,
+        var_names: [],
+        params: 0,
+        param_types: [],
+        owned_params: [],
+        deinit_params: [],
+        ref_params: [],
+        returns_reference: false,
+        var_types: [],
+        return_type: present(Int),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: Int }, reg_type { reg: %r1, type: Int }, reg_type { reg: %r2, type: Int }, reg_type { reg: %r3, type: Int }],
+        locations: [reg_loc { reg: %r0, location: absent }, reg_loc { reg: %r1, location: absent }, reg_loc { reg: %r2, location: absent }, reg_loc { reg: %r3, location: absent }],
+        blocks: [
+          bb0 {
+            instructions: [
+              comptime.if { results: [%r3], conditions: [gt { left: operand_param(binder { owner: "sign", slot: 0, name: n }), right: operand_value(ct_int_literal(0)) }, lt { left: operand_param(binder { owner: "sign", slot: 0, name: n }), right: operand_value(ct_int_literal(0)) }], arms: [[bb0 { instructions: [const { dest: %r0, value: int(1) }], terminator: comptime.yield { values: [%r0] } }], [bb0 { instructions: [const { dest: %r1, value: int(-1) }], terminator: comptime.yield { values: [%r1] } }]], else: [bb0 { instructions: [const { dest: %r2, value: int(0) }], terminator: comptime.yield { values: [%r2] } }] }
+            ],
+            terminator: return { value: present(%r3) }
+          }
+        ]
+      }
+  ]
+}

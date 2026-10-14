@@ -1328,6 +1328,66 @@ fn instruction_value(instruction: &MirInstr) -> String {
                 ("cleanup", list(cleanup.iter().map(|v| var_value(*v)))),
             ],
         ),
+        MirInstr::If {
+            results,
+            cond,
+            then,
+            elifs,
+            orelse,
+        } => record(
+            tag,
+            &[
+                ("results", list(results.iter().map(|v| reg_value(*v)))),
+                ("condition", reg_value(*cond)),
+                ("then", blocks_value(then)),
+                (
+                    "elifs",
+                    list(elifs.iter().map(|elif| {
+                        record(
+                            "elif",
+                            &[
+                                ("condition", blocks_value(&elif.cond)),
+                                ("then", blocks_value(&elif.then)),
+                            ],
+                        )
+                    })),
+                ),
+                ("else", blocks_value(orelse)),
+            ],
+        ),
+        MirInstr::Loop { label, body } => record(
+            tag,
+            &[
+                ("label", option(label.map(loop_label))),
+                ("body", blocks_value(body)),
+            ],
+        ),
+        MirInstr::ComptimeIf {
+            results,
+            conds,
+            arms,
+            orelse,
+        } => record(
+            tag,
+            &[
+                ("results", list(results.iter().map(|v| reg_value(*v)))),
+                ("conditions", list(conds.iter().map(constraint))),
+                ("arms", list(arms.iter().map(|arm| blocks_value(arm)))),
+                ("else", blocks_value(orelse)),
+            ],
+        ),
+        MirInstr::ComptimeFor {
+            binder,
+            slot,
+            source,
+            body,
+            orelse,
+        } => {
+            let mut fields = vec![("binder", binder_ref(binder)), ("slot", var_value(*slot))];
+            fields.extend(sequence_fields(source));
+            fields.extend([("body", blocks_value(body)), ("else", blocks_value(orelse))]);
+            record(tag, &fields)
+        }
         MirInstr::Drop { reg } => record(tag, &[("reg", reg_value(*reg))]),
         MirInstr::DeclareVar { var } | MirInstr::DropVar { var } | MirInstr::ConsumeVar { var } => {
             record(tag, &[("var", var_value(*var))])
@@ -1418,60 +1478,15 @@ fn term_value(term: &MirTerm) -> String {
         MirTerm::ComptimeFor {
             binder,
             slot,
-            source: ComptimeSequence::Range { start, stop, step },
+            source,
             body,
             exit,
-        } => record(
-            tag,
-            &[
-                ("binder", binder_ref(binder)),
-                ("slot", var_value(*slot)),
-                ("start", param_expr(start)),
-                ("stop", param_expr(stop)),
-                ("step", param_expr(step)),
-                ("body", format!("bb{body}")),
-                ("exit", format!("bb{exit}")),
-            ],
-        ),
-        MirTerm::ComptimeFor {
-            binder,
-            slot,
-            source: ComptimeSequence::Elements(elements),
-            body,
-            exit,
-        } => record(
-            tag,
-            &[
-                ("binder", binder_ref(binder)),
-                ("slot", var_value(*slot)),
-                ("elements", param_expr(elements)),
-                ("body", format!("bb{body}")),
-                ("exit", format!("bb{exit}")),
-            ],
-        ),
-        MirTerm::ComptimeFor {
-            binder,
-            slot,
-            source:
-                ComptimeSequence::Iterator {
-                    initial,
-                    has_next,
-                    next_iter,
-                },
-            body,
-            exit,
-        } => record(
-            tag,
-            &[
-                ("binder", binder_ref(binder)),
-                ("slot", var_value(*slot)),
-                ("initial", param_expr(initial)),
-                ("has_next", param_expr(has_next)),
-                ("next_iter", param_expr(next_iter)),
-                ("body", format!("bb{body}")),
-                ("exit", format!("bb{exit}")),
-            ],
-        ),
+        } => {
+            let mut fields = vec![("binder", binder_ref(binder)), ("slot", var_value(*slot))];
+            fields.extend(sequence_fields(source));
+            fields.extend([("body", format!("bb{body}")), ("exit", format!("bb{exit}"))]);
+            record(tag, &fields)
+        }
         MirTerm::Return(value) => record(tag, &[("value", option(value.map(reg_value)))]),
         MirTerm::ReturnWithCleanup { value, cleanup } => record(
             tag,
@@ -1480,7 +1495,18 @@ fn term_value(term: &MirTerm) -> String {
                 ("cleanup", list(cleanup.iter().map(|v| var_value(*v)))),
             ],
         ),
-        MirTerm::FallOff => record(tag, &[]),
+        MirTerm::FallOff
+        | MirTerm::ComptimeBreak
+        | MirTerm::ComptimeContinue
+        | MirTerm::Unreachable => record(tag, &[]),
+        MirTerm::Yield(values) | MirTerm::ComptimeYield(values) => record(
+            tag,
+            &[("values", list(values.iter().map(|v| reg_value(*v))))],
+        ),
+        MirTerm::ElifCond(cond) => record(tag, &[("condition", reg_value(*cond))]),
+        MirTerm::Break { label } | MirTerm::Continue { label } => {
+            record(tag, &[("label", option(label.map(loop_label)))])
+        }
         MirTerm::EscapeJump { target, cleanup } => record(
             tag,
             &[
@@ -1489,6 +1515,31 @@ fn term_value(term: &MirTerm) -> String {
             ],
         ),
     }
+}
+
+/// A `comptime for` source's fields, the form named by which are present.
+fn sequence_fields(source: &ComptimeSequence) -> Vec<(&'static str, String)> {
+    match source {
+        ComptimeSequence::Range { start, stop, step } => vec![
+            ("start", param_expr(start)),
+            ("stop", param_expr(stop)),
+            ("step", param_expr(step)),
+        ],
+        ComptimeSequence::Elements(elements) => vec![("elements", param_expr(elements))],
+        ComptimeSequence::Iterator {
+            initial,
+            has_next,
+            next_iter,
+        } => vec![
+            ("initial", param_expr(initial)),
+            ("has_next", param_expr(has_next)),
+            ("next_iter", param_expr(next_iter)),
+        ],
+    }
+}
+
+fn loop_label(label: LoopLabel) -> String {
+    format!("loop{}", label.0)
 }
 
 fn blocks_value(blocks: &[MirBlock]) -> String {

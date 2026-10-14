@@ -86,6 +86,15 @@ impl VmBackend {
             MirInstr::Rebind { .. } => {
                 return Err(parametric_instruction("a value rebind"));
             }
+            MirInstr::If { .. }
+            | MirInstr::Loop { .. }
+            | MirInstr::ComptimeIf { .. }
+            | MirInstr::ComptimeFor { .. } => {
+                return Err(parametric_instruction(&format!(
+                    "structured control flow `{}`",
+                    mojito_mir::mir::text::instruction_mnemonic(i)
+                )));
+            }
             MirInstr::CopyValue { dest, value } => {
                 let source = regs[value.0 as usize].clone();
                 regs[dest.0 as usize] = if self.has_copyinit {
@@ -2100,6 +2109,19 @@ impl VmBackend {
                 MirTerm::ComptimeFor { binder, .. } => {
                     return Err(parametric_instruction(&format!(
                         "a compile-time loop over `{binder}`"
+                    )));
+                }
+                MirTerm::Yield(_)
+                | MirTerm::ElifCond(_)
+                | MirTerm::Break { .. }
+                | MirTerm::Continue { .. }
+                | MirTerm::ComptimeYield(_)
+                | MirTerm::ComptimeBreak
+                | MirTerm::ComptimeContinue
+                | MirTerm::Unreachable => {
+                    return Err(parametric_instruction(&format!(
+                        "the region terminator `{}`",
+                        mojito_mir::mir::text::terminator_mnemonic(&b.term)
                     )));
                 }
                 MirTerm::Return(r) => {

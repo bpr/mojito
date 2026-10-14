@@ -1,6 +1,7 @@
 # Structured Control Flow Above the Waist: Staged Plan
 
-**Status:** plan recorded 2026-10-14 (R859). The scheduled tasks are on
+**Status:** plan recorded 2026-10-14 (R859); stage 1 landed 2026-10-14
+(R870). The scheduled tasks are on
 [`docs/roadmap.md`](roadmap.md) track `pmir`, one entry per stage below.
 This document is their design record and is updated as stages land. It is
 the structured-control part of
@@ -80,10 +81,11 @@ Checked in `~/src/mojo/repos/modular/Mojo`.
 - **MIR** (`crates/mojito-mir/src/mir/ir.rs`) is a CFG: `MirTerm` is `Jump`,
   `Branch`, `ComptimeBranch`, `ComptimeFor`, `Return`, `ReturnWithCleanup`,
   `FallOff`, and `EscapeJump`.
-  - One region op exists already: `MirInstr::Try`. Its parts are each a
-    `Vec<MirBlock>` mini-CFG sharing the function's registers and slots,
-    walked by `try_regions`/`try_regions_mut` and `block_successors`, and
-    left through `EscapeJump`/`FallOff`.
+  - The region ops are `MirInstr::Try` and, since stage 1, `If`, `Loop`,
+    `ComptimeIf`, and `ComptimeFor`, which nothing produces yet. Each
+    region is a `Vec<MirBlock>` sharing the function's registers and
+    slots, walked by `instruction_regions`/`instruction_regions_mut` and
+    `block_successors`. A `try` part is left through `EscapeJump`/`FallOff`.
   - `lower_expr/ctrl.rs` builds `short_circuit`, `ternary`, `compare_chain`,
     and `comprehension_clauses` as blocks.
 - **The analyses work on edges.** Ownership, borrow, and initialization
@@ -96,8 +98,8 @@ Checked in `~/src/mojo/repos/modular/Mojo`.
 - **The elaborator recovers structure.** `mono/unroll.rs`'s `loop_body`
   finds a `comptime for` body as the blocks its `body` target dominates, and
   `outermost_loop` finds the enclosing loop. A region op would hold both.
-- **Versions.** MIR text `1.53`, `PACKAGE_FORMAT` `"mojito-package 54"`.
-  Packaged bodies are MIR, so structured bodies change both.
+- **Versions.** MIR text `1.54`, `PACKAGE_FORMAT` `"mojito-package 55"`
+  since stage 1. Packaged bodies are MIR, so structured bodies change both.
 
 ## Target
 
@@ -109,16 +111,22 @@ Checked in `~/src/mojo/repos/modular/Mojo`.
     entry is a condition region ending in `ElifCond(reg)` and an arm.
   - `Loop { label, body }` — `hlcf.loop`. Loop-carried values stay in slots
     until register promotion (R787) brings operands and results.
-  - `ComptimeIf { cond, then, orelse }` — `hlcf.comptime.if`.
-  - `ComptimeFor { label, binder, slot, source, body }` —
-    `hlcf.comptime.for`. No `else` until the checker accepts
-    `comptime for … else`, so no `comptime.for.goto.else`.
+  - `ComptimeIf { results, conds, arms, orelse }` — `hlcf.comptime.if`:
+    one arm per condition, then the else region.
+  - `ComptimeFor { binder, slot, source, body, orelse }` —
+    `hlcf.comptime.for`. `orelse` is the shape `LowerSemanticCF` leaves
+    and the elaborator asserts: one block holding `Unreachable`. MIR is
+    that pass's output, so it has no `comptime.for.goto.else`.
   - `Try` keeps its four parts, each one region — `lit.try`, which upstream
     keeps beside `hlcf`.
 - **Region terminators**, new `MirTerm` variants: `Yield(regs)`,
   `ElifCond(reg)`, `Break { label }`, `Continue { label }`,
-  `ComptimeBreak { label }`, `ComptimeContinue { label }`, and
-  `Unreachable`. `Return`/`ReturnWithCleanup` stay and may end any region,
+  `ComptimeYield(regs)` (`hlcf.comptime.yield`, which ends a
+  `ComptimeIf` arm, where `hlcf.yield` may not), `ComptimeBreak`,
+  `ComptimeContinue`, and `Unreachable`. A label is optional and need not
+  be unique: a labelled `break`/`continue` names the nearest enclosing
+  loop carrying it. `comptime.for.break`/`continue` carry no label and
+  name the nearest `comptime for`. `Return`/`ReturnWithCleanup` stay and may end any region,
   as `hlcf.return` is `ReturnLike`. A `break` or `continue` crossing a
   `try` is a labelled `Break`/`Continue` naming its loop, replacing
   `EscapeJump`; `FallOff` becomes `Yield([])`.
@@ -156,11 +164,22 @@ can sit inside a statement CFG; the single-block rule switches on with the
 last producer. Every stage keeps program output unchanged; the
 `pre_elaboration` differential and the corpus are the oracle.
 
-1. **Vocabulary.** Region ops and terminators, MIR text read/write (version
-   bump), the structured verifier mode, walkers generalized over every
-   region op (`try_regions`, `block_successors`, `prune_block_list`,
-   `renumber_escapes`), and `lower-control-flow` with pass tests under
+1. **Vocabulary.** *Landed (R870).* Region ops and terminators, MIR text
+   read/write (1.54, package 55), `verify_structured_function_in`, walkers
+   generalized over every region op (`instruction_regions`,
+   `block_successors`, `prune_block_list`, `renumber_escapes`, and the
+   analysis duplicates), and `mir::lower_control_flow`, registered as the
+   pass `lower-control-flow`, with cases under
    `tests/mir_passes/lower-control-flow/`. No producer yet.
+   - The transitional pass lowers `Unreachable` to `Return(None)`, MIR's
+     unreachable-scaffolding placeholder, until stage 14 emits LLVM's
+     `unreachable`. Results go through one slot per result, stored at each
+     `yield` and forwarded at the join, the shape a ternary has today.
+   - A `break`/`continue` leaving a `try` part to a function-level loop
+     lowers to `EscapeJump`; one whose loop sits in an enclosing `try`
+     part lowers to today's unsupported boundary.
+   - The structured mode still lets a `try` part complete by `FallOff`
+     until stage 5 replaces it.
 2. **Expressions.** `short_circuit`, `ternary`, `compare_chain`, and
    `comprehension_clauses` emit `If` with results (a comprehension also a
    `Loop`) inside today's blocks.
@@ -221,4 +240,6 @@ Mojito-only shape.
 - Where upstream lowers `lit.try` was not traced. `SimplifyCF` still names
   `LIT::TryOp`, so the plan keeps Mojito's `Try` a region op through the
   waist.
-- Whether the pin accepts `comptime for … else` was not checked.
+- Whether the pin accepts `comptime for … else` was not run here.
+  Upstream's parser does parse it (`ParserStmts.cpp`), and R797 records
+  the pin running it.

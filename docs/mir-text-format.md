@@ -1,4 +1,4 @@
-# Mojito Textual MIR Format, Version 1.53
+# Mojito Textual MIR Format, Version 1.54
 
 This document is the normative specification of Mojito's textual verified-MIR
 artifact. The Rust data model in `src/mir.rs` and `src/mir/ir.rs` remains the
@@ -6,7 +6,7 @@ in-memory authority; this format is its stable inspection and interchange
 boundary. `docs/vm-instruction-set.md` explains execution semantics, while this
 document defines syntax and serialized data.
 
-Version 1.53 is implemented end to end for inspection and loading: canonical
+Version 1.54 is implemented end to end for inspection and loading: canonical
 in-memory disassembly, full-grammar assembly parsing, and artifact-loading
 verification (`mir::text::load_artifact`, which reports canonical-verifier
 findings at artifact source spans). Lossless print → parse → print round trips
@@ -22,10 +22,10 @@ which may be generic; it is always elaborated before it runs.
 Every artifact begins with exactly:
 
 ```text
-mojito-mir 1.53
+mojito-mir 1.54
 ```
 
-The writer emits 1.53. The reader accepts 1.0 through 1.53; *Schema 1.0*
+The writer emits 1.54. The reader accepts 1.0 through 1.54; *Schema 1.0*
 below says how a 1.0 artifact is read, and *Binder identity* under *Types*
 how a binder without an identity is.
 
@@ -851,6 +851,10 @@ schema types above. This table is exhaustive and freezes the variant mapping:
 | `Drop` / `DropVar` | `drop.reg` / `drop.var` |
 | `ConsumeVar` / `ConsumePlace` | `consume.var` / `consume.place` |
 | `Unsupported` | `unsupported { message: string }` |
+| `If` | `if { results: [reg...], condition: %rN, then: [block...], elifs: [elif { condition: [block...], then: [block...] }...], else: [block...] }` — `hlcf.if` (schema 1.54) |
+| `Loop` | `loop { label: option<loopN>, body: [block...] }` — `hlcf.loop` (schema 1.54) |
+| `ComptimeIf` | `comptime.if { results: [reg...], conditions: [<constraint>...], arms: [[block...]...], else: [block...] }` — `hlcf.comptime.if`, one arm per condition (schema 1.54) |
+| `ComptimeFor` | `comptime.for { binder: <binder>, slot: $vN, <source>, body: [block...], else: [block...] }` — `hlcf.comptime.for`; `<source>` is the `ComptimeFor` terminator's `start`/`stop`/`step`, `elements`, or `initial`/`has_next`/`next_iter` fields, the form named by which are present; `else` is one block ending in `unreachable {}` (schema 1.54) |
 | `GetIter` / `HasNext` / `Next` / `TryNext` | `iter.init` / `iter.has_next` / `iter.next` / `iter.try_next` |
 
 `UseMode` is `copy`, `move`, `borrow_shared`, `borrow_mut`, or `forward` (schema 1.51: a whole-slot move an owned parameter takes, which runs no move initializer). Intrinsic
@@ -860,7 +864,10 @@ subscripts are `tuple_storage`, `variadic_storage`, `simd`, `pointer`, and
 `copy_iterator_reference`.
 
 For `Try`, `body`, `handler`, `orelse`, and `finalbody` contain lists of local
-blocks. Handler absence differs from a present empty handler. Its `cleanup`
+blocks, as every region of `if`, `loop`, `comptime.if`, and `comptime.for`
+does: a region's blocks are numbered `bb0..bbN` among themselves, entered at
+`bb0`. Nothing produces those four structured ops yet, and concrete MIR
+carries none: the `lower-control-flow` pass lowers them to blocks first. Handler absence differs from a present empty handler. Its `cleanup`
 runs on the body's raise edge only, before the handler or the `finally`, and
 names the slots some raise in the body still holds (schema 1.53; before, it
 ran on every exit of the body). A list naming a slot every raise path has
@@ -881,6 +888,15 @@ as explicit options/lists. Backends must not reconstruct omitted selections.
 | `ReturnWithCleanup` | `return.cleanup { value: option<reg>, cleanup: [var...] }` — drop elaboration writes it on a return that crosses a `finally`: `cleanup` names what the return still holds after the last `finally` it crosses, and runs there (schema 1.53; before, it named loop-owned values) |
 | `FallOff` | `falloff {}` |
 | `EscapeJump` | `escape { target: bbN, cleanup: [var...] }` — `cleanup` runs at the escape, before the `finally` blocks it crosses |
+| `Yield` | `yield { values: [reg...] }` — `hlcf.yield`: ends an `if` arm, its values defining the op's results (schema 1.54) |
+| `ElifCond` | `if.elifcond.yield { condition: %rN }` — ends an elif condition region with its `Bool` (schema 1.54) |
+| `Break` / `Continue` | `break { label: option<loopN> }` / `continue { label: option<loopN> }` — `hlcf.break`/`hlcf.continue`: the nearest enclosing `loop`, or the nearest carrying the label (schema 1.54) |
+| `ComptimeYield` | `comptime.yield { values: [reg...] }` — ends a `comptime.if` arm (schema 1.54) |
+| `ComptimeBreak` / `ComptimeContinue` | `comptime.for.break {}` / `comptime.for.continue {}` — the nearest enclosing `comptime.for` (schema 1.54) |
+| `Unreachable` | `unreachable {}` — `hlcf.unreachable` (schema 1.54) |
+
+The structured terminators end only the region of their op; the verifier
+rejects one anywhere else. Concrete MIR carries none.
 
 Unknown terminators and instructions are fatal for schema major version 1.
 
@@ -928,10 +944,10 @@ lowering unit, one record per library declaration, and one module table
 holding each module's link record, one file per package. The bundled library's is the
 only producer today (`src/package.rs`). No part of a package is MIR text:
 it is a header followed by bytecode records, as upstream's package is
-MLIR bytecode throughout. The format line is `mojito-package 54`.
+MLIR bytecode throughout. The format line is `mojito-package 55`.
 
 ```text
-mojito-package 54
+mojito-package 55
 <the header's length, 8 bytes little-endian>
 <the header, as bytecode>
 <the payload: every record, as bytecode, then the type section>

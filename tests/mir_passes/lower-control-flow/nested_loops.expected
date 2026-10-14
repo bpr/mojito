@@ -1,0 +1,63 @@
+  functions: [
+      fn {
+        name: spin,
+        registers: 1,
+        vars: 1,
+        var_names: [c],
+        params: 1,
+        param_types: [Bool],
+        owned_params: [false],
+        deinit_params: [false],
+        ref_params: [false],
+        returns_reference: false,
+        var_types: [var_type { var: $v0, type: Bool }],
+        return_type: present(None),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: Bool }],
+        locations: [reg_loc { reg: %r0, location: absent }],
+        blocks: [
+          bb0 {
+            instructions: [
+            ],
+            terminator: jump { target: bb2 }
+          },
+          bb1 {
+            instructions: [
+            ],
+            terminator: return { value: absent }
+          },
+          bb2 {
+            instructions: [
+            ],
+            terminator: jump { target: bb4 }
+          },
+          bb3 {
+            instructions: [
+            ],
+            terminator: jump { target: bb2 }
+          },
+          bb4 {
+            instructions: [
+              var.use { dest: %r0, var: $v0, mode: copy }
+            ],
+            terminator: branch { condition: %r0, then: bb6, else: bb7 }
+          },
+          bb5 {
+            instructions: [
+            ],
+            terminator: jump { target: bb4 }
+          },
+          bb6 {
+            instructions: [
+            ],
+            terminator: jump { target: bb1 }
+          },
+          bb7 {
+            instructions: [
+            ],
+            terminator: jump { target: bb5 }
+          }
+        ]
+      }
+  ]

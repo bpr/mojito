@@ -322,6 +322,26 @@ pub const INSTR_CAPABILITIES: &[(&str, CapabilityStatus, &str)] = &[
         "structural flattening with cleanup drops and finally dispatch",
     ),
     (
+        "if",
+        CapabilityStatus::Unsupported,
+        "`lower-control-flow` lowers it before elaboration; concrete MIR carries none",
+    ),
+    (
+        "loop",
+        CapabilityStatus::Unsupported,
+        "`lower-control-flow` lowers it before elaboration; concrete MIR carries none",
+    ),
+    (
+        "comptime.if",
+        CapabilityStatus::Unsupported,
+        "`lower-control-flow` lowers it before elaboration; concrete MIR carries none",
+    ),
+    (
+        "comptime.for",
+        CapabilityStatus::Unsupported,
+        "`lower-control-flow` lowers it before elaboration; concrete MIR carries none",
+    ),
+    (
         "drop.reg",
         CapabilityStatus::Unsupported,
         "reserved for the future assembler VM; the VM rejects it too",

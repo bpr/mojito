@@ -213,6 +213,19 @@ impl VmBackend {
                         "a compile-time loop over `{binder}`"
                     )));
                 }
+                MirTerm::Yield(_)
+                | MirTerm::ElifCond(_)
+                | MirTerm::Break { .. }
+                | MirTerm::Continue { .. }
+                | MirTerm::ComptimeYield(_)
+                | MirTerm::ComptimeBreak
+                | MirTerm::ComptimeContinue
+                | MirTerm::Unreachable => {
+                    return Err(parametric_instruction(&format!(
+                        "the region terminator `{}`",
+                        mojito_mir::mir::text::terminator_mnemonic(&block.term)
+                    )));
+                }
                 MirTerm::Return(reg) => reg
                     .as_ref()
                     .map_or(Value::None, |reg| frame.registers[reg.0 as usize].clone()),

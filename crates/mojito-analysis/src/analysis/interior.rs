@@ -419,7 +419,15 @@ pub(super) fn summarize_interior_region(
             MirTerm::Jump(_)
             | MirTerm::Branch { .. }
             | MirTerm::ComptimeBranch { .. }
-            | MirTerm::ComptimeFor { .. } => {}
+            | MirTerm::ComptimeFor { .. }
+            | MirTerm::Yield(_)
+            | MirTerm::ElifCond(_)
+            | MirTerm::Break { .. }
+            | MirTerm::Continue { .. }
+            | MirTerm::ComptimeYield(_)
+            | MirTerm::ComptimeBreak
+            | MirTerm::ComptimeContinue
+            | MirTerm::Unreachable => {}
         }
     }
     flow
@@ -834,7 +842,7 @@ pub(super) fn interior_reference_uses(instr: &MirInstr) -> Vec<(VarId, Reg)> {
         // metadata, not a second read of a copied argument at call time.
         MirInstr::Call { .. } | MirInstr::CallIndirect { .. } | MirInstr::MethodCall { .. } => {}
         // Invalidating, dropping, or keeping an analytical handle alive is not
-        // a read through that handle. `Try` regions are replayed separately.
+        // a read through that handle. Region ops' regions are replayed separately.
         MirInstr::InvalidateInteriors { .. }
         | MirInstr::DefVar { .. }
         | MirInstr::DeclareVar { .. }
@@ -842,6 +850,10 @@ pub(super) fn interior_reference_uses(instr: &MirInstr) -> Vec<(VarId, Reg)> {
         | MirInstr::ConsumeVar { .. }
         | MirInstr::KeepAlive { .. }
         | MirInstr::Try { .. }
+        | MirInstr::If { .. }
+        | MirInstr::Loop { .. }
+        | MirInstr::ComptimeIf { .. }
+        | MirInstr::ComptimeFor { .. }
         | MirInstr::Const { .. }
         | MirInstr::SizeOf { .. }
         | MirInstr::ParamListAddress { .. }

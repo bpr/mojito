@@ -54,6 +54,21 @@ impl FnLowering<'_> {
             MirTerm::EscapeJump { target, cleanup } => {
                 self.lower_escape_edge(ctx, *target, cleanup)
             }
+            // Concrete MIR carries none: `lower-control-flow` runs first.
+            MirTerm::Yield(_)
+            | MirTerm::ElifCond(_)
+            | MirTerm::Break { .. }
+            | MirTerm::Continue { .. }
+            | MirTerm::ComptimeYield(_)
+            | MirTerm::ComptimeBreak
+            | MirTerm::ComptimeContinue
+            | MirTerm::Unreachable => Err(self.unsupported(
+                format!(
+                    "the region terminator `{}` reached native lowering",
+                    mojito_mir::mir::text::terminator_mnemonic(term)
+                ),
+                None,
+            )),
         }
     }
 

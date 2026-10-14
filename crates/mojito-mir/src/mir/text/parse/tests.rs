@@ -2672,3 +2672,112 @@ fn param_apply_list_get_and_reflect_round_trip() {
     }
     assert_eq!(write::program(&parsed.program), text);
 }
+
+#[test]
+fn structured_region_ops_and_terminators_reprint() {
+    use crate::mir::{LoopLabel, MirElif};
+    let one = |instrs: Vec<MirInstr>, term: MirTerm| vec![MirBlock { instrs, term }];
+    let binder = test_binder("i");
+    let sequences = [
+        mojito_checked::checked::ComptimeSequence::Range {
+            start: constant(CtValue::Int(0)),
+            stop: constant(CtValue::Int(4)),
+            step: constant(CtValue::Int(1)),
+        },
+        mojito_checked::checked::ComptimeSequence::Elements(int_parameter("$test:xs", 0, "xs")),
+        mojito_checked::checked::ComptimeSequence::Iterator {
+            initial: int_parameter("$test:it", 0, "it"),
+            has_next: int_parameter("$test:has", 0, "has"),
+            next_iter: int_parameter("$test:next", 0, "next"),
+        },
+    ];
+    let mut instrs = vec![
+        MirInstr::If {
+            results: vec![Reg(1)],
+            cond: Reg(0),
+            then: one(Vec::new(), MirTerm::Yield(vec![Reg(2)])),
+            elifs: vec![MirElif {
+                cond: one(Vec::new(), MirTerm::ElifCond(Reg(0))),
+                then: one(Vec::new(), MirTerm::Yield(vec![Reg(2)])),
+            }],
+            orelse: one(Vec::new(), MirTerm::Unreachable),
+        },
+        MirInstr::Loop {
+            label: Some(LoopLabel(3)),
+            body: vec![
+                MirBlock {
+                    instrs: Vec::new(),
+                    term: MirTerm::Branch {
+                        cond: Reg(0),
+                        then_b: 1,
+                        else_b: 2,
+                    },
+                },
+                MirBlock {
+                    instrs: Vec::new(),
+                    term: MirTerm::Break {
+                        label: Some(LoopLabel(3)),
+                    },
+                },
+                MirBlock {
+                    instrs: Vec::new(),
+                    term: MirTerm::Continue { label: None },
+                },
+            ],
+        },
+        MirInstr::ComptimeIf {
+            results: Vec::new(),
+            conds: vec![GenericConstraint::Bool(true)],
+            arms: vec![one(Vec::new(), MirTerm::ComptimeYield(Vec::new()))],
+            orelse: one(Vec::new(), MirTerm::ComptimeYield(Vec::new())),
+        },
+    ];
+    instrs.extend(sequences.into_iter().map(|source| MirInstr::ComptimeFor {
+        binder: binder.clone(),
+        slot: 0,
+        source,
+        body: vec![
+            MirBlock {
+                instrs: Vec::new(),
+                term: MirTerm::Branch {
+                    cond: Reg(0),
+                    then_b: 1,
+                    else_b: 2,
+                },
+            },
+            MirBlock {
+                instrs: Vec::new(),
+                term: MirTerm::ComptimeBreak,
+            },
+            MirBlock {
+                instrs: Vec::new(),
+                term: MirTerm::ComptimeContinue,
+            },
+        ],
+        orelse: one(Vec::new(), MirTerm::Unreachable),
+    }));
+    let mut function = function_with(vec![Ty::bool(), Ty::int(), Ty::int()], instrs);
+    function.n_vars = 1;
+    function.var_names = vec!["i".to_string()];
+    function.blocks[0].term = MirTerm::Return(None);
+    let program = program_with(vec![("structured".into(), function)]);
+    assert_reprints(&program);
+    let text = write::program(&program);
+    for mnemonic in [
+        "if {",
+        "if.elifcond.yield {",
+        "yield {",
+        "loop {",
+        "label: present(loop3)",
+        "break {",
+        "continue {",
+        "comptime.if {",
+        "comptime.yield {",
+        "comptime.for {",
+        "comptime.for.break {}",
+        "comptime.for.continue {}",
+        "unreachable {}",
+    ] {
+        assert!(text.contains(mnemonic), "missing `{mnemonic}` in {text}");
+    }
+}

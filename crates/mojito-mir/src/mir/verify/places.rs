@@ -13,11 +13,13 @@ pub(super) fn verify_terminator(
     errors: &mut Vec<String>,
 ) {
     let prefix = format!("MIR function '{name}' block {block_index}");
-    // A region's entry block has no predecessors: control enters a `try`
-    // region only from the `try` (the handler's error binding is the entry
-    // block's argument), never from a branch inside it.
-    if context.in_try_region && crate::mir::terminator_targets(terminator).contains(&0) {
-        errors.push(format!("{prefix}: branch to its try region's entry block"));
+    // A region's entry block has no predecessors: control enters a region
+    // only from its op (a `try` handler's error binding is the entry block's
+    // argument), never from a branch inside it.
+    if !matches!(context.kind(), RegionKind::Function)
+        && crate::mir::terminator_targets(terminator).contains(&0)
+    {
+        errors.push(format!("{prefix}: branch to its region's entry block"));
     }
     match terminator {
         MirTerm::Jump(target) => {
@@ -92,12 +94,12 @@ pub(super) fn verify_terminator(
             }
         }
         MirTerm::FallOff => {
-            if !context.in_try_region {
+            if !context.is_try_part() {
                 errors.push(format!("{prefix}: FallOff terminator outside a try region"));
             }
         }
         MirTerm::EscapeJump { target, .. } => {
-            if !context.in_try_region {
+            if !context.in_try_region() {
                 errors.push(format!(
                     "{prefix}: EscapeJump terminator outside a try region"
                 ));
@@ -105,6 +107,16 @@ pub(super) fn verify_terminator(
             if *target >= context.function_len {
                 errors.push(format!("{prefix}: escape to invalid block {target}"));
             }
+        }
+        MirTerm::Yield(_)
+        | MirTerm::ElifCond(_)
+        | MirTerm::Break { .. }
+        | MirTerm::Continue { .. }
+        | MirTerm::ComptimeYield(_)
+        | MirTerm::ComptimeBreak
+        | MirTerm::ComptimeContinue
+        | MirTerm::Unreachable => {
+            verify_region_terminator(&prefix, function, terminator, context, errors);
         }
     }
 }

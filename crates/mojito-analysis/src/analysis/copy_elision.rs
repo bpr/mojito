@@ -37,7 +37,7 @@ use mojito_hir::hir::VarId;
 use mojito_mir::mir::verify::instruction_operand_regs;
 use mojito_mir::mir::{
     FORWARDED_ARGUMENT_SLOT, MirBlock, MirDeclarations, MirFunction, MirInstr, MirPlace, MirTerm,
-    READ_TEMPORARY_SLOT, Reg, UseMode,
+    READ_TEMPORARY_SLOT, Reg, UseMode, instruction_regions, instruction_regions_mut,
 };
 use std::collections::HashMap;
 
@@ -92,7 +92,7 @@ fn count_operand_uses(blocks: &[MirBlock], uses: &mut HashMap<u32, usize>) {
             for register in &operands {
                 *uses.entry(register.0).or_default() += 1;
             }
-            for region in try_regions(instruction) {
+            for region in instruction_regions(instruction) {
                 count_operand_uses(region, uses);
             }
         }
@@ -140,7 +140,7 @@ fn rewrite_blocks(
 ) {
     for block in blocks {
         for instruction in &mut block.instrs {
-            for region in try_regions_mut(instruction) {
+            for region in instruction_regions_mut(instruction) {
                 rewrite_blocks(region, elision, lent, forwarded);
             }
         }
@@ -444,42 +444,6 @@ fn names(instruction: &MirInstr, var: VarId) -> bool {
         || var_uses(instruction).iter().any(|(named, _)| *named == var)
 }
 
-fn try_regions(instruction: &MirInstr) -> Vec<&[MirBlock]> {
-    let MirInstr::Try {
-        body,
-        handler,
-        orelse,
-        finalbody,
-        ..
-    } = instruction
-    else {
-        return Vec::new();
-    };
-    std::iter::once(body.as_slice())
-        .chain(handler.iter().map(|(_, blocks)| blocks.as_slice()))
-        .chain(orelse.iter().map(Vec::as_slice))
-        .chain(finalbody.iter().map(Vec::as_slice))
-        .collect()
-}
-
-fn try_regions_mut(instruction: &mut MirInstr) -> Vec<&mut [MirBlock]> {
-    let MirInstr::Try {
-        body,
-        handler,
-        orelse,
-        finalbody,
-        ..
-    } = instruction
-    else {
-        return Vec::new();
-    };
-    std::iter::once(body.as_mut_slice())
-        .chain(handler.iter_mut().map(|(_, blocks)| blocks.as_mut_slice()))
-        .chain(orelse.iter_mut().map(Vec::as_mut_slice))
-        .chain(finalbody.iter_mut().map(Vec::as_mut_slice))
-        .collect()
-}
-
 /// Make every death of a lent slot its source's: its `DropVar`s, and its
 /// place in a `try` body's or an exit's cleanup, where a source already
 /// listed keeps its one entry.
@@ -505,7 +469,7 @@ fn strip_forwarded_slots(blocks: &mut [MirBlock], forwarded: &[VarId]) {
             if let MirInstr::Try { cleanup, .. } = instruction {
                 cleanup.retain(|var| !forwarded.contains(var));
             }
-            for region in try_regions_mut(instruction) {
+            for region in instruction_regions_mut(instruction) {
                 strip_forwarded_slots(region, forwarded);
             }
         }
@@ -529,7 +493,7 @@ fn rename_deaths(blocks: &mut [MirBlock], sources: &HashMap<VarId, VarId>) {
                 MirInstr::Try { cleanup, .. } => rename_cleanup(cleanup, sources),
                 _ => {}
             }
-            for region in try_regions_mut(instruction) {
+            for region in instruction_regions_mut(instruction) {
                 rename_deaths(region, sources);
             }
         }

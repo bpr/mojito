@@ -22,8 +22,15 @@ use crate::mir::{MirBlockId, MirCaptureMode, VarId, instruction_slots, terminato
 use std::collections::HashMap;
 
 /// Report every `drop.var` or `var.consume` in `function` whose slot every
-/// path reaching it has already ended.
+/// path reaching it has already ended. A structured body is checked through
+/// its `lower-control-flow` lowering, so a finding names a lowered block.
 pub(super) fn verify_slot_ends(name: &str, function: &MirFunction, errors: &mut Vec<String>) {
+    if crate::mir::has_structured_control_flow(function) {
+        let mut lowered = function.clone();
+        crate::mir::lower_control_flow(&mut lowered);
+        verify_slot_ends(name, &lowered, errors);
+        return;
+    }
     let mut refills = HashMap::new();
     collect_refills(&function.blocks, &mut refills);
     let mut walk = Walk {

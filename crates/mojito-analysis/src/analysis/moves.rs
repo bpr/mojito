@@ -831,7 +831,15 @@ where
             MirTerm::Jump(_)
             | MirTerm::Branch { .. }
             | MirTerm::ComptimeBranch { .. }
-            | MirTerm::ComptimeFor { .. } => {}
+            | MirTerm::ComptimeFor { .. }
+            | MirTerm::Yield(_)
+            | MirTerm::ElifCond(_)
+            | MirTerm::Break { .. }
+            | MirTerm::Continue { .. }
+            | MirTerm::ComptimeYield(_)
+            | MirTerm::ComptimeBreak
+            | MirTerm::ComptimeContinue
+            | MirTerm::Unreachable => {}
         }
     }
     Ok(flow)

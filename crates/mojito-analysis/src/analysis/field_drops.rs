@@ -528,6 +528,15 @@ fn block_field_live_out(
         }
         MirTerm::FallOff => seeds.fall_off.clone(),
         MirTerm::Return(_) => seeds.finally_live.clone(),
+        // Region terminators are lowered before this analysis runs.
+        MirTerm::Yield(_)
+        | MirTerm::ElifCond(_)
+        | MirTerm::Break { .. }
+        | MirTerm::Continue { .. }
+        | MirTerm::ComptimeYield(_)
+        | MirTerm::ComptimeBreak
+        | MirTerm::ComptimeContinue
+        | MirTerm::Unreachable => FieldSet::new(),
         MirTerm::ReturnWithCleanup { cleanup, .. } => {
             let mut out = seeds.finally_live.clone();
             if cleanup.contains(&root.var) {

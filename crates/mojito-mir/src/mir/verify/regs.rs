@@ -58,12 +58,15 @@ pub fn instruction_result_regs(instruction: &MirInstr, out: &mut Vec<Reg>) {
         MirInstr::EstablishLoans { marker, .. }
         | MirInstr::InvalidateInteriors { marker, .. }
         | MirInstr::ConsumePlace { marker, .. } => out.push(*marker),
+        MirInstr::If { results, .. } | MirInstr::ComptimeIf { results, .. } => {
+            out.extend(results.iter().copied());
+        }
         _ => {}
     }
 }
 
 /// The registers an instruction reads (operands, arguments, stored values, and
-/// place index registers). `Try` sub-regions are walked separately.
+/// place index registers). Region ops' blocks are walked separately.
 pub fn instruction_operand_regs(instruction: &MirInstr, out: &mut Vec<Reg>) {
     let place = |p: &MirPlace, out: &mut Vec<Reg>| {
         for projection in &p.proj {
@@ -338,6 +341,7 @@ pub fn instruction_operand_regs(instruction: &MirInstr, out: &mut Vec<Reg>) {
             }
         }
         MirInstr::Raise { src } => out.push(*src),
+        MirInstr::If { cond, .. } => out.push(*cond),
         MirInstr::Drop { reg } => out.push(*reg),
         MirInstr::DefVar { src, .. } => out.push(*src),
         MirInstr::InvalidateInteriors { .. }
@@ -356,6 +360,9 @@ pub fn instruction_operand_regs(instruction: &MirInstr, out: &mut Vec<Reg>) {
         | MirInstr::Next { .. }
         | MirInstr::TryNext { .. }
         | MirInstr::Unsupported(_)
-        | MirInstr::Try { .. } => {}
+        | MirInstr::Try { .. }
+        | MirInstr::Loop { .. }
+        | MirInstr::ComptimeIf { .. }
+        | MirInstr::ComptimeFor { .. } => {}
     }
 }

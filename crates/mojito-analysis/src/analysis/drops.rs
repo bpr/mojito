@@ -903,6 +903,15 @@ pub(super) fn region_block_live_out(
         }
         MirTerm::FallOff => seeds.fall_off.clone(),
         MirTerm::Return(_) | MirTerm::ReturnWithCleanup { .. } => seeds.return_live.clone(),
+        // Region terminators are lowered before this analysis runs.
+        MirTerm::Yield(_)
+        | MirTerm::ElifCond(_)
+        | MirTerm::Break { .. }
+        | MirTerm::Continue { .. }
+        | MirTerm::ComptimeYield(_)
+        | MirTerm::ComptimeBreak
+        | MirTerm::ComptimeContinue
+        | MirTerm::Unreachable => HashSet::new(),
         MirTerm::EscapeJump { target, cleanup } => {
             let mut out = seeds.finally_live.clone();
             out.extend(cleanup.iter().copied());
@@ -1319,7 +1328,15 @@ pub(super) const fn rewire_target(term: &mut MirTerm, old: usize, new: usize) {
         MirTerm::Return(_)
         | MirTerm::ReturnWithCleanup { .. }
         | MirTerm::FallOff
-        | MirTerm::EscapeJump { .. } => {}
+        | MirTerm::EscapeJump { .. }
+        | MirTerm::Yield(_)
+        | MirTerm::ElifCond(_)
+        | MirTerm::Break { .. }
+        | MirTerm::Continue { .. }
+        | MirTerm::ComptimeYield(_)
+        | MirTerm::ComptimeBreak
+        | MirTerm::ComptimeContinue
+        | MirTerm::Unreachable => {}
     }
 }
 

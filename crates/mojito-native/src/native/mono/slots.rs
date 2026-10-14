@@ -7,7 +7,8 @@ use std::collections::BTreeSet;
 
 use mojito_hir::hir::VarId;
 use mojito_mir::mir::{
-    MirBlock, MirFunction, MirInstr, MirTerm, for_each_instruction_slot_mut, instruction_slots,
+    MirBlock, MirFunction, MirInstr, MirTerm, for_each_instruction_slot_mut, instruction_regions,
+    instruction_regions_mut, instruction_slots,
 };
 
 /// Remove the `retired` slots from `function`, none of them a parameter nor
@@ -75,7 +76,15 @@ pub(super) fn renumber_blocks(blocks: &mut [MirBlock], renumber: &dyn Fn(VarId) 
             | MirTerm::Branch { .. }
             | MirTerm::ComptimeBranch { .. }
             | MirTerm::Return(_)
-            | MirTerm::FallOff => {}
+            | MirTerm::FallOff
+            | MirTerm::Yield(_)
+            | MirTerm::ElifCond(_)
+            | MirTerm::Break { .. }
+            | MirTerm::Continue { .. }
+            | MirTerm::ComptimeYield(_)
+            | MirTerm::ComptimeBreak
+            | MirTerm::ComptimeContinue
+            | MirTerm::Unreachable => {}
         }
     }
 }
@@ -83,29 +92,18 @@ pub(super) fn renumber_blocks(blocks: &mut [MirBlock], renumber: &dyn Fn(VarId) 
 fn renumber_instruction(instruction: &mut MirInstr, renumber: &dyn Fn(VarId) -> VarId) {
     for_each_instruction_slot_mut(instruction, &mut |var| *var = renumber(*var));
     if let MirInstr::Try {
-        body,
-        handler,
-        orelse,
-        finalbody,
-        cleanup,
+        handler, cleanup, ..
     } = instruction
     {
-        renumber_blocks(body, renumber);
-        if let Some((slot, blocks)) = handler {
-            if let Some(slot) = slot {
-                *slot = renumber(*slot);
-            }
-            renumber_blocks(blocks, renumber);
-        }
-        if let Some(blocks) = orelse {
-            renumber_blocks(blocks, renumber);
-        }
-        if let Some(blocks) = finalbody {
-            renumber_blocks(blocks, renumber);
+        if let Some((Some(slot), _)) = handler {
+            *slot = renumber(*slot);
         }
         for var in cleanup {
             *var = renumber(*var);
         }
+    }
+    for region in instruction_regions_mut(instruction) {
+        renumber_blocks(region, renumber);
     }
 }
 
@@ -115,24 +113,14 @@ fn collect_block_slots(block: &MirBlock, addressed: &mut BTreeSet<VarId>) {
     for instruction in &block.instrs {
         addressed.extend(instruction_slots(instruction));
         if let MirInstr::Try {
-            body,
-            handler,
-            orelse,
-            finalbody,
-            cleanup,
+            handler, cleanup, ..
         } = instruction
         {
             addressed.extend(handler.iter().filter_map(|(slot, _)| *slot));
             addressed.extend(cleanup.iter().copied());
-            for region in std::iter::once(body)
-                .chain(handler.iter().map(|(_, blocks)| blocks))
-                .chain(orelse)
-                .chain(finalbody)
-            {
-                for inner in region {
-                    collect_block_slots(inner, addressed);
-                }
-            }
+        }
+        for inner in instruction_regions(instruction).into_iter().flatten() {
+            collect_block_slots(inner, addressed);
         }
     }
     match &block.term {
@@ -146,6 +134,14 @@ fn collect_block_slots(block: &MirBlock, addressed: &mut BTreeSet<VarId>) {
         | MirTerm::Branch { .. }
         | MirTerm::ComptimeBranch { .. }
         | MirTerm::Return(_)
-        | MirTerm::FallOff => {}
+        | MirTerm::FallOff
+        | MirTerm::Yield(_)
+        | MirTerm::ElifCond(_)
+        | MirTerm::Break { .. }
+        | MirTerm::Continue { .. }
+        | MirTerm::ComptimeYield(_)
+        | MirTerm::ComptimeBreak
+        | MirTerm::ComptimeContinue
+        | MirTerm::Unreachable => {}
     }
 }

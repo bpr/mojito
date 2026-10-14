@@ -8,6 +8,12 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- MIR has upstream's structured `hlcf` region ops beside `try` (R870):
+  `If`, `Loop`, `ComptimeIf`, and `ComptimeFor`, with their region
+  terminators, MIR text 1.54 (package format 55), verifier rules for each
+  terminator's placement plus a structured mode, and the transitional
+  `lower-control-flow` pass that lowers them to blocks. Nothing produces
+  them yet, so no program's output changes.
 - The plan for structured control flow above the MIR waist is recorded in
   `docs/structured-control-flow-plan.md` (R859): `hlcf`-shaped region ops
   replace the HIR CFG, and one `lower-control-flow` pass moves down to the

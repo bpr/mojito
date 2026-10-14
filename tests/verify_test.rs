@@ -1125,7 +1125,7 @@ fn verifier_rejects_a_branch_to_a_try_region_entry() {
         0,
         &[],
     );
-    expect_finding(&program(f), "branch to its try region's entry block");
+    expect_finding(&program(f), "branch to its region's entry block");
 }
 
 #[test]

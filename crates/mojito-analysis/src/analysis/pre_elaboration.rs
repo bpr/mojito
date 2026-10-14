@@ -72,8 +72,17 @@ pub const ELABORATE_DROPS: BodyPass = BodyPass {
     },
 };
 
+/// Structured control flow lowered to blocks: upstream's `LowerControlFlow`.
+///
+/// Upstream lowers `hlcf` as it reaches LLVM. The pipeline does not list it:
+/// lowering still builds a CFG, so no pipeline body holds a region op.
+pub const LOWER_CONTROL_FLOW: BodyPass = BodyPass {
+    name: "lower-control-flow",
+    run: |_, function, _| mojito_mir::mir::lower_control_flow(function),
+};
+
 /// The pass registered under `name`: a [`PIPELINE`] pass, or one run only
-/// on request (drop elaboration).
+/// on request (drop elaboration, control-flow lowering).
 pub fn pass_named(name: &str) -> Option<&'static Pass> {
     PIPELINE
         .iter()
@@ -170,7 +179,7 @@ pub(super) fn pass_finding(pass: &str, finding: &str) -> String {
 }
 
 /// Passes outside [`PIPELINE`] that [`pass_named`] still answers.
-const REGISTERED: &[Pass] = &[Pass::Body(ELABORATE_DROPS)];
+const REGISTERED: &[Pass] = &[Pass::Body(ELABORATE_DROPS), Pass::Body(LOWER_CONTROL_FLOW)];
 
 /// Run the body pass `pass` over the body `name`, verifying it after the
 /// pass in debug builds.
@@ -207,6 +216,7 @@ mod tests {
         assert!(pass_named("eliminate-dead-symbols").is_some());
         assert!(pass_named("canonicalize").is_some());
         assert!(pass_named("sccp").is_some());
+        assert!(pass_named("lower-control-flow").is_some());
         assert!(pass_named("no-such-pass").is_none());
     }
 }

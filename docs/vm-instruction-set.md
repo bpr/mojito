@@ -154,6 +154,11 @@ accessed; the compact notation omits this analysis-only field.
 | `try` | `Try` | Execute structured try/except/else/finally regions |
 | `unsupported` | `Unsupported` | Report an explicitly unsupported operation |
 
+`if`, `loop`, `comptime.if`, and `comptime.for` (`If`, `Loop`, `ComptimeIf`,
+`ComptimeFor`) are the structured `hlcf` region ops. Concrete MIR carries
+none — the `lower-control-flow` pass lowers them to blocks before the VM runs
+a body — and the VM rejects one as unsupported.
+
 ### Lifetime operations
 
 | Mnemonic | MIR operation | Purpose |
@@ -192,6 +197,11 @@ stored handle and operating on its referent.
 | `return.cleanup` | `ReturnWithCleanup` | Return after pending `finally` regions, then destroy what the return still holds |
 | `falloff` | `FallOff` | Complete a try sub-region normally |
 | `escape` | `EscapeJump` | Leave a try region for an enclosing loop target |
+
+The structured region terminators — `yield`, `if.elifcond.yield`, `break`,
+`continue`, `comptime.yield`, `comptime.for.break`, `comptime.for.continue`,
+and `unreachable` — end only the regions of the ops above, and the VM
+likewise rejects one as unsupported.
 
 ## Constants and Variable Transfer
 

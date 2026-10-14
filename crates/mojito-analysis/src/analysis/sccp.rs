@@ -33,6 +33,7 @@ use mojito_common::timing;
 use mojito_mir::mir::verify::instruction_result_regs;
 use mojito_mir::mir::{
     Const, MirBlock, MirBlockId, MirDeclarations, MirFunction, MirInstr, MirTerm, Reg,
+    instruction_regions,
 };
 use mojito_types::types::Ty;
 use std::collections::HashMap;
@@ -102,7 +103,7 @@ impl Solver<'_> {
     fn visit(&mut self, block: &MirBlock, escapes: &mut Vec<MirBlockId>) -> Vec<MirBlockId> {
         for instruction in &block.instrs {
             self.transfer(instruction);
-            for region in regions(instruction) {
+            for region in instruction_regions(instruction) {
                 self.visit_region(region, escapes);
             }
         }
@@ -124,7 +125,17 @@ impl Solver<'_> {
                 escapes.push(*target);
                 Vec::new()
             }
-            MirTerm::Return(_) | MirTerm::ReturnWithCleanup { .. } | MirTerm::FallOff => Vec::new(),
+            MirTerm::Return(_)
+            | MirTerm::ReturnWithCleanup { .. }
+            | MirTerm::FallOff
+            | MirTerm::Yield(_)
+            | MirTerm::ElifCond(_)
+            | MirTerm::Break { .. }
+            | MirTerm::Continue { .. }
+            | MirTerm::ComptimeYield(_)
+            | MirTerm::ComptimeBreak
+            | MirTerm::ComptimeContinue
+            | MirTerm::Unreachable => Vec::new(),
         }
     }
 
@@ -189,25 +200,6 @@ impl Solver<'_> {
         *current = met;
         self.changed = true;
     }
-}
-
-/// The block lists of a `try` instruction's regions.
-fn regions(instruction: &MirInstr) -> Vec<&Vec<MirBlock>> {
-    let MirInstr::Try {
-        body,
-        handler,
-        orelse,
-        finalbody,
-        ..
-    } = instruction
-    else {
-        return Vec::new();
-    };
-    std::iter::once(body)
-        .chain(handler.as_ref().map(|(_, blocks)| blocks))
-        .chain(orelse)
-        .chain(finalbody)
-        .collect()
 }
 
 /// The operands of an instruction [`MirInstr::folded_constant`] may fold;

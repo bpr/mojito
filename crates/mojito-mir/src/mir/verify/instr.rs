@@ -143,8 +143,8 @@ pub(super) fn verify_instruction(
     verify_effect_instruction(&cx, instruction, errors);
 }
 
-/// A raising site in a nonraising function must sit under a handler; a `try`
-/// verifies each of its regions under that region's protection.
+/// A raising site in a nonraising function must sit under a handler; a
+/// region op verifies each of its regions under that region's protection.
 fn verify_effect_instruction(cx: &InstrCx<'_>, instruction: &MirInstr, errors: &mut Vec<String>) {
     let prefix = cx.prefix;
     match instruction {
@@ -155,50 +155,7 @@ fn verify_effect_instruction(cx: &InstrCx<'_>, instruction: &MirInstr, errors: &
                 ));
             }
         }
-        MirInstr::Try {
-            body,
-            handler,
-            orelse,
-            finalbody,
-            ..
-        } => {
-            let body_context = RegionContext {
-                region_len: body.len(),
-                function_len: cx.context.function_len,
-                in_try_region: true,
-                protected: handler.is_some() || cx.context.protected,
-            };
-            verify_blocks(
-                cx.name,
-                cx.function,
-                cx.declarations,
-                body,
-                &body_context,
-                errors,
-            );
-            for region in handler
-                .iter()
-                .map(|(_, blocks)| blocks)
-                .chain(orelse.iter())
-                .chain(finalbody.iter())
-            {
-                let region_context = RegionContext {
-                    region_len: region.len(),
-                    function_len: cx.context.function_len,
-                    in_try_region: true,
-                    protected: cx.context.protected,
-                };
-                verify_blocks(
-                    cx.name,
-                    cx.function,
-                    cx.declarations,
-                    region,
-                    &region_context,
-                    errors,
-                );
-            }
-        }
-        _ => {}
+        _ => verify_regions(cx, instruction, errors),
     }
     // A call carrying a checked error contract raises unless handled.
     if instruction.call_error().is_some() && !cx.function.raises && !cx.context.protected {

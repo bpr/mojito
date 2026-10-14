@@ -794,6 +794,17 @@ impl FnLowering<'_> {
                 }
             },
             MirInstr::Raise { src } => self.lower_raise(ctx, *src),
+            // Concrete MIR carries none: `lower-control-flow` runs first.
+            MirInstr::If { .. }
+            | MirInstr::Loop { .. }
+            | MirInstr::ComptimeIf { .. }
+            | MirInstr::ComptimeFor { .. } => Err(self.unsupported(
+                format!(
+                    "structured control flow `{}` reached native lowering",
+                    mojito_mir::mir::text::instruction_mnemonic(instr)
+                ),
+                None,
+            )),
             MirInstr::Try {
                 body,
                 handler,

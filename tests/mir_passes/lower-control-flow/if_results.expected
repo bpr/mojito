@@ -1,0 +1,48 @@
+  functions: [
+      fn {
+        name: pick,
+        registers: 4,
+        vars: 4,
+        var_names: [a, b, first, "$yield3"],
+        params: 3,
+        param_types: [param { owner: "pick", slot: 0, name: T, bounds: [ImplicitlyCopyable, Deinitable], callable_bound: absent }, param { owner: "pick", slot: 0, name: T, bounds: [ImplicitlyCopyable, Deinitable], callable_bound: absent }, Bool],
+        owned_params: [false, false, false],
+        deinit_params: [false, false, false],
+        ref_params: [false, false, false],
+        returns_reference: false,
+        var_types: [var_type { var: $v0, type: param { owner: "pick", slot: 0, name: T, bounds: [ImplicitlyCopyable, Deinitable], callable_bound: absent } }, var_type { var: $v1, type: param { owner: "pick", slot: 0, name: T, bounds: [ImplicitlyCopyable, Deinitable], callable_bound: absent } }, var_type { var: $v2, type: Bool }, var_type { var: $v3, type: param { owner: "pick", slot: 0, name: T, bounds: [ImplicitlyCopyable, Deinitable], callable_bound: absent } }],
+        return_type: present(param { owner: "pick", slot: 0, name: T, bounds: [ImplicitlyCopyable, Deinitable], callable_bound: absent }),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: Bool }, reg_type { reg: %r1, type: param { owner: "pick", slot: 0, name: T, bounds: [ImplicitlyCopyable, Deinitable], callable_bound: absent } }, reg_type { reg: %r2, type: param { owner: "pick", slot: 0, name: T, bounds: [ImplicitlyCopyable, Deinitable], callable_bound: absent } }, reg_type { reg: %r3, type: param { owner: "pick", slot: 0, name: T, bounds: [ImplicitlyCopyable, Deinitable], callable_bound: absent } }],
+        locations: [reg_loc { reg: %r0, location: absent }, reg_loc { reg: %r1, location: absent }, reg_loc { reg: %r2, location: absent }, reg_loc { reg: %r3, location: absent }],
+        blocks: [
+          bb0 {
+            instructions: [
+              var.use { dest: %r0, var: $v2, mode: copy }
+            ],
+            terminator: branch { condition: %r0, then: bb2, else: bb3 }
+          },
+          bb1 {
+            instructions: [
+              var.use { dest: %r3, var: $v3, mode: forward }
+            ],
+            terminator: return { value: present(%r3) }
+          },
+          bb2 {
+            instructions: [
+              var.use { dest: %r1, var: $v0, mode: copy },
+              var.store { var: $v3, src: %r1, binding_type: absent, in_place: false }
+            ],
+            terminator: jump { target: bb1 }
+          },
+          bb3 {
+            instructions: [
+              var.use { dest: %r2, var: $v1, mode: copy },
+              var.store { var: $v3, src: %r2, binding_type: absent, in_place: false }
+            ],
+            terminator: jump { target: bb1 }
+          }
+        ]
+      }
+  ]

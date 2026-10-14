@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R885**.
+Next free ID: **R887**.
 
 ## Ordered Work
 
@@ -63,29 +63,6 @@ CFG. The entries that close that gap are staged in
 producers first, then the CFG lowering point moving down one consumer at a
 time.
 
-
-- [ ] **R870 MIR has no structured region ops beside `try`, so no producer
-  can emit upstream's `hlcf` shape**
-
-  Upstream's generators hold control flow as `hlcf` region ops whose
-  regions are single blocks, and MIR's only region op is `MirInstr::Try`.
-  - Stage 1 of `docs/structured-control-flow-plan.md`.
-  - Add `If`, `Loop`, `ComptimeIf`, and `ComptimeFor` region ops, and the
-    `Yield`, `ElifCond`, `Break`, `Continue`, `ComptimeBreak`,
-    `ComptimeContinue`, and `Unreachable` terminators
-    (`crates/mojito-mir/src/mir/ir.rs`), after `HLCFOps.td`.
-  - Add their MIR text read/write and bump the MIR text version.
-  - Add `mir::verify`'s structured mode: every region one block, only
-    region terminators.
-  - Generalize `try_regions`, `block_successors`, `prune_block_list`, and
-    `renumber_escapes` over every region op.
-  - Add the transitional `lower-control-flow` pass (upstream's
-    `LowerControlFlow`) with cases under
-    `tests/mir_passes/lower-control-flow/`.
-  - After it lands, nothing emits the ops, and the pass is registered but
-    has no producer to lower.
-  - Depends on nothing.
-  - Model: Fable, Planned.
 
 - [ ] **R871 Short-circuit, ternary, comparison-chain, and comprehension
   control flow is built as blocks where upstream emits `hlcf.if` with
@@ -138,6 +115,22 @@ time.
     `comptime for … else`.
   - Depends on R872.
   - Model: Opus, Planned.
+
+- [ ] **R885 A `comptime for` region op leaves its loop implicitly when
+  its sequence runs out, where upstream's body tests `has_next` itself**
+
+  Upstream's `LowerSemanticCF` leaves a `hlcf.comptime.for` body opening
+  with an `hlcf.comptime.if` on the iterator's stop test, whose arm holds
+  the lowered `else` and a `comptime.for.break`; Mojito's `ComptimeFor`
+  op continues after itself at exhaustion, with no test in the body.
+  - The op's `else` region is already upstream's post-`LowerSemanticCF`
+    shape: one `unreachable` block.
+  - The explicit test is where a `comptime for … else` body belongs, so
+    R797 should land on top of it.
+  - Needs the iterator protocol as the only source form, so the stop test
+    is `has_next` over the binder.
+  - Depends on R873, R796.
+  - Model: Opus, Not Planned.
 
 - [ ] **R874 A `try`'s parts are multi-block CFGs left through
   `EscapeJump`/`FallOff` where upstream's regions are single blocks left
@@ -405,6 +398,21 @@ time.
   - Start it only after the cheaper passes show how much remains.
   - Depends on R781, R785.
   - Model: Fable, Planned.
+
+- [ ] **R886 Structured region ops carry no values across a region
+  boundary, where upstream's `hlcf` ops pass operands and results**
+
+  Upstream's `hlcf.loop` and `hlcf.comptime.for` carry loop operands and
+  results, and `hlcf.break`, `hlcf.continue`, and `if.elifcond.yield` pass
+  values; Mojito's `Loop`, `ComptimeFor`, `Break`, `Continue`, and
+  `ElifCond` carry none, since MIR blocks have no arguments.
+  - Values cross those boundaries in slots, as they do in today's CFG.
+  - `If`/`ComptimeIf` results already travel through `Yield`/
+    `ComptimeYield`; `lower-control-flow` stores them in slots.
+  - Register promotion is the lever: values the producers keep in slots
+    become operands once a promoted register can cross a region.
+  - Depends on R787, R872.
+  - Model: Fable, Not Planned.
 
 - [ ] **R845 Concrete functions are not CSE'd**
 

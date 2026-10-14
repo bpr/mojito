@@ -656,7 +656,7 @@ pub(super) fn verify_function(
     let context = RegionContext {
         region_len: function.blocks.len(),
         function_len: function.blocks.len(),
-        in_try_region: false,
+        regions: vec![RegionKind::Function],
         protected: false,
     };
     verify_blocks(

@@ -251,21 +251,11 @@ impl Scope {
                 self.kinds.insert(binder.id.clone(), source.binder_meta());
             }
             for instruction in &block.instrs {
-                if let MirInstr::Try {
-                    body,
-                    handler,
-                    orelse,
-                    finalbody,
-                    ..
-                } = instruction
-                {
-                    for region in std::iter::once(body)
-                        .chain(handler.iter().map(|(_, blocks)| blocks))
-                        .chain(orelse.iter())
-                        .chain(finalbody.iter())
-                    {
-                        self.declare_loop_binders(region);
-                    }
+                if let MirInstr::ComptimeFor { binder, source, .. } = instruction {
+                    self.kinds.insert(binder.id.clone(), source.binder_meta());
+                }
+                for region in crate::mir::instruction_regions(instruction) {
+                    self.declare_loop_binders(region);
                 }
             }
         }
@@ -301,18 +291,23 @@ impl ScopeCx<'_> {
     fn blocks(&mut self, blocks: &[MirBlock]) {
         for (index, block) in blocks.iter().enumerate() {
             for instruction in &block.instrs {
-                if let MirInstr::Try {
-                    body,
-                    handler,
-                    orelse,
-                    finalbody,
-                    ..
-                } = instruction
-                {
-                    let regions = std::iter::once(body)
-                        .chain(handler.iter().map(|(_, blocks)| blocks))
-                        .chain(orelse.iter())
-                        .chain(finalbody.iter());
+                let regions = crate::mir::instruction_regions(instruction);
+                if !regions.is_empty() {
+                    match instruction {
+                        MirInstr::ComptimeIf { conds, .. } => {
+                            for cond in conds {
+                                self.constraint(&format!("block {index} compile-time if"), cond);
+                            }
+                        }
+                        MirInstr::ComptimeFor { binder, source, .. } => {
+                            self.comptime_loop(
+                                &format!("block {index} compile-time loop"),
+                                binder,
+                                source,
+                            );
+                        }
+                        _ => {}
+                    }
                     for region in regions {
                         self.blocks(region);
                     }
@@ -383,33 +378,38 @@ impl ScopeCx<'_> {
                     self.constraint(&format!("block {index} compile-time branch"), cond);
                 }
                 MirTerm::ComptimeFor { binder, source, .. } => {
-                    let role = format!("block {index} compile-time loop");
-                    self.reference(&role, &binder.id, &binder.name, None, &[]);
-                    for expression in source.expressions() {
-                        // A sequence the elaborator evaluates is the
-                        // application of its thunk, a list of values; its
-                        // arguments are held to every expression's rules.
-                        let operands: Vec<&ParamExpr> = match expression.kind() {
-                            ParamKind::Apply { args, .. }
-                                if matches!(expression.meta(), MetaTy::ParamList(element)
-                                    if matches!(**element, MetaTy::Value(_))) =>
-                            {
-                                args.iter().collect()
-                            }
-                            _ => vec![expression],
-                        };
-                        for operand in operands {
-                            let mut nested = Vec::new();
-                            self.expr_nodes(
-                                &role,
-                                "compile-time loop sequence",
-                                operand,
-                                &mut nested,
-                            );
-                        }
-                    }
+                    self.comptime_loop(&format!("block {index} compile-time loop"), binder, source);
                 }
                 _ => {}
+            }
+        }
+    }
+
+    /// A compile-time loop's binder is in scope, and every expression of its
+    /// sequence is well-kinded.
+    fn comptime_loop(
+        &mut self,
+        role: &str,
+        binder: &mojito_types::param_expr::ParamRef,
+        source: &mojito_checked::checked::ComptimeSequence,
+    ) {
+        self.reference(role, &binder.id, &binder.name, None, &[]);
+        for expression in source.expressions() {
+            // A sequence the elaborator evaluates is the application of its
+            // thunk, a list of values; its arguments are held to every
+            // expression's rules.
+            let operands: Vec<&ParamExpr> = match expression.kind() {
+                ParamKind::Apply { args, .. }
+                    if matches!(expression.meta(), MetaTy::ParamList(element)
+                        if matches!(**element, MetaTy::Value(_))) =>
+                {
+                    args.iter().collect()
+                }
+                _ => vec![expression],
+            };
+            for operand in operands {
+                let mut nested = Vec::new();
+                self.expr_nodes(role, "compile-time loop sequence", operand, &mut nested);
             }
         }
     }
