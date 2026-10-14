@@ -389,7 +389,7 @@ def modes_for(args, task: Task) -> list[str]:
 def main() -> int:
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("-n", "--count", type=int,
-                   help="tasks to run; 0 means no limit (default 1, or no limit with --until)")
+                   help="tasks to run; 0 means no limit (default 1, or no limit with --until or --only)")
     p.add_argument("--track", help="only the entries of this track, and what they need")
     p.add_argument("--task", action="append", metavar="ID",
                    help="only this entry and its open prerequisites (repeatable)")
@@ -426,7 +426,7 @@ def main() -> int:
                    help="do not commit each finished task")
     args = p.parse_args()
     if args.count is None:
-        args.count = 0 if args.until else 1
+        args.count = 0 if args.until or args.only else 1
     if sum(map(bool, (args.track, args.task, args.only))) > 1:
         sys.exit("claude_loop: --track, --task, and --only exclude each other")
     rm = roadmap.parse()
