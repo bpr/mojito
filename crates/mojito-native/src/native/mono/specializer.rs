@@ -1275,6 +1275,24 @@ impl<'a> Specializer<'a> {
         Ok(())
     }
 
+    /// Whether the `comptime if` condition `cond` holds under the bindings,
+    /// its compile-time applications run first.
+    pub(super) fn decide_comptime_condition(
+        &mut self,
+        template: &str,
+        cond: &GenericConstraint,
+        bindings: &Bindings,
+    ) -> Result<bool, MonoError> {
+        let cond = self.resolve_applications(template, cond, bindings)?;
+        self.constraint_holds(&cond, bindings, &mut HashSet::new())
+            .ok_or_else(|| {
+                self.error(
+                    Some(template),
+                    format!("comptime if condition `{cond:?}` the instance does not decide"),
+                )
+            })
+    }
+
     /// [`Self::select_comptime_branches`] over one block list and the
     /// regions below it; whether any branch was decided.
     pub(super) fn select_comptime_branches_in(
@@ -1292,18 +1310,10 @@ impl<'a> Specializer<'a> {
             } = &block.term
             {
                 let (then_b, else_b) = (*then_b, *else_b);
-                let cond = self.resolve_applications(template, cond, bindings)?;
-                let taken = match self.constraint_holds(&cond, bindings, &mut HashSet::new()) {
-                    Some(true) => then_b,
-                    Some(false) => else_b,
-                    None => {
-                        return Err(self.error(
-                            Some(template),
-                            format!(
-                                "comptime if condition `{cond:?}` the instance does not decide"
-                            ),
-                        ));
-                    }
+                let taken = if self.decide_comptime_condition(template, cond, bindings)? {
+                    then_b
+                } else {
+                    else_b
                 };
                 block.term = MirTerm::Jump(taken);
                 decided = true;

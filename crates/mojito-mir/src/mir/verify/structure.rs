@@ -78,7 +78,28 @@ pub(super) fn verify_regions(cx: &InstrCx<'_>, instruction: &MirInstr, errors: &
                 verify_region(cx, kind, protected, region, errors);
             }
         }
-        MirInstr::ComptimeFor { body, orelse, .. } => {
+        MirInstr::ComptimeFor {
+            source,
+            body,
+            orelse,
+            ..
+        } => {
+            let tests_has_next = matches!(
+                body.as_slice(),
+                [MirBlock {
+                    instrs,
+                    term: MirTerm::Unreachable,
+                }] if matches!(
+                    instrs.first(),
+                    Some(MirInstr::ComptimeIf { conds, .. }) if conds == &[source.stop_test()]
+                )
+            );
+            if !tests_has_next {
+                errors.push(format!(
+                    "{}: comptime for body does not open with its has_next test",
+                    cx.prefix
+                ));
+            }
             let unreachable_else = matches!(
                 orelse.as_slice(),
                 [MirBlock {
@@ -297,22 +318,39 @@ mod tests {
         );
     }
 
-    fn comptime_for(body: Vec<MirBlock>) -> MirInstr {
-        let context = ParamContext::detached();
-        let constant = |value| context.constant(value).expect("a constant");
+    /// A `comptime for` whose body opens with its `has_next` test, the
+    /// test's arm `suite`.
+    fn comptime_for(suite: Vec<MirBlock>) -> MirInstr {
+        let source = sequence();
+        let test = MirInstr::ComptimeIf {
+            results: Vec::new(),
+            conds: vec![source.stop_test()],
+            arms: vec![suite],
+            orelse: one(Vec::new(), MirTerm::ComptimeBreak),
+        };
+        bare_comptime_for(source, one(vec![test], MirTerm::Unreachable))
+    }
+
+    fn bare_comptime_for(source: ComptimeSequence, body: Vec<MirBlock>) -> MirInstr {
         MirInstr::ComptimeFor {
             binder: ParamRef {
                 id: ParamId::new("$comptime_for@f:0..1", 0),
                 name: "i".into(),
             },
-            source: ComptimeSequence {
-                initial: constant(CtValue::Int(0)),
-                has_next: constant(CtValue::Bool(false)),
-                next_iter: constant(CtValue::Int(1)),
-                next_value: constant(CtValue::Int(0)),
-            },
+            source,
             body,
             orelse: one(Vec::new(), MirTerm::Unreachable),
+        }
+    }
+
+    fn sequence() -> ComptimeSequence {
+        let context = ParamContext::detached();
+        let constant = |value| context.constant(value).expect("a constant");
+        ComptimeSequence {
+            initial: constant(CtValue::Int(0)),
+            has_next: constant(CtValue::Bool(false)),
+            next_iter: constant(CtValue::Int(1)),
+            next_value: constant(CtValue::Int(0)),
         }
     }
 
@@ -416,6 +454,23 @@ mod tests {
             "`comptime.for.break` is not inside a comptime for body",
         );
         assert_eq!(found.len(), 1, "{found:?}");
+    }
+
+    #[test]
+    fn a_comptime_for_body_opens_with_its_has_next_test() {
+        let tested = function_with(vec![comptime_for(one(
+            Vec::new(),
+            MirTerm::ComptimeContinue,
+        ))]);
+        assert_eq!(findings(&tested), Vec::<String>::new());
+        let bare = function_with(vec![bare_comptime_for(
+            sequence(),
+            one(Vec::new(), MirTerm::ComptimeContinue),
+        )]);
+        assert_finding(
+            &findings(&bare),
+            "comptime for body does not open with its has_next test",
+        );
     }
 
     #[test]

@@ -400,6 +400,24 @@ fn for_loop_tests_its_has_next_slot_before_binding() {
 }
 
 #[test]
+fn a_comptime_for_stop_arm_is_a_comptime_break() {
+    let c = linked_function_cfg(
+        "def main():\n    comptime for i in range(3):\n        print(i)\n",
+        "main",
+    );
+    let orelse = entry_instrs(&c, &c.root)
+        .iter()
+        .find_map(|instruction| match instruction {
+            HirInstr::ComptimeFor { orelse, .. } => Some(orelse),
+            _ => None,
+        })
+        .expect("a comptime for op");
+    assert!(entry_instrs(&c, orelse).is_empty());
+    assert!(matches!(last_term(&c, orelse), Terminator::ComptimeBreak));
+    assert_all_sealed(&c);
+}
+
+#[test]
 fn a_comptime_for_break_inside_an_if_is_a_comptime_break() {
     let c = linked_function_cfg(
         "def main(a: Bool):\n    comptime for i in range(3):\n        if a:\n            break\n",

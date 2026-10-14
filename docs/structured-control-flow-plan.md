@@ -1,7 +1,8 @@
 # Structured Control Flow Above the Waist: Staged Plan
 
 **Status:** plan recorded 2026-10-14 (R859); stages 1 (R870), 2 (R871),
-3 (R872), and 4 (R873) landed 2026-10-14. The scheduled tasks are on
+3 (R872), and 4 (R873) landed 2026-10-14, and the `comptime for` body's
+`has_next` test (R885) with them. The scheduled tasks are on
 [`docs/roadmap.md`](roadmap.md) track `pmir`, one entry per stage below.
 This document is their design record and is updated as stages land. It is
 the structured-control part of
@@ -54,8 +55,9 @@ Checked in `~/src/mojo/repos/modular/Mojo`.
   way.
 - **The elaborator works on regions** (`lib/Elaborator/Elaborator.cpp`).
   `processComptimeIfOp` keeps the arm taken. `processComptimeForOp` makes
-  one labelled `hlcf.loop` per iteration, and `simplifyParamForLoop` folds
-  the trivial ones away.
+  one labelled `hlcf.loop` per iterator, N+1 of them, since the final,
+  exhausted iterator runs the body's stop arm, and `simplifyParamForLoop`
+  folds the trivial ones away.
 - **Canonicalization is structural**
   (`lib/HLCFDialect/HLCFOpsCanonicalizers.cpp`).
   - On `IfOp`: `HoistYieldResults`, `RemoveStaticCondition`,
@@ -123,7 +125,10 @@ Checked in `~/src/mojo/repos/modular/Mojo`.
   - `ComptimeFor { binder, source, body, orelse }` —
     `hlcf.comptime.for`. `orelse` is the shape `LowerSemanticCF` leaves
     and the elaborator asserts: one block holding `Unreachable`. MIR is
-    that pass's output, so it has no `comptime.for.goto.else`.
+    that pass's output, so it has no `comptime.for.goto.else`: the body is
+    one block holding a `ComptimeIf` on `has_next` over the binder, whose
+    arm is the suite and whose else arm the stop arm, ending in
+    `ComptimeBreak` (R885).
   - `Try` keeps its four parts, each one region — `lit.try`, which upstream
     keeps beside `hlcf`.
 - **Region terminators**, new `MirTerm` variants: `Yield(regs)`,
@@ -156,7 +161,8 @@ Checked in `~/src/mojo/repos/modular/Mojo`.
   runs it.
 - **The elaborator works on regions.** A `ComptimeIf` is replaced by its
   taken arm. A `ComptimeFor` unrolls into one labelled `Loop` per
-  iteration, with `ComptimeBreak`/`ComptimeContinue` retargeted to that
+  iterator, N+1 of them, each deciding its leading `has_next` test before
+  its arms, with `ComptimeBreak`/`ComptimeContinue` retargeted to that
   loop, and the trivial wrappers are folded away. `loop_body` and
   `outermost_loop` are deleted.
 
@@ -233,7 +239,12 @@ last producer. Every stage keeps program output unchanged; the
    builds `hlcf.comptime.if`. MIR lowering builds `MirInstr::ComptimeIf`,
    which the transitional pass lowers to today's `ComptimeBranch` chain.
    HIR's `Jump` and `ComptimeBranch` terminators are gone, so `Cfg::g` has
-   no edge. `comptime for` landed with stage 3.
+   no edge. `comptime for` landed with stage 3. Its body opens with the
+   `ComptimeIf` on `has_next` (R885), and the elaborator already makes
+   upstream's N+1 copies, each deciding that test first and keeping its
+   taken arm alone (`mono/unroll.rs`). The CFG `ComptimeFor` terminator
+   keeps its `exit` edge, which no executed path now takes, until stages
+   11 and 14 delete the terminator.
 5. **`try`.** Each part is one region; `EscapeJump`/`FallOff` become
    `Break`/`Continue`/`Yield`. The single-block rule switches on.
 6. **Move and initialization checks on regions**, as `CheckLifetimes`:

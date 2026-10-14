@@ -1,6 +1,7 @@
 //! Unrolling a `comptime for`: each instance replaces the loop the template
-//! keeps with one copy of its body per iteration, the index bound in each —
-//! or, for an iterator header, the iterator the protocol stepped to.
+//! keeps with one copy of its body per iterator the protocol steps to, the
+//! exhausted one included, each copy keeping the arm of the body's
+//! `has_next` test its iterator takes.
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
@@ -13,17 +14,22 @@ use mojito_mir::mir::{
 
 impl Specializer<'_> {
     /// Unroll every `comptime for` of the instance under its bindings, as
-    /// the elaborator does for upstream's `ComptimeForOp`: the range is
-    /// evaluated, the body is copied once per iteration with fresh registers
-    /// and the index bound to the iteration's value — its reads folded, its
-    /// types substituted, the `comptime if`s over it decided, the loops
-    /// nested in it unrolled in turn — and the copies are chained where the
-    /// loop stood, a `continue` reaching the next copy and a `break` the
-    /// exit. A slot whose type names the index is a fresh slot in each copy,
-    /// as each clone of the region allocates its own `var`, and the
-    /// template's slot leaves the function. The drops the analysis placed in
-    /// the body come with each copy; no last use is recomputed. An empty
-    /// range leaves the exit alone.
+    /// the elaborator does for upstream's `ComptimeForOp`: the iterators are
+    /// stepped, and the body is copied N+1 times, once per iterator
+    /// `has_next` accepts and once over the exhausted one, each with fresh
+    /// registers and the binder bound to its iterator. Each copy decides
+    /// the body's leading `has_next` test first and keeps the taken arm
+    /// alone; the suite's copy then has its reads folded, its types
+    /// substituted, the `comptime if`s over the binder decided, and the
+    /// loops nested in it unrolled in turn, while the exhausted copy keeps
+    /// only the stop arm, which leaves for the exit. The copies are chained
+    /// where the loop stood, a `continue` reaching the next copy and a
+    /// `break` the exit. A slot whose type names the binder is a fresh slot
+    /// in each copy that addresses it, as each clone of the region
+    /// allocates its own `var`, and the template's slot leaves the
+    /// function. The drops the analysis placed in the body come with each
+    /// copy; no last use is recomputed. An empty range makes the one copy
+    /// that takes the stop arm.
     pub(super) fn unroll_comptime_loops(
         &mut self,
         template: &str,
@@ -127,9 +133,9 @@ impl Specializer<'_> {
         Ok(unrolled)
     }
 
-    /// Unroll the loop headed at `header`: its body blocks are copied per
-    /// iteration at the end of `blocks`, the originals left unreachable for
-    /// the final pruning.
+    /// Unroll the loop headed at `header`: the body blocks each iterator's
+    /// copy keeps are copied at the end of `blocks`, the originals left
+    /// unreachable for the final pruning.
     fn unroll_loop(
         &mut self,
         blocks: &mut Vec<MirBlock>,
@@ -147,9 +153,9 @@ impl Specializer<'_> {
         else {
             return Ok(());
         };
-        let values = self.trip_elements(frame.template, &binder, &source, bindings)?;
+        let iterators = self.trip_elements(frame.template, &binder, &source, bindings)?;
         let members = loop_body(blocks, header, body, exit, frame.function_level);
-        let width = members.len();
+        let test = self.stop_test(frame.template, blocks, body, &members, &source)?;
         let mut indexed: BTreeSet<VarId> =
             addressed_slots(members.iter().map(|&member| &blocks[member]))
                 .into_iter()
@@ -166,34 +172,44 @@ impl Specializer<'_> {
             &binder,
         ));
         tables.retired.extend(indexed.iter().copied());
-        let entry = members
-            .iter()
-            .position(|&member| member == body)
-            .unwrap_or(0);
         // Each copy's blocks come first in what its iteration appends; the
         // loops nested in it follow.
-        let mut firsts = Vec::with_capacity(values.len());
-        for value in values {
-            firsts.push(blocks.len());
+        let mut copies: Vec<(MirBlockId, MirBlockId)> = Vec::new();
+        for iterator in iterators {
+            let mut iteration = bindings.clone();
+            iteration.values.insert(binder.clone(), iterator);
+            let suite = self.decide_comptime_condition(frame.template, &test.cond, &iteration)?;
+            let taken = if suite { test.then_b } else { test.else_b };
+            let kept = kept_blocks(blocks, body, &members, (test.block, taken), frame);
+            let first = blocks.len();
+            let entry = first + kept.iter().position(|&member| member == body).unwrap_or(0);
+            copies.push((first, entry));
             self.copy_body(
                 blocks,
-                &members,
+                (&kept, test.block, taken),
                 frame,
-                bindings,
                 tables,
-                (&binder, value, &source.next_value),
+                (&iteration, bindings, suite.then_some(&source.next_value)),
                 &indexed,
             )?;
         }
         // Chain the copies: a back edge to the header reaches the next copy,
-        // and the last one the exit.
-        for (k, &first) in firsts.iter().enumerate() {
-            let next = firsts.get(k + 1).map_or(exit, |first| first + entry);
-            for block in &mut blocks[first..first + width] {
+        // and the exhausted one's stop arm leaves for the exit. The back
+        // edges are those of everything a copy appended: a nested loop's
+        // stop arm threaded past its exit reaches this header directly.
+        let ends: Vec<MirBlockId> = copies
+            .iter()
+            .skip(1)
+            .map(|&(first, _)| first)
+            .chain(std::iter::once(blocks.len()))
+            .collect();
+        for (k, (&(first, _), &end)) in copies.iter().zip(&ends).enumerate() {
+            let next = copies.get(k + 1).map_or(exit, |&(_, entry)| entry);
+            for block in &mut blocks[first..end] {
                 retarget(block, header, next, frame.function_level);
             }
         }
-        blocks[header].term = MirTerm::Jump(firsts.first().map_or(exit, |first| first + entry));
+        blocks[header].term = MirTerm::Jump(copies.first().map_or(exit, |&(_, entry)| entry));
         for &member in &members {
             let dead = std::mem::replace(
                 &mut blocks[member],
@@ -207,34 +223,37 @@ impl Specializer<'_> {
         Ok(())
     }
 
-    /// Append one copy of the loop body for the iteration binding `binder`
-    /// to `value`, finished under that binding: registers fresh, each of the
-    /// `indexed` slots fresh at its type for the iteration, reads of the
-    /// binder folded, types substituted, nested loops unrolled, and the
+    /// Append one copy of the loop body's `kept` blocks for `iteration`,
+    /// which binds the loop's binder, finished under it: the stop test at
+    /// `test` a jump to its `taken` arm, the element answered when the arm
+    /// is the suite, registers fresh, each of the `indexed` slots the copy
+    /// addresses fresh at its type for the iteration, reads of the binder
+    /// folded, types substituted, nested loops unrolled, and the
     /// compile-time branches over the binder decided.
-    #[allow(clippy::too_many_arguments, reason = "one copy's parameters")]
     fn copy_body(
         &mut self,
         blocks: &mut Vec<MirBlock>,
-        members: &[MirBlockId],
+        (kept, test, taken): (&[MirBlockId], MirBlockId, MirBlockId),
         frame: &LoopFrame<'_>,
-        bindings: &Bindings,
         tables: &mut FrameTables<'_>,
-        (binder, bound, element): (&ParamRef, CtValue, &ParamExpr),
+        (iteration, bindings, element): (&Bindings, &Bindings, Option<&ParamExpr>),
         indexed: &BTreeSet<VarId>,
     ) -> Result<(), MonoError> {
         let first = blocks.len();
-        let mut iteration = bindings.clone();
-        iteration.values.insert(binder.clone(), bound);
-        self.answer_element(frame.template, element, &iteration)?;
-        let mapping: HashMap<MirBlockId, MirBlockId> = members
+        if let Some(element) = element {
+            self.answer_element(frame.template, element, iteration)?;
+        }
+        let mapping: HashMap<MirBlockId, MirBlockId> = kept
             .iter()
             .enumerate()
             .map(|(k, &member)| (member, first + k))
             .collect();
         let mut registers = HashMap::new();
-        for &member in members {
+        for &member in kept {
             let mut block = blocks[member].clone();
+            if member == test {
+                block.term = MirTerm::Jump(taken);
+            }
             for target in terminator_targets_mut(&mut block.term) {
                 if let Some(&to) = mapping.get(target) {
                     *target = to;
@@ -243,10 +262,14 @@ impl Specializer<'_> {
             if frame.function_level {
                 remap_escapes(&mut block, &mapping);
             }
-            renumber_block(&mut block, &mut registers, tables, &iteration)?;
+            renumber_block(&mut block, &mut registers, tables, iteration)?;
             blocks.push(block);
         }
-        let slots = fresh_slots(indexed, tables, &iteration);
+        let addressed: BTreeSet<VarId> = addressed_slots(&blocks[first..])
+            .intersection(indexed)
+            .copied()
+            .collect();
+        let slots = fresh_slots(&addressed, tables, iteration);
         if !slots.is_empty() {
             let renumber = |var: VarId| slots.get(&var).copied().unwrap_or(var);
             renumber_blocks(&mut blocks[first..], &renumber);
@@ -259,7 +282,7 @@ impl Specializer<'_> {
         // The loops nested in the copy first: their bounds and their bodies
         // are over this iteration's binding and their own, which nothing
         // else of the copy may be substituted without.
-        self.unroll_in(blocks, first, frame, &iteration, tables)?;
+        self.unroll_in(blocks, first, frame, iteration, tables)?;
         let locals = bound_parameter_locals(frame.scope, bindings);
         substitute_value_parameter_reads(
             &mut blocks[first..],
@@ -272,19 +295,19 @@ impl Specializer<'_> {
             &mut blocks[first..],
             tables.n_regs,
             tables.reg_types,
-            &iteration,
+            iteration,
         )?;
-        substitute_blocks_metadata(&mut blocks[first..], &iteration)?;
+        substitute_blocks_metadata(&mut blocks[first..], iteration)?;
         self.answer_param_constants(
             frame.template,
             &mut blocks[first..],
-            &iteration,
+            iteration,
             tables.n_regs,
             tables.reg_types,
             false,
         )?;
-        self.select_comptime_branches_in(frame.template, &mut blocks[first..], &iteration)?;
-        self.instantiate_region_references(frame.template, &mut blocks[first..], &iteration)
+        self.select_comptime_branches_in(frame.template, &mut blocks[first..], iteration)?;
+        self.instantiate_region_references(frame.template, &mut blocks[first..], iteration)
     }
 
     /// Point each closure and function value of a region copy that names a
@@ -400,9 +423,10 @@ impl Specializer<'_> {
     }
 
     /// The iterators the loop binds under the bindings, in order, as
-    /// upstream's `processParamForOp` steps them: from the iterable's
-    /// `__iter__()`, each iterator `paramfor_has_next` accepts is one
-    /// iteration's binding, and `paramfor_next_iter` gives the next. The
+    /// upstream's `processComptimeForOp` steps them: from the iterable's
+    /// `__iter__()`, each iterator `paramfor_has_next` accepts, and
+    /// `paramfor_next_iter` gives the next, then the exhausted one, so the
+    /// body is unrolled N+1 times and runs its stop arm on the last. The
     /// element is the body's own `paramfor_next_value` read.
     fn trip_elements(
         &mut self,
@@ -417,7 +441,10 @@ impl Specializer<'_> {
             let mut stepping = bindings.clone();
             stepping.values.insert(binder.clone(), iterator.clone());
             match self.evaluated(template, &source.has_next, &stepping)? {
-                CtValue::Bool(false) => return Ok(iterators),
+                CtValue::Bool(false) => {
+                    iterators.push(iterator);
+                    return Ok(iterators);
+                }
                 CtValue::Bool(true) => {}
                 other => {
                     return Err(self.error(
@@ -468,6 +495,44 @@ impl Specializer<'_> {
             })
     }
 
+    /// The body's `has_next` test: the block among `members` the body
+    /// enters by jumps alone — drop elaboration may split the header's edge
+    /// to it — whose `comptime if` decides the stop test of `source`.
+    fn stop_test(
+        &self,
+        template: &str,
+        blocks: &[MirBlock],
+        body: MirBlockId,
+        members: &[MirBlockId],
+        source: &ComptimeSequence,
+    ) -> Result<StopTest, MonoError> {
+        let stop = source.stop_test();
+        let mut block = body;
+        let mut seen = HashSet::new();
+        while members.contains(&block) && seen.insert(block) {
+            match &blocks[block].term {
+                MirTerm::Jump(next) => block = *next,
+                MirTerm::ComptimeBranch {
+                    cond,
+                    then_b,
+                    else_b,
+                } if **cond == stop => {
+                    return Ok(StopTest {
+                        block,
+                        then_b: *then_b,
+                        else_b: *else_b,
+                        cond: stop,
+                    });
+                }
+                _ => break,
+            }
+        }
+        Err(self.error(
+            Some(template),
+            "comptime for body does not open with its has_next test".to_string(),
+        ))
+    }
+
     /// Spend one unit of compile-time fuel on one unrolled iteration.
     fn spend_unroll_fuel(&mut self, template: &str) -> Result<(), MonoError> {
         self.fuel = self.fuel.checked_sub(1).ok_or_else(|| {
@@ -478,6 +543,15 @@ impl Specializer<'_> {
         })?;
         Ok(())
     }
+}
+
+/// A `comptime for` body's leading `has_next` test: the block that
+/// branches on it, its suite and stop arms, and its condition.
+struct StopTest {
+    block: MirBlockId,
+    then_b: MirBlockId,
+    else_b: MirBlockId,
+    cond: GenericConstraint,
 }
 
 /// What one body copy needs of the function it is copied into.
@@ -590,6 +664,35 @@ fn loop_body(
         .collect();
     members.sort_unstable();
     members
+}
+
+/// The blocks of `members` one copy keeps, in index order: those reached
+/// from `body` once the stop test's block `test` leaves for the arm `taken`
+/// alone.
+fn kept_blocks(
+    blocks: &[MirBlock],
+    body: MirBlockId,
+    members: &[MirBlockId],
+    (test, taken): (MirBlockId, MirBlockId),
+    frame: &LoopFrame<'_>,
+) -> Vec<MirBlockId> {
+    let mut reached = BTreeSet::from([body]);
+    let mut stack = vec![body];
+    while let Some(block) = stack.pop() {
+        let successors = if block == test {
+            vec![taken]
+        } else if frame.function_level {
+            mojito_mir::mir::block_successors(&blocks[block])
+        } else {
+            terminator_targets(&blocks[block].term)
+        };
+        for successor in successors {
+            if members.contains(&successor) && reached.insert(successor) {
+                stack.push(successor);
+            }
+        }
+    }
+    reached.into_iter().collect()
 }
 
 /// Point every edge of a copied block that returned to the loop header at

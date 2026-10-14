@@ -8,6 +8,12 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A `comptime for` body now opens with upstream's `comptime if` on the
+  iterator's `has_next`, whose else arm leaves the loop, as
+  `LowerSemanticCF` leaves `hlcf.comptime.for` (R885), and the elaborator
+  unrolls it N+1 times as upstream's does, the exhausted iterator's copy
+  keeping only that stop arm. Program output is unchanged. MIR text 1.58
+  records the body's test, and the package format is 63.
 - The built-in `comptime for` iteration rule is gone (R796): a loop
   header is upstream's iterator protocol alone, so `ComptimeSequence` is
   the iterator's four applications, the header and HIR keep no slot for

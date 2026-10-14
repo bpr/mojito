@@ -1326,7 +1326,10 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   skips. `verify/scope.rs` (`Scope::declare_loop_binders`)
   brings the binders into scope and checks the sequence; `verify/concrete.rs`
   rejects a survivor; the text form is `comptime_for.iterator` (schema
-  1.57). A
+  1.57). The op's body opens with a `ComptimeIf` on
+  `ComptimeSequence::stop_test` (`checked.rs`), the arm the suite and the
+  else arm HIR's stop region (`HirInstr::ComptimeFor::orelse`), which
+  `verify/structure.rs` requires (schema 1.58). A
   `Bool` loop binder is a `comptime if` condition of its own
   (`is_bool_loop_binder`, `check_ct_bool`).
 - Reflection in a served loop: `Checker::eval_reflection_expr`
@@ -1358,18 +1361,23 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `block_successors` is public.
 - `native::mono::unroll` (`mono/unroll.rs`): `unroll_comptime_loops` runs
   before `substitute_function`; `outermost_loop` and `loop_body` (dominators)
-  pick a loop and its body, `trip_elements` evaluates its sequence — a
+  pick a loop and its body, `trip_elements` evaluates its sequence, the
+  exhausted iterator last, so the body is copied N+1 times — a
   thunk's application through `Specializer::resolve_application`, whose
   result `VmBackend::freeze` (`freeze_value`, `backend/vm.rs`) freezes as
   nominal fields and `CtValue::Pointer` memory. `CtValue::comptime_iteration_elements`
   reads the frozen `Array`, `List`, `Set`, or `Dict` storage; a nominal
   `Tuple` (`is_nominal_tuple`) freezes to its elements — and
   `copy_body` appends one finished copy per
-  iteration (fresh registers, a fresh slot from `fresh_slots` for each slot
+  iterator, after `stop_test` finds the body's `has_next` branch,
+  `Specializer::decide_comptime_condition` (`mono/specializer.rs`) decides
+  it under the copy's binding, and `kept_blocks` keeps the taken arm alone
+  (fresh registers, a fresh slot from `fresh_slots` for each slot
   whose type names the index (`mojito_types::types::names_binder`),
   `substitute_value_parameter_reads` with the index among the locals,
   `substitute_blocks_metadata`, nested `unroll_in`,
-  `select_comptime_branches_in`), `retarget` chains the copies, and
+  `select_comptime_branches_in`), `retarget` chains the copies over
+  everything each appended, and
   `forget_registers` drops the dead body's tables; the template's
   index-typed slots leave the instance through `retire_slots`.
 - `native::mono` slot renumbering (`mono/slots.rs`): `renumber_slots`,

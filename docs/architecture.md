@@ -2505,7 +2505,11 @@ its function, as `LowerSemanticCF` numbers loops: its body opens with an
 The `else` body lowers outside its loop's frame, so its own
 `break`/`continue` name the enclosing loop (`lowerLITLoop`). A `comptime for`
 is an `HirInstr::ComptimeFor` (`hlcf.comptime.for`), left with
-`ComptimeBreak` and iterated with `ComptimeContinue`. A `comptime if` is
+`ComptimeBreak` and iterated with `ComptimeContinue`; its `orelse` is the
+stop arm, ended by `ComptimeBreak`, which MIR lowering puts in the else arm
+of the `ComptimeIf` on `has_next` the op's body opens with, as
+`LowerSemanticCF` leaves upstream's body. The elaborator unrolls the body
+N+1 times, the exhausted iterator's copy keeping only the stop arm. A `comptime if` is
 an `HirInstr::ComptimeIf` (`hlcf.comptime.if`): its conditions, computed
 first as upstream's parser does, then one arm region per condition and an
 else region, each arm that completes ended by `Terminator::ComptimeYield`.

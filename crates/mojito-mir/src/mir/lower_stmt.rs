@@ -148,8 +148,9 @@ impl<'a> Flatten<'a> {
                 iter,
                 binding,
                 body,
+                orelse,
                 ..
-            } => self.lower_comptime_for(iter, *binding, body),
+            } => self.lower_comptime_for(iter, *binding, body, orelse),
             // Iterator protocol: compute into a register, then store to the target
             // variable (so the header's branch can read `has_next` as a `UseVar`,
             // and the body binds the loop variable).
@@ -3241,14 +3242,18 @@ impl<'a> Flatten<'a> {
         }
     }
 
-    /// A `comptime for` as `hlcf.comptime.for`. A loop with no recorded
-    /// sequence is the explicit boundary: the iterable is one the
-    /// elaborator unrolls in the AST, never a loop the check kept.
+    /// A `comptime for` as `hlcf.comptime.for`, its body opening with the
+    /// `comptime if` on `has_next` whose arm is the suite and whose else
+    /// arm is the stop region `orelse`, as `LowerSemanticCF` leaves it. A
+    /// loop with no recorded sequence is the explicit boundary: the
+    /// iterable is one the elaborator unrolls in the AST, never a loop the
+    /// check kept.
     fn lower_comptime_for(
         &mut self,
         iter: &'a hir::HirExpr,
         binding: Option<mojito_types::origin::OwnerId>,
         body: &'a hir::HirRegion,
+        orelse: &'a hir::HirRegion,
     ) {
         let iteration = comptime_iteration(self.checked, iter);
         let sequence = iteration.clone().and_then(|iteration| {
@@ -3272,11 +3277,21 @@ impl<'a> Flatten<'a> {
         if let Some((binder, source)) = sequence
             && let Some(iteration) = iteration
         {
-            let body = self.loop_body(&iteration, binding, body);
+            let suite = self.loop_body(&iteration, binding, body);
+            let stop = self.loop_body(&iteration, binding, orelse);
+            let test = MirInstr::ComptimeIf {
+                results: Vec::new(),
+                conds: vec![source.stop_test()],
+                arms: vec![suite],
+                orelse: stop,
+            };
             self.emit(MirInstr::ComptimeFor {
                 binder,
                 source,
-                body,
+                body: vec![MirBlock {
+                    instrs: vec![test],
+                    term: MirTerm::Unreachable,
+                }],
                 orelse: vec![MirBlock {
                     instrs: Vec::new(),
                     term: MirTerm::Unreachable,

@@ -483,6 +483,20 @@ impl ComptimeSequence {
         self.initial.meta().clone()
     }
 
+    /// The loop's stop test, `has_next` over the binder equal to `True`:
+    /// the condition of the `comptime if` its body opens with, as a
+    /// parameter-valued `Bool` condition is spelled.
+    pub fn stop_test(&self) -> mojito_types::types::GenericConstraint {
+        use mojito_types::{
+            ct::CtValue,
+            types::{ConstraintOperand, GenericConstraint},
+        };
+        GenericConstraint::Eq(
+            ConstraintOperand::Expr(self.has_next.clone()),
+            ConstraintOperand::Value(CtValue::Bool(true)),
+        )
+    }
+
     /// Every parameter expression the sequence holds.
     pub fn expressions(&self) -> Vec<&mojito_types::param_expr::ParamExpr> {
         vec![

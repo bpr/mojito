@@ -64,22 +64,6 @@ producers first, then the CFG lowering point moving down one consumer at a
 time.
 
 
-- [ ] **R885 A `comptime for` region op leaves its loop implicitly when
-  its sequence runs out, where upstream's body tests `has_next` itself**
-
-  Upstream's `LowerSemanticCF` leaves a `hlcf.comptime.for` body opening
-  with an `hlcf.comptime.if` on the iterator's stop test, whose arm holds
-  the lowered `else` and a `comptime.for.break`; Mojito's `ComptimeFor`
-  op continues after itself at exhaustion, with no test in the body.
-  - The op's `else` region is already upstream's post-`LowerSemanticCF`
-    shape: one `unreachable` block.
-  - The explicit test is where a `comptime for … else` body belongs, so
-    R797 should land on top of it.
-  - Needs the iterator protocol as the only source form, so the stop test
-    is `has_next` over the binder.
-  - Depends on R873, R796.
-  - Model: Opus, Not Planned.
-
 - [ ] **R874 A `try`'s parts are multi-block CFGs left through
   `EscapeJump`/`FallOff` where upstream's regions are single blocks left
   through labelled terminators**

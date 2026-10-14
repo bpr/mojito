@@ -215,12 +215,16 @@ pub enum HirInstr {
     /// checked binding `binding`, an alias of the element over the loop's
     /// iterator with no slot. `body` ends an iteration
     /// with [`Terminator::ComptimeContinue`] and leaves the loop with
-    /// [`Terminator::ComptimeBreak`]. The elaborator unrolls it.
+    /// [`Terminator::ComptimeBreak`]. `orelse` is the arm taken when the
+    /// iterator's `has_next` fails, ended by [`Terminator::ComptimeBreak`]:
+    /// MIR opens the body with that test, as `LowerSemanticCF` leaves it.
+    /// The elaborator unrolls it.
     ComptimeFor {
         iter: HirExpr,
         var: String,
         binding: Option<mojito_types::origin::OwnerId>,
         body: HirRegion,
+        orelse: HirRegion,
     },
 }
 
@@ -1136,11 +1140,13 @@ impl Lower {
         });
         self.loops.pop();
         self.scopes.pop();
+        let orelse = self.region(|_| Terminator::ComptimeBreak);
         self.push_region_op(HirInstr::ComptimeFor {
             iter,
             var: var.to_string(),
             binding,
             body,
+            orelse,
         });
     }
 

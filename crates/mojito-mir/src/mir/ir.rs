@@ -1794,11 +1794,16 @@ pub enum MirInstr {
     /// `hlcf.comptime.for`: run `body` once per iterator the compile-time
     /// sequence `source` steps through, binding it to the parameter binder
     /// `binder`; the loop variable is an alias of `source.next_value` over
-    /// it and has no storage. The body ends an iteration with
-    /// [`MirTerm::ComptimeContinue`] and leaves the loop with
-    /// [`MirTerm::ComptimeBreak`]; exhaustion continues after the op.
-    /// `orelse` is upstream's else region after `LowerSemanticCF`: one block
-    /// holding [`MirTerm::Unreachable`].
+    /// it and has no storage. The body is one block holding a
+    /// [`MirInstr::ComptimeIf`] on [`ComptimeSequence::stop_test`] and ending
+    /// in [`MirTerm::Unreachable`]: the arm is the suite, which ends an
+    /// iteration with [`MirTerm::ComptimeContinue`], and the else arm is the
+    /// stop arm, which leaves the loop with [`MirTerm::ComptimeBreak`], as a
+    /// `break` in the suite does. Nothing continues after the op but a
+    /// break. `orelse` is upstream's else region after `LowerSemanticCF`:
+    /// one block holding [`MirTerm::Unreachable`].
+    ///
+    /// [`ComptimeSequence::stop_test`]: mojito_checked::checked::ComptimeSequence::stop_test
     ComptimeFor {
         binder: mojito_types::param_expr::ParamRef,
         source: mojito_checked::checked::ComptimeSequence,
@@ -2258,7 +2263,8 @@ pub enum MirTerm {
     /// A `comptime for` header: a loop whose binder `binder` takes each
     /// iterator the compile-time sequence `source` steps through; the loop
     /// variable is an alias of `source.next_value` over it and has no
-    /// storage. The body's back edge jumps here; `exit` follows the loop. Ownership and drops
+    /// storage. The body's back edge jumps here; `exit` follows the loop,
+    /// where a `break` and the body's stop arm land. Ownership and drops
     /// treat it as a loop with its trip count unknown; the elaborator unrolls
     /// it, so concrete MIR carries none.
     ComptimeFor {
