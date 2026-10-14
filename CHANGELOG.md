@@ -8,6 +8,11 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- `benchmarks/compile` gains three instantiation-heavy programs (R774):
+  `collections_many.mojo` (803 generator instances), `nested_generics.mojo`,
+  and `trait_defaults.mojo`, each checked against the pinned Mojo by hand.
+  Writing them found three Mojito-only acceptances, filed as R815–R817
+  with probes, and the missing pin sweep of the folder, R814.
 - `--timings` says how much the elaborator multiplied the program (R771):
   beside `concrete_functions` it reports `concrete_instructions`,
   `generators`, `generator_instances`, `generator_instructions`, and

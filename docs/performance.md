@@ -782,6 +782,23 @@ instructions, 17 generators of 191 instructions, 18 instances of 193;
 numbers. `tests/compiler_test.rs::elaboration_counts_name_generators_and_their_instances`
 pins the definitions on the program's own rows, never on std totals.
 
+Three compile benchmarks make instances most of the program (R774,
+2026-10-13, compiled std package, debug build). `collections_many.mojo`
+drives `List`, `Dict`, `Set`, and `Optional` at a dozen element types,
+`nested_generics.mojo` wraps a user `Box` six deep and nests user generics
+inside std collections, and `trait_defaults.mojo` calls a two-level trait's
+defaults through twelve conformers:
+
+| Fixture | concrete fns | concrete instrs | generators | instances | generator → instance instrs |
+|---|---:|---:|---:|---:|---|
+| `collections_many` | 834 | 17 499 | 111 | 803 | 2 129 → 16 077 (7.6×) |
+| `nested_generics` | 217 | 4 098 | 59 | 194 | 1 136 → 3 117 (2.7×) |
+| `trait_defaults` | 185 | 2 058 | 29 | 130 | 323 → 1 165 (3.6×) |
+
+Each compiles at the pin with the same output (swept with
+`scripts/sweep-assets-mojo --only`; R814 puts the folder in the nightly
+sweep).
+
 ### 4. Profile the dominant measured phase *(done for Hello World: `scripts/sample-stacks`)*
 
 After phase timing identifies the large bucket, build release with debug info

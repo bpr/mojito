@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R814**.
+Next free ID: **R818**.
 
 ## Ordered Work
 
@@ -230,14 +230,14 @@ the `pmir` track, staged in
   - Depends on R772.
   - Model: Opus, Not Planned.
 
-- [ ] **R774 The compile benchmarks barely exercise instantiation**
+- [ ] **R814 Nothing checks `benchmarks/compile` against the pinned Mojo**
 
-  `benchmarks/compile` has one small `generic.mojo`, so neither the
-  counters nor the timings see a program whose cost is mostly instances.
-  - Add fixtures that reach many instances of the bundled collections,
-    nest generic types several levels deep, and call trait defaults through
-    many conformers.
-  - Each must compile with the pinned Mojo, like any `assets/ok` program.
+  `scripts/sweep-assets-mojo` sweeps only `assets/` folders, so a compile
+  benchmark the pin rejects goes unnoticed.
+  - Add `benchmarks/compile` to the overnight sweep in
+    `scripts/run-overnight-gates`, with `--compare`.
+  - First confirm the eight older fixtures pass; the three R774 added
+    were swept by hand with `--only` (2026-10-13).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -5510,6 +5510,47 @@ retained on purpose and re-probed rather than fixed; they are listed in
   - `(c^) + (d^)` is the spelling both accept.
   - Probe: `conformance/probes/transfer_operand_before_infix_operator.mojo`.
   - Found while landing R730 (2026-10-13).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R815 Mojito accepts a `Dict` entry's key as its caller's bound,
+  which the pin rejects**
+
+  Problem: in a generic `def` whose `K` is `Writable`, `print(e.key)` over
+  `d.items()` prints in Mojito, where the pin reports "an element of
+  'values' with type 'K' does not conform to trait 'Writable'".
+  - At the pin the field reads as `DictEntry`'s own `K`, bound by its
+    `KeyElement`-shaped declaration; `d.keys()` or a copy into a `var kk: K`
+    is accepted by both.
+  - Probe: `conformance/probes/dict_entry_key_keeps_caller_bound.mojo`.
+  - Found while landing R774 (2026-10-13).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R816 A contiguous `List` slice is a copy, not a borrowing `Span`**
+
+  Problem: `var ys = xs[1:3]; xs.clear(); print(len(ys))` prints 2 in
+  Mojito, where the pin reports "use of invalidated interior reference
+  'xs["element"]'".
+  - The bundled `List.__getitem__(ContiguousSlice)` returns `Self`, where
+    upstream's returns a `Span` over the list's elements.
+  - Following the pin changes every caller that keeps the slice past a
+    mutation of the list.
+  - Probe: `conformance/probes/list_slice_borrows_the_list.mojo`.
+  - Found while landing R774 (2026-10-13).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R817 The prelude exports `Set`, which the pin's does not**
+
+  Problem: `Set[Int]()` without an import runs in Mojito, where the pin
+  reports "use of unknown declaration 'Set'; did you mean to import it
+  from 'std.collections'?".
+  - `stdlib/std/prelude.mojo` imports `Set`; upstream's prelude does not.
+  - Removing it means adding `from std.collections import Set` to every
+    fixture and bundled module that spells it bare.
+  - Probe: `conformance/probes/set_without_import.mojo`.
+  - Found while landing R774 (2026-10-13).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
