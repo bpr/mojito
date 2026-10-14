@@ -8,6 +8,11 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- The elaborator refuses a package body it reaches whose finish or verify
+  left findings, a pre-elaboration pass's included (R819): each body keeps
+  its own verdict (`PackageBodies::findings`), so a body no program reaches
+  fails none. `CompiledProgram::concrete_mir` now refuses a program whose own
+  bodies carry findings for every backend, not only `Compiler::execute`.
 - Mojito has a pre-elaboration pass pipeline (R777): `analysis::PIPELINE`
   runs between drop elaboration and the elaborator, over the program's own
   bodies and over each imported package body as it is finished, once per

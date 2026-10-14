@@ -106,9 +106,8 @@ pub struct PackageBodies {
     /// Each unit lowered so far, by where its record starts.
     units: Mutex<HashMap<usize, Arc<OnceLock<LoweredUnit>>>>,
     /// Each function table row's body, once finished.
-    decoded: Vec<OnceLock<Option<MirFunction>>>,
+    decoded: Vec<OnceLock<FinishedBody>>,
     finish: Option<BodyFinish>,
-    failures: Mutex<Vec<String>>,
 }
 
 /// What an importer does to a lowered body before using it: insert its
@@ -120,45 +119,24 @@ pub struct PackageBodies {
 pub type BodyFinish = fn(&str, MirFunction, &MirDeclarations, &mut Vec<String>) -> MirFunction;
 
 impl PackageBodies {
-    /// The body of `name`, lowered and finished on first use; `None` when
-    /// the package has no such function or its unit does not lower (a
-    /// failure [`Self::failures`] reports).
+    /// The body of `name`, lowered and finished on first use, whether or
+    /// not it verified; `None` when the package has no such function or its
+    /// unit does not lower (a failure [`Self::findings`] reports).
     ///
     /// Its unit's decode and lowering, and its finish and verify, report as
     /// the `package.unit.*` and `package.body.*` `--timings` spans of the
     /// thread that first asks for it.
     pub fn get(&self, name: &str) -> Option<&MirFunction> {
-        let row = self.package.body_row(name)?;
-        self.decoded
-            .get(row)?
-            .get_or_init(|| {
-                let function = match self.lowered(name) {
-                    Ok(function) => function,
-                    Err(error) => {
-                        self.fail(format!("package body `{name}` does not lower: {error}"));
-                        return None;
-                    }
-                };
-                let Some(finish) = self.finish else {
-                    return Some(function);
-                };
-                let mut findings = Vec::new();
-                let function = {
-                    let _finish = timing::span("package.body.finish");
-                    finish(name, function, &self.declarations, &mut findings)
-                };
-                let _verify = timing::span("package.body.verify");
-                findings.extend(crate::mir::verify::verify_function_in(
-                    name,
-                    &function,
-                    &self.declarations,
-                ));
-                if !findings.is_empty() {
-                    self.fail(findings.join("; "));
-                }
-                Some(function)
-            })
-            .as_ref()
+        self.finished(name)?.function.as_ref()
+    }
+
+    /// What made the body of `name` unusable, finishing it on first use:
+    /// why its unit does not lower, or its finish's and the verifier's
+    /// findings. Empty when it verified or the package has no such
+    /// function.
+    pub fn findings(&self, name: &str) -> &[String] {
+        self.finished(name)
+            .map_or(&[], |finished| finished.findings.as_slice())
     }
 
     /// The body of `name` as its unit lowers to it, before it is finished.
@@ -248,12 +226,60 @@ impl PackageBodies {
             .collect()
     }
 
-    /// The bodies that failed to lower so far.
+    /// The findings of every body finished so far, in this process, in
+    /// package order: not one compilation's verdict, since a package is
+    /// shared by every compilation that imports it.
     pub fn failures(&self) -> Vec<String> {
-        self.failures
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .clone()
+        self.decoded
+            .iter()
+            .filter_map(OnceLock::get)
+            .filter(|finished| !finished.findings.is_empty())
+            .map(|finished| finished.findings.join("; "))
+            .collect()
+    }
+
+    /// The finished body of `name`, finishing it on first use.
+    fn finished(&self, name: &str) -> Option<&FinishedBody> {
+        let row = self.package.body_row(name)?;
+        Some(
+            self.decoded
+                .get(row)?
+                .get_or_init(|| self.finish_body(name)),
+        )
+    }
+
+    /// Lower the body of `name`, finish it, and verify it.
+    fn finish_body(&self, name: &str) -> FinishedBody {
+        let function = match self.lowered(name) {
+            Ok(function) => function,
+            Err(error) => {
+                return FinishedBody {
+                    function: None,
+                    findings: vec![format!("package body `{name}` does not lower: {error}")],
+                };
+            }
+        };
+        let Some(finish) = self.finish else {
+            return FinishedBody {
+                function: Some(function),
+                findings: Vec::new(),
+            };
+        };
+        let mut findings = Vec::new();
+        let function = {
+            let _finish = timing::span("package.body.finish");
+            finish(name, function, &self.declarations, &mut findings)
+        };
+        let _verify = timing::span("package.body.verify");
+        findings.extend(crate::mir::verify::verify_function_in(
+            name,
+            &function,
+            &self.declarations,
+        ));
+        FinishedBody {
+            function: Some(function),
+            findings,
+        }
     }
 
     /// Decode the unit at `range` of the payload and lower it.
@@ -274,13 +300,6 @@ impl PackageBodies {
             },
         );
         crate::mir::lower_package_unit(&program, &self.declarations)
-    }
-
-    fn fail(&self, message: String) {
-        self.failures
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .push(message);
     }
 }
 
@@ -508,9 +527,17 @@ pub fn read_package(bytes: PackageBytes, root: &LibraryRoot) -> Result<Package, 
             units: Mutex::new(HashMap::new()),
             package: declarations,
             finish: None,
-            failures: Mutex::new(Vec::new()),
         },
     })
+}
+
+/// A package body as its importer finished it, and its verdict.
+#[derive(Debug)]
+struct FinishedBody {
+    /// `None` when its unit does not lower.
+    function: Option<MirFunction>,
+    /// Why it does not lower, or its finish's and the verifier's findings.
+    findings: Vec<String>,
 }
 
 /// The functions a unit lowers to, or why it does not lower.

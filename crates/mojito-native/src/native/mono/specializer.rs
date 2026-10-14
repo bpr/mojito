@@ -545,12 +545,25 @@ impl<'a> Specializer<'a> {
         bindings: &Bindings,
     ) -> Result<(), MonoError> {
         let name = self.instance_name(key).to_string();
+        let findings = self.functions.findings(&key.template);
         let template = self.functions.get(key.template.as_str()).ok_or_else(|| {
+            let reason = if findings.is_empty() {
+                String::new()
+            } else {
+                format!(": {}", findings.join("; "))
+            };
             self.error(
                 Some(&key.template),
-                format!("callee `{}` has no MIR body", key.template),
+                format!("callee `{}` has no MIR body{reason}", key.template),
             )
         })?;
+        if !findings.is_empty() {
+            return Err(MonoError {
+                kind: MonoErrorKind::Verify,
+                function: Some(key.template.clone()),
+                construct: findings.join("; "),
+            });
+        }
         let scope = &self.binder_scope(&key.template);
         let bindings = &Bindings {
             layout: self.layout_oracle(),

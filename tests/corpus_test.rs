@@ -390,8 +390,8 @@ fn artifact_trials(trials: &mut Vec<Trial>) {
 
 /// What the VM observes of one production run with the pre-elaboration
 /// pipeline set to `run`: the output, printed before a trap as well, and the
-/// error text. A verifier finding in the program or in an imported package
-/// body fails the trial.
+/// error text. A verifier finding in the program fails the trial; one in an
+/// imported package body the program reaches fails its elaboration.
 fn pipeline_outcome(path: &Path, run: bool) -> Result<(String, Option<String>), Failed> {
     let setting = on_off(run);
     let compiled = Compiler::default()
@@ -409,15 +409,6 @@ fn pipeline_outcome(path: &Path, run: bool) -> Result<(String, Option<String>), 
         .map_err(|error| fail(format!("elaborate (pipeline {setting}): {error}")))?
         .program
         .clone();
-    let body_findings = compiled
-        .imported_package()
-        .map(|package| package.bodies.failures())
-        .unwrap_or_default();
-    if !body_findings.is_empty() {
-        return Err(fail(format!(
-            "package body findings (pipeline {setting}): {body_findings:?}"
-        )));
-    }
     Ok(catch_unwind(AssertUnwindSafe(|| {
         let mut vm = VmBackend::new();
         let error = vm

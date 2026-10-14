@@ -118,7 +118,14 @@ impl CompiledProgram {
     /// backend consumes this one graph; no backend elaborates again. An
     /// imported package's body is lowered from its unit when the elaboration first
     /// reaches it.
+    ///
+    /// A program whose own bodies failed verification is refused, and so is
+    /// one whose elaboration reaches a package body that failed it.
     pub fn concrete_mir(&self) -> Result<&SpecializedProgram, CompilerError> {
+        let findings = &self.elaborated_mir().invariant_errors;
+        if !findings.is_empty() {
+            return Err(CompilerError::Verify(findings.clone()));
+        }
         self.concrete
             .get_or_init(|| {
                 let mir = self.elaborated_mir();
@@ -581,12 +588,9 @@ impl Compiler {
         let mut backend = self.backend.instantiate().map_err(|unimplemented| {
             CompilerError::Runtime(RuntimeError::Unsupported(unimplemented))
         })?;
-        let elaborated = {
+        {
             let _prepare = timing::span("prepare");
-            program.elaborated_mir()
-        };
-        if !elaborated.invariant_errors.is_empty() {
-            return Err(CompilerError::Verify(elaborated.invariant_errors.clone()));
+            program.elaborated_mir();
         }
         let concrete = {
             let _prepare = timing::span("prepare");

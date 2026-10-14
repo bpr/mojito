@@ -392,6 +392,12 @@ backend read one elaboration and no backend elaborates again.
 `mir::ConcreteMir` has one constructor, which runs concrete verification, so
 a holder never has to know which verifier mode ran. A body the elaborator
 refuses is `CompilerError::Elaborate`; there is no other execution path.
+`concrete_mir()` refuses a program whose own bodies carry verifier findings
+(`CompilerError::Verify`), for every backend, and the elaborator refuses a
+package body it materializes whose finish or verify left findings
+(`PackageBodies::findings`, `MonoErrorKind::Verify`). The verdict is the
+body's own, so a body no compilation reaches fails none, as upstream's
+importer fails only the compilation that materializes a bad body.
 
 The entry roots are defined once, by `native::mono::entry_roots`: `main` and
 the module initializer `__toplevel__`, each when the program defines it.
@@ -4745,8 +4751,9 @@ passes that fill it.
   values `bindings()` reports.
 - **Verification.** In debug builds each body is verified after every pass
   (`run_pipeline`), each finding naming the pass, into `invariant_errors` or
-  the package's failures. The post-drop verify after the seam runs in every
-  build.
+  the package body's verdict (`PackageBodies::findings`), which the
+  elaborator refuses when it materializes the body. The post-drop verify
+  after the seam runs in every build.
 - **The switch.** `MOJITO_PRE_ELABORATION=0` turns the pipeline off, and
   `Compiler::with_pre_elaboration(bool)` sets it whatever the environment
   says. The bundled package is imported once per setting
@@ -4758,8 +4765,8 @@ passes that fill it.
   `assets/extensions/ok`, `assets/runtime_error`) with the pipeline on and
   off, in process or, for an `input()` fixture, through the binary with
   piped stdin. It requires the same output, the same error text, and no
-  verifier finding in either run, the imported package's body failures
-  included. The `quick` profile excludes the corpus binary, so the group
+  verifier finding in either run; a finding in a package body the program
+  reaches fails its elaboration. The `quick` profile excludes the corpus binary, so the group
   runs in the overnight gate.
 
 ## Stage 8: Register VM

@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R820**.
+Next free ID: **R821**.
 
 ## Ordered Work
 
@@ -187,19 +187,19 @@ which shrinks it changes no program's behavior. The passes it serves are in
 the `pmir` track, staged in
 [`docs/pre-elaboration-optimization-plan.md`](pre-elaboration-optimization-plan.md).
 
-- [ ] **R819 `Compiler::execute` runs a program whose package bodies failed
-  verification**
+- [ ] **R820 `concrete_mir` refuses every compile after one package
+  declaration fails to decode anywhere in the process**
 
-  A package body that fails verification after it is finished, a
-  pre-elaboration pass's finding included, is still elaborated and run.
-  - `CompiledProgram::concrete_mir` checks `package.declarations.failures()`
-    but not `package.bodies.failures()`.
-  - Only artifact emission (`drop_elaborated_mir`) reports body findings.
-  - The `pre_elaboration::*` corpus group checks the list itself, so this is
-    a production gap, not a test hole.
-  - Done when `concrete_mir` refuses body failures and the corpus stays
-    green; a library body that fails today is fixed, not excused.
-  - Depends on R775.
+  `PackageDeclarations::failures` is one append-only list per package, and
+  the bundled package is shared by every compilation in the process.
+  - `CompiledProgram::concrete_mir` refuses the whole list, so a bad record
+    one compilation reached fails every later one, reached or not.
+  - The verdict should be per declaration, refused by the lookup that
+    reaches it, as R819 made package bodies' verdicts.
+  - Done when the list check leaves `concrete_mir` and a phase test pins
+    that a private package's bad declaration fails only a program reaching
+    it.
+  - Depends on R819.
   - Model: Opus, Not Planned.
 
 - [ ] **R776 A MIR pass has no text-in, text-out test harness**

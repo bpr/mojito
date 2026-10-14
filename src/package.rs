@@ -784,4 +784,77 @@ mod tests {
         );
         assert_eq!(installed.decoded(), 0);
     }
+
+    #[test]
+    fn the_elaboration_refuses_a_reached_package_body_that_failed_verification() {
+        let bodies = failing_bodies();
+        let compiled = Compiler::default()
+            .compile_source(
+                "def main():\n    var xs: List[Int] = [1]\n    print(len(xs))\n",
+                Path::new("main.mojo"),
+            )
+            .expect("compiles");
+        let error = elaborate_against(&compiled, &bodies).expect_err("a reached body fails");
+        assert_eq!(error.kind, crate::native::mono::MonoErrorKind::Verify);
+        let function = error.function.expect("the refused body is named");
+        assert!(!bodies.findings(&function).is_empty(), "{function}");
+        let execution = Compiler::default()
+            .compile_source(
+                "def main():\n    var xs: List[Int] = [1]\n    print(len(xs))\n",
+                Path::new("main.mojo"),
+            )
+            .and_then(|program| Compiler::default().execute(&program))
+            .expect("the process package's bodies verified");
+        assert_eq!(execution.output, "1\n");
+    }
+
+    #[test]
+    fn the_elaboration_refuses_no_package_body_it_does_not_reach() {
+        let bodies = failing_bodies();
+        let compiled = Compiler::default()
+            .compile_source("def main():\n    var x = 1\n", Path::new("main.mojo"))
+            .expect("compiles");
+        assert!(elaborate_against(&compiled, &bodies).is_ok());
+    }
+
+    /// A private copy of the bundled package whose every body, finished as
+    /// the importer finishes it, carries one verifier finding.
+    fn failing_bodies() -> PackageBodies {
+        fn failing(
+            name: &str,
+            function: crate::mir::MirFunction,
+            declarations: &MirDeclarations,
+            findings: &mut Vec<String>,
+        ) -> crate::mir::MirFunction {
+            let function =
+                crate::analysis::finish_package_body(name, function, declarations, findings);
+            findings.push(format!("probe finding in `{name}`"));
+            function
+        }
+        bundled_std_package(true)
+            .expect("the installed package reads")
+            .expect("the bundled library packages");
+        let path = cache_dir().join(format!("std-{BUILD_ID}.mojoc"));
+        let bytes = std::fs::File::open(&path)
+            .and_then(|file| PackageBytes::map(&file))
+            .expect("the package is cached");
+        let root = bundled_root().expect("a bundled library").join("stdlib");
+        read_package(bytes, &LibraryRoot::new(&root))
+            .expect("the cached package reads")
+            .bodies
+            .finishing(failing)
+    }
+
+    fn elaborate_against(
+        compiled: &crate::compiler::CompiledProgram,
+        bodies: &PackageBodies,
+    ) -> Result<crate::native::mono::SpecializedProgram, crate::native::mono::MonoError> {
+        let mir = compiled.elaborated_mir();
+        crate::native::mono::specialize_importing(
+            mir,
+            Some(bodies),
+            &crate::native::mono::entry_roots(mir),
+            None,
+        )
+    }
 }

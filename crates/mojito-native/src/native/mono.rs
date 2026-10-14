@@ -118,6 +118,9 @@ pub enum MonoErrorKind {
     /// instantiation does (`rebind input type 'String' does not match
     /// result type 'Int'`).
     Instantiation,
+    /// A package body the elaboration materializes failed verification
+    /// when its importer finished it.
+    Verify,
 }
 
 impl std::fmt::Display for MonoError {
@@ -134,6 +137,15 @@ impl std::fmt::Display for MonoError {
             ),
             (None, MonoErrorKind::Instantiation) => {
                 write!(f, "function instantiation failed: {construct}")
+            }
+            (Some(function), MonoErrorKind::Verify) => {
+                write!(
+                    f,
+                    "package body `{function}` fails verification: {construct}"
+                )
+            }
+            (None, MonoErrorKind::Verify) => {
+                write!(f, "a package body fails verification: {construct}")
             }
         }
     }

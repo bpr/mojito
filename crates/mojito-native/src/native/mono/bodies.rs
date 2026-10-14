@@ -39,6 +39,16 @@ impl<'a> Bodies<'a> {
             .or_else(|| self.package?.get(name))
     }
 
+    /// What made the package body of `name` unusable when its importer
+    /// finished it; empty for the program's own, whose findings its driver
+    /// refuses before the elaboration.
+    pub(super) fn findings(&self, name: &str) -> &'a [String] {
+        match self.package {
+            Some(package) if !self.resident.contains_key(name) => package.findings(name),
+            _ => &[],
+        }
+    }
+
     pub(super) fn contains_key(&self, name: &str) -> bool {
         self.resident.contains_key(name)
             || self.package.is_some_and(|package| package.contains(name))
