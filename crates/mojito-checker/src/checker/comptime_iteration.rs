@@ -116,7 +116,8 @@ impl Checker {
         };
         if !has_iter {
             return Err(TypeError::Unsupported(format!(
-                "'{ty}' does not implement the '__iter__' method"
+                "'{}' does not implement the '__iter__' method",
+                iterable_spelling(&ty)
             )));
         }
         if !self.reads_compile_time_alone(iter) {
@@ -206,4 +207,40 @@ fn comptime_iterator_binder(iter: &Expr, iterator: &Ty) -> ParamExpr {
         "$iter",
         iterator,
     )
+}
+
+/// The iterable a not-iterable rejection names: a compile-time tuple spells
+/// its element types as the elaborator does for the same program, any other
+/// type its own spelling.
+fn iterable_spelling(ty: &Ty) -> String {
+    let elements: Vec<Ty> = match ty.kind() {
+        TyKind::Tuple(elements) | TyKind::RuntimePack(elements) => elements.clone(),
+        TyKind::Struct(name, args) if name == mojito_types::types::TUPLE_TYPE_NAME => args
+            .iter()
+            .filter_map(|argument| match argument {
+                TyArg::Ty(element) => Some(element.clone()),
+                TyArg::Val(_) | TyArg::Origin(_) => None,
+            })
+            .collect(),
+        _ => return ty.to_string(),
+    };
+    format!(
+        "Tuple[{}]",
+        elements
+            .iter()
+            .map(materialized_element_spelling)
+            .collect::<Vec<_>>()
+            .join(", ")
+    )
+}
+
+/// The element spelling of a materialized compile-time tuple: a literal
+/// element is named by the type it materializes to.
+fn materialized_element_spelling(ty: &Ty) -> String {
+    match ty.kind() {
+        TyKind::IntLiteral => "Int".to_string(),
+        TyKind::StringLiteral => "String".to_string(),
+        TyKind::FloatLiteral => "Float64".to_string(),
+        _ => mojito_types::types::unqualified_type_name(ty),
+    }
 }

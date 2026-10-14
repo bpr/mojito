@@ -571,9 +571,8 @@ impl Checker {
     }
 
     /// Check a `comptime for` by upstream's iterator protocol
-    /// ([`Self::check_comptime_iterator_for`]), after rejecting a
-    /// compile-time `Tuple`, which has no `__iter__`
-    /// ([`Self::reject_compile_time_tuple`]).
+    /// ([`Self::check_comptime_iterator_for`]) over its iterable with every
+    /// local compile-time value inlined.
     pub(super) fn check_comptime_for(
         &mut self,
         stmt: &Stmt,
@@ -582,13 +581,8 @@ impl Checker {
         body: &[Stmt],
         ret: Option<&Ty>,
     ) -> Result<(), TypeError> {
-        let source = iter;
-        let iter = self.inline_local_comptime_values(iter);
-        {
-            let _position = self.comptime_position();
-            self.reject_compile_time_tuple(&iter)?;
-        }
-        self.check_comptime_iterator_for(stmt, var, (source, &iter), body, ret)
+        let inlined = self.inline_local_comptime_values(iter);
+        self.check_comptime_iterator_for(stmt, var, (iter, &inlined), body, ret)
     }
 
     /// Whether every local `expr` names is a compile-time binding: a value
@@ -2740,36 +2734,6 @@ impl Checker {
         }
     }
 
-    /// Reject a `comptime for` over a compile-time `Tuple`, which has no
-    /// `__iter__`, as upstream: the rejection spells the tuple's element
-    /// types as the elaborator does for the same program.
-    fn reject_compile_time_tuple(&self, iter: &Expr) -> Result<(), TypeError> {
-        let not_iterable = |elements: &[Ty]| {
-            TypeError::Unsupported(format!(
-                "'Tuple[{}]' does not implement the '__iter__' method",
-                elements
-                    .iter()
-                    .map(materialized_element_spelling)
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            ))
-        };
-        match self.infer(iter)?.kind() {
-            TyKind::Tuple(elements) | TyKind::RuntimePack(elements) => Err(not_iterable(elements)),
-            TyKind::Struct(name, args) if name == mojito_types::types::TUPLE_TYPE_NAME => {
-                let elements: Vec<Ty> = args
-                    .iter()
-                    .filter_map(|argument| match argument {
-                        TyArg::Ty(element) => Some(element.clone()),
-                        TyArg::Val(_) | TyArg::Origin(_) => None,
-                    })
-                    .collect();
-                Err(not_iterable(&elements))
-            }
-            _ => Ok(()),
-        }
-    }
-
     /// The element a compile-time collection display lists: a dictionary
     /// display's keys, a set display's elements, a list display's elements
     /// (a fixed-size array of literals here) at their default type. `None`
@@ -3031,18 +2995,6 @@ fn materialized_collection_spelling(ty: &Ty) -> String {
         }
     }
     mojito_types::types::unqualified_type_name(ty)
-}
-
-/// The element spelling of a materialized compile-time tuple: a literal
-/// element is named by the type it materializes to, as the elaborator
-/// spells the same rejection.
-fn materialized_element_spelling(ty: &Ty) -> String {
-    match ty.kind() {
-        TyKind::IntLiteral => "Int".to_string(),
-        TyKind::StringLiteral => "String".to_string(),
-        TyKind::FloatLiteral => "Float64".to_string(),
-        _ => mojito_types::types::unqualified_type_name(ty),
-    }
 }
 
 /// Clone `expr` with every identifier that `lookup` binds replaced by its

@@ -462,80 +462,47 @@ pub struct ComptimeIteration {
     pub next_value: mojito_types::param_expr::ParamExpr,
 }
 
-/// What a `comptime for` iterates, as upstream's `kgen.param.for` iterates
-/// a compile-time sequence.
+/// What a `comptime for` iterates, as upstream's `kgen.param.for` steps an
+/// iterator.
+///
+/// From `initial`, the iterable's `__iter__()`, while `has_next` over the
+/// binder holds, the binder takes `next_iter` over it. The binder is the
+/// iterator, and `next_value` over it the element each copy's variable
+/// aliases.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub enum ComptimeSequence {
-    /// A sequence whose value yields the elements
-    /// [`mojito_types::ct::CtValue::comptime_iteration_elements`] names. No
-    /// check produces it; it survives only as a MIR text form.
-    Elements(mojito_types::param_expr::ParamExpr),
-    /// An iterator stepped by upstream's protocol from `initial`, the
-    /// iterable's `__iter__()`: while `has_next` over the binder holds, the
-    /// binder takes `next_iter` over it. The binder is the iterator, and
-    /// `next_value` over it the element each copy's variable aliases.
-    Iterator {
-        initial: mojito_types::param_expr::ParamExpr,
-        has_next: mojito_types::param_expr::ParamExpr,
-        next_iter: mojito_types::param_expr::ParamExpr,
-        next_value: mojito_types::param_expr::ParamExpr,
-    },
+pub struct ComptimeSequence {
+    pub initial: mojito_types::param_expr::ParamExpr,
+    pub has_next: mojito_types::param_expr::ParamExpr,
+    pub next_iter: mojito_types::param_expr::ParamExpr,
+    pub next_value: mojito_types::param_expr::ParamExpr,
 }
 
 impl ComptimeSequence {
-    /// The meta-type of the loop's binder: the iterator of an iterator
-    /// header, the sequence's element otherwise. A tuple element is a value
-    /// of the nominal `Tuple` over its elements' types.
+    /// The meta-type of the loop's binder: the iterator.
     pub fn binder_meta(&self) -> mojito_types::param_expr::MetaTy {
-        use mojito_types::param_expr::MetaTy;
-        fn nominal(meta: &MetaTy) -> Option<mojito_types::types::Ty> {
-            match meta {
-                MetaTy::Tuple(elements) => elements
-                    .iter()
-                    .map(nominal)
-                    .collect::<Option<Vec<_>>>()
-                    .map(mojito_types::types::tuple_type),
-                meta => meta.as_value().cloned(),
-            }
-        }
-        match self {
-            Self::Iterator { initial, .. } => initial.meta().clone(),
-            Self::Elements(elements) => match elements.meta().iteration_element() {
-                Some(element @ MetaTy::Tuple(_)) => {
-                    nominal(element).map_or_else(|| element.clone(), MetaTy::value)
-                }
-                Some(element) => element.clone(),
-                // An empty sequence binds no element.
-                None => MetaTy::int(),
-            },
-        }
+        self.initial.meta().clone()
     }
 
     /// Every parameter expression the sequence holds.
     pub fn expressions(&self) -> Vec<&mojito_types::param_expr::ParamExpr> {
-        match self {
-            Self::Elements(elements) => vec![elements],
-            Self::Iterator {
-                initial,
-                has_next,
-                next_iter,
-                next_value,
-            } => vec![initial, has_next, next_iter, next_value],
-        }
+        vec![
+            &self.initial,
+            &self.has_next,
+            &self.next_iter,
+            &self.next_value,
+        ]
     }
 }
 
 impl std::fmt::Display for ComptimeSequence {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Elements(elements) => write!(f, "{elements}"),
-            Self::Iterator {
-                initial,
-                has_next,
-                next_iter,
-                next_value,
-            } => write!(f, "iter({initial}; {has_next}; {next_iter}; {next_value})"),
-        }
+        let Self {
+            initial,
+            has_next,
+            next_iter,
+            next_value,
+        } = self;
+        write!(f, "iter({initial}; {has_next}; {next_iter}; {next_value})")
     }
 }
 

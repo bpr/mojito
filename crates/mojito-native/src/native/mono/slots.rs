@@ -71,8 +71,8 @@ pub(super) fn renumber_blocks(blocks: &mut [MirBlock], renumber: &dyn Fn(VarId) 
                     *var = renumber(*var);
                 }
             }
-            MirTerm::ComptimeFor { slot, .. } => *slot = renumber(*slot),
-            MirTerm::Jump(_)
+            MirTerm::ComptimeFor { .. }
+            | MirTerm::Jump(_)
             | MirTerm::Branch { .. }
             | MirTerm::ComptimeBranch { .. }
             | MirTerm::Return(_)
@@ -127,10 +127,8 @@ fn collect_block_slots(block: &MirBlock, addressed: &mut BTreeSet<VarId>) {
         MirTerm::ReturnWithCleanup { cleanup, .. } | MirTerm::EscapeJump { cleanup, .. } => {
             addressed.extend(cleanup.iter().copied());
         }
-        MirTerm::ComptimeFor { slot, .. } => {
-            addressed.insert(*slot);
-        }
-        MirTerm::Jump(_)
+        MirTerm::ComptimeFor { .. }
+        | MirTerm::Jump(_)
         | MirTerm::Branch { .. }
         | MirTerm::ComptimeBranch { .. }
         | MirTerm::Return(_)

@@ -1152,16 +1152,17 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
 
 ## The compile-time loop (2026-10-03)
 
-- `MirTerm::ComptimeFor { binder, slot, source, body, exit }`
+- `MirTerm::ComptimeFor { binder, source, body, exit }`
   (`mir/ir.rs`) is the `comptime for` header `lower-control-flow` makes of
   the `MirInstr::ComptimeFor` region op: HIR's
-  `HirInstr::ComptimeFor { iter, var, binding, index, body }`
-  (`hir.rs`, lowered in `Lower::comptime_for` with the loop variable declared as a
-  `for` variable is), lowered by `Flatten::lower_comptime_for` (`mir/lower_stmt.rs`)
+  `HirInstr::ComptimeFor { iter, var, binding, body }`
+  (`hir.rs`, lowered in `Lower::comptime_for`, which declares no slot for
+  the loop variable: it is an alias, as upstream's is), lowered by `Flatten::lower_comptime_for` (`mir/lower_stmt.rs`)
   from the checker's `SemanticAdjustment::ComptimeIteration` (recorded by
   `Checker::check_comptime_iterator_for`, which `check_comptime_for`,
-  `checker/comptime_validation.rs`, calls for every iterable after
-  `reject_compile_time_tuple` rejects a compile-time `Tuple`). A local `comptime` binding of a collection
+  `checker/comptime_validation.rs`, calls for every iterable; a compile-time
+  `Tuple` has no `__iter__`, and `comptime_iterator_protocol` spells its
+  rejection through `iterable_spelling`). A local `comptime` binding of a collection
   display over the binders is typed by
   `Checker::evaluated_display_binding` (its element by
   `display_listed_element`, admitted by `evaluated_display`) from
@@ -1195,13 +1196,13 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   admits an iterable that reads compile-time bindings alone
   (`reads_compile_time_alone`, where a collector's `args.__len__()` is its
   pack's length, `pack_length_receivers`), records the call as the
-  iterable's `SpelledConstruction` and `ComptimeSource::Iterator` in the
+  iterable's `SpelledConstruction` and a `ComptimeIteration` in the
   iterable's `comptime_iteration` fact
   (`CheckedArena::spelled_construction` pushes it onto the call's node),
   binds the iterator binder among the value binders in scope (so a function
   lifted in the body takes it), and binds the variable as a local alias of
   the `paramfor_next_value` application (`next_value`). `lower_comptime_for`
-  makes the header's `ComptimeSequence::Iterator`, its `initial` the thunk
+  makes the header's `ComptimeSequence`, its `initial` the thunk
   of the spelled call (`ComptimeThunks::request_value`), and records the
   variable's alias (`ComptimeThunks::bind_value`) for the thunks and
   bracket arguments that read it; `Specializer::trip_elements`
@@ -1312,13 +1313,9 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `Flatten::lower_call_receiver` (`mir/calls.rs`) reads it as a value, not
   a place, and `type_receiver_name` takes a receiver for a type only when
   its node is a name the check bound to nothing and typed as no value. The header's `source` is the
-  `mojito_checked::checked::ComptimeSequence` (`Elements(expr)`, which no
-  check produces and survives as MIR text until roadmap R796, or
-  `Iterator { initial, has_next, next_iter, next_value }`, whose
-  `binder_meta` types the binder; the elements a
-  value yields are `CtValue::comptime_iteration_elements`, `ct.rs`, which the
-  AST elaborator's `as_sequence` shares), its slot the checked binding's
-  (the slot HIR declared for the binding, typed by `binder_meta`).
+  `mojito_checked::checked::ComptimeSequence`
+  `{ initial, has_next, next_iter, next_value }`, whose `binder_meta` (the
+  iterator's type) types the binder; the header has no slot.
   `Flatten::loop_body` puts each loop's index among the
   `EnclosingBinders` of its body region, with its checked binding
   (`EnclosingBinders::with_loops`, `loop_bindings`), so a bracket argument
@@ -1328,8 +1325,8 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   (`comptime_iterator_binder`) and `mono/substitute.rs::bound_parameter_locals`
   skips. `verify/scope.rs` (`Scope::declare_loop_binders`)
   brings the binders into scope and checks the sequence; `verify/concrete.rs`
-  rejects a survivor; the text form is `comptime_for` for a range (schema
-  1.16) and `comptime_for.elements` for any other sequence (schema 1.25). A
+  rejects a survivor; the text form is `comptime_for.iterator` (schema
+  1.57). A
   `Bool` loop binder is a `comptime if` condition of its own
   (`is_bool_loop_binder`, `check_ct_bool`).
 - Reflection in a served loop: `Checker::eval_reflection_expr`
@@ -1482,13 +1479,11 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   (`parameter_field_objects`); a borrowed one materializes through
   `ParamValue.materialized`, as `ConstructCollection.materialized` does,
   and an alias substitution folds one off a substituted binder
-  (`substituted_field`, `comptime/rewrite.rs`). A compile-time parameter's
-  slot is no
-  drop root: a `comptime for` binder's (`comptime_binder_slots`,
-  `analysis/scan.rs`) and a value parameter's
+  (`substituted_field`, `comptime/rewrite.rs`). A value parameter's
+  slot is no drop root
   (`materialized_parameter_slots`, `mojito-mir/src/mir.rs`, over the
   declarations `binder_scope` walks, which `Specializer::binder_scope`
-  shares), both excluded by `elaborate_drops` and
+  shares), excluded by `elaborate_drops` and
   `RegionDropCtx::droppable`.
 - A type's compile-time value member (`T.K`, `Self.T.K`, `A.K`, `B[4].K`,
   `Self.K`) is `Checker::type_member_value` (`checker/constraints.rs`, over

@@ -732,7 +732,6 @@ impl Decoder {
             }),
             "comptime.for" => Some(MirInstr::ComptimeFor {
                 binder: self.req(value, fields, "binder", Self::binder_ref)?,
-                slot: self.req(value, fields, "slot", Self::var)?,
                 source: self.comptime_sequence(value, fields)?,
                 body: self.req(value, fields, "body", |d, v| Some(d.region_blocks(v)))?,
                 orelse: self.req(value, fields, "else", |d, v| Some(d.region_blocks(v)))?,
@@ -815,28 +814,9 @@ impl Decoder {
                 then_b: self.req(value, fields, "then", Self::block_id)?,
                 else_b: self.req(value, fields, "else", Self::block_id)?,
             }),
-            // Before 1.25 the range form named its binder `index`.
-            "comptime_for.elements" => Some(MirTerm::ComptimeFor {
-                binder: self.req(value, fields, "binder", Self::binder_ref)?,
-                slot: self.req(value, fields, "slot", Self::var)?,
-                source: mojito_checked::checked::ComptimeSequence::Elements(self.req(
-                    value,
-                    fields,
-                    "elements",
-                    Self::param_expr,
-                )?),
-                body: self.req(value, fields, "body", Self::block_id)?,
-                exit: self.req(value, fields, "exit", Self::block_id)?,
-            }),
             "comptime_for.iterator" => Some(MirTerm::ComptimeFor {
                 binder: self.req(value, fields, "binder", Self::binder_ref)?,
-                slot: self.req(value, fields, "slot", Self::var)?,
-                source: mojito_checked::checked::ComptimeSequence::Iterator {
-                    initial: self.req(value, fields, "initial", Self::param_expr)?,
-                    has_next: self.req(value, fields, "has_next", Self::param_expr)?,
-                    next_iter: self.req(value, fields, "next_iter", Self::param_expr)?,
-                    next_value: self.req(value, fields, "next_value", Self::param_expr)?,
-                },
+                source: self.comptime_sequence(value, fields)?,
                 body: self.req(value, fields, "body", Self::block_id)?,
                 exit: self.req(value, fields, "exit", Self::block_id)?,
             }),
@@ -907,23 +887,14 @@ impl Decoder {
             .collect()
     }
 
-    /// A `comptime.for`'s source, its form named by which fields are
-    /// present: `elements`, or `initial`/`has_next`/`next_iter`/`next_value`.
+    /// A `comptime for` header's source: its `initial`/`has_next`/
+    /// `next_iter`/`next_value` fields.
     fn comptime_sequence(
         &mut self,
         value: &Value,
         fields: &[Field],
     ) -> Option<mojito_checked::checked::ComptimeSequence> {
-        use mojito_checked::checked::ComptimeSequence;
-        if self.field(fields, "elements").is_ok() {
-            return Some(ComptimeSequence::Elements(self.req(
-                value,
-                fields,
-                "elements",
-                Self::param_expr,
-            )?));
-        }
-        Some(ComptimeSequence::Iterator {
+        Some(mojito_checked::checked::ComptimeSequence {
             initial: self.req(value, fields, "initial", Self::param_expr)?,
             has_next: self.req(value, fields, "has_next", Self::param_expr)?,
             next_iter: self.req(value, fields, "next_iter", Self::param_expr)?,

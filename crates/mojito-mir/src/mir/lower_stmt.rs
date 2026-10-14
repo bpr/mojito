@@ -147,10 +147,9 @@ impl<'a> Flatten<'a> {
             HirInstr::ComptimeFor {
                 iter,
                 binding,
-                index,
                 body,
                 ..
-            } => self.lower_comptime_for(iter, *binding, *index, body),
+            } => self.lower_comptime_for(iter, *binding, body),
             // Iterator protocol: compute into a register, then store to the target
             // variable (so the header's branch can read `has_next` as a `UseVar`,
             // and the body binds the loop variable).
@@ -3249,7 +3248,6 @@ impl<'a> Flatten<'a> {
         &mut self,
         iter: &'a hir::HirExpr,
         binding: Option<mojito_types::origin::OwnerId>,
-        index: VarId,
         body: &'a hir::HirRegion,
     ) {
         let iteration = comptime_iteration(self.checked, iter);
@@ -3263,7 +3261,7 @@ impl<'a> Flatten<'a> {
                     .bind_value(owner, iteration.next_value.clone());
             }
             let binders = &self.enclosing_binders;
-            let source = mojito_checked::checked::ComptimeSequence::Iterator {
+            let source = mojito_checked::checked::ComptimeSequence {
                 initial: self.comptime_thunks.request_value(iter.node, binders, ty),
                 has_next: iteration.has_next,
                 next_iter: iteration.next_iter,
@@ -3274,21 +3272,9 @@ impl<'a> Flatten<'a> {
         if let Some((binder, source)) = sequence
             && let Some(iteration) = iteration
         {
-            // The slot the body's reads of the variable resolve to:
-            // the one HIR declared for the checked binding, which a
-            // second loop of one name holds under a shadow spelling.
-            let slot = binding.map_or(index, |owner| {
-                *self.owner_vars.entry(owner).or_insert(index)
-            });
-            // Typed by the binder, even when no body read types it:
-            // each unrolled copy stores its element there.
-            if let Some(ty) = source.binder_meta().as_value() {
-                self.var_types.insert(slot, ty.clone());
-            }
             let body = self.loop_body(&iteration, binding, body);
             self.emit(MirInstr::ComptimeFor {
                 binder,
-                slot,
                 source,
                 body,
                 orelse: vec![MirBlock {

@@ -852,25 +852,23 @@ iterator protocol (`Checker::check_comptime_iterator_for`,
 the check spells the iterable as its `__iter__()` call, which the checked
 arena hands HIR in the iterable's place and MIR lifts as a thunk over the
 binders in scope, the header's binder is the iterator, and its
-`ComptimeSequence::Iterator` steps it by the applications of the bundled
+`ComptimeSequence` steps it by the applications of the bundled
 `std.builtin._stubs` functions `paramfor_has_next` and `paramfor_next_iter`
 over that binder, which `native::mono` runs on the VM per step, as
 upstream's `processParamForOp` runs them on its interpreter. The loop
-variable is no binder: it is a local alias of `paramfor_next_value` over
-the iterator (the header's `next_value`), which each body copy runs once
+variable is no binder and has no slot: it is a local alias of
+`paramfor_next_value` over the iterator (the header's `next_value`), which
+each body copy runs once
 and materializes as any application alias is; a function lifted in the
 body over the variable takes the iterator binder. The stubs are linked
 ahead of the prelude, so a bundled module loaded while the prelude
 bootstraps steps its loops by them too. An aggregate loop variable is a
 compile-time parameter of the element's type, as upstream's induction
-variable is: a tuple element's binder is the nominal `Tuple` over its
-elements' types (`ComptimeSequence::binder_meta`), a borrow of the variable
-(the `ref self` of `p[0]`, a read argument, a field read, a receiver)
-materializes it into a temporary (`Checker::materialized_reference_actual`,
-`Checker::materialize_parameter_read`) the ownership analysis destroys, the
-binder's own slot owning nothing and so no drop root
-(`analysis::scan::comptime_binder_slots`), and `native::mono` turns every
-read of it, per unrolled copy, into a `Const::Value` typed by the read's
+variable is: a borrow of the variable (the `ref self` of `p[0]`, a read
+argument, a field read, a receiver) materializes it into a temporary
+(`Checker::materialized_reference_actual`,
+`Checker::materialize_parameter_read`) the ownership analysis destroys, and
+`native::mono` turns every read of it, per unrolled copy, into a `Const::Value` typed by the read's
 register, a `String` leaf included, as upstream's `kgen.param.constant`
 materializes a parameter at each use: each backend writes the frozen
 fields into fresh storage, and no initializer runs again. An element of a
@@ -3807,8 +3805,8 @@ The structure mirrors source-level exception semantics:
 (`docs/structured-control-flow-plan.md`): `If { results, cond, then, elifs,
 orelse }` (`hlcf.if`, each `MirElif` a condition region and an arm), `Loop {
 label, body }` (`hlcf.loop`), `ComptimeIf { results, conds, arms, orelse }`
-(`hlcf.comptime.if`), and `ComptimeFor { binder, slot, source, body, orelse
-}` (`hlcf.comptime.for`, its `orelse` one `Unreachable` block). Their regions
+(`hlcf.comptime.if`), and `ComptimeFor { binder, source, body, orelse }`
+(`hlcf.comptime.for`, its `orelse` one `Unreachable` block). Their regions
 are block lists like a `try` part's, and end in the region terminators
 `Yield`, `ElifCond`, `Break`/`Continue` (an optional `LoopLabel` naming the
 nearest enclosing loop carrying it), `ComptimeYield`, `ComptimeBreak`/

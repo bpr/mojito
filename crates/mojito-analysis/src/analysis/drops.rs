@@ -100,8 +100,7 @@ pub(super) fn elaborate_drops(
         .zip(&generation_entries)
         .map(|(live, generations)| effective_drop_liveness(live.clone(), generations, &loan_roots))
         .collect();
-    let mut parameter_slots = comptime_binder_slots(&f.blocks);
-    parameter_slots.extend(value_parameters);
+    let parameter_slots = value_parameters;
     // The replay moves each instruction into its elaborated block.
     let mut function = function;
     let block_instrs: Vec<Vec<MirInstr>> = function
@@ -113,7 +112,7 @@ pub(super) fn elaborate_drops(
     let droppable = |v: VarId| is_droppable_root(f, v) && !parameter_slots.contains(&v);
     let region_ctx = RegionDropCtx {
         f,
-        parameter_slots: &parameter_slots,
+        parameter_slots,
         loan_roots: &loan_roots,
         generation_dests: &generation_dests,
         effective_live_in: &effective_live_in,
@@ -336,8 +335,7 @@ pub(super) fn elaborate_drops(
 /// Shared analysis inputs for elaborating drops inside `try` region mini-CFGs.
 pub(super) struct RegionDropCtx<'a> {
     f: &'a MirFunction,
-    /// The function's compile-time parameter slots: its `comptime for`
-    /// binders ([`comptime_binder_slots`]) and its materialized value
+    /// The function's compile-time parameter slots: its materialized value
     /// parameters (`materialized_parameter_slots`).
     parameter_slots: &'a HashSet<VarId>,
     /// Owner roots per loan generation, collected deep through regions.
@@ -354,8 +352,7 @@ pub(super) struct RegionDropCtx<'a> {
 
 impl RegionDropCtx<'_> {
     /// Whether the region's function drops the value in `v`
-    /// ([`is_droppable_root`]); a compile-time parameter's slot — a `comptime
-    /// for` binder or a value parameter — never.
+    /// ([`is_droppable_root`]); a value parameter's slot never.
     fn droppable(&self, v: VarId) -> bool {
         is_droppable_root(self.f, v) && !self.parameter_slots.contains(&v)
     }

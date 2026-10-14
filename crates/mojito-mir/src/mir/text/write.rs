@@ -1381,12 +1381,11 @@ fn instruction_value(instruction: &MirInstr) -> String {
         ),
         MirInstr::ComptimeFor {
             binder,
-            slot,
             source,
             body,
             orelse,
         } => {
-            let mut fields = vec![("binder", binder_ref(binder)), ("slot", var_value(*slot))];
+            let mut fields = vec![("binder", binder_ref(binder))];
             fields.extend(sequence_fields(source));
             fields.extend([("body", blocks_value(body)), ("else", blocks_value(orelse))]);
             record(tag, &fields)
@@ -1480,12 +1479,11 @@ fn term_value(term: &MirTerm) -> String {
         ),
         MirTerm::ComptimeFor {
             binder,
-            slot,
             source,
             body,
             exit,
         } => {
-            let mut fields = vec![("binder", binder_ref(binder)), ("slot", var_value(*slot))];
+            let mut fields = vec![("binder", binder_ref(binder))];
             fields.extend(sequence_fields(source));
             fields.extend([("body", format!("bb{body}")), ("exit", format!("bb{exit}"))]);
             record(tag, &fields)
@@ -1520,22 +1518,14 @@ fn term_value(term: &MirTerm) -> String {
     }
 }
 
-/// A `comptime for` source's fields, the form named by which are present.
+/// A `comptime for` source's fields.
 fn sequence_fields(source: &ComptimeSequence) -> Vec<(&'static str, String)> {
-    match source {
-        ComptimeSequence::Elements(elements) => vec![("elements", param_expr(elements))],
-        ComptimeSequence::Iterator {
-            initial,
-            has_next,
-            next_iter,
-            next_value,
-        } => vec![
-            ("initial", param_expr(initial)),
-            ("has_next", param_expr(has_next)),
-            ("next_iter", param_expr(next_iter)),
-            ("next_value", param_expr(next_value)),
-        ],
-    }
+    vec![
+        ("initial", param_expr(&source.initial)),
+        ("has_next", param_expr(&source.has_next)),
+        ("next_iter", param_expr(&source.next_iter)),
+        ("next_value", param_expr(&source.next_value)),
+    ]
 }
 
 fn loop_label(label: LoopLabel) -> String {

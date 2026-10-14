@@ -120,7 +120,7 @@ Checked in `~/src/mojo/repos/modular/Mojo`.
     until register promotion (R787) brings operands and results.
   - `ComptimeIf { results, conds, arms, orelse }` — `hlcf.comptime.if`:
     one arm per condition, then the else region.
-  - `ComptimeFor { binder, slot, source, body, orelse }` —
+  - `ComptimeFor { binder, source, body, orelse }` —
     `hlcf.comptime.for`. `orelse` is the shape `LowerSemanticCF` leaves
     and the elaborator asserts: one block holding `Unreachable`. MIR is
     that pass's output, so it has no `comptime.for.goto.else`.

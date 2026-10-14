@@ -78,15 +78,7 @@ pub(super) fn verify_regions(cx: &InstrCx<'_>, instruction: &MirInstr, errors: &
                 verify_region(cx, kind, protected, region, errors);
             }
         }
-        MirInstr::ComptimeFor {
-            slot, body, orelse, ..
-        } => {
-            if *slot as usize >= cx.function.n_vars {
-                errors.push(format!(
-                    "{}: compile-time loop slot {slot} is out of range",
-                    cx.prefix
-                ));
-            }
+        MirInstr::ComptimeFor { body, orelse, .. } => {
             let unreachable_else = matches!(
                 orelse.as_slice(),
                 [MirBlock {
@@ -307,17 +299,18 @@ mod tests {
 
     fn comptime_for(body: Vec<MirBlock>) -> MirInstr {
         let context = ParamContext::detached();
+        let constant = |value| context.constant(value).expect("a constant");
         MirInstr::ComptimeFor {
             binder: ParamRef {
                 id: ParamId::new("$comptime_for@f:0..1", 0),
                 name: "i".into(),
             },
-            slot: 0,
-            source: ComptimeSequence::Elements(
-                context
-                    .constant(CtValue::List(vec![CtValue::Int(0), CtValue::Int(1)]))
-                    .expect("a constant"),
-            ),
+            source: ComptimeSequence {
+                initial: constant(CtValue::Int(0)),
+                has_next: constant(CtValue::Bool(false)),
+                next_iter: constant(CtValue::Int(1)),
+                next_value: constant(CtValue::Int(0)),
+            },
             body,
             orelse: one(Vec::new(), MirTerm::Unreachable),
         }

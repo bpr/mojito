@@ -8,6 +8,13 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- The built-in `comptime for` iteration rule is gone (R796): a loop
+  header is upstream's iterator protocol alone, so `ComptimeSequence` is
+  the iterator's four applications, the header and HIR keep no slot for
+  the loop variable (an alias, as upstream's is), and the compile-time
+  `Tuple` rejection is the `__iter__` rule's own. Diagnostics and program
+  output are unchanged. MIR text 1.57 withdraws `comptime_for.elements` and
+  the header's `slot` field, and the package format is 62.
 - A `comptime for` over a value pack (`*vals: Int`, a struct's
   `Self.values`) or a reflected field-name list (`reflect[T].field_names()`,
   or a `comptime` binding of one) now steps its `__iter__()` iterator by

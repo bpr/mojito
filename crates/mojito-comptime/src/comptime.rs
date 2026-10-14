@@ -73,13 +73,13 @@ impl CtValueExt for CtValue {
         }
     }
     /// The elements of a compile-time collection (`Tuple`/`List`), for
-    /// iteration and indexing. A `TypeList` value (`Sized` and iterable
+    /// indexing, `len`, and dictionary literals. A `TypeList` value (`Sized` and iterable
     /// upstream) yields its element types.
     fn as_sequence(&self, ctx: &str) -> Result<Vec<CtValue>, ComptimeError> {
         // A dictionary iterates (and counts) its keys, as at runtime.
         self.comptime_iteration_elements()
             .or_else(|| self.typelist_elements().map(<[Self]>::to_vec))
-            .ok_or_else(|| ComptimeError::BadRange(ctx.to_string()))
+            .ok_or_else(|| ComptimeError::NotCollection(ctx.to_string()))
     }
 
     /// The element types carried by a compile-time `TypeList` value, or
@@ -116,11 +116,9 @@ pub enum ComptimeError {
     NotInt(String),
     /// Integer `//`/`%` by zero, or a negative `**` exponent, at compile time.
     BadArithmetic(String),
-    /// A `comptime for` iterable was not a `range(...)` / tuple / list.
-    BadRange(String),
-    /// A `comptime for` iterable whose type has no `__iter__` (a compile-time
-    /// Tuple); the payload is the type's spelling.
-    NotIterable(String),
+    /// A compile-time collection read (an index, a `len`, a dictionary
+    /// literal) over a value that is no collection.
+    NotCollection(String),
     /// A CTFE call had the wrong number of arguments.
     Arity(String),
     /// An inferred type-pack element failed one of the pack's trait bounds at
@@ -184,10 +182,7 @@ impl std::fmt::Display for ComptimeError {
             Self::NotBool(s) => write!(f, "expected a compile-time Bool ({s})"),
             Self::NotInt(s) => write!(f, "expected a compile-time Int ({s})"),
             Self::BadArithmetic(s) => write!(f, "compile-time arithmetic error: {s}"),
-            Self::BadRange(s) => {
-                write!(f, "'comptime for' needs a range(...)/tuple/list: {s}")
-            }
-            Self::NotIterable(ty) => write!(f, "'{ty}' does not implement the '__iter__' method"),
+            Self::NotCollection(s) => write!(f, "not a compile-time collection: {s}"),
             Self::Arity(s) => write!(f, "compile-time call arity: {s}"),
             Self::UnqualifiedStructParam(name) => write!(
                 f,

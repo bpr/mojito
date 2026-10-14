@@ -7012,20 +7012,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R796 The built-in `comptime for` iteration rule still stands beside
-  the iterator protocol**
-
-  Problem: once every iterable iterates by its iterator, the built-in
-  forms remain as dead weight and a non-upstream header shape.
-  - Remove `ComptimeSequence::{Range, Elements}`, the remaining
-    `ComptimeSource` variants, and the loop use of
-    `CtValue::comptime_iteration_elements`.
-  - Remove the header's `slot`, which upstream's `ParamForOp` lacks and
-    nothing reads in the iterator form.
-  - Fold the compile-time `Tuple` rejection into the `__iter__` rule.
-  - Depends on R791, R794, and R795.
-  - Model: Opus, Planned.
-
 - [ ] **R798 The bundled `paramfor_*` stubs bound their iterator by
   `Deinitable` as well**
 

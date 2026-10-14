@@ -193,9 +193,6 @@ impl<'a> Walk<'a> {
                 return flow;
             }
         }
-        if let MirTerm::ComptimeFor { slot, .. } = &block.term {
-            set(&mut state, *slot, false);
-        }
         flow.normal = Some(state);
         flow
     }

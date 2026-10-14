@@ -140,7 +140,6 @@ impl Specializer<'_> {
     ) -> Result<(), MonoError> {
         let MirTerm::ComptimeFor {
             binder,
-            slot,
             source,
             body,
             exit,
@@ -149,10 +148,6 @@ impl Specializer<'_> {
             return Ok(());
         };
         let values = self.trip_elements(frame.template, &binder, &source, bindings)?;
-        let element = match &source {
-            ComptimeSequence::Iterator { next_value, .. } => Some(next_value),
-            ComptimeSequence::Elements(_) => None,
-        };
         let members = loop_body(blocks, header, body, exit, frame.function_level);
         let width = members.len();
         let mut indexed: BTreeSet<VarId> =
@@ -186,7 +181,7 @@ impl Specializer<'_> {
                 frame,
                 bindings,
                 tables,
-                (&binder, slot, value, element),
+                (&binder, value, &source.next_value),
                 &indexed,
             )?;
         }
@@ -225,15 +220,13 @@ impl Specializer<'_> {
         frame: &LoopFrame<'_>,
         bindings: &Bindings,
         tables: &mut FrameTables<'_>,
-        (binder, slot, bound, element): (&ParamRef, VarId, CtValue, Option<&ParamExpr>),
+        (binder, bound, element): (&ParamRef, CtValue, &ParamExpr),
         indexed: &BTreeSet<VarId>,
     ) -> Result<(), MonoError> {
         let first = blocks.len();
         let mut iteration = bindings.clone();
-        iteration.values.insert(binder.clone(), bound.clone());
-        if let Some(element) = element {
-            self.answer_element(frame.template, element, &iteration)?;
-        }
+        iteration.values.insert(binder.clone(), bound);
+        self.answer_element(frame.template, element, &iteration)?;
         let mapping: HashMap<MirBlockId, MirBlockId> = members
             .iter()
             .enumerate()
@@ -267,14 +260,7 @@ impl Specializer<'_> {
         // are over this iteration's binding and their own, which nothing
         // else of the copy may be substituted without.
         self.unroll_in(blocks, first, frame, &iteration, tables)?;
-        let mut locals = bound_parameter_locals(frame.scope, bindings);
-        let with_template = |mut error: MonoError| {
-            error.function = Some(frame.template.to_string());
-            error
-        };
-        if let Some(name) = tables.var_names.get(slot as usize) {
-            locals.insert(name.clone(), &bound);
-        }
+        let locals = bound_parameter_locals(frame.scope, bindings);
         substitute_value_parameter_reads(
             &mut blocks[first..],
             tables.var_names,
@@ -282,10 +268,6 @@ impl Specializer<'_> {
             &locals,
             &bindings.callables,
         )?;
-        if bound.is_constructed_parameter_value() {
-            reject_parameter_storage_reads(&blocks[first..], slot, &bound)
-                .map_err(with_template)?;
-        }
         default_construct_parameters(
             &mut blocks[first..],
             tables.n_regs,
@@ -417,10 +399,11 @@ impl Specializer<'_> {
             .collect()
     }
 
-    /// The values the loop binds under the bindings, in order: the
-    /// iterators an iterator header steps through, or the elements of a
-    /// collection ([`CtValue::comptime_iteration_elements`]), each
-    /// materialized at the binder's type.
+    /// The iterators the loop binds under the bindings, in order, as
+    /// upstream's `processParamForOp` steps them: from the iterable's
+    /// `__iter__()`, each iterator `paramfor_has_next` accepts is one
+    /// iteration's binding, and `paramfor_next_iter` gives the next. The
+    /// element is the body's own `paramfor_next_value` read.
     fn trip_elements(
         &mut self,
         template: &str,
@@ -428,66 +411,25 @@ impl Specializer<'_> {
         source: &ComptimeSequence,
         bindings: &Bindings,
     ) -> Result<Vec<CtValue>, MonoError> {
-        let undecided = |this: &Self, expression: &ParamExpr| {
-            this.error(
-                Some(template),
-                format!(
-                    "comptime for over `{binder}` has the sequence `{expression}` the instance does not decide"
-                ),
-            )
-        };
-        let elements = match source {
-            // Upstream's `processParamForOp`: from the iterable's
-            // `__iter__()`, each iterator `paramfor_has_next` accepts is one
-            // iteration's binding, and `paramfor_next_iter` gives the next.
-            // The element is the body's own `paramfor_next_value` read.
-            ComptimeSequence::Iterator {
-                initial,
-                has_next,
-                next_iter,
-                ..
-            } => {
-                let mut iterator = self.evaluated(template, initial, bindings)?;
-                let mut iterators = Vec::new();
-                loop {
-                    let mut stepping = bindings.clone();
-                    stepping.values.insert(binder.clone(), iterator.clone());
-                    match self.evaluated(template, has_next, &stepping)? {
-                        CtValue::Bool(false) => return Ok(iterators),
-                        CtValue::Bool(true) => {}
-                        other => {
-                            return Err(self.error(
-                                Some(template),
-                                format!(
-                                    "comptime for over `{binder}`: paramfor_has_next gave `{other}`"
-                                ),
-                            ));
-                        }
-                    }
-                    self.spend_unroll_fuel(template)?;
-                    let next = self.evaluated(template, next_iter, &stepping)?;
-                    iterators.push(std::mem::replace(&mut iterator, next));
+        let mut iterator = self.evaluated(template, &source.initial, bindings)?;
+        let mut iterators = Vec::new();
+        loop {
+            let mut stepping = bindings.clone();
+            stepping.values.insert(binder.clone(), iterator.clone());
+            match self.evaluated(template, &source.has_next, &stepping)? {
+                CtValue::Bool(false) => return Ok(iterators),
+                CtValue::Bool(true) => {}
+                other => {
+                    return Err(self.error(
+                        Some(template),
+                        format!("comptime for over `{binder}`: paramfor_has_next gave `{other}`"),
+                    ));
                 }
             }
-            // A display the check left to evaluate is the application of
-            // its thunk, demanded and run here.
-            ComptimeSequence::Elements(expression) => self
-                .resolve_application(template, expression, bindings)?
-                .or_else(|| eval_ct(expression, bindings).ok())
-                .as_ref()
-                .and_then(CtValue::comptime_iteration_elements)
-                .ok_or_else(|| undecided(self, expression))?,
-        };
-        let meta = source.binder_meta();
-        let mut values = Vec::with_capacity(elements.len());
-        for element in elements {
             self.spend_unroll_fuel(template)?;
-            values.push(match meta.as_value() {
-                Some(ty) => element.clone().materialize_as(ty).unwrap_or(element),
-                None => element,
-            });
+            let next = self.evaluated(template, &source.next_iter, &stepping)?;
+            iterators.push(std::mem::replace(&mut iterator, next));
         }
-        Ok(values)
     }
 
     /// Run an iterator loop copy's element application (`paramfor_next_value`

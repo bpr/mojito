@@ -212,15 +212,14 @@ pub enum HirInstr {
     Loop { label: u32, body: HirRegion },
     /// `hlcf.comptime.for`: the iterable is a compile-time sequence MIR
     /// lowers as parameter expressions; the loop variable `var` is the
-    /// checked binding `binding`, interned at `index` here and bound to its
-    /// runtime slot by MIR as a `for` variable is. `body` ends an iteration
+    /// checked binding `binding`, an alias of the element over the loop's
+    /// iterator with no slot. `body` ends an iteration
     /// with [`Terminator::ComptimeContinue`] and leaves the loop with
     /// [`Terminator::ComptimeBreak`]. The elaborator unrolls it.
     ComptimeFor {
         iter: HirExpr,
         var: String,
         binding: Option<mojito_types::origin::OwnerId>,
-        index: VarId,
         body: HirRegion,
     },
 }
@@ -1127,7 +1126,6 @@ impl Lower {
     ) {
         let iter = self.expr(iter);
         self.scopes.push(HashMap::new());
-        let index = self.declare_binding(var, binding);
         self.loops.push(EnclosingLoop {
             target: LoopTarget::ComptimeFor,
             cleanup: Vec::new(),
@@ -1142,7 +1140,6 @@ impl Lower {
             iter,
             var: var.to_string(),
             binding,
-            index,
             body,
         });
     }

@@ -1,4 +1,4 @@
-mojito-mir 1.53
+mojito-mir 1.57
 artifact {
   features: [],
   files: [
@@ -14,20 +14,20 @@ artifact {
       fn {
         name: comptime_for_targets_kept,
         registers: 11,
-        vars: 3,
-        var_names: [total, i, "i$shadow2"],
+        vars: 1,
+        var_names: [total],
         params: 0,
         param_types: [],
         owned_params: [],
         deinit_params: [],
         ref_params: [],
         returns_reference: false,
-        var_types: [var_type { var: $v0, type: Int }, var_type { var: $v1, type: Int }, var_type { var: $v2, type: Int }],
+        var_types: [var_type { var: $v0, type: Int }],
         return_type: present(Int),
         raises: false,
         error_type: absent,
         register_types: [reg_type { reg: %r0, type: IntLiteral }, reg_type { reg: %r1, type: Int }, reg_type { reg: %r2, type: Int }, reg_type { reg: %r3, type: IntLiteral }, reg_type { reg: %r4, type: Int }, reg_type { reg: %r5, type: Bool }, reg_type { reg: %r6, type: Int }, reg_type { reg: %r7, type: Int }, reg_type { reg: %r8, type: Int }, reg_type { reg: %r9, type: Int }, reg_type { reg: %r10, type: None }],
-        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 732, end: 733, origin: absent }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 732, end: 733, origin: absent }) }, reg_loc { reg: %r2, location: present(loc { file: file0, start: 822, end: 823, origin: present($v2) }) }, reg_loc { reg: %r3, location: present(loc { file: file0, start: 827, end: 828, origin: absent }) }, reg_loc { reg: %r4, location: present(loc { file: file0, start: 827, end: 828, origin: absent }) }, reg_loc { reg: %r5, location: present(loc { file: file0, start: 822, end: 828, origin: absent }) }, reg_loc { reg: %r6, location: present(loc { file: file0, start: 881, end: 886, origin: present($v0) }) }, reg_loc { reg: %r7, location: present(loc { file: file0, start: 859, end: 864, origin: present($v0) }) }, reg_loc { reg: %r8, location: present(loc { file: file0, start: 868, end: 869, origin: present($v2) }) }, reg_loc { reg: %r9, location: present(loc { file: file0, start: 859, end: 864, origin: absent }) }, reg_loc { reg: %r10, location: present(loc { file: file0, start: 859, end: 864, origin: present($v0) }) }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 732, end: 733, origin: absent }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 732, end: 733, origin: absent }) }, reg_loc { reg: %r2, location: present(loc { file: file0, start: 822, end: 823, origin: absent }) }, reg_loc { reg: %r3, location: present(loc { file: file0, start: 827, end: 828, origin: absent }) }, reg_loc { reg: %r4, location: present(loc { file: file0, start: 827, end: 828, origin: absent }) }, reg_loc { reg: %r5, location: present(loc { file: file0, start: 822, end: 828, origin: absent }) }, reg_loc { reg: %r6, location: present(loc { file: file0, start: 881, end: 886, origin: present($v0) }) }, reg_loc { reg: %r7, location: present(loc { file: file0, start: 859, end: 864, origin: present($v0) }) }, reg_loc { reg: %r8, location: present(loc { file: file0, start: 868, end: 869, origin: absent }) }, reg_loc { reg: %r9, location: present(loc { file: file0, start: 859, end: 864, origin: absent }) }, reg_loc { reg: %r10, location: present(loc { file: file0, start: 859, end: 864, origin: present($v0) }) }],
         blocks: [
           bb0 {
             instructions: [
@@ -40,7 +40,7 @@ artifact {
           bb1 {
             instructions: [
             ],
-            terminator: comptime_for.elements { binder: binder { owner: "$comptime_for@cases.mojo:756..764", slot: 0, name: i }, slot: $v1, elements: param_constant(ct_list([ct_int(0), ct_int(1), ct_int(2)])), body: bb2, exit: bb3 }
+            terminator: comptime_for.iterator { binder: binder { owner: "$comptime_for@cases.mojo:756..764", slot: 0, name: "$iter" }, initial: param_apply { function: "$comptime$comptime_for_targets_kept$0", type: meta_value(struct_type { name: "__module$std$range$_ZeroStartingRange", arguments: [value_arg(ct_dtype(int))] }), args: [param_decl_ref { owner: "comptime_for_targets_kept", slot: 0, name: n, type: meta_value(Int) }] }, has_next: param_apply { function: "__module$std$builtin$$stubs$paramfor_has_next", type: meta_value(Bool), args: [param_constant(ct_type(struct_type { name: "__module$std$range$_ZeroStartingRange", arguments: [value_arg(ct_dtype(int))] })), param_decl_ref { owner: "$comptime_for@cases.mojo:756..764", slot: 0, name: "$iter", type: meta_value(struct_type { name: "__module$std$range$_ZeroStartingRange", arguments: [value_arg(ct_dtype(int))] }) }] }, next_iter: param_apply { function: "__module$std$builtin$$stubs$paramfor_next_iter", type: meta_value(struct_type { name: "__module$std$range$_ZeroStartingRange", arguments: [value_arg(ct_dtype(int))] }), args: [param_constant(ct_type(struct_type { name: "__module$std$range$_ZeroStartingRange", arguments: [value_arg(ct_dtype(int))] })), param_decl_ref { owner: "$comptime_for@cases.mojo:756..764", slot: 0, name: "$iter", type: meta_value(struct_type { name: "__module$std$range$_ZeroStartingRange", arguments: [value_arg(ct_dtype(int))] }) }] }, next_value: param_apply { function: "__module$std$builtin$$stubs$paramfor_next_value", type: meta_value(Int), args: [param_constant(ct_type(struct_type { name: "__module$std$range$_ZeroStartingRange", arguments: [value_arg(ct_dtype(int))] })), param_decl_ref { owner: "$comptime_for@cases.mojo:756..764", slot: 0, name: "$iter", type: meta_value(struct_type { name: "__module$std$range$_ZeroStartingRange", arguments: [value_arg(ct_dtype(int))] }) }] }, body: bb2, exit: bb3 }
           },
           bb2 {
             instructions: [
@@ -55,13 +55,13 @@ artifact {
           bb4 {
             instructions: [
             ],
-            terminator: comptime_for.elements { binder: binder { owner: "$comptime_for@cases.mojo:801..809", slot: 0, name: i }, slot: $v2, elements: param_constant(ct_list([ct_int(0), ct_int(1), ct_int(2)])), body: bb5, exit: bb6 }
+            terminator: comptime_for.iterator { binder: binder { owner: "$comptime_for@cases.mojo:801..809", slot: 0, name: "$iter" }, initial: param_apply { function: "$comptime$comptime_for_targets_kept$1", type: meta_value(struct_type { name: "__module$std$range$_ZeroStartingRange", arguments: [value_arg(ct_dtype(int))] }), args: [param_decl_ref { owner: "comptime_for_targets_kept", slot: 0, name: n, type: meta_value(Int) }] }, has_next: param_apply { function: "__module$std$builtin$$stubs$paramfor_has_next", type: meta_value(Bool), args: [param_constant(ct_type(struct_type { name: "__module$std$range$_ZeroStartingRange", arguments: [value_arg(ct_dtype(int))] })), param_decl_ref { owner: "$comptime_for@cases.mojo:801..809", slot: 0, name: "$iter", type: meta_value(struct_type { name: "__module$std$range$_ZeroStartingRange", arguments: [value_arg(ct_dtype(int))] }) }] }, next_iter: param_apply { function: "__module$std$builtin$$stubs$paramfor_next_iter", type: meta_value(struct_type { name: "__module$std$range$_ZeroStartingRange", arguments: [value_arg(ct_dtype(int))] }), args: [param_constant(ct_type(struct_type { name: "__module$std$range$_ZeroStartingRange", arguments: [value_arg(ct_dtype(int))] })), param_decl_ref { owner: "$comptime_for@cases.mojo:801..809", slot: 0, name: "$iter", type: meta_value(struct_type { name: "__module$std$range$_ZeroStartingRange", arguments: [value_arg(ct_dtype(int))] }) }] }, next_value: param_apply { function: "__module$std$builtin$$stubs$paramfor_next_value", type: meta_value(Int), args: [param_constant(ct_type(struct_type { name: "__module$std$range$_ZeroStartingRange", arguments: [value_arg(ct_dtype(int))] })), param_decl_ref { owner: "$comptime_for@cases.mojo:801..809", slot: 0, name: "$iter", type: meta_value(struct_type { name: "__module$std$range$_ZeroStartingRange", arguments: [value_arg(ct_dtype(int))] }) }] }, body: bb5, exit: bb6 }
           },
           bb5 {
             instructions: [
               const { dest: %r3, value: int_literal(1) },
               literal.materialize { dest: %r4, value: %r3, target: Int },
-              var.use { dest: %r2, var: $v2, mode: copy },
+              const { dest: %r2, value: param(param_apply { function: "__module$std$builtin$$stubs$paramfor_next_value", type: meta_value(Int), args: [param_constant(ct_type(struct_type { name: "__module$std$range$_ZeroStartingRange", arguments: [value_arg(ct_dtype(int))] })), param_decl_ref { owner: "$comptime_for@cases.mojo:801..809", slot: 0, name: "$iter", type: meta_value(struct_type { name: "__module$std$range$_ZeroStartingRange", arguments: [value_arg(ct_dtype(int))] }) }] }) },
               binary { op: eq, dest: %r5, a: %r2, b: %r4, resolved: absent, raises: absent }
             ],
             terminator: branch { condition: %r5, then: bb8, else: bb9 }
@@ -77,7 +77,7 @@ artifact {
             instructions: [
               var.use { dest: %r7, var: $v0, mode: copy },
               drop.var { var: $v0 },
-              var.use { dest: %r8, var: $v2, mode: copy },
+              const { dest: %r8, value: param(param_apply { function: "__module$std$builtin$$stubs$paramfor_next_value", type: meta_value(Int), args: [param_constant(ct_type(struct_type { name: "__module$std$range$_ZeroStartingRange", arguments: [value_arg(ct_dtype(int))] })), param_decl_ref { owner: "$comptime_for@cases.mojo:801..809", slot: 0, name: "$iter", type: meta_value(struct_type { name: "__module$std$range$_ZeroStartingRange", arguments: [value_arg(ct_dtype(int))] }) }] }) },
               binary { op: add, dest: %r9, a: %r7, b: %r8, resolved: absent, raises: absent },
               interiors.invalidate { base: interior_origin { root: $v0, path: [] }, except: absent, include_base_generation: false, marker: %r10 },
               var.store { var: $v0, src: %r9, binding_type: absent, in_place: false }

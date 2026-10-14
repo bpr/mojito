@@ -1133,7 +1133,9 @@ impl Elab<'_> {
         // An arm whose closed arithmetic fails to evaluate keeps its source:
         // the pin reports the failure only for an instance that takes it.
         let arm = |body: &[Stmt]| match self.block(body, &mut env.clone(), true) {
-            Err(ComptimeError::BadArithmetic(_) | ComptimeError::BadRange(_)) => Ok(body.to_vec()),
+            Err(ComptimeError::BadArithmetic(_) | ComptimeError::NotCollection(_)) => {
+                Ok(body.to_vec())
+            }
             elaborated => elaborated,
         };
         let branches = branches

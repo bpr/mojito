@@ -564,8 +564,7 @@ pub fn instruction_slots(instruction: &MirInstr) -> Vec<VarId> {
         | MirInstr::DefVar { var, .. }
         | MirInstr::DeclareVar { var }
         | MirInstr::DropVar { var }
-        | MirInstr::ConsumeVar { var }
-        | MirInstr::ComptimeFor { slot: var, .. } => out.push(*var),
+        | MirInstr::ConsumeVar { var } => out.push(*var),
         MirInstr::GetIter { source, dest, .. } => out.extend([*source, *dest]),
         MirInstr::HasNext { iter, .. }
         | MirInstr::Next { iter, .. }
@@ -618,8 +617,7 @@ pub fn for_each_instruction_slot_mut(
         | MirInstr::DefVar { var, .. }
         | MirInstr::DeclareVar { var }
         | MirInstr::DropVar { var }
-        | MirInstr::ConsumeVar { var }
-        | MirInstr::ComptimeFor { slot: var, .. } => visit(var),
+        | MirInstr::ConsumeVar { var } => visit(var),
         MirInstr::GetIter { source, dest, .. } => {
             visit(source);
             visit(dest);
@@ -1793,16 +1791,16 @@ pub enum MirInstr {
         arms: Vec<Vec<MirBlock>>,
         orelse: Vec<MirBlock>,
     },
-    /// `hlcf.comptime.for`: run `body` once per element of the compile-time
-    /// sequence `source`, binding it to the parameter binder `binder`, read
-    /// through the slot `slot`. The body ends an iteration with
+    /// `hlcf.comptime.for`: run `body` once per iterator the compile-time
+    /// sequence `source` steps through, binding it to the parameter binder
+    /// `binder`; the loop variable is an alias of `source.next_value` over
+    /// it and has no storage. The body ends an iteration with
     /// [`MirTerm::ComptimeContinue`] and leaves the loop with
     /// [`MirTerm::ComptimeBreak`]; exhaustion continues after the op.
     /// `orelse` is upstream's else region after `LowerSemanticCF`: one block
     /// holding [`MirTerm::Unreachable`].
     ComptimeFor {
         binder: mojito_types::param_expr::ParamRef,
-        slot: VarId,
         source: mojito_checked::checked::ComptimeSequence,
         body: Vec<MirBlock>,
         orelse: Vec<MirBlock>,
@@ -2257,16 +2255,14 @@ pub enum MirTerm {
         then_b: MirBlockId,
         else_b: MirBlockId,
     },
-    /// A `comptime for` header: a loop whose variable is the parameter
-    /// binder `binder`, read by the body through the slot `slot`, over the
-    /// compile-time sequence `source` — a `range` of parameter expressions,
-    /// or a parameter expression whose value yields the elements. The body's
-    /// back edge jumps here; `exit` follows the loop. Ownership and drops
+    /// A `comptime for` header: a loop whose binder `binder` takes each
+    /// iterator the compile-time sequence `source` steps through; the loop
+    /// variable is an alias of `source.next_value` over it and has no
+    /// storage. The body's back edge jumps here; `exit` follows the loop. Ownership and drops
     /// treat it as a loop with its trip count unknown; the elaborator unrolls
     /// it, so concrete MIR carries none.
     ComptimeFor {
         binder: mojito_types::param_expr::ParamRef,
-        slot: VarId,
         source: mojito_checked::checked::ComptimeSequence,
         body: MirBlockId,
         exit: MirBlockId,

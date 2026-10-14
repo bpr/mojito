@@ -1186,15 +1186,7 @@ fn comptime_for_steps_an_iterator_one_copy_per_element() {
         function
             .blocks
             .iter()
-            .filter(|block| {
-                matches!(
-                    block.term,
-                    MirTerm::ComptimeFor {
-                        source: mojito_checked::checked::ComptimeSequence::Iterator { .. },
-                        ..
-                    }
-                )
-            })
+            .filter(|block| matches!(block.term, MirTerm::ComptimeFor { .. }))
             .count()
     };
     let additions = |function: &MirFunction| {

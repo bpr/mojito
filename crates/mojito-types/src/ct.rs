@@ -316,8 +316,8 @@ pub fn convert_lane(lane: &CtLane, target: ScalarConversion) -> CtValue {
 
 /// A compile-time value.
 ///
-/// Scalar values drive folding; `Tuple`/`List` let `comptime for` iterate
-/// compile-time collections; `Type` carries a semantic type for associated
+/// Scalar values drive folding; `Tuple`/`List` are compile-time
+/// collections; `Type` carries a semantic type for associated
 /// comptime members; `Expr` is a symbolic parameter expression while a generic
 /// body is being checked.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
@@ -458,10 +458,10 @@ impl fmt::Display for CtMarker {
 }
 
 impl CtValue {
-    /// What a `comptime for` over this value binds, in order: a list's or a
-    /// set's elements, a dictionary's keys, and a bound value pack's
-    /// elements; `None` for any other value. One rule for both unrollers,
-    /// the AST elaborator's and `native::mono`'s.
+    /// The elements a compile-time collection read sees, in order: a list's
+    /// or a set's elements, a dictionary's keys, and a bound value pack's
+    /// elements; `None` for any other value. Compile-time indexing, `len`,
+    /// and parameter-list reads share this one rule.
     pub fn comptime_iteration_elements(&self) -> Option<Vec<Self>> {
         match self {
             Self::Tuple(values)

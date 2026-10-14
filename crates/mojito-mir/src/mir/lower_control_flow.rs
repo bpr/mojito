@@ -157,7 +157,6 @@ impl Lowering<'_> {
             } => self.lower_comptime_if(&results, conds, arms, orelse, join),
             MirInstr::ComptimeFor {
                 binder,
-                slot,
                 source,
                 body,
                 orelse: _,
@@ -166,7 +165,6 @@ impl Lowering<'_> {
                 let body = self.lower_loop(FrameKind::ComptimeFor, body, join, Some(header));
                 self.out[header].term = MirTerm::ComptimeFor {
                     binder,
-                    slot,
                     source,
                     body,
                     exit: join,

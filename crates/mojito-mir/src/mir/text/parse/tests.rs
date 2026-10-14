@@ -1242,71 +1242,6 @@ fn comptime_branch_terminator_reprints() {
 }
 
 #[test]
-fn comptime_for_terminator_reprints() {
-    use mojito_types::param_expr::{ParamContext, ParamId, ParamRef};
-    let context = ParamContext::detached();
-    let mut function = function_with(vec![Ty::int()], Vec::new());
-    function.n_vars = 1;
-    function.var_names = vec!["i".to_string()];
-    function.blocks[0].term = MirTerm::ComptimeFor {
-        binder: ParamRef {
-            id: ParamId::new("$comptime_for@f:10..18", 0),
-            name: "i".into(),
-        },
-        slot: 0,
-        source: mojito_checked::checked::ComptimeSequence::Elements(
-            context
-                .constant(CtValue::List((0..4).map(CtValue::Int).collect()))
-                .expect("a constant"),
-        ),
-        body: 1,
-        exit: 2,
-    };
-    function.blocks.push(MirBlock {
-        instrs: Vec::new(),
-        term: MirTerm::Jump(0),
-    });
-    function.blocks.push(MirBlock {
-        instrs: Vec::new(),
-        term: MirTerm::Return(None),
-    });
-    let program = program_with(vec![("comptime_for".into(), function)]);
-    assert_reprints(&program);
-}
-
-#[test]
-fn comptime_for_elements_terminator_reprints() {
-    use mojito_types::param_expr::{ParamContext, ParamId, ParamRef};
-    let context = ParamContext::detached();
-    let elements = context
-        .constant(CtValue::List(vec![CtValue::Int(1), CtValue::Int(3)]))
-        .expect("a constant");
-    let mut function = function_with(vec![Ty::int()], Vec::new());
-    function.n_vars = 1;
-    function.var_names = vec!["x".to_string()];
-    function.blocks[0].term = MirTerm::ComptimeFor {
-        binder: ParamRef {
-            id: ParamId::new("$comptime_for@f:10..16", 0),
-            name: "x".into(),
-        },
-        slot: 0,
-        source: mojito_checked::checked::ComptimeSequence::Elements(elements),
-        body: 1,
-        exit: 2,
-    };
-    function.blocks.push(MirBlock {
-        instrs: Vec::new(),
-        term: MirTerm::Jump(0),
-    });
-    function.blocks.push(MirBlock {
-        instrs: Vec::new(),
-        term: MirTerm::Return(None),
-    });
-    let program = program_with(vec![("comptime_for_elements".into(), function)]);
-    assert_reprints(&program);
-}
-
-#[test]
 fn comptime_for_iterator_terminator_reprints() {
     use mojito_types::param_expr::{MetaTy, ParamContext, ParamId, ParamRef};
     let context = ParamContext::detached();
@@ -1322,8 +1257,7 @@ fn comptime_for_iterator_terminator_reprints() {
     function.var_names = vec!["x".to_string()];
     function.blocks[0].term = MirTerm::ComptimeFor {
         binder,
-        slot: 0,
-        source: mojito_checked::checked::ComptimeSequence::Iterator {
+        source: mojito_checked::checked::ComptimeSequence {
             initial,
             has_next: step("has_next", MetaTy::value(Ty::bool())),
             next_iter: step("next_iter", MetaTy::int()),
@@ -2718,15 +2652,12 @@ fn structured_region_ops_and_terminators_reprint() {
     use crate::mir::{LoopLabel, MirElif};
     let one = |instrs: Vec<MirInstr>, term: MirTerm| vec![MirBlock { instrs, term }];
     let binder = test_binder("i");
-    let sequences = [
-        mojito_checked::checked::ComptimeSequence::Elements(int_parameter("$test:xs", 0, "xs")),
-        mojito_checked::checked::ComptimeSequence::Iterator {
-            initial: int_parameter("$test:it", 0, "it"),
-            has_next: int_parameter("$test:has", 0, "has"),
-            next_iter: int_parameter("$test:next", 0, "next"),
-            next_value: int_parameter("$test:value", 0, "value"),
-        },
-    ];
+    let source = mojito_checked::checked::ComptimeSequence {
+        initial: int_parameter("$test:it", 0, "it"),
+        has_next: int_parameter("$test:has", 0, "has"),
+        next_iter: int_parameter("$test:next", 0, "next"),
+        next_value: int_parameter("$test:value", 0, "value"),
+    };
     let mut instrs = vec![
         MirInstr::If {
             results: vec![Reg(1)],
@@ -2768,9 +2699,8 @@ fn structured_region_ops_and_terminators_reprint() {
             orelse: one(Vec::new(), MirTerm::ComptimeYield(Vec::new())),
         },
     ];
-    instrs.extend(sequences.into_iter().map(|source| MirInstr::ComptimeFor {
-        binder: binder.clone(),
-        slot: 0,
+    instrs.push(MirInstr::ComptimeFor {
+        binder,
         source,
         body: vec![
             MirBlock {
@@ -2791,7 +2721,7 @@ fn structured_region_ops_and_terminators_reprint() {
             },
         ],
         orelse: one(Vec::new(), MirTerm::Unreachable),
-    }));
+    });
     let mut function = function_with(vec![Ty::bool(), Ty::int(), Ty::int()], instrs);
     function.n_vars = 1;
     function.var_names = vec!["i".to_string()];

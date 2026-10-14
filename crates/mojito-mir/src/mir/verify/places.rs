@@ -52,20 +52,13 @@ pub(super) fn verify_terminator(
                 }
             }
         }
-        MirTerm::ComptimeFor {
-            slot, body, exit, ..
-        } => {
+        MirTerm::ComptimeFor { body, exit, .. } => {
             for target in [body, exit] {
                 if *target >= context.region_len {
                     errors.push(format!(
                         "{prefix}: compile-time loop to invalid block {target}"
                     ));
                 }
-            }
-            if *slot as usize >= function.n_vars {
-                errors.push(format!(
-                    "{prefix}: compile-time loop slot {slot} is out of range"
-                ));
             }
         }
         MirTerm::Return(value) | MirTerm::ReturnWithCleanup { value, .. } => {
